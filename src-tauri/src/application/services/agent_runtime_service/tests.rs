@@ -15,10 +15,10 @@ use super::commit_ledger::RunCommitLedger;
 use super::delegation::workspace_policy::InvocationWorkspaceRepository;
 use super::skill_scope::{resolve_run_skill_scope_refs, skill_scope_order_for_profile};
 use crate::application::dto::agent_dto::{
-    AgentPromptAssemblyScopeDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
-    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
-    AgentResolvePromptAssemblyDto, AgentSkillScopeRefsDto, AgentStartRunDto,
-    AgentStartRunOptionsDto,
+    AgentPromptAssemblyScopeDto, AgentReadEventsDto, AgentReadModelTurnDto,
+    AgentReadPromptAssemblyRequestDto, AgentResolveChatCommitDto,
+    AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
+    AgentSkillScopeRefsDto, AgentStartRunDto, AgentStartRunOptionsDto,
 };
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
@@ -1943,6 +1943,55 @@ async fn agent_handoff_continues_after_prior_commit() {
             && event.payload["taskId"] == acceptance_task.id
             && event.payload["newInvocationId"] == acceptance_task.child_invocation_id
     }));
+    let plain_page = service
+        .read_events(AgentReadEventsDto {
+            run_id: run.id.clone(),
+            after_seq: Some(0),
+            before_seq: None,
+            limit: 1,
+            include_timeline_projection: false,
+        })
+        .await
+        .expect("read event page without projection");
+    assert_eq!(plain_page.events.len(), 1);
+    assert!(plain_page.timeline_projection.is_none());
+    let projected_page = service
+        .read_events(AgentReadEventsDto {
+            run_id: run.id.clone(),
+            after_seq: Some(0),
+            before_seq: None,
+            limit: 1,
+            include_timeline_projection: true,
+        })
+        .await
+        .expect("read projected event page");
+    assert_eq!(projected_page.events.len(), 1);
+    let projection = projected_page
+        .timeline_projection
+        .expect("timeline projection");
+    assert_eq!(
+        projection.foreground_invocation_ids,
+        vec![
+            "inv_root".to_string(),
+            editor_task.child_invocation_id.clone(),
+            acceptance_task.child_invocation_id.clone(),
+        ]
+    );
+    assert_eq!(projection.handoff_edges.len(), 2);
+    assert_eq!(projection.handoff_edges[0].task_id, editor_task.id.as_str());
+    assert_eq!(projection.handoff_edges[0].source_invocation_id, "inv_root");
+    assert_eq!(
+        projection.handoff_edges[0].new_invocation_id,
+        editor_task.child_invocation_id.as_str()
+    );
+    assert_eq!(
+        projection.handoff_edges[0].status,
+        AgentTaskStatus::Completed
+    );
+    assert_eq!(
+        projection.handoff_edges[1].task_id,
+        acceptance_task.id.as_str()
+    );
 
     wait_for_closed_sessions(
         &model_gateway_probe,

@@ -5,7 +5,8 @@ use crate::domain::models::agent::profile::{
     AgentContextPolicy, AgentPresetRef, AgentProfileDefinition, AgentProfileSummary,
 };
 use crate::domain::models::agent::{
-    AgentChatRef, AgentRunEvent, AgentRunPresentation, AgentRunStatus, AgentToolSpec,
+    AgentChatRef, AgentRunEvent, AgentRunPresentation, AgentRunStatus, AgentTaskStatus,
+    AgentToolSpec,
 };
 use crate::domain::repositories::agent_profile_storage_health_repository::{
     AgentProfileStorageIssue, AgentProfileStorageRepairAction,
@@ -245,12 +246,34 @@ pub struct AgentReadEventsDto {
     pub before_seq: Option<u64>,
     #[serde(default = "default_event_limit")]
     pub limit: usize,
+    #[serde(default)]
+    pub include_timeline_projection: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentReadEventsResultDto {
     pub events: Vec<AgentRunEvent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeline_projection: Option<AgentRunTimelineProjectionDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunTimelineProjectionDto {
+    pub foreground_invocation_ids: Vec<String>,
+    pub handoff_edges: Vec<AgentRunTimelineHandoffEdgeDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunTimelineHandoffEdgeDto {
+    pub task_id: String,
+    pub source_invocation_id: String,
+    pub new_invocation_id: String,
+    pub target_profile_id: String,
+    pub workspace_key: String,
+    pub status: AgentTaskStatus,
 }
 
 #[derive(Debug, Clone, Deserialize)]

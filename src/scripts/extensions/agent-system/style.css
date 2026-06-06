@@ -798,8 +798,34 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 }
 
 .ttas-run-event.kind-subagent .ttas-run-event-icon,
+.ttas-run-event.kind-handoff .ttas-run-event-icon,
 .ttas-run-event.kind-model .ttas-run-event-icon {
     color: color-mix(in srgb, var(--ttas-run-panel-accent) 78%, var(--SmartThemeBodyColor) 22%);
+}
+
+.ttas-run-event.kind-handoff button {
+    border-color: color-mix(in srgb, var(--ttas-run-panel-accent) 34%, var(--ttas-run-panel-border-soft));
+    background:
+        linear-gradient(90deg, color-mix(in srgb, var(--ttas-run-panel-accent) 12%, transparent), transparent 64%),
+        color-mix(in srgb, var(--SmartThemeBlurTintColor) 44%, transparent);
+}
+
+.ttas-run-event.kind-handoff .ttas-run-event-icon {
+    background-color: color-mix(in srgb, currentColor 14%, transparent);
+    box-shadow: 0 0 14px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.ttas-run-event.kind-handoff .ttas-run-event-title {
+    gap: 8px;
+}
+
+.ttas-run-event.kind-handoff .ttas-run-event-title::after {
+    content: '';
+    flex: 1 1 28px;
+    min-width: 20px;
+    height: 1px;
+    background: linear-gradient(90deg, color-mix(in srgb, currentColor 46%, transparent), transparent);
+    opacity: 0.74;
 }
 
 .ttas-run-event-copy {

@@ -324,6 +324,214 @@ test('Agent run timeline projects SubAgent tasks without flattening child events
     ]);
 });
 
+test('Agent run timeline projects Handoff as foreground chain', async () => {
+    const projector = await importFresh('src/scripts/extensions/agent-system/src/run-invocation-projector.js');
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const events = [
+        {
+            seq: 1,
+            id: 'evt-handoff-tool',
+            runId: 'run-1',
+            type: 'tool_call_completed',
+            payload: { invocationId: 'inv_root', callId: 'call_handoff', name: 'agent.handoff' },
+        },
+        {
+            seq: 2,
+            id: 'evt-handoff-accepted',
+            runId: 'run-1',
+            type: 'agent_handoff_accepted',
+            payload: {
+                taskId: 'handoff-1',
+                sourceInvocationId: 'inv_root',
+                newInvocationId: 'inv-editor',
+                targetProfileId: 'line-editor',
+                workspaceKey: 'line-editor',
+            },
+        },
+        {
+            seq: 3,
+            id: 'evt-editor-started',
+            runId: 'run-1',
+            type: 'agent_invocation_started',
+            payload: {
+                invocationId: 'inv-editor',
+                parentInvocationId: 'inv_root',
+                profileId: 'line-editor',
+                kind: 'handoff',
+                status: 'running',
+            },
+        },
+        {
+            seq: 4,
+            id: 'evt-editor-read',
+            runId: 'run-1',
+            type: 'tool_call_completed',
+            payload: {
+                invocationId: 'inv-editor',
+                callId: 'call-read',
+                name: 'workspace.read_file',
+                displayMetrics: { chars: 80, words: 12 },
+            },
+        },
+        {
+            seq: 5,
+            id: 'evt-editor-patch',
+            runId: 'run-1',
+            type: 'workspace_patch_applied',
+            payload: {
+                invocationId: 'inv-editor',
+                path: 'output/main.md',
+                chars: 120,
+                words: 18,
+                replacements: 1,
+            },
+        },
+        {
+            seq: 6,
+            id: 'evt-run-completed',
+            runId: 'run-1',
+            type: 'run_completed',
+            payload: {},
+        },
+    ];
+
+    const projection = projector.projectAgentInvocations(events);
+    assert.deepEqual(projection.foregroundInvocationIds, ['inv_root', 'inv-editor']);
+    assert.equal(projection.handoffTasks.length, 1);
+    assert.equal(projection.handoffTasks[0].displayName, 'line-editor');
+    assert.equal(projection.subAgentTasks.length, 0);
+
+    const mainItems = presenter.timelineItemsFromEvents(events, {
+        foregroundInvocationIds: projection.foregroundInvocationIds,
+    });
+    assert.deepEqual(mainItems.map(item => item.type), [
+        'agent_handoff_accepted',
+        'tool_call_completed',
+        'workspace_patch_applied',
+        'run_completed',
+    ]);
+    assert.equal(mainItems[0].kind, 'handoff');
+    assert.equal(mainItems[0].titleKey, 'timelineEventHandoffAccepted');
+    assert.deepEqual(mainItems[0].titleParams, { agent: 'line-editor' });
+
+    const targets = presenter.buildEventDetailTargets(mainItems[0], events);
+    assert.deepEqual(targets, [
+        {
+            type: 'handoff',
+            labelKey: 'timelineHandoff',
+            taskId: 'handoff-1',
+            sourceInvocationId: 'inv_root',
+            newInvocationId: 'inv-editor',
+            targetProfileId: 'line-editor',
+            workspaceKey: 'line-editor',
+            status: 'accepted',
+        },
+    ]);
+});
+
+test('Agent run timeline falls back to Handoff invocation start when accepted marker is outside the loaded page', async () => {
+    const projector = await importFresh('src/scripts/extensions/agent-system/src/run-invocation-projector.js');
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const events = [
+        {
+            seq: 10,
+            id: 'evt-editor-started',
+            runId: 'run-1',
+            type: 'agent_invocation_started',
+            payload: {
+                invocationId: 'inv-editor',
+                parentInvocationId: 'inv_root',
+                profileId: 'line-editor',
+                kind: 'handoff',
+                status: 'running',
+            },
+        },
+        {
+            seq: 11,
+            id: 'evt-editor-read',
+            runId: 'run-1',
+            type: 'tool_call_completed',
+            payload: { invocationId: 'inv-editor', callId: 'call-read', name: 'workspace.read_file' },
+        },
+    ];
+
+    const projection = projector.projectAgentInvocations(events);
+    assert.deepEqual(projection.foregroundInvocationIds, ['inv_root', 'inv-editor']);
+    const mainItems = presenter.timelineItemsFromEvents(events, {
+        foregroundInvocationIds: projection.foregroundInvocationIds,
+    });
+    assert.deepEqual(mainItems.map(item => item.type), [
+        'agent_invocation_started',
+        'tool_call_completed',
+    ]);
+});
+
+test('Agent run timeline uses projection envelope when Handoff markers are outside the loaded page', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const events = [
+        {
+            seq: 42,
+            id: 'evt-editor-read',
+            runId: 'run-1',
+            type: 'tool_call_completed',
+            timestamp: '2026-06-07T00:00:00.000Z',
+            payload: {
+                invocationId: 'inv-editor',
+                callId: 'call-read',
+                name: 'workspace.read_file',
+            },
+        },
+        {
+            seq: 43,
+            id: 'evt-editor-patch',
+            runId: 'run-1',
+            type: 'workspace_patch_applied',
+            payload: {
+                invocationId: 'inv-editor',
+                path: 'output/main.md',
+                chars: 120,
+                words: 18,
+                replacements: 1,
+            },
+        },
+    ];
+
+    const mainItems = presenter.timelineItemsFromEvents(events, {
+        foregroundInvocationIds: ['inv_root', 'inv-editor'],
+        handoffEdges: [
+            {
+                taskId: 'handoff-1',
+                sourceInvocationId: 'inv_root',
+                newInvocationId: 'inv-editor',
+                targetProfileId: 'line-editor',
+                workspaceKey: 'line-editor',
+                status: 'running',
+            },
+        ],
+    });
+
+    assert.deepEqual(mainItems.map(item => item.type), [
+        'agent_handoff_boundary',
+        'tool_call_completed',
+        'workspace_patch_applied',
+    ]);
+    assert.equal(mainItems[0].kind, 'handoff');
+    assert.equal(mainItems[0].titleKey, 'timelineEventHandoffAccepted');
+    assert.deepEqual(mainItems[0].titleParams, { agent: 'line-editor' });
+    assert.deepEqual(presenter.buildEventDetailTargets(mainItems[0], events), [
+        {
+            type: 'handoff',
+            labelKey: 'timelineHandoff',
+            taskId: 'handoff-1',
+            sourceInvocationId: 'inv_root',
+            newInvocationId: 'inv-editor',
+            targetProfileId: 'line-editor',
+            workspaceKey: 'line-editor',
+            status: 'running',
+        },
+    ]);
+});
+
 test('Agent generation router uses the global toggle for normal regenerate and swipe', async () => {
     let stored = {
         agentModeEnabled: false,
@@ -1979,6 +2187,7 @@ test('Agent run event presenter keeps timeline projection focused', async () => 
 test('Agent run tool labels stay user-facing in timeline projection', async () => {
     const { displayToolName } = await importFresh('src/scripts/extensions/agent-system/src/run-tool-labels.js');
 
+    assert.equal(displayToolName('agent.handoff'), 'handing off');
     assert.equal(displayToolName('skill.read'), 'reading a skill');
     assert.equal(displayToolName('workspace.write_file'), 'writing a file');
     assert.equal(displayToolName('vendor.custom_action'), 'custom action');

@@ -5,6 +5,7 @@ import { translateAgentSystem as tr } from './i18n.js';
 import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
 import {
     formatDetailFile,
+    formatHandoffDetail,
     formatModelTurnDetail,
     formatPatchDiffDetail,
     formatRunFailureDetail,
@@ -23,6 +24,7 @@ import {
     eventsForInvocation,
     isActiveTaskStatus,
     isRootInvocation,
+    normalizeInvocationId,
     projectAgentInvocations,
     ROOT_INVOCATION_ID,
 } from './run-invocation-projector.js';
@@ -60,6 +62,7 @@ function createAgentRunTimelineApp() {
                 activeRun: null,
                 eventStore: createRunTimelineEventStore(),
                 events: [],
+                timelineProjection: emptyTimelineProjection(),
                 terminalEvent: null,
                 collapsed: true,
                 detailsOpen: false,
@@ -134,7 +137,11 @@ function createAgentRunTimelineApp() {
             },
             displayItems() {
                 return timelineItemsFromEvents(this.events, {
-                    invocationId: ROOT_INVOCATION_ID,
+                    foregroundInvocationIds: mergeInvocationIds(
+                        this.timelineProjection.foregroundInvocationIds,
+                        this.runProjection.foregroundInvocationIds,
+                    ),
+                    handoffEdges: this.timelineProjection.handoffEdges,
                 });
             },
             virtualDisplayItems() {
@@ -349,6 +356,7 @@ function createAgentRunTimelineApp() {
                 this.currentRun = run;
                 this.eventStore = createRunTimelineEventStore();
                 this.events = [];
+                this.timelineProjection = emptyTimelineProjection();
                 this.terminalEvent = null;
                 this.selectedSeq = null;
                 this.collapsed = true;
@@ -375,10 +383,12 @@ function createAgentRunTimelineApp() {
                         runId,
                         beforeSeq: RUN_EVENT_TAIL_SEQ,
                         limit: RUN_EVENT_PAGE_LIMIT,
+                        includeTimelineProjection: true,
                     });
                     if (requestId !== this.historyRequestId) {
                         return;
                     }
+                    this.timelineProjection = normalizeTimelineProjection(result?.timelineProjection);
                     const events = Array.isArray(result?.events) ? result.events : [];
                     this.receiveRunEvents(events);
                     this.hasMoreBefore = events.length >= RUN_EVENT_PAGE_LIMIT
@@ -416,10 +426,12 @@ function createAgentRunTimelineApp() {
                         runId: this.currentRun.runId,
                         beforeSeq,
                         limit: RUN_EVENT_PAGE_LIMIT,
+                        includeTimelineProjection: true,
                     });
                     if (requestId !== this.historyRequestId) {
                         return;
                     }
+                    this.timelineProjection = normalizeTimelineProjection(result?.timelineProjection);
                     const events = Array.isArray(result?.events) ? result.events : [];
                     this.receiveRunEvents(events);
                     this.hasMoreBefore = events.length >= RUN_EVENT_PAGE_LIMIT
@@ -541,6 +553,8 @@ function createAgentRunTimelineApp() {
                         return tr('timelineOpCancel');
                     case 'model':
                         return tr('timelineOpModel');
+                    case 'handoff':
+                        return tr('timelineOpHandoff');
                     case 'subagent':
                         return tr('timelineOpSubAgent');
                     default:
@@ -854,6 +868,9 @@ function createAgentRunTimelineApp() {
                 }
             },
             async readDetailTarget(target) {
+                if (target.type === 'handoff') {
+                    return formatHandoffDetail(target);
+                }
                 if (target.type === 'subAgentTask') {
                     return formatSubAgentTaskDetail(target);
                 }
@@ -1489,6 +1506,72 @@ function createAgentRunTimelineApp() {
             </section>
         `,
     });
+}
+
+function emptyTimelineProjection() {
+    return {
+        foregroundInvocationIds: [],
+        handoffEdges: [],
+    };
+}
+
+function normalizeTimelineProjection(value) {
+    if (!plainObject(value)) {
+        throw new Error('agent.timeline_projection_invalid: readEvents.timelineProjection must be an object');
+    }
+    if (!Array.isArray(value.foregroundInvocationIds)) {
+        throw new Error('agent.timeline_projection_invalid: foregroundInvocationIds must be an array');
+    }
+    if (!Array.isArray(value.handoffEdges)) {
+        throw new Error('agent.timeline_projection_invalid: handoffEdges must be an array');
+    }
+
+    return {
+        foregroundInvocationIds: value.foregroundInvocationIds.map(normalizeInvocationId),
+        handoffEdges: value.handoffEdges.map((edge, index) => normalizeHandoffEdge(edge, index)),
+    };
+}
+
+function normalizeHandoffEdge(edge, index) {
+    if (!plainObject(edge)) {
+        throw new Error(`agent.timeline_projection_invalid: handoffEdges[${index}] must be an object`);
+    }
+    return {
+        taskId: requiredProjectionString(edge.taskId, `handoffEdges[${index}].taskId`),
+        sourceInvocationId: requiredProjectionString(edge.sourceInvocationId, `handoffEdges[${index}].sourceInvocationId`),
+        newInvocationId: requiredProjectionString(edge.newInvocationId, `handoffEdges[${index}].newInvocationId`),
+        targetProfileId: requiredProjectionString(edge.targetProfileId, `handoffEdges[${index}].targetProfileId`),
+        workspaceKey: requiredProjectionString(edge.workspaceKey, `handoffEdges[${index}].workspaceKey`),
+        status: requiredProjectionString(edge.status, `handoffEdges[${index}].status`),
+    };
+}
+
+function requiredProjectionString(value, field) {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+        throw new Error(`agent.timeline_projection_invalid: ${field} is required`);
+    }
+    return normalized;
+}
+
+function mergeInvocationIds(...groups) {
+    const ids = [];
+    for (const group of groups) {
+        if (!Array.isArray(group)) {
+            continue;
+        }
+        for (const value of group) {
+            const id = normalizeInvocationId(value);
+            if (!ids.includes(id)) {
+                ids.push(id);
+            }
+        }
+    }
+    return ids;
+}
+
+function plainObject(value) {
+    return value && typeof value === 'object' && !Array.isArray(value);
 }
 
 export async function mountAgentRunTimelinePanel() {

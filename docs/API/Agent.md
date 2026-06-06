@@ -223,10 +223,26 @@ type AgentReadEventsInput = {
   afterSeq?: number;
   beforeSeq?: number;
   limit?: number;
+  includeTimelineProjection?: boolean;
 };
 
 type AgentReadEventsResult = {
   events: AgentRunEvent[];
+  timelineProjection?: AgentRunTimelineProjection;
+};
+
+type AgentRunTimelineProjection = {
+  foregroundInvocationIds: string[];
+  handoffEdges: AgentRunTimelineHandoffEdge[];
+};
+
+type AgentRunTimelineHandoffEdge = {
+  taskId: string;
+  sourceInvocationId: string;
+  newInvocationId: string;
+  targetProfileId: string;
+  workspaceKey: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 };
 ```
 
@@ -234,6 +250,7 @@ type AgentReadEventsResult = {
 
 - `limit` 必须有上限。
 - 移动端 UI 不应一次读取完整巨大 journal；推荐先用 `beforeSeq` 读取最新页，再在用户向上回看时继续用 `beforeSeq` 补拉更早事件，同时用 `afterSeq` 追新。
+- `timelineProjection` 仅在 `includeTimelineProjection = true` 时返回。它是面向 Timeline UI 的轻量结构投影，不是 journal event；它来自 run 的 invocation/task repository，用于在分页事件缺少 handoff 起点时仍能识别 foreground control chain。普通 polling / subscribe 不应请求该投影。
 - 当前暂不返回 `hasMoreBefore/hasMoreAfter`。
 
 ## 9. readWorkspaceFile

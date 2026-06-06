@@ -89,6 +89,7 @@ function createAgentApi({ safeInvoke }) {
                 afterSeq: input?.afterSeq,
                 beforeSeq: input?.beforeSeq,
                 limit: input?.limit,
+                ...(input?.includeTimelineProjection === true ? { includeTimelineProjection: true } : {}),
             },
         });
     }

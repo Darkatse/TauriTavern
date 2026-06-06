@@ -172,6 +172,44 @@ test('api.agent.promptAssembly prepares backend broker requests', async () => {
     ]);
 });
 
+test('api.agent.readEvents requests timeline projection only when asked', async () => {
+    const { calls, agent } = await installHarness();
+
+    await agent.readEvents({ runId: 'run-1', afterSeq: 12, limit: 20 });
+    await agent.readEvents({
+        runId: 'run-1',
+        beforeSeq: 200,
+        limit: 50,
+        includeTimelineProjection: true,
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'read_agent_run_events',
+            args: {
+                dto: {
+                    runId: 'run-1',
+                    afterSeq: 12,
+                    beforeSeq: undefined,
+                    limit: 20,
+                },
+            },
+        },
+        {
+            command: 'read_agent_run_events',
+            args: {
+                dto: {
+                    runId: 'run-1',
+                    afterSeq: undefined,
+                    beforeSeq: 200,
+                    limit: 50,
+                    includeTimelineProjection: true,
+                },
+            },
+        },
+    ]);
+});
+
 test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid input', async () => {
     const { calls, agent } = await installHarness();
 

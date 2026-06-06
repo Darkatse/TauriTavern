@@ -44,6 +44,7 @@ mod prompt_assembly;
 mod prompt_snapshot;
 mod scheduler;
 mod skill_scope;
+mod timeline_projection;
 mod tool_execution;
 
 #[cfg(test)]

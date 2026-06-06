@@ -13,6 +13,7 @@ use super::prompt_snapshot::{
 use super::skill_scope::{
     resolve_run_skill_scope_refs, skill_event_summary, skill_scope_order_for_profile,
 };
+use super::timeline_projection::build_run_timeline_projection;
 use crate::application::dto::agent_dto::{
     AgentCancelRunDto, AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
     AgentRunHandleDto, AgentStartRunDto, AgentWorkspaceFileDto,
@@ -296,8 +297,21 @@ impl AgentRuntimeService {
                 },
             )
             .await?;
+        let timeline_projection = if dto.include_timeline_projection {
+            let invocations = self
+                .invocation_repository
+                .list_invocations(&dto.run_id)
+                .await?;
+            let tasks = self.invocation_repository.list_tasks(&dto.run_id).await?;
+            Some(build_run_timeline_projection(&invocations, &tasks))
+        } else {
+            None
+        };
 
-        Ok(AgentReadEventsResultDto { events })
+        Ok(AgentReadEventsResultDto {
+            events,
+            timeline_projection,
+        })
     }
 
     pub async fn read_workspace_file(

@@ -5,6 +5,7 @@ import { presentAgentRunFailure } from '../../../tauritavern/agent/agent-error-p
 
 const DISPLAY_EVENT_TYPES = new Set([
     'agent_delegate_started',
+    'agent_handoff_accepted',
     'agent_invocation_started',
     'agent_invocation_completed',
     'agent_invocation_failed',
@@ -35,6 +36,7 @@ export const TERMINAL_EVENT_TYPES = Object.freeze(['run_completed', 'run_partial
 
 const SIDE_EFFECT_TOOL_COMPLETIONS = new Set([
     'agent.delegate',
+    'agent.handoff',
     'task.return',
     'workspace.write_file',
     'workspace.apply_patch',
@@ -54,6 +56,7 @@ const SIDE_EFFECT_TOOL_BY_EVENT_TYPE = Object.freeze({
 
 const EVENT_META = Object.freeze({
     agent_delegate_started: { icon: 'fa-diagram-project', tone: 'active', kind: 'subagent', titleKey: 'timelineEventSubAgentStarted' },
+    agent_handoff_accepted: { icon: 'fa-arrow-right-arrow-left', tone: 'active', kind: 'handoff', titleKey: 'timelineEventHandoffAccepted' },
     agent_invocation_started: { icon: 'fa-circle-play', tone: 'active', kind: 'subagent', titleKey: 'timelineEventInvocationStarted' },
     agent_invocation_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'subagent', titleKey: 'timelineEventInvocationCompleted' },
     agent_invocation_failed: { icon: 'fa-circle-exclamation', tone: 'error', kind: 'subagent', titleKey: 'timelineEventInvocationFailed' },
@@ -87,7 +90,11 @@ export function isDisplayableRunEvent(event) {
 export function timelineItemsFromEvents(events, options = {}) {
     const completedToolCalls = new Set();
     const resolvedCommits = new Set();
+    const acceptedHandoffInvocationIds = new Set();
     const invocationId = options.invocationId == null ? null : normalizeInvocationId(options.invocationId);
+    const foregroundInvocationIds = normalizeForegroundInvocationIds(options.foregroundInvocationIds);
+    const handoffEdges = normalizeHandoffEdges(options.handoffEdges);
+    const projectedHandoffInvocationIds = new Set(handoffEdges.map((edge) => normalizeInvocationId(edge.newInvocationId)));
 
     for (const event of events) {
         if (event?.type === 'tool_call_completed' || event?.type === 'tool_call_failed') {
@@ -102,14 +109,25 @@ export function timelineItemsFromEvents(events, options = {}) {
                 resolvedCommits.add(commitId);
             }
         }
+        if (event?.type === 'agent_handoff_accepted') {
+            const payload = plainObject(event?.payload) ? event.payload : {};
+            const newInvocationId = String(payload.newInvocationId || '').trim();
+            if (newInvocationId) {
+                acceptedHandoffInvocationIds.add(normalizeInvocationId(newInvocationId));
+            }
+        }
     }
 
-    return events
+    const items = events
         .filter((event) => shouldShowEvent(event, completedToolCalls, resolvedCommits, {
             ...options,
             invocationId,
+            foregroundInvocationIds,
+            acceptedHandoffInvocationIds,
+            projectedHandoffInvocationIds,
         }))
         .map((event) => presentRunEvent(event, events));
+    return insertProjectedHandoffBoundaries(items, handoffEdges, acceptedHandoffInvocationIds);
 }
 
 export function presentRunEvent(event, allEvents = []) {
@@ -139,6 +157,10 @@ export function presentRunEvent(event, allEvents = []) {
 }
 
 export function buildEventDetailTargets(item, allEvents) {
+    if (Array.isArray(item?.detailTargets)) {
+        return item.detailTargets;
+    }
+
     const event = item?.rawEvent;
     const payload = plainObject(event?.payload) ? event.payload : {};
     const targets = [];
@@ -204,6 +226,19 @@ export function buildEventDetailTargets(item, allEvents) {
         });
     }
 
+    if (event?.type === 'agent_handoff_accepted') {
+        targets.push({
+            type: 'handoff',
+            labelKey: 'timelineHandoff',
+            taskId: payload.taskId || '',
+            sourceInvocationId: payload.sourceInvocationId || '',
+            newInvocationId: payload.newInvocationId || '',
+            targetProfileId: payload.targetProfileId || '',
+            workspaceKey: payload.workspaceKey || '',
+            status: 'accepted',
+        });
+    }
+
     if (event?.type === 'tool_call_completed' || event?.type === 'tool_call_failed') {
         const resultPath = findToolResultPath(allEvents, payload.callId);
         addFile('timelineToolResult', resultPath);
@@ -261,6 +296,28 @@ function shouldShowEvent(event, completedToolCalls, resolvedCommits, options = {
     if (!isDisplayableRunEvent(event)) {
         return false;
     }
+    if (options.foregroundInvocationIds) {
+        if (!eventBelongsToForegroundChain(event, options.foregroundInvocationIds)) {
+            return false;
+        }
+        if (event.type.startsWith('agent_task_') || event.type === 'task_return_completed') {
+            return false;
+        }
+        if (event.type.startsWith('agent_invocation_')) {
+            const payload = plainObject(event?.payload) ? event.payload : {};
+            const invocationId = normalizeInvocationId(payload.invocationId);
+            const kind = String(payload.kind || '').trim();
+            if (isRootInvocation(invocationId) || kind !== 'handoff') {
+                return false;
+            }
+            if (event.type === 'agent_invocation_started') {
+                return !options.acceptedHandoffInvocationIds?.has(invocationId)
+                    && !options.projectedHandoffInvocationIds?.has(invocationId);
+            }
+            return event.type === 'agent_invocation_failed'
+                || event.type === 'agent_invocation_cancelled';
+        }
+    }
     if (options.invocationId && !eventBelongsToInvocation(event, options.invocationId)) {
         return false;
     }
@@ -297,6 +354,112 @@ function findToolResultPath(events, callId) {
         .find((event) => event?.type === 'tool_result_stored'
             && String(event?.payload?.callId || '') === normalized);
     return resultEvent?.payload?.path || '';
+}
+
+function normalizeForegroundInvocationIds(values) {
+    if (!Array.isArray(values)) {
+        return null;
+    }
+    const set = new Set(values.map(normalizeInvocationId));
+    return set.size > 0 ? set : null;
+}
+
+function normalizeHandoffEdges(values) {
+    if (!Array.isArray(values)) {
+        return [];
+    }
+    return values
+        .filter(plainObject)
+        .map((edge) => ({
+            taskId: String(edge.taskId || '').trim(),
+            sourceInvocationId: normalizeInvocationId(edge.sourceInvocationId),
+            newInvocationId: normalizeInvocationId(edge.newInvocationId),
+            targetProfileId: String(edge.targetProfileId || '').trim(),
+            workspaceKey: String(edge.workspaceKey || '').trim(),
+            status: String(edge.status || '').trim(),
+        }))
+        .filter((edge) => !isRootInvocation(edge.newInvocationId));
+}
+
+function insertProjectedHandoffBoundaries(items, handoffEdges, acceptedHandoffInvocationIds) {
+    if (handoffEdges.length === 0 || items.length === 0) {
+        return items;
+    }
+    const next = [...items];
+    for (const edge of handoffEdges) {
+        const invocationId = normalizeInvocationId(edge.newInvocationId);
+        if (acceptedHandoffInvocationIds.has(invocationId)) {
+            continue;
+        }
+        const insertAt = next.findIndex((item) => itemBelongsToInvocation(item, invocationId));
+        if (insertAt < 0) {
+            continue;
+        }
+        const anchor = next[insertAt];
+        next.splice(insertAt, 0, projectedHandoffBoundary(edge, anchor));
+    }
+    return next;
+}
+
+function projectedHandoffBoundary(edge, anchor) {
+    const seq = Number(anchor?.seq || 0) - 0.001;
+    return {
+        id: `handoff-boundary:${edge.taskId || edge.newInvocationId}`,
+        seq,
+        runId: String(anchor?.runId || ''),
+        type: 'agent_handoff_boundary',
+        level: 'info',
+        timestamp: String(anchor?.timestamp || ''),
+        icon: EVENT_META.agent_handoff_accepted.icon,
+        tone: EVENT_META.agent_handoff_accepted.tone,
+        kind: 'handoff',
+        titleKey: EVENT_META.agent_handoff_accepted.titleKey,
+        titleParams: { agent: edge.targetProfileId || edge.newInvocationId || '' },
+        summary: [edge.sourceInvocationId, edge.workspaceKey].filter(Boolean).join(' | '),
+        detailTargets: [handoffDetailTarget(edge)],
+    };
+}
+
+function handoffDetailTarget(edge) {
+    return {
+        type: 'handoff',
+        labelKey: 'timelineHandoff',
+        taskId: edge.taskId,
+        sourceInvocationId: edge.sourceInvocationId,
+        newInvocationId: edge.newInvocationId,
+        targetProfileId: edge.targetProfileId,
+        workspaceKey: edge.workspaceKey,
+        status: edge.status,
+    };
+}
+
+function itemBelongsToInvocation(item, invocationId) {
+    const payload = plainObject(item?.rawEvent?.payload) ? item.rawEvent.payload : {};
+    return normalizeInvocationId(payload.invocationId) === invocationId;
+}
+
+function eventBelongsToForegroundChain(event, foregroundInvocationIds) {
+    const payload = plainObject(event?.payload) ? event.payload : {};
+    const type = String(event?.type || '');
+
+    if (type.startsWith('run_')) {
+        return true;
+    }
+    if (type === 'agent_handoff_accepted') {
+        return foregroundInvocationIds.has(normalizeInvocationId(payload.sourceInvocationId))
+            || foregroundInvocationIds.has(normalizeInvocationId(payload.newInvocationId));
+    }
+    if (type === 'agent_delegate_started') {
+        return foregroundInvocationIds.has(normalizeInvocationId(payload.parentInvocationId));
+    }
+    if (type.startsWith('agent_task_') || type === 'task_return_completed') {
+        return false;
+    }
+    if (type.startsWith('agent_invocation_')) {
+        return foregroundInvocationIds.has(normalizeInvocationId(payload.invocationId));
+    }
+
+    return foregroundInvocationIds.has(normalizeInvocationId(payload.invocationId));
 }
 
 function findAssociatedToolTurn(event, events) {
@@ -380,6 +543,8 @@ function modelTurnHasReasoning(events, round, invocationId) {
 
 function eventTitleParams(type, payload) {
     switch (type) {
+        case 'agent_handoff_accepted':
+            return { agent: payload.targetProfileId || payload.newInvocationId || '' };
         case 'agent_delegate_started':
         case 'agent_task_started':
         case 'agent_task_completed':
@@ -416,6 +581,8 @@ function eventTitleParams(type, payload) {
 
 function eventSummary(type, payload, allEvents) {
     switch (type) {
+        case 'agent_handoff_accepted':
+            return [payload.sourceInvocationId, payload.workspaceKey].filter(Boolean).join(' | ');
         case 'agent_delegate_started':
         case 'agent_task_started':
         case 'agent_task_completed':
@@ -464,6 +631,9 @@ function eventSummary(type, payload, allEvents) {
 }
 
 function eventKind(type, payload, fallback) {
+    if (type === 'agent_handoff_accepted') {
+        return 'handoff';
+    }
     if (type === 'tool_call_requested' || type === 'tool_call_completed') {
         return toolKind(payload.name);
     }

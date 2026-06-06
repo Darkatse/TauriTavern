@@ -123,6 +123,37 @@ export function formatSubAgentTaskDetail(target) {
     };
 }
 
+export function formatHandoffDetail(target) {
+    const fields = [];
+
+    if (target.targetProfileId) {
+        fields.push(field(tr('timelineDetailFieldAgent'), target.targetProfileId));
+    }
+    if (target.status) {
+        fields.push(field(tr('timelineDetailFieldStatus'), target.status));
+    }
+    if (target.workspaceKey) {
+        fields.push(field(tr('timelineDetailFieldWorkspace'), target.workspaceKey));
+    }
+    if (target.sourceInvocationId) {
+        fields.push(field(tr('timelineDetailFieldSourceInvocation'), target.sourceInvocationId));
+    }
+    if (target.newInvocationId) {
+        fields.push(field(tr('timelineDetailFieldInvocation'), target.newInvocationId));
+    }
+    if (target.taskId) {
+        fields.push(field(tr('timelineDetailFieldTask'), target.taskId));
+    }
+
+    return {
+        labelKey: target.labelKey,
+        path: '',
+        fields,
+        blocks: [],
+        actions: [],
+    };
+}
+
 export function formatPatchDiffDetail(target, file) {
     const parsed = parseJson(String(file?.text || ''));
     if (!parsed.ok || !plainObject(parsed.value)) {
