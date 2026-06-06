@@ -143,7 +143,9 @@ impl FileChatRepository {
         file_name: &str,
         max_lines: usize,
     ) -> Result<ChatPayloadTail, DomainError> {
-        let path = self.get_chat_path(character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         read_payload_tail_lines(&path, max_lines).await
     }
 
@@ -154,7 +156,9 @@ impl FileChatRepository {
         cursor: ChatPayloadCursor,
         max_lines: usize,
     ) -> Result<ChatPayloadChunk, DomainError> {
-        let path = self.get_chat_path(character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         read_payload_before_lines(&path, cursor, max_lines).await
     }
 
@@ -169,10 +173,12 @@ impl FileChatRepository {
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.ensure_directory_exists().await?;
 
-        let path = self.get_chat_path(character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         let backup_key = self.get_cache_key(character_name, file_name)?;
 
-        let character_dir = self.get_character_dir(character_name);
+        let character_dir = self.resolve_character_chat_dir(character_name).await?;
         fs::create_dir_all(&character_dir).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to create character chat directory {:?}: {}",

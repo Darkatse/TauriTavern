@@ -132,12 +132,6 @@ async fn rename_store_json_entry(dir: &Path, key: &str, new_key: &str) -> Result
 }
 
 impl FileChatRepository {
-    fn character_chat_store_root(&self, character_name: &str, integrity: &str) -> PathBuf {
-        self.get_character_dir(character_name)
-            .join(".tauritavern")
-            .join(integrity)
-    }
-
     fn group_chat_store_root(&self, chat_id: &str) -> Result<PathBuf, DomainError> {
         Ok(self
             .group_chats_dir
@@ -152,10 +146,19 @@ impl FileChatRepository {
         namespace: &str,
     ) -> Result<PathBuf, DomainError> {
         let namespace = validate_store_component(namespace, "namespace")?;
-        let chat_path = self.get_chat_path(character_name, file_name)?;
+        let chat_path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         let integrity = read_chat_integrity_slug(&chat_path).await?;
-        Ok(self
-            .character_chat_store_root(character_name, &integrity)
+        let character_dir = chat_path.parent().ok_or_else(|| {
+            DomainError::InternalError(format!(
+                "Chat payload path has no parent directory: {}",
+                chat_path.display()
+            ))
+        })?;
+        Ok(character_dir
+            .join(".tauritavern")
+            .join(integrity)
             .join(namespace))
     }
 

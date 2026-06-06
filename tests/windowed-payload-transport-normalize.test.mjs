@@ -22,13 +22,32 @@ test('transport: normalizeChatFileName strips only upstream lowercase .jsonl suf
     assert.equal(normalizeChatFileName(null), '');
 });
 
-test('transport: resolveCharacterDirectoryId prefers avatar internal id', async () => {
+test('transport: resolveCharacterDirectoryId treats avatarUrl as an exact avatar filename identity', async () => {
     const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/transport.js'));
     const { resolveCharacterDirectoryId } = mod;
 
-    assert.equal(resolveCharacterDirectoryId('Alice', 'User Avatars/abc123.png'), 'abc123');
-    assert.equal(resolveCharacterDirectoryId('Alice', 'thumbnail?file=foo.png'), 'foo');
-    assert.equal(resolveCharacterDirectoryId('Alice', 'thumbnail?file=my%20avatar.png'), 'my avatar');
+    assert.equal(resolveCharacterDirectoryId('Alice', 'Alice#1.png'), 'Alice#1');
+    assert.equal(resolveCharacterDirectoryId('Alice', 'Alice%2FB.png'), 'Alice%2FB');
+    assert.equal(resolveCharacterDirectoryId('Alice', ' Alice.png'), ' Alice');
+});
+
+test('transport: resolveCharacterDirectoryId rejects URL-like avatar identities', async () => {
+    const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/transport.js'));
+    const { resolveCharacterDirectoryId } = mod;
+
+    for (const avatarUrl of [
+        'User Avatars/abc123.png',
+        'thumbnail?file=foo.png',
+        'thumbnail?file=my%20avatar.png',
+        'Alice.png#hash',
+        'Alice',
+    ]) {
+        assert.throws(
+            () => resolveCharacterDirectoryId('Alice', avatarUrl),
+            /Bad request: invalid avatar_url/,
+            avatarUrl,
+        );
+    }
 });
 
 test('transport: resolveCharacterDirectoryId falls back to character name when avatar is missing', async () => {

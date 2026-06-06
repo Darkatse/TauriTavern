@@ -13,6 +13,7 @@ use crate::domain::repositories::chat_repository::{
     ChatRepository, PinnedCharacterChat, PinnedGroupChat,
 };
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
+use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 
 use super::FileChatRepository;
 
@@ -307,6 +308,262 @@ async fn save_chat_payload_from_path_keeps_uppercase_jsonl_as_stem_text() {
         .await
         .expect("load uppercase JSONL stem payload bytes");
     assert_eq!(loaded_bytes, raw_payload.as_bytes());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn legacy_hash_truncated_chat_dir_is_read_through_alias() {
+    let (repository, root) = setup_repository().await;
+
+    let characters_dir = root.join("characters");
+    fs::create_dir_all(&characters_dir)
+        .await
+        .expect("create characters directory");
+    fs::write(characters_dir.join("Alice#1.png"), b"")
+        .await
+        .expect("create exact character card");
+
+    let legacy_dir = root.join("chats").join("Alice");
+    fs::create_dir_all(&legacy_dir)
+        .await
+        .expect("create legacy chat dir");
+    let raw_payload = payload_to_jsonl(&payload_with_integrity("legacy-hash"));
+    fs::write(legacy_dir.join("session.jsonl"), &raw_payload)
+        .await
+        .expect("write legacy chat payload");
+
+    let loaded = repository
+        .get_chat_payload_bytes("Alice#1", "session")
+        .await
+        .expect("read legacy payload through exact identity");
+    assert_eq!(loaded, raw_payload.as_bytes());
+
+    let aliases = fs::read_to_string(root.join("user").join("cache").join("chat_aliases_v1.json"))
+        .await
+        .expect("read alias file");
+    assert!(aliases.contains("\"Alice#1\""));
+    assert!(aliases.contains("\"dir\": \"Alice\""));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn legacy_alias_keeps_new_saves_in_existing_physical_dir() {
+    let (repository, root) = setup_repository().await;
+
+    let legacy_dir = root.join("chats").join("Alice");
+    fs::create_dir_all(&legacy_dir)
+        .await
+        .expect("create legacy chat dir");
+    fs::write(
+        legacy_dir.join("session.jsonl"),
+        payload_to_jsonl(&payload_with_integrity("legacy-save-a")),
+    )
+    .await
+    .expect("write legacy payload");
+
+    let raw_payload = payload_to_jsonl(&payload_with_integrity("legacy-save-b"));
+    let source = root.join("legacy-save-source.jsonl");
+    fs::write(&source, &raw_payload)
+        .await
+        .expect("write new payload source");
+
+    repository
+        .save_chat_payload_from_path("Alice#1", "followup", &source, false)
+        .await
+        .expect("save through exact identity into legacy dir");
+
+    assert!(legacy_dir.join("followup.jsonl").exists());
+    assert!(
+        !root
+            .join("chats")
+            .join("Alice#1")
+            .join("followup.jsonl")
+            .exists()
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn legacy_percent_decoded_basename_dir_is_read_for_exact_stem() {
+    let (repository, root) = setup_repository().await;
+
+    let legacy_dir = root.join("chats").join("B");
+    fs::create_dir_all(&legacy_dir)
+        .await
+        .expect("create legacy decoded basename dir");
+    fs::write(
+        legacy_dir.join("session.jsonl"),
+        payload_to_jsonl(&payload_with_integrity("legacy-percent")),
+    )
+    .await
+    .expect("write decoded basename payload");
+
+    let summaries = repository
+        .list_chat_summaries(Some("Alice%2FB"), false)
+        .await
+        .expect("list summaries through decoded legacy alias");
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].character_name, "Alice%2FB");
+    assert_eq!(summaries[0].file_name, "session.jsonl");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn alias_store_merges_concurrent_repository_instances() {
+    let (repository_a, root) = setup_repository().await;
+    let repository_b = FileChatRepository::new(
+        root.join("characters"),
+        root.join("chats"),
+        root.join("group chats"),
+        root.join("backups"),
+    );
+    repository_b
+        .ensure_directory_exists()
+        .await
+        .expect("create second repository dirs");
+
+    let _ = repository_b
+        .get_chat_payload_bytes("Warm#1", "missing")
+        .await
+        .expect_err("warm stale alias store without writing");
+
+    for (dir_name, integrity) in [("Alice", "alias-merge-a"), ("Bob", "alias-merge-b")] {
+        let legacy_dir = root.join("chats").join(dir_name);
+        fs::create_dir_all(&legacy_dir)
+            .await
+            .expect("create legacy chat dir");
+        fs::write(
+            legacy_dir.join("session.jsonl"),
+            payload_to_jsonl(&payload_with_integrity(integrity)),
+        )
+        .await
+        .expect("write legacy payload");
+    }
+
+    repository_a
+        .get_chat_payload_bytes("Alice#1", "session")
+        .await
+        .expect("repository A writes first alias");
+    repository_b
+        .get_chat_payload_bytes("Bob#1", "session")
+        .await
+        .expect("repository B merges existing alias before writing");
+
+    let aliases = fs::read_to_string(root.join("user").join("cache").join("chat_aliases_v1.json"))
+        .await
+        .expect("read alias file");
+    assert!(aliases.contains("\"Alice#1\""));
+    assert!(aliases.contains("\"dir\": \"Alice\""));
+    assert!(aliases.contains("\"Bob#1\""));
+    assert!(aliases.contains("\"dir\": \"Bob\""));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn shared_alias_store_serializes_concurrent_repository_writes() {
+    let root = unique_temp_root();
+    let chat_aliases = new_shared_chat_alias_store_for_user_dir(&root);
+    let repository_a = FileChatRepository::with_chat_aliases(
+        root.join("characters"),
+        root.join("chats"),
+        root.join("group chats"),
+        root.join("backups"),
+        chat_aliases.clone(),
+    );
+    let repository_b = FileChatRepository::with_chat_aliases(
+        root.join("characters"),
+        root.join("chats"),
+        root.join("group chats"),
+        root.join("backups"),
+        chat_aliases,
+    );
+
+    repository_a
+        .ensure_directory_exists()
+        .await
+        .expect("create shared repository dirs");
+
+    for (dir_name, integrity) in [("Alice", "shared-alias-a"), ("Bob", "shared-alias-b")] {
+        let legacy_dir = root.join("chats").join(dir_name);
+        fs::create_dir_all(&legacy_dir)
+            .await
+            .expect("create legacy chat dir");
+        fs::write(
+            legacy_dir.join("session.jsonl"),
+            payload_to_jsonl(&payload_with_integrity(integrity)),
+        )
+        .await
+        .expect("write legacy payload");
+    }
+
+    let (loaded_a, loaded_b) = tokio::try_join!(
+        repository_a.get_chat_payload_bytes("Alice#1", "session"),
+        repository_b.get_chat_payload_bytes("Bob#1", "session")
+    )
+    .expect("shared alias store writes both aliases");
+    assert_eq!(
+        loaded_a,
+        payload_to_jsonl(&payload_with_integrity("shared-alias-a")).as_bytes()
+    );
+    assert_eq!(
+        loaded_b,
+        payload_to_jsonl(&payload_with_integrity("shared-alias-b")).as_bytes()
+    );
+
+    let aliases = fs::read_to_string(root.join("user").join("cache").join("chat_aliases_v1.json"))
+        .await
+        .expect("read alias file");
+    assert!(aliases.contains("\"Alice#1\""));
+    assert!(aliases.contains("\"dir\": \"Alice\""));
+    assert!(aliases.contains("\"Bob#1\""));
+    assert!(aliases.contains("\"dir\": \"Bob\""));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn legacy_candidate_does_not_steal_an_existing_character_dir() {
+    let (repository, root) = setup_repository().await;
+
+    let characters_dir = root.join("characters");
+    fs::create_dir_all(&characters_dir)
+        .await
+        .expect("create characters directory");
+    fs::write(characters_dir.join("Alice.png"), b"")
+        .await
+        .expect("create legacy candidate character card");
+    fs::write(characters_dir.join("Alice#1.png"), b"")
+        .await
+        .expect("create exact character card");
+
+    let legacy_dir = root.join("chats").join("Alice");
+    fs::create_dir_all(&legacy_dir)
+        .await
+        .expect("create candidate chat dir");
+    fs::write(
+        legacy_dir.join("session.jsonl"),
+        payload_to_jsonl(&payload_with_integrity("legacy-conflict")),
+    )
+    .await
+    .expect("write candidate payload");
+
+    let error = repository
+        .get_chat_payload_bytes("Alice#1", "session")
+        .await
+        .expect_err("conflicting legacy candidate should not be used");
+    assert!(matches!(error, DomainError::NotFound(_)));
+    assert!(
+        !root
+            .join("user")
+            .join("cache")
+            .join("chat_aliases_v1.json")
+            .exists()
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }

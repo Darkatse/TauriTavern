@@ -16,6 +16,7 @@ use crate::infrastructure::persistence::file_system::{
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
+use crate::infrastructure::repositories::chat_directory_identity;
 
 use super::FileCharacterRepository;
 
@@ -178,8 +179,19 @@ impl FileCharacterRepository {
         self.chats_dir.join(name)
     }
 
+    pub(crate) async fn resolve_chat_directory(&self, name: &str) -> Result<PathBuf, DomainError> {
+        let dir_key = chat_directory_identity::resolve_character_chat_dir_key(
+            &self.characters_dir,
+            &self.chats_dir,
+            &self.chat_aliases,
+            name,
+        )
+        .await?;
+        Ok(self.get_chat_directory(&dir_key))
+    }
+
     pub(crate) async fn calculate_chat_stats(&self, name: &str) -> Result<(u64, i64), DomainError> {
-        let chat_dir = self.get_chat_directory(name);
+        let chat_dir = self.resolve_chat_directory(name).await?;
 
         if !chat_dir.exists() {
             return Ok((0, 0));

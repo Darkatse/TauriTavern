@@ -92,6 +92,7 @@ use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
 use crate::infrastructure::persistence::file_system::DataDirectory;
+use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_asset_repository::FileAssetRepository;
@@ -413,9 +414,10 @@ fn build_repositories(
     let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
     let data_root = data_directory.root().to_path_buf();
     let default_user_dir = data_directory.default_user().to_path_buf();
+    let chat_aliases = new_shared_chat_alias_store_for_user_dir(data_directory.default_user());
 
     let character_repository: Arc<dyn CharacterRepository> =
-        Arc::new(FileCharacterRepository::new(
+        Arc::new(FileCharacterRepository::with_chat_aliases(
             data_directory.characters().to_path_buf(),
             data_directory.chats().to_path_buf(),
             data_directory
@@ -423,13 +425,15 @@ fn build_repositories(
                 .join("thumbnails")
                 .join("avatar"),
             data_directory.default_avatar().to_path_buf(),
+            chat_aliases.clone(),
         ));
 
-    let file_chat_repository = Arc::new(FileChatRepository::new(
+    let file_chat_repository = Arc::new(FileChatRepository::with_chat_aliases(
         data_directory.characters().to_path_buf(),
         data_directory.chats().to_path_buf(),
         data_directory.group_chats().to_path_buf(),
         data_directory.backups().to_path_buf(),
+        chat_aliases,
     ));
     let chat_repository: Arc<dyn ChatRepository> = file_chat_repository.clone();
     let group_chat_repository: Arc<dyn GroupChatRepository> = file_chat_repository;

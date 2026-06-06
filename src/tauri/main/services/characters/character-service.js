@@ -1,6 +1,10 @@
 // @ts-check
 
-import { assertCharacterAvatarFileName } from './character-request-utils.js';
+import {
+    assertCharacterAvatarFileName,
+    characterStemFromAvatarFileName,
+    hasCharacterAvatarIdentity,
+} from './character-identity.js';
 
 /**
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any) => Promise<any>} SafeInvokeFn
@@ -111,59 +115,21 @@ export function createCharacterService({ safeInvoke }) {
         };
     }
 
-    /** @param {any} avatar */
-    function normalizeAvatarFileName(avatar) {
-        if (avatar === null || avatar === undefined) {
-            return null;
-        }
-
-        let value = String(avatar).trim();
-        if (!value) {
-            return null;
-        }
-
-        if (value.includes('?')) {
-            try {
-                const parsed = new URL(value, 'http://localhost');
-                value = parsed.searchParams.get('file') || parsed.pathname || value;
-            } catch {
-                // Keep original value when URL parsing fails.
-            }
-        }
-
-        try {
-            value = decodeURIComponent(value);
-        } catch {
-            // Keep original value when decodeURIComponent fails.
-        }
-
-        value = value.replace(/[?#].*$/, '');
-        if (!value) {
-            return null;
-        }
-
-        const normalized = value.replace(/[\\/]+/g, '/');
-        const fileName = normalized.split('/').pop();
-        return fileName || null;
-    }
-
-    /** @param {any} avatar */
-    function getAvatarInternalId(avatar) {
-        const fileName = normalizeAvatarFileName(avatar);
-        if (!fileName) {
-            return null;
-        }
-
-        return fileName.replace(/\.[^/.]+$/, '') || null;
-    }
-
     /**
      * @param {any} avatar
      * @param {string} fieldName
      */
     function getExactAvatarInternalId(avatar, fieldName) {
-        const fileName = assertCharacterAvatarFileName(avatar, fieldName, { required: true });
-        return fileName.slice(0, -'.png'.length);
+        return characterStemFromAvatarFileName(avatar, fieldName, { required: true });
+    }
+
+    /** @param {any} avatar */
+    function getOptionalAvatarInternalId(avatar) {
+        if (!hasCharacterAvatarIdentity(avatar)) {
+            return null;
+        }
+
+        return characterStemFromAvatarFileName(avatar, 'avatar_url', { required: true });
     }
 
     /**
@@ -187,9 +153,15 @@ export function createCharacterService({ safeInvoke }) {
             return null;
         }
 
-        const fromAvatar = getAvatarInternalId(character.avatar);
-        if (fromAvatar) {
-            return fromAvatar;
+        if (typeof character.avatar === 'string') {
+            try {
+                const fromAvatar = characterStemFromAvatarFileName(character.avatar, 'avatar');
+                if (fromAvatar) {
+                    return fromAvatar;
+                }
+            } catch {
+                // Keep list rendering tolerant of legacy non-file avatar sentinels such as "none".
+            }
         }
 
         if (character.name) {
@@ -210,11 +182,6 @@ export function createCharacterService({ safeInvoke }) {
             if (character?.avatar) {
                 const rawAvatar = String(character.avatar);
                 characterByAvatar.set(rawAvatar, character);
-
-                const normalizedAvatar = normalizeAvatarFileName(rawAvatar);
-                if (normalizedAvatar) {
-                    characterByAvatar.set(normalizedAvatar, character);
-                }
             }
 
             if (character?.name) {
@@ -263,31 +230,26 @@ export function createCharacterService({ safeInvoke }) {
     function resolveCachedCharacterId(options = {}) {
         const avatar = options.avatar;
         const fallbackName = options.fallbackName;
-        const avatarInternalId = getAvatarInternalId(avatar);
-        const avatarFileName = normalizeAvatarFileName(avatar);
+        const avatarInternalId = getOptionalAvatarInternalId(avatar);
 
-        if (avatar !== undefined && avatar !== null) {
+        if (hasCharacterAvatarIdentity(avatar)) {
+            if (!avatarInternalId) {
+                return null;
+            }
+
             const fromRawAvatar = characterByAvatar.get(String(avatar));
             const fromRawAvatarId = getCharacterId(fromRawAvatar);
             if (fromRawAvatarId) {
                 return fromRawAvatarId;
             }
-        }
 
-        if (avatarFileName) {
-            const fromFileName = characterByAvatar.get(avatarFileName);
-            const fromFileNameId = getCharacterId(fromFileName);
-            if (fromFileNameId) {
-                return fromFileNameId;
-            }
-        }
-
-        if (avatarInternalId) {
             const fromInternalId = characterById.get(avatarInternalId);
             const fromInternalIdValue = getCharacterId(fromInternalId);
             if (fromInternalIdValue) {
                 return fromInternalIdValue;
             }
+
+            return null;
         }
 
         const fallback = String(fallbackName || '').trim();
@@ -316,9 +278,14 @@ export function createCharacterService({ safeInvoke }) {
     async function resolveExistingCharacterId(options = {}) {
         const avatar = options.avatar;
         const fallbackName = String(options.fallbackName || '').trim();
-        const hasAvatarLookup = Boolean(getAvatarInternalId(avatar) || normalizeAvatarFileName(avatar));
-        if (!hasAvatarLookup && !fallbackName) {
+        if (!hasCharacterAvatarIdentity(avatar) && !fallbackName) {
             return null;
+        }
+
+        const avatarInternalId = getOptionalAvatarInternalId(avatar);
+        if (avatarInternalId) {
+            const character = await readCharacterById(avatarInternalId);
+            return character ? avatarInternalId : null;
         }
 
         const cached = resolveCachedCharacterId(options);
@@ -334,14 +301,18 @@ export function createCharacterService({ safeInvoke }) {
      * @param {{ avatar?: any; fallbackName?: string } | undefined} options
      */
     async function resolveCharacterId(options = {}) {
-        const existing = await resolveExistingCharacterId(options);
-        if (existing) {
-            return existing;
+        const avatarInternalId = getOptionalAvatarInternalId(options.avatar);
+        if (avatarInternalId) {
+            return avatarInternalId;
         }
 
-        const avatarInternalId = getAvatarInternalId(options.avatar);
         const fallback = String(options.fallbackName || '').trim();
-        return avatarInternalId || fallback || null;
+        if (!fallback) {
+            return null;
+        }
+
+        const existing = await resolveExistingCharacterId({ fallbackName: fallback });
+        return existing || fallback;
     }
 
     /** @param {string} characterId */
@@ -398,7 +369,7 @@ export function createCharacterService({ safeInvoke }) {
 
     /** @param {any} characterId */
     function findAvatarByCharacterId(characterId) {
-        const key = String(characterId || '').trim();
+        const key = String(characterId || '');
         if (!key) {
             return '';
         }
@@ -413,27 +384,23 @@ export function createCharacterService({ safeInvoke }) {
             return byInternalId.avatar;
         }
 
-        const normalizedAvatar = normalizeAvatarFileName(key);
-        if (normalizedAvatar) {
-            const byAvatar = characterByAvatar.get(normalizedAvatar);
+        try {
+            const avatarFileName = assertCharacterAvatarFileName(key, 'characterId');
+            const byAvatar = characterByAvatar.get(avatarFileName);
             if (byAvatar?.avatar) {
                 return byAvatar.avatar;
             }
-
-            if (normalizedAvatar.toLowerCase().endsWith('.png')) {
-                return normalizedAvatar;
-            }
-
-            const pngName = `${normalizedAvatar}.png`;
-            const byPng = characterByAvatar.get(pngName);
-            if (byPng?.avatar) {
-                return byPng.avatar;
-            }
-
-            return pngName;
+        } catch {
+            // characterId is normally a storage stem; exact avatar filenames are accepted for callers that already have one.
         }
 
-        return '';
+        const pngName = `${key}.png`;
+        const byPng = characterByAvatar.get(pngName);
+        if (byPng?.avatar) {
+            return byPng.avatar;
+        }
+
+        return pngName;
     }
 
     return {

@@ -38,10 +38,10 @@ test('windowed-state: getWindowedChatKey preserves upstream-significant chat id 
 
     assert.equal(getWindowedChatKey({
         kind: 'character',
-        characterName: ' Alice ',
-        avatarUrl: ' /User%20Avatars/a.png ',
+        characterName: ' Alice',
+        avatarUrl: ' Alice.png',
         fileName: ' chat-1 ',
-    }), 'character:Alice|/User%20Avatars/a.png| chat-1 ');
+    }), 'character: Alice| Alice.png| chat-1 ');
 });
 
 test('windowed-state: mergeWindowedChatCursorOffset applies header delta to active offset', async () => {

@@ -7,14 +7,14 @@ use crate::domain::models::chat::{humanized_date, truncate_chat_file_stem_prefix
 use super::FileChatRepository;
 
 impl FileChatRepository {
-    pub(super) fn next_import_chat_file_stem(
+    pub(super) fn next_import_chat_file_stem_in_dir(
         &self,
-        character_name: &str,
+        dir_key: &str,
         character_display_name: &str,
         index: usize,
     ) -> Result<String, DomainError> {
         let display_name = sanitize_filename(character_display_name);
-        let fallback_name = sanitize_filename(character_name);
+        let fallback_name = sanitize_filename(dir_key);
         let base_name = if display_name.is_empty() {
             fallback_name
         } else {
@@ -34,7 +34,10 @@ impl FileChatRepository {
                 truncate_chat_file_stem_prefix(&base_name, &suffix),
                 suffix
             );
-            if !self.get_chat_path(character_name, &candidate)?.exists() {
+            if !self
+                .get_chat_path_for_dir_key(dir_key, &candidate)?
+                .exists()
+            {
                 return Ok(candidate);
             }
             ordinal += 1;

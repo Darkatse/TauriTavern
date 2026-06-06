@@ -260,7 +260,9 @@ impl FileChatRepository {
 
         let file_name = Self::normalize_jsonl_file_name(file_name)?;
 
-        let path = self.get_chat_path(character_name, &file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, &file_name)
+            .await?;
         let bytes = self.read_payload_bytes_from_path(&path).await?;
         let objects: Vec<Value> = parse_jsonl_bytes(&bytes)?;
         self.parse_chat_from_payload(character_name, &file_name, &objects)
@@ -282,11 +284,15 @@ impl FileChatRepository {
             chat.character_name, file_name
         ));
 
-        let path = self.get_chat_path(&chat.character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(&chat.character_name, file_name)
+            .await?;
         let backup_key = self.get_cache_key(&chat.character_name, file_name)?;
 
         // Ensure the character directory exists
-        let character_dir = self.get_character_dir(&chat.character_name);
+        let character_dir = self
+            .resolve_character_chat_dir(&chat.character_name)
+            .await?;
         if !character_dir.exists() {
             fs::create_dir_all(&character_dir).await.map_err(|e| {
                 logger::error(&format!("Failed to create character directory: {}", e));

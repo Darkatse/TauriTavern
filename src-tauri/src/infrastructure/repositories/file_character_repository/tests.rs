@@ -1269,6 +1269,123 @@ async fn rename_sanitizes_target_file_name_and_moves_chat_directory() {
 }
 
 #[tokio::test]
+async fn character_chat_listing_reads_legacy_alias_directory() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Alice#1".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+
+    let legacy_chat_dir = root.join("chats").join("Alice");
+    fs::create_dir_all(&legacy_chat_dir)
+        .await
+        .expect("create legacy chat directory");
+    fs::write(
+        legacy_chat_dir.join("session.jsonl"),
+        b"{\"chat_metadata\":{}}\n{\"mes\":\"hello\",\"send_date\":\"2026-01-01T00:00:00.000Z\"}\n",
+    )
+    .await
+    .expect("write legacy chat file");
+
+    let chats = repository
+        .get_character_chats("Alice#1", false)
+        .await
+        .expect("list legacy character chats");
+    assert_eq!(chats.len(), 1);
+    assert_eq!(chats[0].file_name, "session.jsonl");
+    assert_eq!(chats[0].last_message, "hello");
+
+    repository
+        .clear_cache()
+        .await
+        .expect("clear character cache");
+    let characters = repository
+        .find_all(true)
+        .await
+        .expect("list shallow characters");
+    let alice = characters
+        .iter()
+        .find(|character| character.avatar == "Alice#1.png")
+        .expect("find exact character");
+    assert!(alice.chat_size > 0);
+    assert!(alice.date_last_chat > 0);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn rename_moves_legacy_alias_chat_directory_to_new_canonical_dir() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Alice#1".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+
+    let legacy_chat_dir = root.join("chats").join("Alice");
+    fs::create_dir_all(&legacy_chat_dir)
+        .await
+        .expect("create legacy chat directory");
+    fs::write(legacy_chat_dir.join("session.jsonl"), b"{}\n")
+        .await
+        .expect("write legacy chat file");
+
+    let renamed = repository
+        .rename("Alice#1", "Renamed")
+        .await
+        .expect("rename character");
+
+    assert_eq!(renamed.avatar, "Renamed.png");
+    assert!(
+        root.join("chats")
+            .join("Renamed")
+            .join("session.jsonl")
+            .exists()
+    );
+    assert!(!legacy_chat_dir.exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn delete_with_chats_removes_legacy_alias_chat_directory() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Alice#1".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+
+    let legacy_chat_dir = root.join("chats").join("Alice");
+    fs::create_dir_all(&legacy_chat_dir)
+        .await
+        .expect("create legacy chat directory");
+    fs::write(legacy_chat_dir.join("session.jsonl"), b"{}\n")
+        .await
+        .expect("write legacy chat file");
+
+    repository
+        .delete("Alice#1", true)
+        .await
+        .expect("delete exact character and chats");
+
+    assert!(!root.join("characters").join("Alice#1.png").exists());
+    assert!(!legacy_chat_dir.exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn rename_uses_next_available_file_stem_when_target_exists() {
     let (repository, root) = setup_repository().await;
 

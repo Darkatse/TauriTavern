@@ -3,6 +3,7 @@
 import { t, translate } from '../../i18n.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 import { SURFACE, applySurface } from '../../tauritavern/layout-kit.js';
+import { characterStemFromAvatarFileName } from '../../../tauri/main/services/characters/character-identity.js';
 import { buildSkillImportReminderKey, hasSkillImportReminder, setSkillImportReminder } from './reminders.js';
 
 const EMBEDDED_SKILLS_VERSION = 1;
@@ -228,7 +229,10 @@ function buildPresetSkillSourceId(apiId, name) {
  * @param {unknown} value
  */
 function buildCharacterSkillSourceId(value) {
-    const characterId = requireNonEmptyString(value, 'character id').replace(/\.png$/i, '');
+    const text = String(value ?? '');
+    const characterId = text.endsWith('.png')
+        ? characterStemFromAvatarFileName(text, 'character avatar', { required: true })
+        : requireNonEmptyString(value, 'character id');
     return `character:${characterId}`;
 }
 
@@ -595,9 +599,7 @@ function reportEmbeddedSkillItemError(phase, item, error) {
  * @param {string} avatarFileName
  */
 function characterIdFromAvatarName(avatarFileName) {
-    const fileName = String(avatarFileName || '').trim().split(/[\\/]/).pop() || '';
-    const index = fileName.lastIndexOf('.');
-    return index > 0 ? fileName.slice(0, index) : fileName;
+    return characterStemFromAvatarFileName(avatarFileName, 'avatarFileName', { required: true });
 }
 
 /**

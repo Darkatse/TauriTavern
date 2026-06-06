@@ -1271,7 +1271,7 @@ test('Skill extension resolves active scoped sections from SillyTavern context',
                 characters: [
                     {
                         name: 'Aurelia',
-                        avatar: 'characters/Aurelia.png',
+                        avatar: 'Aurelia.png',
                     },
                 ],
             };
@@ -1455,7 +1455,7 @@ test('Skill extension portability sync writes character embedded Skills without 
     try {
         const character = {
             name: 'Aurelia',
-            avatar: 'characters/Aurelia.png',
+            avatar: 'Aurelia.png',
             data: {
                 extensions: {
                     tauritavern: {

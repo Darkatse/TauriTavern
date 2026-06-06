@@ -1,16 +1,27 @@
 import { normalizeBinaryPayload, sanitizeAttachmentFileName } from '../binary-utils.js';
-import { assertCharacterFileName } from '../services/characters/character-request-utils.js';
+import { assertCharacterAvatarFileName } from '../services/characters/character-identity.js';
+import {
+    badRequestBody,
+    isBadRequestError,
+    resolveExistingRouteCharacterId,
+    resolveRouteCharacterId,
+} from './character-route-utils.js';
 
-/** @param {unknown} error */
-function badRequestBody(error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { error: message.replace(/^Bad request:\s*/i, '') };
+function hasBodyField(body, fieldName) {
+    return Boolean(body && typeof body === 'object' && !Array.isArray(body)
+        && Object.prototype.hasOwnProperty.call(body, fieldName));
 }
 
-/** @param {unknown} error */
-function isBadRequestError(error) {
-    const message = error instanceof Error ? error.message : String(error || '');
-    return /^Bad request:/i.test(message);
+function pickAvatarIdentity(body) {
+    if (hasBodyField(body, 'avatar_url')) {
+        return body.avatar_url;
+    }
+
+    if (hasBodyField(body, 'avatar')) {
+        return body.avatar;
+    }
+
+    return undefined;
 }
 
 /** @param {Record<string, any>} body */
@@ -79,9 +90,13 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     });
 
     router.post('/api/characters/chats', async ({ body }) => {
-        const avatar = body?.avatar_url || body?.avatar;
+        const avatar = pickAvatarIdentity(body);
         const simple = Boolean(body?.simple);
-        const characterId = await context.resolveCharacterId({ avatar, fallbackName: body?.ch_name || body?.name });
+        const resolved = await resolveRouteCharacterId(context, { avatar, fallbackName: body?.ch_name || body?.name });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const characterId = resolved.characterId;
 
         if (!characterId) {
             return jsonResponse([]);
@@ -142,7 +157,11 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
 
     router.post('/api/characters/delete', async ({ body }) => {
         const avatar = body?.avatar_url;
-        const characterId = await context.resolveCharacterId({ avatar, fallbackName: body?.name });
+        const resolved = await resolveRouteCharacterId(context, { avatar, fallbackName: body?.name });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const characterId = resolved.characterId;
 
         if (!characterId) {
             return jsonResponse({ error: 'Character not found' }, 404);
@@ -162,7 +181,11 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     router.post('/api/characters/rename', async ({ body }) => {
         const avatar = body?.avatar_url;
         const newName = body?.new_name || '';
-        const oldCharacterId = await context.resolveCharacterId({ avatar });
+        const resolved = await resolveRouteCharacterId(context, { avatar });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const oldCharacterId = resolved.characterId;
 
         if (!oldCharacterId || !newName) {
             return jsonResponse({ error: 'Character rename payload is invalid' }, 400);
@@ -187,12 +210,16 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         }
 
         try {
-            avatar = assertCharacterFileName(avatar, 'avatar_url');
+            avatar = assertCharacterAvatarFileName(avatar, 'avatar_url', { required: true });
         } catch (error) {
             return jsonResponse(badRequestBody(error), 400);
         }
 
-        const originalCharacterId = await context.resolveExistingCharacterId({ avatar });
+        const resolved = await resolveExistingRouteCharacterId(context, { avatar });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const originalCharacterId = resolved.characterId;
         if (!originalCharacterId) {
             return jsonResponse({ error: 'Character not found' }, 404);
         }
@@ -216,9 +243,19 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
                 return jsonResponse({ message: 'No valid update data provided.' }, 400);
             }
 
+            let avatars = body.avatars;
+            if (avatars.length > 0) {
+                try {
+                    avatars = avatars.map((avatar, index) =>
+                        assertCharacterAvatarFileName(avatar, `avatars[${index}]`, { required: true }));
+                } catch (error) {
+                    return jsonResponse(badRequestBody(error), 400);
+                }
+            }
+
             const result = await context.safeInvoke('bulk_merge_character_card_data', {
                 dto: {
-                    avatars: body.avatars,
+                    avatars,
                     data: body.data,
                     filter: body.filter ?? null,
                 },
@@ -231,7 +268,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         if (avatar !== undefined && avatar !== null) {
             try {
                 const fieldName = Object.prototype.hasOwnProperty.call(body, 'avatar') ? 'avatar' : 'avatar_url';
-                avatar = assertCharacterFileName(avatar, fieldName);
+                avatar = assertCharacterAvatarFileName(avatar, fieldName);
             } catch (error) {
                 return jsonResponse(badRequestBody(error), 400);
             }
@@ -240,7 +277,11 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         const update = buildCharacterMergeUpdate(
             avatar === undefined || avatar === null ? body : { ...body, avatar },
         );
-        const characterId = await context.resolveCharacterId({ avatar, fallbackName: body?.name });
+        const resolved = await resolveRouteCharacterId(context, { avatar, fallbackName: body?.name });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const characterId = resolved.characterId;
 
         if (!characterId) {
             return jsonResponse({ error: 'Character not found' }, 404);
@@ -311,7 +352,11 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     router.post('/api/characters/export', async ({ body }) => {
         const avatar = body?.avatar_url;
         const format = String(body?.format || 'json').toLowerCase();
-        const characterId = await context.resolveCharacterId({ avatar, fallbackName: body?.name });
+        const resolved = await resolveRouteCharacterId(context, { avatar, fallbackName: body?.name });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const characterId = resolved.characterId;
 
         if (!characterId) {
             return jsonResponse({ error: 'Character not found' }, 404);

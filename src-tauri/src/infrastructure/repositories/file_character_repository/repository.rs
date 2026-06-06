@@ -281,7 +281,7 @@ impl CharacterRepository for FileCharacterRepository {
         })?;
 
         if delete_chats {
-            let chat_dir = self.get_chat_directory(name);
+            let chat_dir = self.resolve_chat_directory(name).await?;
             if chat_dir.exists() {
                 fs::remove_dir_all(&chat_dir).await.map_err(|e| {
                     logger::error(&format!("Failed to delete chat directory: {}", e));
@@ -419,7 +419,7 @@ impl CharacterRepository for FileCharacterRepository {
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
-        let old_chat_dir = self.get_chat_directory(old_name);
+        let old_chat_dir = self.resolve_chat_directory(old_name).await?;
         let new_chat_dir = self.get_chat_directory(&target_file_stem);
 
         if old_chat_dir.exists() && old_chat_dir != new_chat_dir && !new_chat_dir.exists() {
@@ -712,7 +712,7 @@ impl CharacterRepository for FileCharacterRepository {
         name: &str,
         simple: bool,
     ) -> Result<Vec<CharacterChat>, DomainError> {
-        let chat_dir = self.get_chat_directory(name);
+        let chat_dir = self.resolve_chat_directory(name).await?;
 
         if !chat_dir.exists() {
             return Ok(Vec::new());

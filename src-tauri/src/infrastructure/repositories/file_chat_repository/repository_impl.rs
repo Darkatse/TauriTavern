@@ -36,7 +36,9 @@ impl ChatRepository for FileChatRepository {
         self.ensure_directory_exists().await?;
         self.write_chat_file(chat, force).await?;
         if let Some(file_name) = &chat.file_name {
-            let path = self.get_chat_path(&chat.character_name, file_name)?;
+            let path = self
+                .resolve_character_chat_path(&chat.character_name, file_name)
+                .await?;
             self.remove_summary_cache_for_path(&path).await;
         }
         Ok(())
@@ -69,7 +71,7 @@ impl ChatRepository for FileChatRepository {
         logger::debug(&format!("Getting chats for character: {}", character_name));
 
         // Ensure the character directory exists
-        let character_dir = self.get_character_dir(character_name);
+        let character_dir = self.resolve_character_chat_dir(character_name).await?;
         if !character_dir.exists() {
             return Ok(Vec::new());
         }
@@ -161,7 +163,9 @@ impl ChatRepository for FileChatRepository {
     async fn delete_chat(&self, character_name: &str, file_name: &str) -> Result<(), DomainError> {
         logger::debug(&format!("Deleting chat: {}/{}", character_name, file_name));
 
-        let path = self.get_chat_path(character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
 
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
@@ -198,8 +202,12 @@ impl ChatRepository for FileChatRepository {
             character_name, old_file_name, character_name, new_file_name
         ));
 
-        let old_path = self.get_chat_path(character_name, old_file_name)?;
-        let new_path = self.get_chat_path(character_name, new_file_name)?;
+        let old_path = self
+            .resolve_character_chat_path(character_name, old_file_name)
+            .await?;
+        let new_path = self
+            .resolve_character_chat_path(character_name, new_file_name)
+            .await?;
         let (_old_payload_guard, _new_payload_guard) = self
             .acquire_payload_rename_locks(&old_path, &new_path)
             .await;
@@ -421,7 +429,9 @@ impl ChatRepository for FileChatRepository {
 
         match format {
             ChatExportFormat::JSONL => {
-                let candidate_path = self.get_chat_path(character_name, file_name)?;
+                let candidate_path = self
+                    .resolve_character_chat_path(character_name, file_name)
+                    .await?;
                 let chat_path = if candidate_path.exists() {
                     candidate_path
                 } else {
@@ -451,7 +461,9 @@ impl ChatRepository for FileChatRepository {
     }
 
     async fn backup_chat(&self, character_name: &str, file_name: &str) -> Result<(), DomainError> {
-        let chat_path = self.get_chat_path(character_name, file_name)?;
+        let chat_path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         if !chat_path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Chat not found: {}/{}",
@@ -536,7 +548,9 @@ impl ChatRepository for FileChatRepository {
         character_name: &str,
         file_name: &str,
     ) -> Result<Vec<u8>, DomainError> {
-        let path = self.get_chat_path(character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Chat not found: {}/{}",
@@ -552,7 +566,9 @@ impl ChatRepository for FileChatRepository {
         character_name: &str,
         file_name: &str,
     ) -> Result<std::path::PathBuf, DomainError> {
-        let path = self.get_chat_path(character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Chat not found: {}/{}",
@@ -626,10 +642,12 @@ impl ChatRepository for FileChatRepository {
     ) -> Result<(), DomainError> {
         self.ensure_directory_exists().await?;
 
-        let path = self.get_chat_path(character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         let backup_key = self.get_cache_key(character_name, file_name)?;
 
-        let character_dir = self.get_character_dir(character_name);
+        let character_dir = self.resolve_character_chat_dir(character_name).await?;
         if !character_dir.exists() {
             fs::create_dir_all(&character_dir).await.map_err(|e| {
                 DomainError::InternalError(format!(
@@ -686,7 +704,7 @@ impl ChatRepository for FileChatRepository {
             }
         };
 
-        let character_dir = self.get_character_dir(character_name);
+        let character_dir = self.resolve_character_chat_dir(character_name).await?;
         if !character_dir.exists() {
             fs::create_dir_all(&character_dir).await.map_err(|e| {
                 DomainError::InternalError(format!(
@@ -697,10 +715,11 @@ impl ChatRepository for FileChatRepository {
         }
 
         let mut created_files = Vec::with_capacity(payloads.len());
+        let dir_key = self.resolve_character_chat_dir_key(character_name).await?;
         for (index, payload) in payloads.iter().enumerate() {
             let file_stem =
-                self.next_import_chat_file_stem(character_name, character_display_name, index)?;
-            let path = self.get_chat_path(character_name, &file_stem)?;
+                self.next_import_chat_file_stem_in_dir(&dir_key, character_display_name, index)?;
+            let path = self.get_chat_path_for_dir_key(&dir_key, &file_stem)?;
             write_jsonl_file(&path, payload).await?;
             self.remove_summary_cache_for_path(&path).await;
             created_files.push(Self::normalize_jsonl_file_name(&file_stem)?);
@@ -724,7 +743,9 @@ impl ChatRepository for FileChatRepository {
         character_name: &str,
         file_name: &str,
     ) -> Result<Value, DomainError> {
-        let path = self.get_chat_path(character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         self.read_chat_metadata_from_path(&path).await
     }
 
@@ -735,7 +756,9 @@ impl ChatRepository for FileChatRepository {
         namespace: &str,
         value: Value,
     ) -> Result<(), DomainError> {
-        let path = self.get_chat_path(character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         self.set_chat_metadata_extension_in_path(&path, namespace, value)
             .await
     }

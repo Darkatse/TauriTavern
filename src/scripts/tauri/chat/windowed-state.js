@@ -35,7 +35,7 @@ export function getWindowedChatKey(windowState) {
         return `group:${String(windowState.id ?? '')}`;
     }
 
-    return `character:${String(windowState.characterName || '').trim()}|${String(windowState.avatarUrl || '').trim()}|${String(windowState.fileName ?? '')}`;
+    return `character:${String(windowState.characterName ?? '')}|${String(windowState.avatarUrl ?? '')}|${String(windowState.fileName ?? '')}`;
 }
 
 export function mergeWindowedChatCursorOffset(activeCursor, nextCursor, expectedBaseOffset) {

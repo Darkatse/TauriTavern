@@ -1,5 +1,9 @@
 import { invoke, isTauriEnv } from '../../../tauri-bridge.js';
 import { stripJsonl } from '../../../tauri/main/kernel/chat-utils.js';
+import {
+    characterStemFromAvatarFileName,
+    hasCharacterAvatarIdentity,
+} from '../../../tauri/main/services/characters/character-identity.js';
 import { fetchAssetStream, writeTempFileFromBytesIterable } from './asset-io.js';
 import { jsonlStreamToPayload, jsonlToPayload, payloadToJsonlByteChunks } from './jsonl.js';
 import {
@@ -11,46 +15,13 @@ export function normalizeChatFileName(fileName) {
     return stripJsonl(fileName);
 }
 
-function normalizeAvatarFileName(avatar) {
-    if (avatar === null || avatar === undefined) {
-        return null;
-    }
-
-    let value = String(avatar).trim();
-    if (!value) {
-        return null;
-    }
-
-    if (value.includes('?')) {
-        const parsed = new URL(value, 'http://localhost');
-        value = parsed.searchParams.get('file') || parsed.pathname || value;
-    }
-
-    value = decodeURIComponent(value);
-
-    value = value.split('?')[0].split('#')[0];
-    if (!value) {
-        return null;
-    }
-
-    const normalized = value.replace(/[\\/]+/g, '/');
-    const fileName = normalized.split('/').pop();
-    return fileName || null;
-}
-
-function getAvatarInternalId(avatar) {
-    const fileName = normalizeAvatarFileName(avatar);
-    if (!fileName) {
-        return null;
-    }
-
-    return fileName.replace(/\.[^/.]+$/, '') || null;
-}
-
+/**
+ * Chat folders are keyed by the character avatar filename stem.
+ * avatarUrl is SillyTavern's avatar_url API field, not a browser asset URL.
+ */
 export function resolveCharacterDirectoryId(characterName, avatarUrl) {
-    const fromAvatar = getAvatarInternalId(avatarUrl);
-    if (fromAvatar) {
-        return fromAvatar;
+    if (hasCharacterAvatarIdentity(avatarUrl)) {
+        return characterStemFromAvatarFileName(avatarUrl, 'avatar_url', { required: true });
     }
 
     return String(characterName || '').trim();

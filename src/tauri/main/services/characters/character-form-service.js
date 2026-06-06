@@ -2,7 +2,8 @@
 
 import { getByPath, mergeObjects, setByPath, unsetByPath } from './form-object-utils.js';
 import { formDataToCreateCharacterDto, parseJsonObjectStrict } from './character-create-mapper.js';
-import { assertCharacterFileName, parseCropParam } from './character-request-utils.js';
+import { assertCharacterAvatarFileName } from './character-identity.js';
+import { parseCropParam } from './character-request-utils.js';
 
 /**
  * @typedef {import('../../context/types.js').MaterializedFileInfo} MaterializedFileInfo
@@ -44,7 +45,7 @@ export function createCharacterFormService({
 
     /** @param {FormData} formData */
     function avatarUrlFromForm(formData) {
-        return assertCharacterFileName(formData.get('avatar_url'), 'avatar_url', { required: true });
+        return assertCharacterAvatarFileName(formData.get('avatar_url'), 'avatar_url', { required: true });
     }
 
     /**
@@ -132,9 +133,8 @@ export function createCharacterFormService({
 
     /** @param {FormData} formData @param {URL} requestUrl */
     async function editCharacterFromForm(formData, requestUrl) {
-        const avatar = stringFromForm(formData, 'avatar_url', '');
-        const fallbackName = stringFromForm(formData, 'ch_name', '');
-        const originalCharacterId = await resolveCharacterId({ avatar, fallbackName });
+        const avatar = avatarUrlFromForm(formData);
+        const originalCharacterId = await resolveCharacterId({ avatar });
 
         if (!originalCharacterId) {
             throw new Error('Character not found for edit');

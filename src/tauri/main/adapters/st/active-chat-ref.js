@@ -1,6 +1,10 @@
 // @ts-check
 
 import { stripJsonl } from '../../kernel/chat-utils.js';
+import {
+    characterStemFromAvatarFileName,
+    hasCharacterAvatarIdentity,
+} from '../../services/characters/character-identity.js';
 
 /**
  * @typedef {{ kind: 'character'; characterId: string; fileName: string }} CharacterChatRef
@@ -29,43 +33,6 @@ export function mustGetSillyTavernContext() {
     }
 
     return context;
-}
-
-/** @param {any} avatar */
-function normalizeAvatarFileName(avatar) {
-    if (avatar === null || avatar === undefined) {
-        return null;
-    }
-
-    let value = String(avatar).trim();
-    if (!value) {
-        return null;
-    }
-
-    if (value.includes('?')) {
-        const parsed = new URL(value, 'http://localhost');
-        value = parsed.searchParams.get('file') || parsed.pathname || value;
-    }
-
-    value = decodeURIComponent(value);
-    value = value.replace(/[?#].*$/, '');
-    if (!value) {
-        return null;
-    }
-
-    const normalized = value.replace(/[\\/]+/g, '/');
-    const fileName = normalized.split('/').pop();
-    return fileName || null;
-}
-
-/** @param {any} avatar */
-function getAvatarInternalId(avatar) {
-    const fileName = normalizeAvatarFileName(avatar);
-    if (!fileName) {
-        return null;
-    }
-
-    return fileName.replace(/\.[^/.]+$/, '') || null;
 }
 
 /**
@@ -101,7 +68,9 @@ export function getActiveChatSnapshot() {
     const activeCharacter = Array.isArray(characters) ? characters[Number(characterIndex)] : null;
 
     const avatar = activeCharacter?.avatar;
-    const characterId = getAvatarInternalId(avatar) || String(activeCharacter?.name || '').trim();
+    const characterId = hasCharacterAvatarIdentity(avatar)
+        ? characterStemFromAvatarFileName(avatar, 'avatar', { required: true })
+        : String(activeCharacter?.name || '').trim();
 
     if (!characterId) {
         throw new Error('Failed to resolve active character id');

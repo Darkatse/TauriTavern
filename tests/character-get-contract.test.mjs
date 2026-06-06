@@ -123,3 +123,54 @@ test('/api/characters/get keeps name lookup only when avatar identity is absent'
         { command: 'get_character', args: { name: 'Alice' } },
     ]);
 });
+
+test('character identity resolver treats avatar values as exact filenames without URL fallback', async () => {
+    const calls = [];
+    const service = createCharacterService({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            throw new Error('safeInvoke should not be called for exact avatar identities');
+        },
+    });
+
+    assert.equal(await service.resolveCharacterId({
+        avatar: 'Alice#1.png',
+        fallbackName: 'Alice',
+    }), 'Alice#1');
+    assert.equal(await service.resolveCharacterId({
+        avatar: 'Alice%2FB.png',
+        fallbackName: 'Alice',
+    }), 'Alice%2FB');
+
+    await assert.rejects(
+        service.resolveCharacterId({
+            avatar: 'Alice.png?cache=1',
+            fallbackName: 'Alice',
+        }),
+        /Bad request: invalid avatar_url/,
+    );
+    assert.deepEqual(calls, []);
+});
+
+test('existing character resolver verifies exact avatar identities directly', async () => {
+    const calls = [];
+    const service = createCharacterService({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            assert.equal(command, 'get_character');
+            return {
+                name: 'Alice',
+                avatar: `${args.name}.png`,
+                data: { extensions: {} },
+            };
+        },
+    });
+
+    assert.equal(await service.resolveExistingCharacterId({
+        avatar: 'Alice%2FB.png',
+        fallbackName: 'Alice',
+    }), 'Alice%2FB');
+    assert.deepEqual(calls, [
+        { command: 'get_character', args: { name: 'Alice%2FB' } },
+    ]);
+});
