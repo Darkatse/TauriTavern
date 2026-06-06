@@ -7,6 +7,12 @@ function badRequestBody(error) {
     return { error: message.replace(/^Bad request:\s*/i, '') };
 }
 
+/** @param {unknown} error */
+function isBadRequestError(error) {
+    const message = error instanceof Error ? error.message : String(error || '');
+    return /^Bad request:/i.test(message);
+}
+
 /** @param {Record<string, any>} body */
 function buildCharacterMergeUpdate(body) {
     const update = { ...body };
@@ -55,7 +61,16 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     });
 
     router.post('/api/characters/get', async ({ body }) => {
-        const character = await context.getSingleCharacter(body);
+        let character;
+        try {
+            character = await context.getSingleCharacter(body);
+        } catch (error) {
+            if (isBadRequestError(error)) {
+                return jsonResponse(badRequestBody(error), 400);
+            }
+            throw error;
+        }
+
         if (!character) {
             return jsonResponse({ error: 'Character not found' }, 404);
         }

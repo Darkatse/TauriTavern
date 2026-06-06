@@ -3,6 +3,37 @@
 const CHARACTER_FILE_NAME_FORBIDDEN_PATTERN = /[\/\\\u0000]/;
 
 /**
+ * Validates an upstream avatar filename identity exactly as supplied.
+ * This is for APIs whose contract is an avatar file name, not a resource URL.
+ * @param {any} value Field value
+ * @param {string} fieldName Field name used in the public error
+ * @param {{ required?: boolean }} [options]
+ * @returns {string} Exact avatar filename, or empty string when optional and missing
+ */
+export function assertCharacterAvatarFileName(value, fieldName, { required = false } = {}) {
+    if (value === null || value === undefined) {
+        if (required) {
+            throw new Error(`Bad request: no ${fieldName} in request body`);
+        }
+        return '';
+    }
+
+    const text = String(value);
+    if (!text) {
+        if (required) {
+            throw new Error(`Bad request: no ${fieldName} in request body`);
+        }
+        return '';
+    }
+
+    if (CHARACTER_FILE_NAME_FORBIDDEN_PATTERN.test(text) || !text.endsWith('.png')) {
+        throw new Error(`Bad request: invalid ${fieldName}`);
+    }
+
+    return text;
+}
+
+/**
  * Validates an upstream character filename field without changing caller intent.
  * @param {any} value Field value
  * @param {string} fieldName Field name used in the public error

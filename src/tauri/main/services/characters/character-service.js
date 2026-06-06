@@ -1,5 +1,7 @@
 // @ts-check
 
+import { assertCharacterAvatarFileName } from './character-request-utils.js';
+
 /**
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any) => Promise<any>} SafeInvokeFn
  */
@@ -153,6 +155,30 @@ export function createCharacterService({ safeInvoke }) {
         }
 
         return fileName.replace(/\.[^/.]+$/, '') || null;
+    }
+
+    /**
+     * @param {any} avatar
+     * @param {string} fieldName
+     */
+    function getExactAvatarInternalId(avatar, fieldName) {
+        const fileName = assertCharacterAvatarFileName(avatar, fieldName, { required: true });
+        return fileName.slice(0, -'.png'.length);
+    }
+
+    /**
+     * @param {any} body
+     * @param {string} fieldName
+     */
+    function hasBodyField(body, fieldName) {
+        return Boolean(body && typeof body === 'object' && !Array.isArray(body)
+            && Object.prototype.hasOwnProperty.call(body, fieldName));
+    }
+
+    /** @param {unknown} error */
+    function isNotFoundError(error) {
+        const message = error instanceof Error ? error.message : String(error || '');
+        return /^\s*(not found:|entity not found:)/i.test(message);
     }
 
     /** @param {any} character */
@@ -318,17 +344,18 @@ export function createCharacterService({ safeInvoke }) {
         return avatarInternalId || fallback || null;
     }
 
-    /** @param {any} body */
-    async function getSingleCharacter(body) {
-        const explicitName = body?.name || body?.ch_name;
-        const avatar = body?.avatar_url || body?.avatar;
-        const characterId = await resolveCharacterId({ avatar, fallbackName: explicitName });
-
-        if (!characterId) {
-            return null;
+    /** @param {string} characterId */
+    async function readCharacterById(characterId) {
+        let character;
+        try {
+            character = await safeInvoke('get_character', { name: characterId });
+        } catch (error) {
+            if (isNotFoundError(error)) {
+                return null;
+            }
+            throw error;
         }
 
-        const character = await safeInvoke('get_character', { name: characterId });
         const normalized = normalizeCharacter(character);
         const normalizedAvatar = normalized?.avatar ? String(normalized.avatar) : '';
         if (normalizedAvatar) {
@@ -348,6 +375,25 @@ export function createCharacterService({ safeInvoke }) {
             characterById.set(normalizedCharacterId, normalized);
         }
         return normalized;
+    }
+
+    /** @param {any} body */
+    async function getSingleCharacter(body) {
+        let characterId = null;
+
+        if (hasBodyField(body, 'avatar_url')) {
+            characterId = getExactAvatarInternalId(body.avatar_url, 'avatar_url');
+        } else if (hasBodyField(body, 'avatar')) {
+            characterId = getExactAvatarInternalId(body.avatar, 'avatar');
+        } else {
+            characterId = String(body?.name || body?.ch_name || '').trim();
+        }
+
+        if (!characterId) {
+            return null;
+        }
+
+        return readCharacterById(characterId);
     }
 
     /** @param {any} characterId */
