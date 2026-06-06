@@ -61,6 +61,11 @@ import {
     normalizeFrozenRunInputSnapshot,
     snapshotExtensionPromptsForFrozenRun,
 } from './scripts/tauritavern/agent/frozen-run-input-snapshot.js';
+import {
+    enqueueImportedCharacterAgentAssetScan,
+    pauseImportedCharacterAgentAssetQueue,
+    resumeImportedCharacterAgentAssetQueue,
+} from './scripts/tauri/agent-import-postprocess.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -11668,22 +11673,27 @@ export async function processDroppedFiles(files, data = new Map()) {
     ];
 
     const avatarFileNames = [];
-    for (const file of files) {
-        const extension = file.name.split('.').pop().toLowerCase();
-        if (allowedMimeTypes.some(x => file.type.startsWith(x)) || allowedExtensions.includes(extension)) {
-            const preservedName = data instanceof Map && data.get(file);
-            const avatarFileName = await importCharacter(file, { preserveFileName: preservedName });
-            if (avatarFileName !== undefined) {
-                avatarFileNames.push(avatarFileName);
+    pauseImportedCharacterAgentAssetQueue();
+    try {
+        for (const file of files) {
+            const extension = file.name.split('.').pop().toLowerCase();
+            if (allowedMimeTypes.some(x => file.type.startsWith(x)) || allowedExtensions.includes(extension)) {
+                const preservedName = data instanceof Map && data.get(file);
+                const avatarFileName = await importCharacter(file, { preserveFileName: preservedName });
+                if (avatarFileName !== undefined) {
+                    avatarFileNames.push(avatarFileName);
+                }
+            } else {
+                toastr.warning(t`Unsupported file type: ` + file.name);
             }
-        } else {
-            toastr.warning(t`Unsupported file type: ` + file.name);
         }
-    }
 
-    if (avatarFileNames.length > 0) {
-        await importCharactersTags(avatarFileNames);
-        selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+        if (avatarFileNames.length > 0) {
+            await importCharactersTags(avatarFileNames);
+            selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+        }
+    } finally {
+        resumeImportedCharacterAgentAssetQueue();
     }
 }
 
@@ -11711,54 +11721,6 @@ function selectImportedChar(charId) {
         oldSelectedChar = characters[this_chid].avatar;
     }
     select_rm_info('char_import_no_toast', charId, oldSelectedChar);
-}
-
-/**
- * @param {{ avatarFileName: string; label: string }} options
- */
-async function maybePromptForImportedCharacterAgentAssets({ avatarFileName, label }) {
-    const hostAbi = window.__TAURITAVERN__;
-    if (!hostAbi) {
-        return;
-    }
-
-    try {
-        if (!hostAbi.api?.agent?.profiles && !hostAbi.api?.skill) {
-            throw new Error('TauriTavern Agent APIs are not available');
-        }
-
-        let importedCharacter = null;
-        const loadCharacter = async () => {
-            if (importedCharacter) {
-                return importedCharacter;
-            }
-            const response = await fetch('/api/characters/get', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({ avatar_url: avatarFileName }),
-                cache: 'no-cache',
-            });
-
-            if (!response.ok) {
-                const details = String(await response.text()).trim();
-                const reason = details || response.statusText || `HTTP ${response.status}`;
-                throw new Error(`Failed to read imported character for Agent embedded asset scan: ${reason}`);
-            }
-
-            importedCharacter = await response.json();
-            return importedCharacter;
-        };
-
-        const { maybePromptForCharacterEmbeddedProfiles } = await import('./scripts/tauri/agent-profiles/embedded-import.js');
-        await maybePromptForCharacterEmbeddedProfiles({ avatarFileName, label, loadCharacter });
-
-        const { maybePromptForCharacterEmbeddedSkills } = await import('./scripts/tauri/agent-skills/embedded-import.js');
-        await maybePromptForCharacterEmbeddedSkills({ avatarFileName, label, loadCharacter });
-    } catch (error) {
-        console.error('Failed to start embedded Agent asset import prompt for character', error);
-        const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
-        toastr.error(message, t`Agent embedded import failed`);
-    }
 }
 
 /**
@@ -11842,9 +11804,11 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
                 await importCharactersTags([avatarFileName]);
                 selectImportedChar(data.file_name);
             }
-            await maybePromptForImportedCharacterAgentAssets({
+            enqueueImportedCharacterAgentAssetScan({
                 avatarFileName,
                 label: String(data.file_name).replace('.png', ''),
+                character: data.character,
+                postImport: data.post_import,
             });
             return avatarFileName;
         }
@@ -13316,20 +13280,24 @@ jQuery(async function () {
         }
 
         const avatarFileNames = [];
-        for (const file of e.target.files) {
-            const avatarFileName = await importCharacter(file);
-            if (avatarFileName !== undefined) {
-                avatarFileNames.push(avatarFileName);
+        pauseImportedCharacterAgentAssetQueue();
+        try {
+            for (const file of e.target.files) {
+                const avatarFileName = await importCharacter(file);
+                if (avatarFileName !== undefined) {
+                    avatarFileNames.push(avatarFileName);
+                }
             }
-        }
 
-        if (avatarFileNames.length > 0) {
-            await importCharactersTags(avatarFileNames);
-            selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+            if (avatarFileNames.length > 0) {
+                await importCharactersTags(avatarFileNames);
+                selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+            }
+        } finally {
+            resumeImportedCharacterAgentAssetQueue();
+            // Clear the file input value to allow re-uploading the same file
+            e.target.value = '';
         }
-
-        // Clear the file input value to allow re-uploading the same file
-        e.target.value = '';
     });
 
     $('#export_button').on('click', function () {

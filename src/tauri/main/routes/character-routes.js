@@ -19,6 +19,35 @@ function buildCharacterMergeUpdate(body) {
     return update;
 }
 
+/**
+ * @param {any} character
+ * @param {'agentProfiles' | 'skills'} field
+ */
+function getCharacterTauriExtensionField(character, field) {
+    const sources = [
+        character?.data?.extensions?.tauritavern,
+        character?.extensions?.tauritavern,
+    ];
+
+    for (const source of sources) {
+        if (source && typeof source === 'object' && !Array.isArray(source)
+            && Object.prototype.hasOwnProperty.call(source, field)) {
+            return source[field];
+        }
+    }
+
+    return undefined;
+}
+
+/**
+ * @param {any} character
+ * @param {'agentProfiles' | 'skills'} field
+ */
+function hasCharacterEmbeddedAgentAsset(character, field) {
+    const value = getCharacterTauriExtensionField(character, field);
+    return value !== undefined && value !== null;
+}
+
 export function registerCharacterRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/characters/all', async () => {
         const characters = await context.getAllCharacters({ shallow: true, forceRefresh: true });
@@ -252,9 +281,15 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
 
         const normalized = context.normalizeCharacter(imported);
         await context.getAllCharacters({ shallow: true, forceRefresh: true });
+        const fileName = String(normalized.avatar || '').replace(/\.png$/i, '');
 
         return jsonResponse({
-            file_name: String(normalized.avatar || '').replace(/\.png$/i, ''),
+            file_name: fileName,
+            character: normalized,
+            post_import: {
+                has_agent_profiles: hasCharacterEmbeddedAgentAsset(normalized, 'agentProfiles'),
+                has_agent_skills: hasCharacterEmbeddedAgentAsset(normalized, 'skills'),
+            },
         });
     });
 
