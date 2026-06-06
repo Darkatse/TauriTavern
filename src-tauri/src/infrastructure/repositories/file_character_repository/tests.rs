@@ -12,6 +12,7 @@ use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
+use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 
 use super::FileCharacterRepository;
 
@@ -65,11 +66,12 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
         .await
         .expect("write default avatar");
 
-    let repository = FileCharacterRepository::new(
+    let repository = FileCharacterRepository::with_chat_aliases(
         characters_dir,
         chats_dir,
         thumbnails_avatar_dir,
         default_avatar,
+        new_shared_chat_alias_store_for_user_dir(&root),
     );
     (repository, root)
 }

@@ -62,6 +62,7 @@ use crate::domain::repositories::workspace_repository::{
     WorkspaceAppendResult, WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
     WorkspaceWriteGuard,
 };
+use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
@@ -7689,11 +7690,12 @@ async fn install_inline_skill(
 }
 
 fn test_chat_repository(root: &Path) -> Arc<FileChatRepository> {
-    Arc::new(FileChatRepository::new(
+    Arc::new(FileChatRepository::with_chat_aliases(
         root.join("characters"),
         root.join("chats"),
         root.join("group_chats"),
         root.join("backups"),
+        new_shared_chat_alias_store_for_user_dir(root),
     ))
 }
 

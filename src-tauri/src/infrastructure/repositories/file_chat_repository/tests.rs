@@ -1,6 +1,5 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-use std::path::PathBuf;
 
 use rand::random;
 use serde_json::{Value, json};
@@ -23,12 +22,7 @@ fn unique_temp_root() -> PathBuf {
 
 async fn setup_repository() -> (FileChatRepository, PathBuf) {
     let root = unique_temp_root();
-    let repository = FileChatRepository::new(
-        root.join("characters"),
-        root.join("chats"),
-        root.join("group chats"),
-        root.join("backups"),
-    );
+    let repository = repository_for_root(&root);
 
     repository
         .ensure_directory_exists()
@@ -36,6 +30,16 @@ async fn setup_repository() -> (FileChatRepository, PathBuf) {
         .expect("create chat directories");
 
     (repository, root)
+}
+
+fn repository_for_root(root: &Path) -> FileChatRepository {
+    FileChatRepository::with_chat_aliases(
+        root.join("characters"),
+        root.join("chats"),
+        root.join("group chats"),
+        root.join("backups"),
+        new_shared_chat_alias_store_for_user_dir(root),
+    )
 }
 
 fn payload_with_integrity(integrity: &str) -> Vec<Value> {
@@ -415,12 +419,7 @@ async fn legacy_percent_decoded_basename_dir_is_read_for_exact_stem() {
 #[tokio::test]
 async fn alias_store_merges_concurrent_repository_instances() {
     let (repository_a, root) = setup_repository().await;
-    let repository_b = FileChatRepository::new(
-        root.join("characters"),
-        root.join("chats"),
-        root.join("group chats"),
-        root.join("backups"),
-    );
+    let repository_b = repository_for_root(&root);
     repository_b
         .ensure_directory_exists()
         .await
@@ -1962,12 +1961,7 @@ async fn summary_index_is_persisted_and_reloaded() {
         Some(1)
     );
 
-    let reloaded_repository = FileChatRepository::new(
-        root.join("characters"),
-        root.join("chats"),
-        root.join("group chats"),
-        root.join("backups"),
-    );
+    let reloaded_repository = repository_for_root(&root);
     reloaded_repository
         .ensure_directory_exists()
         .await

@@ -28,7 +28,12 @@ pub struct FileCharacterRepository {
 }
 
 impl FileCharacterRepository {
-    /// Create a new `FileCharacterRepository`.
+    /// Create an isolated character repository.
+    ///
+    /// This is a convenience wrapper for single-repository use. Runtime
+    /// bootstrap constructs character and chat repositories together and must
+    /// call `with_chat_aliases` so both repositories share one alias store.
+    #[allow(dead_code)]
     pub fn new(
         characters_dir: PathBuf,
         chats_dir: PathBuf,
@@ -49,6 +54,11 @@ impl FileCharacterRepository {
         )
     }
 
+    /// Create a repository with the shared character/chat alias store.
+    ///
+    /// Character and chat repositories must share this store in production so
+    /// lazy legacy-dir aliases are serialized through one cache. Prefer this
+    /// constructor whenever both repositories are created for the same runtime.
     pub(crate) fn with_chat_aliases(
         characters_dir: PathBuf,
         chats_dir: PathBuf,

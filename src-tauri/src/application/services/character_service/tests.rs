@@ -14,6 +14,7 @@ use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
+use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
@@ -118,25 +119,29 @@ async fn setup_service() -> (
         .await
         .expect("write default avatar");
 
-    let character_repository = FileCharacterRepository::new(
-        characters_dir,
-        chats_dir,
-        thumbnails_avatar_dir,
-        default_avatar,
+    let chat_aliases = new_shared_chat_alias_store_for_user_dir(&root);
+    let character_repository = FileCharacterRepository::with_chat_aliases(
+        characters_dir.clone(),
+        chats_dir.clone(),
+        thumbnails_avatar_dir.clone(),
+        default_avatar.clone(),
+        chat_aliases.clone(),
     );
     let world_info_repository = FileWorldInfoRepository::new(worlds_dir);
     let service = CharacterService::new(
-        Arc::new(FileCharacterRepository::new(
-            root.join("characters"),
-            root.join("chats"),
-            root.join("thumbnails/avatar"),
-            root.join("default.png"),
+        Arc::new(FileCharacterRepository::with_chat_aliases(
+            characters_dir,
+            chats_dir.clone(),
+            thumbnails_avatar_dir,
+            default_avatar,
+            chat_aliases.clone(),
         )),
-        Arc::new(FileChatRepository::new(
+        Arc::new(FileChatRepository::with_chat_aliases(
             root.join("characters"),
-            root.join("chats"),
+            chats_dir,
             root.join("group_chats"),
             root.join("backups"),
+            chat_aliases,
         )),
         Arc::new(FileWorldInfoRepository::new(root.join("worlds"))),
         Arc::new(AgentWorkspaceLifecycleService::new(
