@@ -223,6 +223,7 @@ type AgentReadEventsInput = {
   afterSeq?: number;
   beforeSeq?: number;
   limit?: number;
+  invocationId?: string;
   includeTimelineProjection?: boolean;
 };
 
@@ -233,16 +234,33 @@ type AgentReadEventsResult = {
 
 type AgentRunTimelineProjection = {
   foregroundInvocationIds: string[];
-  handoffEdges: AgentRunTimelineHandoffEdge[];
+  invocations: AgentRunTimelineInvocation[];
+  delegationEdges: AgentRunTimelineDelegationEdge[];
 };
 
-type AgentRunTimelineHandoffEdge = {
+type AgentRunTimelineInvocation = {
+  invocationId: string;
+  parentInvocationId?: string;
+  profileId: string;
+  kind: 'root' | 'subagent' | 'handoff';
+  status: 'created' | 'running' | 'completed' | 'failed' | 'cancelled' | 'transferred';
+  exitPolicy: 'run_finish_allowed' | 'task_return_required';
+  createdAt: string;
+  updatedAt: string;
+};
+
+type AgentRunTimelineDelegationEdge = {
   taskId: string;
   sourceInvocationId: string;
-  newInvocationId: string;
+  targetInvocationId: string;
   targetProfileId: string;
   workspaceKey: string;
+  continuation: 'return_to_parent' | 'transfer_control';
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  resultRef?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 ```
 
@@ -250,7 +268,10 @@ type AgentRunTimelineHandoffEdge = {
 
 - `limit` 必须有上限。
 - 移动端 UI 不应一次读取完整巨大 journal；推荐先用 `beforeSeq` 读取最新页，再在用户向上回看时继续用 `beforeSeq` 补拉更早事件，同时用 `afterSeq` 追新。
-- `timelineProjection` 仅在 `includeTimelineProjection = true` 时返回。它是面向 Timeline UI 的轻量结构投影，不是 journal event；它来自 run 的 invocation/task repository，用于在分页事件缺少 handoff 起点时仍能识别 foreground control chain。普通 polling / subscribe 不应请求该投影。
+- `invocationId` 可选。传入时，后端先按 invocation 归属过滤事件流，再应用 `afterSeq` / `beforeSeq` / `limit`；因此分页窗口表达的是该 invocation 自己的历史页，不是全局页的二次筛选。该能力用于 SubAgent / handoff 局部 timeline，避免移动端为查看一个子 Agent 搬运完整 run journal。
+- 新事件使用 canonical event scope：`payload.eventScope.invocationId` 表示主归属 invocation，`payload.eventScope.relatedInvocationIds` 表示相关 invocation。`readEvents({ invocationId })` 会返回主归属或相关列表命中的事件；旧 journal 没有 canonical scope 时，后端仅为兼容读取历史字段。
+- `timelineProjection` 仅在 `includeTimelineProjection = true` 时返回。它是面向 Timeline UI 的轻量结构投影，不是 journal event；它来自 run 的 invocation/task repository，用于在分页事件缺少 SubAgent task 或 handoff 起点时仍能识别 run 内 Agent graph。普通 polling / subscribe 不应请求该投影。
+- `timelineProjection` 不受 `invocationId` 过滤影响；调用方可以同时读取局部事件页和全局 Agent graph。
 - 当前暂不返回 `hasMoreBefore/hasMoreAfter`。
 
 ## 9. readWorkspaceFile

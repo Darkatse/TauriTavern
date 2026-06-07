@@ -1,5 +1,10 @@
 import { displayToolName } from './run-tool-labels.js';
-import { eventBelongsToInvocation, isRootInvocation, normalizeInvocationId } from './run-invocation-projector.js';
+import {
+    eventBelongsToInvocation,
+    isRootInvocation,
+    normalizeInvocationId,
+    TRANSFER_CONTROL_CONTINUATION,
+} from './run-invocation-projector.js';
 import { textMetricFields, textMetricsSummary } from './run-text-metrics.js';
 import { presentAgentRunFailure } from '../../../tauritavern/agent/agent-error-presenter.js';
 
@@ -93,8 +98,8 @@ export function timelineItemsFromEvents(events, options = {}) {
     const acceptedHandoffInvocationIds = new Set();
     const invocationId = options.invocationId == null ? null : normalizeInvocationId(options.invocationId);
     const foregroundInvocationIds = normalizeForegroundInvocationIds(options.foregroundInvocationIds);
-    const handoffEdges = normalizeHandoffEdges(options.handoffEdges);
-    const projectedHandoffInvocationIds = new Set(handoffEdges.map((edge) => normalizeInvocationId(edge.newInvocationId)));
+    const transferControlEdges = normalizeTransferControlEdges(options.delegationEdges);
+    const projectedHandoffInvocationIds = new Set(transferControlEdges.map((edge) => normalizeInvocationId(edge.targetInvocationId)));
 
     for (const event of events) {
         if (event?.type === 'tool_call_completed' || event?.type === 'tool_call_failed') {
@@ -127,7 +132,7 @@ export function timelineItemsFromEvents(events, options = {}) {
             projectedHandoffInvocationIds,
         }))
         .map((event) => presentRunEvent(event, events));
-    return insertProjectedHandoffBoundaries(items, handoffEdges, acceptedHandoffInvocationIds);
+    return insertProjectedHandoffBoundaries(items, transferControlEdges, acceptedHandoffInvocationIds);
 }
 
 export function presentRunEvent(event, allEvents = []) {
@@ -364,30 +369,31 @@ function normalizeForegroundInvocationIds(values) {
     return set.size > 0 ? set : null;
 }
 
-function normalizeHandoffEdges(values) {
+function normalizeTransferControlEdges(values) {
     if (!Array.isArray(values)) {
         return [];
     }
     return values
         .filter(plainObject)
+        .filter((edge) => String(edge.continuation || '').trim() === TRANSFER_CONTROL_CONTINUATION)
         .map((edge) => ({
             taskId: String(edge.taskId || '').trim(),
             sourceInvocationId: normalizeInvocationId(edge.sourceInvocationId),
-            newInvocationId: normalizeInvocationId(edge.newInvocationId),
+            targetInvocationId: normalizeInvocationId(edge.targetInvocationId),
             targetProfileId: String(edge.targetProfileId || '').trim(),
             workspaceKey: String(edge.workspaceKey || '').trim(),
             status: String(edge.status || '').trim(),
         }))
-        .filter((edge) => !isRootInvocation(edge.newInvocationId));
+        .filter((edge) => !isRootInvocation(edge.targetInvocationId));
 }
 
-function insertProjectedHandoffBoundaries(items, handoffEdges, acceptedHandoffInvocationIds) {
-    if (handoffEdges.length === 0 || items.length === 0) {
+function insertProjectedHandoffBoundaries(items, transferControlEdges, acceptedHandoffInvocationIds) {
+    if (transferControlEdges.length === 0 || items.length === 0) {
         return items;
     }
     const next = [...items];
-    for (const edge of handoffEdges) {
-        const invocationId = normalizeInvocationId(edge.newInvocationId);
+    for (const edge of transferControlEdges) {
+        const invocationId = normalizeInvocationId(edge.targetInvocationId);
         if (acceptedHandoffInvocationIds.has(invocationId)) {
             continue;
         }
@@ -404,7 +410,7 @@ function insertProjectedHandoffBoundaries(items, handoffEdges, acceptedHandoffIn
 function projectedHandoffBoundary(edge, anchor) {
     const seq = Number(anchor?.seq || 0) - 0.001;
     return {
-        id: `handoff-boundary:${edge.taskId || edge.newInvocationId}`,
+        id: `handoff-boundary:${edge.taskId || edge.targetInvocationId}`,
         seq,
         runId: String(anchor?.runId || ''),
         type: 'agent_handoff_boundary',
@@ -414,7 +420,7 @@ function projectedHandoffBoundary(edge, anchor) {
         tone: EVENT_META.agent_handoff_accepted.tone,
         kind: 'handoff',
         titleKey: EVENT_META.agent_handoff_accepted.titleKey,
-        titleParams: { agent: edge.targetProfileId || edge.newInvocationId || '' },
+        titleParams: { agent: edge.targetProfileId || edge.targetInvocationId || '' },
         summary: [edge.sourceInvocationId, edge.workspaceKey].filter(Boolean).join(' | '),
         detailTargets: [handoffDetailTarget(edge)],
     };
@@ -426,7 +432,7 @@ function handoffDetailTarget(edge) {
         labelKey: 'timelineHandoff',
         taskId: edge.taskId,
         sourceInvocationId: edge.sourceInvocationId,
-        newInvocationId: edge.newInvocationId,
+        newInvocationId: edge.targetInvocationId,
         targetProfileId: edge.targetProfileId,
         workspaceKey: edge.workspaceKey,
         status: edge.status,

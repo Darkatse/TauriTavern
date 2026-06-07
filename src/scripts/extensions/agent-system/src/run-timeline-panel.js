@@ -21,7 +21,6 @@ import {
 } from './run-timeline-resize.js';
 import {
     eventBelongsToInvocation,
-    eventsForInvocation,
     isActiveTaskStatus,
     isRootInvocation,
     normalizeInvocationId,
@@ -63,6 +62,7 @@ function createAgentRunTimelineApp() {
                 eventStore: createRunTimelineEventStore(),
                 events: [],
                 timelineProjection: emptyTimelineProjection(),
+                timelineProjectionRefreshTimer: null,
                 terminalEvent: null,
                 collapsed: true,
                 detailsOpen: false,
@@ -79,7 +79,13 @@ function createAgentRunTimelineApp() {
                 subAgentTrayExpanded: false,
                 subAgentDialogOpen: false,
                 selectedSubAgentInvocationId: '',
+                subAgentEventStore: createRunTimelineEventStore(),
+                subAgentEvents: [],
                 subAgentSelectedSeq: null,
+                subAgentLoadingHistory: false,
+                subAgentLoadingOlderHistory: false,
+                subAgentHasMoreBefore: false,
+                subAgentHistoryRequestId: 0,
                 subAgentDetailLoading: false,
                 subAgentDetailError: '',
                 subAgentDetailSections: [],
@@ -133,15 +139,12 @@ function createAgentRunTimelineApp() {
                 return this.detailsOpen ? 'details' : 'events';
             },
             runProjection() {
-                return projectAgentInvocations(this.events);
+                return projectAgentInvocations(this.timelineProjection);
             },
             displayItems() {
                 return timelineItemsFromEvents(this.events, {
-                    foregroundInvocationIds: mergeInvocationIds(
-                        this.timelineProjection.foregroundInvocationIds,
-                        this.runProjection.foregroundInvocationIds,
-                    ),
-                    handoffEdges: this.timelineProjection.handoffEdges,
+                    foregroundInvocationIds: this.timelineProjection.foregroundInvocationIds,
+                    delegationEdges: this.timelineProjection.delegationEdges,
                 });
             },
             virtualDisplayItems() {
@@ -235,12 +238,6 @@ function createAgentRunTimelineApp() {
                 }
                 return [this.subAgentStatusLabel(task.status), task.workspaceKey].filter(Boolean).join(' | ');
             },
-            subAgentEvents() {
-                if (!this.selectedSubAgentInvocationId) {
-                    return [];
-                }
-                return eventsForInvocation(this.events, this.selectedSubAgentInvocationId);
-            },
             subAgentDisplayItems() {
                 if (!this.selectedSubAgentInvocationId) {
                     return [];
@@ -305,13 +302,15 @@ function createAgentRunTimelineApp() {
                     void this.loadSubAgentDetails();
                 }
             },
-            selectedSubAgentInvocationId() {
+            selectedSubAgentInvocationId(value) {
                 this.subAgentSelectedSeq = null;
+                this.subAgentDetailLoading = false;
                 this.subAgentDetailSections = [];
                 this.subAgentDetailError = '';
                 this.subAgentTimelineScrollTop = 0;
-                if (this.subAgentDialogOpen) {
-                    void this.loadSubAgentDetails();
+                this.resetSubAgentEvents();
+                if (value) {
+                    void this.loadSubAgentHistory(value);
                 }
             },
         },
@@ -331,6 +330,10 @@ function createAgentRunTimelineApp() {
         unmounted() {
             this.stopResize(false);
             this.closeSubAgentDialog(false);
+            if (this.timelineProjectionRefreshTimer) {
+                clearTimeout(this.timelineProjectionRefreshTimer);
+                this.timelineProjectionRefreshTimer = null;
+            }
             this.unsubscribeSettings?.();
             this.unsubscribeRunState?.();
             this.unsubscribeRunEvents?.();
@@ -368,6 +371,7 @@ function createAgentRunTimelineApp() {
                 this.subAgentTrayExpanded = false;
                 this.subAgentDialogOpen = false;
                 this.selectedSubAgentInvocationId = '';
+                this.resetSubAgentEvents();
                 this.subAgentSelectedSeq = null;
                 this.detailSections = [];
                 this.detailError = '';
@@ -452,11 +456,135 @@ function createAgentRunTimelineApp() {
                     }
                 }
             },
+            resetSubAgentEvents() {
+                this.subAgentHistoryRequestId += 1;
+                this.subAgentEventStore = createRunTimelineEventStore();
+                this.subAgentEvents = [];
+                this.subAgentLoadingHistory = false;
+                this.subAgentLoadingOlderHistory = false;
+                this.subAgentHasMoreBefore = false;
+            },
+            async loadSubAgentHistory(invocationId) {
+                const runId = this.currentRun?.runId;
+                const normalizedInvocationId = String(invocationId || '').trim();
+                if (!runId || !normalizedInvocationId) {
+                    return;
+                }
+
+                const requestId = ++this.subAgentHistoryRequestId;
+                this.subAgentLoadingHistory = true;
+                this.subAgentLoadingOlderHistory = false;
+                try {
+                    const result = await requireHostApi('agent').readEvents({
+                        runId,
+                        invocationId: normalizedInvocationId,
+                        beforeSeq: RUN_EVENT_TAIL_SEQ,
+                        limit: RUN_EVENT_PAGE_LIMIT,
+                    });
+                    if (requestId !== this.subAgentHistoryRequestId
+                        || this.currentRun?.runId !== runId
+                        || String(this.selectedSubAgentInvocationId || '').trim() !== normalizedInvocationId) {
+                        return;
+                    }
+                    const events = Array.isArray(result?.events) ? result.events : [];
+                    this.receiveSubAgentEvents(events);
+                    this.subAgentHasMoreBefore = events.length >= RUN_EVENT_PAGE_LIMIT
+                        && Number(this.subAgentEventStore.oldestSeq() || 0) > 1;
+                    this.$nextTick(() => {
+                        this.measureTimelineViewport();
+                        this.stickSubAgentTimelineToBottom();
+                        if (this.subAgentDialogOpen) {
+                            void this.loadSubAgentDetails();
+                        }
+                    });
+                } catch (error) {
+                    console.error('[AgentSystem] Failed to load SubAgent events', error);
+                    window.toastr?.error?.(errorText(error));
+                } finally {
+                    if (requestId === this.subAgentHistoryRequestId) {
+                        this.subAgentLoadingHistory = false;
+                    }
+                }
+            },
+            async loadOlderSubAgentHistory() {
+                const runId = this.currentRun?.runId;
+                const invocationId = String(this.selectedSubAgentInvocationId || '').trim();
+                if (this.subAgentLoadingHistory
+                    || this.subAgentLoadingOlderHistory
+                    || !this.subAgentHasMoreBefore
+                    || !runId
+                    || !invocationId) {
+                    return;
+                }
+                const beforeSeq = this.subAgentEventStore.oldestSeq();
+                if (beforeSeq == null || beforeSeq <= 1) {
+                    this.subAgentHasMoreBefore = false;
+                    return;
+                }
+
+                const requestId = ++this.subAgentHistoryRequestId;
+                this.subAgentLoadingOlderHistory = true;
+                const scroller = this.$refs.subAgentTimelineScroller;
+                const previousScrollHeight = scroller instanceof HTMLElement ? scroller.scrollHeight : 0;
+                const previousScrollTop = scroller instanceof HTMLElement ? scroller.scrollTop : 0;
+                try {
+                    const result = await requireHostApi('agent').readEvents({
+                        runId,
+                        invocationId,
+                        beforeSeq,
+                        limit: RUN_EVENT_PAGE_LIMIT,
+                    });
+                    if (requestId !== this.subAgentHistoryRequestId
+                        || this.currentRun?.runId !== runId
+                        || String(this.selectedSubAgentInvocationId || '').trim() !== invocationId) {
+                        return;
+                    }
+                    const events = Array.isArray(result?.events) ? result.events : [];
+                    this.receiveSubAgentEvents(events);
+                    this.subAgentHasMoreBefore = events.length >= RUN_EVENT_PAGE_LIMIT
+                        && Number(this.subAgentEventStore.oldestSeq() || 0) > 1;
+                    this.$nextTick(() => {
+                        if (scroller instanceof HTMLElement) {
+                            const delta = scroller.scrollHeight - previousScrollHeight;
+                            scroller.scrollTop = previousScrollTop + Math.max(0, delta);
+                            this.subAgentTimelineScrollTop = scroller.scrollTop;
+                        }
+                    });
+                } catch (error) {
+                    console.error('[AgentSystem] Failed to load older SubAgent events', error);
+                    window.toastr?.error?.(errorText(error));
+                } finally {
+                    if (requestId === this.subAgentHistoryRequestId) {
+                        this.subAgentLoadingOlderHistory = false;
+                    }
+                }
+            },
             receiveRunEvents(events) {
                 for (const event of events) {
                     this.receiveRunEvent(event, { skipStick: true });
                 }
                 this.$nextTick(() => this.stickToBottomIfNeeded());
+            },
+            receiveSubAgentEvents(events) {
+                for (const event of events) {
+                    this.receiveSubAgentEvent(event, { skipDetail: true, skipStick: true });
+                }
+            },
+            receiveSubAgentEvent(event, options = {}) {
+                const shouldStick = !options.skipStick && this.isSubAgentTimelineNearBottom();
+                if (!this.subAgentEventStore.add(event)) {
+                    return;
+                }
+                this.subAgentEvents = this.subAgentEventStore.events();
+                if (!options.skipDetail
+                    && this.subAgentDialogOpen
+                    && this.subAgentSelectedSeq == null
+                    && (isDisplayableRunEvent(event) || event.type === 'model_completed')) {
+                    void this.loadSubAgentDetails();
+                }
+                if (shouldStick) {
+                    this.$nextTick(() => this.stickSubAgentTimelineToBottom());
+                }
             },
             receiveRunEvent(event, options = {}) {
                 if (!event?.runId) {
@@ -469,7 +597,12 @@ function createAgentRunTimelineApp() {
                     return;
                 }
 
-                if (!this.eventStore.add(event)) {
+                const addedToRun = this.eventStore.add(event);
+                if (this.selectedSubAgentInvocationId
+                    && eventBelongsToInvocation(event, this.selectedSubAgentInvocationId)) {
+                    this.receiveSubAgentEvent(event);
+                }
+                if (!addedToRun) {
                     return;
                 }
                 this.events = this.eventStore.events();
@@ -479,18 +612,43 @@ function createAgentRunTimelineApp() {
                         this.revealUserRetryableFailure(event);
                     }
                 }
+                if (isTimelineProjectionStructuralEvent(event.type)) {
+                    this.scheduleTimelineProjectionRefresh();
+                }
                 if (this.detailsOpen && this.selectedSeq == null && isDisplayableRunEvent(event)) {
                     void this.loadDetails();
                 }
-                if (this.subAgentDialogOpen
-                    && this.subAgentSelectedSeq == null
-                    && this.selectedSubAgentInvocationId
-                    && (isDisplayableRunEvent(event) || event.type === 'model_completed')
-                    && eventBelongsToInvocation(event, this.selectedSubAgentInvocationId)) {
-                    void this.loadSubAgentDetails();
-                }
                 if (!options.skipStick) {
                     this.$nextTick(() => this.stickToBottomIfNeeded());
+                }
+            },
+            scheduleTimelineProjectionRefresh() {
+                if (this.timelineProjectionRefreshTimer) {
+                    clearTimeout(this.timelineProjectionRefreshTimer);
+                }
+                this.timelineProjectionRefreshTimer = setTimeout(() => {
+                    this.timelineProjectionRefreshTimer = null;
+                    void this.refreshTimelineProjection();
+                }, 120);
+            },
+            async refreshTimelineProjection() {
+                const runId = this.currentRun?.runId;
+                if (!runId) {
+                    return;
+                }
+                try {
+                    const result = await requireHostApi('agent').readEvents({
+                        runId,
+                        afterSeq: RUN_EVENT_TAIL_SEQ,
+                        limit: 1,
+                        includeTimelineProjection: true,
+                    });
+                    if (this.currentRun?.runId === runId) {
+                        this.timelineProjection = normalizeTimelineProjection(result?.timelineProjection);
+                    }
+                } catch (error) {
+                    console.error('[AgentSystem] Failed to refresh Agent timeline projection', error);
+                    window.toastr?.error?.(errorText(error), tr('agentSystem'));
                 }
             },
             revealUserRetryableFailure(event) {
@@ -774,6 +932,9 @@ function createAgentRunTimelineApp() {
                 }
                 this.subAgentTimelineScrollTop = scroller.scrollTop;
                 this.subAgentTimelineViewportHeight = Math.max(1, scroller.clientHeight);
+                if (scroller.scrollTop <= HISTORY_TOP_LOAD_THRESHOLD_PX) {
+                    void this.loadOlderSubAgentHistory();
+                }
             },
             measureTimelineViewport() {
                 const scroller = this.$refs.timelineScroller;
@@ -794,6 +955,21 @@ function createAgentRunTimelineApp() {
                     this.timelineScrollTop = scroller.scrollTop;
                     this.timelineViewportHeight = Math.max(1, scroller.clientHeight);
                 }
+            },
+            stickSubAgentTimelineToBottom() {
+                const scroller = this.$refs.subAgentTimelineScroller;
+                if (scroller instanceof HTMLElement) {
+                    scroller.scrollTop = scroller.scrollHeight;
+                    this.subAgentTimelineScrollTop = scroller.scrollTop;
+                    this.subAgentTimelineViewportHeight = Math.max(1, scroller.clientHeight);
+                }
+            },
+            isSubAgentTimelineNearBottom() {
+                const scroller = this.$refs.subAgentTimelineScroller;
+                if (!(scroller instanceof HTMLElement)) {
+                    return true;
+                }
+                return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop < 18;
             },
             stickToBottomIfNeeded() {
                 if (!this.autoStick || this.collapsed) {
@@ -1357,11 +1533,23 @@ function createAgentRunTimelineApp() {
                                 :aria-label="tr('timelineSubAgentTimeline')"
                                 @scroll.passive="onSubAgentTimelineScroll"
                             >
-                                <div v-if="subAgentDisplayItems.length === 0" class="ttas-run-empty">
+                                <div v-if="subAgentLoadingHistory && subAgentDisplayItems.length === 0" class="ttas-run-empty">
+                                    <i class="fa-solid fa-spinner fa-spin"></i>
+                                    <span>{{ tr('timelineLoading') }}</span>
+                                </div>
+                                <div v-else-if="subAgentDisplayItems.length === 0" class="ttas-run-empty">
                                     <i class="fa-solid fa-circle-dot"></i>
                                     <span>{{ tr('timelineNoEvents') }}</span>
                                 </div>
                                 <ol v-else class="ttas-run-events ttas-subagent-events is-windowed">
+                                    <li
+                                        v-if="subAgentLoadingOlderHistory"
+                                        class="ttas-run-event-loader"
+                                        aria-live="polite"
+                                    >
+                                        <i class="fa-solid fa-spinner fa-spin"></i>
+                                        <span>{{ tr('timelineLoading') }}</span>
+                                    </li>
                                     <li
                                         v-if="virtualSubAgentDisplayItems.topPadding > 0"
                                         class="ttas-run-event-spacer"
@@ -1511,7 +1699,8 @@ function createAgentRunTimelineApp() {
 function emptyTimelineProjection() {
     return {
         foregroundInvocationIds: [],
-        handoffEdges: [],
+        invocations: [],
+        delegationEdges: [],
     };
 }
 
@@ -1522,27 +1711,54 @@ function normalizeTimelineProjection(value) {
     if (!Array.isArray(value.foregroundInvocationIds)) {
         throw new Error('agent.timeline_projection_invalid: foregroundInvocationIds must be an array');
     }
-    if (!Array.isArray(value.handoffEdges)) {
-        throw new Error('agent.timeline_projection_invalid: handoffEdges must be an array');
+    if (!Array.isArray(value.invocations)) {
+        throw new Error('agent.timeline_projection_invalid: invocations must be an array');
+    }
+    if (!Array.isArray(value.delegationEdges)) {
+        throw new Error('agent.timeline_projection_invalid: delegationEdges must be an array');
     }
 
     return {
         foregroundInvocationIds: value.foregroundInvocationIds.map(normalizeInvocationId),
-        handoffEdges: value.handoffEdges.map((edge, index) => normalizeHandoffEdge(edge, index)),
+        invocations: value.invocations.map((invocation, index) => normalizeProjectionInvocation(invocation, index)),
+        delegationEdges: value.delegationEdges.map((edge, index) => normalizeProjectionDelegationEdge(edge, index)),
     };
 }
 
-function normalizeHandoffEdge(edge, index) {
-    if (!plainObject(edge)) {
-        throw new Error(`agent.timeline_projection_invalid: handoffEdges[${index}] must be an object`);
+function normalizeProjectionInvocation(invocation, index) {
+    if (!plainObject(invocation)) {
+        throw new Error(`agent.timeline_projection_invalid: invocations[${index}] must be an object`);
     }
     return {
-        taskId: requiredProjectionString(edge.taskId, `handoffEdges[${index}].taskId`),
-        sourceInvocationId: requiredProjectionString(edge.sourceInvocationId, `handoffEdges[${index}].sourceInvocationId`),
-        newInvocationId: requiredProjectionString(edge.newInvocationId, `handoffEdges[${index}].newInvocationId`),
-        targetProfileId: requiredProjectionString(edge.targetProfileId, `handoffEdges[${index}].targetProfileId`),
-        workspaceKey: requiredProjectionString(edge.workspaceKey, `handoffEdges[${index}].workspaceKey`),
-        status: requiredProjectionString(edge.status, `handoffEdges[${index}].status`),
+        invocationId: requiredProjectionString(invocation.invocationId, `invocations[${index}].invocationId`),
+        parentInvocationId: optionalProjectionString(invocation.parentInvocationId),
+        profileId: requiredProjectionString(invocation.profileId, `invocations[${index}].profileId`),
+        kind: requiredProjectionString(invocation.kind, `invocations[${index}].kind`),
+        status: requiredProjectionString(invocation.status, `invocations[${index}].status`),
+        exitPolicy: requiredProjectionString(invocation.exitPolicy, `invocations[${index}].exitPolicy`),
+        createdAt: requiredProjectionString(invocation.createdAt, `invocations[${index}].createdAt`),
+        updatedAt: requiredProjectionString(invocation.updatedAt, `invocations[${index}].updatedAt`),
+    };
+}
+
+function normalizeProjectionDelegationEdge(edge, index) {
+    if (!plainObject(edge)) {
+        throw new Error(`agent.timeline_projection_invalid: delegationEdges[${index}] must be an object`);
+    }
+    const targetInvocationId = requiredProjectionString(edge.targetInvocationId, `delegationEdges[${index}].targetInvocationId`);
+    return {
+        taskId: requiredProjectionString(edge.taskId, `delegationEdges[${index}].taskId`),
+        sourceInvocationId: requiredProjectionString(edge.sourceInvocationId, `delegationEdges[${index}].sourceInvocationId`),
+        targetInvocationId,
+        childInvocationId: targetInvocationId,
+        targetProfileId: requiredProjectionString(edge.targetProfileId, `delegationEdges[${index}].targetProfileId`),
+        workspaceKey: requiredProjectionString(edge.workspaceKey, `delegationEdges[${index}].workspaceKey`),
+        continuation: requiredProjectionString(edge.continuation, `delegationEdges[${index}].continuation`),
+        status: requiredProjectionString(edge.status, `delegationEdges[${index}].status`),
+        resultRef: optionalProjectionString(edge.resultRef),
+        error: optionalProjectionString(edge.error),
+        createdAt: requiredProjectionString(edge.createdAt, `delegationEdges[${index}].createdAt`),
+        updatedAt: requiredProjectionString(edge.updatedAt, `delegationEdges[${index}].updatedAt`),
     };
 }
 
@@ -1554,20 +1770,17 @@ function requiredProjectionString(value, field) {
     return normalized;
 }
 
-function mergeInvocationIds(...groups) {
-    const ids = [];
-    for (const group of groups) {
-        if (!Array.isArray(group)) {
-            continue;
-        }
-        for (const value of group) {
-            const id = normalizeInvocationId(value);
-            if (!ids.includes(id)) {
-                ids.push(id);
-            }
-        }
-    }
-    return ids;
+function optionalProjectionString(value) {
+    const normalized = String(value || '').trim();
+    return normalized || '';
+}
+
+function isTimelineProjectionStructuralEvent(type) {
+    return type === 'agent_delegate_started'
+        || type === 'agent_handoff_accepted'
+        || type === 'task_return_completed'
+        || type.startsWith('agent_invocation_')
+        || type.startsWith('agent_task_');
 }
 
 function plainObject(value) {

@@ -341,7 +341,7 @@ agent_invocation_completed         # final owner finish path
 run_completed
 ```
 
-Timeline UI 不应只依赖当前分页内的 journal 事件推断 active chain。`readEvents({ includeTimelineProjection: true })` 会随事件页返回 `timelineProjection.foregroundInvocationIds` 与 `timelineProjection.handoffEdges`；该 projection 来自结构化 invocation/task repository，用于在 `agent_handoff_accepted` 或 `agent_invocation_started` 已不在当前页时仍展示 handoff 主线与分隔行。projection 不是新的 journal event，不能作为审计日志来源；普通 event polling 不应请求它。
+Timeline UI 不应只依赖当前分页内的 journal 事件推断 active chain。`readEvents({ includeTimelineProjection: true })` 会随事件页返回 `timelineProjection.foregroundInvocationIds`、`timelineProjection.invocations` 与 `timelineProjection.delegationEdges`；该 projection 来自结构化 invocation/task repository，用于在 `agent_handoff_accepted`、`agent_delegate_started` 或 `agent_invocation_started` 已不在当前页时仍展示同一 run 内的 Agent graph。projection 不是新的 journal event，不能作为审计日志来源；普通 event polling 不应请求它。
 
 失败和拒绝路径：
 

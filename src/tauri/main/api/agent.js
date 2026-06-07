@@ -83,12 +83,18 @@ function createAgentApi({ safeInvoke }) {
 
     async function readEvents(input) {
         const runId = requireRunId(input?.runId);
+        const hasInvocationId = Object.prototype.hasOwnProperty.call(input || {}, 'invocationId');
+        const invocationId = String(input?.invocationId || '').trim();
+        if (hasInvocationId && !invocationId) {
+            throw new Error('invocationId cannot be empty');
+        }
         return safeInvoke('read_agent_run_events', {
             dto: {
                 runId,
                 afterSeq: input?.afterSeq,
                 beforeSeq: input?.beforeSeq,
                 limit: input?.limit,
+                ...(invocationId ? { invocationId } : {}),
                 ...(input?.includeTimelineProjection === true ? { includeTimelineProjection: true } : {}),
             },
         });

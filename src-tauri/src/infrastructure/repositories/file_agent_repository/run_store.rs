@@ -9,7 +9,7 @@ use super::FileAgentRepository;
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::{AgentRun, AgentRunEvent, AgentRunEventLevel};
 use crate::domain::repositories::agent_run_repository::{
-    AgentRunEventReadQuery, AgentRunRepository,
+    AgentRunEventReadQuery, AgentRunRepository, event_belongs_to_invocation,
 };
 
 #[async_trait]
@@ -123,6 +123,10 @@ impl AgentRunRepository for FileAgentRepository {
     ) -> Result<Vec<AgentRunEvent>, DomainError> {
         let limit = query.limit.clamp(1, 500);
         let mut events = self.read_all_events(run_id).await?;
+
+        if let Some(invocation_id) = query.invocation_id.as_deref() {
+            events.retain(|event| event_belongs_to_invocation(event, invocation_id));
+        }
 
         if let Some(before_seq) = query.before_seq {
             events.retain(|event| event.seq < before_seq);

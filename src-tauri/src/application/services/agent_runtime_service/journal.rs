@@ -1,5 +1,5 @@
 use chrono::Utc;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::errors::ApplicationError;
@@ -35,6 +35,7 @@ impl AgentRuntimeService {
         event_type: &str,
         payload: Value,
     ) -> Result<AgentRunEvent, ApplicationError> {
+        let payload = with_canonical_event_scope(event_type, payload)?;
         self.run_repository
             .append_event(run_id, level, event_type, payload)
             .await
@@ -80,4 +81,126 @@ impl AgentRuntimeService {
         .await?;
         Ok(())
     }
+}
+
+fn with_canonical_event_scope(event_type: &str, payload: Value) -> Result<Value, ApplicationError> {
+    let mut payload = match payload {
+        Value::Object(payload) => payload,
+        payload => return Ok(payload),
+    };
+
+    let mut event_scope = match payload.remove("eventScope") {
+        Some(Value::Object(event_scope)) => event_scope,
+        Some(_) => {
+            return Err(ApplicationError::ValidationError(
+                "agent.event_scope_invalid: payload.eventScope must be an object".to_string(),
+            ));
+        }
+        None => Map::new(),
+    };
+
+    let primary = event_primary_invocation_id(event_type, &payload, &event_scope);
+
+    let Some(primary) = primary else {
+        if !event_scope.is_empty() {
+            payload.insert("eventScope".to_string(), Value::Object(event_scope));
+        }
+        return Ok(Value::Object(payload));
+    };
+
+    event_scope.insert("invocationId".to_string(), json!(primary.as_str()));
+
+    let mut related = scope_related_invocation_ids(&event_scope);
+    for field in [
+        "invocationId",
+        "parentInvocationId",
+        "sourceInvocationId",
+        "childInvocationId",
+        "newInvocationId",
+    ] {
+        if let Some(invocation_id) = payload_string_field(&payload, field) {
+            push_related_invocation(&mut related, invocation_id, &primary);
+        }
+    }
+    if related.is_empty() {
+        event_scope.remove("relatedInvocationIds");
+    } else {
+        event_scope.insert("relatedInvocationIds".to_string(), json!(related));
+    }
+
+    payload.insert("eventScope".to_string(), Value::Object(event_scope));
+    Ok(Value::Object(payload))
+}
+
+fn scope_invocation_id(scope: &Map<String, Value>) -> Option<String> {
+    scope
+        .get("invocationId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn scope_related_invocation_ids(scope: &Map<String, Value>) -> Vec<String> {
+    scope
+        .get("relatedInvocationIds")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn payload_string_field(payload: &Map<String, Value>, field: &str) -> Option<String> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn event_primary_invocation_id(
+    event_type: &str,
+    payload: &Map<String, Value>,
+    scope: &Map<String, Value>,
+) -> Option<String> {
+    scope_invocation_id(scope)
+        .or_else(|| match event_type {
+            "agent_delegate_started" => payload_string_field(payload, "parentInvocationId"),
+            "agent_handoff_requested" | "agent_handoff_accepted" => {
+                payload_string_field(payload, "sourceInvocationId")
+            }
+            "task_return_completed" => payload_string_field(payload, "childInvocationId"),
+            event_type if event_type.starts_with("agent_task_") => {
+                payload_string_field(payload, "parentInvocationId")
+            }
+            _ => None,
+        })
+        .or_else(|| payload_string_field(payload, "invocationId"))
+        .or_else(|| payload_string_field(payload, "parentInvocationId"))
+        .or_else(|| payload_string_field(payload, "sourceInvocationId"))
+        .or_else(|| payload_string_field(payload, "childInvocationId"))
+        .or_else(|| payload_string_field(payload, "newInvocationId"))
+        .or_else(|| run_level_event_scope(event_type))
+}
+
+fn push_related_invocation(related: &mut Vec<String>, invocation_id: String, primary: &str) {
+    if invocation_id == primary || related.iter().any(|existing| existing == &invocation_id) {
+        return;
+    }
+    related.push(invocation_id);
+}
+
+fn run_level_event_scope(event_type: &str) -> Option<String> {
+    if event_type.starts_with("run_") || event_type == "status_changed" {
+        return Some(crate::domain::models::agent::ROOT_AGENT_INVOCATION_ID.to_string());
+    }
+    None
 }

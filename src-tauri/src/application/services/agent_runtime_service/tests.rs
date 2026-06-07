@@ -53,7 +53,7 @@ use crate::domain::models::skill::{
 };
 use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
 use crate::domain::repositories::agent_run_repository::{
-    AgentRunEventReadQuery, AgentRunRepository,
+    AgentRunEventReadQuery, AgentRunRepository, event_belongs_to_invocation,
 };
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
@@ -1066,6 +1066,7 @@ async fn subagent_current_prompt_snapshot_reads_ambient_preset_and_character_ski
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -1394,6 +1395,86 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
     );
     assert_eq!(child_model_turn.tool_calls.len(), 2);
     assert_eq!(child_model_turn.tool_calls[0].name, "workspace.write_file");
+
+    let child_event_page = service
+        .read_events(AgentReadEventsDto {
+            run_id: run.id.clone(),
+            after_seq: Some(0),
+            before_seq: None,
+            limit: 300,
+            invocation_id: Some(task.child_invocation_id.clone()),
+            include_timeline_projection: false,
+        })
+        .await
+        .expect("read child invocation events");
+    assert!(!child_event_page.events.is_empty());
+    assert!(
+        child_event_page
+            .events
+            .iter()
+            .all(|event| event_belongs_to_invocation(event, &task.child_invocation_id))
+    );
+    assert!(child_event_page.events.iter().any(|event| {
+        event.event_type == "model_completed"
+            && event.payload["invocationId"] == task.child_invocation_id
+    }));
+    let delegate_event = child_event_page
+        .events
+        .iter()
+        .find(|event| event.event_type == "agent_delegate_started")
+        .expect("delegate event belongs to child invocation through canonical related scope");
+    assert_eq!(
+        delegate_event.payload["eventScope"]["invocationId"],
+        "inv_root"
+    );
+    assert_eq!(
+        delegate_event.payload["eventScope"]["relatedInvocationIds"][0],
+        task.child_invocation_id
+    );
+    let task_return_event = child_event_page
+        .events
+        .iter()
+        .find(|event| event.event_type == "task_return_completed")
+        .expect("task return event");
+    assert_eq!(task_return_event.payload["parentInvocationId"], "inv_root");
+    assert_eq!(
+        task_return_event.payload["childInvocationId"],
+        task.child_invocation_id
+    );
+    assert_eq!(
+        task_return_event.payload["eventScope"]["invocationId"],
+        task.child_invocation_id
+    );
+    assert_eq!(
+        task_return_event.payload["eventScope"]["relatedInvocationIds"][0],
+        "inv_root"
+    );
+    assert!(
+        !child_event_page
+            .events
+            .iter()
+            .any(|event| event.event_type == "run_completed")
+    );
+    assert!(child_event_page.timeline_projection.is_none());
+
+    let child_event_tail = service
+        .read_events(AgentReadEventsDto {
+            run_id: run.id.clone(),
+            after_seq: None,
+            before_seq: Some(u64::MAX),
+            limit: 2,
+            invocation_id: Some(task.child_invocation_id.clone()),
+            include_timeline_projection: false,
+        })
+        .await
+        .expect("read child invocation event tail");
+    assert_eq!(child_event_tail.events.len(), 2);
+    assert!(
+        child_event_tail
+            .events
+            .iter()
+            .all(|event| event_belongs_to_invocation(event, &task.child_invocation_id))
+    );
 
     let requests = model_gateway_probe.requests().await;
     assert_eq!(requests.len(), 4);
@@ -1925,6 +2006,7 @@ async fn agent_handoff_continues_after_prior_commit() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 300,
+                invocation_id: None,
             },
         )
         .await
@@ -1938,17 +2020,41 @@ async fn agent_handoff_continues_after_prior_commit() {
         handoff_event.payload["newInvocationId"],
         editor_task.child_invocation_id
     );
+    assert_eq!(
+        handoff_event.payload["eventScope"]["invocationId"],
+        "inv_root"
+    );
+    assert_eq!(
+        handoff_event.payload["eventScope"]["relatedInvocationIds"][0],
+        editor_task.child_invocation_id
+    );
     assert!(events.iter().any(|event| {
         event.event_type == "agent_handoff_accepted"
             && event.payload["taskId"] == acceptance_task.id
             && event.payload["newInvocationId"] == acceptance_task.child_invocation_id
     }));
+    let acceptance_handoff_event = events
+        .iter()
+        .find(|event| {
+            event.event_type == "agent_handoff_accepted"
+                && event.payload["taskId"] == acceptance_task.id
+        })
+        .expect("acceptance handoff event");
+    assert_eq!(
+        acceptance_handoff_event.payload["eventScope"]["invocationId"],
+        editor_task.child_invocation_id
+    );
+    assert_eq!(
+        acceptance_handoff_event.payload["eventScope"]["relatedInvocationIds"][0],
+        acceptance_task.child_invocation_id
+    );
     let plain_page = service
         .read_events(AgentReadEventsDto {
             run_id: run.id.clone(),
             after_seq: Some(0),
             before_seq: None,
             limit: 1,
+            invocation_id: None,
             include_timeline_projection: false,
         })
         .await
@@ -1961,6 +2067,7 @@ async fn agent_handoff_continues_after_prior_commit() {
             after_seq: Some(0),
             before_seq: None,
             limit: 1,
+            invocation_id: None,
             include_timeline_projection: true,
         })
         .await
@@ -1977,19 +2084,36 @@ async fn agent_handoff_continues_after_prior_commit() {
             acceptance_task.child_invocation_id.clone(),
         ]
     );
-    assert_eq!(projection.handoff_edges.len(), 2);
-    assert_eq!(projection.handoff_edges[0].task_id, editor_task.id.as_str());
-    assert_eq!(projection.handoff_edges[0].source_invocation_id, "inv_root");
+    assert_eq!(projection.invocations.len(), 3);
+    assert!(
+        projection
+            .invocations
+            .iter()
+            .any(|invocation| invocation.invocation_id == "inv_root")
+    );
+    assert_eq!(projection.delegation_edges.len(), 2);
     assert_eq!(
-        projection.handoff_edges[0].new_invocation_id,
+        projection.delegation_edges[0].task_id,
+        editor_task.id.as_str()
+    );
+    assert_eq!(
+        projection.delegation_edges[0].source_invocation_id,
+        "inv_root"
+    );
+    assert_eq!(
+        projection.delegation_edges[0].target_invocation_id,
         editor_task.child_invocation_id.as_str()
     );
     assert_eq!(
-        projection.handoff_edges[0].status,
+        projection.delegation_edges[0].continuation,
+        AgentDelegationContinuation::TransferControl
+    );
+    assert_eq!(
+        projection.delegation_edges[0].status,
         AgentTaskStatus::Completed
     );
     assert_eq!(
-        projection.handoff_edges[1].task_id,
+        projection.delegation_edges[1].task_id,
         acceptance_task.id.as_str()
     );
 
@@ -2147,6 +2271,7 @@ async fn agent_handoff_denies_pending_delegated_tasks() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 300,
+                invocation_id: None,
             },
         )
         .await
@@ -2317,6 +2442,10 @@ async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
         "inv_child_prompt_assembly"
     );
     assert_eq!(payload["scope"]["taskId"], "task_child_prompt_assembly");
+    assert_eq!(
+        payload["eventScope"]["invocationId"],
+        "inv_child_prompt_assembly"
+    );
     assert!(payload.get("request").is_none());
     assert_eq!(
         payload["requestKind"],
@@ -2435,6 +2564,7 @@ async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -2808,6 +2938,7 @@ async fn cancelled_child_task_does_not_emit_failed_event() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -2948,6 +3079,7 @@ async fn workspace_finish_cancels_unawaited_delegated_task() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -3252,6 +3384,7 @@ async fn agent_loop_writes_artifact_and_completes() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -3615,6 +3748,7 @@ async fn agent_loop_stores_tool_audit_files_with_hashed_call_id_paths() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -3801,6 +3935,7 @@ async fn agent_loop_retries_retryable_model_errors() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -3903,6 +4038,7 @@ async fn agent_loop_does_not_retry_non_retryable_model_errors() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -4063,6 +4199,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -4222,6 +4359,7 @@ async fn finish_promotes_persistent_workspace_projection() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -4362,6 +4500,7 @@ async fn foreground_run_commits_chat_message_before_finish() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -4569,6 +4708,7 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -4813,6 +4953,7 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -5037,6 +5178,7 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -5178,6 +5320,7 @@ async fn foreground_run_without_commit_still_fails_when_drift_recovery_hits_max_
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -5352,6 +5495,7 @@ async fn foreground_run_with_commit_becomes_partial_success_when_persistent_comm
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -5532,6 +5676,7 @@ async fn foreground_finish_before_commit_returns_recoverable_error() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -5683,6 +5828,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -7803,6 +7949,7 @@ async fn resolve_next_chat_commit(
                         after_seq: Some(0),
                         before_seq: None,
                         limit: 100,
+                        invocation_id: None,
                     },
                 )
                 .await
@@ -7848,6 +7995,7 @@ async fn resolve_chat_commits_and_persistent_state_update(
                             after_seq: Some(0),
                             before_seq: None,
                             limit: 300,
+                            invocation_id: None,
                         },
                     )
                     .await
@@ -7890,6 +8038,7 @@ async fn resolve_chat_commits_and_persistent_state_update(
                         after_seq: Some(0),
                         before_seq: None,
                         limit: 300,
+                        invocation_id: None,
                     },
                 )
                 .await
@@ -7931,6 +8080,7 @@ async fn wait_for_event_payload(
                         after_seq: Some(0),
                         before_seq: None,
                         limit: 200,
+                        invocation_id: None,
                     },
                 )
                 .await
@@ -7972,6 +8122,7 @@ async fn resolve_next_chat_commit_and_persistent_state_update(
                         after_seq: Some(0),
                         before_seq: None,
                         limit: 200,
+                        invocation_id: None,
                     },
                 )
                 .await

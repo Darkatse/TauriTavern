@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -5,7 +6,8 @@ use crate::domain::models::agent::profile::{
     AgentContextPolicy, AgentPresetRef, AgentProfileDefinition, AgentProfileSummary,
 };
 use crate::domain::models::agent::{
-    AgentChatRef, AgentRunEvent, AgentRunPresentation, AgentRunStatus, AgentTaskStatus,
+    AgentChatRef, AgentDelegationContinuation, AgentInvocationExitPolicy, AgentInvocationKind,
+    AgentInvocationStatus, AgentRunEvent, AgentRunPresentation, AgentRunStatus, AgentTaskStatus,
     AgentToolSpec,
 };
 use crate::domain::repositories::agent_profile_storage_health_repository::{
@@ -247,6 +249,8 @@ pub struct AgentReadEventsDto {
     #[serde(default = "default_event_limit")]
     pub limit: usize,
     #[serde(default)]
+    pub invocation_id: Option<String>,
+    #[serde(default)]
     pub include_timeline_projection: bool,
 }
 
@@ -262,18 +266,40 @@ pub struct AgentReadEventsResultDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentRunTimelineProjectionDto {
     pub foreground_invocation_ids: Vec<String>,
-    pub handoff_edges: Vec<AgentRunTimelineHandoffEdgeDto>,
+    pub invocations: Vec<AgentRunTimelineInvocationDto>,
+    pub delegation_edges: Vec<AgentRunTimelineDelegationEdgeDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentRunTimelineHandoffEdgeDto {
+pub struct AgentRunTimelineInvocationDto {
+    pub invocation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_invocation_id: Option<String>,
+    pub profile_id: String,
+    pub kind: AgentInvocationKind,
+    pub status: AgentInvocationStatus,
+    pub exit_policy: AgentInvocationExitPolicy,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunTimelineDelegationEdgeDto {
     pub task_id: String,
     pub source_invocation_id: String,
-    pub new_invocation_id: String,
+    pub target_invocation_id: String,
     pub target_profile_id: String,
     pub workspace_key: String,
+    pub continuation: AgentDelegationContinuation,
     pub status: AgentTaskStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

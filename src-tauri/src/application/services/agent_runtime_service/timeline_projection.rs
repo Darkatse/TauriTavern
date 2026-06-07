@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+
 use crate::application::dto::agent_dto::{
-    AgentRunTimelineHandoffEdgeDto, AgentRunTimelineProjectionDto,
+    AgentRunTimelineDelegationEdgeDto, AgentRunTimelineInvocationDto, AgentRunTimelineProjectionDto,
 };
+use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::{
     AgentDelegationContinuation, AgentInvocation, AgentInvocationKind, AgentTaskRecord,
     ROOT_AGENT_INVOCATION_ID,
@@ -9,12 +12,39 @@ use crate::domain::models::agent::{
 pub(super) fn build_run_timeline_projection(
     invocations: &[AgentInvocation],
     tasks: &[AgentTaskRecord],
-) -> AgentRunTimelineProjectionDto {
-    let handoff_edges = handoff_edges(tasks);
-    AgentRunTimelineProjectionDto {
+) -> Result<AgentRunTimelineProjectionDto, ApplicationError> {
+    validate_projection_graph(invocations, tasks)?;
+    Ok(AgentRunTimelineProjectionDto {
         foreground_invocation_ids: foreground_invocation_ids(invocations, tasks),
-        handoff_edges,
+        invocations: invocation_nodes(invocations),
+        delegation_edges: delegation_edges(tasks),
+    })
+}
+
+fn validate_projection_graph(
+    invocations: &[AgentInvocation],
+    tasks: &[AgentTaskRecord],
+) -> Result<(), ApplicationError> {
+    let invocation_ids = invocations
+        .iter()
+        .map(|invocation| invocation.id.as_str())
+        .collect::<HashSet<_>>();
+
+    for task in tasks {
+        if !invocation_ids.contains(task.parent_invocation_id.as_str()) {
+            return Err(ApplicationError::ValidationError(format!(
+                "agent.timeline_projection_invalid: task `{}` references missing parent invocation `{}`",
+                task.id, task.parent_invocation_id
+            )));
+        }
+        if !invocation_ids.contains(task.child_invocation_id.as_str()) {
+            return Err(ApplicationError::ValidationError(format!(
+                "agent.timeline_projection_invalid: task `{}` references missing target invocation `{}`",
+                task.id, task.child_invocation_id
+            )));
+        }
     }
+    Ok(())
 }
 
 fn foreground_invocation_ids(
@@ -47,26 +77,51 @@ fn foreground_invocation_ids(
     ids
 }
 
-fn handoff_edges(tasks: &[AgentTaskRecord]) -> Vec<AgentRunTimelineHandoffEdgeDto> {
-    let mut handoffs = tasks
-        .iter()
-        .filter(|task| task.continuation == AgentDelegationContinuation::TransferControl)
-        .collect::<Vec<_>>();
-    handoffs.sort_by(|left, right| {
+fn invocation_nodes(invocations: &[AgentInvocation]) -> Vec<AgentRunTimelineInvocationDto> {
+    let mut nodes = invocations.iter().collect::<Vec<_>>();
+    nodes.sort_by(|left, right| {
         left.created_at
             .cmp(&right.created_at)
             .then_with(|| left.id.cmp(&right.id))
     });
 
-    handoffs
+    nodes
         .into_iter()
-        .map(|task| AgentRunTimelineHandoffEdgeDto {
+        .map(|invocation| AgentRunTimelineInvocationDto {
+            invocation_id: invocation.id.clone(),
+            parent_invocation_id: invocation.parent_invocation_id.clone(),
+            profile_id: invocation.profile_id.clone(),
+            kind: invocation.kind,
+            status: invocation.status,
+            exit_policy: invocation.exit_policy,
+            created_at: invocation.created_at,
+            updated_at: invocation.updated_at,
+        })
+        .collect()
+}
+
+fn delegation_edges(tasks: &[AgentTaskRecord]) -> Vec<AgentRunTimelineDelegationEdgeDto> {
+    let mut edges = tasks.iter().collect::<Vec<_>>();
+    edges.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    edges
+        .into_iter()
+        .map(|task| AgentRunTimelineDelegationEdgeDto {
             task_id: task.id.clone(),
             source_invocation_id: task.parent_invocation_id.clone(),
-            new_invocation_id: task.child_invocation_id.clone(),
+            target_invocation_id: task.child_invocation_id.clone(),
             target_profile_id: task.target_profile_id.clone(),
             workspace_key: task.workspace_key.clone(),
+            continuation: task.continuation,
             status: task.status,
+            result_ref: task.result_ref.clone(),
+            error: task.error.clone(),
+            created_at: task.created_at,
+            updated_at: task.updated_at,
         })
         .collect()
 }

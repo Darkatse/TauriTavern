@@ -220,6 +220,7 @@ async fn repository_round_trips_run_workspace_event_and_checkpoint() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 10,
+                invocation_id: None,
             },
         )
         .await

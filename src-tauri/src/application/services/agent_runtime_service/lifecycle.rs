@@ -286,6 +286,7 @@ impl AgentRuntimeService {
         &self,
         dto: AgentReadEventsDto,
     ) -> Result<AgentReadEventsResultDto, ApplicationError> {
+        let invocation_id = normalize_read_events_invocation_id(dto.invocation_id.as_deref())?;
         let events = self
             .run_repository
             .read_events(
@@ -294,6 +295,7 @@ impl AgentRuntimeService {
                     after_seq: dto.after_seq,
                     before_seq: dto.before_seq,
                     limit: dto.limit,
+                    invocation_id,
                 },
             )
             .await?;
@@ -303,7 +305,7 @@ impl AgentRuntimeService {
                 .list_invocations(&dto.run_id)
                 .await?;
             let tasks = self.invocation_repository.list_tasks(&dto.run_id).await?;
-            Some(build_run_timeline_projection(&invocations, &tasks))
+            Some(build_run_timeline_projection(&invocations, &tasks)?)
         } else {
             None
         };
@@ -333,6 +335,27 @@ impl AgentRuntimeService {
             sha256: file.sha256,
         })
     }
+}
+
+fn normalize_read_events_invocation_id(
+    value: Option<&str>,
+) -> Result<Option<String>, ApplicationError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let invocation_id = value.trim();
+    if invocation_id.is_empty() {
+        return Err(ApplicationError::ValidationError(
+            "agent.read_events_invocation_id_invalid: invocationId cannot be empty".to_string(),
+        ));
+    }
+    if invocation_id.contains('/') || invocation_id.contains('\\') {
+        return Err(ApplicationError::ValidationError(
+            "agent.read_events_invocation_id_invalid: invocationId must not contain path separators"
+                .to_string(),
+        ));
+    }
+    Ok(Some(invocation_id.to_string()))
 }
 
 #[async_trait::async_trait]

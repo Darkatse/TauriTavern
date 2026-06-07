@@ -164,6 +164,19 @@ drift_recovery_attempted
 run_failed
 ```
 
+多 invocation 事件必须写入 canonical event scope：
+
+```json
+{
+  "eventScope": {
+    "invocationId": "inv_root",
+    "relatedInvocationIds": ["inv_child"]
+  }
+}
+```
+
+`eventScope.invocationId` 是事件主归属 invocation；`eventScope.relatedInvocationIds` 是同一事件关联的其它 invocation。`readEvents({ invocationId })` 先按该 event scope 过滤，再应用 seq 分页。旧 journal 没有 canonical scope 时，后端可以用历史 payload 字段兼容读取，但新事件不应依赖字段名推断作为主契约。
+
 以下小节同时包含当前已落地事件和后续阶段设计事件；实现新事件时必须更新 `docs/CurrentState/AgentFramework.md`。
 
 ### Handoff event sequence
