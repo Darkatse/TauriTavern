@@ -26,7 +26,9 @@ use crate::domain::repositories::agent_invocation_repository::AgentInvocationRep
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
 };
-use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
+use crate::domain::repositories::agent_workspace_lifecycle_repository::{
+    AgentPersistentStatePruneRequest, AgentWorkspaceLifecycleRepository,
+};
 use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
 use crate::domain::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
 fn temp_root() -> PathBuf {
@@ -506,7 +508,7 @@ async fn delete_chat_workspace_removes_runs_and_indexes() {
 }
 
 #[tokio::test]
-async fn prune_persistent_states_ignores_platform_metadata_files() {
+async fn prune_persistent_states_removes_only_unretained_candidates() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
     let states_dir = root
@@ -519,19 +521,65 @@ async fn prune_persistent_states_ignores_platform_metadata_files() {
     fs::create_dir_all(states_dir.join("state_drop"))
         .await
         .expect("create removed state");
+    fs::create_dir_all(states_dir.join("state_orphan_not_candidate"))
+        .await
+        .expect("create non-candidate state");
     fs::write(states_dir.join(".DS_Store"), b"finder metadata")
         .await
         .expect("write platform metadata");
 
     let prune = repository
-        .prune_persistent_states("chat_prune", &["state_keep".to_string()])
+        .prune_persistent_states(
+            "chat_prune",
+            AgentPersistentStatePruneRequest {
+                retained_state_ids: vec!["state_keep".to_string()],
+                candidate_state_ids: vec![
+                    "state_keep".to_string(),
+                    "state_drop".to_string(),
+                    "state_missing".to_string(),
+                ],
+            },
+        )
         .await
         .expect("prune persistent states");
 
     assert_eq!(prune.removed_state_ids, vec!["state_drop".to_string()]);
     assert!(states_dir.join("state_keep").exists());
     assert!(!states_dir.join("state_drop").exists());
+    assert!(states_dir.join("state_orphan_not_candidate").exists());
     assert!(states_dir.join(".DS_Store").exists());
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn prune_persistent_states_rejects_candidate_file() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let states_dir = root
+        .join("chats")
+        .join("chat_prune")
+        .join("persistent-states");
+    fs::create_dir_all(&states_dir)
+        .await
+        .expect("create states dir");
+    fs::write(states_dir.join("state_file"), b"not a directory")
+        .await
+        .expect("write candidate file");
+
+    let error = repository
+        .prune_persistent_states(
+            "chat_prune",
+            AgentPersistentStatePruneRequest {
+                retained_state_ids: Vec::new(),
+                candidate_state_ids: vec!["state_file".to_string()],
+            },
+        )
+        .await
+        .expect_err("candidate file should fail");
+
+    assert!(matches!(error, DomainError::InvalidData(_)));
+    assert!(states_dir.join("state_file").exists());
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }

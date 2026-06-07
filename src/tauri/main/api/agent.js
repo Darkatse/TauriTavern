@@ -144,11 +144,16 @@ function createAgentApi({ safeInvoke }) {
         if (!stableChatId) {
             throw new Error('stableChatId is required');
         }
+        const candidateStateIdsInput = Object.prototype.hasOwnProperty.call(input, 'candidateStateIds')
+            ? input.candidateStateIds
+            : input.candidate_state_ids;
+        const candidateStateIds = normalizeStateIdList(candidateStateIdsInput);
 
         return safeInvoke('prune_agent_chat_persistent_states', {
             dto: {
                 chatRef,
                 stableChatId,
+                candidateStateIds,
             },
         });
     }
@@ -388,6 +393,27 @@ function normalizeOptionalString(value) {
     }
     const text = String(value).trim();
     return text || undefined;
+}
+
+function normalizeStateIdList(value) {
+    if (!Array.isArray(value)) {
+        throw new Error('candidateStateIds must be an array');
+    }
+
+    const stateIds = [];
+    const seen = new Set();
+    for (const item of value) {
+        const stateId = String(item ?? '').trim();
+        if (!stateId) {
+            throw new Error('candidateStateIds contains an empty state id');
+        }
+        if (seen.has(stateId)) {
+            continue;
+        }
+        seen.add(stateId);
+        stateIds.push(stateId);
+    }
+    return stateIds;
 }
 
 function normalizePollInterval(value) {

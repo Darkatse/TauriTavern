@@ -22,6 +22,7 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
 use crate::domain::models::agent::AgentChatRef;
 use crate::domain::models::agent::profile_diagnostic::AgentProfileHealth;
+use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentPersistentStatePruneRequest;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -356,6 +357,13 @@ pub async fn prune_agent_chat_persistent_states(
         }
     };
 
+    let candidate_state_ids = dto.candidate_state_ids.ok_or_else(|| {
+        map_command_error("Failed to prune agent persistent states")(
+            ApplicationError::ValidationError(
+                "agent.persistent_state_prune_candidates_required".to_string(),
+            ),
+        )
+    })?;
     let payload = app_state
         .chat_service
         .get_chat_payload(character_id, file_name)
@@ -371,7 +379,13 @@ pub async fn prune_agent_chat_persistent_states(
 
     app_state
         .chat_service
-        .prune_agent_persistent_states(&target, &retained_state_ids)
+        .prune_agent_persistent_states(
+            &target,
+            AgentPersistentStatePruneRequest {
+                retained_state_ids,
+                candidate_state_ids,
+            },
+        )
         .await
         .map(|prune| AgentPruneChatPersistentStatesResultDto {
             workspace_id: prune.workspace_id,

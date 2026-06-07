@@ -16,7 +16,9 @@ use crate::application::services::chat_file_validation::{
 };
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
-use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentPersistentStatePrune;
+use crate::domain::repositories::agent_workspace_lifecycle_repository::{
+    AgentPersistentStatePrune, AgentPersistentStatePruneRequest,
+};
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatRepository,
@@ -545,10 +547,10 @@ impl ChatService {
     pub async fn prune_agent_persistent_states(
         &self,
         target: &AgentChatWorkspaceTarget,
-        retained_state_ids: &[String],
+        request: AgentPersistentStatePruneRequest,
     ) -> Result<AgentPersistentStatePrune, ApplicationError> {
         self.agent_workspace_lifecycle_service
-            .prune_persistent_states(target, retained_state_ids)
+            .prune_persistent_states(target, request)
             .await
     }
 

@@ -6457,6 +6457,7 @@ async function pruneAgentPersistentStatesAfterDeletion(deletedStateIds) {
     if (!Array.isArray(deletedStateIds) || deletedStateIds.length === 0) {
         return;
     }
+    const candidateStateIds = Array.from(new Set(deletedStateIds));
     if (selected_group || this_chid === undefined) {
         return;
     }
@@ -6465,7 +6466,7 @@ async function pruneAgentPersistentStatesAfterDeletion(deletedStateIds) {
     if (!agentApi || typeof agentApi.pruneChatPersistentStates !== 'function') {
         return;
     }
-    await agentApi.pruneChatPersistentStates();
+    await agentApi.pruneChatPersistentStates({ candidateStateIds });
 }
 
 function assertAgentPromptSnapshotHasNoExternalTools(payload) {

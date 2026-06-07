@@ -15,6 +15,12 @@ pub struct AgentPersistentStatePrune {
     pub removed_state_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentPersistentStatePruneRequest {
+    pub retained_state_ids: Vec<String>,
+    pub candidate_state_ids: Vec<String>,
+}
+
 #[async_trait]
 pub trait AgentWorkspaceLifecycleRepository: Send + Sync {
     async fn delete_chat_workspace(
@@ -25,6 +31,6 @@ pub trait AgentWorkspaceLifecycleRepository: Send + Sync {
     async fn prune_persistent_states(
         &self,
         workspace_id: &str,
-        retained_state_ids: &[String],
+        request: AgentPersistentStatePruneRequest,
     ) -> Result<AgentPersistentStatePrune, DomainError>;
 }

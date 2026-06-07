@@ -28,6 +28,7 @@ type TauriTavernAgentApi = {
   readEvents(input: AgentReadEventsInput): Promise<AgentReadEventsResult>;
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
   readModelTurn(input: AgentReadModelTurnInput): Promise<AgentModelTurn>;
+  pruneChatPersistentStates(input: AgentPruneChatPersistentStatesInput): Promise<AgentPruneChatPersistentStatesResult>;
   profiles: {
     list(): Promise<AgentListProfilesResult>;
     load(input: string | { profileId: string }): Promise<{ profile: AgentProfileDefinition | null }>;
@@ -344,7 +345,28 @@ type AgentModelTurn = {
 
 该方法返回面向 UI 的白名单投影：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。它不会暴露完整 raw response、provider-private native continuation、签名或 encrypted reasoning。需要完整诊断时仍使用 run workspace 中的 `modelResponsePath` 与 LLM API log。
 
-## 11. profiles / promptAssembly / tools
+## 11. pruneChatPersistentStates
+
+```ts
+type AgentPruneChatPersistentStatesInput = {
+  chatRef?: AgentChatRef;
+  stableChatId?: string;
+  candidateStateIds: string[];
+};
+
+type AgentPruneChatPersistentStatesResult = {
+  workspaceId: string;
+  removedStateIds: string[];
+};
+```
+
+`pruneChatPersistentStates()` 是消息/Swipe 删除后的 Host cleanup 入口，不是全量 GC。调用方必须显式传入从被删除消息或被删除 swipe metadata 中收集到的 `candidateStateIds`；缺失、非数组或空字符串 state id 必须 reject。
+
+后端会重新读取当前完整 chat payload，收集仍被当前聊天消息或 swipe 引用的 retained state ids，只删除 `candidateStateIds - retainedStateIds`。未被本次删除动作明确列为 candidate 的孤儿 state 必须保留，避免第三方总结、隐藏楼层、windowed save 或 metadata 损坏把整个 `persistent-states` 目录误清空。
+
+当前只支持 character chat；group chat persistent state prune 会 fail-fast。删除整个 chat / group chat 时，生命周期服务仍删除对应的完整 Agent chat workspace，这不是本方法的职责。
+
+## 12. profiles / promptAssembly / tools
 
 `profiles.*` 是当前 Agent Profile 管理入口。`profiles.list()` 的 summary 包含 `directRunnable`，供前端区分可直接启动的 root-run Profile 与只能作为 SubAgent / handoff target 的 Profile。列表扫描会返回可加载 Profile，同时把单个本地 Profile JSON 文件的内容损坏放入 `issues`，避免一个坏文件阻塞整个面板；`invalidJson` 建议用户确认后删除，`invalidFileIdentity` 可通过 `profiles.repairFile({ profileId, action: "normalizeIdentity" })` 尝试规范化文件 header / identity 键（`schemaVersion`、`kind`、`id`），其它 Profile 内容保持原样。若修复后整份 JSON 仍不能按 Agent Profile 契约读取，则拒绝写回并报告错误。`invalidProfile` 表示主体结构损坏，需要手动修复，不会自动替换为默认 Profile。目录读取失败、非法文件名等仓储契约错误仍然 fail-fast。Profile JSON 中的 `preset.mode = "ref"` 与 `model.mode = "connectionRef"` 会影响 prompt assembly 和最终模型连接；`model.mode = "requiresConfiguration"` 表示 Profile 需要本机重新选择模型，可保存但不可运行；`run.directRunnable = false` 表示该 Profile 不能直接启动，只能通过已实现的非直接入口运行（当前为 return-mode SubAgent）。前端“可作为子 Agent”会写入该非直接运行语义。保存时无效 schema 必须 fail-fast。
 

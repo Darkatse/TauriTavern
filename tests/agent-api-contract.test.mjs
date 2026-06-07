@@ -241,6 +241,52 @@ test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid i
     );
 });
 
+test('api.agent.pruneChatPersistentStates forwards explicit candidate state ids', async () => {
+    const { calls, agent } = await installHarness();
+    const chatRef = { kind: 'character', characterId: 'char-1', fileName: 'Char.json' };
+
+    await agent.pruneChatPersistentStates({
+        chatRef,
+        stableChatId: ' chat_1 ',
+        candidateStateIds: [' state_drop ', 'state_drop', 'state_keep'],
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'prune_agent_chat_persistent_states',
+            args: {
+                dto: {
+                    chatRef,
+                    stableChatId: 'chat_1',
+                    candidateStateIds: ['state_drop', 'state_keep'],
+                },
+            },
+        },
+    ]);
+});
+
+test('api.agent.pruneChatPersistentStates fails fast on invalid candidate state ids', async () => {
+    const { calls, agent } = await installHarness();
+    const input = {
+        chatRef: { kind: 'character', characterId: 'char-1', fileName: 'Char.json' },
+        stableChatId: 'chat_1',
+    };
+
+    await assert.rejects(
+        () => agent.pruneChatPersistentStates(input),
+        /candidateStateIds must be an array/,
+    );
+    await assert.rejects(
+        () => agent.pruneChatPersistentStates({ ...input, candidateStateIds: 'state_drop' }),
+        /candidateStateIds must be an array/,
+    );
+    await assert.rejects(
+        () => agent.pruneChatPersistentStates({ ...input, candidateStateIds: ['state_drop', ''] }),
+        /candidateStateIds contains an empty state id/,
+    );
+    assert.deepEqual(calls, []);
+});
+
 test('agent chat commit bridge detaches on partial success terminal event', async () => {
     const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-chat-commit-bridge.js'));
     moduleUrl.search = `?case=partial-success-detach-${Date.now()}`;

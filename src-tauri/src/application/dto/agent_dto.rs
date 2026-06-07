@@ -419,6 +419,7 @@ pub struct AgentPruneChatPersistentStatesDto {
     pub chat_ref: AgentChatRef,
     #[serde(default, alias = "stableId")]
     pub stable_chat_id: String,
+    pub candidate_state_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

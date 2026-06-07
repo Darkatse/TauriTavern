@@ -9,7 +9,8 @@ use super::fs_tree::should_skip_platform_metadata_file;
 use super::paths::validate_segment;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::agent_workspace_lifecycle_repository::{
-    AgentChatWorkspaceDeletion, AgentPersistentStatePrune, AgentWorkspaceLifecycleRepository,
+    AgentChatWorkspaceDeletion, AgentPersistentStatePrune, AgentPersistentStatePruneRequest,
+    AgentWorkspaceLifecycleRepository,
 };
 
 #[async_trait]
@@ -78,13 +79,24 @@ impl AgentWorkspaceLifecycleRepository for FileAgentRepository {
     async fn prune_persistent_states(
         &self,
         workspace_id: &str,
-        retained_state_ids: &[String],
+        request: AgentPersistentStatePruneRequest,
     ) -> Result<AgentPersistentStatePrune, DomainError> {
         validate_segment(workspace_id, "workspace_id")?;
         let mut retained = BTreeSet::new();
-        for state_id in retained_state_ids {
+        for state_id in &request.retained_state_ids {
             validate_segment(state_id, "persist_state_id")?;
             retained.insert(state_id.as_str());
+        }
+        let mut candidates = BTreeSet::new();
+        for state_id in &request.candidate_state_ids {
+            validate_segment(state_id, "persist_state_id")?;
+            candidates.insert(state_id.as_str());
+        }
+        if candidates.is_empty() {
+            return Ok(AgentPersistentStatePrune {
+                workspace_id: workspace_id.to_string(),
+                removed_state_ids: Vec::new(),
+            });
         }
 
         let states_dir = self.chat_dir(workspace_id)?.join("persistent-states");
@@ -111,56 +123,39 @@ impl AgentWorkspaceLifecycleRepository for FileAgentRepository {
             )));
         }
 
-        let mut entries = fs::read_dir(&states_dir).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read persistent states directory {}: {}",
-                states_dir.display(),
-                error
-            ))
-        })?;
         let mut removed_state_ids = Vec::new();
-        while let Some(entry) = entries.next_entry().await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read persistent states directory entry {}: {}",
-                states_dir.display(),
-                error
-            ))
-        })? {
-            let metadata = fs::symlink_metadata(entry.path()).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to inspect persistent state {}: {}",
-                    entry.path().display(),
-                    error
-                ))
-            })?;
-            if should_skip_platform_metadata_file(&entry.path(), &metadata)? {
+        for state_id in candidates {
+            if retained.contains(state_id) {
                 continue;
             }
+            let state_dir = self.persistent_state_dir(workspace_id, state_id)?;
+            let metadata = match fs::symlink_metadata(&state_dir).await {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(DomainError::InternalError(format!(
+                        "Failed to inspect persistent state {}: {}",
+                        state_dir.display(),
+                        error
+                    )));
+                }
+            };
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
                 return Err(DomainError::InvalidData(format!(
                     "Persistent state path is not a directory: {}",
-                    entry.path().display()
+                    state_dir.display()
                 )));
             }
-            let state_id = entry.file_name().into_string().map_err(|_| {
-                DomainError::InvalidData("Persistent state id is not UTF-8".to_string())
-            })?;
-            validate_segment(&state_id, "persist_state_id")?;
 
-            if retained.contains(state_id.as_str()) {
-                continue;
-            }
-
-            fs::remove_dir_all(entry.path()).await.map_err(|error| {
+            fs::remove_dir_all(&state_dir).await.map_err(|error| {
                 DomainError::InternalError(format!(
                     "Failed to delete persistent state {}: {}",
-                    entry.path().display(),
+                    state_dir.display(),
                     error
                 ))
             })?;
-            removed_state_ids.push(state_id);
+            removed_state_ids.push(state_id.to_string());
         }
-        removed_state_ids.sort();
 
         Ok(AgentPersistentStatePrune {
             workspace_id: workspace_id.to_string(),
