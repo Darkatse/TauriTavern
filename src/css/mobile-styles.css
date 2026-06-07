@@ -25,7 +25,6 @@
 
     #send_form.compact #leftSendForm,
     #send_form.compact #rightSendForm {
-        flex-wrap: nowrap;
         width: unset;
     }
 

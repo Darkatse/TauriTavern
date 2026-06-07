@@ -1,5 +1,6 @@
 import { DOMPurify, Bowser } from '../lib.js';
 import { ChatInputFocusIntent, focusChatInput } from './chat-input-focus.js';
+import { installChatInputFullscreenEditor } from './chat-input-fullscreen-editor.js';
 
 import {
     characters,
@@ -909,6 +910,12 @@ export function initRossMods() {
         const needsDebounce = hasContent && (fitsCurrentSize || (isScrollbarShown && isHalfScreenHeight));
         if (needsDebounce) autoFitSendTextAreaDebounced();
         else autoFitSendTextArea();
+    });
+
+    installChatInputFullscreenEditor({
+        sendTextArea,
+        sendMessage: sendTextareaMessage,
+        isMobile,
     });
 
     restoreUserInput();
