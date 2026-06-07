@@ -269,6 +269,44 @@ test('Embedded Agent Skill import isolates per-item preview and install failures
 test('Agent run timeline projects SubAgent tasks without flattening child events into root', async () => {
     const projector = await importFresh('src/scripts/extensions/agent-system/src/run-invocation-projector.js');
     const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const timelineProjection = {
+        foregroundInvocationIds: ['inv_root'],
+        invocations: [
+            {
+                invocationId: 'inv_root',
+                profileId: 'writer',
+                kind: 'root',
+                status: 'running',
+                exitPolicy: 'run_finish_allowed',
+                createdAt: '2026-06-07T00:00:00.000Z',
+                updatedAt: '2026-06-07T00:00:00.000Z',
+            },
+            {
+                invocationId: 'inv-child',
+                parentInvocationId: 'inv_root',
+                profileId: 'scene-critic',
+                kind: 'subagent',
+                status: 'completed',
+                exitPolicy: 'task_return_required',
+                createdAt: '2026-06-07T00:00:01.000Z',
+                updatedAt: '2026-06-07T00:00:05.000Z',
+            },
+        ],
+        delegationEdges: [
+            {
+                taskId: 'task-1',
+                sourceInvocationId: 'inv_root',
+                targetInvocationId: 'inv-child',
+                targetProfileId: 'scene-critic',
+                workspaceKey: 'scene-critic',
+                continuation: projector.RETURN_TO_PARENT_CONTINUATION,
+                status: 'completed',
+                resultRef: 'agent-results/inv-child.json',
+                createdAt: '2026-06-07T00:00:01.000Z',
+                updatedAt: '2026-06-07T00:00:05.000Z',
+            },
+        ],
+    };
     const events = [
         {
             seq: 1,
@@ -288,6 +326,10 @@ test('Agent run timeline projects SubAgent tasks without flattening child events
                 childInvocationId: 'inv-child',
                 targetProfileId: 'scene-critic',
                 workspaceKey: 'scene-critic',
+                eventScope: {
+                    invocationId: 'inv_root',
+                    relatedInvocationIds: ['inv-child'],
+                },
             },
         },
         {
@@ -297,9 +339,14 @@ test('Agent run timeline projects SubAgent tasks without flattening child events
             type: 'agent_task_started',
             payload: {
                 taskId: 'task-1',
+                parentInvocationId: 'inv_root',
                 childInvocationId: 'inv-child',
                 targetProfileId: 'scene-critic',
                 status: 'running',
+                eventScope: {
+                    invocationId: 'inv_root',
+                    relatedInvocationIds: ['inv-child'],
+                },
             },
         },
         {
@@ -330,24 +377,39 @@ test('Agent run timeline projects SubAgent tasks without flattening child events
             type: 'task_return_completed',
             payload: {
                 taskId: 'task-1',
+                parentInvocationId: 'inv_root',
                 childInvocationId: 'inv-child',
                 status: 'completed',
                 resultRef: 'agent-results/inv-child.json',
                 summaryRef: 'summaries/scene-critic-result.md',
+                eventScope: {
+                    invocationId: 'inv-child',
+                    relatedInvocationIds: ['inv_root'],
+                },
             },
         },
     ];
 
-    const projection = projector.projectAgentInvocations(events);
+    const projection = projector.projectAgentInvocations(timelineProjection);
     assert.equal(projection.subAgentTasks.length, 1);
     assert.equal(projection.subAgentTasks[0].displayName, 'scene-critic');
     assert.equal(projection.subAgentTasks[0].status, 'completed');
 
-    const rootItems = presenter.timelineItemsFromEvents(events, { invocationId: projector.ROOT_INVOCATION_ID });
+    const rootItems = presenter.timelineItemsFromEvents(events, {
+        foregroundInvocationIds: projection.foregroundInvocationIds,
+        delegationEdges: timelineProjection.delegationEdges,
+    });
     assert.deepEqual(rootItems.map(item => item.type), ['agent_delegate_started']);
 
+    const childEvents = [
+        events[1],
+        events[2],
+        events[3],
+        events[4],
+        events[5],
+    ];
     const childItems = presenter.timelineItemsFromEvents(
-        projector.eventsForInvocation(events, 'inv-child'),
+        childEvents,
         { invocationId: 'inv-child' },
     );
     assert.deepEqual(childItems.map(item => item.type), [
@@ -360,6 +422,43 @@ test('Agent run timeline projects SubAgent tasks without flattening child events
 test('Agent run timeline projects Handoff as foreground chain', async () => {
     const projector = await importFresh('src/scripts/extensions/agent-system/src/run-invocation-projector.js');
     const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const timelineProjection = {
+        foregroundInvocationIds: ['inv_root', 'inv-editor'],
+        invocations: [
+            {
+                invocationId: 'inv_root',
+                profileId: 'writer',
+                kind: 'root',
+                status: 'transferred',
+                exitPolicy: 'run_finish_allowed',
+                createdAt: '2026-06-07T00:00:00.000Z',
+                updatedAt: '2026-06-07T00:00:02.000Z',
+            },
+            {
+                invocationId: 'inv-editor',
+                parentInvocationId: 'inv_root',
+                profileId: 'line-editor',
+                kind: 'handoff',
+                status: 'running',
+                exitPolicy: 'run_finish_allowed',
+                createdAt: '2026-06-07T00:00:02.000Z',
+                updatedAt: '2026-06-07T00:00:05.000Z',
+            },
+        ],
+        delegationEdges: [
+            {
+                taskId: 'handoff-1',
+                sourceInvocationId: 'inv_root',
+                targetInvocationId: 'inv-editor',
+                targetProfileId: 'line-editor',
+                workspaceKey: 'line-editor',
+                continuation: projector.TRANSFER_CONTROL_CONTINUATION,
+                status: 'completed',
+                createdAt: '2026-06-07T00:00:02.000Z',
+                updatedAt: '2026-06-07T00:00:02.000Z',
+            },
+        ],
+    };
     const events = [
         {
             seq: 1,
@@ -379,6 +478,10 @@ test('Agent run timeline projects Handoff as foreground chain', async () => {
                 newInvocationId: 'inv-editor',
                 targetProfileId: 'line-editor',
                 workspaceKey: 'line-editor',
+                eventScope: {
+                    invocationId: 'inv_root',
+                    relatedInvocationIds: ['inv-editor'],
+                },
             },
         },
         {
@@ -428,7 +531,7 @@ test('Agent run timeline projects Handoff as foreground chain', async () => {
         },
     ];
 
-    const projection = projector.projectAgentInvocations(events);
+    const projection = projector.projectAgentInvocations(timelineProjection);
     assert.deepEqual(projection.foregroundInvocationIds, ['inv_root', 'inv-editor']);
     assert.equal(projection.handoffTasks.length, 1);
     assert.equal(projection.handoffTasks[0].displayName, 'line-editor');
@@ -436,6 +539,7 @@ test('Agent run timeline projects Handoff as foreground chain', async () => {
 
     const mainItems = presenter.timelineItemsFromEvents(events, {
         foregroundInvocationIds: projection.foregroundInvocationIds,
+        delegationEdges: timelineProjection.delegationEdges,
     });
     assert.deepEqual(mainItems.map(item => item.type), [
         'agent_handoff_accepted',
@@ -462,9 +566,34 @@ test('Agent run timeline projects Handoff as foreground chain', async () => {
     ]);
 });
 
-test('Agent run timeline falls back to Handoff invocation start when accepted marker is outside the loaded page', async () => {
+test('Agent run timeline shows Handoff invocation start when only foreground projection is available', async () => {
     const projector = await importFresh('src/scripts/extensions/agent-system/src/run-invocation-projector.js');
     const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const timelineProjection = {
+        foregroundInvocationIds: ['inv_root', 'inv-editor'],
+        invocations: [
+            {
+                invocationId: 'inv_root',
+                profileId: 'writer',
+                kind: 'root',
+                status: 'transferred',
+                exitPolicy: 'run_finish_allowed',
+                createdAt: '2026-06-07T00:00:00.000Z',
+                updatedAt: '2026-06-07T00:00:09.000Z',
+            },
+            {
+                invocationId: 'inv-editor',
+                parentInvocationId: 'inv_root',
+                profileId: 'line-editor',
+                kind: 'handoff',
+                status: 'running',
+                exitPolicy: 'run_finish_allowed',
+                createdAt: '2026-06-07T00:00:10.000Z',
+                updatedAt: '2026-06-07T00:00:11.000Z',
+            },
+        ],
+        delegationEdges: [],
+    };
     const events = [
         {
             seq: 10,
@@ -488,7 +617,7 @@ test('Agent run timeline falls back to Handoff invocation start when accepted ma
         },
     ];
 
-    const projection = projector.projectAgentInvocations(events);
+    const projection = projector.projectAgentInvocations(timelineProjection);
     assert.deepEqual(projection.foregroundInvocationIds, ['inv_root', 'inv-editor']);
     const mainItems = presenter.timelineItemsFromEvents(events, {
         foregroundInvocationIds: projection.foregroundInvocationIds,
@@ -531,13 +660,14 @@ test('Agent run timeline uses projection envelope when Handoff markers are outsi
 
     const mainItems = presenter.timelineItemsFromEvents(events, {
         foregroundInvocationIds: ['inv_root', 'inv-editor'],
-        handoffEdges: [
+        delegationEdges: [
             {
                 taskId: 'handoff-1',
                 sourceInvocationId: 'inv_root',
-                newInvocationId: 'inv-editor',
+                targetInvocationId: 'inv-editor',
                 targetProfileId: 'line-editor',
                 workspaceKey: 'line-editor',
+                continuation: 'transfer_control',
                 status: 'running',
             },
         ],
