@@ -93,6 +93,7 @@ test('Agent System settings use the extension store and publish changes', async 
     const loaded = await settings.loadAgentSystemSettings();
     assert.deepEqual(loaded, {
         agentModeEnabled: false,
+        chatInputToggleHidden: false,
         activeProfileId: 'default-writer',
         editingProfileId: 'default-writer',
         activeTab: 'profiles',
@@ -106,6 +107,7 @@ test('Agent System settings use the extension store and publish changes', async 
     };
     assert.deepEqual(await settings.loadAgentSystemSettings(), {
         agentModeEnabled: true,
+        chatInputToggleHidden: false,
         activeProfileId: 'legacy-writer',
         editingProfileId: 'legacy-writer',
         activeTab: 'profiles',
@@ -118,6 +120,7 @@ test('Agent System settings use the extension store and publish changes', async 
     });
     const saved = await settings.saveAgentSystemSettings({
         agentModeEnabled: true,
+        chatInputToggleHidden: true,
         activeProfileId: 'writer',
         editingProfileId: 'editor',
     });
@@ -125,12 +128,42 @@ test('Agent System settings use the extension store and publish changes', async 
 
     assert.deepEqual(saved, {
         agentModeEnabled: true,
+        chatInputToggleHidden: true,
         activeProfileId: 'writer',
         editingProfileId: 'editor',
         activeTab: 'profiles',
         runTimelineHeightPx: null,
     });
     assert.deepEqual(emitted, saved);
+});
+
+test('Agent System entry keeps quick toggles before profile and panel entry', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/index.js',
+    ), 'utf8');
+
+    const agentModeIndex = source.indexOf('@click="toggleAgentMode"');
+    const inputToggleIndex = source.indexOf('@click="toggleChatInputToggleVisibility"');
+    const activeProfileIndex = source.indexOf('ttas-entry-active-profile');
+    const openPanelIndex = source.indexOf('@click="openPanel"');
+
+    assert.notEqual(agentModeIndex, -1);
+    assert.notEqual(inputToggleIndex, -1);
+    assert.notEqual(activeProfileIndex, -1);
+    assert.notEqual(openPanelIndex, -1);
+    assert.ok(agentModeIndex < inputToggleIndex);
+    assert.ok(inputToggleIndex < activeProfileIndex);
+    assert.ok(activeProfileIndex < openPanelIndex);
+});
+
+test('Agent input toggle visibility follows the drawer preference', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/chat-input-toggle.js',
+    ), 'utf8');
+
+    assert.match(source, /Boolean\(settings\?\.chatInputToggleHidden\)/);
 });
 
 test('Agent run timeline resize geometry is deterministic', async () => {

@@ -38,6 +38,18 @@
     align-items: end;
 }
 
+#agent_system_settings .ttas-entry > .menu_button {
+    width: 100%;
+    min-height: 34px;
+    justify-content: center;
+}
+
+#agent_system_settings .ttas-entry > .menu_button > span {
+    min-width: 0;
+    line-height: 1.15;
+    white-space: normal;
+}
+
 #agent_system_settings .ttas-entry-active-profile {
     margin: 0;
 }
@@ -45,6 +57,11 @@
 #agent_system_settings .ttas-entry-active-profile > span {
     font-size: 0.76rem;
     opacity: 0.72;
+}
+
+#agent_system_settings .ttas-entry-active-profile select {
+    width: 100%;
+    min-width: 0;
 }
 
 #agent_system_settings .menu_button,

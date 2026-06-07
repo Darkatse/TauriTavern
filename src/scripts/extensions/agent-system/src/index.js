@@ -21,6 +21,7 @@ function createAgentSystemEntryApp() {
                 profiles: [],
                 settings: {
                     agentModeEnabled: false,
+                    chatInputToggleHidden: false,
                     activeProfileId: DEFAULT_AGENT_PROFILE_ID,
                 },
             };
@@ -96,6 +97,16 @@ function createAgentSystemEntryApp() {
                     throw error;
                 }
             },
+            async toggleChatInputToggleVisibility() {
+                try {
+                    this.settings = await patchSettings(this.settings, {
+                        chatInputToggleHidden: !this.settings.chatInputToggleHidden,
+                    });
+                } catch (error) {
+                    this.reportError(error);
+                    throw error;
+                }
+            },
             async setActiveProfile(profileId) {
                 const id = String(profileId || '').trim();
                 const profile = this.profiles.find((item) => item.id === id);
@@ -139,6 +150,10 @@ function createAgentSystemEntryApp() {
                             <button type="button" class="menu_button menu_button_icon" :class="{ active: settings.agentModeEnabled }" :disabled="loading" @click="toggleAgentMode">
                                 <i class="fa-solid" :class="settings.agentModeEnabled ? 'fa-toggle-on' : 'fa-toggle-off'"></i>
                                 <span>{{ settings.agentModeEnabled ? tr('agentModeOn') : tr('agentModeOff') }}</span>
+                            </button>
+                            <button type="button" class="menu_button menu_button_icon" :class="{ active: settings.chatInputToggleHidden }" :aria-pressed="String(settings.chatInputToggleHidden)" :disabled="loading" @click="toggleChatInputToggleVisibility">
+                                <i class="fa-solid" :class="settings.chatInputToggleHidden ? 'fa-eye' : 'fa-eye-slash'"></i>
+                                <span>{{ settings.chatInputToggleHidden ? tr('showChatInputToggle') : tr('hideChatInputToggle') }}</span>
                             </button>
                             <label class="ttas-field ttas-entry-active-profile">
                                 <span>{{ tr('activeProfile') }}</span>
