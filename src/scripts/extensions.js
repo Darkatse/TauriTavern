@@ -616,6 +616,19 @@ export function findExtension(name) {
     return { name: internalExtensionName, enabled: isEnabled };
 }
 
+const CODE_RENDER_DELEGATE_EXTENSION_NAMES = Object.freeze([
+    'JS-Slash-Runner',
+    'LittleWhiteBox',
+]);
+
+/**
+ * Returns true when a known third-party message code renderer should own HTML/script code blocks.
+ * @returns {boolean}
+ */
+export function isCodeRenderDelegatedToThirdPartyRenderer() {
+    return CODE_RENDER_DELEGATE_EXTENSION_NAMES.some(name => findExtension(name)?.enabled === true);
+}
+
 /**
  * Returns a deep clone of the manifest for the given extension name.
  * Accepts either the short name (e.g. `SillyTavern-MyExtension`) or the full internal key
