@@ -56,7 +56,10 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
     });
 
     const characterService = createCharacterService({ safeInvoke: invokeService.safeInvoke });
-    const uploadService = createUploadService();
+    const uploadService = createUploadService({
+        safeInvoke: invokeService.safeInvoke,
+        invoke,
+    });
     const readableFileStreamService = createReadableFileStreamService({ invoke });
     const characterCreateService = createCharacterCreateService({
         safeInvoke: invokeService.safeInvoke,

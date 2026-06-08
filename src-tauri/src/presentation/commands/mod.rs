@@ -42,6 +42,7 @@ pub mod translate_commands;
 pub mod tt_sync_commands;
 pub mod tts_commands;
 pub mod update_commands;
+pub mod upload_staging_commands;
 pub mod user_commands;
 pub mod user_directory_commands;
 pub mod world_info_commands;

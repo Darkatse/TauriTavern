@@ -547,7 +547,7 @@ test('character form service maps edit-avatar to update_avatar without full char
         },
         materializeUploadFile: async (file, options) => {
             assert.ok(file instanceof Blob);
-            assert.deepEqual(options, { preferredName: 'avatar.png' });
+            assert.deepEqual(options, { kind: 'avatar', preferredName: 'avatar.png' });
             return {
                 filePath: '/tmp/avatar.png',
                 cleanup: async () => cleanups.push('avatar.png'),
@@ -728,7 +728,7 @@ test('character create service maps multipart creates with avatar to create_char
         },
         materializeUploadFile: async (file, options) => {
             assert.ok(file instanceof Blob);
-            assert.deepEqual(options, { preferredName: 'assistant.png' });
+            assert.deepEqual(options, { kind: 'avatar', preferredName: 'assistant.png' });
             return {
                 filePath: '/tmp/assistant.png',
                 cleanup: async () => cleanups.push('assistant.png'),
@@ -850,7 +850,7 @@ test('character create service uses default avatar when upload materialization f
             },
             materializeUploadFile: async (file, options) => {
                 assert.ok(file instanceof Blob);
-                assert.deepEqual(options, { preferredName: 'assistant.png' });
+                assert.deepEqual(options, { kind: 'avatar', preferredName: 'assistant.png' });
                 return {
                     filePath: '',
                     error: 'simulated temp write failure',

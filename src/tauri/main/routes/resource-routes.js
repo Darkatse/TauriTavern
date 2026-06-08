@@ -372,6 +372,7 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
         }
 
         const fileInfo = await context.materializeUploadFile(file, {
+            kind: 'background',
             preferredName: rawFilename,
         });
         if (!fileInfo?.filePath) {

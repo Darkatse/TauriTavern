@@ -215,6 +215,11 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::tt_sync_commands::tt_sync_remove_server,
         super::tt_sync_commands::tt_sync_pull,
         super::tt_sync_commands::tt_sync_push,
+        // Upload staging commands
+        super::upload_staging_commands::stage_upload_begin,
+        super::upload_staging_commands::stage_upload_chunk,
+        super::upload_staging_commands::stage_upload_finish,
+        super::upload_staging_commands::stage_upload_discard,
         // File commands
         super::file_commands::upload_user_file,
         super::file_commands::read_user_file_asset,

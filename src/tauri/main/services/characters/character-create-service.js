@@ -10,7 +10,7 @@ export const CHARACTER_CREATE_WARNINGS = Object.freeze({
 /**
  * @typedef {import('../../context/types.js').MaterializedFileInfo} MaterializedFileInfo
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any) => Promise<any>} SafeInvokeFn
- * @typedef {(file: Blob, options?: { preferredName?: string; preferredExtension?: string }) => Promise<MaterializedFileInfo | null>} MaterializeUploadFileFn
+ * @typedef {(file: Blob, options?: { preferredName?: string; preferredExtension?: string; kind?: string }) => Promise<MaterializedFileInfo | null>} MaterializeUploadFileFn
  * @typedef {{ code: string; message: string }} CharacterCreateWarning
  * @typedef {{ character: any; warnings: CharacterCreateWarning[] }} CharacterCreateOutcome
  */
@@ -45,6 +45,7 @@ export function createCharacterCreateService({ safeInvoke, materializeUploadFile
         if (file instanceof Blob && file.size > 0) {
             const preferredName = file instanceof File ? file.name : '';
             const fileInfo = await materializeUploadFile(file, {
+                kind: 'avatar',
                 preferredName,
             });
             if (!fileInfo?.filePath) {

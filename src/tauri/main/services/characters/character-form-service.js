@@ -14,7 +14,7 @@ import { parseCropParam } from './character-request-utils.js';
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand) => void} InvalidateInvokeAllFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveCharacterIdFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveExistingCharacterIdFn
- * @typedef {(file: Blob, options?: { preferredName?: string; preferredExtension?: string }) => Promise<MaterializedFileInfo | null>} MaterializeUploadFileFn
+ * @typedef {(file: Blob, options?: { preferredName?: string; preferredExtension?: string; kind?: string }) => Promise<MaterializedFileInfo | null>} MaterializeUploadFileFn
  */
 
 /**
@@ -147,6 +147,7 @@ export function createCharacterFormService({
         if (file instanceof Blob && file.size > 0) {
             const preferredName = file instanceof File ? file.name : '';
             const fileInfo = await materializeUploadFile(file, {
+                kind: 'avatar',
                 preferredName,
             });
 
@@ -199,6 +200,7 @@ export function createCharacterFormService({
         const crop = parseCropParam(requestUrl);
         const preferredName = file instanceof File ? file.name : '';
         const fileInfo = await materializeUploadFile(file, {
+            kind: 'avatar',
             preferredName,
         });
         if (!fileInfo?.filePath) {
@@ -233,6 +235,7 @@ export function createCharacterFormService({
 
         const preferredName = file instanceof File ? file.name : '';
         const fileInfo = await materializeUploadFile(file, {
+            kind: 'user-avatar',
             preferredName,
         });
         if (!fileInfo?.filePath) {

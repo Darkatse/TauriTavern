@@ -95,6 +95,7 @@ test('/api/characters/import returns canonical character payload and Agent post-
             type: 'materialize',
             fileName: 'Alice.png',
             options: {
+                kind: 'character-import',
                 preferredName: 'Alice.png',
                 preferredExtension: 'png',
             },

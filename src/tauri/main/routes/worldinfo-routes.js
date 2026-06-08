@@ -110,7 +110,10 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
             return jsonResponse(result || {});
         }
 
-        const fileInfo = await context.materializeUploadFile(file);
+        const fileInfo = await context.materializeUploadFile(file, {
+            kind: 'worldinfo-import',
+            preferredName: originalFilename,
+        });
         if (!fileInfo?.filePath) {
             const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
             return jsonResponse({ error: `Unable to access uploaded world info file path${reason}` }, 400);

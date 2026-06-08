@@ -7,7 +7,7 @@ export {};
  */
 
 /**
- * @typedef {(command: TauriInvokeCommand, args?: any) => Promise<any>} TauriInvokeFn
+ * @typedef {(command: TauriInvokeCommand, args?: any, options?: { headers?: HeadersInit }) => Promise<any>} TauriInvokeFn
  */
 
 /**
@@ -97,7 +97,7 @@ export {};
  *   editCharacterFromForm: (formData: FormData, requestUrl: URL) => Promise<void>;
  *   editCharacterAvatarFromForm: (formData: FormData, requestUrl: URL) => Promise<void>;
  *   uploadAvatarFromForm: (formData: FormData, requestUrl: URL) => Promise<any>;
- *   materializeUploadFile: (file: Blob, options?: { preferredName?: string; preferredExtension?: string }) => Promise<MaterializedFileInfo | null>;
+ *   materializeUploadFile: (file: Blob, options?: { preferredName?: string; preferredExtension?: string; kind?: string }) => Promise<MaterializedFileInfo | null>;
  *   materializeAndroidContentUriUpload: (contentUri: string) => Promise<MaterializedFileInfo>;
  *   materializeAndroidSkillImportArchive: (contentUri: string) => Promise<MaterializedFileInfo>;
  *   pickAndroidImportArchive: () => Promise<string>;

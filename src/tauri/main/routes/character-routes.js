@@ -329,6 +329,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         const preferredName = file instanceof File && file.name ? file.name : fallbackName;
 
         const fileInfo = await context.materializeUploadFile(file, {
+            kind: 'character-import',
             preferredName,
             preferredExtension: fileType,
         });

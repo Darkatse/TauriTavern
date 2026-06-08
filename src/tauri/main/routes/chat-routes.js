@@ -319,6 +319,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
 
         const preferredName = file instanceof File && file.name ? file.name : `import.${fileType}`;
         const fileInfo = await context.materializeUploadFile(file, {
+            kind: 'chat-import',
             preferredName,
             preferredExtension: fileType,
         });
@@ -475,6 +476,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
 
         const preferredName = file instanceof File && file.name ? file.name : 'group-chat.jsonl';
         const fileInfo = await context.materializeUploadFile(file, {
+            kind: 'chat-import',
             preferredName,
             preferredExtension: 'jsonl',
         });
