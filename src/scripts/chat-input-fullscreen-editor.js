@@ -1,7 +1,8 @@
-const EXPAND_BUTTON_ID = 'send_textarea_maximize';
+const EXPAND_BUTTON_ID = 'send_textarea_expand';
 const EDITOR_DIALOG_ID = 'tt-chat-input-editor';
 const EDITOR_TITLE_ID = 'tt-chat-input-editor-title';
-const HEIGHT_EPSILON_PX = 1;
+const EXPAND_VISIBLE_ROWS = 3;
+const ROW_EPSILON_PX = 1;
 
 function requireElement(id, type) {
     const element = document.getElementById(id);
@@ -33,6 +34,46 @@ function createIconButton({ className, icon, title }) {
     button.appendChild(iconElement);
 
     return button;
+}
+
+function createExpandButton(title) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tt-chat-input-expand-corner interactable';
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    button.dataset.i18n = `[title]${title};[aria-label]${title}`;
+
+    const mark = document.createElement('span');
+    mark.className = 'tt-chat-input-expand-corner__mark';
+    mark.setAttribute('aria-hidden', 'true');
+    button.appendChild(mark);
+
+    return button;
+}
+
+function createInputShell(sourceTextarea) {
+    const nonQRFormItems = requireElement('nonQRFormItems', HTMLElement);
+    if (sourceTextarea.parentElement !== nonQRFormItems) {
+        throw new Error('Expected #send_textarea to be a direct child of #nonQRFormItems');
+    }
+
+    const shell = document.createElement('div');
+    shell.className = 'tt-chat-input-shell';
+    sourceTextarea.before(shell);
+    shell.appendChild(sourceTextarea);
+
+    return shell;
+}
+
+function getTextareaContentMetrics(textarea) {
+    const style = getComputedStyle(textarea);
+    const lineHeight = parsePixelValue(style.lineHeight, '#send_textarea line-height');
+    const paddingTop = parsePixelValue(style.paddingTop, '#send_textarea padding-top');
+    const paddingBottom = parsePixelValue(style.paddingBottom, '#send_textarea padding-bottom');
+    const contentHeight = Math.max(textarea.scrollHeight - paddingTop - paddingBottom, 0);
+
+    return { contentHeight, lineHeight };
 }
 
 function createEditorDialog(sourceTextarea) {
@@ -75,7 +116,7 @@ function createEditorDialog(sourceTextarea) {
     header.append(title, actions);
 
     const textarea = document.createElement('textarea');
-    textarea.className = 'tt-chat-input-editor__textarea text_pole textarea_compact mdHotkeys';
+    textarea.className = 'tt-chat-input-editor__textarea text_pole textarea_compact mdHotkeys height100p wide100p maximized_textarea';
     textarea.autocomplete = 'off';
     textarea.placeholder = sourceTextarea.placeholder;
     textarea.spellcheck = sourceTextarea.spellcheck;
@@ -111,21 +152,24 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
         throw new Error('isMobile must be a function');
     }
 
-    const leftSendForm = requireElement('leftSendForm', HTMLElement);
-    const expandButton = createIconButton({
-        className: 'tt-chat-input-expand-button interactable',
-        icon: 'fa-maximize',
-        title: 'Expand the editor',
-    });
+    const inputShell = createInputShell(sendTextArea);
+    const expandButton = createExpandButton('Expand the editor');
     expandButton.id = EXPAND_BUTTON_ID;
     expandButton.hidden = true;
-    leftSendForm.appendChild(expandButton);
+    expandButton.setAttribute('aria-controls', EDITOR_DIALOG_ID);
+    expandButton.setAttribute('aria-haspopup', 'dialog');
+    inputShell.appendChild(expandButton);
 
     const { dialog, textarea, collapseButton, sendButton } = createEditorDialog(sendTextArea);
 
     let pendingButtonFrame = 0;
     let pendingSourceFocus = false;
     let closingReason = '';
+
+    const setExpandButtonVisible = (visible) => {
+        expandButton.hidden = !visible;
+        inputShell.classList.toggle('tt-chat-input-shell--has-expand', visible);
+    };
 
     const queueButtonVisibilityUpdate = () => {
         if (pendingButtonFrame) {
@@ -134,8 +178,8 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
 
         pendingButtonFrame = requestAnimationFrame(() => {
             pendingButtonFrame = 0;
-            const minHeight = parsePixelValue(getComputedStyle(sendTextArea).minHeight, '#send_textarea min-height');
-            expandButton.hidden = !sendTextArea.value || sendTextArea.scrollHeight <= minHeight + HEIGHT_EPSILON_PX;
+            const { contentHeight, lineHeight } = getTextareaContentMetrics(sendTextArea);
+            setExpandButtonVisible(sendTextArea.value !== '' && contentHeight >= lineHeight * EXPAND_VISIBLE_ROWS - ROW_EPSILON_PX);
         });
     };
 
@@ -229,6 +273,7 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
     });
 
     sendTextArea.addEventListener('input', queueButtonVisibilityUpdate);
+    window.addEventListener('resize', queueButtonVisibilityUpdate);
     queueButtonVisibilityUpdate();
 
     return {
