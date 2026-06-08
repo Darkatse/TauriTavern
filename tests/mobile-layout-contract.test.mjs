@@ -665,7 +665,6 @@ test('overlay classifier revokes and restores host-admitted surfaces on visibili
     });
     dom.body.appendChild(surface);
 
-    let display = 'block';
     dom.setComputedStyle(surface, {
         position: 'fixed',
         top: '44px',
@@ -676,7 +675,7 @@ test('overlay classifier revokes and restores host-admitted surfaces on visibili
         cursor: 'auto',
         touchAction: 'auto',
         get display() {
-            return display;
+            return surface.style.getPropertyValue('display') || 'block';
         },
     });
 
@@ -690,13 +689,13 @@ test('overlay classifier revokes and restores host-admitted surfaces on visibili
     assert.equal(surface.getAttribute('data-tt-mobile-surface'), 'fullscreen-window');
     assert.equal(surface.getAttribute('data-tt-mobile-surface-admitted'), '1');
 
-    display = 'none';
+    surface.style.setProperty('display', 'none');
     dom.emitAttributeMutation(surface, 'style');
     assert.equal(surface.getAttribute('data-tt-mobile-surface'), null);
     assert.equal(surface.getAttribute('data-tt-mobile-surface-admitted'), null);
     assert.equal(surface.style.getPropertyValue('--tt-original-top'), '');
 
-    display = 'block';
+    surface.style.setProperty('display', 'block');
     dom.emitAttributeMutation(surface, 'style');
     assert.equal(surface.getAttribute('data-tt-mobile-surface'), 'fullscreen-window');
     assert.equal(surface.getAttribute('data-tt-mobile-surface-admitted'), '1');
@@ -1159,7 +1158,6 @@ test('overlay classifier coalesces non-free surface style revalidation into anim
     });
     dom.body.appendChild(surface);
 
-    let display = 'block';
     dom.setComputedStyle(surface, {
         position: 'fixed',
         top: '44px',
@@ -1170,7 +1168,7 @@ test('overlay classifier coalesces non-free surface style revalidation into anim
         cursor: 'auto',
         touchAction: 'auto',
         get display() {
-            return display;
+            return surface.style.getPropertyValue('display') || 'block';
         },
     });
 
@@ -1187,7 +1185,7 @@ test('overlay classifier coalesces non-free surface style revalidation into anim
     assert.equal(surface.getAttribute('data-tt-mobile-surface'), 'fullscreen-window');
 
     const computedReadsBeforeMutations = dom.getComputedStyleCount(surface);
-    display = 'none';
+    surface.style.setProperty('display', 'none');
     for (let index = 0; index < 8; index += 1) {
         dom.emitAttributeMutation(surface, 'style');
     }
@@ -1198,6 +1196,88 @@ test('overlay classifier coalesces non-free surface style revalidation into anim
     rafQueue.shift()();
     assert.equal(surface.getAttribute('data-tt-mobile-surface'), null);
     assert.equal(surface.getAttribute('data-tt-mobile-surface-admitted'), null);
+
+    controller.dispose();
+});
+
+test('overlay classifier ignores host IME contract style writes on stable fullscreen surfaces', async () => {
+    const dom = createDomHarness();
+    dom.reset();
+
+    const rafQueue = [];
+    dom.windowMock.requestAnimationFrame = (handler) => {
+        rafQueue.push(handler);
+        return rafQueue.length;
+    };
+    globalThis.requestAnimationFrame = dom.windowMock.requestAnimationFrame;
+
+    dom.setComputedStyle(dom.documentElement, {
+        getPropertyValue(name) {
+            if (name === '--tt-inset-top') return '0px';
+            if (name === '--tt-inset-left') return '0px';
+            if (name === '--tt-inset-right') return '0px';
+            if (name === '--tt-viewport-bottom-inset') return '0px';
+            if (name === '--tt-inset-bottom') return '0px';
+            return '';
+        },
+    });
+
+    const surface = new HTMLElementMock('div');
+    surface.className = 'horae-modal';
+    surface.setBoundingClientRect({
+        top: 0,
+        left: 0,
+        right: dom.windowMock.innerWidth,
+        bottom: dom.windowMock.innerHeight,
+        width: dom.windowMock.innerWidth,
+        height: dom.windowMock.innerHeight,
+    });
+    dom.body.appendChild(surface);
+
+    dom.setComputedStyle(surface, {
+        position: 'fixed',
+        top: '0px',
+        left: '0px',
+        right: '0px',
+        bottom: '0px',
+        pointerEvents: 'auto',
+        cursor: 'auto',
+        touchAction: 'auto',
+        get display() {
+            return surface.style.getPropertyValue('display') || 'flex';
+        },
+    });
+
+    const overlayModulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js',
+    );
+    const { installMobileOverlayCompatController } = await import(pathToFileURL(overlayModulePath).href);
+
+    const controller = installMobileOverlayCompatController();
+    while (rafQueue.length > 0) {
+        rafQueue.shift()();
+    }
+    assert.equal(surface.getAttribute('data-tt-mobile-surface'), 'fullscreen-window');
+    assert.equal(surface.getAttribute('data-tt-mobile-surface-admitted'), '1');
+
+    const computedReadsBeforeImeContract = dom.getComputedStyleCount(surface);
+    surface.style.setProperty('--tt-ime-bottom', '300px');
+    surface.setBoundingClientRect({
+        top: 0,
+        left: 0,
+        right: dom.windowMock.innerWidth,
+        bottom: dom.windowMock.innerHeight - 300,
+        width: dom.windowMock.innerWidth,
+        height: dom.windowMock.innerHeight - 300,
+    });
+    dom.emitAttributeMutation(surface, 'style');
+
+    assert.equal(rafQueue.length, 0);
+    assert.equal(dom.getComputedStyleCount(surface), computedReadsBeforeImeContract);
+    assert.equal(surface.getAttribute('data-tt-mobile-surface'), 'fullscreen-window');
+    assert.equal(surface.getAttribute('data-tt-mobile-surface-admitted'), '1');
+    assert.equal(surface.style.getPropertyValue('--tt-original-top'), '');
 
     controller.dispose();
 });
