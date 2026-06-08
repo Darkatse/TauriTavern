@@ -1,4 +1,5 @@
 use chrono::DateTime;
+use crc32fast::Hasher;
 use std::io::Cursor;
 use std::path::PathBuf;
 
@@ -8,9 +9,11 @@ use serde_json::json;
 use tokio::fs;
 
 use crate::domain::models::character::Character;
-use crate::domain::repositories::character_repository::CharacterRepository;
+use crate::domain::repositories::character_repository::{
+    CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterRepository,
+};
 use crate::infrastructure::persistence::png_utils::{
-    read_character_data_from_png, write_character_data_to_png,
+    read_character_data_from_png, read_text_chunks_from_png, write_character_data_to_png,
 };
 use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 
@@ -44,6 +47,35 @@ fn build_distinct_png() -> Vec<u8> {
         .write_to(&mut cursor, ImageFormat::Png)
         .expect("should build png image");
     output
+}
+
+fn build_text_chunk(keyword: &str, text: &str) -> Vec<u8> {
+    let mut data = Vec::with_capacity(keyword.len() + 1 + text.len());
+    data.extend_from_slice(keyword.as_bytes());
+    data.push(0);
+    data.extend_from_slice(text.as_bytes());
+
+    let chunk_type = *b"tEXt";
+    let mut chunk = Vec::with_capacity(data.len() + 12);
+    chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    chunk.extend_from_slice(&chunk_type);
+    chunk.extend_from_slice(&data);
+
+    let mut hasher = Hasher::new();
+    hasher.update(&chunk_type);
+    hasher.update(&data);
+    chunk.extend_from_slice(&hasher.finalize().to_be_bytes());
+    chunk
+}
+
+fn insert_text_chunk_before_iend(mut png: Vec<u8>, keyword: &str, text: &str) -> Vec<u8> {
+    let iend_start = png
+        .len()
+        .checked_sub(12)
+        .expect("minimal png should contain IEND");
+    let text_chunk = build_text_chunk(keyword, text);
+    png.splice(iend_start..iend_start, text_chunk);
+    png
 }
 
 async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
@@ -189,7 +221,8 @@ async fn create_with_avatar_allocates_unique_file_stems() {
     let created_first = repository
         .create_with_avatar(&first, None, None)
         .await
-        .expect("create first character");
+        .expect("create first character")
+        .character;
 
     let second = Character::new(
         "Duplicate".to_string(),
@@ -200,7 +233,8 @@ async fn create_with_avatar_allocates_unique_file_stems() {
     let created_second = repository
         .create_with_avatar(&second, None, None)
         .await
-        .expect("create second character");
+        .expect("create second character")
+        .character;
 
     assert_eq!(created_first.avatar, "Duplicate.png");
     assert_eq!(created_second.avatar, "Duplicate1.png");
@@ -233,7 +267,8 @@ async fn create_with_avatar_sanitizes_file_stem_like_sillytavern() {
     let created = repository
         .create_with_avatar(&character, None, None)
         .await
-        .expect("create character");
+        .expect("create character")
+        .character;
 
     assert_eq!(created.avatar, "UnsafeName.png");
 
@@ -255,7 +290,8 @@ async fn create_with_avatar_prefers_explicit_file_stem() {
     let created = repository
         .create_with_avatar(&character, None, None)
         .await
-        .expect("create character");
+        .expect("create character")
+        .character;
 
     assert_eq!(created.avatar, "Permanent Assistant.png");
     assert_eq!(created.file_name, Some("Permanent Assistant".to_string()));
@@ -265,6 +301,136 @@ async fn create_with_avatar_prefers_explicit_file_stem() {
         .await
         .expect("load character by file stem");
     assert_eq!(loaded.name, "Display Name");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn create_with_avatar_missing_avatar_file_falls_back_to_default_avatar() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Missing Avatar".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    let missing_avatar_path = root.join("missing-upload.png");
+
+    let result = repository
+        .create_with_avatar(&character, Some(&missing_avatar_path), None)
+        .await
+        .expect("create character with default avatar fallback");
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(
+        result.warnings[0].code,
+        CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED
+    );
+    let created = result.character;
+
+    let stored_path = root.join("characters").join(&created.avatar);
+    let stored_bytes = fs::read(&stored_path)
+        .await
+        .expect("read stored character png");
+    let stored_image = image::load_from_memory(&stored_bytes).expect("decode fallback avatar");
+    assert_eq!(stored_image.width(), 1);
+    assert_eq!(stored_image.height(), 1);
+
+    let stored_json =
+        read_character_data_from_png(&stored_bytes).expect("extract stored character data");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse stored character data");
+    assert_eq!(
+        stored_value.get("name").and_then(|value| value.as_str()),
+        Some("Missing Avatar")
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn create_with_avatar_invalid_avatar_bytes_falls_back_to_default_avatar() {
+    let (repository, root) = setup_repository().await;
+
+    let invalid_avatar_path = root.join("invalid-upload.bin");
+    fs::write(&invalid_avatar_path, b"not an image")
+        .await
+        .expect("write invalid avatar");
+
+    let character = Character::new(
+        "Invalid Avatar".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+
+    let result = repository
+        .create_with_avatar(&character, Some(&invalid_avatar_path), None)
+        .await
+        .expect("create character with invalid avatar fallback");
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(
+        result.warnings[0].code,
+        CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED
+    );
+    let created = result.character;
+
+    let stored_path = root.join("characters").join(&created.avatar);
+    let stored_bytes = fs::read(&stored_path)
+        .await
+        .expect("read stored character png");
+    let stored_image = image::load_from_memory(&stored_bytes).expect("decode fallback avatar");
+    assert_eq!(stored_image.width(), 1);
+    assert_eq!(stored_image.height(), 1);
+
+    let stored_json =
+        read_character_data_from_png(&stored_bytes).expect("extract stored character data");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse stored character data");
+    assert_eq!(
+        stored_value.get("name").and_then(|value| value.as_str()),
+        Some("Invalid Avatar")
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn create_with_avatar_png_without_crop_preserves_png_metadata_fast_path() {
+    let (repository, root) = setup_repository().await;
+
+    let avatar_path = root.join("metadata-avatar.png");
+    fs::write(
+        &avatar_path,
+        insert_text_chunk_before_iend(build_distinct_png(), "tauritavern-fast-path", "preserve me"),
+    )
+    .await
+    .expect("write metadata avatar");
+
+    let character = Character::new(
+        "Fast Path Avatar".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+
+    let result = repository
+        .create_with_avatar(&character, Some(&avatar_path), None)
+        .await
+        .expect("create character with png fast path");
+    assert!(result.warnings.is_empty());
+
+    let stored_path = root.join("characters").join(&result.character.avatar);
+    let stored_bytes = fs::read(&stored_path)
+        .await
+        .expect("read stored character png");
+    let text_chunks = read_text_chunks_from_png(&stored_bytes).expect("read png text chunks");
+
+    assert!(
+        text_chunks.iter().any(|chunk| {
+            chunk.keyword == "tauritavern-fast-path" && chunk.text == "preserve me"
+        })
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -1440,7 +1606,8 @@ async fn rename_preserves_avatar_pixel_data() {
     let created = repository
         .create_with_avatar(&character, Some(&avatar_path), None)
         .await
-        .expect("create character with avatar");
+        .expect("create character with avatar")
+        .character;
 
     let old_file_path = root.join("characters").join(&created.avatar);
     let old_bytes = fs::read(&old_file_path)
@@ -1479,7 +1646,8 @@ async fn update_avatar_invalidates_stale_thumbnail() {
     let created = repository
         .create_with_avatar(&character, None, None)
         .await
-        .expect("create character");
+        .expect("create character")
+        .character;
 
     let thumbnail_path = root.join("thumbnails/avatar").join(&created.avatar);
     fs::write(&thumbnail_path, b"stale thumbnail")
@@ -1501,6 +1669,36 @@ async fn update_avatar_invalidates_stale_thumbnail() {
             .await
             .expect("check thumbnail")
     );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn update_avatar_keeps_invalid_avatar_bytes_as_failure() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Strict Avatar Target".to_string(),
+        "desc".to_string(),
+        "personality".to_string(),
+        "hello".to_string(),
+    );
+    let created = repository
+        .create_with_avatar(&character, None, None)
+        .await
+        .expect("create character")
+        .character;
+
+    let invalid_avatar_path = root.join("invalid-replacement.bin");
+    fs::write(&invalid_avatar_path, b"not an image")
+        .await
+        .expect("write invalid avatar");
+
+    let result = repository
+        .update_avatar(&created, &invalid_avatar_path, None)
+        .await;
+
+    assert!(result.is_err(), "invalid avatar replacement should fail");
 
     let _ = fs::remove_dir_all(&root).await;
 }

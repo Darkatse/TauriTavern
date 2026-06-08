@@ -1,4 +1,5 @@
 import { normalizeBinaryPayload, sanitizeAttachmentFileName } from '../binary-utils.js';
+import { CHARACTER_CREATE_WARNINGS } from '../services/characters/character-create-service.js';
 import { assertCharacterAvatarFileName } from '../services/characters/character-identity.js';
 import {
     badRequestBody,
@@ -6,6 +7,8 @@ import {
     resolveExistingRouteCharacterId,
     resolveRouteCharacterId,
 } from './character-route-utils.js';
+
+const CHARACTER_CREATE_WARNING_HEADER = 'x-tauritavern-warning';
 
 function hasBodyField(body, fieldName) {
     return Boolean(body && typeof body === 'object' && !Array.isArray(body)
@@ -63,6 +66,19 @@ function getCharacterTauriExtensionField(character, field) {
 function hasCharacterEmbeddedAgentAsset(character, field) {
     const value = getCharacterTauriExtensionField(character, field);
     return value !== undefined && value !== null;
+}
+
+function createCharacterResponse(outcome, textResponse) {
+    const response = textResponse(outcome.character?.avatar || '');
+    const hasAvatarImportWarning = outcome.warnings?.some(
+        (warning) => warning?.code === CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
+    );
+
+    if (hasAvatarImportWarning) {
+        response.headers.set(CHARACTER_CREATE_WARNING_HEADER, CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED);
+    }
+
+    return response;
 }
 
 export function registerCharacterRoutes(router, context, { jsonResponse, textResponse }) {
@@ -126,14 +142,14 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
 
     router.post('/api/characters/create', async ({ body, url }) => {
         if (body instanceof FormData) {
-            const created = await context.createCharacterFromForm(body, url);
+            const outcome = await context.createCharacterFromForm(body, url);
             await context.getAllCharacters({ shallow: true, forceRefresh: true });
-            return textResponse(created?.avatar || '');
+            return createCharacterResponse(outcome, textResponse);
         }
 
-        const created = await context.createCharacterFromPayload(body);
+        const outcome = await context.createCharacterFromPayload(body);
         await context.getAllCharacters({ shallow: true, forceRefresh: true });
-        return textResponse(created?.avatar || '');
+        return createCharacterResponse(outcome, textResponse);
     });
 
     router.post('/api/characters/edit', async ({ body, url }) => {

@@ -3,11 +3,11 @@ mod lorebook_codec;
 
 use crate::application::dto::character_dto::{
     BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto, CharacterChatDto,
-    CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
-    DuplicateCharacterDto, ExportCharacterContentDto, ExportCharacterContentResultDto,
-    ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto, MergeCharacterCardDataDto,
-    RenameCharacterDto, UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
-    merge_character_extensions,
+    CharacterDto, CreateCharacterDto, CreateCharacterWithAvatarResultDto, CreateWithAvatarDto,
+    DeleteCharacterDto, DuplicateCharacterDto, ExportCharacterContentDto,
+    ExportCharacterContentResultDto, ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto,
+    MergeCharacterCardDataDto, RenameCharacterDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
+    UpdateCharacterDto, merge_character_extensions,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::{
@@ -103,14 +103,14 @@ impl CharacterService {
             .create_with_avatar(&character, None, None)
             .await?;
 
-        Ok(CharacterDto::from(created))
+        Ok(CharacterDto::from(created.character))
     }
 
     /// Create a character with an avatar
     pub async fn create_with_avatar(
         &self,
         dto: CreateWithAvatarDto,
-    ) -> Result<CharacterDto, ApplicationError> {
+    ) -> Result<CreateCharacterWithAvatarResultDto, ApplicationError> {
         logger::debug(&format!(
             "Creating character with avatar: {}",
             dto.character.name
@@ -138,7 +138,7 @@ impl CharacterService {
             .create_with_avatar(&character, avatar_path_ref, crop)
             .await?;
 
-        Ok(CharacterDto::from(created))
+        Ok(CreateCharacterWithAvatarResultDto::from(created))
     }
 
     /// Update a character

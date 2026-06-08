@@ -6,7 +6,10 @@ import { resolveHostErrorResponse } from '../src/tauri/main/kernel/host-error-re
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerCharacterRoutes } from '../src/tauri/main/routes/character-routes.js';
 import { createCharacterService } from '../src/tauri/main/services/characters/character-service.js';
-import { createCharacterCreateService } from '../src/tauri/main/services/characters/character-create-service.js';
+import {
+    CHARACTER_CREATE_WARNINGS,
+    createCharacterCreateService,
+} from '../src/tauri/main/services/characters/character-create-service.js';
 import { formDataToCreateCharacterDto, payloadToCreateCharacterDto } from '../src/tauri/main/services/characters/character-create-mapper.js';
 import { createCharacterFormService } from '../src/tauri/main/services/characters/character-form-service.js';
 
@@ -72,7 +75,7 @@ test('/api/characters/create accepts upstream JSON character payloads', async ()
         },
         createCharacterFromPayload: async (payload) => {
             calls.push({ type: 'payload', payload });
-            return { avatar: 'Alice.png' };
+            return { character: { avatar: 'Alice.png' }, warnings: [] };
         },
         getAllCharacters: async (options) => {
             calls.push({ type: 'refresh', options });
@@ -102,6 +105,53 @@ test('/api/characters/create accepts upstream JSON character payloads', async ()
     assert.equal(await response.text(), 'Alice.png');
     assert.deepEqual(calls, [
         { type: 'payload', payload },
+        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
+    ]);
+});
+
+test('/api/characters/create keeps text body and exposes avatar fallback warning header', async () => {
+    const router = createRouteRegistry();
+    const calls = [];
+    const context = {
+        createCharacterFromForm: async (formData, url) => {
+            calls.push({ type: 'form', formData, url });
+            return {
+                character: { avatar: 'Alice.png' },
+                warnings: [{
+                    code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
+                    message: 'Unable to access avatar file path: simulated failure',
+                }],
+            };
+        },
+        createCharacterFromPayload: async () => {
+            throw new Error('createCharacterFromPayload should not be called');
+        },
+        getAllCharacters: async (options) => {
+            calls.push({ type: 'refresh', options });
+            return [];
+        },
+    };
+
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+
+    const body = new FormData();
+    body.set('ch_name', 'Alice');
+    body.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'avatar.png');
+    const url = new URL('http://localhost/api/characters/create');
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/create',
+        url,
+        body,
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'Alice.png');
+    assert.equal(response.headers.get('x-tauritavern-warning'), CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED);
+    assert.deepEqual(calls, [
+        { type: 'form', formData: body, url },
         { type: 'refresh', options: { shallow: true, forceRefresh: true } },
     ]);
 });
@@ -613,7 +663,7 @@ test('character create service maps upstream JSON create payload to create_chara
         },
     });
 
-    const created = await service.createCharacterFromPayload({
+    const outcome = await service.createCharacterFromPayload({
         file_name: 'AliceCard',
         ch_name: 'Alice',
         description: 'A friendly assistant',
@@ -628,7 +678,7 @@ test('character create service maps upstream JSON create payload to create_chara
         extensions: '{}',
     });
 
-    assert.deepEqual(created, { avatar: 'Alice.png' });
+    assert.deepEqual(outcome, { character: { avatar: 'Alice.png' }, warnings: [] });
     assert.deepEqual(invokes, [
         {
             command: 'create_character',
@@ -692,12 +742,12 @@ test('character create service maps multipart creates with avatar to create_char
     formData.set('creator_notes', 'Automatically created character.');
     formData.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'assistant.png');
 
-    const created = await service.createCharacterFromForm(
+    const outcome = await service.createCharacterFromForm(
         formData,
         new URL('http://localhost/api/characters/create?crop=%7B%22x%22%3A0%2C%22y%22%3A0%2C%22width%22%3A300%2C%22height%22%3A400%2C%22want_resize%22%3Atrue%7D'),
     );
 
-    assert.deepEqual(created, { avatar: 'Assistant.png' });
+    assert.deepEqual(outcome, { character: { avatar: 'Assistant.png' }, warnings: [] });
     assert.deepEqual(invokes, [
         {
             command: 'create_character_with_avatar',
@@ -746,6 +796,127 @@ test('character create service maps multipart creates with avatar to create_char
         },
     ]);
     assert.deepEqual(cleanups, ['assistant.png']);
+});
+
+test('character create service propagates Rust avatar fallback warnings', async () => {
+    const service = createCharacterCreateService({
+        safeInvoke: async (command) => {
+            assert.equal(command, 'create_character_with_avatar');
+            return {
+                character: { avatar: 'Assistant.png' },
+                warnings: [{
+                    code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
+                    message: 'Uploaded avatar could not be processed; default avatar was used.',
+                }],
+            };
+        },
+        materializeUploadFile: async () => ({
+            filePath: '/tmp/assistant.png',
+        }),
+    });
+
+    const formData = new FormData();
+    formData.set('ch_name', 'Neutral Assistant');
+    formData.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'assistant.png');
+
+    const outcome = await service.createCharacterFromForm(
+        formData,
+        new URL('http://localhost/api/characters/create'),
+    );
+
+    assert.deepEqual(outcome, {
+        character: { avatar: 'Assistant.png' },
+        warnings: [{
+            code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
+            message: 'Uploaded avatar could not be processed; default avatar was used.',
+        }],
+    });
+});
+
+test('character create service uses default avatar when upload materialization fails', async () => {
+    const invokes = [];
+    const originalWarn = console.warn;
+    const warnings = [];
+    console.warn = (...args) => warnings.push(args);
+
+    try {
+        const service = createCharacterCreateService({
+            safeInvoke: async (command, args) => {
+                invokes.push({ command, args });
+                if (command !== 'create_character') {
+                    throw new Error(`unexpected command: ${command}`);
+                }
+                return { avatar: 'Assistant.png' };
+            },
+            materializeUploadFile: async (file, options) => {
+                assert.ok(file instanceof Blob);
+                assert.deepEqual(options, { preferredName: 'assistant.png' });
+                return {
+                    filePath: '',
+                    error: 'simulated temp write failure',
+                    isTemporary: false,
+                };
+            },
+        });
+
+        const formData = new FormData();
+        formData.set('file_name', 'Assistant');
+        formData.set('ch_name', 'Neutral Assistant');
+        formData.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'assistant.png');
+
+        const outcome = await service.createCharacterFromForm(
+            formData,
+            new URL('http://localhost/api/characters/create'),
+        );
+
+        assert.deepEqual(outcome, {
+            character: { avatar: 'Assistant.png' },
+            warnings: [{
+                code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
+                message: 'Unable to access avatar file path: simulated temp write failure',
+            }],
+        });
+        assert.deepEqual(invokes, [
+            {
+                command: 'create_character',
+                args: {
+                    dto: {
+                        file_name: 'Assistant',
+                        json_data: null,
+                        primary_lorebook: null,
+                        name: 'Neutral Assistant',
+                        description: '',
+                        personality: '',
+                        scenario: '',
+                        first_mes: '',
+                        mes_example: '',
+                        creator: '',
+                        creator_notes: '',
+                        character_version: '',
+                        tags: [],
+                        talkativeness: 0.5,
+                        fav: false,
+                        alternate_greetings: [],
+                        system_prompt: '',
+                        post_history_instructions: '',
+                        extensions: {
+                            world: '',
+                            depth_prompt: {
+                                prompt: '',
+                                depth: 4,
+                                role: 'system',
+                            },
+                            talkativeness: 0.5,
+                            fav: false,
+                        },
+                    },
+                },
+            },
+        ]);
+        assert.equal(warnings.length, 1);
+    } finally {
+        console.warn = originalWarn;
+    }
 });
 
 test('character form service fails fast on invalid avatar_url', async () => {

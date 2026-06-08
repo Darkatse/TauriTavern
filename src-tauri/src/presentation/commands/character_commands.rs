@@ -5,10 +5,11 @@ use tauri::State;
 use crate::app::AppState;
 use crate::application::dto::character_dto::{
     BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto, CharacterChatDto,
-    CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
-    DuplicateCharacterDto, ExportCharacterContentDto, ExportCharacterContentResultDto,
-    ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto, MergeCharacterCardDataDto,
-    RenameCharacterDto, UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
+    CharacterDto, CreateCharacterDto, CreateCharacterWithAvatarResultDto, CreateWithAvatarDto,
+    DeleteCharacterDto, DuplicateCharacterDto, ExportCharacterContentDto,
+    ExportCharacterContentResultDto, ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto,
+    MergeCharacterCardDataDto, RenameCharacterDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
+    UpdateCharacterDto,
 };
 use crate::domain::models::skill::{SkillScope, SkillScopeRetargetRequest};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -65,7 +66,7 @@ pub async fn create_character(
 pub async fn create_character_with_avatar(
     dto: CreateWithAvatarDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<CharacterDto, CommandError> {
+) -> Result<CreateCharacterWithAvatarResultDto, CommandError> {
     log_command(format!(
         "create_character_with_avatar {}",
         dto.character.name

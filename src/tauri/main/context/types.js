@@ -34,6 +34,20 @@ export {};
 
 /**
  * @typedef {{
+ *   code: string;
+ *   message: string;
+ * }} CharacterCreateWarning
+ */
+
+/**
+ * @typedef {{
+ *   character: any;
+ *   warnings: CharacterCreateWarning[];
+ * }} CharacterCreateOutcome
+ */
+
+/**
+ * @typedef {{
  *   type: string;
  *   file: string;
  *   animated: boolean;
@@ -78,8 +92,8 @@ export {};
  *   exportChatAsText: (frontendChat: any) => string;
  *   exportChatAsJsonl: (frontendChat: any[]) => string;
  *   findAvatarByCharacterId: (characterId: any) => string;
- *   createCharacterFromForm: (formData: FormData, requestUrl: URL) => Promise<any>;
- *   createCharacterFromPayload: (payload: Record<string, any>) => Promise<any>;
+ *   createCharacterFromForm: (formData: FormData, requestUrl: URL) => Promise<CharacterCreateOutcome>;
+ *   createCharacterFromPayload: (payload: Record<string, any>) => Promise<CharacterCreateOutcome>;
  *   editCharacterFromForm: (formData: FormData, requestUrl: URL) => Promise<void>;
  *   editCharacterAvatarFromForm: (formData: FormData, requestUrl: URL) => Promise<void>;
  *   uploadAvatarFromForm: (formData: FormData, requestUrl: URL) => Promise<any>;

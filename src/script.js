@@ -10994,6 +10994,10 @@ export async function createOrEditCharacter(e) {
                 throw new Error('Fetch result is not ok');
             }
 
+            const createWarnings = String(fetchResult.headers.get('x-tauritavern-warning') || '')
+                .split(',')
+                .map(warning => warning.trim())
+                .filter(Boolean);
             const avatarId = await fetchResult.text();
 
             $('#character_cross').trigger('click'); //closes the advanced character editing popup
@@ -11049,6 +11053,9 @@ export async function createOrEditCharacter(e) {
             }
 
             console.log(`new avatar id: ${avatarId}`);
+            if (createWarnings.includes('avatar-import-failed')) {
+                toastr.warning(t`Character created, but avatar import had a recoverable issue. Check the avatar and re-upload if needed.`);
+            }
             createTagMapFromList('#tagList', avatarId);
             await getCharacters();
 
