@@ -80,7 +80,14 @@ pub async fn spawn_lan_sync_server(
 }
 
 async fn handle_status() -> impl IntoResponse {
-    (StatusCode::OK, Json(json!({ "ok": true })))
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "protocol": "lan-v1",
+            "deprecated": true,
+        })),
+    )
 }
 
 fn sync_plan_body_limit() -> DefaultBodyLimit {
@@ -182,8 +189,6 @@ async fn handle_sync_file_inner(
     headers: HeaderMap,
     path: String,
 ) -> Result<(HeaderMap, Body), (StatusCode, String)> {
-    validate_relative_path(&path).map_err(map_domain_error)?;
-
     let (device_id, signature) = require_auth_headers(&headers)?;
 
     let paired_device =
@@ -446,6 +451,8 @@ mod tests {
 
     use axum::http::Request;
     use tower::ServiceExt;
+
+    use crate::domain::models::lan_sync::LanSyncManifest;
 
     async fn accept_manifest(Json(_): Json<LanSyncManifest>) -> StatusCode {
         StatusCode::OK

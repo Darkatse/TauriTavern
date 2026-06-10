@@ -70,8 +70,8 @@ webpki-roots = "1"
 dunce = "1"
 
 # TT-Sync v2 shared contract/scope (crates.io)
-ttsync-contract = "~1.0.0"
-ttsync-core = "~1.0.0"
+ttsync-contract = "2"
+ttsync-core = "2"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-dialog = "2.7.0"

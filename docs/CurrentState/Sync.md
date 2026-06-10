@@ -10,14 +10,15 @@
 
 TauriTavern 当前存在两套同步链路：
 
-- **LAN Sync（v1）**：局域网内设备间同步（协议与事件语义对齐上游 SillyTavern）。
+- **LAN Sync（v1）**：局域网内设备间同步（遗留 HTTP 协议，后续不再扩展新同步能力）。
 - **TT-Sync（v2）**：公网远端同步（TauriTavern ⇄ TT-Sync 服务端），语义与 LAN Sync 对齐，但协议独立演进。
 
 关键结论（后续改动优先守住这些）：
 
 1. **同步语义以“用户数据一致性”为中心**：scope/exclude、`(size_bytes, modified_ms)` 增量判定、Mirror delete 的时序、原子写入与 mtime 保留。
 2. **同步作业全局串行**：LAN Sync 与 TT-Sync 共用同一个 `Semaphore(1)`（即同一时刻只能跑一个同步作业），避免两条链路并发写入相同数据目录导致破坏性竞态（见 `src-tauri/src/app/bootstrap.rs`）。
-3. **TT-Sync 已落地 Bundle 传输形态**：在公网高 RTT 场景下把 N 个 per-file 请求收敛为 1 个 bundle 请求，并可选 zstd 压缩；旧的 per-file 端点仍保留作为 fallback。
+3. **长期同步 scope 由 TT-Sync `DatasetPolicy` 定义**：TT-Sync v2 与后续 HTTPS LAN v2 消费同一份策略；LAN Sync v1 冻结旧 allowlist，不再扩展 Agent 等新范围。
+4. **TT-Sync 已落地 Bundle 传输形态**：在公网高 RTT 场景下把 N 个 per-file 请求收敛为 1 个 bundle 请求，并可选 zstd 压缩；旧的 per-file 端点仍保留作为 fallback。
 
 ---
 
@@ -32,7 +33,22 @@ TauriTavern 当前存在两套同步链路：
 - TT-Sync v2 状态：`default-user/user/lan-sync/tt-sync-v2/`
   - `identity.json` / `paired-servers.json`（见 `src-tauri/src/infrastructure/tt_sync/store.rs`）
 
-TT-Sync 的 manifest 扫描严格遵循 `ttsync_core::scope`，并且会排除 LAN/TT 同步状态目录（见 `src-tauri/src/infrastructure/tt_sync/fs.rs`）。
+TT-Sync v2 manifest 扫描严格遵循 `ttsync_core::dataset::ResolvedDatasetPolicy`，并且会排除 LAN/TT 同步状态目录（见 `src-tauri/src/infrastructure/tt_sync/fs.rs`）。当前 TauriTavern 默认数据集还会排除 `_tauritavern/prompt-cache/`、`_tauritavern/.ios-policy.json`、`_cache/`、`.staging` 与同步临时文件。
+
+默认 TauriTavern 数据集已经覆盖 Agent 连续性数据：
+
+- `_tauritavern/agent-profiles/profiles/**`
+- `_tauritavern/llm-connections/**`
+- `_tauritavern/skills/{installed,index}/**`
+- `_tauritavern/agent-workspaces/chats/**/persistent-states/**`
+- `_tauritavern/agent-workspaces/index/runs/**`
+- `_tauritavern/agent-workspaces/chats/**/runs/*/{run.json,events.jsonl}`
+
+`default-user/secrets.json`、Agent `model-responses/`、`checkpoints/`、`backups/`、`vectors/`、`thumbnails/` 被保留为独立数据集，不在当前无 UI 选择的默认同步中。
+
+Agent run history 只同步终态运行。扫描器会读取 `run.json` / run index JSON 的 `status`，仅纳入 `completed`、`partial_success`、`cancelled`、`failed`；运行中的 `calling_model` 等状态不会进入 manifest。
+
+LAN Sync v1 仍使用原有固定 allowlist 和裸 `LanSyncManifest` plan 请求。它不会同步 Agent 数据，也不会接入 DatasetPolicy；新范围应进入 TT-Sync v2/未来 HTTPS LAN v2。
 
 ---
 
@@ -77,14 +93,15 @@ TT-Sync 的 manifest 扫描严格遵循 `ttsync_core::scope`，并且会排除 L
 
 1. **全局 permit**：尝试获取同步许可；失败则发 error 事件并直接返回（见 `src-tauri/src/application/services/tt_sync_service.rs`）。
 2. `POST /v2/session/open`：用 Ed25519 对 canonical request 签名，获得 `session_token` 与 `granted_permissions`。
-3. Scanning：扫描本地 manifest（`src-tauri/src/infrastructure/tt_sync/fs.rs`）。
-4. Diffing：请求 plan：
+3. Status：读取 `GET /v2/status`，必须支持 `dataset_scope_v1` 且 `dataset_policy_version` 匹配；旧 server 会 fail-fast，避免静默漏同步 Agent 数据。
+4. Scanning：按 TauriTavern default `DatasetPolicy` 扫描本地 manifest（`src-tauri/src/infrastructure/tt_sync/fs.rs`）。
+5. Diffing：携带同一份 `DatasetSelection` 请求 plan：
    - pull：`POST /v2/sync/pull-plan`
    - push：`POST /v2/sync/push-plan`
-5. Transfer：
+6. Transfer：
    - **优先 bundle**（需服务端 `features` 声明支持；见 5.x）
    - 否则 fallback 到 per-file 并发传输
-6. Deleting（仅 Mirror）：
+7. Deleting（仅 Mirror）：
    - pull：本地按 plan.delete 删除
    - push：在 commit 后由服务端应用删除（Mirror 语义）
 
@@ -102,13 +119,15 @@ push 的额外步骤：
 
 ### 5.1 能力协商（features）
 
-客户端会先调用 `GET /v2/status` 获取 `features`（失败则当作不支持，走 fallback）：
+客户端会先调用 `GET /v2/status` 获取 `features` 与 DatasetPolicy 版本；状态请求失败、`dataset_scope_v1` 缺失或策略版本不匹配都会 fail-fast：
 
 - `bundle_v1`：支持 bundle 端点
 - `zstd_v1`：支持 bundle 的 zstd 编解码
+- `dataset_scope_v1`：支持携带 `DatasetSelection` 的 scope-aware plan/delete
 
 客户端策略（见 `src-tauri/src/infrastructure/tt_sync/push.rs`、`src-tauri/src/infrastructure/tt_sync/pull.rs`）：
 
+- `dataset_scope_v1` 缺失或策略版本不匹配时直接报错。
 - 仅当存在 `bundle_v1` 才启用 bundle。
 - 仅当同时存在 `bundle_v1` + `zstd_v1` 才启用 zstd（push 不能“试一试”，必须先确认）。
 
@@ -179,3 +198,5 @@ wire framing（见 `src-tauri/src/infrastructure/tt_sync/bundle.rs`）：
 3. **不要破坏 mtime 语义**：增量 diff 依赖 `(size_bytes, modified_ms)`，写入必须保留 `modified_ms`。
 4. **不要改动事件语义**：阶段划分与完成/错误时序对前端是契约。
 5. **不要把 iOS policy 本地缓存纳入 scope**：`_tauritavern/.ios-policy.json` 属于 iOS-only 宿主本地状态，用于避免同步覆盖 `tauritavern-settings.json` 时丢失已解锁的 policy。
+6. **不要在 v2 链路重新引入手写 scope 数组**：新增同步目录必须先进入 TT-Sync `DatasetPolicy`，再由 TT-Sync v2/未来 HTTPS LAN v2 消费。
+7. **不要把敏感/重型 Agent 数据默认并入无选择同步**：`model-responses/`、`checkpoints/` 与密钥文件需要保持独立数据集。

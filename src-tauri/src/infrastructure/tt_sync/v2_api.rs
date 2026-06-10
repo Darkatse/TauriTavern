@@ -5,6 +5,9 @@ use serde::Deserialize;
 use url::Url;
 
 use ttsync_contract::canonical::CanonicalRequest;
+use ttsync_contract::dataset::{
+    DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1, DatasetSelection,
+};
 use ttsync_contract::manifest::ManifestV2;
 use ttsync_contract::pair::{PairCompleteRequest, PairCompleteResponse};
 use ttsync_contract::path::SyncPath;
@@ -73,7 +76,7 @@ impl TtSyncV2Api {
             .map_err(|error| DomainError::InternalError(error.to_string()))
     }
 
-    pub async fn status_features(&self) -> Result<Vec<String>, DomainError> {
+    pub async fn status(&self) -> Result<StatusResponse, DomainError> {
         let url = status_url(&self.base_url)?;
 
         let response = self
@@ -95,7 +98,7 @@ impl TtSyncV2Api {
             ));
         }
 
-        Ok(status.features)
+        Ok(status)
     }
 
     pub async fn open_session(
@@ -150,12 +153,14 @@ impl TtSyncV2Api {
         &self,
         session_token: &SessionToken,
         mode: SyncMode,
+        selection: DatasetSelection,
         target_manifest: ManifestV2,
     ) -> Result<SyncPlan, DomainError> {
         let url = pull_plan_url(&self.base_url)?;
 
         let request = PullPlanRequest {
             mode,
+            selection,
             target_manifest,
         };
         let body = serde_json::to_vec(&request)
@@ -182,12 +187,14 @@ impl TtSyncV2Api {
         &self,
         session_token: &SessionToken,
         mode: SyncMode,
+        selection: DatasetSelection,
         source_manifest: ManifestV2,
     ) -> Result<SyncPlan, DomainError> {
         let url = push_plan_url(&self.base_url)?;
 
         let request = PushPlanRequest {
             mode,
+            selection,
             source_manifest,
         };
         let body = serde_json::to_vec(&request)
@@ -343,10 +350,41 @@ impl TtSyncV2Api {
 }
 
 #[derive(Debug, Deserialize)]
-struct StatusResponse {
-    ok: bool,
+pub(crate) struct StatusResponse {
+    pub(crate) ok: bool,
     #[serde(default)]
-    features: Vec<String>,
+    pub(crate) features: Vec<String>,
+    #[serde(default)]
+    pub(crate) dataset_policy_version: Option<u32>,
+}
+
+impl StatusResponse {
+    pub(crate) fn ensure_dataset_scope_v1(&self) -> Result<(), DomainError> {
+        if !self
+            .features
+            .iter()
+            .any(|feature| feature == DATASET_SCOPE_FEATURE_V1)
+        {
+            return Err(DomainError::InvalidData(
+                "TT-Sync server does not support DatasetPolicy; upgrade TT-Sync server".to_string(),
+            ));
+        }
+
+        let Some(version) = self.dataset_policy_version else {
+            return Err(DomainError::InvalidData(
+                "TT-Sync server did not report dataset policy version".to_string(),
+            ));
+        };
+
+        if version != DATASET_POLICY_VERSION {
+            return Err(DomainError::InvalidData(format!(
+                "Unsupported TT-Sync dataset policy version: {}",
+                version
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 fn pair_complete_url(base_url: &str, token: &str) -> Result<Url, DomainError> {
@@ -451,7 +489,9 @@ fn response_error(status: reqwest::StatusCode, message: String) -> DomainError {
 
 #[cfg(test)]
 mod tests {
-    use super::response_error;
+    use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1};
+
+    use super::{StatusResponse, response_error};
     use crate::domain::errors::DomainError;
 
     #[test]
@@ -472,6 +512,33 @@ mod tests {
         );
 
         assert!(matches!(error, DomainError::AuthenticationError(_)));
+    }
+
+    #[test]
+    fn status_requires_dataset_scope_feature() {
+        let status = StatusResponse {
+            ok: true,
+            features: vec![],
+            dataset_policy_version: Some(DATASET_POLICY_VERSION),
+        };
+
+        assert!(matches!(
+            status.ensure_dataset_scope_v1(),
+            Err(DomainError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn status_accepts_matching_dataset_policy_version() {
+        let status = StatusResponse {
+            ok: true,
+            features: vec![DATASET_SCOPE_FEATURE_V1.to_string()],
+            dataset_policy_version: Some(DATASET_POLICY_VERSION),
+        };
+
+        status
+            .ensure_dataset_scope_v1()
+            .expect("dataset scope feature should be accepted");
     }
 }
 

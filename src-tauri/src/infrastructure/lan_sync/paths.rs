@@ -156,7 +156,10 @@ mod tests {
             "extensions/index.js",
             "_tauritavern/extension-sources/index.json",
             "default-user/user/lan-sync/config.json",
+            "default-user/secrets.json",
             "_tauritavern/settings.json",
+            "_tauritavern/prompt-cache/cache.json",
+            "_tauritavern/agent-profiles/profiles/writer.json",
         ];
 
         for path in rejected_paths {

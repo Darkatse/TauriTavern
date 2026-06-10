@@ -11,13 +11,14 @@ use ttsync_contract::peer::DeviceId;
 use ttsync_contract::plan::{PlanId, SyncPlan};
 use ttsync_contract::session::SessionToken;
 use ttsync_contract::sync::{SyncMode, SyncPhase};
+use ttsync_core::dataset::{ResolvedDatasetPolicy, tauri_tavern_default_selection};
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
 use crate::infrastructure::tt_sync::bundle::{
     FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, copy_exact, write_u32_be,
 };
-use crate::infrastructure::tt_sync::fs::scan_manifest;
+use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 use crate::infrastructure::tt_sync::transfer;
 use crate::infrastructure::tt_sync::v2_api::TtSyncV2Api;
@@ -31,7 +32,9 @@ pub async fn push_to_server(
     let identity = runtime.store.load_or_create_identity().await?;
 
     let api = TtSyncV2Api::new(server.base_url.clone(), server.spki_sha256.clone())?;
-    let features = api.status_features().await.unwrap_or_default();
+    let status = api.status().await?;
+    status.ensure_dataset_scope_v1()?;
+    let features = status.features;
     let prefer_bundle = features.iter().any(|f| f == FEATURE_BUNDLE_V1);
     let allow_zstd = prefer_bundle && features.iter().any(|f| f == FEATURE_ZSTD_V1);
 
@@ -63,7 +66,11 @@ pub async fn push_to_server(
         current_path: None,
     })?;
 
-    let source_manifest = scan_manifest(runtime.sync_root.clone()).await?;
+    let selection = tauri_tavern_default_selection();
+    let policy = ResolvedDatasetPolicy::from_selection(&selection)
+        .map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let source_manifest =
+        scan_manifest_with_policy(runtime.sync_root.clone(), policy.clone()).await?;
 
     runtime.emit_progress(TtSyncProgressEvent {
         direction: TtSyncDirection::Push,
@@ -76,8 +83,9 @@ pub async fn push_to_server(
     })?;
 
     let plan = api
-        .push_plan(&session.session_token, mode, source_manifest)
+        .push_plan(&session.session_token, mode, selection, source_manifest)
         .await?;
+    validate_plan_scope(&plan, &policy)?;
 
     let plan_files_total = plan.files_total;
     let plan_bytes_total = plan.bytes_total;

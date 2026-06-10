@@ -14,6 +14,7 @@ use ttsync_contract::plan::{PlanId, SyncPlan};
 use ttsync_contract::session::SessionToken;
 use ttsync_contract::sync::SyncMode;
 use ttsync_contract::sync::SyncPhase;
+use ttsync_core::dataset::{ResolvedDatasetPolicy, tauri_tavern_default_selection};
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
@@ -21,7 +22,7 @@ use crate::infrastructure::sync_fs;
 use crate::infrastructure::tt_sync::bundle::{
     ExactSizeReader, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, MAX_BUNDLE_PATH_LEN, read_u32_be,
 };
-use crate::infrastructure::tt_sync::fs::scan_manifest;
+use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 use crate::infrastructure::tt_sync::transfer;
 use crate::infrastructure::tt_sync::v2_api::TtSyncV2Api;
@@ -35,7 +36,9 @@ pub async fn pull_from_server(
     let identity = runtime.store.load_or_create_identity().await?;
 
     let api = TtSyncV2Api::new(server.base_url.clone(), server.spki_sha256.clone())?;
-    let features = api.status_features().await.unwrap_or_default();
+    let status = api.status().await?;
+    status.ensure_dataset_scope_v1()?;
+    let features = status.features;
     let prefer_bundle = features.iter().any(|f| f == FEATURE_BUNDLE_V1);
     let accept_zstd = prefer_bundle && features.iter().any(|f| f == FEATURE_ZSTD_V1);
 
@@ -67,7 +70,11 @@ pub async fn pull_from_server(
         current_path: None,
     })?;
 
-    let target_manifest = scan_manifest(runtime.sync_root.clone()).await?;
+    let selection = tauri_tavern_default_selection();
+    let policy = ResolvedDatasetPolicy::from_selection(&selection)
+        .map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let target_manifest =
+        scan_manifest_with_policy(runtime.sync_root.clone(), policy.clone()).await?;
 
     runtime.emit_progress(TtSyncProgressEvent {
         direction: TtSyncDirection::Pull,
@@ -80,8 +87,9 @@ pub async fn pull_from_server(
     })?;
 
     let plan = api
-        .pull_plan(&session.session_token, mode, target_manifest)
+        .pull_plan(&session.session_token, mode, selection, target_manifest)
         .await?;
+    validate_plan_scope(&plan, &policy)?;
     let plan_files_total = plan.files_total;
     let plan_bytes_total = plan.bytes_total;
 
