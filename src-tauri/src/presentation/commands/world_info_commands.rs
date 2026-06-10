@@ -5,7 +5,8 @@ use tauri::State;
 use crate::app::AppState;
 use crate::application::dto::world_info_dto::{
     DeleteWorldInfoDto, GetWorldInfoDto, GetWorldInfosBatchDto, GetWorldInfosBatchResponseDto,
-    ImportWorldInfoDto, ImportWorldInfoResponseDto, SaveWorldInfoDto,
+    ImportWorldInfoDto, ImportWorldInfoResponseDto, NormalizeWorldInfoNameDto,
+    NormalizeWorldInfoNameResponseDto, SaveWorldInfoDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -38,6 +39,24 @@ pub async fn get_world_infos_batch(
         .map_err(map_command_error("Failed to get world infos batch"))?;
 
     Ok(GetWorldInfosBatchResponseDto { items })
+}
+
+#[tauri::command]
+pub async fn normalize_world_info_name(
+    dto: NormalizeWorldInfoNameDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<NormalizeWorldInfoNameResponseDto, CommandError> {
+    log_command(format!(
+        "normalize_world_info_name, import_filename: {}",
+        dto.import_filename
+    ));
+
+    let name = app_state
+        .world_info_service
+        .normalize_world_info_name(&dto.name, dto.import_filename)
+        .map_err(map_command_error("Failed to normalize world info name"))?;
+
+    Ok(NormalizeWorldInfoNameResponseDto { name })
 }
 
 #[tauri::command]

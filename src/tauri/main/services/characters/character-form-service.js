@@ -106,7 +106,7 @@ export function createCharacterFormService({
             'data.extensions': mergedExtensions,
         });
 
-        if (typeof mergedExtensions.world === 'string' && mergedExtensions.world.trim()) {
+        if (typeof mergedExtensions.world === 'string' && mergedExtensions.world !== '') {
             unsetByPath(baseCard, 'data.character_book');
         }
 

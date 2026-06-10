@@ -15,8 +15,8 @@ function normalizeWorldInfoEntryRef(ref) {
         throw new Error('WorldInfo entry ref must be an object');
     }
 
-    const world = String(ref.world || '').trim();
-    if (!world) {
+    const world = typeof ref.world === 'string' ? ref.world : '';
+    if (world === '') {
         throw new Error('world is required');
     }
 

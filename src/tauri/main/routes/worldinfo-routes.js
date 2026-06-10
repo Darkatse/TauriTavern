@@ -4,8 +4,8 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
     const worldInfoBroker = createWorldInfoBroker({ context });
 
     router.post('/api/worldinfo/get', async ({ body }) => {
-        const name = String(body?.name || '').trim();
-        if (!name) {
+        const name = typeof body?.name === 'string' ? body.name : '';
+        if (name === '') {
             return jsonResponse({ error: 'World file must have a name' }, 400);
         }
 
@@ -21,38 +21,54 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
         }
 
         const seen = new Set();
-        const sanitized = [];
+        const requestedNames = [];
 
         for (const rawName of names) {
             if (typeof rawName !== 'string') {
                 continue;
             }
 
-            const name = rawName.trim();
-            if (!name || seen.has(name)) {
+            const name = rawName;
+            if (name === '' || seen.has(name)) {
                 continue;
             }
 
             seen.add(name);
-            sanitized.push(name);
+            requestedNames.push(name);
         }
 
-        if (!sanitized.length) {
+        if (!requestedNames.length) {
             return jsonResponse({ items: [] });
         }
 
         const result = await context.safeInvoke('get_world_infos_batch', {
-            dto: { names: sanitized },
+            dto: { names: requestedNames },
         });
 
         return jsonResponse(result || { items: [] });
     });
 
+    router.post('/api/worldinfo/sanitize-name', async ({ body }) => {
+        const name = typeof body?.name === 'string' ? body.name : '';
+        if (name === '') {
+            return jsonResponse({ error: 'World file must have a name' }, 400);
+        }
+
+        const result = await context.safeInvoke('normalize_world_info_name', {
+            dto: {
+                name,
+                import_filename: Boolean(body?.importFilename),
+            },
+        });
+
+        return jsonResponse(result || {});
+    });
+
     router.post('/api/worldinfo/edit', async ({ body }) => {
-        const name = String(body?.name || '').trim();
+        const name = typeof body?.name === 'string' ? body.name : '';
         const data = body?.data;
 
-        if (!name) {
+        if (name === '') {
             return jsonResponse({ error: 'World file must have a name' }, 400);
         }
 
@@ -71,8 +87,8 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/worldinfo/delete', async ({ body }) => {
-        const name = String(body?.name || '').trim();
-        if (!name) {
+        const name = typeof body?.name === 'string' ? body.name : '';
+        if (name === '') {
             return jsonResponse({ error: 'World file must have a name' }, 400);
         }
 

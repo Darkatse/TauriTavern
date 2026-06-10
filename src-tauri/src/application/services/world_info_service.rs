@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use crate::application::dto::world_info_dto::GetWorldInfosBatchItemDto;
 use crate::application::errors::ApplicationError;
-use crate::domain::models::world_info::WorldInfo;
+use crate::domain::models::world_info::{
+    WorldInfo, sanitize_world_info_import_name, sanitize_world_info_name,
+};
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 
 pub struct WorldInfoService {
@@ -46,6 +48,26 @@ impl WorldInfoService {
         Ok(items)
     }
 
+    pub fn normalize_world_info_name(
+        &self,
+        name: &str,
+        import_filename: bool,
+    ) -> Result<String, ApplicationError> {
+        let normalized = if import_filename {
+            sanitize_world_info_import_name(name)
+        } else {
+            sanitize_world_info_name(name)
+        };
+
+        if normalized.is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "World file must have a name".to_string(),
+            ));
+        }
+
+        Ok(normalized)
+    }
+
     pub async fn save_world_info(&self, name: &str, data: Value) -> Result<(), ApplicationError> {
         let world_info = WorldInfo::new(name.to_string(), data);
         world_info
@@ -81,7 +103,7 @@ impl WorldInfoService {
             ));
         }
 
-        if original_filename.trim().is_empty() {
+        if original_filename.is_empty() {
             return Err(ApplicationError::ValidationError(
                 "World file must have a name".to_string(),
             ));

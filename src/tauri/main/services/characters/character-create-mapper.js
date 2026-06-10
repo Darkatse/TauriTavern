@@ -153,7 +153,7 @@ function arrayNotationValuesFromForm(formData, key) {
 function buildCharacterExtensions(payload, data) {
     const dataExtensions = objectFromValue(data.extensions, {}, 'data.extensions');
     const explicitExtensions = objectFromValue(payload.extensions, {}, 'extensions JSON');
-    const world = hasOwn(payload, 'world') ? String(payload.world ?? '').trim() : '';
+    const world = hasOwn(payload, 'world') ? String(payload.world ?? '') : '';
     const defaults = {
         world,
         depth_prompt: {
@@ -190,12 +190,12 @@ export function payloadToCreateCharacterDto(payload) {
         stringFromPayload(payload, data, ['file_name', 'fileName']),
         'file_name',
     );
-    const primaryLorebook = hasOwn(payload, 'world') ? String(payload.world ?? '').trim() : '';
+    const primaryLorebook = hasOwn(payload, 'world') ? String(payload.world ?? '') : '';
 
     return {
         file_name: fileName || null,
         json_data: jsonDataFromPayload(payload),
-        primary_lorebook: primaryLorebook || null,
+        primary_lorebook: primaryLorebook === '' ? null : primaryLorebook,
         name,
         description: stringFromPayload(payload, data, ['description']),
         personality: stringFromPayload(payload, data, ['personality']),

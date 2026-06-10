@@ -2,7 +2,7 @@ import { Fuse } from '../lib.js';
 
 import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, saveMetadata, getCurrentChatId, create_save, createOrEditCharacter, name1, getOneCharacter, select_selected_character } from '../script.js';
 import { extension_prompt_roles } from './extension-prompts.js';
-import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName, logSlashCommandWarn, addLongPressEvent, escapeHtml } from './utils.js';
+import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName, logSlashCommandWarn, addLongPressEvent, escapeHtml } from './utils.js';
 import { extension_settings, getContext } from './extensions.js';
 import { NOTE_MODULE_NAME, metadata_keys, shouldWIAddPrompt } from './authors-note.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -2110,8 +2110,8 @@ function resetWorldInfoEditorSearch() {
  * @param {{ navigation?: number | string; flashOnNav?: boolean; wiData?: any; syncSelection?: boolean }} [options]
  */
 async function renderWorldInfoEditor(name, options = {}) {
-    const worldName = String(name || '').trim();
-    if (!worldName) {
+    const worldName = String(name ?? '');
+    if (worldName === '') {
         await hideWorldEditor();
         return false;
     }
@@ -2145,7 +2145,8 @@ async function renderWorldInfoEditor(name, options = {}) {
 }
 
 export async function showWorldEditor(name) {
-    if (!name) {
+    name = String(name ?? '');
+    if (name === '') {
         await hideWorldEditor();
         return;
     }
@@ -2159,8 +2160,8 @@ async function prefetchWorldInfos(names) {
     const seen = new Set();
 
     for (const rawName of names) {
-        const name = String(rawName || '').trim();
-        if (!name || seen.has(name) || worldInfoCache.has(name)) {
+        const name = typeof rawName === 'string' ? rawName : '';
+        if (name === '' || seen.has(name) || worldInfoCache.has(name)) {
             continue;
         }
 
@@ -2184,8 +2185,8 @@ async function prefetchWorldInfos(names) {
             const payload = await response.json();
             const items = Array.isArray(payload?.items) ? payload.items : [];
             for (const item of items) {
-                const name = String(item?.name || '').trim();
-                if (!name) {
+                const name = typeof item?.name === 'string' ? item.name : '';
+                if (name === '') {
                     continue;
                 }
 
@@ -2218,8 +2219,8 @@ async function prefetchWorldInfos(names) {
  * @return {Promise<Object|null>} A promise that resolves to the loaded world information, or null if the request fails.
  */
 export async function loadWorldInfo(name) {
-    name = String(name || '').trim();
-    if (!name) return;
+    name = String(name ?? '');
+    if (name === '') return;
 
     if (worldInfoCache.has(name)) {
         return worldInfoCache.get(name);
@@ -4310,8 +4311,8 @@ async function _save(name, data, revision = 0) {
  * @return {Promise<void>} A promise that resolves when the world info is saved
  */
 export async function saveWorldInfo(name, data, immediately = false) {
-    name = String(name || '').trim();
-    if (!name || !data) {
+    name = String(name ?? '');
+    if (name === '' || !data) {
         return;
     }
 
@@ -4337,6 +4338,15 @@ async function renameWorldInfo(name, data) {
     }
     if (equalsIgnoreCaseAndAccents(oldName, newName)) {
         toastr.warning(t`Name not accepted, as it is the same as before (ignoring case and accents).`, t`Rename World Info`);
+        return;
+    }
+
+    const [oldSanitizedName, newSanitizedName] = await Promise.all([
+        getSanitizedWorldInfoName(oldName),
+        getSanitizedWorldInfoName(newName),
+    ]);
+    if (oldSanitizedName === newSanitizedName) {
+        toastr.warning(t`Name not accepted, as it resolves to the same file as before.`, t`Rename World Info`);
         return;
     }
 
@@ -4461,7 +4471,7 @@ async function updateWorldInfoLinks(oldName, newName) {
  * @returns {Promise<boolean>} A promise that resolves to true if the world info was successfully deleted, false otherwise
  */
 export async function deleteWorldInfo(worldInfoName, { saveLinkedCharacter = true } = {}) {
-    worldInfoName = String(worldInfoName || '').trim();
+    worldInfoName = String(worldInfoName ?? '');
     dirtyWorldInfos.delete(worldInfoName);
     if (!world_names.includes(worldInfoName)) {
         return false;
@@ -4555,6 +4565,31 @@ export function getFreeWorldName(worldName = null, { stripIndex = true } = {}) {
     return undefined;
 }
 
+async function getSanitizedWorldInfoName(worldName, { importFilename = false } = {}) {
+    try {
+        const result = await fetch('/api/worldinfo/sanitize-name', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                name: worldName,
+                importFilename,
+            }),
+        });
+
+        if (!result.ok) {
+            const error = await result.text();
+            throw new Error(error);
+        }
+
+        const responseData = await result.json();
+        return responseData.name;
+    } catch (error) {
+        toastr.error(String(error), 'Could not sanitize World Info name');
+        console.error('Could not sanitize World Info name', error);
+        throw error;
+    }
+}
+
 /**
  * Creates a new world info/lorebook with the given name.
  * Checks if a world with the same name already exists, providing a warning or optionally a user confirmation dialog.
@@ -4571,7 +4606,7 @@ export async function createNewWorldInfo(worldName, { interactive = false } = {}
         return false;
     }
 
-    const sanitizedWorldName = await getSanitizedFilename(worldName);
+    const sanitizedWorldName = await getSanitizedWorldInfoName(worldName);
 
     const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: interactive, actionName: 'Create', deleteAction: (existingName) => deleteWorldInfo(existingName) });
     if (!allowed) {
@@ -6046,8 +6081,7 @@ export async function importWorldInfo(file) {
         return;
     }
 
-    const worldName = file.name.substr(0, file.name.lastIndexOf('.'));
-    const sanitizedWorldName = await getSanitizedFilename(worldName);
+    const sanitizedWorldName = await getSanitizedWorldInfoName(file.name, { importFilename: true });
     const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: true, actionName: 'Import', deleteAction: (existingName) => deleteWorldInfo(existingName) });
     if (!allowed) {
         return false;
@@ -6104,8 +6138,8 @@ export function openWorldInfoEditor(worldName) {
  * @returns {Promise<boolean>}
  */
 export async function openWorldInfoEntry(worldName, uid, options = {}) {
-    const normalizedWorldName = String(worldName || '').trim();
-    if (!normalizedWorldName) {
+    const normalizedWorldName = String(worldName ?? '');
+    if (normalizedWorldName === '') {
         return false;
     }
 

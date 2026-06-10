@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::world_info::{sanitize_world_info_name, validate_world_info_data};
+use crate::domain::models::world_info::{
+    WORLD_INFO_EXTENSION, sanitize_world_info_file_name, sanitize_world_info_import_name,
+    validate_world_info_data,
+};
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::persistence::file_system::{
     delete_file, list_files_with_extension, read_json_file, write_json_file,
@@ -37,19 +40,35 @@ impl FileWorldInfoRepository {
         Ok(())
     }
 
-    fn get_world_path(&self, name: &str) -> PathBuf {
-        self.worlds_dir.join(format!("{}.json", name))
+    fn get_world_path(&self, file_name: &str) -> PathBuf {
+        self.worlds_dir.join(file_name)
     }
 
-    fn normalize_world_name(&self, name: &str) -> Result<String, DomainError> {
-        let normalized = sanitize_world_info_name(name);
-        if normalized.is_empty() {
+    fn normalize_world_file_name(&self, name: &str) -> Result<String, DomainError> {
+        let file_name = sanitize_world_info_file_name(name);
+        if file_name.is_empty()
+            || Path::new(&file_name)
+                .extension()
+                .and_then(OsStr::to_str)
+                .is_none_or(|ext| !ext.eq_ignore_ascii_case(WORLD_INFO_EXTENSION))
+        {
             return Err(DomainError::InvalidData(
                 "World file must have a name".to_string(),
             ));
         }
 
-        Ok(normalized)
+        Ok(file_name)
+    }
+
+    fn normalize_import_world_name(&self, original_filename: &str) -> Result<String, DomainError> {
+        let world_name = sanitize_world_info_import_name(original_filename);
+        if world_name.is_empty() {
+            return Err(DomainError::InvalidData(
+                "World file must have a name".to_string(),
+            ));
+        }
+
+        Ok(world_name.to_string())
     }
 
     fn parse_world_info_json(&self, json_text: &str) -> Result<Value, DomainError> {
@@ -138,7 +157,7 @@ impl WorldInfoRepository for FileWorldInfoRepository {
         name: &str,
         allow_dummy: bool,
     ) -> Result<Option<Value>, DomainError> {
-        if name.trim().is_empty() {
+        if name.is_empty() {
             return Ok(if allow_dummy {
                 Some(json!({ "entries": {} }))
             } else {
@@ -146,8 +165,8 @@ impl WorldInfoRepository for FileWorldInfoRepository {
             });
         }
 
-        let world_name = self.normalize_world_name(name)?;
-        let world_path = self.get_world_path(&world_name);
+        let file_name = self.normalize_world_file_name(name)?;
+        let world_path = self.get_world_path(&file_name);
 
         if !world_path.exists() {
             return Ok(if allow_dummy {
@@ -164,21 +183,21 @@ impl WorldInfoRepository for FileWorldInfoRepository {
     async fn save_world_info(&self, name: &str, data: &Value) -> Result<(), DomainError> {
         self.ensure_directory_exists().await?;
 
-        let world_name = self.normalize_world_name(name)?;
+        let file_name = self.normalize_world_file_name(name)?;
         validate_world_info_data(data).map_err(DomainError::InvalidData)?;
 
-        let world_path = self.get_world_path(&world_name);
+        let world_path = self.get_world_path(&file_name);
         write_json_file(&world_path, data).await
     }
 
     async fn delete_world_info(&self, name: &str) -> Result<(), DomainError> {
-        let world_name = self.normalize_world_name(name)?;
-        let world_path = self.get_world_path(&world_name);
+        let file_name = self.normalize_world_file_name(name)?;
+        let world_path = self.get_world_path(&file_name);
 
         if !world_path.exists() {
             return Err(DomainError::NotFound(format!(
                 "World info file {} doesn't exist",
-                world_name
+                file_name
             )));
         }
 
@@ -193,17 +212,14 @@ impl WorldInfoRepository for FileWorldInfoRepository {
     ) -> Result<String, DomainError> {
         self.ensure_directory_exists().await?;
 
-        let world_name_raw = Path::new(original_filename)
-            .file_stem()
-            .and_then(OsStr::to_str)
-            .unwrap_or_default();
-        let world_name = self.normalize_world_name(world_name_raw)?;
+        let world_name = self.normalize_import_world_name(original_filename)?;
 
         let data = self
             .read_import_payload(file_path, original_filename, converted_data)
             .await?;
 
-        let target = self.get_world_path(&world_name);
+        let file_name = self.normalize_world_file_name(&world_name)?;
+        let target = self.get_world_path(&file_name);
         write_json_file(&target, &data).await?;
 
         Ok(world_name)
@@ -233,6 +249,7 @@ impl WorldInfoRepository for FileWorldInfoRepository {
 mod tests {
     use super::FileWorldInfoRepository;
     use crate::domain::repositories::world_info_repository::WorldInfoRepository;
+    use serde_json::json;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -264,6 +281,78 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[tokio::test]
+    async fn save_get_delete_keeps_spaced_world_names_distinct() {
+        let dir = TestDir::new();
+        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf());
+        let plain = json!({ "entries": { "0": { "uid": 0, "content": "plain" } } });
+        let leading = json!({ "entries": { "0": { "uid": 0, "content": "leading" } } });
+        let trailing = json!({ "entries": { "0": { "uid": 0, "content": "trailing" } } });
+
+        repository
+            .save_world_info("Lore", &plain)
+            .await
+            .expect("save plain world");
+        repository
+            .save_world_info(" Lore", &leading)
+            .await
+            .expect("save leading-space world");
+        repository
+            .save_world_info("Lore ", &trailing)
+            .await
+            .expect("save trailing-space world");
+
+        assert!(dir.path().join("Lore.json").exists());
+        assert!(dir.path().join(" Lore.json").exists());
+        assert!(dir.path().join("Lore .json").exists());
+        assert_eq!(
+            repository
+                .get_world_info("Lore", false)
+                .await
+                .expect("get plain world"),
+            Some(plain)
+        );
+        assert_eq!(
+            repository
+                .get_world_info(" Lore", false)
+                .await
+                .expect("get leading-space world"),
+            Some(leading)
+        );
+        assert_eq!(
+            repository
+                .get_world_info("Lore ", false)
+                .await
+                .expect("get trailing-space world"),
+            Some(trailing)
+        );
+
+        repository
+            .delete_world_info("Lore")
+            .await
+            .expect("delete plain world");
+
+        assert!(!dir.path().join("Lore.json").exists());
+        assert!(dir.path().join(" Lore.json").exists());
+        assert!(dir.path().join("Lore .json").exists());
+    }
+
+    #[tokio::test]
+    async fn import_world_info_preserves_leading_space_from_original_filename() {
+        let dir = TestDir::new();
+        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf());
+        let source = dir.path().join("upload.json");
+        std::fs::write(&source, r#"{"entries":{}}"#).expect("write import source");
+
+        let imported_name = repository
+            .import_world_info(&source, " Pinned.json", None)
+            .await
+            .expect("import world info");
+
+        assert_eq!(imported_name, " Pinned");
+        assert!(dir.path().join(" Pinned.json").exists());
     }
 
     #[tokio::test]

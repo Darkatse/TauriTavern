@@ -60,7 +60,7 @@ function normalizeDisplayName(entry) {
 function normalizeEntry(entry) {
     const position = normalizePosition(entry?.position);
     return {
-        world: String(entry?.world || '').trim(),
+        world: typeof entry?.world === 'string' ? entry.world : '',
         uid: typeof entry?.uid === 'number' ? entry.uid : String(entry?.uid ?? '').trim(),
         displayName: normalizeDisplayName(entry),
         constant: Boolean(entry?.constant),

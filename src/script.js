@@ -12095,8 +12095,8 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
             continue;
         }
 
-        let primaryWorldName = String(character?.data?.extensions?.world || '').trim();
-        if (!primaryWorldName) {
+        let primaryWorldName = String(character?.data?.extensions?.world ?? '');
+        if (primaryWorldName === '') {
             const detailsResponse = await fetch('/api/characters/get', {
                 method: 'POST',
                 headers: getRequestHeaders(),
@@ -12111,7 +12111,7 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
 
             try {
                 const details = await detailsResponse.json();
-                primaryWorldName = String(details?.data?.extensions?.world || details?.extensions?.world || '').trim();
+                primaryWorldName = String(details?.data?.extensions?.world ?? details?.extensions?.world ?? '');
             } catch (error) {
                 console.error('Failed to parse character details response:', error);
                 toastr.error(t`Failed to resolve linked worldbook for character deletion.`, t`Failed to delete character`);
@@ -12136,7 +12136,7 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
             continue;
         }
 
-        if (primaryWorldName) {
+        if (primaryWorldName !== '') {
             worldsToDelete.add(primaryWorldName);
         }
 

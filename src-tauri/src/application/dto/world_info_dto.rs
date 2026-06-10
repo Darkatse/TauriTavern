@@ -23,6 +23,18 @@ pub struct GetWorldInfosBatchResponseDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NormalizeWorldInfoNameDto {
+    pub name: String,
+    #[serde(default)]
+    pub import_filename: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NormalizeWorldInfoNameResponseDto {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveWorldInfoDto {
     pub name: String,
     pub data: Value,

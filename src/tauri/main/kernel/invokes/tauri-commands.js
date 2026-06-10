@@ -127,6 +127,7 @@ export {};
  *   | 'load_llm_connection'
  *   | 'move_extension'
  *   | 'move_skill'
+ *   | 'normalize_world_info_name'
  *   | 'read_secret_state'
  *   | 'read_secret_settings'
  *   | 'read_agent_run_events'

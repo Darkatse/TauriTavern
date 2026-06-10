@@ -761,7 +761,7 @@ impl CharacterService {
         &self,
         character: &mut Character,
     ) -> Result<bool, DomainError> {
-        let world_name = character.data.extensions.world.trim().to_string();
+        let world_name = character.data.extensions.world.clone();
         if world_name.is_empty() {
             let removed = character.data.character_book.take().is_some();
             return Ok(removed);
@@ -775,10 +775,7 @@ impl CharacterService {
         character: &mut Character,
         primary_lorebook: Option<&str>,
     ) -> Result<(), DomainError> {
-        let Some(world_name) = primary_lorebook
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
+        let Some(world_name) = primary_lorebook.filter(|value| !value.is_empty()) else {
             return Ok(());
         };
 
@@ -864,14 +861,13 @@ impl CharacterService {
     }
 
     fn resolve_embedded_world_name(character: &Character, character_book: &Value) -> String {
-        if !character.data.extensions.world.trim().is_empty() {
-            return character.data.extensions.world.trim().to_string();
+        if !character.data.extensions.world.is_empty() {
+            return character.data.extensions.world.clone();
         }
 
         if let Some(book_name) = character_book.get("name").and_then(Value::as_str) {
-            let trimmed = book_name.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
+            if !book_name.is_empty() {
+                return book_name.to_string();
             }
         }
 
@@ -977,8 +973,7 @@ impl CharacterService {
         let world_name = export_value
             .pointer("/data/extensions/world")
             .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim();
+            .unwrap_or("");
 
         if world_name.is_empty() {
             if let Some(data_object) = export_value.get_mut("data").and_then(Value::as_object_mut) {
