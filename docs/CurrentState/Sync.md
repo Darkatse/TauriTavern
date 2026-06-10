@@ -163,6 +163,7 @@ wire framing（见 `src-tauri/src/infrastructure/tt_sync/bundle.rs`）：
 
 - `path_len` 上限为 **16KiB**（避免异常请求造成内存放大）。
 - 服务端必须拒绝“提前结束/缺文件/重复文件/不在 plan 内”的 bundle（保证 Mirror commit 不会在部分上传时发生）。
+- TauriTavern 客户端当前对 TT-Sync v2 传输显式偏向 HTTP/1.1。bundle 是单个长流，现有 reqwest/hyper HTTP/2 默认 flow-control 在局域网实测下不如 HTTP/1.1；协议本身仍只要求 HTTPS + SPKI pinning，不把 HTTP 版本暴露为外部契约。
 
 ### 5.4 zstd（zstd_v1：端到端流式压缩）
 

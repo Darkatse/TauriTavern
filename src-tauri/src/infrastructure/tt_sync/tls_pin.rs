@@ -39,7 +39,7 @@ fn build_signature_verifier() -> Result<Arc<rustls::client::WebPkiServerVerifier
 }
 
 fn default_alpn_protocols() -> Vec<Vec<u8>> {
-    vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+    vec![b"http/1.1".to_vec()]
 }
 
 #[derive(Debug)]
@@ -93,5 +93,15 @@ impl ServerCertVerifier for SpkiPinVerifier {
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.signature_verifier.supported_verify_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_alpn_protocols;
+
+    #[test]
+    fn tt_sync_alpn_prefers_http1_for_bundle_streams() {
+        assert_eq!(default_alpn_protocols(), vec![b"http/1.1".to_vec()]);
     }
 }

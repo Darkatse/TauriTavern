@@ -9,6 +9,8 @@ pub(crate) const BUNDLE_CONTENT_TYPE: &str = "application/x-ttsync-bundle";
 pub(crate) const FEATURE_BUNDLE_V1: &str = "bundle_v1";
 pub(crate) const FEATURE_ZSTD_V1: &str = "zstd_v1";
 
+pub(crate) const BUNDLE_STREAM_BUFFER_SIZE: usize = 64 * 1024;
+pub(crate) const BUNDLE_ZSTD_DECODE_BUFFER_SIZE: usize = 1024 * 1024;
 pub(crate) const MAX_BUNDLE_PATH_LEN: u32 = 16 * 1024;
 
 pub(crate) async fn read_u32_be<R>(reader: &mut R) -> Result<u32, DomainError>
@@ -37,12 +39,12 @@ pub(crate) async fn copy_exact<R, W>(
     reader: &mut R,
     writer: &mut W,
     mut remaining: u64,
+    buffer: &mut [u8],
 ) -> Result<(), DomainError>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut buffer = vec![0u8; 64 * 1024];
     while remaining > 0 {
         let to_read = (buffer.len() as u64).min(remaining) as usize;
         let read = reader

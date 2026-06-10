@@ -45,7 +45,11 @@ impl TtSyncV2Api {
 
         let tls = build_spki_pinned_tls_config(&spki_sha256)?;
 
-        let builder = apply_default_user_agent(Client::builder()).use_preconfigured_tls(tls);
+        // Bundle transfers are single long streams; HTTP/1.1 avoids h2 flow-control overhead
+        // observed on LAN while keeping the public TT-Sync protocol as plain HTTPS.
+        let builder = apply_default_user_agent(Client::builder())
+            .use_preconfigured_tls(tls)
+            .http1_only();
 
         let http = builder
             .build()

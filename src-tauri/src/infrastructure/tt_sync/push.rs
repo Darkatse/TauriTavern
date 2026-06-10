@@ -16,7 +16,7 @@ use ttsync_core::dataset::{ResolvedDatasetPolicy, tauri_tavern_default_selection
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
 use crate::infrastructure::tt_sync::bundle::{
-    FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, copy_exact, write_u32_be,
+    BUNDLE_STREAM_BUFFER_SIZE, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, copy_exact, write_u32_be,
 };
 use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
@@ -149,7 +149,7 @@ async fn apply_push_plan(
         let (progress_tx, mut progress_rx) =
             tokio::sync::mpsc::unbounded_channel::<BundleProgress>();
 
-        let (reader, writer) = tokio::io::duplex(64 * 1024);
+        let (reader, writer) = tokio::io::duplex(BUNDLE_STREAM_BUFFER_SIZE);
         let writer_task = tokio::spawn(write_bundle_upload(
             runtime.sync_root.clone(),
             transfer_entries,
@@ -158,12 +158,15 @@ async fn apply_push_plan(
         ));
 
         let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = if allow_zstd {
-            Box::new(ZstdEncoder::new(BufReader::new(reader)))
+            Box::new(ZstdEncoder::new(BufReader::with_capacity(
+                BUNDLE_STREAM_BUFFER_SIZE,
+                reader,
+            )))
         } else {
             Box::new(reader)
         };
 
-        let stream = ReaderStream::with_capacity(reader, 64 * 1024);
+        let stream = ReaderStream::with_capacity(reader, BUNDLE_STREAM_BUFFER_SIZE);
         let body = reqwest::Body::wrap_stream(stream);
 
         let mut upload_fut = Box::pin(api.upload_bundle(session_token, &plan_id, body, allow_zstd));
@@ -320,6 +323,8 @@ async fn write_bundle_upload(
     mut out: tokio::io::DuplexStream,
     progress: tokio::sync::mpsc::UnboundedSender<BundleProgress>,
 ) -> Result<(), DomainError> {
+    let mut buffer = vec![0u8; BUNDLE_STREAM_BUFFER_SIZE];
+
     for entry in transfer {
         let path_bytes = entry.path.as_str().as_bytes();
         let path_len = u32::try_from(path_bytes.len()).map_err(|_| {
@@ -336,7 +341,7 @@ async fn write_bundle_upload(
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
-        copy_exact(&mut file, &mut out, entry.size_bytes).await?;
+        copy_exact(&mut file, &mut out, entry.size_bytes, &mut buffer).await?;
         let _ = progress.send(BundleProgress {
             path: entry.path.to_string(),
             size_bytes: entry.size_bytes,
@@ -376,7 +381,7 @@ async fn upload_one(
         .await
         .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
-    let stream = ReaderStream::with_capacity(file, 64 * 1024);
+    let stream = ReaderStream::with_capacity(file, BUNDLE_STREAM_BUFFER_SIZE);
     let body = reqwest::Body::wrap_stream(stream);
     api.upload_file(session_token, plan_id, &entry.path, body)
         .await?;

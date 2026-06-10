@@ -20,7 +20,8 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
 use crate::infrastructure::sync_fs;
 use crate::infrastructure::tt_sync::bundle::{
-    ExactSizeReader, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, MAX_BUNDLE_PATH_LEN, read_u32_be,
+    BUNDLE_ZSTD_DECODE_BUFFER_SIZE, ExactSizeReader, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1,
+    MAX_BUNDLE_PATH_LEN, read_u32_be,
 };
 use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
@@ -159,7 +160,10 @@ async fn apply_pull_plan(
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error));
         let reader = StreamReader::new(stream);
         let mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = if is_zstd {
-            Box::new(ZstdDecoder::new(BufReader::new(reader)))
+            Box::new(ZstdDecoder::new(BufReader::with_capacity(
+                BUNDLE_ZSTD_DECODE_BUFFER_SIZE,
+                reader,
+            )))
         } else {
             Box::new(reader)
         };
