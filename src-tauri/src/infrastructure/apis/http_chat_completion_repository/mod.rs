@@ -266,7 +266,19 @@ impl HttpChatCompletionRepository {
     }
 
     fn map_transport_error(label: &str, error: reqwest::Error) -> DomainError {
-        DomainError::transient(format!("{label}: {error}"))
+        let failure = crate::infrastructure::http_error::reqwest_transport_failure(&error);
+        tracing::warn!(
+            operation = label,
+            code = %failure.code,
+            category = %failure.category,
+            endpoint = failure.endpoint.as_deref().unwrap_or(""),
+            timeout = error.is_timeout(),
+            connect = error.is_connect(),
+            body = error.is_body(),
+            request = error.is_request(),
+            "upstream transport request failed",
+        );
+        DomainError::upstream_failure(failure)
     }
 
     async fn stream_sse_response(
@@ -290,6 +302,7 @@ impl HttpChatCompletionRepository {
     {
         let mut buffer = Vec::<u8>::new();
         let mut accumulator = SseEventAccumulator::default();
+        let endpoint = response.url().clone();
 
         loop {
             if *cancel.borrow() {
@@ -304,9 +317,25 @@ impl HttpChatCompletionRepository {
                     continue;
                 }
                 chunk = response.chunk() => {
-                    chunk.map_err(|error| DomainError::transient(format!(
-                        "{provider_name} stream read failed: {error}"
-                    )))?
+                    chunk.map_err(|error| {
+                        let failure = crate::infrastructure::http_error::reqwest_body_failure(
+                            &error,
+                            Some(&endpoint),
+                        );
+                        tracing::warn!(
+                            provider = provider_name,
+                            operation = "stream",
+                            code = %failure.code,
+                            category = %failure.category,
+                            endpoint = failure.endpoint.as_deref().unwrap_or(""),
+                            timeout = error.is_timeout(),
+                            connect = error.is_connect(),
+                            body = error.is_body(),
+                            request = error.is_request(),
+                            "upstream stream read failed",
+                        );
+                        DomainError::upstream_failure(failure)
+                    })?
                 }
             };
 

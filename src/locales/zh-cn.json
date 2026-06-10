@@ -3948,5 +3948,14 @@
     "Custom models saved.": "自定义模型已保存。",
     "Custom model already exists.": "自定义模型已存在。",
     "Cannot delete current custom model": "无法删除当前自定义模型",
-    "Switch to another model before deleting it.": "请先切换到其他模型，再删除此模型。"
+    "Switch to another model before deleting it.": "请先切换到其他模型，再删除此模型。",
+    "tauritavern.error.network.timeout": "请求超时：目标服务没有及时响应，可能是网络、VPN 不稳定或服务繁忙。",
+    "tauritavern.error.network.connect_failed": "连接目标服务失败：当前网络、VPN、代理或接口地址可能暂时不可用。",
+    "tauritavern.error.network.proxy_failed": "代理连接失败：当前代理可能不可用，或代理设置不正确。",
+    "tauritavern.error.network.dns_failed": "找不到目标服务地址：可能是接口地址填写有误，或当前网络无法解析该地址。",
+    "tauritavern.error.network.tls_failed": "安全连接失败：证书校验、系统时间、代理拦截或网络环境可能异常。",
+    "tauritavern.error.network.body_interrupted": "响应读取中断：网络连接可能不稳定，或目标服务提前断开了连接。",
+    "tauritavern.error.network.request_failed": "网络请求失败：当前网络可能不稳定，或目标服务暂时不可达。",
+    "tauritavern.error.network.action": "请检查网络连接、VPN、代理或自定义接口地址，然后重试。",
+    "tauritavern.error.network.endpoint_label": "请求地址"
 }

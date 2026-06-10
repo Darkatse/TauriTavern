@@ -163,6 +163,51 @@ test('chat completion status route preserves object custom headers for Rust DTO'
     assert.deepEqual(calls[0].args.dto.custom_include_headers, customHeaders);
 });
 
+test('chat completion status route exposes structured upstream network failures', async () => {
+    installBrowserShims();
+    const { registerAiRoutes } = await import('../src/tauri/main/routes/ai-routes.js');
+    const router = createRouteRegistry();
+
+    registerAiRoutes(router, {
+        safeInvoke: async () => {
+            const error = new Error('error sending request for url (https://api.example.test/v1/chat/completions)');
+            error.details = {
+                code: 'network.proxy_failed',
+                category: 'network',
+                endpoint: 'https://api.example.test/v1/chat/completions',
+                messageKey: 'tauritavern.error.network.proxy_failed',
+            };
+            throw error;
+        },
+    }, { jsonResponse });
+
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    let response;
+    try {
+        response = await router.handle({
+            method: 'POST',
+            path: '/api/backends/chat-completions/status',
+            body: {
+                chat_completion_source: 'openai',
+            },
+        });
+    } finally {
+        console.error = originalConsoleError;
+    }
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.error, true);
+    assert.equal(body.code, 'network.proxy_failed');
+    assert.equal(body.category, 'network');
+    assert.equal(body.message_key, 'tauritavern.error.network.proxy_failed');
+    assert.equal(body.endpoint, 'https://api.example.test/v1/chat/completions');
+    assert.match(body.message, /Could not connect through the configured proxy\./);
+    assert.match(body.message, /Check your network, VPN, proxy, or custom endpoint address/);
+    assert.match(body.message, /Endpoint: https:\/\/api\.example\.test\/v1\/chat\/completions/);
+});
+
 test('chat completion status frontend includes active secret id snapshot', async () => {
     const source = await readFile(
         new URL('../src/scripts/openai.js', import.meta.url),

@@ -56,6 +56,9 @@ fn agent_error_code_and_message(error: &ApplicationError) -> (String, String) {
         ApplicationError::Transient(message) => {
             structured_code_and_message(message, "agent.transient")
         }
+        ApplicationError::UpstreamFailure(failure) => {
+            (failure.code.clone(), failure.fallback_message().to_string())
+        }
         ApplicationError::Cancelled(message) => {
             structured_code_and_message(message, "agent.cancelled")
         }
@@ -100,7 +103,9 @@ fn is_error_code(value: &str) -> bool {
 fn is_retryable(error: &ApplicationError) -> bool {
     matches!(
         error,
-        ApplicationError::RateLimited(_) | ApplicationError::Transient(_)
+        ApplicationError::RateLimited(_)
+            | ApplicationError::Transient(_)
+            | ApplicationError::UpstreamFailure(_)
     )
 }
 

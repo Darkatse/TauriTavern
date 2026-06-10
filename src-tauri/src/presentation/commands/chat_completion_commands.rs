@@ -9,6 +9,7 @@ use crate::application::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
 };
 use crate::application::services::chat_completion_service::ChatCompletionService;
+use crate::domain::models::upstream_failure::UpstreamFailure;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -47,9 +48,15 @@ pub async fn generate_chat_completion(
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ChatCompletionStreamEvent {
-    Chunk { data: String },
+    Chunk {
+        data: String,
+    },
     Done,
-    Error { message: String },
+    Error {
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        details: Option<UpstreamFailure>,
+    },
 }
 
 #[tauri::command]
@@ -143,8 +150,11 @@ async fn run_stream_generation(
             let _ = on_event.send(ChatCompletionStreamEvent::Done);
         }
         Err(error) => {
+            let command_error = CommandError::from(error);
+            let details = command_error.upstream_failure().cloned();
             let _ = on_event.send(ChatCompletionStreamEvent::Error {
-                message: error.to_string(),
+                message: command_error.to_string(),
+                details,
             });
         }
     }

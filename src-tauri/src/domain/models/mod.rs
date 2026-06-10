@@ -20,6 +20,7 @@ pub mod skill;
 pub mod theme;
 pub mod tt_sync;
 pub mod update;
+pub mod upstream_failure;
 pub mod user;
 pub mod user_directory;
 pub mod world_info;

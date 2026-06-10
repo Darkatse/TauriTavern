@@ -1,6 +1,11 @@
 // @ts-check
 
 import { createInvokeBroker } from '../../brokers/invoke-broker.js';
+import {
+    asUpstreamFailureDetails,
+    findUpstreamFailureDetails,
+    upstreamFailureFallbackText,
+} from '../../kernel/upstream-failure.js';
 
 /**
  * @typedef {import('../../context/types.js').TauriInvokeFn} TauriInvokeFn
@@ -142,6 +147,8 @@ export function createInvokeService({ invoke, policies }) {
                 return `Internal server error: ${nested}`;
             case 'TooManyRequests':
                 return `Too many requests: ${nested}`;
+            case 'UpstreamFailure':
+                return upstreamFailureFallbackText(asUpstreamFailureDetails(payload)) || nested;
             default:
                 return '';
         }
@@ -186,6 +193,7 @@ export function createInvokeService({ invoke, policies }) {
                 return await invoke(command, invokeArgs);
             } catch (error) {
                 const message = normalizeInvokeErrorMessage(error, `Command failed: ${command}`);
+                const details = findUpstreamFailureDetails(error);
                 if (attempt < 19 && shouldRetryInvoke(message)) {
                     await sleep(200);
                     continue;
@@ -194,6 +202,10 @@ export function createInvokeService({ invoke, policies }) {
                 const raised = new Error(message);
                 // @ts-ignore - assign error cause for better debugging.
                 raised.cause = error;
+                if (details) {
+                    // @ts-ignore - structured backend error details.
+                    raised.details = details;
+                }
                 throw raised;
             }
         }

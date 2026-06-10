@@ -417,6 +417,9 @@ fn map_domain_error(error: DomainError) -> (StatusCode, String) {
         DomainError::InternalError(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
         DomainError::RateLimited { message } => (StatusCode::TOO_MANY_REQUESTS, message),
         DomainError::Transient(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
+        DomainError::UpstreamFailure(failure) => {
+            (StatusCode::SERVICE_UNAVAILABLE, failure.to_string())
+        }
         DomainError::WorkspacePathIsDirectory { path } => (
             StatusCode::CONFLICT,
             format!("Workspace path is a directory: {path}"),

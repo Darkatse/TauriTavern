@@ -4464,5 +4464,14 @@
     "Custom models saved.": "自訂模型已儲存。",
     "Custom model already exists.": "自訂模型已存在。",
     "Cannot delete current custom model": "無法刪除目前的自訂模型",
-    "Switch to another model before deleting it.": "請先切換到其他模型，再刪除此模型。"
+    "Switch to another model before deleting it.": "請先切換到其他模型，再刪除此模型。",
+    "tauritavern.error.network.timeout": "請求逾時：目標服務沒有及時回應，可能是網路、VPN 不穩定或服務忙碌。",
+    "tauritavern.error.network.connect_failed": "連線到目標服務失敗：目前網路、VPN、代理或接口位址可能暫時不可用。",
+    "tauritavern.error.network.proxy_failed": "代理連線失敗：目前代理可能不可用，或代理設定不正確。",
+    "tauritavern.error.network.dns_failed": "找不到目標服務位址：可能是接口位址填寫有誤，或目前網路無法解析該位址。",
+    "tauritavern.error.network.tls_failed": "安全連線失敗：憑證驗證、系統時間、代理攔截或網路環境可能異常。",
+    "tauritavern.error.network.body_interrupted": "回應讀取中斷：網路連線可能不穩定，或目標服務提前中斷連線。",
+    "tauritavern.error.network.request_failed": "網路請求失敗：目前網路可能不穩定，或目標服務暫時無法連線。",
+    "tauritavern.error.network.action": "請檢查網路連線、VPN、代理或自訂接口位址，然後重試。",
+    "tauritavern.error.network.endpoint_label": "請求位址"
 }

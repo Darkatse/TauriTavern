@@ -8,6 +8,7 @@ pub mod data_root_content_dirs;
 pub mod github;
 pub mod http_client;
 pub mod http_client_pool;
+pub mod http_error;
 #[cfg(target_os = "ios")]
 pub mod ios_document_picker;
 pub mod ios_policy_cache;
