@@ -229,7 +229,7 @@ fn is_desktop_distributable(path: &Path) -> bool {
 fn normalize_android_abi(abi: &str) -> &str {
     match abi {
         "arm" => "armeabi-v7a",
-        "arm64" => "arm64",
+        "arm64" => "arm64-v8a",
         "x86" => "x86",
         "x86_64" => "x86_64",
         other => other,
