@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::theme::{Theme, sanitize_filename};
+use crate::domain::models::filename::sanitize_filename;
+use crate::domain::models::theme::Theme;
 use crate::domain::repositories::theme_repository::ThemeRepository;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{delete_file, write_json_file};
@@ -34,9 +35,15 @@ impl FileThemeRepository {
     }
 
     /// Get the path to a theme file
-    fn get_theme_path(&self, name: &str) -> PathBuf {
-        let filename = format!("{}.json", sanitize_filename(name));
-        self.themes_dir.join(filename)
+    fn get_theme_path(&self, name: &str) -> Result<PathBuf, DomainError> {
+        let filename = sanitize_filename(&format!("{name}.json"));
+        if filename.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Theme name is invalid for filesystem storage".to_string(),
+            ));
+        }
+
+        Ok(self.themes_dir.join(filename))
     }
 }
 
@@ -49,7 +56,7 @@ impl ThemeRepository for FileThemeRepository {
         self.ensure_directory_exists().await?;
 
         // Get the path to the theme file
-        let path = self.get_theme_path(&theme.name);
+        let path = self.get_theme_path(&theme.name)?;
 
         // Create a new JSON object that includes the name
         let mut theme_data = theme.data.clone();
@@ -73,7 +80,7 @@ impl ThemeRepository for FileThemeRepository {
     async fn delete_theme(&self, name: &str) -> Result<(), DomainError> {
         logger::debug(&format!("Deleting theme: {}", name));
 
-        let path = self.get_theme_path(name);
+        let path = self.get_theme_path(name)?;
 
         if !path.exists() {
             return Err(DomainError::NotFound(format!("Theme not found: {}", name)));

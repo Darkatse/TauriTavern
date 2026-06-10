@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::ffi::OsStr;
 use std::path::Path;
 
-use crate::domain::models::character::sanitize_filename;
+use crate::domain::models::filename::sanitize_filename;
 
 pub const WORLD_INFO_EXTENSION: &str = "json";
 

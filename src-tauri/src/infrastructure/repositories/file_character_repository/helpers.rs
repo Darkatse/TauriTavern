@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::character::{Character, sanitize_filename};
+use crate::domain::models::character::Character;
 use crate::domain::models::chat::parse_message_timestamp;
+use crate::domain::models::filename::sanitize_filename;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
     list_files_with_extension, replace_file_with_fallback, unique_temp_path,

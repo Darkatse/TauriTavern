@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::quick_reply::{QuickReplySet, sanitize_filename};
+use crate::domain::models::filename::sanitize_filename;
+use crate::domain::models::quick_reply::QuickReplySet;
 use crate::domain::repositories::quick_reply_repository::QuickReplyRepository;
 use crate::infrastructure::persistence::file_system::{delete_file, write_json_file};
 
@@ -33,14 +34,14 @@ impl FileQuickReplyRepository {
     }
 
     fn get_quick_reply_path(&self, name: &str) -> Result<PathBuf, DomainError> {
-        let file_stem = sanitize_filename(name);
-        if file_stem.is_empty() {
+        let filename = sanitize_filename(&format!("{name}.json"));
+        if filename.is_empty() {
             return Err(DomainError::InvalidData(
                 "Quick Reply set name is invalid".to_string(),
             ));
         }
 
-        Ok(self.quick_replies_dir.join(format!("{file_stem}.json")))
+        Ok(self.quick_replies_dir.join(filename))
     }
 }
 

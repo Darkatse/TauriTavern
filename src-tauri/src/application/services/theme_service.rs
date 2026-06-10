@@ -21,6 +21,12 @@ impl ThemeService {
     pub async fn save_theme(&self, name: &str, data: Value) -> Result<(), ApplicationError> {
         tracing::info!("Saving theme: {}", name);
 
+        if name.is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Theme name is required".to_string(),
+            ));
+        }
+
         // Validate the theme data
         if !data.is_object() {
             return Err(ApplicationError::ValidationError(
@@ -41,6 +47,12 @@ impl ThemeService {
     /// Delete a theme
     pub async fn delete_theme(&self, name: &str) -> Result<(), ApplicationError> {
         tracing::info!("Deleting theme: {}", name);
+
+        if name.is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Theme name is required".to_string(),
+            ));
+        }
 
         self.theme_repository.delete_theme(name).await.map_err(|e| {
             tracing::error!("Failed to delete theme {}: {}", name, e);

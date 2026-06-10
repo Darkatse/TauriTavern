@@ -1,9 +1,9 @@
 use crate::application::errors::ApplicationError;
-use crate::domain::models::character::sanitize_filename;
 use crate::domain::models::chat::normalize_chat_file_stem;
+use crate::domain::models::filename::sanitize_filename;
 
 pub(super) fn validate_character_path_component(value: &str) -> Result<(), ApplicationError> {
-    if value.trim().is_empty() || sanitize_filename(value.trim()).is_empty() {
+    if value.is_empty() || sanitize_filename(value).is_empty() {
         return Err(ApplicationError::ValidationError(
             "Character name cannot be empty or invalid".to_string(),
         ));
@@ -36,6 +36,7 @@ mod tests {
     #[test]
     fn accepts_safe_chat_file_names_with_or_without_jsonl_extension() {
         assert!(validate_character_path_component("Alice").is_ok());
+        assert!(validate_character_path_component(" Alice").is_ok());
         assert!(validate_chat_file_name("session", "Chat file name").is_ok());
         assert!(validate_chat_file_name("session.JSONL", "Chat file name").is_ok());
         assert!(validate_chat_file_name("中文会话.jsonl", "Chat file name").is_ok());

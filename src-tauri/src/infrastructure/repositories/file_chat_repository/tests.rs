@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::character::sanitize_filename;
+use crate::domain::models::filename::sanitize_filename;
 use crate::domain::repositories::chat_repository::{
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchQuery, ChatPayloadPatchOp,
     ChatRepository, PinnedCharacterChat, PinnedGroupChat,

@@ -151,6 +151,7 @@ export {};
  *   | 'cancel_agent_run'
  *   | 'preview_skill_import'
  *   | 'prepare_agent_prompt_assembly'
+ *   | 'sanitize_filename'
  *   | 'read_agent_prompt_assembly_request'
  *   | 'delete_agent_profile'
  *   | 'delete_llm_connection'

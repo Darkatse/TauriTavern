@@ -17,28 +17,3 @@ impl Theme {
         Self { name, data }
     }
 }
-
-/// Sanitize a filename to ensure it's safe to use in a file system
-///
-/// This function removes or replaces characters that are not safe for filenames
-/// across different operating systems.
-pub fn sanitize_filename(filename: &str) -> String {
-    // List of characters that are not allowed in filenames across most file systems
-    let invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
-
-    // Replace invalid characters with underscores
-    let mut sanitized = filename.to_string();
-    for c in invalid_chars {
-        sanitized = sanitized.replace(c, "_");
-    }
-
-    // Trim leading and trailing whitespace
-    sanitized = sanitized.trim().to_string();
-
-    // If the filename is empty after sanitization, use a default name
-    if sanitized.is_empty() {
-        sanitized = "unnamed_theme".to_string();
-    }
-
-    sanitized
-}

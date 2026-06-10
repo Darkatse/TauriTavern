@@ -10,6 +10,7 @@ use tokio::fs;
 use url::Url;
 
 use crate::app::AppState;
+use crate::domain::models::filename::sanitize_filename as sanitize_filename_contract;
 use crate::presentation::commands::helpers::log_command;
 use crate::presentation::errors::CommandError;
 
@@ -217,6 +218,19 @@ async fn get_default_user_files_directory(
     })?;
 
     Ok(files_dir)
+}
+
+#[tauri::command]
+pub async fn sanitize_filename(file_name: String) -> Result<String, CommandError> {
+    log_command(format!("sanitize_filename {}", file_name));
+
+    if file_name.is_empty() {
+        return Err(CommandError::BadRequest(
+            "No fileName specified".to_string(),
+        ));
+    }
+
+    Ok(sanitize_filename_contract(&file_name))
 }
 
 #[tauri::command]

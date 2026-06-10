@@ -28,20 +28,6 @@ impl QuickReplySet {
     }
 }
 
-/// Sanitize a filename to ensure it's safe to write to disk.
-pub fn sanitize_filename(name: &str) -> String {
-    name.chars()
-        .map(|character| match character {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            control if control.is_control() => '_',
-            other => other,
-        })
-        .collect::<String>()
-        .trim()
-        .trim_end_matches(['.', ' '])
-        .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,13 +43,5 @@ mod tests {
     fn validate_rejects_non_object_payload() {
         let set = QuickReplySet::new("Default".to_string(), json!("not-an-object"));
         assert!(set.validate().is_err());
-    }
-
-    #[test]
-    fn sanitize_filename_replaces_invalid_chars() {
-        assert_eq!(
-            sanitize_filename("name/with\\unsafe:chars*?"),
-            "name_with_unsafe_chars__"
-        );
     }
 }

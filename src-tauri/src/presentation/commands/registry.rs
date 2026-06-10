@@ -222,6 +222,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::upload_staging_commands::stage_upload_finish,
         super::upload_staging_commands::stage_upload_discard,
         // File commands
+        super::file_commands::sanitize_filename,
         super::file_commands::upload_user_file,
         super::file_commands::read_user_file_asset,
         super::file_commands::delete_user_file,

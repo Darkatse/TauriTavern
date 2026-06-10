@@ -49,8 +49,7 @@ impl QuickReplyService {
         let name = payload
             .get("name")
             .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
+            .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| {
                 ApplicationError::ValidationError("Quick Reply set name is required".to_string())
             })?;
