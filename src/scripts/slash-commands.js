@@ -306,6 +306,19 @@ export function initDefaultSlashCommands() {
         return '';
     }
 
+    function getSlashCommandErrorMessage(error) {
+        return error?.message ? String(error.message) : String(error);
+    }
+
+    async function runTauriTavernPanelSlashCommand(openPanel, reportError) {
+        try {
+            await openPanel();
+        } catch (error) {
+            reportError(getSlashCommandErrorMessage(error));
+        }
+        return '';
+    }
+
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'api',
         callback: async function (args, text) {
@@ -3649,26 +3662,75 @@ export function initDefaultSlashCommands() {
         `,
     }));
 
-    // 新增 /llmlog 斜杠命令，快捷打开 LLM API 日志窗口（TauriTavern 专有功能）
-    // 无需进入设置面板即可直接打开日志查看器
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'llmlog',
         aliases: ['apilog'],
         callback: async () => {
-            // 检查 Tauri 宿主环境是否可用
             if (!window.__TAURITAVERN__?.api?.dev) {
                 toastr.error(t`LLM API logs are only available in TauriTavern.`);
                 return '';
             }
-            try {
+
+            return runTauriTavernPanelSlashCommand(async () => {
                 const { openLlmApiLogsPanel } = await import('./tauri/setting/dev-logs.js');
                 await openLlmApiLogsPanel();
-            } catch (error) {
-                toastr.error(t`Failed to open LLM API logs: ${error?.message || error}`);
-            }
-            return '';
+            }, (message) => toastr.error(t`Failed to open LLM API logs: ${message}`));
         },
         helpString: t`Open the LLM API log viewer (TauriTavern only).`,
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'frontendlog',
+        aliases: ['consolelog'],
+        callback: async () => {
+            if (!window.__TAURITAVERN__?.api?.dev) {
+                toastr.error(t`Frontend logs are only available in TauriTavern.`);
+                return '';
+            }
+
+            return runTauriTavernPanelSlashCommand(async () => {
+                const { openFrontendLogsPanel } = await import('./tauri/setting/dev-logs.js');
+                await openFrontendLogsPanel();
+            }, (message) => toastr.error(t`Failed to open frontend logs: ${message}`));
+        },
+        helpString: t`Open the frontend log viewer (TauriTavern only).`,
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'backendlog',
+        callback: async () => {
+            if (!window.__TAURITAVERN__?.api?.dev) {
+                toastr.error(t`Backend logs are only available in TauriTavern.`);
+                return '';
+            }
+
+            return runTauriTavernPanelSlashCommand(async () => {
+                const { openBackendLogsPanel } = await import('./tauri/setting/dev-logs.js');
+                await openBackendLogsPanel();
+            }, (message) => toastr.error(t`Failed to open backend logs: ${message}`));
+        },
+        helpString: t`Open the backend log viewer (TauriTavern only).`,
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'syncpanel',
+        aliases: ['lansync'],
+        callback: async () => {
+            if (typeof window.__TAURI__?.core?.invoke !== 'function') {
+                toastr.error(t`LAN Sync panel is only available in TauriTavern.`);
+                return '';
+            }
+            if (getActiveIosPolicyCapabilities()?.sync?.lan === false) {
+                toastr.error(t`LAN Sync is disabled by the active iOS policy.`);
+                return '';
+            }
+
+            return runTauriTavernPanelSlashCommand(async () => {
+                const { openSyncPopup } = await import('./tauri/setting/setting-panel/sync-popup.js');
+                await openSyncPopup();
+            }, (message) => toastr.error(t`Failed to open LAN Sync panel: ${message}`));
+        },
+        helpString: t`Open the LAN Sync panel (TauriTavern only).`,
     }));
 
 
