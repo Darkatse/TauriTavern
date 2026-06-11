@@ -627,13 +627,22 @@ impl ChatService {
         cursor: ChatPayloadCursor,
         header: String,
         lines: Vec<String>,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         validate_character_path_component(character_name)?;
         validate_chat_file_name(file_name, "Chat file name")?;
 
         self.chat_repository
-            .save_chat_payload_windowed(character_name, file_name, cursor, header, lines, force)
+            .save_chat_payload_windowed(
+                character_name,
+                file_name,
+                cursor,
+                header,
+                lines,
+                expected_window_line_count,
+                force,
+            )
             .await
             .map_err(Into::into)
     }
@@ -646,13 +655,22 @@ impl ChatService {
         cursor: ChatPayloadCursor,
         header: String,
         op: ChatPayloadPatchOp,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         validate_character_path_component(character_name)?;
         validate_chat_file_name(file_name, "Chat file name")?;
 
         self.chat_repository
-            .patch_chat_payload_windowed(character_name, file_name, cursor, header, op, force)
+            .patch_chat_payload_windowed(
+                character_name,
+                file_name,
+                cursor,
+                header,
+                op,
+                expected_window_line_count,
+                force,
+            )
             .await
             .map_err(Into::into)
     }

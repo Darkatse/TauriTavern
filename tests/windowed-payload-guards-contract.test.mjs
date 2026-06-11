@@ -98,7 +98,7 @@ test('windowed payload: windowed patch commit is guarded and merges cursor offse
 
     const saveGroupStart = groupChats.indexOf('async function saveGroupChat');
     assert.ok(saveGroupStart >= 0);
-    const saveGroupSlice = groupChats.slice(saveGroupStart, saveGroupStart + 2400);
+    const saveGroupSlice = groupChats.slice(saveGroupStart, saveGroupStart + 2600);
 
     assert.match(saveGroupSlice, /\bgetWindowedChatKey\b/);
     assert.match(saveGroupSlice, /const\s+expectedCursorOffset\s*=\s*windowState\.cursor\.offset\s*;/);

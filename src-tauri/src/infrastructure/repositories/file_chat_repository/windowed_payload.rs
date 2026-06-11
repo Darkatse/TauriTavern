@@ -165,6 +165,7 @@ impl FileChatRepository {
         cursor: ChatPayloadCursor,
         header: String,
         lines: Vec<String>,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.ensure_directory_exists().await?;
@@ -181,7 +182,15 @@ impl FileChatRepository {
         })?;
 
         let _write_guard = self.acquire_payload_write_lock(&path).await;
-        let result = save_payload_windowed_internal(&path, cursor, header, lines, force).await?;
+        let result = save_payload_windowed_internal(
+            &path,
+            cursor,
+            header,
+            lines,
+            expected_window_line_count,
+            force,
+        )
+        .await?;
 
         {
             let mut cache = self.memory_cache.lock().await;
@@ -220,6 +229,7 @@ impl FileChatRepository {
         cursor: ChatPayloadCursor,
         header: String,
         lines: Vec<String>,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.ensure_directory_exists().await?;
@@ -227,7 +237,15 @@ impl FileChatRepository {
         let path = self.get_group_chat_path(chat_id)?;
         let _write_guard = self.acquire_payload_write_lock(&path).await;
         let backup_key = Self::get_group_backup_key(chat_id)?;
-        let result = save_payload_windowed_internal(&path, cursor, header, lines, force).await?;
+        let result = save_payload_windowed_internal(
+            &path,
+            cursor,
+            header,
+            lines,
+            expected_window_line_count,
+            force,
+        )
+        .await?;
 
         self.remove_summary_cache_for_path(&path).await;
         self.backup_chat_file(&path, chat_id, &backup_key).await?;
@@ -312,6 +330,7 @@ async fn save_payload_windowed_internal(
     cursor: ChatPayloadCursor,
     header: String,
     lines: Vec<String>,
+    expected_window_line_count: usize,
     force: bool,
 ) -> Result<ChatPayloadCursor, DomainError> {
     let header_integrity = extract_integrity_slug_from_header_line(&header)?;
@@ -379,14 +398,19 @@ async fn save_payload_windowed_internal(
         _ => existing_header != header,
     };
 
+    // Window baseline contract: reject stale cursors before truncating.
+    if !(header_only && cursor.offset == existing_header_end_offset) {
+        verify_cursor_offset_is_line_boundary(path, cursor.offset).await?;
+    }
+    verify_window_baseline(
+        path,
+        cursor.offset,
+        metadata.len(),
+        expected_window_line_count,
+    )
+    .await?;
+
     if !header_changed {
-        if !(header_only && cursor.offset == existing_header_end_offset) {
-            verify_cursor_offset_is_line_boundary(path, cursor.offset).await?;
-        }
-
-        let writing_count = lines.iter().filter(|l| !l.trim().is_empty()).count();
-        verify_window_line_consistency(path, cursor.offset, metadata.len(), writing_count).await?;
-
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -451,13 +475,6 @@ async fn save_payload_windowed_internal(
             DomainError::InternalError(format!("Failed to flush chat payload file: {}", error))
         })?;
     } else {
-        if !(header_only && cursor.offset == existing_header_end_offset) {
-            verify_cursor_offset_is_line_boundary(path, cursor.offset).await?;
-        }
-
-        let writing_count = lines.iter().filter(|l| !l.trim().is_empty()).count();
-        verify_window_line_consistency(path, cursor.offset, metadata.len(), writing_count).await?;
-
         ensure_parent_dir(path).await?;
 
         let temp_path = FileChatRepository::temp_payload_path(path);

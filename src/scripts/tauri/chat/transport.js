@@ -206,7 +206,15 @@ export async function saveCharacterChatPayload({ characterName, avatarUrl, fileN
     }));
 }
 
-export async function saveCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, payload, force = false }) {
+function normalizeExpectedWindowLineCount(value) {
+    const normalized = Number(value);
+    if (!Number.isInteger(normalized) || normalized < 0) {
+        throw new Error('Windowed chat baseline expectedWindowLineCount is missing');
+    }
+    return normalized;
+}
+
+export async function saveCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, payload, expectedWindowLineCount, force = false }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
     if (!Array.isArray(payload) || payload.length === 0 || !normalizedCharacter || !normalizedFile.trim()) {
@@ -223,12 +231,13 @@ export async function saveCharacterChatPayloadWindowed({ characterName, avatarUr
             cursor,
             header,
             lines,
+            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
             force,
         },
     });
 }
 
-export async function patchCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, header, patch, force = false }) {
+export async function patchCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, header, patch, expectedWindowLineCount, force = false }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
     if (!normalizedCharacter || !normalizedFile.trim()) {
@@ -242,6 +251,7 @@ export async function patchCharacterChatPayloadWindowed({ characterName, avatarU
             cursor,
             header: String(header),
             patch,
+            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
             force,
         },
     });
@@ -349,7 +359,7 @@ export async function saveGroupChatPayload({ id, payload, force = false }) {
     }));
 }
 
-export async function saveGroupChatPayloadWindowed({ id, cursor, payload, force = false }) {
+export async function saveGroupChatPayloadWindowed({ id, cursor, payload, expectedWindowLineCount, force = false }) {
     const normalizedId = normalizeChatFileName(id);
     if (!Array.isArray(payload) || payload.length === 0 || !normalizedId.trim()) {
         throw new Error('Invalid group chat payload');
@@ -364,12 +374,13 @@ export async function saveGroupChatPayloadWindowed({ id, cursor, payload, force 
             cursor,
             header,
             lines,
+            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
             force,
         },
     });
 }
 
-export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch, force = false }) {
+export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch, expectedWindowLineCount, force = false }) {
     const normalizedId = normalizeChatFileName(id);
     if (!normalizedId.trim()) {
         throw new Error('Invalid group chat payload patch request');
@@ -381,6 +392,7 @@ export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch,
             cursor,
             header: String(header),
             patch,
+            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
             force,
         },
     });

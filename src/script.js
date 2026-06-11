@@ -8394,6 +8394,7 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
                     patch,
                     savedMessageCount: nextSavedMessageCount,
                     dirtyFromIndex: nextDirtyFromIndex,
+                    expectedWindowLineCount,
                 } = buildWindowedPayloadPatch(trimmedChat, windowState, 'chat');
 
                 const cursor = await patchCharacterChatPayloadWindowed({
@@ -8403,6 +8404,7 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
                     cursor: windowState.cursor,
                     header: JSON.stringify(chatHeader),
                     patch,
+                    expectedWindowLineCount,
                     force: Boolean(force),
                 });
 

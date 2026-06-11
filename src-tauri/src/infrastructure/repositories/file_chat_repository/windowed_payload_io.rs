@@ -338,35 +338,25 @@ pub(super) async fn count_lines_in_region(
     Ok(line_count)
 }
 
-/// Verify that the number of lines being written is consistent with the window
-/// region on disk. Prevents silent data loss from mode-switch stale cursors
-/// where cursor.offset doesn't match the actual window loaded by the frontend.
-pub(super) async fn verify_window_line_consistency(
+/// Verify the window baseline contract: the caller declares how many message
+/// lines its last successful load/save left between cursor.offset and EOF,
+/// and the write is rejected unless the file still matches exactly. Catches
+/// stale cursors (mode switch, concurrent writer) without the false
+/// accepts/rejects of a tolerance heuristic.
+pub(super) async fn verify_window_baseline(
     path: &Path,
     cursor_offset: u64,
     file_size: u64,
-    writing_line_count: usize,
+    expected_window_line_count: usize,
 ) -> Result<(), DomainError> {
     let window_lines_on_disk = count_lines_in_region(path, cursor_offset, file_size).await?;
 
-    if window_lines_on_disk == 0 || writing_line_count == 0 {
-        return Ok(());
-    }
-
-    // Allow reasonable edits: written count can differ by up to max(20, 50% of window)
-    let tolerance = (window_lines_on_disk / 2).max(20);
-    let diff = if writing_line_count > window_lines_on_disk {
-        writing_line_count - window_lines_on_disk
-    } else {
-        window_lines_on_disk - writing_line_count
-    };
-
-    if diff > tolerance {
+    if window_lines_on_disk != expected_window_line_count {
         return Err(DomainError::InvalidData(format!(
-            "Window line count mismatch for {:?}: cursor window has {} lines on disk \
-             but {} lines are being written (diff={}). This may indicate a stale cursor \
-             from a mode switch (full/windowed). Reload the chat and retry.",
-            path, window_lines_on_disk, writing_line_count, diff
+            "Window baseline mismatch for {:?}: expected {} message lines after the \
+             cursor but found {} on disk. The cursor is stale (mode switch or \
+             concurrent write). Reload the chat and retry.",
+            path, expected_window_line_count, window_lines_on_disk
         )));
     }
 

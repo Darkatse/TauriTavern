@@ -299,12 +299,20 @@ impl GroupChatService {
         cursor: ChatPayloadCursor,
         header: String,
         lines: Vec<String>,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         validate_chat_file_name(chat_id, "Group chat id")?;
 
         self.group_chat_repository
-            .save_group_chat_payload_windowed(chat_id, cursor, header, lines, force)
+            .save_group_chat_payload_windowed(
+                chat_id,
+                cursor,
+                header,
+                lines,
+                expected_window_line_count,
+                force,
+            )
             .await
             .map_err(Into::into)
     }
@@ -316,12 +324,20 @@ impl GroupChatService {
         cursor: ChatPayloadCursor,
         header: String,
         op: ChatPayloadPatchOp,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         validate_chat_file_name(chat_id, "Group chat id")?;
 
         self.group_chat_repository
-            .patch_group_chat_payload_windowed(chat_id, cursor, header, op, force)
+            .patch_group_chat_payload_windowed(
+                chat_id,
+                cursor,
+                header,
+                op,
+                expected_window_line_count,
+                force,
+            )
             .await
             .map_err(Into::into)
     }

@@ -169,10 +169,13 @@ pub trait ChatRepository: Send + Sync {
         cursor: ChatPayloadCursor,
         header: String,
         lines: Vec<String>,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError>;
 
     /// Patch a windowed character chat payload by applying an operation at the tail.
+    /// `expected_window_line_count` is the window baseline contract: how many message
+    /// lines the caller's last successful load/save left between cursor.offset and EOF.
     async fn patch_chat_payload_windowed(
         &self,
         character_name: &str,
@@ -180,6 +183,7 @@ pub trait ChatRepository: Send + Sync {
         cursor: ChatPayloadCursor,
         header: String,
         op: ChatPayloadPatchOp,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError>;
 
