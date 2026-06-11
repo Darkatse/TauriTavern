@@ -14,8 +14,8 @@ use super::windowed_payload_io::{
     WINDOW_READ_CHUNK_BYTES, cursor_from_metadata, ensure_parent_dir,
     extract_integrity_slug_from_header_line, map_open_existing_error, open_existing_payload_file,
     read_existing_payload_metadata, read_first_line_and_end_offset, replace_file,
-    verify_cursor_offset_is_line_boundary, verify_cursor_signature, write_jsonl_lines_at_end,
-    write_jsonl_lines_to_file,
+    verify_cursor_offset_is_line_boundary, verify_cursor_signature,
+    verify_window_line_consistency, write_jsonl_lines_at_end, write_jsonl_lines_to_file,
 };
 
 impl FileChatRepository {
@@ -361,6 +361,10 @@ async fn patch_payload_windowed_internal(
             }
 
             let has_lines = lines.iter().any(|line| !line.trim().is_empty());
+
+            let writing_count = lines.iter().filter(|l| !l.trim().is_empty()).count();
+            verify_window_line_consistency(path, start_offset, metadata.len(), writing_count)
+                .await?;
 
             if !header_changed {
                 let mut file = OpenOptions::new()

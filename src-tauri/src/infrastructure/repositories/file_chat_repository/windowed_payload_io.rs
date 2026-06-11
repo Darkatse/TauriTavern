@@ -269,6 +269,110 @@ pub(super) fn verify_cursor_signature(
     Ok(())
 }
 
+/// Count the number of JSONL lines between `start_offset` and `end_offset`.
+pub(super) async fn count_lines_in_region(
+    path: &Path,
+    start_offset: u64,
+    end_offset: u64,
+) -> Result<usize, DomainError> {
+    if end_offset <= start_offset {
+        return Ok(0);
+    }
+
+    let mut file = open_existing_payload_file(path).await?;
+    file.seek(SeekFrom::Start(start_offset))
+        .await
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to seek chat payload file {:?}: {}",
+                path, error
+            ))
+        })?;
+
+    let region_len = (end_offset - start_offset) as usize;
+    let mut remaining = region_len;
+    let mut line_count: usize = 0;
+    let mut buf = vec![0u8; WINDOW_READ_CHUNK_BYTES.min(region_len)];
+
+    while remaining > 0 {
+        let to_read = buf.len().min(remaining);
+        let n = file.read(&mut buf[..to_read]).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read chat payload file {:?}: {}",
+                path, error
+            ))
+        })?;
+        if n == 0 {
+            break;
+        }
+        line_count += buf[..n].iter().filter(|&&b| b == b'\n').count();
+        remaining -= n;
+    }
+
+    // The last line may not end with \n, count it if there's content
+    if region_len > 0 {
+        line_count += 1;
+        // But if the region ends with \n, we already counted it
+        if remaining == 0 {
+            let mut last_byte = [0u8; 1];
+            file.seek(SeekFrom::Start(end_offset - 1))
+                .await
+                .map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to seek chat payload file {:?}: {}",
+                        path, error
+                    ))
+                })?;
+            let n = file.read(&mut last_byte).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to read chat payload file {:?}: {}",
+                    path, error
+                ))
+            })?;
+            if n == 1 && last_byte[0] == b'\n' {
+                line_count -= 1;
+            }
+        }
+    }
+
+    Ok(line_count)
+}
+
+/// Verify that the number of lines being written is consistent with the window
+/// region on disk. Prevents silent data loss from mode-switch stale cursors
+/// where cursor.offset doesn't match the actual window loaded by the frontend.
+pub(super) async fn verify_window_line_consistency(
+    path: &Path,
+    cursor_offset: u64,
+    file_size: u64,
+    writing_line_count: usize,
+) -> Result<(), DomainError> {
+    let window_lines_on_disk = count_lines_in_region(path, cursor_offset, file_size).await?;
+
+    if window_lines_on_disk == 0 || writing_line_count == 0 {
+        return Ok(());
+    }
+
+    // Allow reasonable edits: written count can differ by up to max(20, 50% of window)
+    let tolerance = (window_lines_on_disk / 2).max(20);
+    let diff = if writing_line_count > window_lines_on_disk {
+        writing_line_count - window_lines_on_disk
+    } else {
+        window_lines_on_disk - writing_line_count
+    };
+
+    if diff > tolerance {
+        return Err(DomainError::InvalidData(format!(
+            "Window line count mismatch for {:?}: cursor window has {} lines on disk \
+             but {} lines are being written (diff={}). This may indicate a stale cursor \
+             from a mode switch (full/windowed). Reload the chat and retry.",
+            path, window_lines_on_disk, writing_line_count, diff
+        )));
+    }
+
+    Ok(())
+}
+
 pub(super) async fn verify_cursor_offset_is_line_boundary(
     path: &Path,
     cursor_offset: u64,

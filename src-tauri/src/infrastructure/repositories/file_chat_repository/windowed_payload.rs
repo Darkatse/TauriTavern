@@ -384,6 +384,9 @@ async fn save_payload_windowed_internal(
             verify_cursor_offset_is_line_boundary(path, cursor.offset).await?;
         }
 
+        let writing_count = lines.iter().filter(|l| !l.trim().is_empty()).count();
+        verify_window_line_consistency(path, cursor.offset, metadata.len(), writing_count).await?;
+
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -451,6 +454,10 @@ async fn save_payload_windowed_internal(
         if !(header_only && cursor.offset == existing_header_end_offset) {
             verify_cursor_offset_is_line_boundary(path, cursor.offset).await?;
         }
+
+        let writing_count = lines.iter().filter(|l| !l.trim().is_empty()).count();
+        verify_window_line_consistency(path, cursor.offset, metadata.len(), writing_count).await?;
+
         ensure_parent_dir(path).await?;
 
         let temp_path = FileChatRepository::temp_payload_path(path);
