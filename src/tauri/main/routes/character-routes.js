@@ -162,6 +162,53 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         return textResponse('ok');
     });
 
+    router.post('/api/characters/lorebook-conflict', async ({ body }) => {
+        const avatar = pickAvatarIdentity(body);
+        const resolved = await resolveRouteCharacterId(context, { avatar, fallbackName: body?.name });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+
+        const characterId = resolved.characterId;
+        if (!characterId) {
+            return jsonResponse({ error: 'Character not found' }, 404);
+        }
+
+        const result = await context.safeInvoke('check_character_lorebook_conflict', {
+            dto: { name: characterId },
+        });
+
+        return jsonResponse(result || { conflict: false });
+    });
+
+    router.post('/api/characters/resolve-lorebook-conflict', async ({ body }) => {
+        const avatar = pickAvatarIdentity(body);
+        const resolution = typeof body?.resolution === 'string' ? body.resolution : '';
+        if (!['current', 'embedded'].includes(resolution)) {
+            return jsonResponse({ error: 'Invalid lorebook conflict resolution' }, 400);
+        }
+
+        const resolved = await resolveRouteCharacterId(context, { avatar, fallbackName: body?.name });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+
+        const characterId = resolved.characterId;
+        if (!characterId) {
+            return jsonResponse({ error: 'Character not found' }, 404);
+        }
+
+        const result = await context.safeInvoke('resolve_character_lorebook_conflict', {
+            dto: {
+                name: characterId,
+                resolution,
+            },
+        });
+
+        await context.getAllCharacters({ shallow: true, forceRefresh: true });
+        return jsonResponse(result || {});
+    });
+
     router.post('/api/characters/edit-avatar', async ({ body, url }) => {
         if (!(body instanceof FormData)) {
             return jsonResponse({ error: 'Expected multipart form data' }, 400);

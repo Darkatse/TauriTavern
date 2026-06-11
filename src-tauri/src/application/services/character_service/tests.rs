@@ -1,8 +1,10 @@
 use super::CharacterService;
 use crate::application::dto::character_dto::{
-    BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataFilterDto, CreateCharacterDto,
+    BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataFilterDto,
+    CharacterLorebookConflictResolution, CheckCharacterLorebookConflictDto, CreateCharacterDto,
     ExportCharacterContentDto, ExportCharacterDto, ImportCharacterDto, MergeCharacterCardDataDto,
-    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
+    ResolveCharacterLorebookConflictDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
+    UpdateCharacterDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::{
@@ -2232,6 +2234,126 @@ async fn update_avatar_materializes_bound_lorebook_into_written_card() {
             .and_then(|value| value.pointer("/entries/0/content")),
         Some(&json!("fresh"))
     );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn lorebook_conflict_current_resolution_materializes_local_world() {
+    let (service, character_repository, world_info_repository, root) = setup_service().await;
+    let embedded_book = save_bound_world(&world_info_repository, "bound-book").await;
+
+    let mut character = Character::new(
+        "Conflict Current".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    character.data.extensions.world = "bound-book".to_string();
+    character.data.character_book = Some(embedded_book);
+    let mut card_payload = serde_json::to_value(character.to_v2()).expect("serialize character");
+    card_payload
+        .as_object_mut()
+        .expect("card payload object")
+        .insert("x_custom_top".to_string(), json!({ "preserved": true }));
+    write_character_png(&root, "Conflict Current", &card_payload).await;
+
+    let conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Conflict Current".to_string(),
+        })
+        .await
+        .expect("check lorebook conflict");
+    assert!(conflict.conflict);
+    assert!(conflict.current_available);
+    assert_eq!(conflict.world, "bound-book");
+
+    service
+        .resolve_lorebook_conflict(ResolveCharacterLorebookConflictDto {
+            name: "Conflict Current".to_string(),
+            resolution: CharacterLorebookConflictResolution::Current,
+        })
+        .await
+        .expect("resolve with current local world");
+
+    let stored_json = character_repository
+        .read_character_card_json("Conflict Current")
+        .await
+        .expect("read resolved character");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse resolved character");
+    assert_eq!(
+        stored_value.pointer("/data/character_book/entries/0/content"),
+        Some(&json!("fresh"))
+    );
+    assert_eq!(
+        stored_value.get("x_custom_top"),
+        Some(&json!({ "preserved": true }))
+    );
+
+    let conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Conflict Current".to_string(),
+        })
+        .await
+        .expect("recheck lorebook conflict");
+    assert!(!conflict.conflict);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn lorebook_conflict_embedded_resolution_overwrites_local_world() {
+    let (service, character_repository, world_info_repository, root) = setup_service().await;
+    let embedded_book = save_bound_world(&world_info_repository, "bound-book").await;
+
+    let mut character = Character::new(
+        "Conflict Embedded".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    character.data.extensions.world = "bound-book".to_string();
+    character.data.character_book = Some(embedded_book);
+    character_repository
+        .save(&character)
+        .await
+        .expect("save conflict character");
+
+    let conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Conflict Embedded".to_string(),
+        })
+        .await
+        .expect("check lorebook conflict");
+    assert!(conflict.conflict);
+    assert!(conflict.current_available);
+
+    service
+        .resolve_lorebook_conflict(ResolveCharacterLorebookConflictDto {
+            name: "Conflict Embedded".to_string(),
+            resolution: CharacterLorebookConflictResolution::Embedded,
+        })
+        .await
+        .expect("resolve with embedded world");
+
+    let world_info = world_info_repository
+        .get_world_info("bound-book", false)
+        .await
+        .expect("read world info")
+        .expect("world info exists");
+    assert_eq!(
+        world_info.pointer("/entries/1/content"),
+        Some(&json!("content"))
+    );
+
+    let conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Conflict Embedded".to_string(),
+        })
+        .await
+        .expect("recheck lorebook conflict");
+    assert!(!conflict.conflict);
 
     let _ = fs::remove_dir_all(&root).await;
 }

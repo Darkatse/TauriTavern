@@ -5,10 +5,12 @@ use tauri::State;
 use crate::app::AppState;
 use crate::application::dto::character_dto::{
     BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto, CharacterChatDto,
-    CharacterDto, CreateCharacterDto, CreateCharacterWithAvatarResultDto, CreateWithAvatarDto,
+    CharacterDto, CharacterLorebookConflictDto, CheckCharacterLorebookConflictDto,
+    CreateCharacterDto, CreateCharacterWithAvatarResultDto, CreateWithAvatarDto,
     DeleteCharacterDto, DuplicateCharacterDto, ExportCharacterContentDto,
     ExportCharacterContentResultDto, ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto,
-    MergeCharacterCardDataDto, RenameCharacterDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
+    MergeCharacterCardDataDto, RenameCharacterDto, ResolveCharacterLorebookConflictDto,
+    ResolveCharacterLorebookConflictResultDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
     UpdateCharacterDto,
 };
 use crate::domain::models::skill::{SkillScope, SkillScopeRetargetRequest};
@@ -107,6 +109,38 @@ pub async fn update_character_card_data(
         .update_character_card_data(&name, dto)
         .await
         .map_err(map_command_error("Failed to update character card data"))
+}
+
+#[tauri::command]
+pub async fn check_character_lorebook_conflict(
+    dto: CheckCharacterLorebookConflictDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<CharacterLorebookConflictDto, CommandError> {
+    log_command(format!("check_character_lorebook_conflict {}", dto.name));
+
+    app_state
+        .character_service
+        .check_lorebook_conflict(dto)
+        .await
+        .map_err(map_command_error(
+            "Failed to check character lorebook conflict",
+        ))
+}
+
+#[tauri::command]
+pub async fn resolve_character_lorebook_conflict(
+    dto: ResolveCharacterLorebookConflictDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ResolveCharacterLorebookConflictResultDto, CommandError> {
+    log_command(format!("resolve_character_lorebook_conflict {}", dto.name));
+
+    app_state
+        .character_service
+        .resolve_lorebook_conflict(dto)
+        .await
+        .map_err(map_command_error(
+            "Failed to resolve character lorebook conflict",
+        ))
 }
 
 #[tauri::command]

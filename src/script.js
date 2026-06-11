@@ -97,6 +97,8 @@ import {
     getWorldInfoSettings,
     setWorldInfoSettings,
     world_names,
+    worldInfoCache,
+    flushWorldInfoSaves,
     updateWorldInfoList,
     deleteWorldInfo,
     importEmbeddedWorldInfo,
@@ -11852,6 +11854,119 @@ async function importFromURL(items, files) {
     }
 }
 
+async function readLorebookConflictResponse(response) {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.error) {
+        throw new Error(data?.details || data?.error || response.statusText);
+    }
+
+    return data;
+}
+
+async function resolveCharacterLorebookConflictBeforeNewChat() {
+    if (selected_group || this_chid === undefined) {
+        return true;
+    }
+
+    const character = characters[this_chid];
+    if (!character?.avatar) {
+        return true;
+    }
+
+    try {
+        await flushWorldInfoSaves('new_chat_lorebook_conflict_check');
+        const conflictResponse = await fetch('/api/characters/lorebook-conflict', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ avatar_url: character.avatar }),
+            cache: 'no-cache',
+        });
+        const conflict = await readLorebookConflictResponse(conflictResponse);
+
+        if (!conflict?.conflict) {
+            return true;
+        }
+
+        const worldName = String(conflict.world || character?.data?.extensions?.world || '');
+        const embeddedName = String(conflict.embedded_name || t`Embedded World/Lorebook`);
+        const currentAvailable = Boolean(conflict.current_available);
+        const currentWorldLabel = worldName ? `<code>${escapeHtml(worldName)}</code>` : `<code>${t`missing`}</code>`;
+        const embeddedWorldLabel = `<code>${escapeHtml(embeddedName)}</code>`;
+        const unavailableMessage = currentAvailable
+            ? ''
+            : `<div class="m-t-1">${t`The linked local World/Lorebook file is missing. You can restore it from the embedded copy or cancel.`}</div>`;
+
+        const popupBody = `
+            <div>${t`The embedded World/Lorebook and linked local World/Lorebook are different.`}</div>
+            <div class="m-t-1">${t`Current local World/Lorebook:`} ${currentWorldLabel}</div>
+            <div>${t`Embedded World/Lorebook:`} ${embeddedWorldLabel}</div>
+            ${unavailableMessage}
+            <div class="m-t-1">${t`Choose which version to keep before starting a new chat. The other version will be overwritten.`}</div>
+        `;
+        const customButtons = [];
+
+        if (currentAvailable) {
+            customButtons.push({
+                text: t`Save current World/Lorebook`,
+                result: POPUP_RESULT.CUSTOM1,
+            });
+        }
+
+        customButtons.push(
+            {
+                text: t`Overwrite with embedded World/Lorebook`,
+                result: POPUP_RESULT.CUSTOM2,
+            },
+            {
+                text: translate('Cancel', 'Cancel World/Lorebook conflict'),
+                result: POPUP_RESULT.NEGATIVE,
+            },
+        );
+
+        const result = await Popup.show.confirm(t`World/Lorebook conflict`, popupBody, {
+            okButton: false,
+            cancelButton: false,
+            customButtons,
+            defaultResult: currentAvailable ? POPUP_RESULT.CUSTOM1 : POPUP_RESULT.CUSTOM2,
+        });
+
+        const resolution = result === POPUP_RESULT.CUSTOM1
+            ? 'current'
+            : result === POPUP_RESULT.CUSTOM2
+                ? 'embedded'
+                : '';
+
+        if (!resolution) {
+            return false;
+        }
+
+        const resolveResponse = await fetch('/api/characters/resolve-lorebook-conflict', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                avatar_url: character.avatar,
+                resolution,
+            }),
+            cache: 'no-cache',
+        });
+        const resolved = await readLorebookConflictResponse(resolveResponse);
+
+        if (resolution === 'embedded') {
+            const resolvedWorld = String(resolved?.world || worldName || '');
+            if (resolvedWorld) {
+                worldInfoCache.delete(resolvedWorld);
+            }
+            await updateWorldInfoList();
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Failed to resolve character lorebook conflict before new chat.', error);
+        toastr.error(error?.message || t`Failed to resolve the World/Lorebook conflict.`, t`New chat cancelled`);
+        return false;
+    }
+}
+
 export async function doNewChat({ deleteCurrentChat = false } = {}) {
     //Make a new chat for selected character
     if ((!selected_group && this_chid == undefined) || menu_type == 'create') {
@@ -11860,6 +11975,9 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
 
     //Fix it; New chat doesn't create while open create character menu
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
+    if (!await resolveCharacterLorebookConflictBeforeNewChat()) {
+        return;
+    }
     await clearChat({ clearData: true });
 
     chat_file_for_del = getCurrentChatDetails()?.sessionName;

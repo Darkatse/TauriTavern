@@ -127,6 +127,37 @@ pub struct UpdateCharacterCardDataDto {
     pub crop: Option<ImageCropDto>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckCharacterLorebookConflictDto {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterLorebookConflictDto {
+    pub conflict: bool,
+    pub world: String,
+    pub embedded_name: Option<String>,
+    pub current_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CharacterLorebookConflictResolution {
+    Current,
+    Embedded,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveCharacterLorebookConflictDto {
+    pub name: String,
+    pub resolution: CharacterLorebookConflictResolution,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveCharacterLorebookConflictResultDto {
+    pub world: String,
+}
+
 /// Raw character card merge DTO used by upstream-compatible HTTP routes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeCharacterCardDataDto {
