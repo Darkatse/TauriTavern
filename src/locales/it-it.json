@@ -1,4 +1,12 @@
 {
+    "Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.": "Nasconde un messaggio della chat dal prompt. Usa <code>all</code> per nascondere l'intera chat, o <code>before</code> per nascondere solo i messaggi salvati prima della finestra caricata.",
+    "Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.": "Mostra di nuovo un messaggio nel prompt. Usa <code>all</code> per mostrare l'intera chat, o <code>before</code> per mostrare solo i messaggi salvati prima della finestra caricata.",
+    "message index (starts with 0) or range, or \"all\" / \"before\" (messages before the loaded window), defaults to the last message index if not provided": "indice del messaggio (parte da 0) o intervallo, oppure \"all\" / \"before\" (messaggi precedenti alla finestra caricata); se non specificato, l'indice dell'ultimo messaggio",
+    "every message in the chat, including unloaded ones": "tutti i messaggi della chat, inclusi quelli non caricati",
+    "only unloaded messages before the current window": "solo i messaggi non caricati precedenti alla finestra attuale",
+    "All messages are already loaded. Use /hide with a message range instead.": "Tutti i messaggi sono già caricati. Usa invece /hide con un intervallo di messaggi.",
+    "There are no unloaded messages before the current window.": "Non ci sono messaggi non caricati prima della finestra attuale.",
+    "Failed to update messages before the loaded window. Reload the chat and try again.": "Aggiornamento dei messaggi precedenti alla finestra caricata non riuscito. Ricarica la chat e riprova.",
     "Favorite": "Preferito",
     "Tag": "Etichetta",
     "Duplicate": "Duplicare",

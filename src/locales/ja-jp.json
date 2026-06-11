@@ -1,4 +1,12 @@
 {
+    "Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.": "プロンプトからチャットメッセージを非表示にします。<code>all</code> でチャット全体を、<code>before</code> で読み込み済みウィンドウより前のメッセージのみを非表示にします。",
+    "Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.": "プロンプトにメッセージを再表示します。<code>all</code> でチャット全体を、<code>before</code> で読み込み済みウィンドウより前のメッセージのみを再表示します。",
+    "message index (starts with 0) or range, or \"all\" / \"before\" (messages before the loaded window), defaults to the last message index if not provided": "メッセージインデックス（0 から開始）または範囲、もしくは \"all\" / \"before\"（読み込み済みウィンドウより前のメッセージ）。未指定の場合は最後のメッセージインデックスになります",
+    "every message in the chat, including unloaded ones": "未読み込み分を含むチャット内のすべてのメッセージ",
+    "only unloaded messages before the current window": "現在のウィンドウより前の未読み込みメッセージのみ",
+    "All messages are already loaded. Use /hide with a message range instead.": "すべてのメッセージは既に読み込まれています。代わりにメッセージ範囲を指定して /hide を使用してください。",
+    "There are no unloaded messages before the current window.": "現在のウィンドウより前に未読み込みのメッセージはありません。",
+    "Failed to update messages before the loaded window. Reload the chat and try again.": "読み込み済みウィンドウより前のメッセージの更新に失敗しました。チャットを再読み込みしてやり直してください。",
     "Favorite": "お気に入り",
     "Tag": "タグ",
     "Duplicate": "重複",

@@ -1,4 +1,12 @@
 {
+    "Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.": "Verbergt een chatbericht uit de prompt. Gebruik <code>all</code> om de hele chat te verbergen, of <code>before</code> om alleen de berichten vóór het geladen venster te verbergen.",
+    "Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.": "Toont een bericht weer in de prompt. Gebruik <code>all</code> om de hele chat weer te tonen, of <code>before</code> om alleen de berichten vóór het geladen venster weer te tonen.",
+    "message index (starts with 0) or range, or \"all\" / \"before\" (messages before the loaded window), defaults to the last message index if not provided": "berichtindex (begint bij 0) of bereik, of \"all\" / \"before\" (berichten vóór het geladen venster); standaard de index van het laatste bericht",
+    "every message in the chat, including unloaded ones": "elk bericht in de chat, inclusief niet-geladen berichten",
+    "only unloaded messages before the current window": "alleen niet-geladen berichten vóór het huidige venster",
+    "All messages are already loaded. Use /hide with a message range instead.": "Alle berichten zijn al geladen. Gebruik in plaats daarvan /hide met een berichtbereik.",
+    "There are no unloaded messages before the current window.": "Er zijn geen niet-geladen berichten vóór het huidige venster.",
+    "Failed to update messages before the loaded window. Reload the chat and try again.": "Bijwerken van berichten vóór het geladen venster is mislukt. Herlaad de chat en probeer het opnieuw.",
     "Favorite": "Favoriet",
     "Tag": "Label",
     "Duplicate": "Duplicaat",

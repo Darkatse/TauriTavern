@@ -1,4 +1,12 @@
 {
+    "Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.": "Скрывает сообщение чата из промпта. Используйте <code>all</code>, чтобы скрыть весь чат, или <code>before</code>, чтобы скрыть только сообщения до загруженного окна.",
+    "Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.": "Возвращает сообщение в промпт. Используйте <code>all</code>, чтобы показать весь чат, или <code>before</code>, чтобы показать только сообщения до загруженного окна.",
+    "message index (starts with 0) or range, or \"all\" / \"before\" (messages before the loaded window), defaults to the last message index if not provided": "индекс сообщения (начинается с 0) или диапазон, либо \"all\" / \"before\" (сообщения до загруженного окна); по умолчанию — индекс последнего сообщения",
+    "every message in the chat, including unloaded ones": "все сообщения чата, включая незагруженные",
+    "only unloaded messages before the current window": "только незагруженные сообщения до текущего окна",
+    "All messages are already loaded. Use /hide with a message range instead.": "Все сообщения уже загружены. Используйте /hide с диапазоном сообщений.",
+    "There are no unloaded messages before the current window.": "Перед текущим окном нет незагруженных сообщений.",
+    "Failed to update messages before the loaded window. Reload the chat and try again.": "Не удалось обновить сообщения до загруженного окна. Перезагрузите чат и попробуйте снова.",
     "clickslidertips": "Кликайте по цифрам под ползунками, чтобы менять их вручную.",
     "kobldpresets": "Пресеты для Kobold",
     "guikoboldaisettings": "Настройки из интерфейса KoboldAI",
