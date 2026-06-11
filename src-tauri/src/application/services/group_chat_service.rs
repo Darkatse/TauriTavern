@@ -342,6 +342,29 @@ impl GroupChatService {
             .map_err(Into::into)
     }
 
+    /// Set the hidden flag on all messages stored before the window cursor.
+    pub async fn hide_group_chat_payload_before_cursor(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        hide: bool,
+        name_filter: Option<String>,
+        expected_window_line_count: usize,
+    ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_chat_file_name(chat_id, "Group chat id")?;
+
+        self.group_chat_repository
+            .hide_group_chat_payload_before_cursor(
+                chat_id,
+                cursor,
+                hide,
+                name_filter,
+                expected_window_line_count,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
     /// Save a group chat payload from a JSONL file path.
     pub async fn save_group_chat_from_file(
         &self,

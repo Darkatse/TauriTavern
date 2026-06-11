@@ -4,8 +4,9 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::chat_dto::{
-    ChatSearchResultDto, DeleteGroupChatDto, ImportGroupChatDto, PatchGroupChatWindowedDto,
-    PinnedGroupChatDto, RenameGroupChatDto, SaveGroupChatFromFileDto, SaveGroupChatWindowedDto,
+    ChatSearchResultDto, DeleteGroupChatDto, HideGroupChatBeforeCursorDto, ImportGroupChatDto,
+    PatchGroupChatWindowedDto, PinnedGroupChatDto, RenameGroupChatDto, SaveGroupChatFromFileDto,
+    SaveGroupChatWindowedDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::repositories::chat_types::{
@@ -208,6 +209,28 @@ pub async fn patch_group_chat_payload_windowed(
         .await
         .map_err(map_command_error(
             "Failed to patch windowed group chat payload",
+        ))
+}
+
+#[tauri::command]
+pub async fn hide_group_chat_payload_before_cursor(
+    dto: HideGroupChatBeforeCursorDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ChatPayloadCursor, CommandError> {
+    log_command(format!("hide_group_chat_payload_before_cursor {}", dto.id));
+
+    app_state
+        .group_chat_service
+        .hide_group_chat_payload_before_cursor(
+            &dto.id,
+            dto.cursor,
+            dto.hide,
+            dto.name_filter,
+            dto.expected_window_line_count,
+        )
+        .await
+        .map_err(map_command_error(
+            "Failed to update hidden state before group chat window",
         ))
 }
 

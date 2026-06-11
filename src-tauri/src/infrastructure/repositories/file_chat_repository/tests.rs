@@ -2745,6 +2745,201 @@ async fn patch_chat_payload_windowed_appends_and_rewrites_tail() {
 }
 
 #[tokio::test]
+async fn hide_chat_payload_before_cursor_rewrites_only_lines_before_window() {
+    let (repository, root) = setup_repository().await;
+
+    let character_name = "alice";
+    let file_name = "session";
+
+    let mut payload = vec![payload_with_integrity("hide-a")[0].clone()];
+    for index in 0..6 {
+        let is_user = index % 2 == 0;
+        payload.push(json!({
+            "name": if is_user { "User" } else { "Alice" },
+            "is_user": is_user,
+            "send_date": format!("2026-01-01T00:00:0{}.000Z", index),
+            "mes": format!("message {}", index),
+            "extra": {},
+        }));
+    }
+
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        character_name,
+        file_name,
+        &payload,
+        false,
+    )
+    .await
+    .expect("save initial payload");
+
+    let tail = repository
+        .get_chat_payload_tail_lines(character_name, file_name, 2)
+        .await
+        .expect("get tail");
+    assert_eq!(tail.lines.len(), 2);
+    assert!(tail.has_more_before);
+    let window_lines = tail.lines.clone();
+    let stale_cursor = tail.cursor;
+
+    let cursor = repository
+        .hide_chat_payload_before_cursor(character_name, file_name, tail.cursor, true, None, 2)
+        .await
+        .expect("hide before cursor");
+
+    let bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read payload bytes");
+    let text = String::from_utf8(bytes).expect("payload should be utf8");
+    let lines = text.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 7);
+    for line in &lines[1..5] {
+        let value = serde_json::from_str::<Value>(line).expect("parse json line");
+        assert_eq!(value.get("is_system").and_then(Value::as_bool), Some(true));
+    }
+    assert_eq!(lines[5], window_lines[0]);
+    assert_eq!(lines[6], window_lines[1]);
+
+    let chunk = repository
+        .get_chat_payload_before_lines(character_name, file_name, cursor, 100)
+        .await
+        .expect("read lines before returned cursor");
+    assert_eq!(chunk.lines.len(), 4);
+    assert!(!chunk.has_more_before);
+
+    let stale = repository
+        .hide_chat_payload_before_cursor(character_name, file_name, stale_cursor, true, None, 2)
+        .await;
+    assert!(stale.is_err(), "stale cursor should be rejected");
+
+    let baseline_mismatch = repository
+        .hide_chat_payload_before_cursor(character_name, file_name, cursor, true, None, 5)
+        .await;
+    assert!(
+        baseline_mismatch.is_err(),
+        "window baseline mismatch should be rejected"
+    );
+
+    let cursor = repository
+        .hide_chat_payload_before_cursor(
+            character_name,
+            file_name,
+            cursor,
+            false,
+            Some("User".to_string()),
+            2,
+        )
+        .await
+        .expect("unhide filtered by name");
+
+    let bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read payload bytes after filtered unhide");
+    let text_after_filter = String::from_utf8(bytes).expect("payload should be utf8");
+    let lines = text_after_filter.lines().collect::<Vec<_>>();
+    for (message_index, line) in lines[1..5].iter().enumerate() {
+        let value = serde_json::from_str::<Value>(line).expect("parse json line");
+        let expected_hidden = message_index % 2 != 0;
+        assert_eq!(
+            value.get("is_system").and_then(Value::as_bool),
+            Some(expected_hidden),
+            "message {} hidden state",
+            message_index
+        );
+    }
+
+    repository
+        .hide_chat_payload_before_cursor(
+            character_name,
+            file_name,
+            cursor,
+            false,
+            Some("User".to_string()),
+            2,
+        )
+        .await
+        .expect("no-op unhide");
+
+    let bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read payload bytes after no-op");
+    let text_after_noop = String::from_utf8(bytes).expect("payload should be utf8");
+    assert_eq!(text_after_noop, text_after_filter);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn hide_chat_payload_before_cursor_rejects_non_object_lines() {
+    let (repository, root) = setup_repository().await;
+
+    let character_name = "alice";
+    let file_name = "session";
+
+    let payload = vec![
+        payload_with_integrity("hide-b")[0].clone(),
+        json!(123),
+        json!({
+            "name": "User",
+            "is_user": true,
+            "send_date": "2026-01-01T00:00:00.000Z",
+            "mes": "before window",
+            "extra": {},
+        }),
+        json!({
+            "name": "Alice",
+            "is_user": false,
+            "send_date": "2026-01-01T00:00:01.000Z",
+            "mes": "in window",
+            "extra": {},
+        }),
+    ];
+
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        character_name,
+        file_name,
+        &payload,
+        false,
+    )
+    .await
+    .expect("save initial payload");
+
+    let original_bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read original payload bytes");
+
+    let tail = repository
+        .get_chat_payload_tail_lines(character_name, file_name, 1)
+        .await
+        .expect("get tail");
+    assert_eq!(tail.lines.len(), 1);
+
+    let error = repository
+        .hide_chat_payload_before_cursor(character_name, file_name, tail.cursor, true, None, 1)
+        .await
+        .expect_err("hide should reject a non-object payload line");
+    assert!(matches!(error, DomainError::InvalidData(_)));
+
+    let bytes_after = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read payload bytes after rejected hide");
+    assert_eq!(
+        bytes_after, original_bytes,
+        "rejected hide must leave the file untouched"
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn patch_chat_payload_windowed_rejects_missing_integrity_when_existing_has_one() {
     let (repository, root) = setup_repository().await;
 

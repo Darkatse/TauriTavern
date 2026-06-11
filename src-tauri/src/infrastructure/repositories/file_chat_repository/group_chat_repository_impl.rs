@@ -195,6 +195,24 @@ impl GroupChatRepository for FileChatRepository {
         .await
     }
 
+    async fn hide_group_chat_payload_before_cursor(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        hide: bool,
+        name_filter: Option<String>,
+        expected_window_line_count: usize,
+    ) -> Result<ChatPayloadCursor, DomainError> {
+        self.hide_group_payload_before_cursor(
+            chat_id,
+            cursor,
+            hide,
+            name_filter,
+            expected_window_line_count,
+        )
+        .await
+    }
+
     async fn save_group_chat_payload_from_path(
         &self,
         chat_id: &str,

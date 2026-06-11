@@ -44,6 +44,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_commands::get_chat_payload_before_pages,
         super::chat_commands::save_chat_payload_windowed,
         super::chat_commands::patch_chat_payload_windowed,
+        super::chat_commands::hide_chat_payload_before_cursor,
         super::chat_commands::save_chat_payload_from_file,
         super::chat_commands::import_character_chats,
         // Group chat commands
@@ -56,6 +57,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::group_chat_commands::get_group_chat_payload_before_pages,
         super::group_chat_commands::save_group_chat_payload_windowed,
         super::group_chat_commands::patch_group_chat_payload_windowed,
+        super::group_chat_commands::hide_group_chat_payload_before_cursor,
         super::group_chat_commands::save_group_chat_from_file,
         super::group_chat_commands::delete_group_chat,
         super::group_chat_commands::rename_group_chat,

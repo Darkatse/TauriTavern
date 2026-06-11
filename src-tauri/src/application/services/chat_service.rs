@@ -677,6 +677,32 @@ impl ChatService {
             .map_err(Into::into)
     }
 
+    /// Set the hidden flag on all messages stored before the window cursor.
+    pub async fn hide_chat_payload_before_cursor(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        hide: bool,
+        name_filter: Option<String>,
+        expected_window_line_count: usize,
+    ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_character_path_component(character_name)?;
+        validate_chat_file_name(file_name, "Chat file name")?;
+
+        self.chat_repository
+            .hide_chat_payload_before_cursor(
+                character_name,
+                file_name,
+                cursor,
+                hide,
+                name_filter,
+                expected_window_line_count,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
     /// Save a character chat payload from a JSONL file path.
     pub async fn save_chat_from_file(
         &self,
