@@ -30,8 +30,39 @@ const agentSystemCacheInputs = [
   'src/scripts/tauritavern/agent/agent-run-retry.js',
 ];
 
+const tauriSettingUiCacheInputs = [
+  ...commonCacheInputs,
+  ...listJavaScriptFiles('src/scripts/tauri/setting/settings-app'),
+  ...listJavaScriptFiles('src/scripts/tauri/setting/dev-logs-app'),
+  ...listJavaScriptFiles('src/scripts/tauri/setting/sync-app'),
+];
+
 function resolveRepoPath(file) {
   return path.resolve(__dirname, file);
+}
+
+function listJavaScriptFiles(relativeDir) {
+  const root = resolveRepoPath(relativeDir);
+  const results = [];
+  const stack = [root];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+
+      if (entry.isFile() && path.extname(entry.name) === '.js') {
+        results.push(path.relative(__dirname, fullPath).replace(/\\/g, '/'));
+      }
+    }
+  }
+
+  return results.sort();
 }
 
 function buildCacheVersion(name, inputFiles) {
@@ -97,6 +128,14 @@ const sharedPerformance = {
   maxAssetSize: 5120000
 };
 
+function createVueDefinePlugin() {
+  return new webpack.DefinePlugin({
+    __VUE_OPTIONS_API__: JSON.stringify(true),
+    __VUE_PROD_DEVTOOLS__: JSON.stringify(false),
+    __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: JSON.stringify(false),
+  });
+}
+
 const coreConfig = {
   name: 'vendor-libs',
   mode: 'production',
@@ -145,12 +184,38 @@ const agentSystemConfig = {
   optimization: sharedOptimization,
   performance: sharedPerformance,
   plugins: [
-    new webpack.DefinePlugin({
-      __VUE_OPTIONS_API__: JSON.stringify(true),
-      __VUE_PROD_DEVTOOLS__: JSON.stringify(false),
-      __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: JSON.stringify(false),
-    }),
+    createVueDefinePlugin(),
   ],
 };
 
-export default [coreConfig, agentSystemConfig];
+const tauriTavernSettingsConfig = {
+  name: 'tauritavern-settings',
+  dependencies: ['vendor-libs'],
+  mode: 'production',
+  target: ['web', 'es2020'],
+  cache: createFilesystemCache('tauritavern-settings', tauriSettingUiCacheInputs),
+  entry: {
+    settings: './src/scripts/tauri/setting/settings-app/index.js',
+    'dev-logs': './src/scripts/tauri/setting/dev-logs-app/index.js',
+    sync: './src/scripts/tauri/setting/sync-app/index.js',
+  },
+  output: {
+    filename: '[name].bundle.js',
+    path: path.resolve(__dirname, 'src/scripts/tauri/setting/dist'),
+    library: {
+      type: 'module'
+    },
+    clean: true,
+  },
+  experiments: {
+    outputModule: true,
+  },
+  resolve: sharedResolve,
+  optimization: sharedOptimization,
+  performance: sharedPerformance,
+  plugins: [
+    createVueDefinePlugin(),
+  ],
+};
+
+export default [coreConfig, agentSystemConfig, tauriTavernSettingsConfig];

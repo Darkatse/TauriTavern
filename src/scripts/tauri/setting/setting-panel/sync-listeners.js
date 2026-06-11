@@ -3,9 +3,37 @@ import { t, translate } from '../../../i18n.js';
 import { TT_SYNC_SERVERS_CHANGED_EVENT } from './constants.js';
 import { formatBytes } from './formatters.js';
 
+const SYNC_STYLE_ID = 'tauritavern-sync-style';
+
 let syncListenerInstalled = false;
 let syncProgressPopup = null;
-let syncProgressElements = null;
+let syncProgressApp = null;
+let syncProgressOpening = null;
+let syncProgressState = null;
+
+function ensureSyncStyle() {
+    if (document.getElementById(SYNC_STYLE_ID)) {
+        return;
+    }
+
+    const link = document.createElement('link');
+    link.id = SYNC_STYLE_ID;
+    link.rel = 'stylesheet';
+    link.href = new URL('./sync-app.css', import.meta.url).href;
+    document.head.appendChild(link);
+}
+
+async function importSyncBundle() {
+    return import(new URL('../dist/sync.bundle.js', import.meta.url).href);
+}
+
+function getListen() {
+    const listen = window.__TAURI__?.event?.listen;
+    if (typeof listen !== 'function') {
+        throw new Error('Tauri event API is unavailable');
+    }
+    return listen;
+}
 
 export function installSyncListeners() {
     if (syncListenerInstalled) {
@@ -13,24 +41,17 @@ export function installSyncListeners() {
     }
     syncListenerInstalled = true;
 
-    const listen = window.__TAURI__.event.listen;
+    const listen = getListen();
 
     void (async () => {
         await listen('lan_sync:progress', (event) => {
-            const payload = event.payload;
-
-            ensureSyncProgressPopup('LAN Sync progress');
-            updateSyncProgressPopup(payload);
+            updateSyncProgress('LAN Sync progress', event.payload);
         });
 
         await listen('lan_sync:completed', async (event) => {
             const payload = event.payload;
 
-            if (syncProgressPopup) {
-                await syncProgressPopup.completeAffirmative();
-            }
-            syncProgressPopup = null;
-            syncProgressElements = null;
+            await closeSyncProgressPopup();
 
             const files = payload.files_total;
             const bytes = payload.bytes_total;
@@ -54,39 +75,18 @@ export function installSyncListeners() {
         });
 
         await listen('lan_sync:error', async (event) => {
-            const payload = event.payload;
-
-            if (syncProgressPopup) {
-                await syncProgressPopup.completeAffirmative();
-            }
-            syncProgressPopup = null;
-            syncProgressElements = null;
-
-            const message = translate(payload.message);
-            await callGenericPopup(String(message), POPUP_TYPE.TEXT, '', {
-                okButton: translate('OK'),
-                allowVerticalScrolling: true,
-                wide: false,
-                large: false,
-            });
+            await closeSyncProgressPopup();
+            await showSyncError(event.payload);
         });
 
         await listen('tt_sync:progress', (event) => {
-            const payload = event.payload;
-
-            ensureSyncProgressPopup('TT-Sync progress');
-            updateSyncProgressPopup(payload);
+            updateSyncProgress('TT-Sync progress', event.payload);
         });
 
         await listen('tt_sync:completed', async (event) => {
             const payload = event.payload;
 
-            if (syncProgressPopup) {
-                await syncProgressPopup.completeAffirmative();
-            }
-            syncProgressPopup = null;
-            syncProgressElements = null;
-
+            await closeSyncProgressPopup();
             window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
 
             const files = payload.files_total;
@@ -116,100 +116,105 @@ export function installSyncListeners() {
         });
 
         await listen('tt_sync:error', async (event) => {
-            const payload = event.payload;
-
-            if (syncProgressPopup) {
-                await syncProgressPopup.completeAffirmative();
-            }
-            syncProgressPopup = null;
-            syncProgressElements = null;
-
-            const message = translate(payload.message);
-            await callGenericPopup(String(message), POPUP_TYPE.TEXT, '', {
-                okButton: translate('OK'),
-                allowVerticalScrolling: true,
-                wide: false,
-                large: false,
-            });
+            await closeSyncProgressPopup();
+            await showSyncError(event.payload);
         });
     })();
 }
 
-function ensureSyncProgressPopup(titleText) {
-    if (syncProgressPopup) {
-        if (syncProgressElements?.title && titleText) {
-            syncProgressElements.title.textContent = translate(titleText);
-        }
-        return syncProgressPopup;
+function updateSyncProgress(title, payload) {
+    syncProgressState = {
+        title,
+        payload,
+    };
+
+    if (syncProgressApp) {
+        syncProgressApp.update(syncProgressState);
+        return;
     }
 
-    const root = document.createElement('div');
-    root.className = 'flex-container flexFlowColumn';
-    root.style.gap = '10px';
+    void ensureSyncProgressPopup();
+}
 
-    const title = document.createElement('b');
-    title.textContent = translate(titleText || 'Sync progress');
-    root.appendChild(title);
+async function ensureSyncProgressPopup() {
+    if (syncProgressPopup) {
+        return syncProgressPopup;
+    }
+    if (syncProgressOpening) {
+        return syncProgressOpening;
+    }
 
-    const phase = document.createElement('div');
-    root.appendChild(phase);
+    syncProgressOpening = (async () => {
+        ensureSyncStyle();
+        const bundle = await importSyncBundle();
+        const mount = document.createElement('div');
+        const initialState = syncProgressState || {
+            title: 'Sync progress',
+            payload: {
+                phase: 'Starting',
+                files_done: 0,
+                files_total: 0,
+                bytes_done: 0,
+                bytes_total: 0,
+                current_path: null,
+            },
+        };
 
-    const counts = document.createElement('div');
-    root.appendChild(counts);
+        syncProgressApp = bundle.mountTauriTavernSyncProgressApp(mount, {
+            ...initialState,
+            tr: translate,
+        });
 
-    const bytes = document.createElement('div');
-    root.appendChild(bytes);
+        const popup = new Popup(mount, POPUP_TYPE.DISPLAY, '', {
+            allowVerticalScrolling: true,
+            wide: false,
+            large: false,
+        });
 
-    const current = document.createElement('div');
-    current.style.wordBreak = 'break-word';
-    current.style.opacity = '0.9';
-    root.appendChild(current);
+        syncProgressPopup = popup;
+        void popup.show().finally(() => {
+            cleanupSyncProgressPopup(popup);
+        });
 
-    syncProgressElements = { title, phase, counts, bytes, current };
-    updateSyncProgressPopup({
-        phase: 'Starting',
-        files_done: 0,
-        files_total: 0,
-        bytes_done: 0,
-        bytes_total: 0,
-        current_path: null,
-    });
+        return popup;
+    })();
 
-    const popup = new Popup(root, POPUP_TYPE.DISPLAY, '', {
+    return syncProgressOpening;
+}
+
+async function closeSyncProgressPopup() {
+    if (syncProgressOpening) {
+        await syncProgressOpening.catch(() => null);
+    }
+
+    const popup = syncProgressPopup;
+    if (!popup) {
+        syncProgressState = null;
+        return;
+    }
+
+    await popup.completeAffirmative();
+    cleanupSyncProgressPopup(popup);
+}
+
+function cleanupSyncProgressPopup(popup) {
+    if (syncProgressPopup !== popup) {
+        return;
+    }
+
+    syncProgressApp?.unmount();
+    syncProgressPopup = null;
+    syncProgressApp = null;
+    syncProgressOpening = null;
+    syncProgressState = null;
+}
+
+async function showSyncError(payload) {
+    const message = translate(payload.message);
+    await callGenericPopup(String(message), POPUP_TYPE.TEXT, '', {
+        okButton: translate('OK'),
         allowVerticalScrolling: true,
         wide: false,
         large: false,
     });
-
-    syncProgressPopup = popup;
-    void popup.show().finally(() => {
-        if (syncProgressPopup === popup) {
-            syncProgressPopup = null;
-            syncProgressElements = null;
-        }
-    });
-
-    return popup;
 }
-
-function updateSyncProgressPopup(payload) {
-    if (!syncProgressElements) {
-        return;
-    }
-
-    const direction = payload.direction || null;
-    const phase = payload.phase;
-    const filesDone = payload.files_done;
-    const filesTotal = payload.files_total;
-    const bytesDone = payload.bytes_done;
-    const bytesTotal = payload.bytes_total;
-    const currentPath = payload.current_path;
-
-    syncProgressElements.phase.textContent = direction
-        ? t`Phase: ${translate(direction)} / ${translate(phase)}`
-        : t`Phase: ${translate(phase)}`;
-    syncProgressElements.counts.textContent = t`Files: ${filesDone}/${filesTotal}`;
-    syncProgressElements.bytes.textContent = t`Bytes: ${formatBytes(bytesDone)}/${formatBytes(bytesTotal)}`;
-    syncProgressElements.current.textContent = currentPath ? t`Current: ${currentPath}` : '';
-}
-
