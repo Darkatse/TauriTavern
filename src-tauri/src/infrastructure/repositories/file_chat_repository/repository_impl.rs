@@ -607,6 +607,7 @@ impl ChatRepository for FileChatRepository {
         cursor: ChatPayloadCursor,
         header: String,
         lines: Vec<String>,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.save_character_payload_windowed(
@@ -615,6 +616,7 @@ impl ChatRepository for FileChatRepository {
             cursor,
             header,
             lines,
+            expected_window_line_count,
             force,
         )
         .await
@@ -627,10 +629,19 @@ impl ChatRepository for FileChatRepository {
         cursor: ChatPayloadCursor,
         header: String,
         op: ChatPayloadPatchOp,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError> {
-        self.patch_character_payload_windowed(character_name, file_name, cursor, header, op, force)
-            .await
+        self.patch_character_payload_windowed(
+            character_name,
+            file_name,
+            cursor,
+            header,
+            op,
+            expected_window_line_count,
+            force,
+        )
+        .await
     }
 
     async fn save_chat_payload_from_path(

@@ -14,8 +14,8 @@ use super::windowed_payload_io::{
     WINDOW_READ_CHUNK_BYTES, cursor_from_metadata, ensure_parent_dir,
     extract_integrity_slug_from_header_line, map_open_existing_error, open_existing_payload_file,
     read_existing_payload_metadata, read_first_line_and_end_offset, replace_file,
-    verify_cursor_offset_is_line_boundary, verify_cursor_signature, write_jsonl_lines_at_end,
-    write_jsonl_lines_to_file,
+    verify_cursor_offset_is_line_boundary, verify_cursor_signature, verify_window_baseline,
+    write_jsonl_lines_at_end, write_jsonl_lines_to_file,
 };
 
 impl FileChatRepository {
@@ -26,6 +26,7 @@ impl FileChatRepository {
         cursor: ChatPayloadCursor,
         header: String,
         op: ChatPayloadPatchOp,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.ensure_directory_exists().await?;
@@ -44,7 +45,15 @@ impl FileChatRepository {
         })?;
 
         let _write_guard = self.acquire_payload_write_lock(&path).await;
-        let result = patch_payload_windowed_internal(&path, cursor, header, op, force).await?;
+        let result = patch_payload_windowed_internal(
+            &path,
+            cursor,
+            header,
+            op,
+            expected_window_line_count,
+            force,
+        )
+        .await?;
 
         {
             let mut cache = self.memory_cache.lock().await;
@@ -64,6 +73,7 @@ impl FileChatRepository {
         cursor: ChatPayloadCursor,
         header: String,
         op: ChatPayloadPatchOp,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.ensure_directory_exists().await?;
@@ -71,7 +81,15 @@ impl FileChatRepository {
         let path = self.get_group_chat_path(chat_id)?;
         let _write_guard = self.acquire_payload_write_lock(&path).await;
         let backup_key = Self::get_group_backup_key(chat_id)?;
-        let result = patch_payload_windowed_internal(&path, cursor, header, op, force).await?;
+        let result = patch_payload_windowed_internal(
+            &path,
+            cursor,
+            header,
+            op,
+            expected_window_line_count,
+            force,
+        )
+        .await?;
 
         self.remove_summary_cache_for_path(&path).await;
         self.backup_chat_file(&path, chat_id, &backup_key).await?;
@@ -164,6 +182,7 @@ async fn patch_payload_windowed_internal(
     cursor: ChatPayloadCursor,
     header: String,
     op: ChatPayloadPatchOp,
+    expected_window_line_count: usize,
     force: bool,
 ) -> Result<ChatPayloadCursor, DomainError> {
     let header_integrity = extract_integrity_slug_from_header_line(&header)?;
@@ -240,6 +259,21 @@ async fn patch_payload_windowed_internal(
         (Ok(a), Ok(b)) => a != b,
         _ => existing_header != header,
     };
+
+    // Window baseline contract: both ops anchor on cursor.offset, so a stale
+    // offset must be rejected before any bytes are written — Append included,
+    // otherwise the bad offset gets re-signed into the returned cursor.
+    let header_only = existing_header_end_offset == metadata.len();
+    if !(header_only && cursor.offset == existing_header_end_offset) {
+        verify_cursor_offset_is_line_boundary(path, cursor.offset).await?;
+    }
+    verify_window_baseline(
+        path,
+        cursor.offset,
+        metadata.len(),
+        expected_window_line_count,
+    )
+    .await?;
 
     match op {
         ChatPayloadPatchOp::Append { lines } => {
@@ -350,8 +384,6 @@ async fn patch_payload_windowed_internal(
             }
         }
         ChatPayloadPatchOp::RewriteFromIndex { start_index, lines } => {
-            verify_cursor_offset_is_line_boundary(path, cursor.offset).await?;
-
             let start_offset =
                 find_line_start_offset_from_cursor(path, cursor.offset, start_index).await?;
 

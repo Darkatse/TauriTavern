@@ -768,6 +768,7 @@ async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false) {
 	                    patch,
 	                    savedMessageCount: nextSavedMessageCount,
 	                    dirtyFromIndex: nextDirtyFromIndex,
+	                    expectedWindowLineCount,
 	                } = buildWindowedPayloadPatch(chat, windowState, 'group chat');
 
                 const cursor = await patchGroupChatPayloadWindowed({
@@ -775,6 +776,7 @@ async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false) {
                     cursor: windowState.cursor,
                     header: JSON.stringify(chatHeader),
 	                    patch,
+	                    expectedWindowLineCount,
 	                    force: Boolean(force),
 	                });
 

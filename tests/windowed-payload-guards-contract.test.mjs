@@ -6,6 +6,46 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * Extract a function body by brace-balancing from a header marker, so a guard
+ * assertion can't be silently defeated by the function growing past a fixed
+ * character window. Returns the slice from the marker through the matching
+ * closing brace of the first `{` after it.
+ */
+function extractFunctionBody(source, marker) {
+    const start = source.indexOf(marker);
+    assert.ok(start >= 0, `marker not found: ${marker}`);
+
+    // Skip the parameter list first — a destructured signature like
+    // `fn({ a, b } = {})` has braces that would otherwise be matched as the
+    // body. Balance the signature parentheses to find where params end.
+    const paramOpen = source.indexOf('(', start);
+    assert.ok(paramOpen >= 0, `no parameter list after: ${marker}`);
+    let parenDepth = 0;
+    let paramEnd = -1;
+    for (let i = paramOpen; i < source.length; i += 1) {
+        if (source[i] === '(') parenDepth += 1;
+        else if (source[i] === ')') {
+            parenDepth -= 1;
+            if (parenDepth === 0) { paramEnd = i; break; }
+        }
+    }
+    assert.ok(paramEnd >= 0, `unbalanced parameter list: ${marker}`);
+
+    const open = source.indexOf('{', paramEnd);
+    assert.ok(open >= 0, `no function body after: ${marker}`);
+    let depth = 0;
+    for (let i = open; i < source.length; i += 1) {
+        const ch = source[i];
+        if (ch === '{') depth += 1;
+        else if (ch === '}') {
+            depth -= 1;
+            if (depth === 0) return source.slice(start, i + 1);
+        }
+    }
+    throw new Error(`unbalanced braces from marker: ${marker}`);
+}
+
 test('windowed payload: showMoreMessages implements single-flight + CAS commit', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
 
@@ -84,27 +124,21 @@ test('windowed payload: windowed patch commit is guarded and merges cursor offse
     const script = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
     const groupChats = await readFile(path.join(REPO_ROOT, 'src/scripts/group-chats.js'), 'utf8');
 
-    const saveChatStart = script.indexOf('export async function saveChat');
-    assert.ok(saveChatStart >= 0);
-    const saveChatSlice = script.slice(saveChatStart, saveChatStart + 3200);
+    // Brace-balanced extraction: a guard can't be defeated by the function
+    // growing past a fixed character window (which already broke once).
+    const saveChatSlice = extractFunctionBody(script, 'async function saveChatUnsafe');
+    const saveGroupSlice = extractFunctionBody(groupChats, 'async function saveGroupChatUnsafe');
 
-    assert.match(saveChatSlice, /\bgetWindowedChatKey\b/);
-    assert.match(saveChatSlice, /const\s+expectedCursorOffset\s*=\s*windowState\.cursor\.offset\s*;/);
-    assert.match(
-        saveChatSlice,
-        /mergeWindowedChatCursorOffset\(\s*activeWindowState\?\.\s*cursor\s*,\s*cursor\s*,\s*expectedCursorOffset\s*\)/,
-    );
-    assert.match(saveChatSlice, /activeWindowState\?\.\s*cursor\?\.\s*offset\s*===\s*expectedCursorOffset/);
-
-    const saveGroupStart = groupChats.indexOf('async function saveGroupChat');
-    assert.ok(saveGroupStart >= 0);
-    const saveGroupSlice = groupChats.slice(saveGroupStart, saveGroupStart + 2400);
-
-    assert.match(saveGroupSlice, /\bgetWindowedChatKey\b/);
-    assert.match(saveGroupSlice, /const\s+expectedCursorOffset\s*=\s*windowState\.cursor\.offset\s*;/);
-    assert.match(
-        saveGroupSlice,
-        /mergeWindowedChatCursorOffset\(\s*activeWindowState\?\.\s*cursor\s*,\s*cursor\s*,\s*expectedCursorOffset\s*\)/,
-    );
-    assert.match(saveGroupSlice, /activeWindowState\?\.\s*cursor\?\.\s*offset\s*===\s*expectedCursorOffset/);
+    for (const slice of [saveChatSlice, saveGroupSlice]) {
+        assert.match(slice, /\bgetWindowedChatKey\b/);
+        assert.match(slice, /const\s+expectedCursorOffset\s*=\s*windowState\.cursor\.offset\s*;/);
+        assert.match(
+            slice,
+            /mergeWindowedChatCursorOffset\(\s*activeWindowState\?\.\s*cursor\s*,\s*cursor\s*,\s*expectedCursorOffset\s*\)/,
+        );
+        assert.match(slice, /activeWindowState\?\.\s*cursor\?\.\s*offset\s*===\s*expectedCursorOffset/);
+        // Window baseline contract: the patch call must forward the declared
+        // line count, or the backend can't reject a stale cursor.
+        assert.match(slice, /expectedWindowLineCount/);
+    }
 });

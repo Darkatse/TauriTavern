@@ -179,6 +179,7 @@ pub async fn save_group_chat_payload_windowed(
             dto.cursor,
             dto.header,
             dto.lines,
+            dto.expected_window_line_count,
             dto.force.unwrap_or(false),
         )
         .await
@@ -201,6 +202,7 @@ pub async fn patch_group_chat_payload_windowed(
             dto.cursor,
             dto.header,
             dto.patch,
+            dto.expected_window_line_count,
             dto.force.unwrap_or(false),
         )
         .await

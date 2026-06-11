@@ -172,6 +172,7 @@ pub struct SaveChatWindowedDto {
     pub cursor: ChatPayloadCursor,
     pub header: String,
     pub lines: Vec<String>,
+    pub expected_window_line_count: usize,
     pub force: Option<bool>,
 }
 
@@ -184,6 +185,7 @@ pub struct PatchChatWindowedDto {
     pub cursor: ChatPayloadCursor,
     pub header: String,
     pub patch: ChatPayloadPatchOp,
+    pub expected_window_line_count: usize,
     pub force: Option<bool>,
 }
 
@@ -202,6 +204,7 @@ pub struct SaveGroupChatWindowedDto {
     pub cursor: ChatPayloadCursor,
     pub header: String,
     pub lines: Vec<String>,
+    pub expected_window_line_count: usize,
     pub force: Option<bool>,
 }
 
@@ -212,6 +215,7 @@ pub struct PatchGroupChatWindowedDto {
     pub cursor: ChatPayloadCursor,
     pub header: String,
     pub patch: ChatPayloadPatchOp,
+    pub expected_window_line_count: usize,
     pub force: Option<bool>,
 }
 

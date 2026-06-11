@@ -2659,6 +2659,7 @@ async fn patch_chat_payload_windowed_appends_and_rewrites_tail() {
             ChatPayloadPatchOp::Append {
                 lines: vec![new_line.clone()],
             },
+            2,
             false,
         )
         .await
@@ -2695,6 +2696,7 @@ async fn patch_chat_payload_windowed_appends_and_rewrites_tail() {
                 start_index: 2,
                 lines: vec![updated_line],
             },
+            3,
             false,
         )
         .await
@@ -2722,6 +2724,7 @@ async fn patch_chat_payload_windowed_appends_and_rewrites_tail() {
                 start_index: 1,
                 lines: Vec::new(),
             },
+            3,
             false,
         )
         .await
@@ -2774,11 +2777,143 @@ async fn patch_chat_payload_windowed_rejects_missing_integrity_when_existing_has
             tail.cursor,
             missing_integrity_header,
             ChatPayloadPatchOp::Append { lines: Vec::new() },
+            tail.lines.len(),
             false,
         )
         .await
         .expect_err("patch should fail when incoming integrity is missing");
     assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn patch_chat_payload_windowed_rejects_window_baseline_mismatch() {
+    let (repository, root) = setup_repository().await;
+
+    let character_name = "alice";
+    let file_name = "session";
+
+    let mut payload = vec![payload_with_integrity("baseline-a")[0].clone()];
+    for index in 0..5 {
+        payload.push(json!({
+            "name": "User",
+            "is_user": true,
+            "send_date": format!("2026-01-01T00:00:0{}.000Z", index),
+            "mes": format!("message {}", index),
+            "extra": {},
+        }));
+    }
+
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        character_name,
+        file_name,
+        &payload,
+        false,
+    )
+    .await
+    .expect("save initial payload");
+
+    let windowed_tail = repository
+        .get_chat_payload_tail_lines(character_name, file_name, 2)
+        .await
+        .expect("get windowed tail");
+    assert_eq!(windowed_tail.lines.len(), 2);
+
+    let full_tail = repository
+        .get_chat_payload_tail_lines(character_name, file_name, 100)
+        .await
+        .expect("get full tail");
+    assert_eq!(full_tail.lines.len(), 5);
+
+    let new_line = serde_json::to_string(&json!({
+        "name": "User",
+        "is_user": true,
+        "send_date": "2026-01-01T00:00:09.000Z",
+        "mes": "appended",
+        "extra": {},
+    }))
+    .expect("serialize new line");
+
+    // Append with a stale full-mode offset but a valid file signature: before the
+    // baseline contract this passed silently and returned the bad offset re-signed
+    // with the new file signature.
+    let error = repository
+        .patch_chat_payload_windowed(
+            character_name,
+            file_name,
+            full_tail.cursor,
+            windowed_tail.header.clone(),
+            ChatPayloadPatchOp::Append {
+                lines: vec![new_line.clone()],
+            },
+            windowed_tail.lines.len(),
+            false,
+        )
+        .await
+        .expect_err("append with stale offset must be rejected");
+    assert!(
+        format!("{}", error).contains("Window baseline mismatch"),
+        "error should mention the window baseline, got: {}",
+        error
+    );
+
+    // RewriteFromIndex with a wrong declared baseline is rejected too.
+    let error = repository
+        .patch_chat_payload_windowed(
+            character_name,
+            file_name,
+            windowed_tail.cursor,
+            windowed_tail.header.clone(),
+            ChatPayloadPatchOp::RewriteFromIndex {
+                start_index: 0,
+                lines: vec![new_line.clone()],
+            },
+            4,
+            false,
+        )
+        .await
+        .expect_err("rewrite with wrong baseline must be rejected");
+    assert!(
+        format!("{}", error).contains("Window baseline mismatch"),
+        "error should mention the window baseline, got: {}",
+        error
+    );
+
+    // File untouched by the rejected writes.
+    let bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read payload bytes");
+    assert_eq!(
+        String::from_utf8(bytes).expect("utf8").lines().count(),
+        6,
+        "rejected writes must not modify the file"
+    );
+
+    // The same append with the correct baseline succeeds.
+    repository
+        .patch_chat_payload_windowed(
+            character_name,
+            file_name,
+            windowed_tail.cursor,
+            windowed_tail.header,
+            ChatPayloadPatchOp::Append {
+                lines: vec![new_line],
+            },
+            windowed_tail.lines.len(),
+            false,
+        )
+        .await
+        .expect("append with correct baseline");
+
+    let bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read payload bytes after append");
+    assert_eq!(String::from_utf8(bytes).expect("utf8").lines().count(), 7);
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -2806,4 +2941,242 @@ fn payload_to_jsonl(payload: &[Value]) -> String {
         .map(|item| serde_json::to_string(item).expect("serialize line"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+// ============================================================================
+// Data loss reproduction: mode switch (full ↔ windowed) with stale cursor
+// ============================================================================
+
+fn generate_large_payload(num_messages: usize, integrity: &str) -> Vec<Value> {
+    let mut payload = vec![json!({
+        "chat_metadata": {
+            "integrity": integrity,
+        },
+        "user_name": "User",
+        "character_name": "Character",
+    })];
+
+    for i in 0..num_messages {
+        let is_user = i % 2 == 0;
+        let large_content = format!("Message {} content. {}", i, "X".repeat(2000));
+        payload.push(json!({
+            "name": if is_user { "User" } else { "Character" },
+            "is_user": is_user,
+            "send_date": format!("2026-06-{:02}T{:02}:{:02}:00.000Z",
+                1 + (i / 48).min(29),
+                (i % 48) / 2,
+                if i % 2 == 0 { 0 } else { 30 }
+            ),
+            "mes": large_content,
+            "extra": {},
+        }));
+    }
+
+    payload
+}
+
+/// TEST 1: Full → Windowed mode switch.
+/// Full-mode cursor (offset=header_end) used with only 50 windowed messages.
+/// Expected: 250 messages silently destroyed.
+#[tokio::test]
+async fn repro_full_to_windowed_mode_switch_data_loss() {
+    let (repository, root) = setup_repository().await;
+
+    let character_name = "test-char";
+    let file_name = "session";
+    let num_messages: usize = 300;
+    let window_size: usize = 50;
+
+    let payload = generate_large_payload(num_messages, "repro-test");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        character_name,
+        file_name,
+        &payload,
+        false,
+    )
+    .await
+    .expect("save 300-message payload");
+
+    // Load full mode
+    let full_tail = repository
+        .get_chat_payload_tail_lines(character_name, file_name, 10000)
+        .await
+        .expect("get full tail");
+    let cursor_full = full_tail.cursor;
+    assert_eq!(full_tail.lines.len(), num_messages);
+    assert!(!full_tail.has_more_before);
+
+    // Load windowed mode (without modifying file)
+    let windowed_tail = repository
+        .get_chat_payload_tail_lines(character_name, file_name, window_size)
+        .await
+        .expect("get windowed tail");
+    assert_eq!(windowed_tail.lines.len(), window_size);
+    assert!(windowed_tail.has_more_before);
+
+    // Verify: same signature, different offsets
+    assert_eq!(cursor_full.size, windowed_tail.cursor.size);
+    assert_eq!(
+        cursor_full.modified_millis,
+        windowed_tail.cursor.modified_millis
+    );
+    assert!(
+        cursor_full.offset < windowed_tail.cursor.offset,
+        "full offset ({}) < windowed offset ({})",
+        cursor_full.offset,
+        windowed_tail.cursor.offset
+    );
+
+    println!("=== Full → Windowed ===");
+    println!("Full cursor offset:     {}", cursor_full.offset);
+    println!("Windowed cursor offset: {}", windowed_tail.cursor.offset);
+    println!(
+        "Data at risk: {} bytes",
+        windowed_tail.cursor.offset - cursor_full.offset
+    );
+
+    // THE BUG: save with full cursor + only windowed messages
+    let save_result = repository
+        .save_chat_payload_windowed(
+            character_name,
+            file_name,
+            cursor_full,
+            full_tail.header,
+            windowed_tail.lines,
+            window_size,
+            false,
+        )
+        .await;
+
+    // Verify: save must be rejected to prevent data loss
+    assert!(
+        save_result.is_err(),
+        "Save with mismatched cursor/lines should be rejected"
+    );
+    let err_msg = format!("{}", save_result.unwrap_err());
+    assert!(
+        err_msg.contains("Window baseline mismatch"),
+        "Error should mention the window baseline, got: {}",
+        err_msg
+    );
+
+    // Verify file is intact
+    let bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read post-rejected-save");
+    let post_line_count = String::from_utf8(bytes).expect("utf8").lines().count();
+    assert_eq!(
+        post_line_count,
+        num_messages + 1,
+        "File should be untouched after rejected save"
+    );
+
+    println!(
+        "PASS: Full→Windowed stale cursor rejected, all {} messages safe.",
+        num_messages
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+/// TEST 2: Windowed → Full mode switch (user's actual scenario).
+/// Windowed-mode cursor (offset near file end) used with all 300 messages from full reload.
+/// The full-mode save writes all messages but truncates from the windowed offset,
+/// potentially duplicating or misplacing messages.
+#[tokio::test]
+async fn repro_windowed_to_full_mode_switch_data_loss() {
+    let (repository, root) = setup_repository().await;
+
+    let character_name = "test-char-w2f";
+    let file_name = "session";
+    let num_messages: usize = 300;
+    let window_size: usize = 50;
+
+    let payload = generate_large_payload(num_messages, "w2f-test");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        character_name,
+        file_name,
+        &payload,
+        false,
+    )
+    .await
+    .expect("save 300-message payload");
+
+    // Step 1: User is in windowed mode
+    let windowed_tail = repository
+        .get_chat_payload_tail_lines(character_name, file_name, window_size)
+        .await
+        .expect("get windowed tail");
+    let cursor_windowed = windowed_tail.cursor;
+    assert_eq!(windowed_tail.lines.len(), window_size);
+    assert!(windowed_tail.has_more_before);
+
+    // Step 2: User switches to full mode — frontend reloads all messages
+    let full_tail = repository
+        .get_chat_payload_tail_lines(character_name, file_name, 10000)
+        .await
+        .expect("get full tail");
+    assert_eq!(full_tail.lines.len(), num_messages);
+
+    println!("=== Windowed → Full ===");
+    println!(
+        "Windowed cursor offset: {} (near end of file)",
+        cursor_windowed.offset
+    );
+    println!(
+        "Full cursor offset:     {} (near header end)",
+        full_tail.cursor.offset
+    );
+    println!("File size: {}", cursor_windowed.size);
+
+    // THE BUG: save with windowed cursor + ALL 300 messages from full reload.
+    // set_len(cursor_windowed.offset) keeps prefix up to windowed offset,
+    // then writes ALL 300 messages after it.
+    // Result: messages 1-250 exist TWICE (once in preserved prefix, once in written payload)
+    // or the file becomes corrupted/oversized.
+    let save_result = repository
+        .save_chat_payload_windowed(
+            character_name,
+            file_name,
+            cursor_windowed, // STALE: offset near file end
+            full_tail.header,
+            full_tail.lines, // ALL 300 messages
+            num_messages,
+            false,
+        )
+        .await;
+
+    assert!(
+        save_result.is_err(),
+        "Save with mismatched cursor/lines should be rejected"
+    );
+    let err_msg = format!("{}", save_result.unwrap_err());
+    assert!(
+        err_msg.contains("Window baseline mismatch"),
+        "Error should mention the window baseline, got: {}",
+        err_msg
+    );
+
+    let bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read post-rejected-save");
+    let post_line_count = String::from_utf8(bytes).expect("utf8").lines().count();
+    assert_eq!(
+        post_line_count,
+        num_messages + 1,
+        "File should be untouched after rejected save"
+    );
+
+    println!(
+        "PASS: Windowed->Full stale cursor rejected, all {} messages safe.",
+        num_messages
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
 }
