@@ -46,8 +46,8 @@ src/
 ├── tauri-main.js                # thin bootstrap entry
 ├── init.js                      # startup orchestrator
 ├── lib.js                       # library facade (ESM exports)
-├── dist/lib.core.bundle.js      # webpack-built core vendor bundle (startup-critical)
-├── dist/lib.optional.bundle.js  # webpack-built optional vendor bundle (on-demand)
+├── dist/lib.core.bundle.js      # Rspack-built core vendor bundle (startup-critical)
+├── dist/lib.optional.bundle.js  # Rspack-built optional vendor bundle (on-demand)
 └── tauri/main/
     ├── bootstrap.js             # composition root
     ├── context.js               # compatibility shim (re-export `context/index`)
@@ -73,7 +73,7 @@ src/
 Prerequisites:
 
 - Rust stable
-- Node.js 18+
+- Node.js 22.12+
 - pnpm
 - Tauri CLI
 
@@ -89,7 +89,7 @@ Common commands:
 
 ```bash
 pnpm run check             # guardrails + host-kernel type checks (recommended)
-pnpm run web:build         # build frontend bundles (webpack)
+pnpm run web:build         # build frontend bundles (Rspack)
 pnpm run dev           # desktop dev mode (alias of tauri:dev)
 pnpm run tauri:dev     # desktop dev mode
 pnpm run tauri:build   # build desktop installers

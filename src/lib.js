@@ -1,7 +1,7 @@
 /**
  * Library module facade for TauriTavern.
  *
- * We load a small core webpack bundle (`src/dist/lib.core.bundle.js`) and
+ * We load a small core Rspack bundle (`src/dist/lib.core.bundle.js`) and
  * re-export the libraries expected by SillyTavern frontend modules.
  *
  * Heavy / feature-specific libraries live in `src/dist/lib.optional.bundle.js`

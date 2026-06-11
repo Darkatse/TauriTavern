@@ -64,7 +64,8 @@ async function loadRollbackScript() {
     if (rollbackScriptOverride) {
         return rollbackScriptOverride;
     }
-    return import(/* webpackIgnore: true */ '/script.js');
+    // Rspack supports webpackIgnore and leaves this host runtime import native.
+    return import('/script.js' /* webpackIgnore: true */);
 }
 
 export function __setAgentRunRollbackScriptForTests(script) {

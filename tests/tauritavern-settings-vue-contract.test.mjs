@@ -51,13 +51,13 @@ test('TauriTavern Settings wallpaper options use the no-render background refres
     assert.doesNotMatch(source, /getBackgrounds/);
 });
 
-test('webpack exposes a dedicated TauriTavern Settings Vue entry', async () => {
-    const source = await readRepoFile('webpack.config.js');
+test('Rspack exposes a dedicated TauriTavern Settings Vue entry', async () => {
+    const source = await readRepoFile('rspack.config.js');
 
     assert.match(source, /name:\s*['"]tauritavern-settings['"]/);
     assert.match(source, /settings:\s*['"]\.\/src\/scripts\/tauri\/setting\/settings-app\/index\.js['"]/);
     assert.match(source, /src\/scripts\/tauri\/setting\/dist/);
-    assert.match(source, /createFilesystemCache\(['"]tauritavern-settings['"],\s*tauriSettingUiCacheInputs\)/);
+    assert.match(source, /createPersistentCache\(['"]tauritavern-settings['"],\s*tauriSettingUiCacheInputs\)/);
     assert.match(source, /createVueDefinePlugin\(\)/);
 });
 

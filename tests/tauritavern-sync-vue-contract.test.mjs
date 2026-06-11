@@ -59,8 +59,8 @@ test('TauriTavern Sync listeners keep event contract while delegating progress U
     assert.doesNotMatch(source, /from\s+['"]vue(?:\/|['"])/);
 });
 
-test('webpack exposes a dedicated TauriTavern Sync Vue entry', async () => {
-    const source = await readRepoFile('webpack.config.js');
+test('Rspack exposes a dedicated TauriTavern Sync Vue entry', async () => {
+    const source = await readRepoFile('rspack.config.js');
 
     assert.match(source, /sync:\s*['"]\.\/src\/scripts\/tauri\/setting\/sync-app\/index\.js['"]/);
     assert.match(source, /listJavaScriptFiles\(['"]src\/scripts\/tauri\/setting\/sync-app['"]\)/);

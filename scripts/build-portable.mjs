@@ -14,7 +14,7 @@ function printHelp() {
 Options:
   --target <triple>       Rust target triple, e.g. x86_64-pc-windows-msvc
   --output-dir <path>     Portable output directory (default: release)
-  --skip-web-build        Skip frontend webpack build
+  --skip-web-build        Skip frontend bundle build
   --help                  Show this help message
 `);
 }

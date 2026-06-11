@@ -69,10 +69,11 @@ function assertRetryRuntime(runtime) {
 }
 
 async function defaultRetryRuntime() {
+    // Rspack supports webpackIgnore and leaves these host runtime imports native.
     const [script, groupChats, router] = await Promise.all([
-        import(/* webpackIgnore: true */ '/script.js'),
-        import(/* webpackIgnore: true */ '/scripts/group-chats.js'),
-        import(/* webpackIgnore: true */ '/scripts/tauritavern/agent/agent-generation-router.js'),
+        import('/script.js' /* webpackIgnore: true */),
+        import('/scripts/group-chats.js' /* webpackIgnore: true */),
+        import('/scripts/tauritavern/agent/agent-generation-router.js' /* webpackIgnore: true */),
     ]);
     return {
         Generate: script.Generate,

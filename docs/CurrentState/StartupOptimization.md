@@ -148,7 +148,7 @@
 
 ### 6.1 产物与入口
 
-- webpack 入口：`webpack.config.js`
+- Rspack 入口：`rspack.config.js`
   - `lib.core` → `src/lib-bundle-core.js` → `src/dist/lib.core.bundle.js`
   - `lib.optional` → `src/lib-bundle-optional.js` → `src/dist/lib.optional.bundle.js`
 

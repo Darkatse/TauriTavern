@@ -46,8 +46,8 @@ test('TauriTavern Dev Logs wrapper owns the host ABI boundary', async () => {
     assert.doesNotMatch(source, /devlog_/);
 });
 
-test('webpack exposes a dedicated TauriTavern Dev Logs Vue entry', async () => {
-    const source = await readRepoFile('webpack.config.js');
+test('Rspack exposes a dedicated TauriTavern Dev Logs Vue entry', async () => {
+    const source = await readRepoFile('rspack.config.js');
 
     assert.match(source, /['"]dev-logs['"]:\s*['"]\.\/src\/scripts\/tauri\/setting\/dev-logs-app\/index\.js['"]/);
     assert.match(source, /listJavaScriptFiles\(['"]src\/scripts\/tauri\/setting\/dev-logs-app['"]\)/);

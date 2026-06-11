@@ -1720,6 +1720,22 @@ test('Agent System profile panel does not statically bundle main app modules', a
     assert.match(modelTargetConnectionSource, /requireSillyTavernContext/);
 });
 
+test('Agent run helpers keep main runtime imports native for the extension bundle', async () => {
+    const controllerSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/tauritavern/agent/agent-run-controller.js',
+    ), 'utf8');
+    const retrySource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/tauritavern/agent/agent-run-retry.js',
+    ), 'utf8');
+
+    assert.match(controllerSource, /import\(['"]\/script\.js['"]\s*\/\*\s*webpackIgnore:\s*true\s*\*\/\)/);
+    assert.match(retrySource, /import\(['"]\/script\.js['"]\s*\/\*\s*webpackIgnore:\s*true\s*\*\/\)/);
+    assert.match(retrySource, /import\(['"]\/scripts\/group-chats\.js['"]\s*\/\*\s*webpackIgnore:\s*true\s*\*\/\)/);
+    assert.match(retrySource, /import\(['"]\/scripts\/tauritavern\/agent\/agent-generation-router\.js['"]\s*\/\*\s*webpackIgnore:\s*true\s*\*\/\)/);
+});
+
 test('Skill extension resolves active scoped sections from SillyTavern context', async () => {
     const hostWindow = installWindow({});
     hostWindow.SillyTavern = {

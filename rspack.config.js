@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import webpack from 'webpack';
+import * as rspack from '@rspack/core';
 
 // Get the directory name of the current module
 const __filename = fileURLToPath(import.meta.url);
@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 const cacheEnvironment = `${process.platform}-${process.arch}-node${process.versions.node.split('.')[0]}`;
 
 const commonCacheInputs = [
-  'webpack.config.js',
+  'rspack.config.js',
   'package.json',
   'pnpm-lock.yaml',
 ];
@@ -71,7 +71,7 @@ function buildCacheVersion(name, inputFiles) {
   hash.update(`platform=${process.platform}\n`);
   hash.update(`arch=${process.arch}\n`);
   hash.update(`node=${process.versions.node}\n`);
-  hash.update(`webpack=${webpack.version}\n`);
+  hash.update(`rspack=${rspack.rspackVersion}\n`);
 
   for (const file of inputFiles) {
     hash.update(`file=${file}\n`);
@@ -82,15 +82,14 @@ function buildCacheVersion(name, inputFiles) {
   return hash.digest('hex');
 }
 
-function createFilesystemCache(name, inputFiles) {
+function createPersistentCache(name, inputFiles) {
   return {
-    type: 'filesystem',
-    name,
-    cacheDirectory: path.resolve(__dirname, '.cache/webpack', cacheEnvironment, name),
+    type: 'persistent',
     version: buildCacheVersion(name, inputFiles),
-    buildDependencies: {
-      config: [__filename],
-      inputs: inputFiles.map(resolveRepoPath),
+    buildDependencies: commonCacheInputs.map(resolveRepoPath),
+    storage: {
+      type: 'filesystem',
+      directory: path.resolve(__dirname, '.cache/rspack', cacheEnvironment, name),
     },
   };
 }
@@ -128,8 +127,26 @@ const sharedPerformance = {
   maxAssetSize: 5120000
 };
 
+const sharedStats = {
+  preset: 'normal',
+  assets: true,
+  chunks: true,
+  modules: true,
+  entrypoints: true,
+  timings: true,
+  builtAt: true,
+  logging: 'warn',
+  cachedAssets: false,
+  cachedModules: false,
+  chunkModules: false,
+  assetsSort: '!size',
+  modulesSort: '!size',
+  assetsSpace: 20,
+  modulesSpace: 20,
+};
+
 function createVueDefinePlugin() {
-  return new webpack.DefinePlugin({
+  return new rspack.DefinePlugin({
     __VUE_OPTIONS_API__: JSON.stringify(true),
     __VUE_PROD_DEVTOOLS__: JSON.stringify(false),
     __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: JSON.stringify(false),
@@ -139,8 +156,9 @@ function createVueDefinePlugin() {
 const coreConfig = {
   name: 'vendor-libs',
   mode: 'production',
+  bail: true,
   target: ['web', 'es2020'],
-  cache: createFilesystemCache('vendor-libs', libraryCacheInputs),
+  cache: createPersistentCache('vendor-libs', libraryCacheInputs),
   entry: {
     'lib.core': './src/lib-bundle-core.js',
     'lib.optional': './src/lib-bundle-optional.js',
@@ -148,41 +166,40 @@ const coreConfig = {
   output: {
     filename: '[name].bundle.js',
     path: path.resolve(__dirname, 'src/dist'),
+    module: true,
     library: {
       type: 'module'
     }
   },
-  experiments: {
-    outputModule: true,
-  },
   resolve: sharedResolve,
   optimization: sharedOptimization,
   performance: sharedPerformance,
+  stats: sharedStats,
 };
 
 const agentSystemConfig = {
   name: 'agent-system',
   dependencies: ['vendor-libs'],
   mode: 'production',
+  bail: true,
   target: ['web', 'es2020'],
-  cache: createFilesystemCache('agent-system', agentSystemCacheInputs),
+  cache: createPersistentCache('agent-system', agentSystemCacheInputs),
   entry: {
     index: './src/scripts/extensions/agent-system/src/index.js',
   },
   output: {
     filename: '[name].bundle.js',
     path: path.resolve(__dirname, 'src/scripts/extensions/agent-system/dist'),
+    module: true,
     library: {
       type: 'module'
     },
     clean: true,
   },
-  experiments: {
-    outputModule: true,
-  },
   resolve: sharedResolve,
   optimization: sharedOptimization,
   performance: sharedPerformance,
+  stats: sharedStats,
   plugins: [
     createVueDefinePlugin(),
   ],
@@ -192,8 +209,9 @@ const tauriTavernSettingsConfig = {
   name: 'tauritavern-settings',
   dependencies: ['vendor-libs'],
   mode: 'production',
+  bail: true,
   target: ['web', 'es2020'],
-  cache: createFilesystemCache('tauritavern-settings', tauriSettingUiCacheInputs),
+  cache: createPersistentCache('tauritavern-settings', tauriSettingUiCacheInputs),
   entry: {
     settings: './src/scripts/tauri/setting/settings-app/index.js',
     'dev-logs': './src/scripts/tauri/setting/dev-logs-app/index.js',
@@ -202,17 +220,16 @@ const tauriTavernSettingsConfig = {
   output: {
     filename: '[name].bundle.js',
     path: path.resolve(__dirname, 'src/scripts/tauri/setting/dist'),
+    module: true,
     library: {
       type: 'module'
     },
     clean: true,
   },
-  experiments: {
-    outputModule: true,
-  },
   resolve: sharedResolve,
   optimization: sharedOptimization,
   performance: sharedPerformance,
+  stats: sharedStats,
   plugins: [
     createVueDefinePlugin(),
   ],
