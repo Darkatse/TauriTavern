@@ -5,6 +5,7 @@ import { scanQrCodeWithBackCancellation } from '../../../../tauri/main/services/
 import { LAN_SYNC_DEVICES_CHANGED_EVENT, TT_SYNC_SERVERS_CHANGED_EVENT } from './constants.js';
 import { formatTimestamp } from './formatters.js';
 import { showErrorPopup } from './popup-utils.js';
+import { callTauriTavernPanelPopup } from '../panel-popup.js';
 import {
     clearSyncTargetAlias,
     getLanSyncAdvertiseAddress,
@@ -399,7 +400,7 @@ export async function openSyncPopup() {
     window.addEventListener(TT_SYNC_SERVERS_CHANGED_EVENT, refresh);
 
     try {
-        await callGenericPopup(mount, POPUP_TYPE.TEXT, '', {
+        await callTauriTavernPanelPopup(mount, POPUP_TYPE.TEXT, '', {
             okButton: translate('Close'),
             allowVerticalScrolling: true,
             wide: false,

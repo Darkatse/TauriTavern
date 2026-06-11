@@ -129,6 +129,7 @@ const FIREWALL_CSS = `
   }
 
   body [data-tt-mobile-surface="fullscreen-window"][data-tt-mobile-surface][data-tt-mobile-surface] {
+    position: fixed !important;
     top: max(var(--tt-inset-top), 0px) !important;
     left: max(var(--tt-inset-left), 0px) !important;
     right: max(var(--tt-inset-right), 0px) !important;
@@ -137,9 +138,13 @@ const FIREWALL_CSS = `
     height: auto !important;
     max-width: none !important;
     max-height: none !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
   }
 
   body [data-tt-mobile-surface="viewport-host"][data-tt-mobile-surface][data-tt-mobile-surface] {
+    position: fixed !important;
     top: 0 !important;
     left: 0 !important;
     right: 0 !important;
@@ -224,6 +229,33 @@ const FIREWALL_CSS = `
   body .fillRight {
     top: var(--tt-safe-top) !important;
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
+  }
+
+  body [data-tt-mobile-surface="fullscreen-window"][data-tt-mobile-surface][data-tt-mobile-surface] {
+    position: fixed !important;
+    top: max(var(--tt-inset-top), 0px) !important;
+    left: max(var(--tt-inset-left), 0px) !important;
+    right: max(var(--tt-inset-right), 0px) !important;
+    bottom: max(var(--tt-viewport-bottom-inset, var(--tt-inset-bottom)), 0px) !important;
+  }
+
+  body dialog.popup.tt-tauritavern-panel-popup[data-tt-mobile-surface="fullscreen-window"][data-tt-mobile-surface][data-tt-mobile-surface] {
+    --tt-panel-popup-wide-margin-x: 18px;
+    --tt-panel-popup-wide-margin-y: 18px;
+    --tt-panel-popup-wide-safe-left: max(var(--tt-inset-left), 0px);
+    --tt-panel-popup-wide-safe-right: max(var(--tt-inset-right), 0px);
+    --tt-panel-popup-wide-safe-top: max(var(--tt-inset-top), 0px);
+    --tt-panel-popup-wide-safe-bottom: max(var(--tt-viewport-bottom-inset-local, var(--tt-viewport-bottom-inset, var(--tt-inset-bottom))), 0px);
+    --tt-panel-popup-wide-width: max(calc(100dvw - var(--tt-panel-popup-wide-safe-left) - var(--tt-panel-popup-wide-safe-right) - var(--tt-panel-popup-wide-margin-x) * 2), 0px);
+    --tt-panel-popup-wide-height: max(calc(var(--tt-base-viewport-height, var(--doc-height, 100dvh)) - var(--tt-panel-popup-wide-safe-top) - var(--tt-panel-popup-wide-safe-bottom) - var(--tt-panel-popup-wide-margin-y) * 2), 0px);
+
+    width: min(980px, var(--tt-panel-popup-wide-width)) !important;
+    height: min(760px, var(--tt-panel-popup-wide-height)) !important;
+    max-width: min(980px, var(--tt-panel-popup-wide-width)) !important;
+    max-height: min(760px, var(--tt-panel-popup-wide-height)) !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    margin: auto !important;
   }
 }
 

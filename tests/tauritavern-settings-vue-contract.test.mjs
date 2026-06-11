@@ -77,3 +77,17 @@ test('TauriTavern Settings Vue app stays presentation-only', async () => {
     assert.match(entry, /from\s+['"]vue\/dist\/vue\.esm-bundler\.js['"]/);
     assert.match(entry, /export\s+function\s+mountTauriTavernSettingsApp/);
 });
+
+test('TauriTavern Settings keeps mobile toggle rows inline', async () => {
+    const source = await readRepoFile('src/scripts/tauri/setting/setting-panel/settings-app.css');
+
+    assert.match(source, /@media\s+\(max-width:\s*640px\)/);
+    assert.match(
+        source,
+        /\.tt-settings-row:has\(\.tt-settings-switch\)\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/,
+    );
+    assert.match(
+        source,
+        /\.tt-settings-row:has\(\.tt-settings-switch\)\s+\.tt-settings-control\s*\{[\s\S]*width:\s*auto[\s\S]*justify-content:\s*flex-end/,
+    );
+});

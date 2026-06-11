@@ -1,8 +1,9 @@
-import { callGenericPopup, POPUP_TYPE } from '../../popup.js';
+import { POPUP_TYPE } from '../../popup.js';
 import { translate } from '../../i18n.js';
 import { trimFrontendLogEntriesInPlace } from '../../../tauri/main/services/dev-logging/frontend-log-retention.js';
 import { openFullscreenTextViewer } from './text-viewer-popup.js';
 import { runTaskOrPopup, showErrorPopup } from './setting-panel/popup-utils.js';
+import { callTauriTavernPanelPopup } from './panel-popup.js';
 
 const DEV_LOGS_STYLE_ID = 'tauritavern-dev-logs-style';
 
@@ -54,7 +55,7 @@ async function openDevLogsPopup(options) {
     });
 
     try {
-        await callGenericPopup(mount, POPUP_TYPE.TEXT, '', {
+        await callTauriTavernPanelPopup(mount, POPUP_TYPE.TEXT, '', {
             okButton: translate('Close'),
             allowVerticalScrolling: true,
             wide: true,

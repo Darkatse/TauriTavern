@@ -9,6 +9,7 @@ import { runTaskOrPopup } from './popup-utils.js';
 import { loadTauriTavernSettingsViewModel } from './settings-view-model.js';
 import { buildTauriTavernSettingsUpdate } from './settings-patch.js';
 import { applyTauriTavernSettingsUpdateEffects } from './settings-effects.js';
+import { callTauriTavernPanelPopup } from '../panel-popup.js';
 
 const SETTINGS_STYLE_ID = 'tauritavern-settings-style';
 
@@ -224,7 +225,7 @@ export async function openTauriTavernSettingsPopup() {
     });
 
     try {
-        const result = await callGenericPopup(mount, POPUP_TYPE.CONFIRM, '', {
+        const result = await callTauriTavernPanelPopup(mount, POPUP_TYPE.CONFIRM, '', {
             okButton: translate('Save'),
             cancelButton: translate('Close'),
             allowVerticalScrolling: true,

@@ -272,6 +272,21 @@
         width: 100%;
     }
 
+    .tt-settings-row:has(.tt-settings-switch) {
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        column-gap: 10px;
+    }
+
+    .tt-settings-row:has(.tt-settings-switch) .tt-settings-control {
+        width: auto;
+        justify-content: flex-end;
+    }
+
+    .tt-settings-row:has(.tt-settings-switch) .tt-settings-label-line {
+        min-height: 24px;
+    }
+
     .tt-settings-path-row {
         grid-template-columns: 1fr;
     }

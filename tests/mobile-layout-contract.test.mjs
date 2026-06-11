@@ -352,10 +352,33 @@ test('geometry firewall surface selectors keep high specificity (>= Vue scoped)'
         source,
         /\[data-tt-mobile-surface="fullscreen-window"\]\[data-tt-mobile-surface\]\[data-tt-mobile-surface\]/,
     );
+    assert.match(
+        source,
+        /\[data-tt-mobile-surface="fullscreen-window"\]\[data-tt-mobile-surface\]\[data-tt-mobile-surface\]\s*\{[\s\S]*position:\s*fixed\s*!important/,
+    );
     assert.match(source, /\[data-tt-mobile-surface="edge-window"\]\[data-tt-mobile-surface\]\[data-tt-mobile-surface\]/);
     assert.match(
         source,
         /\[data-tt-mobile-surface="viewport-host"\]\[data-tt-mobile-surface\]\[data-tt-mobile-surface\]/,
+    );
+    assert.match(
+        source,
+        /\[data-tt-mobile-surface="viewport-host"\]\[data-tt-mobile-surface\]\[data-tt-mobile-surface\]\s*\{[\s\S]*position:\s*fixed\s*!important/,
+    );
+});
+
+test('geometry firewall keeps wide mobile fullscreen surfaces safe-area pinned', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const source = await readFile(firewallPath, 'utf8');
+
+    assert.match(source, /@media\s+screen\s+and\s+\(min-width:\s*1001px\)\s*\{/);
+    assert.match(
+        source,
+        /body\s+\[data-tt-mobile-surface="fullscreen-window"\]\[data-tt-mobile-surface\]\[data-tt-mobile-surface\]\s*\{[\s\S]*position:\s*fixed\s*!important[\s\S]*top:\s*max\(var\(--tt-inset-top\),\s*0px\)\s*!important[\s\S]*bottom:\s*max\(var\(--tt-viewport-bottom-inset,\s*var\(--tt-inset-bottom\)\),\s*0px\)\s*!important/,
+    );
+    assert.match(
+        source,
+        /dialog\.popup\.tt-tauritavern-panel-popup\[data-tt-mobile-surface="fullscreen-window"\][\s\S]*width:\s*min\(980px,\s*var\(--tt-panel-popup-wide-width\)\)\s*!important[\s\S]*height:\s*min\(760px,\s*var\(--tt-panel-popup-wide-height\)\)\s*!important/,
     );
 });
 
