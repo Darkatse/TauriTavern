@@ -96,9 +96,12 @@ export function createTauriTavernSettingsState(settings, options = {}) {
             ? options.nativeRegexBackendEnabled
             : readNativeRegexBackendEnabledFromSettings(settings),
         dynamicTheme: {
-            enabled: Boolean(dynamicTheme.enabled),
+            themeEnabled: Boolean(dynamicTheme.enabled),
             dayTheme: String(dynamicTheme.day_theme || '').trim(),
             nightTheme: String(dynamicTheme.night_theme || '').trim(),
+            wallpaperEnabled: Boolean(dynamicTheme.wallpaper_enabled),
+            dayWallpaper: String(dynamicTheme.day_wallpaper || ''),
+            nightWallpaper: String(dynamicTheme.night_wallpaper || ''),
         },
         promptCacheTtl: PROMPT_CACHE_TTL_VALUES.includes(rawPromptCacheTtl) ? rawPromptCacheTtl : 'off',
         promptCacheTtlSource: rawPromptCacheTtl,

@@ -18,5 +18,15 @@
     "tauritavern.error.network.body_interrupted": "The response was interrupted while it was being read.",
     "tauritavern.error.network.request_failed": "Network request failed.",
     "tauritavern.error.network.action": "Check your network, VPN, proxy, or custom endpoint address, then try again.",
-    "tauritavern.error.network.endpoint_label": "Endpoint"
+    "tauritavern.error.network.endpoint_label": "Endpoint",
+    "Dynamic Theme & Wallpaper": "Dynamic Theme & Wallpaper",
+    "Enable Theme Switching": "Enable Theme Switching",
+    "Enable Wallpaper Switching": "Enable Wallpaper Switching",
+    "Day Wallpaper": "Day Wallpaper",
+    "Night Wallpaper": "Night Wallpaper",
+    "Choose Wallpaper": "Choose Wallpaper",
+    "No backgrounds available": "No backgrounds available",
+    "Dynamic Theme & Wallpaper hint": "Automatically switch TauriTavern themes and global wallpapers with the system light/dark mode.",
+    "Dynamic Theme help: mapping": "Day = system light mode. Night = system dark mode.",
+    "Dynamic Theme help: behavior": "Theme switching behaves like changing the theme dropdown. Wallpaper switching updates the global SillyTavern background and respects chat-locked backgrounds."
 }

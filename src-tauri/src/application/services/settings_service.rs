@@ -161,6 +161,18 @@ impl SettingsService {
                 settings.dynamic_theme.night_theme = night_theme;
             }
 
+            if let Some(wallpaper_enabled) = dynamic_theme.wallpaper_enabled {
+                settings.dynamic_theme.wallpaper_enabled = wallpaper_enabled;
+            }
+
+            if let Some(day_wallpaper) = dynamic_theme.day_wallpaper {
+                settings.dynamic_theme.day_wallpaper = day_wallpaper;
+            }
+
+            if let Some(night_wallpaper) = dynamic_theme.night_wallpaper {
+                settings.dynamic_theme.night_wallpaper = night_wallpaper;
+            }
+
             if settings.dynamic_theme.enabled {
                 if settings.dynamic_theme.day_theme.trim().is_empty() {
                     return Err(ApplicationError::ValidationError(
@@ -171,6 +183,20 @@ impl SettingsService {
                 if settings.dynamic_theme.night_theme.trim().is_empty() {
                     return Err(ApplicationError::ValidationError(
                         "Dynamic theme night theme is required".to_string(),
+                    ));
+                }
+            }
+
+            if settings.dynamic_theme.wallpaper_enabled {
+                if settings.dynamic_theme.day_wallpaper.trim().is_empty() {
+                    return Err(ApplicationError::ValidationError(
+                        "Dynamic wallpaper day wallpaper is required".to_string(),
+                    ));
+                }
+
+                if settings.dynamic_theme.night_wallpaper.trim().is_empty() {
+                    return Err(ApplicationError::ValidationError(
+                        "Dynamic wallpaper night wallpaper is required".to_string(),
                     ));
                 }
             }

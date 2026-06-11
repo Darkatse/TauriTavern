@@ -103,6 +103,12 @@ pub struct DynamicThemeSettings {
     pub day_theme: String,
     #[serde(default)]
     pub night_theme: String,
+    #[serde(default)]
+    pub wallpaper_enabled: bool,
+    #[serde(default)]
+    pub day_wallpaper: String,
+    #[serde(default)]
+    pub night_wallpaper: String,
 }
 
 impl Default for DynamicThemeSettings {
@@ -111,6 +117,9 @@ impl Default for DynamicThemeSettings {
             enabled: false,
             day_theme: String::new(),
             night_theme: String::new(),
+            wallpaper_enabled: false,
+            day_wallpaper: String::new(),
+            night_wallpaper: String::new(),
         }
     }
 }

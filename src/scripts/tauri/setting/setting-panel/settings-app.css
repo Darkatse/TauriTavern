@@ -151,7 +151,9 @@
 
 .tt-settings-switch input:focus-visible + span,
 .tt-settings-icon-button:focus-visible,
-.tt-settings-action-button:focus-visible {
+.tt-settings-action-button:focus-visible,
+.tt-settings-wallpaper-button:focus-visible,
+.tt-wallpaper-picker-item:focus-visible {
     outline: 2px solid var(--SmartThemeQuoteColor);
     outline-offset: 2px;
 }
@@ -260,6 +262,102 @@
     margin: 0;
 }
 
+.tt-settings-wallpaper-button {
+    display: grid;
+    grid-template-columns: 68px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 48px;
+    margin: 0;
+    padding: 4px 8px 4px 4px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    color: var(--SmartThemeBodyColor);
+    background: var(--black10a);
+    cursor: pointer;
+}
+
+.tt-settings-wallpaper-button:hover:not(:disabled) {
+    background: var(--white20a);
+}
+
+.tt-settings-wallpaper-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.64;
+}
+
+.tt-settings-wallpaper-swatch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 68px;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 80%, transparent);
+    background-color: var(--black30a);
+    background-position: center;
+    background-size: cover;
+}
+
+.tt-settings-wallpaper-swatch i {
+    color: var(--SmartThemeQuoteColor);
+}
+
+.tt-settings-wallpaper-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.tt-wallpaper-picker {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 10px;
+    width: min(100%, 760px);
+}
+
+.tt-wallpaper-picker-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    margin: 0;
+    padding: 6px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 76%, transparent);
+    border-radius: 8px;
+    color: var(--SmartThemeBodyColor);
+    background: var(--black10a);
+    cursor: pointer;
+}
+
+.tt-wallpaper-picker-item:hover,
+.tt-wallpaper-picker-item.is-selected {
+    border-color: var(--SmartThemeQuoteColor);
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor) 14%, var(--black10a));
+}
+
+.tt-wallpaper-picker-thumb {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 6px;
+    background-color: var(--black30a);
+    background-position: center;
+    background-size: cover;
+}
+
+.tt-wallpaper-picker-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
 @media (max-width: 640px) {
     .tt-settings-row {
         grid-template-columns: 1fr;
@@ -294,5 +392,9 @@
     .tt-settings-action-grid,
     .tt-settings-action-button {
         width: 100%;
+    }
+
+    .tt-wallpaper-picker {
+        grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
     }
 }

@@ -169,6 +169,24 @@ export let background_settings = {
     sortOrder: BG_SORT_OPTIONS.AZ,
 };
 
+export function getSystemBackgroundEntries() {
+    return cachedSystemBackgrounds.map(({ filename, isAnimated }) => ({ filename, isAnimated }));
+}
+
+export function assertSystemBackgroundExists(bg) {
+    const filename = String(bg || '');
+    if (!filename) {
+        throw new Error('Background filename is required');
+    }
+
+    const entry = cachedSystemBackgrounds.find((candidate) => candidate.filename === filename);
+    if (!entry) {
+        throw new Error(`Background not found: ${filename}`);
+    }
+
+    return entry;
+}
+
 /**
  * Sorts an array of background entries based on the current sort order.
  * @param {Array<string|{filename: string, isAnimated?: boolean}>} backgrounds - Array of background entries
@@ -817,7 +835,7 @@ function renderChatBackgrounds(backgrounds) {
     activateLazyLoader();
 }
 
-export async function getBackgrounds() {
+export async function refreshSystemBackgroundEntries() {
     const response = await fetch('/api/backgrounds/all', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -842,6 +860,12 @@ export async function getBackgrounds() {
             selectedSystemBackgroundFiles.delete(selectedFile);
         }
     }
+
+    return getSystemBackgroundEntries();
+}
+
+export async function getBackgrounds() {
+    await refreshSystemBackgroundEntries();
 
     // Load folders first so getFilteredImages() works correctly in folder view
     await loadFolders();
@@ -1561,6 +1585,17 @@ async function setBackground(bg, url) {
     background_settings.name = bg;
     background_settings.url = url;
     saveSettingsDebounced();
+}
+
+export async function applyGlobalBackground(bg) {
+    const entry = assertSystemBackgroundExists(bg);
+    const url = generateUrlParameter(entry.filename, false);
+    if (background_settings.name === entry.filename && background_settings.url === url) {
+        return;
+    }
+
+    await setBackground(entry.filename, url);
+    highlightSelectedBackground();
 }
 
 async function delBackground(bg) {

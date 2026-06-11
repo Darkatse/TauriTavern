@@ -22,6 +22,9 @@ function createSettings(overrides = {}) {
             enabled: false,
             day_theme: 'Default',
             night_theme: 'Dark',
+            wallpaper_enabled: false,
+            day_wallpaper: ' Day.png',
+            night_wallpaper: 'Night .png',
         },
         models: {
             claude: {
@@ -36,6 +39,9 @@ test('buildTauriTavernSettingsUpdate returns an empty patch for unchanged settin
     const initial = createTauriTavernSettingsState(createSettings(), {
         nativeRegexBackendEnabled: true,
     });
+
+    assert.equal(initial.dynamicTheme.dayWallpaper, ' Day.png');
+    assert.equal(initial.dynamicTheme.nightWallpaper, 'Night .png');
 
     const update = buildTauriTavernSettingsUpdate(initial, {
         ...initial,
@@ -77,6 +83,34 @@ test('buildTauriTavernSettingsUpdate preserves minimal nested patch semantics', 
             enabled: true,
             url: 'http://127.0.0.1:7890',
             bypass: ['localhost', '127.0.0.1', '10.0.0.0/8'],
+        },
+    });
+});
+
+test('buildTauriTavernSettingsUpdate persists dynamic wallpaper settings with theme settings', () => {
+    const initial = createTauriTavernSettingsState(createSettings(), {
+        nativeRegexBackendEnabled: true,
+    });
+
+    const update = buildTauriTavernSettingsUpdate(initial, {
+        ...initial,
+        dynamicTheme: {
+            ...initial.dynamicTheme,
+            wallpaperEnabled: true,
+            dayWallpaper: ' Soft Morning.png',
+            nightWallpaper: 'Deep Night .webp',
+        },
+    });
+
+    assert.equal(update.hasChanges, true);
+    assert.deepEqual(update.patch, {
+        dynamic_theme: {
+            enabled: false,
+            day_theme: 'Default',
+            night_theme: 'Dark',
+            wallpaper_enabled: true,
+            day_wallpaper: ' Soft Morning.png',
+            night_wallpaper: 'Deep Night .webp',
         },
     });
 });

@@ -4,6 +4,7 @@ import {
     SettingRow,
     SettingsSection,
     ToggleSwitch,
+    WallpaperField,
 } from './components.js';
 
 const PANEL_RUNTIME_OPTIONS = [
@@ -32,8 +33,10 @@ const PROMPT_CACHE_OPTIONS = [
 
 function cloneOptions(options) {
     return options.map((option) => ({
-        value: String(option.value || '').trim(),
-        label: String(option.label || option.value || '').trim(),
+        value: String(option.value || ''),
+        label: String(option.label || option.value || ''),
+        thumbnailUrl: String(option.thumbnailUrl || ''),
+        isAnimated: Boolean(option.isAnimated),
     }));
 }
 
@@ -44,8 +47,12 @@ function translateOptions(options, tr) {
     }));
 }
 
-function cloneDraft(values, themeOptions) {
+function cloneDraft(values, themeOptions, backgroundOptions, currentBackground) {
     const fallbackTheme = themeOptions[0]?.value || '';
+    const normalizedCurrentBackground = String(currentBackground || '');
+    const fallbackBackground = backgroundOptions.some((option) => option.value === normalizedCurrentBackground)
+        ? normalizedCurrentBackground
+        : backgroundOptions[0]?.value || '';
 
     return {
         panelRuntimeProfile: values.panelRuntimeProfile,
@@ -61,9 +68,12 @@ function cloneDraft(values, themeOptions) {
         avatarPersonaOriginalImagesEnabled: values.avatarPersonaOriginalImagesEnabled,
         nativeRegexBackendEnabled: values.nativeRegexBackendEnabled,
         dynamicTheme: {
-            enabled: values.dynamicTheme.enabled,
+            themeEnabled: values.dynamicTheme.themeEnabled,
             dayTheme: values.dynamicTheme.dayTheme || fallbackTheme,
             nightTheme: values.dynamicTheme.nightTheme || fallbackTheme,
+            wallpaperEnabled: values.dynamicTheme.wallpaperEnabled,
+            dayWallpaper: values.dynamicTheme.dayWallpaper || (values.dynamicTheme.wallpaperEnabled ? fallbackBackground : ''),
+            nightWallpaper: values.dynamicTheme.nightWallpaper || (values.dynamicTheme.wallpaperEnabled ? fallbackBackground : ''),
         },
         promptCacheTtl: values.promptCacheTtl,
     };
@@ -96,8 +106,10 @@ export function createTauriTavernSettingsApp(options) {
     }
 
     const themeOptions = cloneOptions(options.themeOptions || []);
+    const backgroundOptions = cloneOptions(options.backgroundOptions || []);
+    const currentBackground = String(options.currentBackground || '');
     const capabilities = { ...viewModel.capabilities };
-    const initialDraft = cloneDraft(viewModel.values, themeOptions);
+    const initialDraft = cloneDraft(viewModel.values, themeOptions, backgroundOptions, currentBackground);
     const initialDataRoot = cloneDataRoot(viewModel.dataRoot);
 
     return {
@@ -108,11 +120,13 @@ export function createTauriTavernSettingsApp(options) {
             SettingRow,
             SettingsSection,
             ToggleSwitch,
+            WallpaperField,
         },
         data() {
             return {
                 capabilities,
                 themeOptions,
+                backgroundOptions,
                 draft: initialDraft,
                 dataRoot: initialDataRoot,
                 details: {
@@ -144,7 +158,7 @@ export function createTauriTavernSettingsApp(options) {
             requestProxySummary() {
                 return this.tr(this.details.requestProxy ? 'Click to collapse' : 'Click to expand');
             },
-            dynamicThemeSummary() {
+            dynamicAppearanceSummary() {
                 return this.tr(this.details.dynamicTheme ? 'Click to collapse' : 'Click to expand');
             },
             dataRootSummary() {
@@ -194,6 +208,36 @@ export function createTauriTavernSettingsApp(options) {
                     { value: normalized, label: normalized },
                 ];
             },
+            backgroundOptionsWithStored(storedValue) {
+                const normalized = String(storedValue || '');
+                if (!normalized || this.backgroundOptions.some((option) => option.value === normalized)) {
+                    return this.backgroundOptions;
+                }
+
+                return [
+                    ...this.backgroundOptions,
+                    {
+                        value: normalized,
+                        label: normalized,
+                        thumbnailUrl: '',
+                        isAnimated: false,
+                    },
+                ];
+            },
+            backgroundOption(storedValue) {
+                const normalized = String(storedValue || '');
+                return this.backgroundOptionsWithStored(normalized)
+                    .find((option) => option.value === normalized) || null;
+            },
+            ensureWallpaperDefaults() {
+                const fallback = this.backgroundOptions[0]?.value || '';
+                if (!this.draft.dynamicTheme.dayWallpaper) {
+                    this.draft.dynamicTheme.dayWallpaper = fallback;
+                }
+                if (!this.draft.dynamicTheme.nightWallpaper) {
+                    this.draft.dynamicTheme.nightWallpaper = fallback;
+                }
+            },
             showHelp(topicId) {
                 void requireAction(actions, 'showHelp')(topicId);
             },
@@ -226,13 +270,32 @@ export function createTauriTavernSettingsApp(options) {
                 this.details.requestProxy = true;
                 this.$nextTick(() => this.$refs.requestProxyUrl?.focus?.());
             },
-            setDynamicThemeEnabled(enabled) {
-                this.draft.dynamicTheme.enabled = enabled;
+            setThemeSwitchingEnabled(enabled) {
+                this.draft.dynamicTheme.themeEnabled = enabled;
                 if (!enabled) {
                     return;
                 }
                 this.details.dynamicTheme = true;
                 this.$nextTick(() => this.$refs.dynamicThemeDay?.$el?.focus?.());
+            },
+            setWallpaperSwitchingEnabled(enabled) {
+                this.draft.dynamicTheme.wallpaperEnabled = enabled;
+                if (!enabled) {
+                    return;
+                }
+
+                this.ensureWallpaperDefaults();
+                this.details.dynamicTheme = true;
+            },
+            async chooseWallpaper(targetKey) {
+                const selected = await requireAction(actions, 'chooseWallpaper')({
+                    currentValue: this.draft.dynamicTheme[targetKey],
+                });
+                if (!selected) {
+                    return;
+                }
+
+                this.draft.dynamicTheme[targetKey] = selected;
             },
             getDraft() {
                 return {
@@ -419,22 +482,22 @@ export function createTauriTavernSettingsApp(options) {
                         @toggle="details.dynamicTheme = $event.currentTarget.open"
                     >
                         <summary>
-                            <span>{{ tr('Dynamic Theme') }}</span>
+                            <span>{{ tr('Dynamic Theme & Wallpaper') }}</span>
                             <span class="tt-settings-summary-meta">
-                                <small>{{ dynamicThemeSummary }}</small>
+                                <small>{{ dynamicAppearanceSummary }}</small>
                                 <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
                             </span>
                         </summary>
                         <div class="tt-settings-disclosure-body">
                             <SettingRow
-                                :label="tr('Enable Dynamic Theme')"
+                                :label="tr('Enable Theme Switching')"
                                 help-topic="dynamicTheme"
                                 :help-title="tr('Learn more')"
                                 @help="showHelp"
                             >
                                 <ToggleSwitch
-                                    :model-value="draft.dynamicTheme.enabled"
-                                    @update:model-value="setDynamicThemeEnabled"
+                                    :model-value="draft.dynamicTheme.themeEnabled"
+                                    @update:model-value="setThemeSwitchingEnabled"
                                 />
                             </SettingRow>
                             <SettingRow :label="tr('Day Theme')">
@@ -442,17 +505,41 @@ export function createTauriTavernSettingsApp(options) {
                                     ref="dynamicThemeDay"
                                     v-model="draft.dynamicTheme.dayTheme"
                                     :options="themeOptionsWithStored(draft.dynamicTheme.dayTheme)"
-                                    :disabled="!draft.dynamicTheme.enabled"
+                                    :disabled="!draft.dynamicTheme.themeEnabled"
                                 />
                             </SettingRow>
                             <SettingRow :label="tr('Night Theme')">
                                 <SelectField
                                     v-model="draft.dynamicTheme.nightTheme"
                                     :options="themeOptionsWithStored(draft.dynamicTheme.nightTheme)"
-                                    :disabled="!draft.dynamicTheme.enabled"
+                                    :disabled="!draft.dynamicTheme.themeEnabled"
                                 />
                             </SettingRow>
-                            <small class="tt-settings-section-note">{{ tr('Dynamic Theme hint') }}</small>
+                            <SettingRow :label="tr('Enable Wallpaper Switching')">
+                                <ToggleSwitch
+                                    :model-value="draft.dynamicTheme.wallpaperEnabled"
+                                    @update:model-value="setWallpaperSwitchingEnabled"
+                                />
+                            </SettingRow>
+                            <SettingRow :label="tr('Day Wallpaper')">
+                                <WallpaperField
+                                    :option="backgroundOption(draft.dynamicTheme.dayWallpaper)"
+                                    :value="draft.dynamicTheme.dayWallpaper"
+                                    :placeholder="tr('Choose Wallpaper')"
+                                    :disabled="!draft.dynamicTheme.wallpaperEnabled"
+                                    @choose="chooseWallpaper('dayWallpaper')"
+                                />
+                            </SettingRow>
+                            <SettingRow :label="tr('Night Wallpaper')">
+                                <WallpaperField
+                                    :option="backgroundOption(draft.dynamicTheme.nightWallpaper)"
+                                    :value="draft.dynamicTheme.nightWallpaper"
+                                    :placeholder="tr('Choose Wallpaper')"
+                                    :disabled="!draft.dynamicTheme.wallpaperEnabled"
+                                    @choose="chooseWallpaper('nightWallpaper')"
+                                />
+                            </SettingRow>
+                            <small class="tt-settings-section-note">{{ tr('Dynamic Theme & Wallpaper hint') }}</small>
                         </div>
                     </details>
                 </SettingsSection>

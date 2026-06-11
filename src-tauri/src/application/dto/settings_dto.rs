@@ -67,6 +67,9 @@ pub struct DynamicThemeSettingsDto {
     pub enabled: bool,
     pub day_theme: String,
     pub night_theme: String,
+    pub wallpaper_enabled: bool,
+    pub day_wallpaper: String,
+    pub night_wallpaper: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +77,9 @@ pub struct UpdateDynamicThemeSettingsDto {
     pub enabled: Option<bool>,
     pub day_theme: Option<String>,
     pub night_theme: Option<String>,
+    pub wallpaper_enabled: Option<bool>,
+    pub day_wallpaper: Option<String>,
+    pub night_wallpaper: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,6 +227,9 @@ impl From<DynamicThemeSettings> for DynamicThemeSettingsDto {
             enabled: settings.enabled,
             day_theme: settings.day_theme,
             night_theme: settings.night_theme,
+            wallpaper_enabled: settings.wallpaper_enabled,
+            day_wallpaper: settings.day_wallpaper,
+            night_wallpaper: settings.night_wallpaper,
         }
     }
 }

@@ -17,9 +17,12 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     const nextChatHistoryMode = normalizeChatHistoryModeName(draft.chatHistoryMode);
     const nextCloseToTrayOnClose = Boolean(draft.closeToTrayOnClose);
 
-    const nextDynamicThemeEnabled = Boolean(draft.dynamicTheme?.enabled);
+    const nextDynamicThemeEnabled = Boolean(draft.dynamicTheme?.themeEnabled);
     const nextDynamicThemeDayTheme = String(draft.dynamicTheme?.dayTheme || '').trim();
     const nextDynamicThemeNightTheme = String(draft.dynamicTheme?.nightTheme || '').trim();
+    const nextDynamicThemeWallpaperEnabled = Boolean(draft.dynamicTheme?.wallpaperEnabled);
+    const nextDynamicThemeDayWallpaper = String(draft.dynamicTheme?.dayWallpaper || '');
+    const nextDynamicThemeNightWallpaper = String(draft.dynamicTheme?.nightWallpaper || '');
 
     const nextAllowKeysExposure = Boolean(draft.allowKeysExposure);
     const nextAvatarPersonaOriginalImagesEnabled = Boolean(draft.avatarPersonaOriginalImagesEnabled);
@@ -41,9 +44,12 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         && (nextEmbeddedRuntimeProfile !== initial.embeddedRuntimeProfile || requiresEmbeddedRuntimeMigration);
     const hasChatHistoryModeChange = nextChatHistoryMode !== initial.chatHistoryMode;
     const hasCloseToTrayOnCloseChange = nextCloseToTrayOnClose !== initial.closeToTrayOnClose;
-    const hasDynamicThemeChange = nextDynamicThemeEnabled !== initial.dynamicTheme.enabled
+    const hasDynamicThemeChange = nextDynamicThemeEnabled !== initial.dynamicTheme.themeEnabled
         || nextDynamicThemeDayTheme !== initial.dynamicTheme.dayTheme
-        || nextDynamicThemeNightTheme !== initial.dynamicTheme.nightTheme;
+        || nextDynamicThemeNightTheme !== initial.dynamicTheme.nightTheme
+        || nextDynamicThemeWallpaperEnabled !== initial.dynamicTheme.wallpaperEnabled
+        || nextDynamicThemeDayWallpaper !== initial.dynamicTheme.dayWallpaper
+        || nextDynamicThemeNightWallpaper !== initial.dynamicTheme.nightWallpaper;
     const hasAllowKeysExposureChange = nextAllowKeysExposure !== initial.allowKeysExposure;
     const hasAvatarPersonaOriginalImagesEnabledChange =
         nextAvatarPersonaOriginalImagesEnabled !== initial.avatarPersonaOriginalImagesEnabled;
@@ -90,6 +96,9 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
             enabled: nextDynamicThemeEnabled,
             day_theme: nextDynamicThemeDayTheme,
             night_theme: nextDynamicThemeNightTheme,
+            wallpaper_enabled: nextDynamicThemeWallpaperEnabled,
+            day_wallpaper: nextDynamicThemeDayWallpaper,
+            night_wallpaper: nextDynamicThemeNightWallpaper,
         };
     }
     if (hasAllowKeysExposureChange) {
@@ -127,9 +136,12 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
             chatHistoryMode: nextChatHistoryMode,
             closeToTrayOnClose: nextCloseToTrayOnClose,
             dynamicTheme: {
-                enabled: nextDynamicThemeEnabled,
+                themeEnabled: nextDynamicThemeEnabled,
                 dayTheme: nextDynamicThemeDayTheme,
                 nightTheme: nextDynamicThemeNightTheme,
+                wallpaperEnabled: nextDynamicThemeWallpaperEnabled,
+                dayWallpaper: nextDynamicThemeDayWallpaper,
+                nightWallpaper: nextDynamicThemeNightWallpaper,
             },
             allowKeysExposure: nextAllowKeysExposure,
             avatarPersonaOriginalImagesEnabled: nextAvatarPersonaOriginalImagesEnabled,

@@ -88,6 +88,43 @@ export const SelectField = {
     `,
 };
 
+export const WallpaperField = {
+    props: {
+        option: { type: Object, default: null },
+        value: { type: String, default: '' },
+        placeholder: { type: String, required: true },
+        disabled: { type: Boolean, default: false },
+    },
+    emits: ['choose'],
+    computed: {
+        label() {
+            return this.option?.label || this.value || this.placeholder;
+        },
+        swatchStyle() {
+            if (!this.option?.thumbnailUrl) {
+                return {};
+            }
+
+            return { backgroundImage: `url("${this.option.thumbnailUrl}")` };
+        },
+    },
+    template: `
+        <button
+            type="button"
+            class="tt-settings-wallpaper-button"
+            :disabled="disabled"
+            :title="label"
+            @click="$emit('choose')"
+        >
+            <span class="tt-settings-wallpaper-swatch" :style="swatchStyle">
+                <i v-if="!option?.thumbnailUrl" class="fa-solid fa-image" aria-hidden="true"></i>
+            </span>
+            <span class="tt-settings-wallpaper-label">{{ label }}</span>
+            <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
+        </button>
+    `,
+};
+
 export const ActionButton = {
     props: {
         label: { type: String, required: true },

@@ -44,6 +44,13 @@ test('TauriTavern Settings popup is a host wrapper around the Vue bundle', async
     assert.match(source, /applyTauriTavernSettingsUpdateEffects\(update,\s*updatedSettings\)/);
 });
 
+test('TauriTavern Settings wallpaper options use the no-render background refresh', async () => {
+    const source = await readRepoFile('src/scripts/tauri/setting/setting-panel/settings-popup.js');
+
+    assert.match(source, /refreshSystemBackgroundEntries/);
+    assert.doesNotMatch(source, /getBackgrounds/);
+});
+
 test('webpack exposes a dedicated TauriTavern Settings Vue entry', async () => {
     const source = await readRepoFile('webpack.config.js');
 
@@ -76,6 +83,10 @@ test('TauriTavern Settings Vue app stays presentation-only', async () => {
     const entry = await readRepoFile('src/scripts/tauri/setting/settings-app/index.js');
     assert.match(entry, /from\s+['"]vue\/dist\/vue\.esm-bundler\.js['"]/);
     assert.match(entry, /export\s+function\s+mountTauriTavernSettingsApp/);
+
+    const app = await readRepoFile('src/scripts/tauri/setting/settings-app/SettingsApp.js');
+    assert.match(app, /Dynamic Theme & Wallpaper/);
+    assert.match(app, /WallpaperField/);
 });
 
 test('TauriTavern Settings keeps mobile toggle rows inline', async () => {

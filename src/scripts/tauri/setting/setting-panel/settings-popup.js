@@ -67,7 +67,7 @@ const HELP_TOPICS = {
         ],
     },
     dynamicTheme: {
-        title: 'Dynamic Theme',
+        title: 'Dynamic Theme & Wallpaper',
         lines: [
             'Dynamic Theme help: mapping',
             'Dynamic Theme help: behavior',
@@ -103,11 +103,103 @@ function readThemeOptions() {
     }));
 }
 
+function getBackgroundThumbnailUrl(filename) {
+    if (typeof window.__TAURITAVERN_THUMBNAIL__ === 'function') {
+        return window.__TAURITAVERN_THUMBNAIL__('bg', filename);
+    }
+
+    return `/thumbnail?type=bg&file=${encodeURIComponent(filename)}`;
+}
+
+async function readBackgroundOptions() {
+    const {
+        background_settings,
+        refreshSystemBackgroundEntries,
+    } = await import('../../../backgrounds.js');
+
+    const backgroundEntries = await refreshSystemBackgroundEntries();
+
+    return {
+        currentBackground: String(background_settings.name || ''),
+        backgroundOptions: backgroundEntries.map((entry) => ({
+            value: entry.filename,
+            label: entry.filename,
+            thumbnailUrl: getBackgroundThumbnailUrl(entry.filename),
+            isAnimated: entry.isAnimated,
+        })),
+    };
+}
+
 function createPopupColumn() {
     const root = document.createElement('div');
     root.className = 'flex-container flexFlowColumn';
     root.style.gap = '10px';
     return root;
+}
+
+function setWallpaperPickerSelection(root, selectedValue) {
+    for (const item of root.querySelectorAll('.tt-wallpaper-picker-item')) {
+        item.classList.toggle('is-selected', item.getAttribute('data-value') === selectedValue);
+    }
+}
+
+function createWallpaperPickerItem(option, selected, onSelect) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'tt-wallpaper-picker-item';
+    item.dataset.value = option.value;
+    item.title = option.label;
+
+    const thumbnail = document.createElement('span');
+    thumbnail.className = 'tt-wallpaper-picker-thumb';
+    thumbnail.style.backgroundImage = `url("${option.thumbnailUrl}")`;
+
+    const label = document.createElement('span');
+    label.className = 'tt-wallpaper-picker-label';
+    label.textContent = option.label;
+
+    item.append(thumbnail, label);
+    item.classList.toggle('is-selected', selected === option.value);
+    item.addEventListener('click', () => onSelect(option.value));
+
+    return item;
+}
+
+async function chooseWallpaper(backgroundOptions, request = {}) {
+    if (backgroundOptions.length === 0) {
+        await callGenericPopup(translate('No backgrounds available'), POPUP_TYPE.TEXT, '', {
+            okButton: translate('OK'),
+            allowVerticalScrolling: true,
+            wide: false,
+            large: false,
+        });
+        return null;
+    }
+
+    const requestedValue = String(request?.currentValue || '');
+    let selected = backgroundOptions.some((option) => option.value === requestedValue)
+        ? requestedValue
+        : backgroundOptions[0].value;
+
+    const picker = document.createElement('div');
+    picker.className = 'tt-wallpaper-picker';
+
+    for (const option of backgroundOptions) {
+        picker.appendChild(createWallpaperPickerItem(option, selected, (nextValue) => {
+            selected = nextValue;
+            setWallpaperPickerSelection(picker, selected);
+        }));
+    }
+
+    const result = await callGenericPopup(picker, POPUP_TYPE.CONFIRM, '', {
+        okButton: translate('Select'),
+        cancelButton: translate('Cancel'),
+        allowVerticalScrolling: true,
+        wide: true,
+        large: false,
+    });
+
+    return result === POPUP_RESULT.AFFIRMATIVE ? selected : null;
 }
 
 async function showHelpTopic(topicId) {
@@ -182,9 +274,10 @@ async function chooseDataRoot() {
     return normalized;
 }
 
-function createSettingsActions() {
+function createSettingsActions(backgroundOptions) {
     return {
         chooseDataRoot: () => runTaskOrPopup(chooseDataRoot),
+        chooseWallpaper: (request) => runTaskOrPopup(() => chooseWallpaper(backgroundOptions, request)),
         showHelp: (topicId) => runTaskOrPopup(() => showHelpTopic(topicId)),
         reloadFrontend: () => runTaskOrPopup(async () => {
             window.location.reload();
@@ -211,16 +304,19 @@ function createSettingsActions() {
 export async function openTauriTavernSettingsPopup() {
     ensureSettingsStyle();
 
-    const [viewModel, bundle] = await Promise.all([
+    const [viewModel, bundle, backgroundModel] = await Promise.all([
         loadTauriTavernSettingsViewModel(),
         importSettingsBundle(),
+        readBackgroundOptions(),
     ]);
 
     const mount = document.createElement('div');
     const appHandle = bundle.mountTauriTavernSettingsApp(mount, {
         viewModel,
         themeOptions: readThemeOptions(),
-        actions: createSettingsActions(),
+        backgroundOptions: backgroundModel.backgroundOptions,
+        currentBackground: backgroundModel.currentBackground,
+        actions: createSettingsActions(backgroundModel.backgroundOptions),
         tr: translate,
     });
 
