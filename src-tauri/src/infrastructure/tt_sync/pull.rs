@@ -2,13 +2,11 @@ use std::sync::Arc;
 
 use async_compression::tokio::bufread::ZstdDecoder;
 use futures_util::TryStreamExt;
-use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::task::JoinSet;
 use tokio_util::io::StreamReader;
 
 use ttsync_contract::manifest::ManifestEntryV2;
-use ttsync_contract::path::SyncPath;
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::plan::{PlanId, SyncPlan};
 use ttsync_contract::session::SessionToken;
@@ -18,11 +16,10 @@ use ttsync_core::dataset::{ResolvedDatasetPolicy, tauri_tavern_default_selection
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
-use crate::infrastructure::sync_fs;
-use crate::infrastructure::tt_sync::bundle::{
-    BUNDLE_ZSTD_DECODE_BUFFER_SIZE, ExactSizeReader, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1,
-    MAX_BUNDLE_PATH_LEN, read_u32_be,
+use crate::infrastructure::sync_bundle::{
+    BUNDLE_ZSTD_DECODE_BUFFER_SIZE, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, write_bundle_to_local_files,
 };
+use crate::infrastructure::sync_fs;
 use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 use crate::infrastructure::tt_sync::transfer;
@@ -168,64 +165,30 @@ async fn apply_pull_plan(
             Box::new(reader)
         };
 
-        let mut remaining = transfer_entries
-            .into_iter()
-            .map(|entry| (entry.path.clone(), entry))
-            .collect::<std::collections::HashMap<SyncPath, ManifestEntryV2>>();
+        write_bundle_to_local_files(
+            &runtime.sync_root,
+            transfer_entries,
+            &mut reader,
+            |progress| {
+                files_done += 1;
+                bytes_done += progress.size_bytes;
 
-        loop {
-            let path_len = read_u32_be(&mut reader).await?;
-            if path_len == 0 {
-                break;
-            }
-            if path_len > MAX_BUNDLE_PATH_LEN {
-                return Err(DomainError::InvalidData(format!(
-                    "Bundle path too long: {} bytes",
-                    path_len
-                )));
-            }
+                if transfer::should_emit_progress(files_done, files_total) {
+                    runtime.emit_progress(TtSyncProgressEvent {
+                        direction: TtSyncDirection::Pull,
+                        phase: SyncPhase::Downloading,
+                        files_done,
+                        files_total,
+                        bytes_done,
+                        bytes_total,
+                        current_path: Some(progress.path),
+                    })?;
+                }
 
-            let mut path_bytes = vec![0u8; path_len as usize];
-            reader
-                .read_exact(&mut path_bytes)
-                .await
-                .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-            let path_text = String::from_utf8(path_bytes)
-                .map_err(|_| DomainError::InvalidData("Bundle path is not UTF-8".to_string()))?;
-            let sync_path = SyncPath::new(path_text)
-                .map_err(|error| DomainError::InvalidData(error.to_string()))?;
-
-            let entry = remaining.remove(&sync_path).ok_or_else(|| {
-                DomainError::NotFound(format!("Bundle file not in plan: {}", sync_path))
-            })?;
-
-            let full_path = transfer::resolve_to_local(&runtime.sync_root, &entry.path);
-            let mut exact = ExactSizeReader::new(&mut reader, entry.size_bytes);
-            sync_fs::write_file_atomic(&full_path, &mut exact, entry.modified_ms).await?;
-
-            files_done += 1;
-            bytes_done += entry.size_bytes;
-
-            if transfer::should_emit_progress(files_done, files_total) {
-                runtime.emit_progress(TtSyncProgressEvent {
-                    direction: TtSyncDirection::Pull,
-                    phase: SyncPhase::Downloading,
-                    files_done,
-                    files_total,
-                    bytes_done,
-                    bytes_total,
-                    current_path: Some(entry.path.to_string()),
-                })?;
-            }
-        }
-
-        if !remaining.is_empty() {
-            return Err(DomainError::InvalidData(format!(
-                "Bundle ended early: {}/{} files received",
-                files_done, files_total
-            )));
-        }
+                Ok(())
+            },
+        )
+        .await?;
     } else {
         let download_concurrency = transfer::tt_sync_transfer_concurrency();
         let mut join_set = JoinSet::new();

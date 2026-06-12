@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
+use async_compression::tokio::bufread::ZstdDecoder;
 use futures_util::TryStreamExt;
+use tokio::io::BufReader;
 use tokio::task::JoinSet;
 use tokio_util::io::StreamReader;
 use ttsync_contract::manifest::ManifestEntryV2;
@@ -17,10 +19,12 @@ use crate::domain::models::lan_sync::{
 use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
 use crate::infrastructure::lan_sync::v2::client::LanSyncV2Api;
 use crate::infrastructure::lan_sync::v2::store::LanSyncV2Store;
+use crate::infrastructure::sync_bundle::{
+    BUNDLE_ZSTD_DECODE_BUFFER_SIZE, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, write_bundle_to_local_files,
+};
 use crate::infrastructure::sync_fs;
 use crate::infrastructure::sync_transfer;
 use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
-use crate::infrastructure::tt_sync::transfer::resolve_to_local;
 use crate::infrastructure::tt_sync::v2_api::ensure_dataset_scope_v1;
 
 pub async fn pull_from_device(
@@ -35,6 +39,15 @@ pub async fn pull_from_device(
     let api = LanSyncV2Api::new(peer.base_url.clone(), peer.spki_sha256.clone())?;
     let status = api.status().await?;
     ensure_dataset_scope_v1(&status, "LAN Sync v2 peer")?;
+    let prefer_bundle = status
+        .features
+        .iter()
+        .any(|feature| feature == FEATURE_BUNDLE_V1);
+    let accept_zstd = prefer_bundle
+        && status
+            .features
+            .iter()
+            .any(|feature| feature == FEATURE_ZSTD_V1);
 
     let session = api
         .open_session(&identity.device_id, &identity.ed25519_seed)
@@ -84,7 +97,16 @@ pub async fn pull_from_device(
     let files_total = plan.files_total;
     let bytes_total = plan.bytes_total;
 
-    let files_deleted = apply_pull_plan(&runtime, api, &session.session_token, plan, mode).await?;
+    let files_deleted = apply_pull_plan(
+        &runtime,
+        api,
+        &session.session_token,
+        plan,
+        mode,
+        prefer_bundle,
+        accept_zstd,
+    )
+    .await?;
 
     let mut updated_peer = peer;
     updated_peer.grant.last_sync_ms = Some(sync_transfer::now_ms());
@@ -119,6 +141,8 @@ async fn apply_pull_plan(
     session_token: &SessionToken,
     plan: SyncPlan,
     mode: SyncMode,
+    prefer_bundle: bool,
+    accept_zstd: bool,
 ) -> Result<usize, DomainError> {
     let plan_id = plan.plan_id;
     let transfer_entries = plan.transfer;
@@ -137,50 +161,62 @@ async fn apply_pull_plan(
         current_path: None,
     })?;
 
-    let download_concurrency = sync_transfer::default_transfer_concurrency();
-    let mut join_set = JoinSet::new();
-    let mut download_iter = transfer_entries.into_iter();
-    let mut in_flight = 0usize;
+    if prefer_bundle && !transfer_entries.is_empty() {
+        let response = api
+            .download_bundle(session_token, &plan_id, accept_zstd)
+            .await?;
+        let content_encoding = response
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        let is_zstd = content_encoding.eq_ignore_ascii_case("zstd");
 
-    while in_flight < download_concurrency {
-        let Some(entry) = download_iter.next() else {
-            break;
+        let stream = response.bytes_stream().map_err(std::io::Error::other);
+        let reader = StreamReader::new(stream);
+        let mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = if is_zstd {
+            Box::new(ZstdDecoder::new(BufReader::with_capacity(
+                BUNDLE_ZSTD_DECODE_BUFFER_SIZE,
+                reader,
+            )))
+        } else {
+            Box::new(reader)
         };
 
-        spawn_download_task(
-            &mut join_set,
-            api.clone(),
-            runtime.sync_root.clone(),
-            session_token.clone(),
-            plan_id.clone(),
-            entry,
-        );
-        in_flight += 1;
-    }
+        write_bundle_to_local_files(
+            &runtime.sync_root,
+            transfer_entries,
+            &mut reader,
+            |progress| {
+                files_done += 1;
+                bytes_done += progress.size_bytes;
 
-    while in_flight > 0 {
-        let joined = join_set
-            .join_next()
-            .await
-            .ok_or_else(|| DomainError::InternalError("Download join set ended early".to_string()))?
-            .map_err(|error| DomainError::InternalError(error.to_string()))??;
+                if sync_transfer::should_emit_progress(files_done, files_total) {
+                    runtime.emit_sync_progress(LanSyncSyncProgressEvent {
+                        phase: LanSyncSyncPhase::Downloading,
+                        files_done,
+                        files_total,
+                        bytes_done,
+                        bytes_total,
+                        current_path: Some(progress.path),
+                    })?;
+                }
 
-        in_flight -= 1;
-        files_done += 1;
-        bytes_done += joined.size_bytes;
+                Ok(())
+            },
+        )
+        .await?;
+    } else {
+        let download_concurrency = sync_transfer::default_transfer_concurrency();
+        let mut join_set = JoinSet::new();
+        let mut download_iter = transfer_entries.into_iter();
+        let mut in_flight = 0usize;
 
-        if sync_transfer::should_emit_progress(files_done, files_total) {
-            runtime.emit_sync_progress(LanSyncSyncProgressEvent {
-                phase: LanSyncSyncPhase::Downloading,
-                files_done,
-                files_total,
-                bytes_done,
-                bytes_total,
-                current_path: Some(joined.path),
-            })?;
-        }
+        while in_flight < download_concurrency {
+            let Some(entry) = download_iter.next() else {
+                break;
+            };
 
-        if let Some(entry) = download_iter.next() {
             spawn_download_task(
                 &mut join_set,
                 api.clone(),
@@ -190,6 +226,43 @@ async fn apply_pull_plan(
                 entry,
             );
             in_flight += 1;
+        }
+
+        while in_flight > 0 {
+            let joined = join_set
+                .join_next()
+                .await
+                .ok_or_else(|| {
+                    DomainError::InternalError("Download join set ended early".to_string())
+                })?
+                .map_err(|error| DomainError::InternalError(error.to_string()))??;
+
+            in_flight -= 1;
+            files_done += 1;
+            bytes_done += joined.size_bytes;
+
+            if sync_transfer::should_emit_progress(files_done, files_total) {
+                runtime.emit_sync_progress(LanSyncSyncProgressEvent {
+                    phase: LanSyncSyncPhase::Downloading,
+                    files_done,
+                    files_total,
+                    bytes_done,
+                    bytes_total,
+                    current_path: Some(joined.path),
+                })?;
+            }
+
+            if let Some(entry) = download_iter.next() {
+                spawn_download_task(
+                    &mut join_set,
+                    api.clone(),
+                    runtime.sync_root.clone(),
+                    session_token.clone(),
+                    plan_id.clone(),
+                    entry,
+                );
+                in_flight += 1;
+            }
         }
     }
 
@@ -209,7 +282,7 @@ async fn apply_pull_plan(
 
     let mut files_deleted = 0usize;
     for sync_path in delete {
-        let full_path = resolve_to_local(&runtime.sync_root, &sync_path);
+        let full_path = sync_transfer::resolve_to_local(&runtime.sync_root, &sync_path);
         tokio::fs::remove_file(&full_path)
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?;
@@ -255,7 +328,7 @@ async fn download_one(
     plan_id: &PlanId,
     entry: ManifestEntryV2,
 ) -> Result<DownloadResult, DomainError> {
-    let full_path = resolve_to_local(sync_root, &entry.path);
+    let full_path = sync_transfer::resolve_to_local(sync_root, &entry.path);
     let response = api
         .download_file(session_token, plan_id, &entry.path)
         .await?;

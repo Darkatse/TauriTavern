@@ -15,7 +15,7 @@ use ttsync_core::dataset::{ResolvedDatasetPolicy, tauri_tavern_default_selection
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
-use crate::infrastructure::tt_sync::bundle::{
+use crate::infrastructure::sync_bundle::{
     BUNDLE_STREAM_BUFFER_SIZE, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, copy_exact, write_u32_be,
 };
 use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};

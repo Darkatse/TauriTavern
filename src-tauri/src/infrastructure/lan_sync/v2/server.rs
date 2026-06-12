@@ -30,8 +30,8 @@ use crate::infrastructure::lan_sync::v2::pairing::{
 };
 use crate::infrastructure::lan_sync::v2::store::LanSyncV2Store;
 use crate::infrastructure::sync_fs;
+use crate::infrastructure::sync_transfer;
 use crate::infrastructure::tt_sync::fs::scan_manifest_with_policy;
-use crate::infrastructure::tt_sync::transfer::resolve_to_local;
 use crate::infrastructure::tt_sync::v2_api::{domain_error_to_sync, sync_error_to_domain};
 
 const LAN_HTTPS_FEATURE_V1: &str = "lan_https_v1";
@@ -185,7 +185,7 @@ impl ManifestStore for LanSyncV2ManifestStore {
         let sync_root = self.sync_root.clone();
         let path = path.clone();
         async move {
-            let full_path = resolve_to_local(&sync_root, &path);
+            let full_path = sync_transfer::resolve_to_local(&sync_root, &path);
             let file = tokio::fs::File::open(&full_path)
                 .await
                 .map_err(|error| SyncError::Io(error.to_string()))?;
@@ -202,7 +202,7 @@ impl ManifestStore for LanSyncV2ManifestStore {
         let sync_root = self.sync_root.clone();
         let path = path.clone();
         async move {
-            let full_path = resolve_to_local(&sync_root, &path);
+            let full_path = sync_transfer::resolve_to_local(&sync_root, &path);
             sync_fs::write_file_atomic(&full_path, data, modified_ms)
                 .await
                 .map_err(domain_error_to_sync)
@@ -216,7 +216,7 @@ impl ManifestStore for LanSyncV2ManifestStore {
         let sync_root = self.sync_root.clone();
         let path = path.clone();
         async move {
-            let full_path = resolve_to_local(&sync_root, &path);
+            let full_path = sync_transfer::resolve_to_local(&sync_root, &path);
             tokio::fs::remove_file(&full_path)
                 .await
                 .map_err(|error| SyncError::Io(error.to_string()))
@@ -502,9 +502,13 @@ mod tests {
 
     use std::path::PathBuf;
 
+    use async_compression::tokio::bufread::ZstdDecoder;
     use async_trait::async_trait;
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use futures_util::TryStreamExt;
+    use tokio::io::BufReader;
+    use tokio_util::io::StreamReader;
     use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1};
     use ttsync_contract::manifest::ManifestV2;
     use ttsync_contract::peer::Permissions;
@@ -515,6 +519,10 @@ mod tests {
     use crate::infrastructure::lan_sync::v2::client::{LanSyncV2Api, complete_pairing};
     use crate::infrastructure::lan_sync::v2::pairing::{
         LanSyncV2PairingCoordinator, LanSyncV2PairingSession,
+    };
+    use crate::infrastructure::sync_bundle::{
+        BUNDLE_ZSTD_DECODE_BUFFER_SIZE, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1,
+        write_bundle_to_local_files,
     };
 
     fn temp_default_user_dir() -> PathBuf {
@@ -616,6 +624,8 @@ mod tests {
                 .iter()
                 .any(|item| item == DATASET_SCOPE_FEATURE_V1)
         );
+        assert!(status.features.iter().any(|item| item == FEATURE_BUNDLE_V1));
+        assert!(status.features.iter().any(|item| item == FEATURE_ZSTD_V1));
 
         handle.shutdown();
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;
@@ -763,7 +773,48 @@ mod tests {
         let bytes = response.bytes().await.expect("download bytes");
         assert_eq!(&bytes[..], br#"{"hello":true}"#);
 
+        let bundle_response = api
+            .download_bundle(&session.session_token, &plan.plan_id, true)
+            .await
+            .expect("download bundle");
+        let content_encoding = bundle_response
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert_eq!(content_encoding, "zstd");
+
+        let target_root = temp_default_user_dir();
+        let stream = bundle_response
+            .bytes_stream()
+            .map_err(std::io::Error::other);
+        let reader = StreamReader::new(stream);
+        let mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(ZstdDecoder::new(
+            BufReader::with_capacity(BUNDLE_ZSTD_DECODE_BUFFER_SIZE, reader),
+        ));
+        let mut progress_paths = Vec::new();
+        write_bundle_to_local_files(
+            &target_root,
+            plan.transfer.clone(),
+            &mut reader,
+            |progress| {
+                progress_paths.push(progress.path);
+                Ok(())
+            },
+        )
+        .await
+        .expect("write bundle files");
+        assert_eq!(
+            progress_paths,
+            vec!["default-user/chats/hello.json".to_string()]
+        );
+        let bundle_bytes = tokio::fs::read(target_root.join("default-user/chats/hello.json"))
+            .await
+            .expect("read bundle file");
+        assert_eq!(&bundle_bytes, br#"{"hello":true}"#);
+
         handle.shutdown();
+        let _ = tokio::fs::remove_dir_all(target_root).await;
         let _ = tokio::fs::remove_dir_all(sync_root).await;
     }
 }

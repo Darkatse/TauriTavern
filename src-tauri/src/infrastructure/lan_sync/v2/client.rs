@@ -85,6 +85,17 @@ impl LanSyncV2Api {
         self.inner.download_file(session_token, plan_id, path).await
     }
 
+    pub async fn download_bundle(
+        &self,
+        session_token: &SessionToken,
+        plan_id: &PlanId,
+        accept_zstd: bool,
+    ) -> Result<Response, DomainError> {
+        self.inner
+            .download_bundle(session_token, plan_id, accept_zstd)
+            .await
+    }
+
     pub async fn notify_pull_request(
         &self,
         session_token: &SessionToken,

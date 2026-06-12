@@ -28,6 +28,7 @@ pub mod preset_file_naming;
 pub mod repositories;
 pub mod request_path;
 pub mod sillytavern_sorting;
+pub mod sync_bundle;
 pub mod sync_fs;
 pub mod sync_transfer;
 pub mod third_party_assets;

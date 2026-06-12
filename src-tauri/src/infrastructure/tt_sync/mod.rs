@@ -1,4 +1,3 @@
-pub mod bundle;
 pub mod fs;
 pub mod pull;
 pub mod push;
