@@ -12,6 +12,7 @@ use crate::domain::errors::DomainError;
 use crate::infrastructure::lan_sync::v2::pairing::{
     LanSyncV2PairCompleteRequest, LanSyncV2PairCompleteResponse,
 };
+use crate::infrastructure::sync_v2::SyncV2OperationOptions;
 use crate::infrastructure::tt_sync::v2_api::{TtSyncV2Api, bearer_auth_value, ensure_success};
 
 #[derive(Clone)]
@@ -99,6 +100,7 @@ impl LanSyncV2Api {
     pub async fn notify_pull_request(
         &self,
         session_token: &SessionToken,
+        options: &SyncV2OperationOptions,
     ) -> Result<(), DomainError> {
         let url = self.inner.endpoint_url("/v2/lan/pull-request")?;
 
@@ -110,6 +112,7 @@ impl LanSyncV2Api {
                 reqwest::header::AUTHORIZATION,
                 bearer_auth_value(session_token),
             )
+            .json(options)
             .send()
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?;

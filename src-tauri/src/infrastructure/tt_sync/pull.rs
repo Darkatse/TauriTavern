@@ -12,14 +12,15 @@ use ttsync_contract::plan::{PlanId, SyncPlan};
 use ttsync_contract::session::SessionToken;
 use ttsync_contract::sync::SyncMode;
 use ttsync_contract::sync::SyncPhase;
-use ttsync_core::dataset::{ResolvedDatasetPolicy, tauri_tavern_default_selection};
+use ttsync_core::dataset::ResolvedDatasetPolicy;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
 use crate::infrastructure::sync_bundle::{
-    BUNDLE_ZSTD_DECODE_BUFFER_SIZE, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, write_bundle_to_local_files,
+    BUNDLE_ZSTD_DECODE_BUFFER_SIZE, write_bundle_to_local_files,
 };
 use crate::infrastructure::sync_fs;
+use crate::infrastructure::sync_v2::{SyncV2OperationOptions, bundle_transport_for_status};
 use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 use crate::infrastructure::tt_sync::transfer;
@@ -29,6 +30,7 @@ pub async fn pull_from_server(
     runtime: Arc<TtSyncRuntime>,
     server_device_id: &DeviceId,
     mode: SyncMode,
+    options: SyncV2OperationOptions,
 ) -> Result<TtSyncCompletedEvent, DomainError> {
     let mut server = runtime.get_paired_server(server_device_id).await?;
     let identity = runtime.store.load_or_create_identity().await?;
@@ -36,9 +38,8 @@ pub async fn pull_from_server(
     let api = TtSyncV2Api::new(server.base_url.clone(), server.spki_sha256.clone())?;
     let status = api.status().await?;
     ensure_dataset_scope_v1(&status, "TT-Sync server")?;
-    let features = status.features;
-    let prefer_bundle = features.iter().any(|f| f == FEATURE_BUNDLE_V1);
-    let accept_zstd = prefer_bundle && features.iter().any(|f| f == FEATURE_ZSTD_V1);
+    let transport =
+        bundle_transport_for_status(&status, "TT-Sync server", options.require_bundle_zstd)?;
 
     let session = api
         .open_session(&identity.device_id, &identity.ed25519_seed)
@@ -68,7 +69,7 @@ pub async fn pull_from_server(
         current_path: None,
     })?;
 
-    let selection = tauri_tavern_default_selection();
+    let selection = options.selection;
     let policy = ResolvedDatasetPolicy::from_selection(&selection)
         .map_err(|error| DomainError::InvalidData(error.to_string()))?;
     let target_manifest =
@@ -97,8 +98,8 @@ pub async fn pull_from_server(
         &session.session_token,
         plan,
         mode,
-        prefer_bundle,
-        accept_zstd,
+        transport.prefer_bundle,
+        transport.use_zstd,
     )
     .await?;
 

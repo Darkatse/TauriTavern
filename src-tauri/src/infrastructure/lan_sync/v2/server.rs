@@ -31,15 +31,21 @@ use crate::infrastructure::lan_sync::v2::pairing::{
 use crate::infrastructure::lan_sync::v2::store::LanSyncV2Store;
 use crate::infrastructure::sync_fs;
 use crate::infrastructure::sync_transfer;
+use crate::infrastructure::sync_v2::SyncV2OperationOptions;
 use crate::infrastructure::tt_sync::fs::scan_manifest_with_policy;
 use crate::infrastructure::tt_sync::v2_api::{domain_error_to_sync, sync_error_to_domain};
 
 const LAN_HTTPS_FEATURE_V1: &str = "lan_https_v1";
 const LAN_SESSION_FEATURE_V1: &str = "lan_session_v1";
+pub(crate) const LAN_PULL_REQUEST_SELECTION_FEATURE_V1: &str = "lan_pull_request_selection_v1";
 
 #[async_trait]
 pub trait LanSyncV2PullRequestHandler: Send + Sync {
-    async fn accept_pull_request(&self, peer_device_id: DeviceId) -> Result<(), DomainError>;
+    async fn accept_pull_request(
+        &self,
+        peer_device_id: DeviceId,
+        options: SyncV2OperationOptions,
+    ) -> Result<(), DomainError>;
 }
 
 pub struct LanSyncV2ServerHandle {
@@ -80,6 +86,7 @@ pub async fn spawn_lan_sync_v2_server(
     status.spki_sha256 = Some(spki_sha256.clone());
     append_feature(&mut status.features, LAN_HTTPS_FEATURE_V1);
     append_feature(&mut status.features, LAN_SESSION_FEATURE_V1);
+    append_feature(&mut status.features, LAN_PULL_REQUEST_SELECTION_FEATURE_V1);
 
     let shared_state = Arc::new(
         ServerState::new(
@@ -388,15 +395,20 @@ async fn handle_lan_pair_complete(
 async fn handle_pull_request(
     State(state): State<Arc<LanSyncV2LanState>>,
     headers: HeaderMap,
+    request: Option<Json<SyncV2OperationOptions>>,
 ) -> Result<impl IntoResponse, ApiError> {
     let peer = state
         .shared
         .authenticate_headers(&headers)
         .await
         .map_err(ApiError::from)?;
+    let options = request
+        .map(|Json(value)| value)
+        .unwrap_or_default()
+        .validate()?;
     state
         .pull_requests
-        .accept_pull_request(peer.device_id)
+        .accept_pull_request(peer.device_id, options)
         .await
         .map_err(ApiError::from)?;
 
@@ -538,7 +550,11 @@ mod tests {
 
     #[async_trait]
     impl LanSyncV2PullRequestHandler for NoopPullRequestHandler {
-        async fn accept_pull_request(&self, _peer_device_id: DeviceId) -> Result<(), DomainError> {
+        async fn accept_pull_request(
+            &self,
+            _peer_device_id: DeviceId,
+            _options: SyncV2OperationOptions,
+        ) -> Result<(), DomainError> {
             Ok(())
         }
     }
@@ -617,6 +633,12 @@ mod tests {
                 .features
                 .iter()
                 .any(|item| item == LAN_SESSION_FEATURE_V1)
+        );
+        assert!(
+            status
+                .features
+                .iter()
+                .any(|item| item == LAN_PULL_REQUEST_SELECTION_FEATURE_V1)
         );
         assert!(
             status

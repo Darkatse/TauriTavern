@@ -31,6 +31,7 @@ pub mod sillytavern_sorting;
 pub mod sync_bundle;
 pub mod sync_fs;
 pub mod sync_transfer;
+pub mod sync_v2;
 pub mod third_party_assets;
 pub mod third_party_paths;
 pub mod thumbnails;

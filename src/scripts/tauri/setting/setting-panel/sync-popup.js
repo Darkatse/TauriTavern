@@ -9,11 +9,14 @@ import { callTauriTavernPanelPopup } from '../panel-popup.js';
 import {
     clearSyncTargetAlias,
     getLanSyncAdvertiseAddress,
+    getSyncV2DatasetSelection,
     getSyncTargetAlias,
     getSyncTargetDisplayName,
+    parseLanSyncV2PairUri,
     parseTtSyncPairUri,
     selectLanSyncAdvertiseAddress,
     setLanSyncAdvertiseAddress,
+    setSyncV2DatasetSelection,
     setSyncTargetAlias,
 } from './sync-state.js';
 
@@ -110,6 +113,27 @@ function normalizePairingInfo(pairingInfo) {
     };
 }
 
+function normalizeDatasetCatalog(catalog) {
+    const supportedDatasetIds = ensureArray(
+        catalog?.supported_dataset_ids,
+        'sync_v2_get_dataset_catalog.supported_dataset_ids',
+    ).map(String);
+    const defaultDatasetIds = ensureArray(
+        catalog?.default_dataset_ids,
+        'sync_v2_get_dataset_catalog.default_dataset_ids',
+    ).map(String);
+
+    return {
+        policyVersion: Number(catalog?.policy_version),
+        supportedDatasetIds,
+        supportedProfileIds: ensureArray(
+            catalog?.supported_profile_ids,
+            'sync_v2_get_dataset_catalog.supported_profile_ids',
+        ).map(String),
+        defaultDatasetIds,
+    };
+}
+
 function normalizeLanDevice(device) {
     const id = String(device.device_id || '');
     const name = String(device.device_name || id);
@@ -155,18 +179,22 @@ function createSyncClient() {
 
     return {
         async loadState() {
-            const [rawStatus, rawDevices, rawServers] = await Promise.all([
+            const [rawStatus, rawDevices, rawServers, rawCatalog] = await Promise.all([
                 invoke('lan_sync_get_status'),
                 invoke('lan_sync_list_devices'),
                 invoke('tt_sync_list_servers'),
+                invoke('sync_v2_get_dataset_catalog'),
             ]);
             const status = normalizeStatus(rawStatus);
             const selectedAddress = selectLanSyncAdvertiseAddress(status, getLanSyncAdvertiseAddress());
             setLanSyncAdvertiseAddress(selectedAddress);
+            const datasetCatalog = normalizeDatasetCatalog(rawCatalog);
 
             return {
                 status,
                 selectedAddress,
+                datasetCatalog,
+                syncSelection: getSyncV2DatasetSelection(datasetCatalog),
                 devices: ensureArray(rawDevices, 'lan_sync_list_devices').map(normalizeLanDevice),
                 servers: ensureArray(rawServers, 'tt_sync_list_servers').map(normalizeTtSyncServer),
             };
@@ -180,8 +208,8 @@ function createSyncClient() {
         getLanPairingInfo: (address) => invoke('lan_sync_get_pairing_info', { address }).then(normalizePairingInfo),
         requestLanPairing: (pairUri) => invoke('lan_sync_request_pairing', { pairUri }),
         removeLanDevice: (deviceId) => invoke('lan_sync_remove_device', { deviceId }),
-        pullLanDevice: (deviceId) => invoke('lan_sync_sync_from_device', { deviceId }),
-        pushLanDevice: (deviceId) => invoke('lan_sync_push_to_device', { deviceId }),
+        pullLanDevice: (deviceId, options) => invoke('lan_sync_sync_from_device', { deviceId, options }),
+        pushLanDevice: (deviceId, options) => invoke('lan_sync_push_to_device', { deviceId, options }),
         setLanSyncMode: (mode, persist) => invoke('lan_sync_set_sync_mode', { mode, persist }),
         clearLanSyncModeOverride: () => invoke('lan_sync_clear_sync_mode_override'),
         pairTtSync: (pairUri) => invoke('tt_sync_pair', { pairUri }),
@@ -189,8 +217,8 @@ function createSyncClient() {
             await invoke('tt_sync_remove_server', { serverDeviceId });
             window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
         },
-        pullTtSyncServer: (serverDeviceId, mode) => invoke('tt_sync_pull', { serverDeviceId, mode }),
-        pushTtSyncServer: (serverDeviceId, mode) => invoke('tt_sync_push', { serverDeviceId, mode }),
+        pullTtSyncServer: (serverDeviceId, mode, options) => invoke('tt_sync_pull', { serverDeviceId, mode, options }),
+        pushTtSyncServer: (serverDeviceId, mode, options) => invoke('tt_sync_push', { serverDeviceId, mode, options }),
     };
 }
 
@@ -324,6 +352,35 @@ async function changeSyncMode(client, status) {
     return true;
 }
 
+async function editSyncScope(catalog, selection) {
+    const content = document.createElement('div');
+    const bundle = await importSyncBundle();
+    const appHandle = bundle.mountTauriTavernSyncScopeApp(content, {
+        catalog,
+        selection,
+        tr: translate,
+    });
+
+    try {
+        const result = await callGenericPopup(content, POPUP_TYPE.CONFIRM, '', {
+            okButton: translate('Save'),
+            cancelButton: translate('Cancel'),
+            allowVerticalScrolling: true,
+            wide: true,
+            large: true,
+            defaultResult: POPUP_RESULT.NEGATIVE,
+        });
+
+        if (result !== POPUP_RESULT.AFFIRMATIVE) {
+            return null;
+        }
+
+        return setSyncV2DatasetSelection(appHandle.getSelection(), catalog);
+    } finally {
+        appHandle.unmount();
+    }
+}
+
 function createSyncActions(client) {
     return {
         copyText: async (text) => {
@@ -332,6 +389,7 @@ function createSyncActions(client) {
         scanPairUri: () => scanQrCodeWithBackCancellation(),
         reportError: (error) => showErrorPopup(error),
         changeSyncMode: (status) => changeSyncMode(client, status),
+        editSyncScope: ({ catalog, selection }) => editSyncScope(catalog, selection),
         renameTarget: async ({ type, id, fallbackName }) => {
             const existing = getSyncTargetAlias(type, id);
             const result = await callGenericPopup(
@@ -373,6 +431,7 @@ function createSyncActions(client) {
                 return true;
             }
 
+            parseLanSyncV2PairUri(trimmed, translate);
             await client.requestLanPairing(trimmed);
             return true;
         },

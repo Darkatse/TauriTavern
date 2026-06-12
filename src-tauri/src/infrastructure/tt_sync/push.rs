@@ -11,13 +11,12 @@ use ttsync_contract::peer::DeviceId;
 use ttsync_contract::plan::{PlanId, SyncPlan};
 use ttsync_contract::session::SessionToken;
 use ttsync_contract::sync::{SyncMode, SyncPhase};
-use ttsync_core::dataset::{ResolvedDatasetPolicy, tauri_tavern_default_selection};
+use ttsync_core::dataset::ResolvedDatasetPolicy;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
-use crate::infrastructure::sync_bundle::{
-    BUNDLE_STREAM_BUFFER_SIZE, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, copy_exact, write_u32_be,
-};
+use crate::infrastructure::sync_bundle::{BUNDLE_STREAM_BUFFER_SIZE, copy_exact, write_u32_be};
+use crate::infrastructure::sync_v2::{SyncV2OperationOptions, bundle_transport_for_status};
 use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 use crate::infrastructure::tt_sync::transfer;
@@ -27,6 +26,7 @@ pub async fn push_to_server(
     runtime: Arc<TtSyncRuntime>,
     server_device_id: &DeviceId,
     mode: SyncMode,
+    options: SyncV2OperationOptions,
 ) -> Result<TtSyncCompletedEvent, DomainError> {
     let mut server = runtime.get_paired_server(server_device_id).await?;
     let identity = runtime.store.load_or_create_identity().await?;
@@ -34,9 +34,8 @@ pub async fn push_to_server(
     let api = TtSyncV2Api::new(server.base_url.clone(), server.spki_sha256.clone())?;
     let status = api.status().await?;
     ensure_dataset_scope_v1(&status, "TT-Sync server")?;
-    let features = status.features;
-    let prefer_bundle = features.iter().any(|f| f == FEATURE_BUNDLE_V1);
-    let allow_zstd = prefer_bundle && features.iter().any(|f| f == FEATURE_ZSTD_V1);
+    let transport =
+        bundle_transport_for_status(&status, "TT-Sync server", options.require_bundle_zstd)?;
 
     let session = api
         .open_session(&identity.device_id, &identity.ed25519_seed)
@@ -66,7 +65,7 @@ pub async fn push_to_server(
         current_path: None,
     })?;
 
-    let selection = tauri_tavern_default_selection();
+    let selection = options.selection;
     let policy = ResolvedDatasetPolicy::from_selection(&selection)
         .map_err(|error| DomainError::InvalidData(error.to_string()))?;
     let source_manifest =
@@ -101,8 +100,8 @@ pub async fn push_to_server(
         &session.session_token,
         plan,
         mode,
-        prefer_bundle,
-        allow_zstd,
+        transport.prefer_bundle,
+        transport.use_zstd,
     )
     .await?;
 

@@ -34,6 +34,7 @@ use crate::infrastructure::lan_sync::v2::server::{
     LanSyncV2ServerHandle, spawn_lan_sync_v2_server,
 };
 use crate::infrastructure::lan_sync::v2::store::LanSyncV2Store;
+use crate::infrastructure::sync_v2::{SyncV2OperationOptions, resolve_sync_v2_options};
 use crate::infrastructure::tt_sync::v2_api::sync_error_to_domain;
 
 pub struct LanSyncService {
@@ -552,7 +553,11 @@ impl LanSyncService {
         Ok(())
     }
 
-    pub async fn sync_from_device(&self, device_id: &str) -> Result<(), DomainError> {
+    pub async fn sync_from_device(
+        &self,
+        device_id: &str,
+        options: Option<SyncV2OperationOptions>,
+    ) -> Result<(), DomainError> {
         let permit = match self.runtime.try_acquire_sync_permit() {
             Ok(permit) => permit,
             Err(error) => {
@@ -563,7 +568,7 @@ impl LanSyncService {
             }
         };
 
-        match self.sync_from_device_inner(device_id).await {
+        match self.sync_from_device_inner(device_id, options).await {
             Ok(completed) => {
                 let refresh_result = self
                     .runtime
@@ -601,10 +606,23 @@ impl LanSyncService {
     async fn sync_from_device_inner(
         &self,
         device_id: &str,
+        options: Option<SyncV2OperationOptions>,
     ) -> Result<LanSyncSyncCompletedEvent, DomainError> {
         if let Some(v2_device_id) = self.resolve_v2_peer_device_id(device_id).await? {
-            return pull_from_v2_device(self.runtime.clone(), self.v2_store.clone(), &v2_device_id)
-                .await;
+            let options = resolve_sync_v2_options(options)?;
+            return pull_from_v2_device(
+                self.runtime.clone(),
+                self.v2_store.clone(),
+                &v2_device_id,
+                options,
+            )
+            .await;
+        }
+
+        if options.is_some() {
+            return Err(DomainError::InvalidData(
+                "LAN Sync v2 pairing is required for scoped sync".to_string(),
+            ));
         }
 
         let http_client = self.http_clients.client(HttpClientProfile::Default)?;
@@ -616,9 +634,20 @@ impl LanSyncService {
         .await
     }
 
-    pub async fn push_to_device(&self, device_id: &str) -> Result<(), DomainError> {
+    pub async fn push_to_device(
+        &self,
+        device_id: &str,
+        options: Option<SyncV2OperationOptions>,
+    ) -> Result<(), DomainError> {
         if let Some(v2_device_id) = self.resolve_v2_peer_device_id(device_id).await? {
-            return request_v2_peer_pull(self.v2_store.clone(), &v2_device_id).await;
+            let options = resolve_sync_v2_options(options)?;
+            return request_v2_peer_pull(self.v2_store.clone(), &v2_device_id, options).await;
+        }
+
+        if options.is_some() {
+            return Err(DomainError::InvalidData(
+                "LAN Sync v2 pairing is required for scoped sync".to_string(),
+            ));
         }
 
         let peer = self.runtime.get_paired_device(device_id).await?;

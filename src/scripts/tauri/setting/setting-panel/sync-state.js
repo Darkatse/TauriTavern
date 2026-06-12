@@ -1,6 +1,7 @@
 const LAN_SYNC_DEVICE_ALIAS_STORAGE_PREFIX = 'tauritavern:lan_sync_device_alias:';
 const TT_SYNC_SERVER_ALIAS_STORAGE_PREFIX = 'tauritavern:tt_sync_server_alias:';
 const LAN_SYNC_ADVERTISE_ADDRESS_STORAGE_KEY = 'tauritavern:lan_sync_advertise_address';
+const SYNC_V2_DATASET_SELECTION_STORAGE_KEY = 'tauritavern:sync_v2_dataset_selection';
 
 const SYNC_TARGET_STORAGE_PREFIX = {
     lan: LAN_SYNC_DEVICE_ALIAS_STORAGE_PREFIX,
@@ -57,6 +58,106 @@ export function selectLanSyncAdvertiseAddress(status, storedAddress = getLanSync
         : availableAddresses[0] || currentAddress || '';
 
     return stored && availableAddresses.includes(stored) ? stored : defaultAddress;
+}
+
+export function createDefaultSyncV2DatasetSelection(catalog) {
+    return {
+        policy_version: Number(catalog?.policyVersion),
+        dataset_ids: [...catalog.defaultDatasetIds],
+    };
+}
+
+function normalizeSyncV2DatasetSelection(selection, catalog) {
+    const policyVersion = Number(selection?.policy_version);
+    if (!Number.isInteger(policyVersion) || policyVersion !== Number(catalog?.policyVersion)) {
+        throw new Error('Stored sync content selection has an unsupported policy version');
+    }
+
+    const supported = new Set(catalog.supportedDatasetIds);
+    const datasetIds = [];
+    const seen = new Set();
+    for (const id of selection?.dataset_ids || []) {
+        const value = String(id || '').trim();
+        if (!value || seen.has(value)) {
+            continue;
+        }
+        if (!supported.has(value)) {
+            throw new Error(`Stored sync content selection contains unsupported dataset: ${value}`);
+        }
+        seen.add(value);
+        datasetIds.push(value);
+    }
+
+    if (datasetIds.length === 0) {
+        throw new Error('Stored sync content selection is empty');
+    }
+
+    return {
+        policy_version: policyVersion,
+        dataset_ids: datasetIds,
+    };
+}
+
+export function getSyncV2DatasetSelection(catalog) {
+    const raw = localStorage.getItem(SYNC_V2_DATASET_SELECTION_STORAGE_KEY);
+    if (!raw) {
+        return createDefaultSyncV2DatasetSelection(catalog);
+    }
+
+    try {
+        return normalizeSyncV2DatasetSelection(JSON.parse(raw), catalog);
+    } catch (error) {
+        localStorage.removeItem(SYNC_V2_DATASET_SELECTION_STORAGE_KEY);
+        console.warn('Stored sync content selection was reset:', error);
+        return createDefaultSyncV2DatasetSelection(catalog);
+    }
+}
+
+export function setSyncV2DatasetSelection(selection, catalog) {
+    const normalized = normalizeSyncV2DatasetSelection(selection, catalog);
+    localStorage.setItem(SYNC_V2_DATASET_SELECTION_STORAGE_KEY, JSON.stringify(normalized));
+    return normalized;
+}
+
+export function parseLanSyncV2PairUri(pairUri, tr = (key) => key) {
+    const parsed = new URL(String(pairUri || '').trim());
+    if (parsed.protocol.toLowerCase() !== 'tauritavern:') {
+        throw new Error(tr('Pair URI must start with tauritavern://'));
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    if (host !== 'lan-sync' || path !== '/pair') {
+        throw new Error(tr('Pair URI is not a LAN Sync pairing link'));
+    }
+
+    const version = parsed.searchParams.get('v') || '';
+    if (version !== '2') {
+        throw new Error(tr('LAN Sync Pair URI must be v=2'));
+    }
+
+    const baseUrl = parsed.searchParams.get('url') || '';
+    if (!baseUrl) {
+        throw new Error(tr('Pair URI missing url'));
+    }
+
+    const token = parsed.searchParams.get('token') || '';
+    if (!token) {
+        throw new Error(tr('Pair URI missing token'));
+    }
+
+    const spki = parsed.searchParams.get('spki') || '';
+    if (!spki) {
+        throw new Error(tr('Pair URI missing spki'));
+    }
+
+    const expiresAtMsRaw = parsed.searchParams.get('exp') || '';
+    const expiresAtMs = expiresAtMsRaw ? Number(expiresAtMsRaw) : null;
+    if (!expiresAtMsRaw || Number.isNaN(expiresAtMs)) {
+        throw new Error(tr('Pair URI has invalid exp'));
+    }
+
+    return { baseUrl, token, spki, expiresAtMs };
 }
 
 export function parseTtSyncPairUri(pairUri, tr = (key) => key) {

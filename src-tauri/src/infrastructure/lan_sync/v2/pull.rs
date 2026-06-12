@@ -10,7 +10,7 @@ use ttsync_contract::peer::DeviceId;
 use ttsync_contract::plan::{PlanId, SyncPlan};
 use ttsync_contract::session::SessionToken;
 use ttsync_contract::sync::SyncMode;
-use ttsync_core::dataset::{ResolvedDatasetPolicy, tauri_tavern_default_selection};
+use ttsync_core::dataset::ResolvedDatasetPolicy;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
@@ -20,10 +20,11 @@ use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
 use crate::infrastructure::lan_sync::v2::client::LanSyncV2Api;
 use crate::infrastructure::lan_sync::v2::store::LanSyncV2Store;
 use crate::infrastructure::sync_bundle::{
-    BUNDLE_ZSTD_DECODE_BUFFER_SIZE, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, write_bundle_to_local_files,
+    BUNDLE_ZSTD_DECODE_BUFFER_SIZE, write_bundle_to_local_files,
 };
 use crate::infrastructure::sync_fs;
 use crate::infrastructure::sync_transfer;
+use crate::infrastructure::sync_v2::{SyncV2OperationOptions, bundle_transport_for_status};
 use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
 use crate::infrastructure::tt_sync::v2_api::ensure_dataset_scope_v1;
 
@@ -31,6 +32,7 @@ pub async fn pull_from_device(
     runtime: Arc<LanSyncRuntime>,
     store: LanSyncV2Store,
     device_id: &DeviceId,
+    options: SyncV2OperationOptions,
 ) -> Result<LanSyncSyncCompletedEvent, DomainError> {
     let mut peer = store.get_paired_device(device_id).await?;
     let identity = store.load_or_create_identity().await?;
@@ -39,15 +41,8 @@ pub async fn pull_from_device(
     let api = LanSyncV2Api::new(peer.base_url.clone(), peer.spki_sha256.clone())?;
     let status = api.status().await?;
     ensure_dataset_scope_v1(&status, "LAN Sync v2 peer")?;
-    let prefer_bundle = status
-        .features
-        .iter()
-        .any(|feature| feature == FEATURE_BUNDLE_V1);
-    let accept_zstd = prefer_bundle
-        && status
-            .features
-            .iter()
-            .any(|feature| feature == FEATURE_ZSTD_V1);
+    let transport =
+        bundle_transport_for_status(&status, "LAN Sync v2 peer", options.require_bundle_zstd)?;
 
     let session = api
         .open_session(&identity.device_id, &identity.ed25519_seed)
@@ -75,7 +70,7 @@ pub async fn pull_from_device(
         current_path: None,
     })?;
 
-    let selection = tauri_tavern_default_selection();
+    let selection = options.selection;
     let policy = ResolvedDatasetPolicy::from_selection(&selection)
         .map_err(|error| DomainError::InvalidData(error.to_string()))?;
     let target_manifest =
@@ -103,8 +98,8 @@ pub async fn pull_from_device(
         &session.session_token,
         plan,
         mode,
-        prefer_bundle,
-        accept_zstd,
+        transport.prefer_bundle,
+        transport.use_zstd,
     )
     .await?;
 

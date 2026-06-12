@@ -1,6 +1,7 @@
 import { createApp } from 'vue/dist/vue.esm-bundler.js';
 import { createTauriTavernSyncApp } from './SyncApp.js';
 import { createTauriTavernSyncProgressApp } from './SyncProgressApp.js';
+import { createTauriTavernSyncScopeApp } from './SyncScopeApp.js';
 
 export function mountTauriTavernSyncApp(mount, options) {
     if (!(mount instanceof HTMLElement)) {
@@ -26,6 +27,20 @@ export function mountTauriTavernSyncProgressApp(mount, options) {
 
     return {
         update: (next) => instance.update(next),
+        unmount: () => app.unmount(),
+    };
+}
+
+export function mountTauriTavernSyncScopeApp(mount, options) {
+    if (!(mount instanceof HTMLElement)) {
+        throw new Error('TauriTavern Sync scope mount element is required');
+    }
+
+    const app = createApp(createTauriTavernSyncScopeApp(options));
+    const instance = app.mount(mount);
+
+    return {
+        getSelection: () => instance.getSelection(),
         unmount: () => app.unmount(),
     };
 }

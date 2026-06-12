@@ -112,6 +112,106 @@
     resize: vertical;
 }
 
+.tt-sync-scope-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 64%, transparent);
+    border-radius: 8px;
+    background: var(--black10a);
+}
+
+.tt-sync-scope-current {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.tt-sync-scope-dialog {
+    display: flex;
+    width: min(760px, 80vw);
+    max-width: 100%;
+    flex-direction: column;
+    gap: 12px;
+    color: var(--SmartThemeBodyColor);
+    text-align: left;
+}
+
+.tt-sync-scope-presets,
+.tt-sync-scope-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.tt-sync-scope-summary code,
+.tt-sync-scope-item code {
+    font-size: 0.82em;
+}
+
+.tt-sync-scope-groups {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.tt-sync-scope-group {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 64%, transparent);
+    border-radius: 8px;
+    background: var(--black10a);
+}
+
+.tt-sync-scope-group-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 0 0 6px;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 48%, transparent);
+    color: var(--SmartThemeBodyColor);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+}
+
+.tt-sync-scope-group-header span {
+    opacity: 0.78;
+    white-space: nowrap;
+}
+
+.tt-sync-scope-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+}
+
+.tt-sync-scope-item input {
+    margin: 0;
+}
+
+.tt-sync-scope-item span {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.tt-sync-scope-item small {
+    opacity: 0.72;
+    word-break: break-word;
+}
+
 .tt-sync-target-row {
     display: flex;
     justify-content: space-between;
@@ -192,6 +292,19 @@
     .tt-sync-button,
     .tt-sync-target-actions {
         width: 100%;
+    }
+
+    .tt-sync-scope-row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .tt-sync-scope-dialog {
+        width: min(100%, 88vw);
+    }
+
+    .tt-sync-scope-groups {
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .tt-sync-target-row {

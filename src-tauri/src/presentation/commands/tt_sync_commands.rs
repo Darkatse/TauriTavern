@@ -6,6 +6,7 @@ use ttsync_contract::sync::SyncMode;
 
 use crate::app::AppState;
 use crate::domain::models::tt_sync::TtSyncPairedServer;
+use crate::infrastructure::sync_v2::SyncV2OperationOptions;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -98,12 +99,13 @@ pub async fn tt_sync_pull(
     app_state: State<'_, Arc<AppState>>,
     server_device_id: String,
     mode: SyncMode,
+    options: Option<SyncV2OperationOptions>,
 ) -> Result<(), CommandError> {
     log_command("tt_sync_pull");
 
     app_state
         .tt_sync_service
-        .pull(&server_device_id, mode)
+        .pull(&server_device_id, mode, options)
         .await
         .map_err(map_command_error("Failed to run TT-Sync pull"))
 }
@@ -113,12 +115,13 @@ pub async fn tt_sync_push(
     app_state: State<'_, Arc<AppState>>,
     server_device_id: String,
     mode: SyncMode,
+    options: Option<SyncV2OperationOptions>,
 ) -> Result<(), CommandError> {
     log_command("tt_sync_push");
 
     app_state
         .tt_sync_service
-        .push(&server_device_id, mode)
+        .push(&server_device_id, mode, options)
         .await
         .map_err(map_command_error("Failed to run TT-Sync push"))
 }

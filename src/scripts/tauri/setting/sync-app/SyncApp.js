@@ -24,6 +24,7 @@ const REQUIRED_ACTIONS = [
     'copyText',
     'scanPairUri',
     'changeSyncMode',
+    'editSyncScope',
     'renameTarget',
     'connectPairUri',
     'notifyLanPushRequested',
@@ -70,6 +71,8 @@ export function createTauriTavernSyncApp(options) {
                 servers: [],
                 selectedAddress: '',
                 pairingInfo: null,
+                datasetCatalog: null,
+                syncSelection: null,
                 requestPairUri: '',
                 loading: false,
                 busy: '',
@@ -119,7 +122,7 @@ export function createTauriTavernSyncApp(options) {
                 return `${this.tr('Enabled')} (${this.tr('Expires')}: ${formatTimestampValue(this.status?.pairingExpiresAtMs, this.tr)})`;
             },
             pairUri() {
-                return this.pairingInfo?.pairUri || '';
+                return this.pairingInfo?.v2PairUri || '';
             },
             pairExpiryText() {
                 return this.pairingInfo?.expiresAtMs
@@ -127,12 +130,39 @@ export function createTauriTavernSyncApp(options) {
                     : this.tr('N/A');
             },
             qrImageSrc() {
-                const svg = this.pairingInfo?.qrSvg || '';
+                const svg = this.pairingInfo?.v2QrSvg || '';
                 if (!svg) {
                     return '';
                 }
 
                 return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+            },
+            selectedDatasetCount() {
+                return this.syncSelection?.dataset_ids?.length || 0;
+            },
+            supportedDatasetCount() {
+                return this.datasetCatalog?.supportedDatasetIds?.length || 0;
+            },
+            defaultDatasetSelected() {
+                const current = [...(this.syncSelection?.dataset_ids || [])].sort();
+                const defaults = [...(this.datasetCatalog?.defaultDatasetIds || [])].sort();
+                return current.length > 0
+                    && current.length === defaults.length
+                    && current.every((id, index) => id === defaults[index]);
+            },
+            scopeTitle() {
+                if (!this.selectedDatasetCount) {
+                    return this.tr('N/A');
+                }
+                return this.defaultDatasetSelected
+                    ? this.tr('Recommended default')
+                    : `${this.selectedDatasetCount} ${this.tr('datasets selected')}`;
+            },
+            scopeSubtitle() {
+                if (!this.selectedDatasetCount || !this.supportedDatasetCount) {
+                    return this.tr('Sync content selection is unavailable');
+                }
+                return `${this.selectedDatasetCount} / ${this.supportedDatasetCount}`;
             },
             targets() {
                 return [
@@ -170,6 +200,8 @@ export function createTauriTavernSyncApp(options) {
                 this.devices = snapshot.devices;
                 this.servers = snapshot.servers;
                 this.selectedAddress = snapshot.selectedAddress || '';
+                this.datasetCatalog = snapshot.datasetCatalog;
+                this.syncSelection = snapshot.syncSelection;
             },
             async refresh() {
                 this.loading = true;
@@ -188,6 +220,27 @@ export function createTauriTavernSyncApp(options) {
                     }
                     if (await actions.changeSyncMode(this.status)) {
                         await this.refresh();
+                    }
+                });
+            },
+            syncOperationOptions() {
+                if (!this.syncSelection) {
+                    throw new Error(this.tr('Sync content selection is unavailable'));
+                }
+
+                return {
+                    selection: this.syncSelection,
+                    require_bundle_zstd: true,
+                };
+            },
+            async editSyncScope() {
+                await this.withBusy('scope', async () => {
+                    const next = await actions.editSyncScope({
+                        catalog: this.datasetCatalog,
+                        selection: this.syncSelection,
+                    });
+                    if (next) {
+                        this.syncSelection = next;
                     }
                 });
             },
@@ -263,25 +316,27 @@ export function createTauriTavernSyncApp(options) {
             },
             async pullTarget(target) {
                 await this.withBusy(`pull:${target.type}:${target.id}`, async () => {
+                    const options = this.syncOperationOptions();
                     if (target.type === 'lan') {
-                        await client.pullLanDevice(target.id);
+                        await client.pullLanDevice(target.id, options);
                         return;
                     }
 
                     const mode = this.status?.syncMode ?? 'Incremental';
-                    await client.pullTtSyncServer(target.id, mode);
+                    await client.pullTtSyncServer(target.id, mode, options);
                 });
             },
             async pushTarget(target) {
                 await this.withBusy(`push:${target.type}:${target.id}`, async () => {
+                    const options = this.syncOperationOptions();
                     if (target.type === 'lan') {
-                        await client.pushLanDevice(target.id);
+                        await client.pushLanDevice(target.id, options);
                         actions.notifyLanPushRequested();
                         return;
                     }
 
                     const mode = this.status?.syncMode ?? 'Incremental';
-                    await client.pushTtSyncServer(target.id, mode);
+                    await client.pushTtSyncServer(target.id, mode, options);
                 });
             },
             async removeTarget(target) {
@@ -362,10 +417,25 @@ export function createTauriTavernSyncApp(options) {
                     </div>
                 </section>
 
-                <SyncSection :title="tr('Pair via QR')">
+                <SyncSection :title="tr('Sync content')">
+                    <div class="tt-sync-scope-row">
+                        <div class="tt-sync-scope-current">
+                            <b>{{ scopeTitle }}</b>
+                            <span class="tt-sync-muted">{{ scopeSubtitle }}</span>
+                        </div>
+                        <SyncButton
+                            :label="tr('Choose')"
+                            icon="fa-list-check"
+                            :disabled="isBusy || !datasetCatalog"
+                            @click="editSyncScope"
+                        />
+                    </div>
+                </SyncSection>
+
+                <SyncSection :title="tr('Pair via LAN v2 QR')">
                     <div class="tt-sync-pair-grid">
                         <div class="tt-sync-qr-wrap">
-                            <img v-if="qrImageSrc" :src="qrImageSrc" alt="LAN Sync Pair QR" width="200" height="200" />
+                            <img v-if="qrImageSrc" :src="qrImageSrc" alt="LAN Sync v2 Pair QR" width="200" height="200" />
                             <span v-else>{{ tr('No QR') }}</span>
                         </div>
                         <div class="tt-sync-pair-fields">
@@ -375,7 +445,7 @@ export function createTauriTavernSyncApp(options) {
                                 :value="pairUri"
                                 rows="4"
                                 readonly
-                                :placeholder="tr('Pair URI (scan QR or copy)')"
+                                :placeholder="tr('LAN Sync v2 Pair URI')"
                             ></textarea>
                             <div class="tt-sync-actions">
                                 <SyncButton

@@ -41,7 +41,10 @@ test('TauriTavern Sync popup wrapper owns host-only capabilities', async () => {
     assert.match(source, /callGenericPopup/);
     assert.match(source, /sync\.bundle\.js/);
     assert.match(source, /mountTauriTavernSyncApp/);
+    assert.match(source, /mountTauriTavernSyncScopeApp/);
     assert.match(source, /parseTtSyncPairUri/);
+    assert.match(source, /parseLanSyncV2PairUri/);
+    assert.match(source, /sync_v2_get_dataset_catalog/);
     assert.doesNotMatch(source, /from\s+['"]vue(?:\/|['"])/);
 });
 
@@ -71,6 +74,7 @@ test('TauriTavern Sync Vue app stays presentation-only', async () => {
     const files = await listJsFiles('src/scripts/tauri/setting/sync-app');
     assert.ok(files.includes('src/scripts/tauri/setting/sync-app/index.js'));
     assert.ok(files.includes('src/scripts/tauri/setting/sync-app/SyncApp.js'));
+    assert.ok(files.includes('src/scripts/tauri/setting/sync-app/SyncScopeApp.js'));
     assert.ok(files.includes('src/scripts/tauri/setting/sync-app/SyncProgressApp.js'));
 
     const forbidden = [
@@ -92,17 +96,22 @@ test('TauriTavern Sync Vue app stays presentation-only', async () => {
     const entry = await readRepoFile('src/scripts/tauri/setting/sync-app/index.js');
     assert.match(entry, /from\s+['"]vue\/dist\/vue\.esm-bundler\.js['"]/);
     assert.match(entry, /export\s+function\s+mountTauriTavernSyncApp/);
+    assert.match(entry, /export\s+function\s+mountTauriTavernSyncScopeApp/);
     assert.match(entry, /export\s+function\s+mountTauriTavernSyncProgressApp/);
 });
 
-test('TauriTavern Sync pure state helpers keep TT-Sync pair URI validation explicit', async () => {
+test('TauriTavern Sync pure state helpers keep pair URI validation explicit', async () => {
     const source = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-state.js');
 
     assert.match(source, /export\s+function\s+parseTtSyncPairUri/);
+    assert.match(source, /export\s+function\s+parseLanSyncV2PairUri/);
     assert.match(source, /Pair URI must start with tauritavern:\/\//);
     assert.match(source, /Pair URI is not a TT-Sync pairing link/);
+    assert.match(source, /Pair URI is not a LAN Sync pairing link/);
     assert.match(source, /Pair URI must be v=2/);
+    assert.match(source, /LAN Sync Pair URI must be v=2/);
     assert.match(source, /Pair URI missing url/);
+    assert.match(source, /Pair URI missing token/);
     assert.match(source, /Pair URI missing spki/);
     assert.doesNotMatch(source, /callGenericPopup/);
     assert.doesNotMatch(source, /window\.__TAURI__/);

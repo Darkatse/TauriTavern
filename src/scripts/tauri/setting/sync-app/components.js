@@ -56,6 +56,15 @@ export const SyncTargetRow = {
         isLan() {
             return this.target.type === 'lan';
         },
+        isLanV2() {
+            return !this.isLan || this.target.protocolVersion === 2;
+        },
+        protocolLabel() {
+            if (!this.isLan) {
+                return 'TT-Sync';
+            }
+            return this.isLanV2 ? 'LAN v2' : 'LAN v1';
+        },
         lastSyncText() {
             return this.target.lastSyncMs
                 ? formatTimestampValue(this.target.lastSyncMs, this.tr)
@@ -68,12 +77,15 @@ export const SyncTargetRow = {
             return this.target.lastKnownAddress || this.tr('Address: N/A (reconnect needed)');
         },
         pullDisabled() {
-            return this.disabled || (this.isLan && !this.target.lastKnownAddress);
+            return this.disabled || (this.isLan && (!this.isLanV2 || !this.target.lastKnownAddress));
         },
         pushDisabled() {
-            return this.disabled || (this.isLan && (!this.target.lastKnownAddress || !this.running));
+            return this.disabled || (this.isLan && (!this.isLanV2 || !this.target.lastKnownAddress || !this.running));
         },
         pullTitle() {
+            if (this.isLan && !this.isLanV2) {
+                return this.tr('Reconnect using LAN Sync v2 Pair URI.');
+            }
             if (this.isLan && !this.target.lastKnownAddress) {
                 return this.tr('Address missing. Reconnect using Pair URI.');
             }
@@ -82,6 +94,9 @@ export const SyncTargetRow = {
                 : this.tr('Download (pull from this server)');
         },
         pushTitle() {
+            if (this.isLan && !this.isLanV2) {
+                return this.tr('Reconnect using LAN Sync v2 Pair URI.');
+            }
             if (this.isLan && !this.target.lastKnownAddress) {
                 return this.tr('Address missing. Reconnect using Pair URI.');
             }
@@ -112,7 +127,7 @@ export const SyncTargetRow = {
                 <div class="tt-sync-target-muted">{{ target.id }}</div>
                 <div class="tt-sync-target-muted tt-sync-target-address">
                     <span>{{ secondaryLine }}</span>
-                    <code v-if="!isLan">TT-Sync</code>
+                    <code>{{ protocolLabel }}</code>
                 </div>
                 <div class="tt-sync-target-muted">{{ tr('Last sync') }}: {{ lastSyncText }}</div>
             </div>

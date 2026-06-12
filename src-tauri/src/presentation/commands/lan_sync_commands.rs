@@ -5,6 +5,7 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::domain::models::lan_sync::{LanSyncPairedDeviceSummary, LanSyncStatus, LanSyncSyncMode};
+use crate::infrastructure::sync_v2::SyncV2OperationOptions;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
@@ -211,13 +212,14 @@ pub async fn lan_sync_remove_device(
 pub async fn lan_sync_sync_from_device(
     app_state: State<'_, Arc<AppState>>,
     device_id: String,
+    options: Option<SyncV2OperationOptions>,
 ) -> Result<(), CommandError> {
     log_command("lan_sync_sync_from_device");
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
-        .sync_from_device(&device_id)
+        .sync_from_device(&device_id, options)
         .await
         .map_err(map_command_error("Failed to run LAN sync pull"))
 }
@@ -226,13 +228,14 @@ pub async fn lan_sync_sync_from_device(
 pub async fn lan_sync_push_to_device(
     app_state: State<'_, Arc<AppState>>,
     device_id: String,
+    options: Option<SyncV2OperationOptions>,
 ) -> Result<(), CommandError> {
     log_command("lan_sync_push_to_device");
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
-        .push_to_device(&device_id)
+        .push_to_device(&device_id, options)
         .await
         .map_err(map_command_error("Failed to request LAN sync push"))
 }
