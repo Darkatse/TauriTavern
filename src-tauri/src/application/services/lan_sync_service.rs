@@ -235,6 +235,15 @@ impl LanSyncService {
         self.runtime.set_sync_mode_override(None).await;
     }
 
+    pub async fn effective_sync_mode(&self) -> Result<LanSyncSyncMode, DomainError> {
+        let config = self.runtime.store.load_or_create_config().await?;
+        Ok(self
+            .runtime
+            .get_sync_mode_override()
+            .await
+            .unwrap_or(config.sync_mode))
+    }
+
     async fn running_v2_server_info(&self) -> Option<LanSyncV2ServerInfo> {
         let server = self.v2_server.lock().await;
         server.as_ref().map(|handle| LanSyncV2ServerInfo {
@@ -693,6 +702,34 @@ impl LanSyncService {
         }
 
         Ok(())
+    }
+
+    pub async fn push_to_device_for_automation(
+        &self,
+        device_id: &str,
+        options: Option<SyncV2OperationOptions>,
+    ) -> Result<(), DomainError> {
+        let server_running = {
+            let server = self.server.lock().await;
+            server.is_some()
+        };
+        let v2_server_running = {
+            let server = self.v2_server.lock().await;
+            server.is_some()
+        };
+        if !server_running || !v2_server_running {
+            return Err(DomainError::InvalidData(
+                "LAN Sync server is not running".to_string(),
+            ));
+        }
+
+        let Some(v2_device_id) = self.resolve_v2_peer_device_id(device_id).await? else {
+            return Err(DomainError::InvalidData(
+                "LAN auto upload requires a paired LAN Sync v2 device".to_string(),
+            ));
+        };
+        let options = resolve_sync_v2_options(options)?;
+        request_v2_peer_pull(self.v2_store.clone(), &v2_device_id, options).await
     }
 
     async fn resolve_v2_peer_device_id(

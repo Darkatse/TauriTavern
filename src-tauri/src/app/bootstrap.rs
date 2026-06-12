@@ -34,6 +34,7 @@ use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
 use crate::application::services::skill_service::SkillService;
 use crate::application::services::stable_diffusion_service::StableDiffusionService;
+use crate::application::services::sync_automation_service::SyncAutomationService;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::translate_service::TranslateService;
@@ -151,6 +152,7 @@ pub(super) struct AppServices {
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
+    pub sync_automation_service: Arc<SyncAutomationService>,
     pub update_service: Arc<UpdateService>,
     pub native_regex_service: Arc<NativeRegexService>,
     pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
@@ -361,6 +363,13 @@ pub(super) async fn build_services(
         data_directory.default_user().to_path_buf(),
         sync_permit,
     ));
+    let sync_automation_service = Arc::new(SyncAutomationService::new(
+        app_handle.clone(),
+        data_directory.default_user().to_path_buf(),
+        lan_sync_service.clone(),
+        tt_sync_service.clone(),
+        ios_policy.capabilities.sync.lan,
+    ));
 
     let secret_service = Arc::new(SecretService::new(
         repositories.secret_repository,
@@ -401,6 +410,7 @@ pub(super) async fn build_services(
         world_info_service,
         lan_sync_service,
         tt_sync_service,
+        sync_automation_service,
         update_service,
         native_regex_service,
         ios_policy,

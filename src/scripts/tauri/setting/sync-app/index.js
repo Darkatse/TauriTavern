@@ -13,6 +13,7 @@ export function mountTauriTavernSyncApp(mount, options) {
 
     return {
         refresh: () => instance.refresh(),
+        refreshAutomationStatus: () => instance.refreshAutomationStatus(),
         unmount: () => app.unmount(),
     };
 }

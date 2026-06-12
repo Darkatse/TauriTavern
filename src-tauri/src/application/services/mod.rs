@@ -32,6 +32,7 @@ mod settings_repair;
 pub mod settings_service;
 pub mod skill_service;
 pub mod stable_diffusion_service;
+pub mod sync_automation_service;
 pub mod theme_service;
 pub mod tokenization_service;
 pub mod translate_service;

@@ -2,7 +2,12 @@ import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
 import { isMobile } from '../../../RossAscends-mods.js';
 import { t, translate } from '../../../i18n.js';
 import { scanQrCodeWithBackCancellation } from '../../../../tauri/main/services/barcode-scanner/barcode-scanner-service.js';
-import { LAN_SYNC_DEVICES_CHANGED_EVENT, TT_SYNC_SERVERS_CHANGED_EVENT } from './constants.js';
+import {
+    LAN_SYNC_DEVICES_CHANGED_EVENT,
+    SYNC_AUTOMATION_CHANGED_EVENT,
+    SYNC_AUTOMATION_STATUS_CHANGED_EVENT,
+    TT_SYNC_SERVERS_CHANGED_EVENT,
+} from './constants.js';
 import { formatTimestamp } from './formatters.js';
 import { showErrorPopup } from './popup-utils.js';
 import { callTauriTavernPanelPopup } from '../panel-popup.js';
@@ -167,6 +172,74 @@ function normalizeTtSyncServer(server) {
     };
 }
 
+function normalizeAutomationTarget(target) {
+    if (!target) {
+        return null;
+    }
+    if (target.type === 'lan') {
+        return {
+            type: 'lan',
+            id: String(target.device_id || ''),
+        };
+    }
+    if (target.type === 'tt') {
+        return {
+            type: 'tt',
+            id: String(target.server_device_id || ''),
+        };
+    }
+    return null;
+}
+
+function serializeAutomationTarget(target) {
+    if (!target) {
+        return null;
+    }
+    if (target.type === 'lan') {
+        return {
+            type: 'lan',
+            device_id: target.id,
+        };
+    }
+    if (target.type === 'tt') {
+        return {
+            type: 'tt',
+            server_device_id: target.id,
+        };
+    }
+    throw new Error(`Unsupported auto sync target type: ${target.type}`);
+}
+
+function normalizeAutomationConfig(config, syncSelection) {
+    return {
+        lanServerAutoStart: Boolean(config?.lan_server_auto_start),
+        autoSyncEnabled: Boolean(config?.auto_sync_enabled),
+        intervalMinutes: Number(config?.interval_minutes || 30),
+        target: normalizeAutomationTarget(config?.target),
+        selection: syncSelection,
+    };
+}
+
+function serializeAutomationConfig(config, syncSelection) {
+    return {
+        lan_server_auto_start: Boolean(config?.lanServerAutoStart),
+        auto_sync_enabled: Boolean(config?.autoSyncEnabled),
+        interval_minutes: Number(config?.intervalMinutes || 30),
+        target: serializeAutomationTarget(config?.target),
+        selection: syncSelection,
+    };
+}
+
+function normalizeAutomationStatus(status) {
+    return {
+        running: Boolean(status?.running),
+        nextRunAtMs: status?.next_run_at_ms ?? null,
+        lastAttemptAtMs: status?.last_attempt_at_ms ?? null,
+        lastSuccessAtMs: status?.last_success_at_ms ?? null,
+        lastError: status?.last_error || '',
+    };
+}
+
 function ensureArray(value, commandName) {
     if (!Array.isArray(value)) {
         throw new Error(`${commandName} returned non-array`);
@@ -179,22 +252,34 @@ function createSyncClient() {
 
     return {
         async loadState() {
-            const [rawStatus, rawDevices, rawServers, rawCatalog] = await Promise.all([
+            const [
+                rawStatus,
+                rawDevices,
+                rawServers,
+                rawCatalog,
+                rawAutomationConfig,
+                rawAutomationStatus,
+            ] = await Promise.all([
                 invoke('lan_sync_get_status'),
                 invoke('lan_sync_list_devices'),
                 invoke('tt_sync_list_servers'),
                 invoke('sync_v2_get_dataset_catalog'),
+                invoke('sync_automation_get_config'),
+                invoke('sync_automation_get_status'),
             ]);
             const status = normalizeStatus(rawStatus);
             const selectedAddress = selectLanSyncAdvertiseAddress(status, getLanSyncAdvertiseAddress());
             setLanSyncAdvertiseAddress(selectedAddress);
             const datasetCatalog = normalizeDatasetCatalog(rawCatalog);
+            const syncSelection = getSyncV2DatasetSelection(datasetCatalog);
 
             return {
                 status,
                 selectedAddress,
                 datasetCatalog,
-                syncSelection: getSyncV2DatasetSelection(datasetCatalog),
+                syncSelection,
+                automationConfig: normalizeAutomationConfig(rawAutomationConfig, syncSelection),
+                automationStatus: normalizeAutomationStatus(rawAutomationStatus),
                 devices: ensureArray(rawDevices, 'lan_sync_list_devices').map(normalizeLanDevice),
                 servers: ensureArray(rawServers, 'tt_sync_list_servers').map(normalizeTtSyncServer),
             };
@@ -219,6 +304,10 @@ function createSyncClient() {
         },
         pullTtSyncServer: (serverDeviceId, mode, options) => invoke('tt_sync_pull', { serverDeviceId, mode, options }),
         pushTtSyncServer: (serverDeviceId, mode, options) => invoke('tt_sync_push', { serverDeviceId, mode, options }),
+        updateAutomationConfig: (config, syncSelection) => invoke('sync_automation_update_config', {
+            config: serializeAutomationConfig(config, syncSelection),
+        }).then((saved) => normalizeAutomationConfig(saved, syncSelection)),
+        getAutomationStatus: () => invoke('sync_automation_get_status').then(normalizeAutomationStatus),
     };
 }
 
@@ -461,9 +550,14 @@ export async function openSyncPopup() {
     const refresh = () => {
         void appHandle.refresh();
     };
+    const refreshAutomationStatus = () => {
+        void appHandle.refreshAutomationStatus();
+    };
 
     window.addEventListener(LAN_SYNC_DEVICES_CHANGED_EVENT, refresh);
     window.addEventListener(TT_SYNC_SERVERS_CHANGED_EVENT, refresh);
+    window.addEventListener(SYNC_AUTOMATION_CHANGED_EVENT, refresh);
+    window.addEventListener(SYNC_AUTOMATION_STATUS_CHANGED_EVENT, refreshAutomationStatus);
 
     try {
         await callTauriTavernPanelPopup(mount, POPUP_TYPE.TEXT, '', {
@@ -475,6 +569,8 @@ export async function openSyncPopup() {
     } finally {
         window.removeEventListener(LAN_SYNC_DEVICES_CHANGED_EVENT, refresh);
         window.removeEventListener(TT_SYNC_SERVERS_CHANGED_EVENT, refresh);
+        window.removeEventListener(SYNC_AUTOMATION_CHANGED_EVENT, refresh);
+        window.removeEventListener(SYNC_AUTOMATION_STATUS_CHANGED_EVENT, refreshAutomationStatus);
         appHandle.unmount();
     }
 }

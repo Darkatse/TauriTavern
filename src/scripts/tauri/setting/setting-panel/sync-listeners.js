@@ -1,7 +1,11 @@
 import { callGenericPopup, POPUP_TYPE, Popup } from '../../../popup.js';
 import { t, translate } from '../../../i18n.js';
-import { TT_SYNC_SERVERS_CHANGED_EVENT } from './constants.js';
-import { formatBytes } from './formatters.js';
+import {
+    SYNC_AUTOMATION_CHANGED_EVENT,
+    SYNC_AUTOMATION_STATUS_CHANGED_EVENT,
+    TT_SYNC_SERVERS_CHANGED_EVENT,
+} from './constants.js';
+import { formatBytes, formatTimestamp } from './formatters.js';
 
 const SYNC_STYLE_ID = 'tauritavern-sync-style';
 
@@ -45,11 +49,18 @@ export function installSyncListeners() {
 
     void (async () => {
         await listen('lan_sync:progress', (event) => {
+            if (isAutoSyncPayload(event.payload)) {
+                return;
+            }
             updateSyncProgress('LAN Sync progress', event.payload);
         });
 
         await listen('lan_sync:completed', async (event) => {
             const payload = event.payload;
+            if (isAutoSyncPayload(payload)) {
+                window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
+                return;
+            }
 
             await closeSyncProgressPopup();
 
@@ -75,16 +86,27 @@ export function installSyncListeners() {
         });
 
         await listen('lan_sync:error', async (event) => {
+            if (isAutoSyncPayload(event.payload)) {
+                window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
+                return;
+            }
             await closeSyncProgressPopup();
             await showSyncError(event.payload);
         });
 
         await listen('tt_sync:progress', (event) => {
+            if (isAutoSyncPayload(event.payload)) {
+                return;
+            }
             updateSyncProgress('TT-Sync progress', event.payload);
         });
 
         await listen('tt_sync:completed', async (event) => {
             const payload = event.payload;
+            if (isAutoSyncPayload(payload)) {
+                window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
+                return;
+            }
 
             await closeSyncProgressPopup();
             window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
@@ -116,10 +138,59 @@ export function installSyncListeners() {
         });
 
         await listen('tt_sync:error', async (event) => {
+            if (isAutoSyncPayload(event.payload)) {
+                window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
+                return;
+            }
             await closeSyncProgressPopup();
             await showSyncError(event.payload);
         });
+
+        await listen('sync_auto:status', () => {
+            window.dispatchEvent(new Event(SYNC_AUTOMATION_STATUS_CHANGED_EVENT));
+        });
+
+        await listen('sync_auto:toast', (event) => {
+            showSyncAutomationToast(event.payload);
+            window.dispatchEvent(new Event(SYNC_AUTOMATION_STATUS_CHANGED_EVENT));
+        });
     })();
+}
+
+function isAutoSyncPayload(payload) {
+    return payload?.origin === 'auto';
+}
+
+function showSyncAutomationToast(payload) {
+    const detail = String(payload?.detail || '').trim();
+    const message = [
+        formatSyncAutomationToastMessage(payload),
+        detail || null,
+    ].filter(Boolean).join('\n');
+    const title = translate('Auto sync');
+    const options = { timeOut: 7000, extendedTimeOut: 3000, preventDuplicates: true };
+
+    if (payload?.level === 'warning') {
+        toastr.warning(message, title, options);
+        return;
+    }
+
+    toastr.info(message, title, options);
+}
+
+function formatSyncAutomationToastMessage(payload) {
+    const nextRunAtMs = payload?.next_run_at_ms ?? payload?.nextRunAtMs ?? null;
+    if (nextRunAtMs) {
+        const nextRun = formatTimestamp(nextRunAtMs);
+        if (payload?.message === 'Auto sync upload has started as scheduled.') {
+            return t`Auto sync upload has started as scheduled. Next sync time: ${nextRun}`;
+        }
+        if (payload?.message === 'Auto sync upload has completed as scheduled.') {
+            return t`Auto sync upload has completed as scheduled. Next sync time: ${nextRun}`;
+        }
+    }
+
+    return translate(payload?.message || 'Auto sync updated.');
 }
 
 function updateSyncProgress(title, payload) {

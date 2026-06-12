@@ -1,6 +1,7 @@
 import {
     SyncButton,
     SyncSection,
+    SyncSwitch,
     SyncTargetRow,
 } from './components.js';
 import { formatTimestampValue } from './format.js';
@@ -18,6 +19,8 @@ const REQUIRED_CLIENT_METHODS = [
     'removeTtSyncServer',
     'pullTtSyncServer',
     'pushTtSyncServer',
+    'updateAutomationConfig',
+    'getAutomationStatus',
 ];
 
 const REQUIRED_ACTIONS = [
@@ -43,6 +46,46 @@ function normalizeBusyName(name) {
     return String(name || '').trim();
 }
 
+const AUTO_SYNC_INTERVAL_OPTIONS = [5, 15, 30, 60, 180, 360, 720, 1440];
+
+function formatAutomationInterval(minutes, tr) {
+    const value = Number(minutes);
+    if (!Number.isFinite(value)) {
+        return `0 ${tr('minutes')}`;
+    }
+    if (value < 60) {
+        return `${value} ${tr('minutes')}`;
+    }
+
+    const hours = value / 60;
+    const hourText = Number.isInteger(hours) ? String(hours) : String(Math.round(hours * 10) / 10);
+    return `${hourText} ${tr(hours === 1 ? 'hour' : 'hours')}`;
+}
+
+function automationTargetValue(target) {
+    if (!target?.type || !target?.id) {
+        return '';
+    }
+    return `${target.type}:${target.id}`;
+}
+
+function parseAutomationTargetValue(value) {
+    const raw = String(value || '').trim();
+    if (!raw) {
+        return null;
+    }
+
+    const separator = raw.indexOf(':');
+    if (separator <= 0) {
+        throw new Error(`Invalid auto sync target: ${raw}`);
+    }
+
+    return {
+        type: raw.slice(0, separator),
+        id: raw.slice(separator + 1),
+    };
+}
+
 export function createTauriTavernSyncApp(options) {
     const {
         client,
@@ -62,6 +105,7 @@ export function createTauriTavernSyncApp(options) {
         components: {
             SyncButton,
             SyncSection,
+            SyncSwitch,
             SyncTargetRow,
         },
         data() {
@@ -73,6 +117,23 @@ export function createTauriTavernSyncApp(options) {
                 pairingInfo: null,
                 datasetCatalog: null,
                 syncSelection: null,
+                automationConfig: {
+                    lanServerAutoStart: false,
+                    autoSyncEnabled: false,
+                    intervalMinutes: 30,
+                    target: null,
+                    selection: null,
+                },
+                automationStatus: {
+                    running: false,
+                    nextRunAtMs: null,
+                    lastAttemptAtMs: null,
+                    lastSuccessAtMs: null,
+                    lastError: '',
+                },
+                automationExpanded: false,
+                automationDraftDirty: false,
+                automationIntervals: AUTO_SYNC_INTERVAL_OPTIONS,
                 requestPairUri: '',
                 loading: false,
                 busy: '',
@@ -170,6 +231,81 @@ export function createTauriTavernSyncApp(options) {
                     ...this.servers,
                 ];
             },
+            automationTargetValue: {
+                get() {
+                    return automationTargetValue(this.automationConfig?.target);
+                },
+                set(value) {
+                    if (!this.automationConfig) {
+                        return;
+                    }
+                    this.automationConfig.target = parseAutomationTargetValue(value);
+                    this.automationDraftDirty = true;
+                },
+            },
+            automationTargets() {
+                return this.targets.map((target) => {
+                    const isLan = target.type === 'lan';
+                    const isLanV2 = !isLan || target.protocolVersion === 2;
+                    const canWrite = isLan || Boolean(target.permissions?.write);
+                    const canMirror = isLan || Boolean(target.permissions?.mirror_delete);
+                    const disabled = isLan
+                        ? (!isLanV2 || !target.lastKnownAddress)
+                        : (!canWrite || (this.modeDanger && !canMirror));
+                    const protocol = isLan ? (isLanV2 ? 'LAN v2' : 'LAN v1') : 'TT-Sync';
+
+                    return {
+                        value: automationTargetValue(target),
+                        label: `${protocol} · ${target.displayName}`,
+                        disabled,
+                    };
+                });
+            },
+            automationTargetLabel() {
+                const value = this.automationTargetValue;
+                if (!value) {
+                    return this.tr('Choose target');
+                }
+
+                return this.automationTargets.find((target) => target.value === value)?.label
+                    || this.tr('Choose target');
+            },
+            automationSummaryText() {
+                if (!this.automationConfig?.autoSyncEnabled) {
+                    return `${this.tr('Off')} · ${this.automationStatusText}`;
+                }
+
+                return [
+                    this.tr('On'),
+                    formatAutomationInterval(this.automationConfig.intervalMinutes, this.tr),
+                    this.automationTargetLabel,
+                ].join(' · ');
+            },
+            automationStatusText() {
+                const status = this.automationStatus;
+                if (!status) {
+                    return this.tr('N/A');
+                }
+                if (status.running) {
+                    return this.tr('Uploading...');
+                }
+                if (status.nextRunAtMs) {
+                    return `${this.tr('Next run')}: ${formatTimestampValue(status.nextRunAtMs, this.tr)}`;
+                }
+                if (status.lastSuccessAtMs) {
+                    return `${this.tr('Last success')}: ${formatTimestampValue(status.lastSuccessAtMs, this.tr)}`;
+                }
+                if (status.lastError) {
+                    return `${this.tr('Last error')}: ${status.lastError}`;
+                }
+                return this.tr('Idle');
+            },
+            automationSaveDisabled() {
+                if (this.isBusy || !this.automationConfig || !this.syncSelection) {
+                    return true;
+                }
+                return this.automationConfig.autoSyncEnabled && !this.automationConfig.target;
+            },
         },
         async mounted() {
             await this.refresh();
@@ -195,6 +331,24 @@ export function createTauriTavernSyncApp(options) {
                     }
                 }
             },
+            async withBusyStrict(name, task) {
+                const busyName = normalizeBusyName(name);
+                this.busy = busyName;
+                try {
+                    return await task();
+                } finally {
+                    if (this.busy === busyName) {
+                        this.busy = '';
+                    }
+                }
+            },
+            automationIntervalLabel(minutes) {
+                return formatAutomationInterval(minutes, this.tr);
+            },
+            setAutomationInterval(value) {
+                this.automationConfig.intervalMinutes = Number(value);
+                this.automationDraftDirty = true;
+            },
             applySnapshot(snapshot) {
                 this.status = snapshot.status;
                 this.devices = snapshot.devices;
@@ -202,6 +356,10 @@ export function createTauriTavernSyncApp(options) {
                 this.selectedAddress = snapshot.selectedAddress || '';
                 this.datasetCatalog = snapshot.datasetCatalog;
                 this.syncSelection = snapshot.syncSelection;
+                if (!this.automationDraftDirty) {
+                    this.automationConfig = snapshot.automationConfig;
+                }
+                this.automationStatus = snapshot.automationStatus;
             },
             async refresh() {
                 this.loading = true;
@@ -212,6 +370,25 @@ export function createTauriTavernSyncApp(options) {
                 } finally {
                     this.loading = false;
                 }
+            },
+            async refreshAutomationStatus() {
+                try {
+                    this.automationStatus = await client.getAutomationStatus();
+                } catch (error) {
+                    this.reportError(error);
+                }
+            },
+            async persistAutomationConfig() {
+                if (!this.automationConfig) {
+                    throw new Error(this.tr('Auto sync settings are unavailable'));
+                }
+
+                this.automationConfig = await client.updateAutomationConfig(
+                    this.automationConfig,
+                    this.syncSelection,
+                );
+                this.automationDraftDirty = false;
+                this.automationStatus = await client.getAutomationStatus();
             },
             async changeSyncMode() {
                 await this.withBusy('mode', async () => {
@@ -241,8 +418,56 @@ export function createTauriTavernSyncApp(options) {
                     });
                     if (next) {
                         this.syncSelection = next;
+                        if (this.automationConfig) {
+                            this.automationConfig.selection = next;
+                            await this.persistAutomationConfig();
+                        }
                     }
                 });
+            },
+            async saveAutomation() {
+                await this.withBusy('automation', async () => {
+                    await this.persistAutomationConfig();
+                });
+            },
+            async setLanServerAutoStart(enabled) {
+                if (!this.automationConfig) {
+                    return;
+                }
+
+                const previous = this.automationConfig.lanServerAutoStart;
+                this.automationConfig.lanServerAutoStart = enabled;
+                try {
+                    await this.withBusyStrict('automation-port', async () => {
+                        await this.persistAutomationConfig();
+                    });
+                } catch (error) {
+                    this.automationConfig.lanServerAutoStart = previous;
+                    this.reportError(error);
+                }
+            },
+            async setAutoSyncEnabled(enabled) {
+                if (!this.automationConfig) {
+                    return;
+                }
+
+                const previous = this.automationConfig.autoSyncEnabled;
+                this.automationConfig.autoSyncEnabled = enabled;
+                if (enabled) {
+                    this.automationExpanded = true;
+                }
+
+                try {
+                    await this.withBusyStrict('automation', async () => {
+                        await this.persistAutomationConfig();
+                    });
+                } catch (error) {
+                    this.automationConfig.autoSyncEnabled = previous;
+                    if (enabled) {
+                        this.automationExpanded = true;
+                    }
+                    this.reportError(error);
+                }
             },
             async startServer() {
                 await this.withBusy('start', async () => {
@@ -414,7 +639,95 @@ export function createTauriTavernSyncApp(options) {
                             :disabled="isBusy"
                             @click="enablePairing"
                         />
+                        <SyncSwitch
+                            :model-value="automationConfig.lanServerAutoStart"
+                            :label="tr('Auto-start port')"
+                            :title="tr('Start sync port with app startup')"
+                            :disabled="isBusy || !automationConfig"
+                            @update:model-value="setLanServerAutoStart"
+                        />
                     </div>
+                </section>
+
+                <section class="tt-sync-section tt-sync-automation-section">
+                    <details
+                        class="tt-sync-automation-disclosure"
+                        :open="automationExpanded"
+                        @toggle="automationExpanded = $event.currentTarget.open"
+                    >
+                        <summary>
+                            <span class="tt-sync-automation-title">
+                                <b>{{ tr('Auto sync') }}</b>
+                            </span>
+                            <span class="tt-sync-automation-summary-meta">
+                                <small>{{ automationSummaryText }}</small>
+                                <span
+                                    class="tt-sync-automation-switch-wrap"
+                                    @click.stop
+                                    @keydown.stop
+                                >
+                                    <SyncSwitch
+                                        :model-value="automationConfig.autoSyncEnabled"
+                                        :title="tr('Auto upload while app is running')"
+                                        :disabled="isBusy || !automationConfig"
+                                        @update:model-value="setAutoSyncEnabled"
+                                    />
+                                </span>
+                                <i class="fa-solid fa-chevron-down tt-sync-automation-chevron" aria-hidden="true"></i>
+                            </span>
+                        </summary>
+                        <div class="tt-sync-automation-body">
+                            <div class="tt-sync-automation-grid">
+                                <label class="tt-sync-field-row">
+                                    <span>{{ tr('Interval') }}</span>
+                                    <select
+                                        :value="automationConfig.intervalMinutes"
+                                        class="text_pole"
+                                        :disabled="isBusy || !automationConfig"
+                                        @change="setAutomationInterval($event.target.value)"
+                                    >
+                                        <option v-for="minutes in automationIntervals" :key="minutes" :value="minutes">
+                                            {{ automationIntervalLabel(minutes) }}
+                                        </option>
+                                    </select>
+                                </label>
+                                <label class="tt-sync-field-row tt-sync-field-row-wide">
+                                    <span>{{ tr('Target') }}</span>
+                                    <select
+                                        v-model="automationTargetValue"
+                                        class="text_pole"
+                                        :disabled="isBusy || !automationConfig"
+                                    >
+                                        <option value="">{{ tr('Choose target') }}</option>
+                                        <option
+                                            v-for="target in automationTargets"
+                                            :key="target.value"
+                                            :value="target.value"
+                                            :disabled="target.disabled"
+                                        >
+                                            {{ target.label }}
+                                        </option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="tt-sync-auto-warning">
+                                <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                                <span>{{ tr('Auto sync only uploads from this device. Do not use or edit data on the target device while it is syncing; Mirror mode may delete target files.') }}</span>
+                            </div>
+                            <div class="tt-sync-scope-row">
+                                <div class="tt-sync-scope-current">
+                                    <b>{{ tr('Auto sync status') }}</b>
+                                    <span class="tt-sync-muted">{{ automationStatusText }}</span>
+                                </div>
+                                <SyncButton
+                                    :label="tr('Save')"
+                                    icon="fa-floppy-disk"
+                                    :disabled="automationSaveDisabled"
+                                    @click="saveAutomation"
+                                />
+                            </div>
+                        </div>
+                    </details>
                 </section>
 
                 <SyncSection :title="tr('Sync content')">

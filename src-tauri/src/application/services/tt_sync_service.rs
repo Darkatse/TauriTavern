@@ -189,6 +189,23 @@ impl TtSyncService {
 
         Ok(())
     }
+
+    pub async fn push_for_automation(
+        &self,
+        server_device_id: &str,
+        mode: SyncMode,
+        options: Option<SyncV2OperationOptions>,
+    ) -> Result<crate::domain::models::tt_sync::TtSyncCompletedEvent, DomainError> {
+        let server_device_id = DeviceId::new(server_device_id.to_string())
+            .map_err(|error| DomainError::InvalidData(error.to_string()))?;
+        let options = resolve_sync_v2_options(options)?;
+
+        let permit = self.runtime.try_acquire_sync_permit()?;
+        let _origin = self.runtime.auto_event_guard();
+        let result = push_to_server(self.runtime.clone(), &server_device_id, mode, options).await;
+        drop(permit);
+        result
+    }
 }
 
 fn now_ms() -> u64 {

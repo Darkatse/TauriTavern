@@ -41,6 +41,29 @@ export const SyncSection = {
     `,
 };
 
+export const SyncSwitch = {
+    props: {
+        modelValue: { type: Boolean, required: true },
+        disabled: { type: Boolean, default: false },
+        label: { type: String, default: '' },
+        title: { type: String, default: '' },
+    },
+    emits: ['update:modelValue'],
+    template: `
+        <label class="tt-sync-switch" :class="{ 'is-disabled': disabled }" :title="title || label">
+            <input
+                type="checkbox"
+                :checked="modelValue"
+                :disabled="disabled"
+                :aria-label="title || label"
+                @change="$emit('update:modelValue', $event.target.checked)"
+            />
+            <span class="tt-sync-switch-track" aria-hidden="true"></span>
+            <span v-if="label" class="tt-sync-switch-label">{{ label }}</span>
+        </label>
+    `,
+};
+
 export const SyncTargetRow = {
     props: {
         target: { type: Object, required: true },

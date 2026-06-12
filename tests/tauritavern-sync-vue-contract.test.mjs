@@ -62,6 +62,67 @@ test('TauriTavern Sync listeners keep event contract while delegating progress U
     assert.doesNotMatch(source, /from\s+['"]vue(?:\/|['"])/);
 });
 
+test('TauriTavern Sync automation status events refresh status only', async () => {
+    const constants = await readRepoFile('src/scripts/tauri/setting/setting-panel/constants.js');
+    const listeners = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-listeners.js');
+    const popup = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-popup.js');
+    const entry = await readRepoFile('src/scripts/tauri/setting/sync-app/index.js');
+
+    assert.match(constants, /SYNC_AUTOMATION_STATUS_CHANGED_EVENT/);
+
+    const statusBlock = listeners.slice(
+        listeners.indexOf("listen('sync_auto:status'"),
+        listeners.indexOf("listen('sync_auto:toast'"),
+    );
+    assert.match(statusBlock, /SYNC_AUTOMATION_STATUS_CHANGED_EVENT/);
+    assert.doesNotMatch(statusBlock, /SYNC_AUTOMATION_CHANGED_EVENT/);
+
+    const toastBlock = listeners.slice(listeners.indexOf("listen('sync_auto:toast'"));
+    assert.match(toastBlock, /SYNC_AUTOMATION_STATUS_CHANGED_EVENT/);
+
+    assert.match(popup, /const refreshAutomationStatus = \(\) => \{[\s\S]*appHandle\.refreshAutomationStatus\(\)/);
+    assert.match(popup, /addEventListener\(SYNC_AUTOMATION_STATUS_CHANGED_EVENT,\s*refreshAutomationStatus\)/);
+    assert.doesNotMatch(popup, /addEventListener\(SYNC_AUTOMATION_STATUS_CHANGED_EVENT,\s*refresh\)/);
+    assert.match(entry, /refreshAutomationStatus:\s*\(\)\s*=>\s*instance\.refreshAutomationStatus\(\)/);
+});
+
+test('TauriTavern Sync automation success toasts include next run time', async () => {
+    const listeners = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-listeners.js');
+    const service = await readRepoFile('src-tauri/src/application/services/sync_automation_service.rs');
+    const model = await readRepoFile('src-tauri/src/domain/models/sync_automation.rs');
+    const zhCn = await readRepoFile('src/locales/zh-cn.json');
+    const zhTw = await readRepoFile('src/locales/zh-tw.json');
+
+    assert.match(model, /pub next_run_at_ms:\s*Option<u64>/);
+    assert.match(service, /emit_toast_with_next_run/);
+    assert.match(service, /Auto sync upload has started as scheduled\./);
+    assert.match(service, /Auto sync upload has completed as scheduled\./);
+    assert.match(listeners, /formatTimestamp/);
+    assert.match(listeners, /payload\?\.next_run_at_ms/);
+    assert.match(listeners, /Auto sync upload has started as scheduled\. Next sync time: \$\{nextRun\}/);
+    assert.match(listeners, /Auto sync upload has completed as scheduled\. Next sync time: \$\{nextRun\}/);
+    assert.match(zhCn, /自动同步上传已经按计划开始。/);
+    assert.match(zhCn, /自动同步上传已经按计划完成。/);
+    assert.match(zhCn, /自动同步上传已经按计划开始，下次同步时间是\$\{0\}/);
+    assert.match(zhCn, /自动同步上传已经按计划完成，下次同步时间是\$\{0\}/);
+    assert.match(zhTw, /自動同步上傳已按計畫開始。/);
+    assert.match(zhTw, /自動同步上傳已按計畫完成。/);
+    assert.match(zhTw, /自動同步上傳已按計畫開始，下次同步時間是\$\{0\}/);
+    assert.match(zhTw, /自動同步上傳已按計畫完成，下次同步時間是\$\{0\}/);
+});
+
+test('TauriTavern Sync automation draft survives background refreshes', async () => {
+    const source = await readRepoFile('src/scripts/tauri/setting/sync-app/SyncApp.js');
+
+    assert.match(source, /automationDraftDirty:\s*false/);
+    assert.match(source, /setAutomationInterval\(value\)\s*\{[\s\S]*this\.automationDraftDirty\s*=\s*true/);
+    assert.match(source, /this\.automationConfig\.target\s*=\s*parseAutomationTargetValue\(value\);[\s\S]*this\.automationDraftDirty\s*=\s*true/);
+    assert.match(source, /if \(!this\.automationDraftDirty\) \{[\s\S]*this\.automationConfig\s*=\s*snapshot\.automationConfig/);
+    assert.match(source, /async refreshAutomationStatus\(\)\s*\{[\s\S]*client\.getAutomationStatus\(\)/);
+    assert.match(source, /this\.automationDraftDirty\s*=\s*false/);
+    assert.match(source, /@change="setAutomationInterval\(\$event\.target\.value\)"/);
+});
+
 test('Rspack exposes a dedicated TauriTavern Sync Vue entry', async () => {
     const source = await readRepoFile('rspack.config.js');
 
