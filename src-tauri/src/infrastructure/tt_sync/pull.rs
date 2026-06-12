@@ -26,7 +26,7 @@ use crate::infrastructure::tt_sync::bundle::{
 use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 use crate::infrastructure::tt_sync::transfer;
-use crate::infrastructure::tt_sync::v2_api::TtSyncV2Api;
+use crate::infrastructure::tt_sync::v2_api::{TtSyncV2Api, ensure_dataset_scope_v1};
 
 pub async fn pull_from_server(
     runtime: Arc<TtSyncRuntime>,
@@ -38,7 +38,7 @@ pub async fn pull_from_server(
 
     let api = TtSyncV2Api::new(server.base_url.clone(), server.spki_sha256.clone())?;
     let status = api.status().await?;
-    status.ensure_dataset_scope_v1()?;
+    ensure_dataset_scope_v1(&status, "TT-Sync server")?;
     let features = status.features;
     let prefer_bundle = features.iter().any(|f| f == FEATURE_BUNDLE_V1);
     let accept_zstd = prefer_bundle && features.iter().any(|f| f == FEATURE_ZSTD_V1);

@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::domain::models::lan_sync::{LanSyncPairedDevice, LanSyncStatus, LanSyncSyncMode};
+use crate::domain::models::lan_sync::{LanSyncPairedDeviceSummary, LanSyncStatus, LanSyncSyncMode};
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
@@ -64,6 +64,9 @@ pub struct LanSyncPairingInfoDto {
     pub pair_uri: String,
     pub qr_svg: String,
     pub expires_at_ms: u64,
+    pub v2_address: Option<String>,
+    pub v2_pair_uri: Option<String>,
+    pub v2_qr_svg: Option<String>,
 }
 
 #[tauri::command]
@@ -83,6 +86,9 @@ pub async fn lan_sync_enable_pairing(
             pair_uri: info.pair_uri,
             qr_svg: info.qr_svg,
             expires_at_ms: info.expires_at_ms,
+            v2_address: info.v2_address,
+            v2_pair_uri: info.v2_pair_uri,
+            v2_qr_svg: info.v2_qr_svg,
         })
         .map_err(map_command_error("Failed to enable LAN sync pairing"))
 }
@@ -104,6 +110,9 @@ pub async fn lan_sync_get_pairing_info(
             pair_uri: info.pair_uri,
             qr_svg: info.qr_svg,
             expires_at_ms: info.expires_at_ms,
+            v2_address: info.v2_address,
+            v2_pair_uri: info.v2_pair_uri,
+            v2_qr_svg: info.v2_qr_svg,
         })
         .map_err(map_command_error("Failed to get LAN sync pairing info"))
 }
@@ -112,16 +121,18 @@ pub async fn lan_sync_get_pairing_info(
 pub struct LanSyncPairedDeviceDto {
     pub device_id: String,
     pub device_name: String,
+    pub protocol_version: u8,
     pub last_known_address: Option<String>,
     pub paired_at_ms: u64,
     pub last_sync_ms: Option<u64>,
 }
 
-impl From<LanSyncPairedDevice> for LanSyncPairedDeviceDto {
-    fn from(device: LanSyncPairedDevice) -> Self {
+impl From<LanSyncPairedDeviceSummary> for LanSyncPairedDeviceDto {
+    fn from(device: LanSyncPairedDeviceSummary) -> Self {
         Self {
             device_id: device.device_id,
             device_name: device.device_name,
+            protocol_version: device.protocol_version,
             last_known_address: device.last_known_address,
             paired_at_ms: device.paired_at_ms,
             last_sync_ms: device.last_sync_ms,

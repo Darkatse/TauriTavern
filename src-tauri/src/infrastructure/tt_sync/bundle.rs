@@ -5,7 +5,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 use crate::domain::errors::DomainError;
 
-pub(crate) const BUNDLE_CONTENT_TYPE: &str = "application/x-ttsync-bundle";
 pub(crate) const FEATURE_BUNDLE_V1: &str = "bundle_v1";
 pub(crate) const FEATURE_ZSTD_V1: &str = "zstd_v1";
 

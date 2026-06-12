@@ -1,0 +1,769 @@
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use axum::{
+    Json, Router,
+    extract::{Query, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::post,
+};
+use serde_json::json;
+use tokio::io::AsyncRead;
+use ttsync_contract::peer::{DeviceId, PeerGrant};
+use ttsync_core::dataset::ResolvedDatasetPolicy;
+use ttsync_core::error::SyncError;
+use ttsync_core::ports::{ManifestStore, PeerStore};
+use ttsync_core::session::{SessionManager, SessionManagerConfig};
+use ttsync_http::server::{ServerState, build_transfer_router, default_status_response};
+use ttsync_http::tls::{SelfManagedTls, TlsProvider};
+
+use crate::domain::errors::DomainError;
+use crate::domain::models::lan_sync::{LanSyncV2Identity, LanSyncV2PairedDevice};
+use crate::infrastructure::lan_sync::v2::pairing::{
+    LanSyncV2PairCompleteRequest, LanSyncV2PairCompleteResponse, LanSyncV2PairingCoordinator,
+    decode_device_pubkey_b64url, default_lan_v2_permissions, host_for_pairing_prompt,
+    validate_https_base_url,
+};
+use crate::infrastructure::lan_sync::v2::store::LanSyncV2Store;
+use crate::infrastructure::sync_fs;
+use crate::infrastructure::tt_sync::fs::scan_manifest_with_policy;
+use crate::infrastructure::tt_sync::transfer::resolve_to_local;
+use crate::infrastructure::tt_sync::v2_api::{domain_error_to_sync, sync_error_to_domain};
+
+const LAN_HTTPS_FEATURE_V1: &str = "lan_https_v1";
+const LAN_SESSION_FEATURE_V1: &str = "lan_session_v1";
+
+#[async_trait]
+pub trait LanSyncV2PullRequestHandler: Send + Sync {
+    async fn accept_pull_request(&self, peer_device_id: DeviceId) -> Result<(), DomainError>;
+}
+
+pub struct LanSyncV2ServerHandle {
+    pub addr: SocketAddr,
+    pub spki_sha256: String,
+    handle: axum_server::Handle<SocketAddr>,
+    _task: tokio::task::JoinHandle<()>,
+}
+
+impl LanSyncV2ServerHandle {
+    pub fn shutdown(self) {
+        self.handle.graceful_shutdown(Some(Duration::from_secs(5)));
+    }
+}
+
+type SharedLanServerState = ServerState<LanSyncV2ManifestStore, LanSyncV2PeerStore>;
+
+pub async fn spawn_lan_sync_v2_server(
+    addr: SocketAddr,
+    sync_root: PathBuf,
+    store: LanSyncV2Store,
+    pairing: Arc<dyn LanSyncV2PairingCoordinator>,
+    pull_requests: Arc<dyn LanSyncV2PullRequestHandler>,
+) -> Result<LanSyncV2ServerHandle, DomainError> {
+    let identity = store.load_or_create_identity().await?;
+    let tls = SelfManagedTls::load_or_create(&store.state_dir()).map_err(sync_error_to_domain)?;
+    let spki_sha256 = tls.spki_sha256().to_string();
+
+    let manifest_store = Arc::new(LanSyncV2ManifestStore::new(sync_root));
+    let peer_store = Arc::new(LanSyncV2PeerStore::new(store.clone()));
+    let session_manager = Arc::new(SessionManager::new(SessionManagerConfig::default()));
+
+    let mut status = default_status_response();
+    status.protocol = "lan-v2".to_string();
+    status.server = "tauritavern-lan".to_string();
+    status.device_id = Some(identity.device_id.clone());
+    status.device_name = Some(identity.device_name.clone());
+    status.spki_sha256 = Some(spki_sha256.clone());
+    append_feature(&mut status.features, LAN_HTTPS_FEATURE_V1);
+    append_feature(&mut status.features, LAN_SESSION_FEATURE_V1);
+
+    let shared_state = Arc::new(
+        ServerState::new(
+            identity.device_id.clone(),
+            identity.device_name.clone(),
+            manifest_store,
+            peer_store,
+            session_manager,
+        )
+        .with_status(status),
+    );
+    let lan_state = Arc::new(LanSyncV2LanState {
+        identity,
+        store,
+        pairing,
+        pull_requests,
+        shared: shared_state.clone(),
+    });
+
+    let app = build_transfer_router(shared_state).merge(
+        Router::new()
+            .route("/v2/lan/pair/complete", post(handle_lan_pair_complete))
+            .route("/v2/lan/pull-request", post(handle_pull_request))
+            .with_state(lan_state),
+    );
+
+    spawn_router(addr, Arc::new(tls), spki_sha256, app).await
+}
+
+async fn spawn_router(
+    addr: SocketAddr,
+    tls: Arc<dyn TlsProvider>,
+    spki_sha256: String,
+    app: Router,
+) -> Result<LanSyncV2ServerHandle, DomainError> {
+    let server_config = tls.server_config().map_err(sync_error_to_domain)?;
+    let tls_config = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(server_config));
+
+    let listener = std::net::TcpListener::bind(addr)
+        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+    let handle = axum_server::Handle::<SocketAddr>::new();
+    let mut server = axum_server::from_tcp_rustls(listener, tls_config)
+        .map_err(|error| DomainError::InternalError(error.to_string()))?
+        .handle(handle.clone());
+    server
+        .http_builder()
+        .http2()
+        .max_concurrent_streams(Some(256))
+        .initial_connection_window_size(Some(4 * 1024 * 1024))
+        .initial_stream_window_size(Some(1024 * 1024));
+
+    let task = tokio::spawn(async move {
+        if let Err(error) = server.serve(app.into_make_service()).await {
+            tracing::error!("LAN Sync v2 server failed: {}", error);
+        }
+    });
+
+    Ok(LanSyncV2ServerHandle {
+        addr,
+        spki_sha256,
+        handle,
+        _task: task,
+    })
+}
+
+#[derive(Clone)]
+struct LanSyncV2ManifestStore {
+    sync_root: PathBuf,
+}
+
+impl LanSyncV2ManifestStore {
+    fn new(sync_root: PathBuf) -> Self {
+        Self { sync_root }
+    }
+}
+
+impl ManifestStore for LanSyncV2ManifestStore {
+    fn scan(
+        &self,
+        policy: ResolvedDatasetPolicy,
+    ) -> impl std::future::Future<Output = Result<ttsync_contract::manifest::ManifestV2, SyncError>> + Send
+    {
+        let sync_root = self.sync_root.clone();
+        async move {
+            scan_manifest_with_policy(sync_root, policy)
+                .await
+                .map_err(domain_error_to_sync)
+        }
+    }
+
+    fn read_file(
+        &self,
+        path: &ttsync_contract::path::SyncPath,
+    ) -> impl std::future::Future<Output = Result<Box<dyn AsyncRead + Send + Unpin>, SyncError>> + Send
+    {
+        let sync_root = self.sync_root.clone();
+        let path = path.clone();
+        async move {
+            let full_path = resolve_to_local(&sync_root, &path);
+            let file = tokio::fs::File::open(&full_path)
+                .await
+                .map_err(|error| SyncError::Io(error.to_string()))?;
+            Ok(Box::new(file) as Box<dyn AsyncRead + Send + Unpin>)
+        }
+    }
+
+    fn write_file(
+        &self,
+        path: &ttsync_contract::path::SyncPath,
+        data: &mut (dyn AsyncRead + Send + Unpin),
+        modified_ms: u64,
+    ) -> impl std::future::Future<Output = Result<(), SyncError>> + Send {
+        let sync_root = self.sync_root.clone();
+        let path = path.clone();
+        async move {
+            let full_path = resolve_to_local(&sync_root, &path);
+            sync_fs::write_file_atomic(&full_path, data, modified_ms)
+                .await
+                .map_err(domain_error_to_sync)
+        }
+    }
+
+    fn delete_file(
+        &self,
+        path: &ttsync_contract::path::SyncPath,
+    ) -> impl std::future::Future<Output = Result<(), SyncError>> + Send {
+        let sync_root = self.sync_root.clone();
+        let path = path.clone();
+        async move {
+            let full_path = resolve_to_local(&sync_root, &path);
+            tokio::fs::remove_file(&full_path)
+                .await
+                .map_err(|error| SyncError::Io(error.to_string()))
+        }
+    }
+}
+
+#[derive(Clone)]
+struct LanSyncV2PeerStore {
+    store: LanSyncV2Store,
+}
+
+impl LanSyncV2PeerStore {
+    fn new(store: LanSyncV2Store) -> Self {
+        Self { store }
+    }
+}
+
+impl PeerStore for LanSyncV2PeerStore {
+    fn get_peer(
+        &self,
+        device_id: &DeviceId,
+    ) -> impl std::future::Future<Output = Result<PeerGrant, SyncError>> + Send {
+        let store = self.store.clone();
+        let device_id = device_id.clone();
+        async move {
+            store
+                .get_peer_grant(&device_id)
+                .await
+                .map_err(domain_error_to_sync)
+        }
+    }
+
+    fn save_peer(
+        &self,
+        grant: PeerGrant,
+    ) -> impl std::future::Future<Output = Result<(), SyncError>> + Send {
+        let store = self.store.clone();
+        async move {
+            store
+                .save_peer_grant(grant)
+                .await
+                .map_err(domain_error_to_sync)
+        }
+    }
+
+    fn remove_peer(
+        &self,
+        device_id: &DeviceId,
+    ) -> impl std::future::Future<Output = Result<(), SyncError>> + Send {
+        let store = self.store.clone();
+        let device_id = device_id.clone();
+        async move {
+            store
+                .remove_paired_device(&device_id)
+                .await
+                .map_err(domain_error_to_sync)
+        }
+    }
+
+    fn list_peers(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<PeerGrant>, SyncError>> + Send {
+        let store = self.store.clone();
+        async move {
+            store
+                .load_paired_devices()
+                .await
+                .map(|devices| {
+                    devices
+                        .into_iter()
+                        .map(|device| device.grant)
+                        .collect::<Vec<_>>()
+                })
+                .map_err(domain_error_to_sync)
+        }
+    }
+}
+
+struct LanSyncV2LanState {
+    identity: LanSyncV2Identity,
+    store: LanSyncV2Store,
+    pairing: Arc<dyn LanSyncV2PairingCoordinator>,
+    pull_requests: Arc<dyn LanSyncV2PullRequestHandler>,
+    shared: Arc<SharedLanServerState>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PairQuery {
+    token: String,
+}
+
+async fn handle_lan_pair_complete(
+    State(state): State<Arc<LanSyncV2LanState>>,
+    Query(query): Query<PairQuery>,
+    Json(request): Json<LanSyncV2PairCompleteRequest>,
+) -> Result<Json<LanSyncV2PairCompleteResponse>, ApiError> {
+    let session = state
+        .pairing
+        .active_pairing_session()
+        .await
+        .ok_or_else(|| ApiError::unauthorized("Pairing not enabled"))?;
+
+    if query.token != session.token {
+        return Err(ApiError::unauthorized("Invalid pairing token"));
+    }
+    if now_ms() > session.expires_at_ms {
+        return Err(ApiError::unauthorized("Pairing expired"));
+    }
+    if request.device_id == state.identity.device_id {
+        return Err(ApiError::invalid_data(
+            "Cannot pair LAN Sync v2 device with itself",
+        ));
+    }
+
+    validate_https_base_url(&request.client_base_url).map_err(ApiError::from)?;
+    if request.client_spki_sha256.trim().is_empty() {
+        return Err(ApiError::invalid_data("Missing LAN Sync v2 client SPKI"));
+    }
+    let public_key = decode_device_pubkey_b64url(&request.device_pubkey).map_err(ApiError::from)?;
+
+    let peer_ip = host_for_pairing_prompt(&request.client_base_url).map_err(ApiError::from)?;
+    let accepted = state
+        .pairing
+        .request_pairing_decision(
+            request.device_id.to_string(),
+            request.device_name.clone(),
+            peer_ip,
+        )
+        .await
+        .map_err(ApiError::from)?;
+
+    if !accepted {
+        return Err(ApiError::forbidden("Pairing rejected"));
+    }
+
+    let permissions = default_lan_v2_permissions();
+    let paired_at_ms = now_ms();
+    state
+        .store
+        .upsert_paired_device(LanSyncV2PairedDevice {
+            grant: PeerGrant {
+                device_id: request.device_id,
+                device_name: request.device_name,
+                public_key,
+                permissions,
+                paired_at_ms,
+                last_sync_ms: None,
+            },
+            base_url: request.client_base_url,
+            spki_sha256: request.client_spki_sha256,
+        })
+        .await
+        .map_err(ApiError::from)?;
+
+    state.pairing.clear_pairing_session().await;
+
+    let server_device_pubkey =
+        ttsync_core::crypto::device_pubkey_b64url(&state.identity.ed25519_seed)
+            .map_err(ApiError::from)?;
+    Ok(Json(LanSyncV2PairCompleteResponse {
+        server_device_id: state.identity.device_id.clone(),
+        server_device_name: state.identity.device_name.clone(),
+        server_device_pubkey,
+        granted_permissions: permissions,
+    }))
+}
+
+async fn handle_pull_request(
+    State(state): State<Arc<LanSyncV2LanState>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let peer = state
+        .shared
+        .authenticate_headers(&headers)
+        .await
+        .map_err(ApiError::from)?;
+    state
+        .pull_requests
+        .accept_pull_request(peer.device_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "ok": true,
+        })),
+    ))
+}
+
+#[derive(Debug)]
+struct ApiError {
+    status_override: Option<StatusCode>,
+    error: DomainError,
+}
+
+impl ApiError {
+    fn invalid_data(message: impl Into<String>) -> Self {
+        Self::from(DomainError::InvalidData(message.into()))
+    }
+
+    fn unauthorized(message: impl Into<String>) -> Self {
+        Self::from(DomainError::AuthenticationError(message.into()))
+    }
+
+    fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status_override: Some(StatusCode::FORBIDDEN),
+            error: DomainError::AuthenticationError(message.into()),
+        }
+    }
+}
+
+impl From<DomainError> for ApiError {
+    fn from(error: DomainError) -> Self {
+        Self {
+            status_override: None,
+            error,
+        }
+    }
+}
+
+impl From<SyncError> for ApiError {
+    fn from(error: SyncError) -> Self {
+        Self::from(sync_error_to_domain(error))
+    }
+}
+
+fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let (status, message) = match self.error {
+            DomainError::NotFound(message) => (StatusCode::NOT_FOUND, message),
+            DomainError::InvalidData(message) => (StatusCode::BAD_REQUEST, message),
+            DomainError::AuthenticationError(message) => (StatusCode::UNAUTHORIZED, message),
+            DomainError::Cancelled(message) => (StatusCode::from_u16(499).unwrap(), message),
+            DomainError::InternalError(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
+            DomainError::RateLimited { message } => (StatusCode::TOO_MANY_REQUESTS, message),
+            DomainError::Transient(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
+            DomainError::UpstreamFailure(failure) => {
+                (StatusCode::SERVICE_UNAVAILABLE, failure.to_string())
+            }
+            DomainError::WorkspacePathIsDirectory { path } => (
+                StatusCode::CONFLICT,
+                format!("Workspace path is a directory: {path}"),
+            ),
+            DomainError::WorkspaceWriteConflict { kind, .. } => (
+                StatusCode::CONFLICT,
+                format!("Workspace write conflict: {kind}"),
+            ),
+        };
+        let status = self.status_override.unwrap_or(status);
+
+        (
+            status,
+            Json(json!({
+                "ok": false,
+                "error": message,
+            })),
+        )
+            .into_response()
+    }
+}
+
+fn append_feature(features: &mut Vec<String>, feature: &str) {
+    if !features.iter().any(|item| item == feature) {
+        features.push(feature.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::path::PathBuf;
+
+    use async_trait::async_trait;
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1};
+    use ttsync_contract::manifest::ManifestV2;
+    use ttsync_contract::peer::Permissions;
+    use ttsync_contract::sync::SyncMode;
+    use ttsync_core::dataset::tauri_tavern_default_selection;
+    use uuid::Uuid;
+
+    use crate::infrastructure::lan_sync::v2::client::{LanSyncV2Api, complete_pairing};
+    use crate::infrastructure::lan_sync::v2::pairing::{
+        LanSyncV2PairingCoordinator, LanSyncV2PairingSession,
+    };
+
+    fn temp_default_user_dir() -> PathBuf {
+        std::env::temp_dir().join(format!("tauritavern-lan-v2-server-{}", Uuid::new_v4()))
+    }
+
+    struct TestPairingCoordinator {
+        session: Option<LanSyncV2PairingSession>,
+        accept: bool,
+    }
+
+    struct NoopPullRequestHandler;
+
+    #[async_trait]
+    impl LanSyncV2PullRequestHandler for NoopPullRequestHandler {
+        async fn accept_pull_request(&self, _peer_device_id: DeviceId) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl LanSyncV2PairingCoordinator for TestPairingCoordinator {
+        async fn active_pairing_session(&self) -> Option<LanSyncV2PairingSession> {
+            self.session.clone()
+        }
+
+        async fn request_pairing_decision(
+            &self,
+            _peer_device_id: String,
+            _peer_device_name: String,
+            _peer_ip: String,
+        ) -> Result<bool, DomainError> {
+            Ok(self.accept)
+        }
+
+        async fn clear_pairing_session(&self) {}
+    }
+
+    fn inactive_pairing() -> Arc<dyn LanSyncV2PairingCoordinator> {
+        Arc::new(TestPairingCoordinator {
+            session: None,
+            accept: false,
+        })
+    }
+
+    fn accepting_pairing(token: &str) -> Arc<dyn LanSyncV2PairingCoordinator> {
+        Arc::new(TestPairingCoordinator {
+            session: Some(LanSyncV2PairingSession {
+                token: token.to_string(),
+                expires_at_ms: now_ms() + 60_000,
+            }),
+            accept: true,
+        })
+    }
+
+    fn noop_pull_requests() -> Arc<dyn LanSyncV2PullRequestHandler> {
+        Arc::new(NoopPullRequestHandler)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn status_is_served_over_spki_pinned_https() {
+        let default_user_dir = temp_default_user_dir();
+        let store = LanSyncV2Store::new(default_user_dir.clone());
+        let handle = spawn_lan_sync_v2_server(
+            "127.0.0.1:0".parse().unwrap(),
+            default_user_dir.clone(),
+            store,
+            inactive_pairing(),
+            noop_pull_requests(),
+        )
+        .await
+        .expect("spawn LAN Sync v2 server");
+
+        let api = LanSyncV2Api::new(
+            format!("https://127.0.0.1:{}", handle.addr.port()),
+            handle.spki_sha256.clone(),
+        )
+        .expect("pinned api");
+
+        let status = api.status().await.expect("status");
+        assert!(status.ok);
+        assert_eq!(status.protocol, "lan-v2");
+        assert_eq!(status.dataset_policy_version, Some(DATASET_POLICY_VERSION));
+        assert!(
+            status
+                .features
+                .iter()
+                .any(|item| item == LAN_HTTPS_FEATURE_V1)
+        );
+        assert!(
+            status
+                .features
+                .iter()
+                .any(|item| item == LAN_SESSION_FEATURE_V1)
+        );
+        assert!(
+            status
+                .features
+                .iter()
+                .any(|item| item == DATASET_SCOPE_FEATURE_V1)
+        );
+
+        handle.shutdown();
+        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pair_complete_stores_peer_grant() {
+        let default_user_dir = temp_default_user_dir();
+        let store = LanSyncV2Store::new(default_user_dir.clone());
+        let token = "pair-token";
+        let handle = spawn_lan_sync_v2_server(
+            "127.0.0.1:0".parse().unwrap(),
+            default_user_dir.clone(),
+            store.clone(),
+            accepting_pairing(token),
+            noop_pull_requests(),
+        )
+        .await
+        .expect("spawn LAN Sync v2 server");
+
+        let peer_device_id =
+            DeviceId::new("550e8400-e29b-41d4-a716-446655440000".to_string()).unwrap();
+        let response = complete_pairing(
+            &format!("https://127.0.0.1:{}", handle.addr.port()),
+            &handle.spki_sha256,
+            token,
+            &LanSyncV2PairCompleteRequest {
+                device_id: peer_device_id.clone(),
+                device_name: "Peer".to_string(),
+                device_pubkey: URL_SAFE_NO_PAD.encode([9u8; 32]),
+                client_base_url: "https://127.0.0.1:60000".to_string(),
+                client_spki_sha256: "client-spki".to_string(),
+            },
+        )
+        .await
+        .expect("complete pair");
+
+        assert!(response.granted_permissions.read);
+        assert!(response.granted_permissions.mirror_delete);
+        assert!(!response.granted_permissions.write);
+        assert!(!response.server_device_pubkey.is_empty());
+
+        let peer = store
+            .get_paired_device(&peer_device_id)
+            .await
+            .expect("stored peer");
+        assert_eq!(peer.base_url, "https://127.0.0.1:60000");
+        assert_eq!(peer.spki_sha256, "client-spki");
+        assert_eq!(peer.grant.public_key, vec![9u8; 32]);
+
+        handle.shutdown();
+        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pull_plan_and_file_download_use_session_and_dataset_scope() {
+        let sync_root = temp_default_user_dir();
+        tokio::fs::create_dir_all(sync_root.join("default-user/chats"))
+            .await
+            .expect("create sync scope");
+        tokio::fs::write(
+            sync_root.join("default-user/chats/hello.json"),
+            br#"{"hello":true}"#,
+        )
+        .await
+        .expect("write source file");
+
+        let store = LanSyncV2Store::new(sync_root.clone());
+        let peer_device_id =
+            DeviceId::new("550e8400-e29b-41d4-a716-446655440001".to_string()).unwrap();
+        let peer_seed = URL_SAFE_NO_PAD.encode([3u8; 32]);
+        let peer_pubkey = URL_SAFE_NO_PAD
+            .decode(ttsync_core::crypto::device_pubkey_b64url(&peer_seed).unwrap())
+            .unwrap();
+        store
+            .upsert_paired_device(LanSyncV2PairedDevice {
+                grant: PeerGrant {
+                    device_id: peer_device_id.clone(),
+                    device_name: "Peer".to_string(),
+                    public_key: peer_pubkey,
+                    permissions: Permissions {
+                        read: true,
+                        write: false,
+                        mirror_delete: true,
+                    },
+                    paired_at_ms: now_ms(),
+                    last_sync_ms: None,
+                },
+                base_url: "https://127.0.0.1:60000".to_string(),
+                spki_sha256: "peer-spki".to_string(),
+            })
+            .await
+            .expect("store peer");
+
+        let handle = spawn_lan_sync_v2_server(
+            "127.0.0.1:0".parse().unwrap(),
+            sync_root.clone(),
+            store,
+            inactive_pairing(),
+            noop_pull_requests(),
+        )
+        .await
+        .expect("spawn LAN Sync v2 server");
+
+        let api = LanSyncV2Api::new(
+            format!("https://127.0.0.1:{}", handle.addr.port()),
+            handle.spki_sha256.clone(),
+        )
+        .expect("pinned api");
+        let status = api.status().await.expect("status");
+        crate::infrastructure::tt_sync::v2_api::ensure_dataset_scope_v1(
+            &status,
+            "LAN Sync v2 peer",
+        )
+        .expect("dataset scope feature");
+        let session = api
+            .open_session(&peer_device_id, &peer_seed)
+            .await
+            .expect("open session");
+        let plan = api
+            .pull_plan(
+                &session.session_token,
+                SyncMode::Incremental,
+                tauri_tavern_default_selection(),
+                ManifestV2 { entries: vec![] },
+            )
+            .await
+            .expect("pull plan");
+
+        assert_eq!(plan.files_total, 1);
+        assert_eq!(plan.transfer.len(), 1);
+        assert_eq!(
+            plan.transfer[0].path.as_str(),
+            "default-user/chats/hello.json"
+        );
+
+        let response = api
+            .download_file(
+                &session.session_token,
+                &plan.plan_id,
+                &plan.transfer[0].path,
+            )
+            .await
+            .expect("download file");
+        let bytes = response.bytes().await.expect("download bytes");
+        assert_eq!(&bytes[..], br#"{"hello":true}"#);
+
+        handle.shutdown();
+        let _ = tokio::fs::remove_dir_all(sync_root).await;
+    }
+}

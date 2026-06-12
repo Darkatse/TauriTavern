@@ -55,7 +55,7 @@ pub async fn spawn_lan_sync_server(
             "/v1/sync/plan",
             post(handle_sync_plan).layer(sync_plan_body_limit()),
         )
-        .route("/v1/sync/file/*path", get(handle_sync_file))
+        .route("/v1/sync/file/{*path}", get(handle_sync_file))
         .with_state(runtime);
 
     let task = tokio::spawn(async move {

@@ -62,16 +62,18 @@ flate2 = "1.1.9"
 crc32fast = "1"
 filetime = "0.2"
 miktik = { version = "0.2.0", default-features = false, features = ["openai", "huggingface", "sentencepiece"] }
-axum = { version = "0.7", default-features = false, features = ["http1", "json", "multipart", "tokio"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "multipart", "query", "tokio"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
 local-ip-address = "0.6"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 rustls = "0.23"
 webpki-roots = "1"
 dunce = "1"
 
-# TT-Sync v2 shared contract/scope (crates.io)
+# TT-Sync v2 shared protocol crates. (crates.io)
 ttsync-contract = "2"
 ttsync-core = "2"
+ttsync-http = "2"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-dialog = "2.7.0"

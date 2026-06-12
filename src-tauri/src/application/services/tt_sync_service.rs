@@ -12,11 +12,10 @@ use ttsync_contract::sync::SyncMode;
 use crate::app::AppState;
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncDirection, TtSyncErrorEvent, TtSyncPairedServer};
-use crate::infrastructure::tt_sync::identity::device_pubkey_b64url;
 use crate::infrastructure::tt_sync::pull::pull_from_server;
 use crate::infrastructure::tt_sync::push::push_to_server;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
-use crate::infrastructure::tt_sync::v2_api::TtSyncV2Api;
+use crate::infrastructure::tt_sync::v2_api::{TtSyncV2Api, sync_error_to_domain};
 
 pub struct TtSyncService {
     runtime: Arc<TtSyncRuntime>,
@@ -52,7 +51,8 @@ impl TtSyncService {
         }
 
         let identity = self.runtime.store.load_or_create_identity().await?;
-        let device_pubkey = device_pubkey_b64url(&identity.ed25519_seed)?;
+        let device_pubkey = ttsync_core::crypto::device_pubkey_b64url(&identity.ed25519_seed)
+            .map_err(sync_error_to_domain)?;
 
         let request = PairCompleteRequest {
             device_id: identity.device_id,

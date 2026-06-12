@@ -1,10 +1,4 @@
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use reqwest::Client;
-use serde::Deserialize;
-use url::Url;
-
-use ttsync_contract::canonical::CanonicalRequest;
+use reqwest::{Body, Client, Response};
 use ttsync_contract::dataset::{
     DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1, DatasetSelection,
 };
@@ -12,50 +6,45 @@ use ttsync_contract::manifest::ManifestV2;
 use ttsync_contract::pair::{PairCompleteRequest, PairCompleteResponse};
 use ttsync_contract::path::SyncPath;
 use ttsync_contract::peer::DeviceId;
-use ttsync_contract::plan::{CommitResponse, PlanId, PullPlanRequest, PushPlanRequest, SyncPlan};
-use ttsync_contract::session::{
-    HEADER_DEVICE_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_TIMESTAMP_MS, SessionOpenRequest,
-    SessionOpenResponse, SessionToken,
-};
+use ttsync_contract::plan::{CommitResponse, PlanId, SyncPlan};
+use ttsync_contract::session::{SessionOpenResponse, SessionToken};
+use ttsync_contract::status::StatusResponse;
 use ttsync_contract::sync::SyncMode;
+use ttsync_core::error::SyncError;
+use ttsync_http::client::{
+    SyncClient, SyncClientHttpVersion, SyncClientOptions,
+    bearer_auth_value as shared_bearer_auth_value, ensure_success as shared_ensure_success,
+};
+use url::Url;
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::http_client::apply_default_user_agent;
-use crate::infrastructure::tt_sync::bundle::BUNDLE_CONTENT_TYPE;
-use crate::infrastructure::tt_sync::crypto::{random_base64url, sha256_base64url};
-use crate::infrastructure::tt_sync::identity::sign_ed25519_b64url;
-use crate::infrastructure::tt_sync::tls_pin::build_spki_pinned_tls_config;
+use crate::infrastructure::http_client::APP_USER_AGENT;
 
 #[derive(Clone)]
 pub struct TtSyncV2Api {
-    base_url: String,
-    http: Client,
+    inner: SyncClient,
 }
 
 impl TtSyncV2Api {
     pub fn new(base_url: String, spki_sha256: String) -> Result<Self, DomainError> {
-        let parsed =
-            Url::parse(&base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-        if parsed.scheme() != "https" {
-            return Err(DomainError::InvalidData(format!(
-                "TT-Sync base_url must be https: {}",
-                base_url
-            )));
-        }
+        let inner = SyncClient::with_options(
+            base_url,
+            SyncClientOptions {
+                spki_sha256: Some(spki_sha256),
+                user_agent: Some(APP_USER_AGENT.to_string()),
+                http_version: SyncClientHttpVersion::Http1Only,
+            },
+        )
+        .map_err(sync_error_to_domain)?;
+        Ok(Self { inner })
+    }
 
-        let tls = build_spki_pinned_tls_config(&spki_sha256)?;
+    pub(crate) fn http(&self) -> &Client {
+        self.inner.http()
+    }
 
-        // Bundle transfers are single long streams; HTTP/1.1 avoids h2 flow-control overhead
-        // observed on LAN while keeping the public TT-Sync protocol as plain HTTPS.
-        let builder = apply_default_user_agent(Client::builder())
-            .use_preconfigured_tls(tls)
-            .http1_only();
-
-        let http = builder
-            .build()
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        Ok(Self { base_url, http })
+    pub(crate) fn endpoint_url(&self, path: &str) -> Result<Url, DomainError> {
+        self.inner.endpoint_url(path).map_err(sync_error_to_domain)
     }
 
     pub async fn pair_complete(
@@ -63,46 +52,14 @@ impl TtSyncV2Api {
         token: &str,
         request: &PairCompleteRequest,
     ) -> Result<PairCompleteResponse, DomainError> {
-        let url = pair_complete_url(&self.base_url, token)?;
-
-        let response = self
-            .http
-            .post(url)
-            .json(request)
-            .send()
+        self.inner
+            .pair_complete(token, request)
             .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let response = ensure_success(response, "TT-Sync pairing failed").await?;
-        response
-            .json::<PairCompleteResponse>()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))
+            .map_err(sync_error_to_domain)
     }
 
     pub async fn status(&self) -> Result<StatusResponse, DomainError> {
-        let url = status_url(&self.base_url)?;
-
-        let response = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let response = ensure_success(response, "TT-Sync status failed").await?;
-        let status = response
-            .json::<StatusResponse>()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        if !status.ok {
-            return Err(DomainError::InternalError(
-                "TT-Sync status returned ok=false".to_string(),
-            ));
-        }
-
-        Ok(status)
+        self.inner.status().await.map_err(sync_error_to_domain)
     }
 
     pub async fn open_session(
@@ -110,47 +67,10 @@ impl TtSyncV2Api {
         device_id: &DeviceId,
         ed25519_seed_b64url: &str,
     ) -> Result<SessionOpenResponse, DomainError> {
-        let url = session_open_url(&self.base_url)?;
-
-        let now_ms = now_ms();
-        let nonce = random_base64url(12);
-
-        let request = SessionOpenRequest {
-            device_id: device_id.clone(),
-        };
-        let body = serde_json::to_vec(&request)
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-        let body_hash = sha256_base64url(&body);
-
-        let canonical = CanonicalRequest::new(
-            device_id.clone(),
-            now_ms,
-            nonce.clone(),
-            "POST".to_owned(),
-            "/v2/session/open".to_owned(),
-            body_hash,
-        )
-        .map_err(|error| DomainError::InvalidData(error.to_string()))?;
-        let signature = sign_ed25519_b64url(ed25519_seed_b64url, &canonical.to_bytes())?;
-
-        let response = self
-            .http
-            .post(url)
-            .header(HEADER_DEVICE_ID, device_id.as_str())
-            .header(HEADER_TIMESTAMP_MS, now_ms.to_string())
-            .header(HEADER_NONCE, nonce)
-            .header(HEADER_SIGNATURE, signature)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(body)
-            .send()
+        self.inner
+            .open_session(device_id, ed25519_seed_b64url)
             .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let response = ensure_success(response, "TT-Sync session open failed").await?;
-        response
-            .json::<SessionOpenResponse>()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))
+            .map_err(sync_error_to_domain)
     }
 
     pub async fn pull_plan(
@@ -160,31 +80,10 @@ impl TtSyncV2Api {
         selection: DatasetSelection,
         target_manifest: ManifestV2,
     ) -> Result<SyncPlan, DomainError> {
-        let url = pull_plan_url(&self.base_url)?;
-
-        let request = PullPlanRequest {
-            mode,
-            selection,
-            target_manifest,
-        };
-        let body = serde_json::to_vec(&request)
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let response = self
-            .http
-            .post(url)
-            .header(reqwest::header::AUTHORIZATION, bearer(session_token))
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(body)
-            .send()
+        self.inner
+            .pull_plan(session_token, mode, selection, target_manifest)
             .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let response = ensure_success(response, "TT-Sync pull plan failed").await?;
-        response
-            .json::<SyncPlan>()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))
+            .map_err(sync_error_to_domain)
     }
 
     pub async fn push_plan(
@@ -194,31 +93,10 @@ impl TtSyncV2Api {
         selection: DatasetSelection,
         source_manifest: ManifestV2,
     ) -> Result<SyncPlan, DomainError> {
-        let url = push_plan_url(&self.base_url)?;
-
-        let request = PushPlanRequest {
-            mode,
-            selection,
-            source_manifest,
-        };
-        let body = serde_json::to_vec(&request)
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let response = self
-            .http
-            .post(url)
-            .header(reqwest::header::AUTHORIZATION, bearer(session_token))
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(body)
-            .send()
+        self.inner
+            .push_plan(session_token, mode, selection, source_manifest)
             .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let response = ensure_success(response, "TT-Sync push plan failed").await?;
-        response
-            .json::<SyncPlan>()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))
+            .map_err(sync_error_to_domain)
     }
 
     pub async fn download_file(
@@ -226,19 +104,11 @@ impl TtSyncV2Api {
         session_token: &SessionToken,
         plan_id: &PlanId,
         path: &SyncPath,
-    ) -> Result<reqwest::Response, DomainError> {
-        let path_b64 = URL_SAFE_NO_PAD.encode(path.as_str().as_bytes());
-        let url = file_download_url(&self.base_url, plan_id, &path_b64)?;
-
-        let response = self
-            .http
-            .get(url)
-            .header(reqwest::header::AUTHORIZATION, bearer(session_token))
-            .send()
+    ) -> Result<Response, DomainError> {
+        self.inner
+            .download_file(session_token, plan_id, path)
             .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        ensure_success(response, "TT-Sync file download failed").await
+            .map_err(sync_error_to_domain)
     }
 
     pub async fn download_bundle(
@@ -246,25 +116,11 @@ impl TtSyncV2Api {
         session_token: &SessionToken,
         plan_id: &PlanId,
         accept_zstd: bool,
-    ) -> Result<reqwest::Response, DomainError> {
-        let url = bundle_url(&self.base_url, plan_id)?;
-
-        let mut request = self
-            .http
-            .get(url)
-            .header(reqwest::header::AUTHORIZATION, bearer(session_token))
-            .header(reqwest::header::ACCEPT, BUNDLE_CONTENT_TYPE);
-
-        if accept_zstd {
-            request = request.header(reqwest::header::ACCEPT_ENCODING, "zstd");
-        }
-
-        let response = request
-            .send()
+    ) -> Result<Response, DomainError> {
+        self.inner
+            .download_bundle(session_token, plan_id, accept_zstd)
             .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        ensure_success(response, "TT-Sync bundle download failed").await
+            .map_err(sync_error_to_domain)
     }
 
     pub async fn upload_file(
@@ -272,62 +128,25 @@ impl TtSyncV2Api {
         session_token: &SessionToken,
         plan_id: &PlanId,
         path: &SyncPath,
-        body: reqwest::Body,
+        body: Body,
     ) -> Result<(), DomainError> {
-        let path_b64 = URL_SAFE_NO_PAD.encode(path.as_str().as_bytes());
-        let url = file_download_url(&self.base_url, plan_id, &path_b64)?;
-
-        let response = self
-            .http
-            .put(url)
-            .header(reqwest::header::AUTHORIZATION, bearer(session_token))
-            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-            .body(body)
-            .send()
+        self.inner
+            .upload_file(session_token, plan_id, path, body)
             .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let response = ensure_success(response, "TT-Sync file upload failed").await?;
-        response
-            .bytes()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        Ok(())
+            .map_err(sync_error_to_domain)
     }
 
     pub async fn upload_bundle(
         &self,
         session_token: &SessionToken,
         plan_id: &PlanId,
-        body: reqwest::Body,
+        body: Body,
         content_encoding_zstd: bool,
     ) -> Result<(), DomainError> {
-        let url = bundle_url(&self.base_url, plan_id)?;
-
-        let mut request = self
-            .http
-            .put(url)
-            .header(reqwest::header::AUTHORIZATION, bearer(session_token))
-            .header(reqwest::header::CONTENT_TYPE, BUNDLE_CONTENT_TYPE);
-
-        if content_encoding_zstd {
-            request = request.header(reqwest::header::CONTENT_ENCODING, "zstd");
-        }
-
-        let response = request
-            .body(body)
-            .send()
+        self.inner
+            .upload_bundle(session_token, plan_id, body, content_encoding_zstd)
             .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let response = ensure_success(response, "TT-Sync bundle upload failed").await?;
-        response
-            .bytes()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        Ok(())
+            .map_err(sync_error_to_domain)
     }
 
     pub async fn commit(
@@ -335,222 +154,138 @@ impl TtSyncV2Api {
         session_token: &SessionToken,
         plan_id: &PlanId,
     ) -> Result<CommitResponse, DomainError> {
-        let url = commit_url(&self.base_url, plan_id)?;
-
-        let response = self
-            .http
-            .post(url)
-            .header(reqwest::header::AUTHORIZATION, bearer(session_token))
-            .send()
+        self.inner
+            .commit(session_token, plan_id)
             .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let response = ensure_success(response, "TT-Sync commit failed").await?;
-        response
-            .json::<CommitResponse>()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))
+            .map_err(sync_error_to_domain)
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct StatusResponse {
-    pub(crate) ok: bool,
-    #[serde(default)]
-    pub(crate) features: Vec<String>,
-    #[serde(default)]
-    pub(crate) dataset_policy_version: Option<u32>,
+pub(crate) fn bearer_auth_value(session_token: &SessionToken) -> String {
+    shared_bearer_auth_value(session_token)
 }
 
-impl StatusResponse {
-    pub(crate) fn ensure_dataset_scope_v1(&self) -> Result<(), DomainError> {
-        if !self
-            .features
-            .iter()
-            .any(|feature| feature == DATASET_SCOPE_FEATURE_V1)
-        {
-            return Err(DomainError::InvalidData(
-                "TT-Sync server does not support DatasetPolicy; upgrade TT-Sync server".to_string(),
-            ));
-        }
-
-        let Some(version) = self.dataset_policy_version else {
-            return Err(DomainError::InvalidData(
-                "TT-Sync server did not report dataset policy version".to_string(),
-            ));
-        };
-
-        if version != DATASET_POLICY_VERSION {
-            return Err(DomainError::InvalidData(format!(
-                "Unsupported TT-Sync dataset policy version: {}",
-                version
-            )));
-        }
-
-        Ok(())
-    }
-}
-
-fn pair_complete_url(base_url: &str, token: &str) -> Result<Url, DomainError> {
-    let mut url =
-        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-    url.set_path("/v2/pair/complete");
-    url.set_query(None);
-    url.query_pairs_mut().append_pair("token", token);
-    Ok(url)
-}
-
-fn session_open_url(base_url: &str) -> Result<Url, DomainError> {
-    let mut url =
-        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-    url.set_path("/v2/session/open");
-    url.set_query(None);
-    Ok(url)
-}
-
-fn status_url(base_url: &str) -> Result<Url, DomainError> {
-    let mut url =
-        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-    url.set_path("/v2/status");
-    url.set_query(None);
-    Ok(url)
-}
-
-fn pull_plan_url(base_url: &str) -> Result<Url, DomainError> {
-    let mut url =
-        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-    url.set_path("/v2/sync/pull-plan");
-    url.set_query(None);
-    Ok(url)
-}
-
-fn push_plan_url(base_url: &str) -> Result<Url, DomainError> {
-    let mut url =
-        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-    url.set_path("/v2/sync/push-plan");
-    url.set_query(None);
-    Ok(url)
-}
-
-fn file_download_url(base_url: &str, plan_id: &PlanId, path_b64: &str) -> Result<Url, DomainError> {
-    let mut url =
-        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-    url.set_path(&format!("/v2/plans/{}/files/{}", plan_id.0, path_b64));
-    url.set_query(None);
-    Ok(url)
-}
-
-fn bundle_url(base_url: &str, plan_id: &PlanId) -> Result<Url, DomainError> {
-    let mut url =
-        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-    url.set_path(&format!("/v2/plans/{}/bundle", plan_id.0));
-    url.set_query(None);
-    Ok(url)
-}
-
-fn commit_url(base_url: &str, plan_id: &PlanId) -> Result<Url, DomainError> {
-    let mut url =
-        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-    url.set_path(&format!("/v2/plans/{}/commit", plan_id.0));
-    url.set_query(None);
-    Ok(url)
-}
-
-fn bearer(session_token: &SessionToken) -> String {
-    format!("Bearer {}", session_token.as_str())
-}
-
-async fn ensure_success(
-    response: reqwest::Response,
+pub(crate) async fn ensure_success(
+    response: Response,
     context: &str,
-) -> Result<reqwest::Response, DomainError> {
-    if response.status().is_success() {
-        return Ok(response);
+) -> Result<Response, DomainError> {
+    shared_ensure_success(response, context)
+        .await
+        .map_err(sync_error_to_domain)
+}
+
+pub(crate) fn ensure_dataset_scope_v1(
+    status: &StatusResponse,
+    peer_label: &str,
+) -> Result<(), DomainError> {
+    if !status
+        .features
+        .iter()
+        .any(|feature| feature == DATASET_SCOPE_FEATURE_V1)
+    {
+        return Err(DomainError::InvalidData(format!(
+            "{peer_label} does not support DatasetPolicy"
+        )));
     }
 
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
-    let message = response_error_message(context, status, body);
+    let Some(version) = status.dataset_policy_version else {
+        return Err(DomainError::InvalidData(format!(
+            "{peer_label} did not report dataset policy version"
+        )));
+    };
 
-    Err(response_error(status, message))
+    if version != DATASET_POLICY_VERSION {
+        return Err(DomainError::InvalidData(format!(
+            "Unsupported {peer_label} dataset policy version: {version}"
+        )));
+    }
+
+    Ok(())
 }
 
-fn response_error_message(context: &str, status: reqwest::StatusCode, body: String) -> String {
-    format!("{} ({}): {}", context, status, body)
+pub(crate) fn sync_error_to_domain(error: SyncError) -> DomainError {
+    match error {
+        SyncError::NotFound(message) => DomainError::NotFound(message),
+        SyncError::InvalidData(message) => DomainError::InvalidData(message),
+        SyncError::Unauthorized(message) => DomainError::AuthenticationError(message),
+        SyncError::Io(message) | SyncError::Internal(message) => {
+            DomainError::InternalError(message)
+        }
+    }
 }
 
-fn response_error(status: reqwest::StatusCode, message: String) -> DomainError {
-    match status.as_u16() {
-        400 | 413 => DomainError::InvalidData(message),
-        401 | 403 => DomainError::AuthenticationError(message),
-        404 => DomainError::NotFound(message),
-        _ => DomainError::InternalError(message),
+pub(crate) fn domain_error_to_sync(error: DomainError) -> SyncError {
+    match error {
+        DomainError::NotFound(message) => SyncError::NotFound(message),
+        DomainError::InvalidData(message) => SyncError::InvalidData(message),
+        DomainError::AuthenticationError(message) => SyncError::Unauthorized(message),
+        DomainError::Cancelled(message) => SyncError::Internal(message),
+        DomainError::InternalError(message) => SyncError::Internal(message),
+        DomainError::RateLimited { message } => SyncError::Internal(message),
+        DomainError::Transient(message) => SyncError::Io(message),
+        DomainError::UpstreamFailure(failure) => SyncError::Internal(failure.to_string()),
+        DomainError::WorkspacePathIsDirectory { path } => {
+            SyncError::InvalidData(format!("Workspace path is a directory: {path}"))
+        }
+        DomainError::WorkspaceWriteConflict { kind, .. } => {
+            SyncError::InvalidData(format!("Workspace write conflict: {kind}"))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1};
+    use ttsync_contract::status::StatusResponse;
+    use ttsync_core::error::SyncError;
 
-    use super::{StatusResponse, response_error};
+    use super::{ensure_dataset_scope_v1, sync_error_to_domain};
     use crate::domain::errors::DomainError;
 
-    #[test]
-    fn payload_too_large_is_invalid_data() {
-        let error = response_error(
-            reqwest::StatusCode::PAYLOAD_TOO_LARGE,
-            "TT-Sync pull plan failed (413 Payload Too Large): length limit exceeded".to_owned(),
-        );
-
-        assert!(matches!(error, DomainError::InvalidData(_)));
+    fn status(features: Vec<String>, version: Option<u32>) -> StatusResponse {
+        StatusResponse {
+            ok: true,
+            protocol: "v2".to_owned(),
+            server: "tt-sync".to_owned(),
+            features,
+            dataset_policy_version: version,
+            supported_dataset_ids: vec![],
+            supported_profile_ids: vec![],
+            default_dataset_ids: vec![],
+            device_id: None,
+            device_name: None,
+            spki_sha256: None,
+        }
     }
 
     #[test]
-    fn unauthorized_is_authentication_error() {
-        let error = response_error(
-            reqwest::StatusCode::UNAUTHORIZED,
-            "invalid session".to_owned(),
-        );
-
-        assert!(matches!(error, DomainError::AuthenticationError(_)));
+    fn sync_error_maps_to_domain_error() {
+        assert!(matches!(
+            sync_error_to_domain(SyncError::Unauthorized("nope".to_owned())),
+            DomainError::AuthenticationError(_)
+        ));
+        assert!(matches!(
+            sync_error_to_domain(SyncError::InvalidData("bad".to_owned())),
+            DomainError::InvalidData(_)
+        ));
     }
 
     #[test]
     fn status_requires_dataset_scope_feature() {
-        let status = StatusResponse {
-            ok: true,
-            features: vec![],
-            dataset_policy_version: Some(DATASET_POLICY_VERSION),
-        };
-
+        let status = status(vec![], Some(DATASET_POLICY_VERSION));
         assert!(matches!(
-            status.ensure_dataset_scope_v1(),
+            ensure_dataset_scope_v1(&status, "TT-Sync server"),
             Err(DomainError::InvalidData(_))
         ));
     }
 
     #[test]
     fn status_accepts_matching_dataset_policy_version() {
-        let status = StatusResponse {
-            ok: true,
-            features: vec![DATASET_SCOPE_FEATURE_V1.to_string()],
-            dataset_policy_version: Some(DATASET_POLICY_VERSION),
-        };
-
-        status
-            .ensure_dataset_scope_v1()
+        let status = status(
+            vec![DATASET_SCOPE_FEATURE_V1.to_owned()],
+            Some(DATASET_POLICY_VERSION),
+        );
+        ensure_dataset_scope_v1(&status, "TT-Sync server")
             .expect("dataset scope feature should be accepted");
     }
-}
-
-fn now_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
 }

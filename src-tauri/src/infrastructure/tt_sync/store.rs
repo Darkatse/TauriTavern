@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use rand::RngCore;
+use ttsync_core::crypto::random_base64url;
 use uuid::Uuid;
 
 use crate::domain::errors::DomainError;
@@ -41,7 +39,7 @@ impl TtSyncStore {
             device_id: ttsync_contract::peer::DeviceId::new(Uuid::new_v4().to_string())
                 .expect("generated uuid must be valid"),
             device_name: "TauriTavern".to_string(),
-            ed25519_seed: random_seed_b64url(),
+            ed25519_seed: random_base64url(32),
         };
         write_json_file(&path, &identity).await?;
         Ok(identity)
@@ -93,10 +91,4 @@ impl TtSyncStore {
 
         self.save_paired_servers(&filtered).await
     }
-}
-
-fn random_seed_b64url() -> String {
-    let mut seed = [0u8; 32];
-    rand::rng().fill_bytes(&mut seed);
-    URL_SAFE_NO_PAD.encode(seed)
 }
