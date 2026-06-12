@@ -6,8 +6,8 @@ use tauri::ipc::Response as InvokeResponse;
 use crate::app::AppState;
 use crate::application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
-    ImportCharacterChatsDto, ImportChatDto, PatchChatWindowedDto, PinnedCharacterChatDto,
-    RenameChatDto, SaveChatFromFileDto, SaveChatWindowedDto,
+    HideChatBeforeCursorDto, ImportCharacterChatsDto, ImportChatDto, PatchChatWindowedDto,
+    PinnedCharacterChatDto, RenameChatDto, SaveChatFromFileDto, SaveChatWindowedDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::repositories::chat_repository::{
@@ -457,6 +457,32 @@ pub async fn patch_chat_payload_windowed(
         )
         .await
         .map_err(map_command_error("Failed to patch windowed chat payload"))
+}
+
+#[tauri::command]
+pub async fn hide_chat_payload_before_cursor(
+    dto: HideChatBeforeCursorDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ChatPayloadCursor, CommandError> {
+    log_command(format!(
+        "hide_chat_payload_before_cursor {}/{}",
+        dto.character_name, dto.file_name
+    ));
+
+    app_state
+        .chat_service
+        .hide_chat_payload_before_cursor(
+            &dto.character_name,
+            &dto.file_name,
+            dto.cursor,
+            dto.hide,
+            dto.name_filter,
+            dto.expected_window_line_count,
+        )
+        .await
+        .map_err(map_command_error(
+            "Failed to update hidden state before chat window",
+        ))
 }
 
 #[tauri::command]

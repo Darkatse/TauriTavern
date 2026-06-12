@@ -644,6 +644,26 @@ impl ChatRepository for FileChatRepository {
         .await
     }
 
+    async fn hide_chat_payload_before_cursor(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        hide: bool,
+        name_filter: Option<String>,
+        expected_window_line_count: usize,
+    ) -> Result<ChatPayloadCursor, DomainError> {
+        self.hide_character_payload_before_cursor(
+            character_name,
+            file_name,
+            cursor,
+            hide,
+            name_filter,
+            expected_window_line_count,
+        )
+        .await
+    }
+
     async fn save_chat_payload_from_path(
         &self,
         character_name: &str,

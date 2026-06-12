@@ -228,6 +228,25 @@ export async function patchCharacterChatPayloadWindowed({ characterName, avatarU
     });
 }
 
+export async function hideCharacterChatPayloadBeforeCursor({ characterName, avatarUrl, fileName, cursor, hide, nameFilter = null, expectedWindowLineCount }) {
+    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
+    const normalizedFile = normalizeChatFileName(fileName);
+    if (!normalizedCharacter || !normalizedFile.trim()) {
+        throw new Error('Invalid chat payload hide request');
+    }
+
+    return invoke('hide_chat_payload_before_cursor', {
+        dto: {
+            ch_name: normalizedCharacter,
+            file_name: normalizedFile,
+            cursor,
+            hide: Boolean(hide),
+            name_filter: nameFilter || null,
+            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
+        },
+    });
+}
+
 export async function loadGroupChatPayload({ id, allowNotFound = false }) {
     const normalizedId = normalizeChatFileName(id);
     if (!normalizedId.trim()) {
@@ -365,6 +384,23 @@ export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch,
             patch,
             expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
             force,
+        },
+    });
+}
+
+export async function hideGroupChatPayloadBeforeCursor({ id, cursor, hide, nameFilter = null, expectedWindowLineCount }) {
+    const normalizedId = normalizeChatFileName(id);
+    if (!normalizedId.trim()) {
+        throw new Error('Invalid group chat payload hide request');
+    }
+
+    return invoke('hide_group_chat_payload_before_cursor', {
+        dto: {
+            id: normalizedId,
+            cursor,
+            hide: Boolean(hide),
+            name_filter: nameFilter || null,
+            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
         },
     });
 }

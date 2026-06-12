@@ -187,6 +187,17 @@ pub trait ChatRepository: Send + Sync {
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError>;
 
+    /// Set the hidden flag (`is_system`) on all messages stored before the window cursor.
+    async fn hide_chat_payload_before_cursor(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        hide: bool,
+        name_filter: Option<String>,
+        expected_window_line_count: usize,
+    ) -> Result<ChatPayloadCursor, DomainError>;
+
     /// Save raw JSONL bytes for a character chat payload from an existing file path.
     async fn save_chat_payload_from_path(
         &self,
