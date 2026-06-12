@@ -1,4 +1,12 @@
 {
+    "Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.": "Oculta un mensaje del chat en el prompt. Usa <code>all</code> para ocultar todo el chat, o <code>before</code> para ocultar solo los mensajes almacenados antes de la ventana cargada.",
+    "Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.": "Vuelve a mostrar un mensaje en el prompt. Usa <code>all</code> para mostrar todo el chat, o <code>before</code> para mostrar solo los mensajes almacenados antes de la ventana cargada.",
+    "message index (starts with 0) or range, or \"all\" / \"before\" (messages before the loaded window), defaults to the last message index if not provided": "índice del mensaje (empieza en 0) o rango, o \"all\" / \"before\" (mensajes anteriores a la ventana cargada); por defecto, el índice del último mensaje",
+    "every message in the chat, including unloaded ones": "todos los mensajes del chat, incluidos los no cargados",
+    "only unloaded messages before the current window": "solo los mensajes no cargados anteriores a la ventana actual",
+    "All messages are already loaded. Use /hide with a message range instead.": "Todos los mensajes ya están cargados. Usa /hide con un rango de mensajes en su lugar.",
+    "There are no unloaded messages before the current window.": "No hay mensajes sin cargar antes de la ventana actual.",
+    "Failed to update messages before the loaded window. Reload the chat and try again.": "No se pudieron actualizar los mensajes anteriores a la ventana cargada. Recarga el chat e inténtalo de nuevo.",
     "Favorite": "Favorito",
     "Tag": "Etiqueta",
     "Duplicate": "Duplicar",

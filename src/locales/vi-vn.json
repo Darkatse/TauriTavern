@@ -1,4 +1,12 @@
 {
+    "Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.": "Ẩn một tin nhắn chat khỏi prompt. Dùng <code>all</code> để ẩn toàn bộ cuộc trò chuyện, hoặc <code>before</code> để chỉ ẩn các tin nhắn trước cửa sổ đã tải.",
+    "Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.": "Hiện lại một tin nhắn trong prompt. Dùng <code>all</code> để hiện toàn bộ cuộc trò chuyện, hoặc <code>before</code> để chỉ hiện các tin nhắn trước cửa sổ đã tải.",
+    "message index (starts with 0) or range, or \"all\" / \"before\" (messages before the loaded window), defaults to the last message index if not provided": "chỉ số tin nhắn (bắt đầu từ 0) hoặc phạm vi, hoặc \"all\" / \"before\" (các tin nhắn trước cửa sổ đã tải); mặc định là chỉ số tin nhắn cuối cùng",
+    "every message in the chat, including unloaded ones": "tất cả tin nhắn trong cuộc trò chuyện, kể cả tin chưa tải",
+    "only unloaded messages before the current window": "chỉ các tin nhắn chưa tải trước cửa sổ hiện tại",
+    "All messages are already loaded. Use /hide with a message range instead.": "Tất cả tin nhắn đã được tải. Hãy dùng /hide với phạm vi tin nhắn.",
+    "There are no unloaded messages before the current window.": "Không có tin nhắn chưa tải nào trước cửa sổ hiện tại.",
+    "Failed to update messages before the loaded window. Reload the chat and try again.": "Cập nhật các tin nhắn trước cửa sổ đã tải thất bại. Hãy mở lại cuộc trò chuyện và thử lại.",
     "Favorite": "Yêu thích",
     "Tag": "Từ khóa",
     "Duplicate": "Nhân đôi",
