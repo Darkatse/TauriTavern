@@ -131,6 +131,10 @@ export function initLibraryShims() {
         return;
     }
 
+    // SillyTavern ecosystem extensions externalize lodash as `_`; keep this
+    // ABI explicit instead of relying on bundler side effects.
+    window._ = lodash;
+
     if (!('Fuse' in window)) {
         window.Fuse = Fuse;
     }

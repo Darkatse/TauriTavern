@@ -13,6 +13,9 @@ interface Window {
     // TauriTavern host contract (public globals)
     __TAURITAVERN__?: TauriTavernHostAbi;
 
+    // SillyTavern ecosystem library shim ABI
+    _?: any;
+
     __TAURITAVERN_THUMBNAIL__?: (type: string, file: string, useTimestamp?: boolean) => string;
     __TAURITAVERN_THUMBNAIL_BLOB_URL__?: (
         type: string,

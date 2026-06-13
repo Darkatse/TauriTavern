@@ -89,7 +89,17 @@
   - `push()`：注入分享 payload（url 或 png）。
   - `subscribe()`：订阅消费；若早到则进入 backlog，首次订阅会 drain backlog。
 
-### 3.5 平台 ABI（Public，新）
+### 3.5 上游库兼容全局（Public）
+
+由 `src/lib.js:initLibraryShims()` 安装：
+
+- `window._ : lodash`
+  - SillyTavern 生态中的 third-party 扩展可能把 lodash external 为 `_`，并在 ESM 模块求值阶段直接访问。
+  - 该符号必须在 third-party 扩展模块加载前可用；不得依赖 webpack/Rspack 等打包器偶然泄漏全局。
+
+该 ABI 属于 SillyTavern 兼容层，不放入 `window.__TAURITAVERN__.api`。新 TauriTavern 代码仍应从 `src/lib.js` 显式 import `lodash`。
+
+### 3.6 平台 ABI（Public，新）
 
 为避免未来继续扩散 `window.__TAURITAVERN_*` 零散符号，宿主层额外提供一个**统一出口**：
 
