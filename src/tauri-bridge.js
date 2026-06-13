@@ -185,6 +185,9 @@ export async function updateTauriTavernSettings(dto) {
     if (!invokeFn) {
         throw new Error('Tauri invoke is unavailable');
     }
+    if (!dto || typeof dto !== 'object') {
+        throw new Error('Invalid TauriTavern settings DTO');
+    }
 
     return invokeFn('update_tauritavern_settings', { dto });
 }
@@ -199,6 +202,9 @@ export async function getRuntimePaths() {
 }
 
 export async function setDataRoot(dataRoot) {
+    if (typeof dataRoot !== 'string' || dataRoot.trim() === '') {
+        throw new Error('Invalid data root path');
+    }
     return invokeWithHostNormalization('set_data_root', { data_root: dataRoot });
 }
 
@@ -208,9 +214,11 @@ export async function openDialog(options = {}) {
         throw new Error('Tauri invoke is unavailable');
     }
 
-    if (options && typeof options === 'object') {
-        Object.freeze(options);
+    if (options && typeof options !== 'object') {
+        throw new Error('Invalid dialog options: expected an object');
     }
+
+    Object.freeze(options);
 
     return invokeWithHostNormalization('plugin:dialog|open', { options });
 }
