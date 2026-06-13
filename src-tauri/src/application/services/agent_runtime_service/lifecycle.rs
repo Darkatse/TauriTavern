@@ -360,17 +360,23 @@ fn normalize_read_events_invocation_id(
 
 #[async_trait::async_trait]
 impl AgentRunActivity for AgentRuntimeService {
-    async fn active_run_ids_for_workspace(
-        &self,
-        workspace_id: &str,
-    ) -> Result<Vec<String>, ApplicationError> {
-        let run_ids = self
+    async fn active_run_ids(&self) -> Result<Vec<String>, ApplicationError> {
+        let mut run_ids = self
             .active_runs
             .read()
             .await
             .keys()
             .cloned()
             .collect::<Vec<_>>();
+        run_ids.sort();
+        Ok(run_ids)
+    }
+
+    async fn active_run_ids_for_workspace(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<String>, ApplicationError> {
+        let run_ids = self.active_run_ids().await?;
         let mut active = Vec::new();
         for run_id in run_ids {
             let run = self.run_repository.load_run(&run_id).await?;

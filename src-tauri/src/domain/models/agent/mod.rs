@@ -9,6 +9,7 @@ use crate::domain::errors::DomainError;
 pub mod plan;
 pub mod profile;
 pub mod profile_diagnostic;
+pub mod storage;
 
 pub const ROOT_AGENT_INVOCATION_ID: &str = "inv_root";
 pub const AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION: u32 = 1;
@@ -46,6 +47,15 @@ pub enum AgentRunStatus {
     Cancelling,
     Cancelled,
     Failed,
+}
+
+impl AgentRunStatus {
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::PartialSuccess | Self::Cancelled | Self::Failed
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

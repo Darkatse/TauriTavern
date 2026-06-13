@@ -9,15 +9,15 @@ use crate::app::AppState;
 use crate::application::dto::agent_dto::{
     AgentCancelRunDto, AgentListProfilesResultDto, AgentListRunsDto, AgentListRunsResultDto,
     AgentListToolSpecsResultDto, AgentLoadProfileResultDto, AgentModelTurnDisplayDto,
-    AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto, AgentProfileIdDto,
-    AgentPromptAssemblyBrokerRequestDto, AgentPruneChatPersistentStatesDto,
+    AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto,
+    AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto, AgentPruneChatPersistentStatesDto,
     AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto, AgentReadEventsResultDto,
     AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto, AgentReadWorkspaceFileDto,
     AgentRepairProfileFileDto, AgentResolveChatCommitDto,
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
     AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRetargetPresetRefsDto,
-    AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto,
-    AgentWorkspaceFileDto,
+    AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentRunPrunePlanDto, AgentSaveProfileDto,
+    AgentStartRunDto, AgentWorkspaceFileDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
@@ -245,6 +245,20 @@ pub async fn list_agent_runs(
         .list_runs(dto)
         .await
         .map_err(map_command_error("Failed to list agent runs"))
+}
+
+#[tauri::command]
+pub async fn plan_agent_run_prune(
+    dto: AgentPlanRunPruneDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentRunPrunePlanDto, CommandError> {
+    log_command("plan_agent_run_prune");
+
+    app_state
+        .agent_run_history_service
+        .plan_run_prune(dto)
+        .await
+        .map_err(map_command_error("Failed to plan agent run prune"))
 }
 
 #[tauri::command]

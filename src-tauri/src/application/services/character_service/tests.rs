@@ -34,6 +34,10 @@ struct NoActiveAgentRuns;
 
 #[async_trait]
 impl AgentRunActivity for NoActiveAgentRuns {
+    async fn active_run_ids(&self) -> Result<Vec<String>, ApplicationError> {
+        Ok(Vec::new())
+    }
+
     async fn active_run_ids_for_workspace(
         &self,
         _workspace_id: &str,

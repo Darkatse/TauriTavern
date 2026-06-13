@@ -31,6 +31,18 @@ pub struct AgentRunListQuery {
     pub limit: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AgentRunStorageEntryStats {
+    pub file_count: usize,
+    pub byte_count: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AgentRunStorageStats {
+    pub total: AgentRunStorageEntryStats,
+    pub heavy_artifacts: AgentRunStorageEntryStats,
+}
+
 #[async_trait]
 pub trait AgentRunRepository: Send + Sync {
     async fn create_run(&self, run: &AgentRun) -> Result<(), DomainError>;
@@ -38,6 +50,13 @@ pub trait AgentRunRepository: Send + Sync {
     async fn load_run(&self, run_id: &str) -> Result<AgentRun, DomainError>;
 
     async fn list_runs(&self, query: AgentRunListQuery) -> Result<Vec<AgentRun>, DomainError>;
+
+    async fn list_all_runs(&self) -> Result<Vec<AgentRun>, DomainError>;
+
+    async fn inspect_run_storage(
+        &self,
+        run: &AgentRun,
+    ) -> Result<AgentRunStorageStats, DomainError>;
 
     async fn load_run_summary_projection(
         &self,

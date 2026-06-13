@@ -50,6 +50,17 @@ fn default_model_settings() -> ModelSettings {
 }
 
 pub const MIN_LLM_API_KEEP: u32 = 1;
+pub const DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS: u32 = 100;
+pub const DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS: u32 = 20;
+pub const MAX_AGENT_RETENTION_KEEP_RUNS: u32 = 10_000;
+
+fn default_agent_retention_keep_recent_terminal_runs() -> u32 {
+    DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS
+}
+
+fn default_agent_retention_keep_full_recent_runs() -> u32 {
+    DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PromptCacheTtl {
@@ -196,6 +207,85 @@ impl DevLoggingSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSettings {
+    #[serde(default)]
+    pub retention: AgentRunRetentionSettings,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            retention: AgentRunRetentionSettings::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunRetentionSettings {
+    #[serde(default = "default_agent_retention_keep_recent_terminal_runs")]
+    pub keep_recent_terminal_runs: u32,
+    #[serde(default = "default_agent_retention_keep_full_recent_runs")]
+    pub keep_full_recent_runs: u32,
+}
+
+impl Default for AgentRunRetentionSettings {
+    fn default() -> Self {
+        Self {
+            keep_recent_terminal_runs: DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS,
+            keep_full_recent_runs: DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRunRetentionSettingsValidationError {
+    KeepRecentTerminalRunsOutOfRange,
+    KeepFullRecentRunsOutOfRange,
+}
+
+impl AgentRunRetentionSettingsValidationError {
+    pub fn message(self) -> String {
+        match self {
+            Self::KeepRecentTerminalRunsOutOfRange => format!(
+                "agent.retention_keep_recent_terminal_runs_invalid: keep_recent_terminal_runs must be between 0 and {MAX_AGENT_RETENTION_KEEP_RUNS}"
+            ),
+            Self::KeepFullRecentRunsOutOfRange => {
+                "agent.retention_keep_full_recent_runs_invalid: keep_full_recent_runs must be between 0 and keep_recent_terminal_runs"
+                    .to_string()
+            }
+        }
+    }
+}
+
+impl AgentRunRetentionSettings {
+    pub fn validate(&self) -> Result<(), AgentRunRetentionSettingsValidationError> {
+        if !Self::is_valid_keep_runs(self.keep_recent_terminal_runs) {
+            return Err(AgentRunRetentionSettingsValidationError::KeepRecentTerminalRunsOutOfRange);
+        }
+
+        if !Self::is_valid_full_retention(
+            self.keep_full_recent_runs,
+            self.keep_recent_terminal_runs,
+        ) {
+            return Err(AgentRunRetentionSettingsValidationError::KeepFullRecentRunsOutOfRange);
+        }
+
+        Ok(())
+    }
+
+    pub fn is_valid_keep_runs(value: u32) -> bool {
+        value <= MAX_AGENT_RETENTION_KEEP_RUNS
+    }
+
+    pub fn is_valid_full_retention(
+        keep_full_recent_runs: u32,
+        keep_recent_terminal_runs: u32,
+    ) -> bool {
+        keep_full_recent_runs <= keep_recent_terminal_runs
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernSettings {
     pub updates: TauriTavernUpdateSettings,
     #[serde(default = "default_perf_profile")]
@@ -224,6 +314,8 @@ pub struct TauriTavernSettings {
     pub dynamic_theme: DynamicThemeSettings,
     #[serde(default = "default_model_settings")]
     pub models: ModelSettings,
+    #[serde(default)]
+    pub agent: AgentSettings,
     /// iOS-only distribution policy (profile + capability overrides).
     ///
     /// NOTE: This field is intentionally stored as raw JSON to ensure:
@@ -251,6 +343,7 @@ impl Default for TauriTavernSettings {
             dev: DevLoggingSettings::default(),
             dynamic_theme: DynamicThemeSettings::default(),
             models: default_model_settings(),
+            agent: AgentSettings::default(),
             ios_policy: default_ios_policy_seed(),
         }
     }
@@ -316,7 +409,11 @@ impl Default for UserSettings {
 
 #[cfg(test)]
 mod tests {
-    use super::{DevLoggingSettings, TauriTavernSettings};
+    use super::{
+        AgentRunRetentionSettings, DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS,
+        DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS, DevLoggingSettings,
+        MAX_AGENT_RETENTION_KEEP_RUNS, TauriTavernSettings,
+    };
 
     #[test]
     fn effective_llm_api_keep_has_minimum_of_one() {
@@ -352,5 +449,51 @@ mod tests {
         .expect("parse settings");
 
         assert!(settings.native_regex_backend_enabled);
+    }
+
+    #[test]
+    fn agent_retention_defaults_to_recent_terminal_history_policy() {
+        let settings = TauriTavernSettings::default();
+
+        assert_eq!(
+            settings.agent.retention.keep_recent_terminal_runs,
+            DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS
+        );
+        assert_eq!(
+            settings.agent.retention.keep_full_recent_runs,
+            DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS
+        );
+    }
+
+    #[test]
+    fn agent_settings_defaults_when_loading_older_settings() {
+        let settings = TauriTavernSettings::from_json_str_with_compat(
+            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
+        )
+        .expect("parse settings");
+
+        assert_eq!(
+            settings.agent.retention.keep_recent_terminal_runs,
+            DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS
+        );
+        assert_eq!(
+            settings.agent.retention.keep_full_recent_runs,
+            DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS
+        );
+    }
+
+    #[test]
+    fn agent_retention_validation_caps_run_counts_and_requires_full_subset() {
+        assert!(AgentRunRetentionSettings::is_valid_keep_runs(0));
+        assert!(AgentRunRetentionSettings::is_valid_keep_runs(
+            MAX_AGENT_RETENTION_KEEP_RUNS
+        ));
+        assert!(!AgentRunRetentionSettings::is_valid_keep_runs(
+            MAX_AGENT_RETENTION_KEEP_RUNS + 1
+        ));
+
+        assert!(AgentRunRetentionSettings::is_valid_full_retention(20, 100));
+        assert!(AgentRunRetentionSettings::is_valid_full_retention(0, 0));
+        assert!(!AgentRunRetentionSettings::is_valid_full_retention(21, 20));
     }
 }

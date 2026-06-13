@@ -52,6 +52,8 @@ LAN Sync v2 与 TT-Sync v2 的 manifest 扫描严格遵循 `ttsync_core::dataset
 
 Agent run history 只同步终态运行。扫描器会读取 `run.json` / run index JSON 的 `status`，仅纳入 `completed`、`partial_success`、`cancelled`、`failed`；运行中的 `calling_model` 等状态不会进入 manifest。
 
+Agent run retention 复用同一套 run storage class 词汇来描述 `run_journal`、`run_context`、`run_workspace_projection`、`run_tool_io` 等路径归属，但 prune 策略不读取 `DatasetSelection`，同步 scope 仍只由 TT-Sync `DatasetPolicy` 决定。
+
 LAN Sync v1 仍使用原有固定 allowlist 和裸 `LanSyncManifest` plan 请求。它不会同步 Agent 数据，也不会接入 DatasetPolicy；新范围应进入 LAN Sync v2/TT-Sync v2。
 
 ---

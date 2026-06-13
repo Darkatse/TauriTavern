@@ -301,6 +301,102 @@ pub struct AgentListRunsResultDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentPlanRunPruneDto {
+    #[serde(default)]
+    pub retention: Option<AgentRunPruneRetentionDto>,
+    #[serde(default = "default_run_prune_detail_limit")]
+    pub detail_limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunPruneRetentionDto {
+    pub keep_recent_terminal_runs: u32,
+    pub keep_full_recent_runs: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunPrunePlanDto {
+    pub retention: AgentRunPruneRetentionDto,
+    pub detail_limit: usize,
+    pub terminal_run_count: usize,
+    pub non_terminal_run_count: usize,
+    pub blocked_run_count: usize,
+    pub full_retained_run_count: usize,
+    pub core_retained_run_count: usize,
+    pub slim_candidate_count: usize,
+    pub delete_candidate_count: usize,
+    pub total_slim_file_count: usize,
+    pub total_slim_byte_count: u64,
+    pub total_delete_file_count: usize,
+    pub total_delete_byte_count: u64,
+    pub total_candidate_file_count: usize,
+    pub total_candidate_byte_count: u64,
+    pub candidate_details_truncated: bool,
+    pub candidates: Vec<AgentRunPruneCandidateDto>,
+    pub blocked_details_truncated: bool,
+    pub blocked_runs: Vec<AgentRunPruneBlockedRunDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunPruneCandidateDto {
+    pub run_id: String,
+    pub workspace_id: String,
+    pub stable_chat_id: String,
+    pub chat_ref: AgentChatRef,
+    pub status: AgentRunStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub action: AgentRunPruneActionDto,
+    pub reason: AgentRunPruneReasonDto,
+    pub file_count: usize,
+    pub byte_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunPruneBlockedRunDto {
+    pub run_id: String,
+    pub workspace_id: String,
+    pub stable_chat_id: String,
+    pub chat_ref: AgentChatRef,
+    pub status: AgentRunStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub action: AgentRunPruneActionDto,
+    pub reason: AgentRunPruneReasonDto,
+    pub block_reason: AgentRunPruneBlockReasonDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunPruneActionDto {
+    SlimHeavyArtifacts,
+    DeleteRun,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunPruneReasonDto {
+    OutsideFullRetentionWindow,
+    OutsideHistoryRetentionWindow,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunPruneBlockReasonDto {
+    ActiveRun,
+    MissingTerminalEvent,
+    InvalidJournal,
+    InvalidStorage,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentCancelRunDto {
     pub run_id: String,
 }
@@ -506,6 +602,10 @@ fn default_event_limit() -> usize {
 
 fn default_run_list_limit() -> usize {
     50
+}
+
+fn default_run_prune_detail_limit() -> usize {
+    200
 }
 
 fn default_model_turn_text_limit() -> usize {

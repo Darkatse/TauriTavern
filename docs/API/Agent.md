@@ -606,12 +606,13 @@ start_agent_run(dto)
 list_agent_tool_specs()
 cancel_agent_run(dto)
 list_agent_runs(dto)
+plan_agent_run_prune(dto)
 read_agent_run_events(dto)
 read_agent_workspace_file(dto)
 resolve_agent_chat_commit(dto)
 ```
 
-Command 层必须是薄封装。Agent loop 不写在 command 内。
+`plan_agent_run_prune(dto)` 是后端 dry-run command：它按 `tauritavern-settings.agent.retention` 或调用方传入的一次性 retention override 计算 `slim_heavy_artifacts` / `delete_run` 候选和 files/bytes，不执行删除。`slim_heavy_artifacts` 使用后端 Agent run storage class 统计，分类边界与 TT-Sync 的 Agent run dataset 词汇对齐，但不读取同步 profile 或 dataset selection。`dto.detailLimit` 控制返回的 candidate/blocked 明细数量，计数与 bytes totals 不受截断影响；`blockedRuns` 会显式报告 active run、缺失 terminal event、journal/storage 异常等不能安全清理的对象。Command 层必须是薄封装。Agent loop 不写在 command 内。
 
 后续命令：
 

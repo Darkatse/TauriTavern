@@ -8,10 +8,12 @@ use std::time::Duration;
 use super::settings_repair::repair_sillytavern_prompt_manager_settings;
 use crate::application::dto::settings_dto::{
     SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
-    UpdateTauriTavernSettingsDto, UserSettingsDto,
+    UpdateAgentSettingsDto, UpdateTauriTavernSettingsDto, UserSettingsDto,
 };
 use crate::application::errors::ApplicationError;
-use crate::domain::models::settings::DevLoggingSettings;
+use crate::domain::models::settings::{
+    AgentRunRetentionSettings, AgentSettings, DevLoggingSettings,
+};
 use crate::domain::repositories::settings_repository::SettingsRepository;
 
 pub struct SettingsService {
@@ -210,11 +212,37 @@ impl SettingsService {
             }
         }
 
+        if let Some(agent) = dto.agent {
+            Self::apply_agent_settings_update(&mut settings.agent, agent)?;
+        }
+
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;
 
         Ok(TauriTavernSettingsDto::from(settings))
+    }
+
+    fn apply_agent_settings_update(
+        settings: &mut AgentSettings,
+        dto: UpdateAgentSettingsDto,
+    ) -> Result<(), ApplicationError> {
+        if let Some(retention) = dto.retention {
+            let mut next = settings.retention.clone();
+
+            if let Some(keep_recent_terminal_runs) = retention.keep_recent_terminal_runs {
+                next.keep_recent_terminal_runs = keep_recent_terminal_runs;
+            }
+
+            if let Some(keep_full_recent_runs) = retention.keep_full_recent_runs {
+                next.keep_full_recent_runs = keep_full_recent_runs;
+            }
+
+            validate_agent_retention_settings(&next)?;
+            settings.retention = next;
+        }
+
+        Ok(())
     }
 
     pub async fn save_user_settings(
@@ -359,5 +387,79 @@ impl SettingsService {
         self.settings_repository.restore_snapshot(name).await?;
 
         Ok(())
+    }
+}
+
+fn validate_agent_retention_settings(
+    settings: &AgentRunRetentionSettings,
+) -> Result<(), ApplicationError> {
+    settings
+        .validate()
+        .map_err(|error| ApplicationError::ValidationError(error.message()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::dto::settings_dto::UpdateAgentRunRetentionSettingsDto;
+
+    #[test]
+    fn agent_retention_update_applies_partial_settings() {
+        let mut settings = AgentSettings::default();
+
+        SettingsService::apply_agent_settings_update(
+            &mut settings,
+            UpdateAgentSettingsDto {
+                retention: Some(UpdateAgentRunRetentionSettingsDto {
+                    keep_recent_terminal_runs: Some(50),
+                    keep_full_recent_runs: Some(10),
+                }),
+            },
+        )
+        .expect("apply agent settings");
+
+        assert_eq!(settings.retention.keep_recent_terminal_runs, 50);
+        assert_eq!(settings.retention.keep_full_recent_runs, 10);
+    }
+
+    #[test]
+    fn agent_retention_update_allows_zero_terminal_history() {
+        let mut settings = AgentSettings::default();
+
+        SettingsService::apply_agent_settings_update(
+            &mut settings,
+            UpdateAgentSettingsDto {
+                retention: Some(UpdateAgentRunRetentionSettingsDto {
+                    keep_recent_terminal_runs: Some(0),
+                    keep_full_recent_runs: Some(0),
+                }),
+            },
+        )
+        .expect("apply zero retention");
+
+        assert_eq!(settings.retention.keep_recent_terminal_runs, 0);
+        assert_eq!(settings.retention.keep_full_recent_runs, 0);
+    }
+
+    #[test]
+    fn agent_retention_update_rejects_full_retention_outside_history_window() {
+        let mut settings = AgentSettings::default();
+
+        let error = SettingsService::apply_agent_settings_update(
+            &mut settings,
+            UpdateAgentSettingsDto {
+                retention: Some(UpdateAgentRunRetentionSettingsDto {
+                    keep_recent_terminal_runs: Some(10),
+                    keep_full_recent_runs: Some(11),
+                }),
+            },
+        )
+        .expect_err("reject invalid retention");
+
+        assert!(matches!(
+            error,
+            ApplicationError::ValidationError(message)
+                if message.contains("agent.retention_keep_full_recent_runs_invalid")
+        ));
     }
 }

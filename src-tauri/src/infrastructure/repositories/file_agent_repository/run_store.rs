@@ -12,7 +12,7 @@ use crate::domain::models::agent::{
 };
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunListCursor, AgentRunListQuery, AgentRunRepository,
-    event_belongs_to_invocation,
+    AgentRunStorageStats, event_belongs_to_invocation,
 };
 
 #[async_trait]
@@ -38,14 +38,22 @@ impl AgentRunRepository for FileAgentRepository {
     async fn list_runs(&self, query: AgentRunListQuery) -> Result<Vec<AgentRun>, DomainError> {
         let mut runs = self.read_indexed_runs().await?;
         runs.retain(|run| run_matches_list_query(run, &query));
-        runs.sort_by(|left, right| {
-            right
-                .created_at
-                .cmp(&left.created_at)
-                .then_with(|| right.id.cmp(&left.id))
-        });
+        sort_runs_newest_first(&mut runs);
         runs.truncate(query.limit);
         Ok(runs)
+    }
+
+    async fn list_all_runs(&self) -> Result<Vec<AgentRun>, DomainError> {
+        let mut runs = self.read_indexed_runs().await?;
+        sort_runs_newest_first(&mut runs);
+        Ok(runs)
+    }
+
+    async fn inspect_run_storage(
+        &self,
+        run: &AgentRun,
+    ) -> Result<AgentRunStorageStats, DomainError> {
+        FileAgentRepository::inspect_run_storage(self, run).await
     }
 
     async fn load_run_summary_projection(
@@ -303,6 +311,15 @@ fn run_matches_list_query(run: &AgentRun, query: &AgentRunListQuery) -> bool {
         return false;
     }
     true
+}
+
+fn sort_runs_newest_first(runs: &mut [AgentRun]) {
+    runs.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| right.id.cmp(&left.id))
+    });
 }
 
 fn run_is_before_cursor(run: &AgentRun, cursor: &AgentRunListCursor) -> bool {

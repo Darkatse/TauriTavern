@@ -21,6 +21,8 @@ pub struct AgentChatWorkspaceTarget {
 
 #[async_trait]
 pub trait AgentRunActivity: Send + Sync {
+    async fn active_run_ids(&self) -> Result<Vec<String>, ApplicationError>;
+
     async fn active_run_ids_for_workspace(
         &self,
         workspace_id: &str,
@@ -206,6 +208,10 @@ mod tests {
 
     #[async_trait]
     impl AgentRunActivity for MockRunActivity {
+        async fn active_run_ids(&self) -> Result<Vec<String>, ApplicationError> {
+            Ok(self.active_run_ids.clone())
+        }
+
         async fn active_run_ids_for_workspace(
             &self,
             _workspace_id: &str,

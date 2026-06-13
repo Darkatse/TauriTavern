@@ -274,9 +274,6 @@ pub(super) async fn build_services(
         repositories.preset_repository.clone(),
         llm_connection_service.clone(),
     ));
-    let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
-        repositories.agent_run_repository.clone(),
-    ));
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository,
         repositories.secret_repository.clone(),
@@ -303,6 +300,11 @@ pub(super) async fn build_services(
         agent_profile_service.clone(),
         llm_connection_service.clone(),
         prompt_assembly_service.clone(),
+    ));
+    let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
+        repositories.agent_run_repository.clone(),
+        repositories.settings_repository.clone(),
+        agent_runtime_service.clone() as Arc<dyn AgentRunActivity>,
     ));
     let agent_workspace_lifecycle_service = Arc::new(AgentWorkspaceLifecycleService::new(
         repositories.agent_workspace_lifecycle_repository.clone(),
