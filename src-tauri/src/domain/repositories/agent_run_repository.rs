@@ -1,9 +1,11 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::{
-    AgentRun, AgentRunEvent, AgentRunEventLevel, ROOT_AGENT_INVOCATION_ID,
+    AgentChatRef, AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunStatus,
+    AgentRunSummaryProjection, ROOT_AGENT_INVOCATION_ID,
 };
 
 #[derive(Debug, Clone)]
@@ -14,11 +16,38 @@ pub struct AgentRunEventReadQuery {
     pub invocation_id: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentRunListCursor {
+    pub created_at: DateTime<Utc>,
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentRunListQuery {
+    pub chat_ref: Option<AgentChatRef>,
+    pub stable_chat_id: Option<String>,
+    pub statuses: Option<Vec<AgentRunStatus>>,
+    pub before: Option<AgentRunListCursor>,
+    pub limit: usize,
+}
+
 #[async_trait]
 pub trait AgentRunRepository: Send + Sync {
     async fn create_run(&self, run: &AgentRun) -> Result<(), DomainError>;
 
     async fn load_run(&self, run_id: &str) -> Result<AgentRun, DomainError>;
+
+    async fn list_runs(&self, query: AgentRunListQuery) -> Result<Vec<AgentRun>, DomainError>;
+
+    async fn load_run_summary_projection(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<AgentRunSummaryProjection>, DomainError>;
+
+    async fn save_run_summary_projection(
+        &self,
+        projection: &AgentRunSummaryProjection,
+    ) -> Result<(), DomainError>;
 
     async fn save_run(&self, run: &AgentRun) -> Result<(), DomainError>;
 
@@ -35,6 +64,8 @@ pub trait AgentRunRepository: Send + Sync {
         run_id: &str,
         query: AgentRunEventReadQuery,
     ) -> Result<Vec<AgentRunEvent>, DomainError>;
+
+    async fn read_all_events(&self, run_id: &str) -> Result<Vec<AgentRunEvent>, DomainError>;
 }
 
 pub fn event_belongs_to_invocation(event: &AgentRunEvent, invocation_id: &str) -> bool {

@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 当前参考。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来设计。
+状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval 等未来设计。
 
 `provider_state` 是 Rust 后端内部 continuation contract，不是 Host ABI。前端/扩展不应读写 `_tauritavern_provider_state`；需要诊断时通过 run events、`modelResponsePath` 与 LLM API log 观察。
 模型回合详情必须通过 `readModelTurn()` 读取后端投影 DTO；前端不解析 `model-responses/` raw JSON。
@@ -51,7 +51,16 @@ type TauriTavernAgentApi = {
   };
 
   approveToolCall(): never;
-  listRuns(): never;
+  listRuns(input?: {
+    chatRef?: AgentChatRef;
+    stableChatId?: string;
+    statuses?: AgentRunStatus[];
+    before?: { createdAt: string; runId: string };
+    limit?: number;
+  }): Promise<{
+    runs: AgentRunSummary[];
+    nextCursor?: { createdAt: string; runId: string };
+  }>;
   readDiff(): never;
   rollback(): never;
 };
@@ -64,7 +73,7 @@ type TauriTavernAgentApi = {
 - `startRunFromLegacyGenerate()`：从当前 Legacy Generate dryRun 兼容桥启动。
 - `startRunWithPromptSnapshot()`：调用方已经持有 prompt snapshot 时启动。
 
-`approveToolCall()`、`listRuns()`、`readDiff()`、`rollback()` 已预留名称，但当前实现会显式 throw，避免静默降级。
+`approveToolCall()`、`readDiff()`、`rollback()` 已预留名称，但当前实现会显式 throw，避免静默降级。
 
 ## 3. startRunFromLegacyGenerate
 
@@ -142,7 +151,36 @@ type AgentRunHandle = {
   stableChatId: string;
   generationType: string;
 };
+
+type AgentRunSummary = {
+  runId: string;
+  workspaceId: string;
+  stableChatId: string;
+  chatRef: AgentChatRef;
+  generationType: string;
+  profileId?: string;
+  skillScopeRefs?: {
+    preset?: { apiId: string; name: string };
+    characterId?: string;
+  };
+  persistBaseStateId?: string;
+  inputMessageCount?: number;
+  presentation: 'foreground' | 'background';
+  status: AgentRunStatus;
+  createdAt: string;
+  updatedAt: string;
+  commitCount: number;
+  committedMessage?: {
+    commitId: string;
+    messageId: string;
+    messageIndex?: number;
+    committedAt: string;
+  };
+  terminalAt?: string;
+};
 ```
+
+`AgentRunSummary.committedMessage.messageIndex` 是 host commit 当时的零基消息索引快照，由 `chat_commit_completed.messageId` 派生；它不承诺当前聊天仍在该位置。旧 run 没有可解析 `messageId` 时该字段为空，前端不应显示楼层定位。summary projection 是可从 journal 重建的缓存，只在已经写入 terminal event 的终态 run 上复用/落盘。
 
 身份语义：
 
@@ -567,6 +605,7 @@ commit.save_failed
 start_agent_run(dto)
 list_agent_tool_specs()
 cancel_agent_run(dto)
+list_agent_runs(dto)
 read_agent_run_events(dto)
 read_agent_workspace_file(dto)
 resolve_agent_chat_commit(dto)
@@ -578,7 +617,6 @@ Command 层必须是薄封装。Agent loop 不写在 command 内。
 
 ```text
 approve_agent_tool_call(dto)
-list_agent_runs(chat_ref)
 read_agent_diff(dto)
 rollback_agent_run(dto)
 ```

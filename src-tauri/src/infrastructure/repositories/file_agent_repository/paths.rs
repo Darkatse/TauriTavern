@@ -19,6 +19,15 @@ impl FileAgentRepository {
             .join(format!("{run_id}.json")))
     }
 
+    pub(super) fn index_run_summary_path(&self, run_id: &str) -> Result<PathBuf, DomainError> {
+        validate_segment(run_id, "run_id")?;
+        Ok(self
+            .root
+            .join("index")
+            .join("run-summaries")
+            .join(format!("{run_id}.json")))
+    }
+
     pub(super) fn run_dir(&self, run: &AgentRun) -> Result<PathBuf, DomainError> {
         validate_segment(&run.workspace_id, "workspace_id")?;
         validate_segment(&run.id, "run_id")?;

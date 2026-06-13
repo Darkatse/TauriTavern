@@ -168,7 +168,8 @@ chat deletion fails clearly while the corresponding Agent workspace has an activ
 skill_search respects visible/deny policy and read budget
 skill_read supports line and character ranges
 recoverable tool errors are returned to the model instead of failing the run
-future APIs approveToolCall/listRuns/readDiff/rollback throw explicitly
+listRuns returns paginated Agent run history summaries
+future APIs approveToolCall/readDiff/rollback throw explicitly
 ```
 
 Provider normalizer tests 必须覆盖可见 reasoning 提取：Claude `thinking`、Gemini `thought` 文本、OpenAI Responses reasoning summary 进入 `reasoning_content`；signature / encrypted continuation 仍作为 native/provider state 保留，不能作为可展示文本。

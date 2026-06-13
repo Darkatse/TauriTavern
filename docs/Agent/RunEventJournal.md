@@ -428,13 +428,14 @@ Locked plan violation 必须失败或等待用户决策，不能静默忽略。
 artifact_assembly_started
 artifact_assembled
 artifact_assembly_failed
-commit_started
-run_committed
-commit_failed
+chat_commit_started
+chat_commit_requested
+chat_commit_completed
+chat_commit_failed
 committed_message_rollback_completed
 ```
 
-Commit event must include chat ref、message index/id、checkpoint id、artifact set id。
+Commit event 必须包含 chat ref、checkpoint id、artifact path，并在 host bridge 已确认时包含 message id。`chat_commit_completed.messageId` 是 host bridge 在提交当时返回的聊天消息 id；当前 run 还会从数字型 message id 派生零基 `messageIndex`。这是提交时快照，不是对当前聊天消息位置的反向查询。
 
 ## 5. 事件与副作用的顺序
 

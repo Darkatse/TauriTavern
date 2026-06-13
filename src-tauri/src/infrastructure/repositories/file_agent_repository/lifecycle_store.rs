@@ -67,6 +67,19 @@ impl AgentWorkspaceLifecycleRepository for FileAgentRepository {
                     )));
                 }
             }
+
+            let summary_path = self.index_run_summary_path(run_id)?;
+            match fs::remove_file(&summary_path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(DomainError::InternalError(format!(
+                        "Failed to delete agent run summary {}: {}",
+                        summary_path.display(),
+                        error
+                    )));
+                }
+            }
         }
 
         Ok(AgentChatWorkspaceDeletion {

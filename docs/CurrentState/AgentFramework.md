@@ -24,6 +24,7 @@
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；实际 root run 使用扩展设置中的 `activeProfileId`。Profile 面板的 `editingProfileId` 只表示当前正在编辑的配置档案，不影响生成。Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
 - Agent System 前端已提供 run timeline / detail panel；timeline 以 `readEvents(beforeSeq, limit)` 读取最新页并按需补拉更早 journal 页，默认视图只投影用户可见操作，DOM 使用窗口化渲染避免长 run 在低端移动设备上堆积节点；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。
+- Agent run history 已提供只读 `listRuns()` / `list_agent_runs(dto)` 入口；首版从 `_tauritavern/agent-workspaces/index/runs/*.json` 读取 `AgentRun` 摘要，支持 `chatRef`、`stableChatId`、`statuses`、时间游标与 limit。列表会维护 `_tauritavern/agent-workspaces/index/run-summaries/<run-id>.json` projection，从 `chat_commit_completed.messageId` 派生提交当时的 `messageIndex`；该索引是提交时快照，不扫描聊天消息、不反查当前楼层。只有已经写入 terminal event 的终态 run 会复用/落盘 summary projection，运行中或终态事件尚未出现的窗口只即时投影。
 - 输入框 Agent 快捷开关 `#ttas_agent_send_toggle` 可以在 Agent System 扩展抽屉中隐藏；该状态只是扩展 UI 偏好，不改变 `agentModeEnabled`、生成路由、Agent Host ABI、journal 或 Rust runtime。
 
 ## 当前 Host ABI
@@ -35,6 +36,7 @@ api.agent.startRunFromLegacyGenerate(input?)
 api.agent.startRunWithPromptSnapshot(input)
 api.agent.subscribe(runId, handler, options?)
 api.agent.cancel(runId)
+api.agent.listRuns(input?)
 api.agent.readEvents(input)
 api.agent.readWorkspaceFile(input)
 api.agent.readModelTurn(input)
@@ -490,7 +492,7 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - 继续完善运行中 prompt assembly 的恢复/诊断体验；当前 child / handoff 已有独立 provider_state、model binding 与 host bridge prompt assembly handshake。
 - 实现模型可见 task cancel 与更完整的 scheduler policy。
 - 明确多 Agent provider/model switch policy；root run 的 `connectionRef` 模型绑定已经可用。
-- 实现 readDiff、rollback、listRuns、resume-run、streaming 的明确策略。
+- 实现 readDiff、rollback、resume-run、streaming 的明确策略。
 
 ## 每次 Agent 相关变更必须更新
 

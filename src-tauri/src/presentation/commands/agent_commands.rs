@@ -7,12 +7,13 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::agent_dto::{
-    AgentCancelRunDto, AgentListProfilesResultDto, AgentListToolSpecsResultDto,
-    AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentPreparePromptAssemblyDto,
-    AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto,
-    AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
-    AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
-    AgentReadWorkspaceFileDto, AgentRepairProfileFileDto, AgentResolveChatCommitDto,
+    AgentCancelRunDto, AgentListProfilesResultDto, AgentListRunsDto, AgentListRunsResultDto,
+    AgentListToolSpecsResultDto, AgentLoadProfileResultDto, AgentModelTurnDisplayDto,
+    AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto, AgentProfileIdDto,
+    AgentPromptAssemblyBrokerRequestDto, AgentPruneChatPersistentStatesDto,
+    AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto, AgentReadEventsResultDto,
+    AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto, AgentReadWorkspaceFileDto,
+    AgentRepairProfileFileDto, AgentResolveChatCommitDto,
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
     AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRetargetPresetRefsDto,
     AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto,
@@ -230,6 +231,20 @@ pub async fn cancel_agent_run(
         .cancel_run(dto)
         .await
         .map_err(map_command_error("Failed to cancel agent run"))
+}
+
+#[tauri::command]
+pub async fn list_agent_runs(
+    dto: AgentListRunsDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentListRunsResultDto, CommandError> {
+    log_command("list_agent_runs");
+
+    app_state
+        .agent_run_history_service
+        .list_runs(dto)
+        .await
+        .map_err(map_command_error("Failed to list agent runs"))
 }
 
 #[tauri::command]

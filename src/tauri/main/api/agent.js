@@ -10,6 +10,23 @@ import { normalizeAgentRunOptions } from './agent-run-options.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../scripts/tauritavern/agent/agent-system-settings.js';
 
 const DEFAULT_EVENT_POLL_MS = 500;
+const MAX_RUN_LIST_LIMIT = 200;
+const AGENT_RUN_STATUSES = new Set([
+    'created',
+    'initializing_workspace',
+    'assembling_context',
+    'calling_model',
+    'dispatching_tool',
+    'applying_workspace_patch',
+    'creating_checkpoint',
+    'awaiting_host_commit',
+    'finishing',
+    'completed',
+    'partial_success',
+    'cancelling',
+    'cancelled',
+    'failed',
+]);
 
 /**
  * @typedef {{ kind: 'character'; characterId: string; fileName: string }} CharacterChatRef
@@ -79,6 +96,32 @@ function createAgentApi({ safeInvoke }) {
     async function cancel(runId) {
         const normalizedRunId = requireRunId(runId);
         return safeInvoke('cancel_agent_run', { dto: { runId: normalizedRunId } });
+    }
+
+    async function listRuns(input = {}) {
+        if (!isPlainObject(input)) {
+            throw new Error('Agent listRuns input must be an object');
+        }
+
+        const chatRef = input.chatRef;
+        if (chatRef != null && !isPlainObject(chatRef)) {
+            throw new Error('chatRef must be an object');
+        }
+
+        const stableChatId = normalizeOptionalString(input.stableChatId ?? input.stable_chat_id);
+        const statuses = normalizeRunStatuses(input.statuses);
+        const before = normalizeRunListBefore(input.before);
+        const limit = normalizeRunListLimit(input.limit);
+
+        return safeInvoke('list_agent_runs', {
+            dto: {
+                ...(chatRef ? { chatRef } : {}),
+                ...(stableChatId ? { stableChatId } : {}),
+                ...(statuses ? { statuses } : {}),
+                ...(before ? { before } : {}),
+                ...(limit == null ? {} : { limit }),
+            },
+        });
     }
 
     async function readEvents(input) {
@@ -232,9 +275,7 @@ function createAgentApi({ safeInvoke }) {
         approveToolCall() {
             throw new Error('approveToolCall is not implemented in Agent Phase 2B');
         },
-        listRuns() {
-            throw new Error('listRuns is not implemented in Agent Phase 2B');
-        },
+        listRuns,
         readDiff() {
             throw new Error('readDiff is not implemented in Agent Phase 2B');
         },
@@ -393,6 +434,78 @@ function normalizeOptionalString(value) {
     }
     const text = String(value).trim();
     return text || undefined;
+}
+
+function normalizeRunStatuses(value) {
+    if (value == null) {
+        return undefined;
+    }
+    if (!Array.isArray(value)) {
+        throw new Error('statuses must be an array');
+    }
+
+    const statuses = [];
+    const seen = new Set();
+    for (const item of value) {
+        const status = String(item ?? '').trim();
+        if (!status) {
+            throw new Error('statuses contains an empty status');
+        }
+        if (!AGENT_RUN_STATUSES.has(status)) {
+            throw new Error(`unknown agent run status: ${status}`);
+        }
+        if (seen.has(status)) {
+            continue;
+        }
+        seen.add(status);
+        statuses.push(status);
+    }
+    return statuses.length ? statuses : undefined;
+}
+
+function normalizeRunListBefore(value) {
+    if (value == null) {
+        return undefined;
+    }
+    if (!isPlainObject(value)) {
+        throw new Error('before must be an object');
+    }
+
+    const runId = String(value.runId ?? value.run_id ?? '').trim();
+    if (!runId) {
+        throw new Error('before.runId is required');
+    }
+    const createdAt = normalizeRunListCursorTimestamp(value.createdAt ?? value.created_at);
+    return { createdAt, runId };
+}
+
+function normalizeRunListCursorTimestamp(value) {
+    if (value instanceof Date) {
+        if (Number.isNaN(value.getTime())) {
+            throw new Error('before.createdAt must be a valid timestamp');
+        }
+        return value.toISOString();
+    }
+    const timestamp = String(value ?? '').trim();
+    if (!timestamp) {
+        throw new Error('before.createdAt is required');
+    }
+    const parsed = new Date(timestamp);
+    if (Number.isNaN(parsed.getTime())) {
+        throw new Error('before.createdAt must be a valid timestamp');
+    }
+    return parsed.toISOString();
+}
+
+function normalizeRunListLimit(value) {
+    if (value == null) {
+        return undefined;
+    }
+    const limit = Number(value);
+    if (!Number.isInteger(limit) || limit <= 0 || limit > MAX_RUN_LIST_LIMIT) {
+        throw new Error(`limit must be an integer between 1 and ${MAX_RUN_LIST_LIMIT}`);
+    }
+    return limit;
 }
 
 function normalizeStateIdList(value) {

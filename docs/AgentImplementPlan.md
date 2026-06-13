@@ -59,7 +59,6 @@ api.agent.tools.list()
 
 ```ts
 approveToolCall()
-listRuns()
 readDiff()
 rollback()
 ```

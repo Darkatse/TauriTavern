@@ -4,6 +4,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
 use crate::application::services::agent_profile_service::AgentProfileService;
+use crate::application::services::agent_run_history_service::AgentRunHistoryService;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::asset_service::AssetService;
 use crate::application::services::avatar_service::AvatarService;
@@ -67,6 +68,7 @@ pub struct AppState {
     pub agent_profile_service: Arc<AgentProfileService>,
     pub agent_profile_diagnostic_service: Arc<AgentProfileDiagnosticService>,
     pub prompt_assembly_service: Arc<PromptAssemblyService>,
+    pub agent_run_history_service: Arc<AgentRunHistoryService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub llm_connection_service: Arc<LlmConnectionService>,
@@ -124,6 +126,7 @@ impl AppState {
             agent_profile_service: services.agent_profile_service,
             agent_profile_diagnostic_service: services.agent_profile_diagnostic_service,
             prompt_assembly_service: services.prompt_assembly_service,
+            agent_run_history_service: services.agent_run_history_service,
             agent_runtime_service: services.agent_runtime_service,
             chat_completion_service: services.chat_completion_service,
             llm_connection_service: services.llm_connection_service,

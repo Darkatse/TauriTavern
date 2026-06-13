@@ -250,6 +250,7 @@ impl AgentRuntimeService {
 
         match host_result {
             Ok(result) => {
+                let message_index = message_index_from_message_id(result.message_id.as_deref());
                 commit_ledger.record(&path, mode, result.message_id.clone(), round);
                 self.transition_status(run_id, AgentRunStatus::DispatchingTool)
                     .await?;
@@ -264,6 +265,7 @@ impl AgentRuntimeService {
                         "path": path.as_str(),
                         "mode": mode,
                         "messageId": result.message_id.as_deref(),
+                        "messageIndex": message_index,
                     }),
                 )
                 .await?;
@@ -285,6 +287,7 @@ impl AgentRuntimeService {
                             "path": path.as_str(),
                             "mode": mode,
                             "messageId": result.message_id.as_deref(),
+                            "messageIndex": message_index,
                             "chars": file_metrics.chars,
                             "words": file_metrics.words,
                         }),
@@ -531,6 +534,10 @@ fn persistent_change_payloads(changes: &WorkspacePersistentChangeSet) -> Vec<Val
             })
         })
         .collect()
+}
+
+fn message_index_from_message_id(message_id: Option<&str>) -> Option<usize> {
+    message_id?.trim().parse::<usize>().ok()
 }
 
 fn recoverable_tool_error(

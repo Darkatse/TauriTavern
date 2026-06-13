@@ -7,8 +7,8 @@ use crate::domain::models::agent::profile::{
 };
 use crate::domain::models::agent::{
     AgentChatRef, AgentDelegationContinuation, AgentInvocationExitPolicy, AgentInvocationKind,
-    AgentInvocationStatus, AgentRunEvent, AgentRunPresentation, AgentRunStatus, AgentTaskStatus,
-    AgentToolSpec,
+    AgentInvocationStatus, AgentRunEvent, AgentRunPresentation, AgentRunSkillScopeRefs,
+    AgentRunStatus, AgentTaskStatus, AgentToolSpec,
 };
 use crate::domain::repositories::agent_profile_storage_health_repository::{
     AgentProfileStorageIssue, AgentProfileStorageRepairAction,
@@ -234,6 +234,73 @@ pub struct AgentRunHandleDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentListRunsDto {
+    #[serde(default)]
+    pub chat_ref: Option<AgentChatRef>,
+    #[serde(default, alias = "stableId")]
+    pub stable_chat_id: Option<String>,
+    #[serde(default)]
+    pub statuses: Vec<AgentRunStatus>,
+    #[serde(default)]
+    pub before: Option<AgentListRunsCursorDto>,
+    #[serde(default = "default_run_list_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentListRunsCursorDto {
+    pub created_at: DateTime<Utc>,
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunSummaryDto {
+    pub run_id: String,
+    pub workspace_id: String,
+    pub stable_chat_id: String,
+    pub chat_ref: AgentChatRef,
+    pub generation_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "AgentRunSkillScopeRefs::is_empty")]
+    pub skill_scope_refs: AgentRunSkillScopeRefs,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persist_base_state_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_message_count: Option<usize>,
+    pub presentation: AgentRunPresentation,
+    pub status: AgentRunStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub commit_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed_message: Option<AgentRunCommittedMessageDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunCommittedMessageDto {
+    pub commit_id: String,
+    pub message_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_index: Option<usize>,
+    pub committed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentListRunsResultDto {
+    pub runs: Vec<AgentRunSummaryDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<AgentListRunsCursorDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentCancelRunDto {
     pub run_id: String,
 }
@@ -435,6 +502,10 @@ fn default_generation_type() -> String {
 
 fn default_event_limit() -> usize {
     100
+}
+
+fn default_run_list_limit() -> usize {
+    50
 }
 
 fn default_model_turn_text_limit() -> usize {

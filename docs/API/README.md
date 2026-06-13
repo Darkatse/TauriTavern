@@ -30,10 +30,10 @@ const api = host?.api;
 - `api.extension.store`
   - 面向需要**全局持久化**的扩展（不绑定 chat）。
   - 提供 Extension KV JSON + Blob 存储，支持多 table。
-- `api.agent`（已落地 canonical model IR、provider_state continuation、上下文只读工具与 workspace 读改工具循环）
+- `api.agent`（已落地 canonical model IR、provider_state continuation、上下文只读工具、workspace 读改工具循环与 run history listing）
   - 面向 Agent Run / timeline / workspace / checkpoint / commit。
-  - 当前提供启动 run、订阅/读取事件、取消、读取 workspace 文件、prepare/finalize/commit；模型侧内建 chat search/read、world info read、skill list/read 与 workspace list/read/write/patch/finish 工具由 Rust runtime 注册。
-  - approval、listRuns、readDiff、rollback 仍是后续工作；当前入口显式 throw。
+  - 当前提供启动 run、列出历史 run、订阅/读取事件、取消、读取 workspace 文件、prepare/finalize/commit；模型侧内建 chat search/read、world info read、skill list/read 与 workspace list/read/write/patch/finish 工具由 Rust runtime 注册。
+  - approval、readDiff、rollback 仍是后续工作；当前入口显式 throw。
 - `api.llmConnections`
   - 面向 Agent Profile / 扩展侧的 LLM 连接定义管理。
   - 当前提供 list、load、save、delete；Profile 通过 `connectionRef + modelId` 引用连接，不直接依赖 Connection Manager 的 Model Target id。

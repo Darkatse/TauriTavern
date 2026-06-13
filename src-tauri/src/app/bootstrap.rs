@@ -7,6 +7,7 @@ use tokio::sync::Semaphore;
 use crate::application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
 use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
 use crate::application::services::agent_profile_service::AgentProfileService;
+use crate::application::services::agent_run_history_service::AgentRunHistoryService;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::agent_workspace_lifecycle_service::{
     AgentRunActivity, AgentWorkspaceLifecycleService,
@@ -141,6 +142,7 @@ pub(super) struct AppServices {
     pub agent_profile_service: Arc<AgentProfileService>,
     pub agent_profile_diagnostic_service: Arc<AgentProfileDiagnosticService>,
     pub prompt_assembly_service: Arc<PromptAssemblyService>,
+    pub agent_run_history_service: Arc<AgentRunHistoryService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub llm_connection_service: Arc<LlmConnectionService>,
@@ -272,6 +274,9 @@ pub(super) async fn build_services(
         repositories.preset_repository.clone(),
         llm_connection_service.clone(),
     ));
+    let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
+        repositories.agent_run_repository.clone(),
+    ));
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository,
         repositories.secret_repository.clone(),
@@ -399,6 +404,7 @@ pub(super) async fn build_services(
         agent_profile_service,
         agent_profile_diagnostic_service,
         prompt_assembly_service,
+        agent_run_history_service,
         agent_runtime_service,
         chat_completion_service,
         llm_connection_service,

@@ -112,11 +112,91 @@ type TauriTavernAgentRunEvent = {
     payload?: any;
 };
 
+type TauriTavernAgentInvocationKind = 'root' | 'subagent' | 'handoff';
+
+type TauriTavernAgentInvocationStatus =
+    | 'created'
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'transferred';
+
+type TauriTavernAgentInvocationExitPolicy = 'run_finish_allowed' | 'task_return_required';
+
+type TauriTavernAgentDelegationContinuation = 'return_to_parent' | 'transfer_control';
+
+type TauriTavernAgentTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+type TauriTavernAgentRunTimelineInvocation = {
+    invocationId: string;
+    parentInvocationId?: string;
+    profileId: string;
+    kind: TauriTavernAgentInvocationKind;
+    status: TauriTavernAgentInvocationStatus;
+    exitPolicy: TauriTavernAgentInvocationExitPolicy;
+    createdAt: string;
+    updatedAt: string;
+};
+
+type TauriTavernAgentRunTimelineDelegationEdge = {
+    taskId: string;
+    sourceInvocationId: string;
+    targetInvocationId: string;
+    targetProfileId: string;
+    workspaceKey: string;
+    continuation: TauriTavernAgentDelegationContinuation;
+    status: TauriTavernAgentTaskStatus;
+    resultRef?: string;
+    error?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+type TauriTavernAgentRunTimelineProjection = {
+    foregroundInvocationIds: string[];
+    invocations: TauriTavernAgentRunTimelineInvocation[];
+    delegationEdges: TauriTavernAgentRunTimelineDelegationEdge[];
+};
+
 type TauriTavernAgentRunHandle = {
     runId: string;
     workspaceId: string;
     stableChatId: string;
+    generationType: string;
     status: TauriTavernAgentRunStatus;
+};
+
+type TauriTavernAgentRunListCursor = {
+    createdAt: string;
+    runId: string;
+};
+
+type TauriTavernAgentRunSummary = {
+    runId: string;
+    workspaceId: string;
+    stableChatId: string;
+    chatRef: TauriTavernChatRef;
+    generationType: string;
+    profileId?: string;
+    skillScopeRefs?: {
+        preset?: TauriTavernAgentPresetRef;
+        characterId?: string;
+    };
+    persistBaseStateId?: string;
+    inputMessageCount?: number;
+    presentation: TauriTavernAgentRunPresentation;
+    status: TauriTavernAgentRunStatus;
+    createdAt: string;
+    updatedAt: string;
+    commitCount: number;
+    committedMessage?: {
+        commitId: string;
+        messageId: string;
+        messageIndex?: number;
+        committedAt: string;
+    };
+    terminalAt?: string;
 };
 
 type TauriTavernAgentModelTurn = {
@@ -353,18 +433,18 @@ type TauriTavernAgentApi = {
         presentation?: TauriTavernAgentRunPresentation;
         options?: { presentation?: TauriTavernAgentRunPresentation; stream?: false };
     }) => Promise<TauriTavernAgentRunHandle>;
-    cancel: (runId: string) => Promise<{
-        runId: string;
-        workspaceId: string;
-        stableChatId: string;
-        status: TauriTavernAgentRunStatus;
-    }>;
+    cancel: (runId: string) => Promise<TauriTavernAgentRunHandle>;
     readEvents: (input: {
         runId: string;
         afterSeq?: number;
         beforeSeq?: number;
         limit?: number;
-    }) => Promise<{ events: TauriTavernAgentRunEvent[] }>;
+        invocationId?: string;
+        includeTimelineProjection?: boolean;
+    }) => Promise<{
+        events: TauriTavernAgentRunEvent[];
+        timelineProjection?: TauriTavernAgentRunTimelineProjection;
+    }>;
     readWorkspaceFile: (input: {
         runId: string;
         path: string;
@@ -384,7 +464,16 @@ type TauriTavernAgentApi = {
     tools: TauriTavernAgentToolsApi;
     promptAssembly: TauriTavernAgentPromptAssemblyApi;
     approveToolCall: () => never;
-    listRuns: () => never;
+    listRuns: (input?: {
+        chatRef?: TauriTavernChatRef;
+        stableChatId?: string;
+        statuses?: TauriTavernAgentRunStatus[];
+        before?: TauriTavernAgentRunListCursor;
+        limit?: number;
+    }) => Promise<{
+        runs: TauriTavernAgentRunSummary[];
+        nextCursor?: TauriTavernAgentRunListCursor;
+    }>;
     readDiff: () => never;
     rollback: () => never;
 };

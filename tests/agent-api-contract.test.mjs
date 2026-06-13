@@ -210,6 +210,87 @@ test('api.agent.readEvents requests timeline projection only when asked', async 
     ]);
 });
 
+test('api.agent.listRuns forwards run history filters with camelCase DTOs', async () => {
+    const { calls, agent } = await installHarness();
+    const chatRef = { kind: 'character', characterId: 'char-1', fileName: 'Char.json' };
+
+    await agent.listRuns();
+    await agent.listRuns({
+        chatRef,
+        stableChatId: ' stable_1 ',
+        statuses: ['completed', 'failed', 'completed'],
+        before: {
+            createdAt: '2026-01-02T11:04:05+08:00',
+            runId: ' run_b ',
+        },
+        limit: 25,
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'list_agent_runs',
+            args: { dto: {} },
+        },
+        {
+            command: 'list_agent_runs',
+            args: {
+                dto: {
+                    chatRef,
+                    stableChatId: 'stable_1',
+                    statuses: ['completed', 'failed'],
+                    before: {
+                        createdAt: '2026-01-02T03:04:05.000Z',
+                        runId: 'run_b',
+                    },
+                    limit: 25,
+                },
+            },
+        },
+    ]);
+});
+
+test('api.agent.listRuns fails fast on invalid history filters', async () => {
+    const { calls, agent } = await installHarness();
+
+    await assert.rejects(
+        () => agent.listRuns(null),
+        /Agent listRuns input must be an object/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ chatRef: 'bad' }),
+        /chatRef must be an object/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ statuses: 'completed' }),
+        /statuses must be an array/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ statuses: ['completed', ''] }),
+        /statuses contains an empty status/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ statuses: ['done'] }),
+        /unknown agent run status/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ before: { createdAt: '2026-01-02T03:04:05.000Z' } }),
+        /before.runId is required/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ before: { runId: 'run_a', createdAt: 'not-a-date' } }),
+        /before.createdAt must be a valid timestamp/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ before: { runId: 'run_a', createdAt: new Date(Number.NaN) } }),
+        /before.createdAt must be a valid timestamp/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ limit: 0 }),
+        /limit must be an integer between 1 and 200/,
+    );
+    assert.deepEqual(calls, []);
+});
+
 test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid input', async () => {
     const { calls, agent } = await installHarness();
 

@@ -3,6 +3,7 @@ pub mod agent_identity;
 pub mod agent_model_gateway;
 pub mod agent_profile_diagnostic_service;
 pub mod agent_profile_service;
+pub mod agent_run_history_service;
 pub mod agent_runtime_service;
 pub mod agent_tools;
 pub mod agent_workspace_lifecycle_service;
