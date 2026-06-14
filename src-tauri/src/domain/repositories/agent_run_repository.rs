@@ -58,6 +58,13 @@ pub trait AgentRunRepository: Send + Sync {
         run: &AgentRun,
     ) -> Result<AgentRunStorageStats, DomainError>;
 
+    async fn slim_run_heavy_artifacts(
+        &self,
+        run: &AgentRun,
+    ) -> Result<AgentRunStorageEntryStats, DomainError>;
+
+    async fn delete_run(&self, run: &AgentRun) -> Result<AgentRunStorageEntryStats, DomainError>;
+
     async fn load_run_summary_projection(
         &self,
         run_id: &str,

@@ -292,7 +292,7 @@ test('api.agent.listRuns fails fast on invalid history filters', async () => {
     assert.deepEqual(calls, []);
 });
 
-test('api.agent.retention forwards settings and prune plan contracts', async () => {
+test('api.agent.retention forwards settings and prune contracts', async () => {
     const calls = [];
     const { agent } = await installHarness({
         safeInvoke: async (command, args) => {
@@ -339,6 +339,13 @@ test('api.agent.retention forwards settings and prune plan contracts', async () 
         },
         detailLimit: 8,
     });
+    await agent.retention.applyPrune({
+        retention: {
+            keepRecentTerminalRuns: 80,
+            keepFullRecentRuns: 12,
+        },
+        detailLimit: 8,
+    });
 
     assert.deepEqual(calls, [
         {
@@ -360,6 +367,18 @@ test('api.agent.retention forwards settings and prune plan contracts', async () 
         },
         {
             command: 'plan_agent_run_prune',
+            args: {
+                dto: {
+                    retention: {
+                        keepRecentTerminalRuns: 80,
+                        keepFullRecentRuns: 12,
+                    },
+                    detailLimit: 8,
+                },
+            },
+        },
+        {
+            command: 'apply_agent_run_prune',
             args: {
                 dto: {
                     retention: {
@@ -402,6 +421,23 @@ test('api.agent.retention fails fast on invalid retention inputs', async () => {
     );
     await assert.rejects(
         () => agent.retention.planPrune({
+            retention: {
+                keepRecentTerminalRuns: 10,
+                keepFullRecentRuns: 11,
+            },
+        }),
+        /keepFullRecentRuns must be less than or equal to keepRecentTerminalRuns/,
+    );
+    await assert.rejects(
+        () => agent.retention.applyPrune(null),
+        /Agent applyRunPrune input must be an object/,
+    );
+    await assert.rejects(
+        () => agent.retention.applyPrune({ detailLimit: -1 }),
+        /detailLimit must be an integer between 0 and 1000/,
+    );
+    await assert.rejects(
+        () => agent.retention.applyPrune({
             retention: {
                 keepRecentTerminalRuns: 10,
                 keepFullRecentRuns: 11,

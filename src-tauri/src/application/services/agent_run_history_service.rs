@@ -1,17 +1,21 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use tokio::sync::Mutex;
+
 use crate::application::dto::agent_dto::{
-    AgentListRunsCursorDto, AgentListRunsDto, AgentListRunsResultDto, AgentPlanRunPruneDto,
-    AgentRunCommittedMessageDto, AgentRunPruneActionDto, AgentRunPruneBlockReasonDto,
-    AgentRunPruneBlockedRunDto, AgentRunPruneCandidateDto, AgentRunPrunePlanDto,
+    AgentApplyRunPruneDto, AgentListRunsCursorDto, AgentListRunsDto, AgentListRunsResultDto,
+    AgentPlanRunPruneDto, AgentRunCommittedMessageDto, AgentRunPruneActionDto,
+    AgentRunPruneApplyResultDto, AgentRunPruneBlockReasonDto, AgentRunPruneBlockedRunDto,
+    AgentRunPruneCandidateDto, AgentRunPruneFailedRunDto, AgentRunPrunePlanDto,
     AgentRunPruneReasonDto, AgentRunPruneRetentionDto, AgentRunSummaryDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_run_retention_planner::{
     AgentRunPruneAction, AgentRunPruneBlockReason, AgentRunPruneBlockedRun, AgentRunPruneCandidate,
-    AgentRunPruneReason, AgentRunRetentionPlan, AgentRunRetentionPlanInput,
-    AgentRunRetentionPlanner, MAX_AGENT_RUN_PRUNE_DETAIL_LIMIT, is_terminal_run_event,
+    AgentRunPruneReason, AgentRunRetentionPlan, AgentRunRetentionPlanDetailMode,
+    AgentRunRetentionPlanInput, AgentRunRetentionPlanner, MAX_AGENT_RUN_PRUNE_DETAIL_LIMIT,
+    is_terminal_run_event,
 };
 use crate::application::services::agent_workspace_lifecycle_service::AgentRunActivity;
 use crate::domain::models::agent::{
@@ -20,7 +24,7 @@ use crate::domain::models::agent::{
 };
 use crate::domain::models::settings::AgentRunRetentionSettings;
 use crate::domain::repositories::agent_run_repository::{
-    AgentRunListCursor, AgentRunListQuery, AgentRunRepository,
+    AgentRunListCursor, AgentRunListQuery, AgentRunRepository, AgentRunStorageEntryStats,
 };
 use crate::domain::repositories::settings_repository::SettingsRepository;
 
@@ -30,6 +34,7 @@ pub struct AgentRunHistoryService {
     run_repository: Arc<dyn AgentRunRepository>,
     settings_repository: Arc<dyn SettingsRepository>,
     run_activity: Arc<dyn AgentRunActivity>,
+    run_prune_apply_lock: Mutex<()>,
 }
 
 impl AgentRunHistoryService {
@@ -42,6 +47,7 @@ impl AgentRunHistoryService {
             run_repository,
             settings_repository,
             run_activity,
+            run_prune_apply_lock: Mutex::new(()),
         }
     }
 
@@ -96,22 +102,88 @@ impl AgentRunHistoryService {
     ) -> Result<AgentRunPrunePlanDto, ApplicationError> {
         let retention = self.resolve_prune_retention(dto.retention).await?;
         let detail_limit = normalize_prune_detail_limit(dto.detail_limit)?;
-        let active_run_ids = self
-            .run_activity
-            .active_run_ids()
-            .await?
-            .into_iter()
-            .collect::<BTreeSet<_>>();
-        let planner = AgentRunRetentionPlanner::new(self.run_repository.as_ref());
-        let plan = planner
-            .plan(AgentRunRetentionPlanInput {
-                retention,
-                detail_limit,
-                active_run_ids,
-            })
+        let plan = self
+            .build_preview_run_prune_plan(retention, detail_limit)
             .await?;
 
-        Ok(AgentRunPrunePlanDto::from_plan(plan))
+        Ok(AgentRunPrunePlanDto::from_preview_plan(plan, detail_limit))
+    }
+
+    pub async fn apply_run_prune(
+        &self,
+        dto: AgentApplyRunPruneDto,
+    ) -> Result<AgentRunPruneApplyResultDto, ApplicationError> {
+        let detail_limit = normalize_prune_detail_limit(dto.detail_limit)?;
+        let _guard = self.run_prune_apply_lock.lock().await;
+        let retention = self.resolve_prune_retention(dto.retention).await?;
+        let retention_dto = AgentRunPruneRetentionDto::from(retention.clone());
+        let execution_plan = self
+            .build_execution_run_prune_plan(retention.clone())
+            .await?;
+
+        let mut slimmed_run_count = 0;
+        let mut deleted_run_count = 0;
+        let mut failed_run_count = 0;
+        let mut removed_file_count = 0;
+        let mut removed_byte_count = 0;
+        let mut failed_details_truncated = false;
+        let mut failed_runs = Vec::new();
+
+        for candidate in execution_plan.candidates {
+            let result = match candidate.action {
+                AgentRunPruneAction::SlimHeavyArtifacts => {
+                    self.run_repository
+                        .slim_run_heavy_artifacts(&candidate.run)
+                        .await
+                }
+                AgentRunPruneAction::DeleteRun => {
+                    self.run_repository.delete_run(&candidate.run).await
+                }
+            };
+
+            match result {
+                Ok(stats) => {
+                    match candidate.action {
+                        AgentRunPruneAction::SlimHeavyArtifacts => slimmed_run_count += 1,
+                        AgentRunPruneAction::DeleteRun => deleted_run_count += 1,
+                    }
+                    accumulate_apply_stats(
+                        &mut removed_file_count,
+                        &mut removed_byte_count,
+                        stats,
+                    )?;
+                }
+                Err(error) => {
+                    failed_run_count += 1;
+                    if failed_runs.len() < detail_limit {
+                        failed_runs.push(AgentRunPruneFailedRunDto::from_candidate(
+                            candidate,
+                            error.to_string(),
+                        ));
+                    } else {
+                        failed_details_truncated = true;
+                    }
+                }
+            }
+        }
+
+        let after_plan = self
+            .build_preview_run_prune_plan(retention, detail_limit)
+            .await
+            .map(|plan| AgentRunPrunePlanDto::from_preview_plan(plan, detail_limit))?;
+
+        Ok(AgentRunPruneApplyResultDto {
+            retention: retention_dto,
+            detail_limit,
+            slimmed_run_count,
+            deleted_run_count,
+            failed_run_count,
+            removed_file_count,
+            removed_byte_count,
+            failed_details_truncated,
+            failed_runs,
+            after_plan,
+        })
     }
 
     async fn resolve_prune_retention(
@@ -133,6 +205,51 @@ impl AgentRunHistoryService {
 
         validate_prune_retention(&retention)?;
         Ok(retention)
+    }
+
+    async fn build_preview_run_prune_plan(
+        &self,
+        retention: AgentRunRetentionSettings,
+        detail_limit: usize,
+    ) -> Result<AgentRunRetentionPlan, ApplicationError> {
+        self.build_run_prune_plan(
+            retention,
+            AgentRunRetentionPlanDetailMode::Preview { detail_limit },
+        )
+        .await
+    }
+
+    async fn build_execution_run_prune_plan(
+        &self,
+        retention: AgentRunRetentionSettings,
+    ) -> Result<AgentRunRetentionPlan, ApplicationError> {
+        self.build_run_prune_plan(retention, AgentRunRetentionPlanDetailMode::Execution)
+            .await
+    }
+
+    async fn build_run_prune_plan(
+        &self,
+        retention: AgentRunRetentionSettings,
+        detail_mode: AgentRunRetentionPlanDetailMode,
+    ) -> Result<AgentRunRetentionPlan, ApplicationError> {
+        let active_run_ids = self.active_run_id_set().await?;
+        let planner = AgentRunRetentionPlanner::new(self.run_repository.as_ref());
+        planner
+            .plan(AgentRunRetentionPlanInput {
+                retention,
+                detail_mode,
+                active_run_ids,
+            })
+            .await
+    }
+
+    async fn active_run_id_set(&self) -> Result<BTreeSet<String>, ApplicationError> {
+        Ok(self
+            .run_activity
+            .active_run_ids()
+            .await?
+            .into_iter()
+            .collect())
     }
 
     async fn summary_projection_for_run(
@@ -169,10 +286,10 @@ impl From<AgentRunRetentionSettings> for AgentRunPruneRetentionDto {
 }
 
 impl AgentRunPrunePlanDto {
-    fn from_plan(plan: AgentRunRetentionPlan) -> Self {
+    fn from_preview_plan(plan: AgentRunRetentionPlan, detail_limit: usize) -> Self {
         Self {
             retention: AgentRunPruneRetentionDto::from(plan.retention),
-            detail_limit: plan.detail_limit,
+            detail_limit,
             terminal_run_count: plan.terminal_run_count,
             non_terminal_run_count: plan.non_terminal_run_count,
             blocked_run_count: plan.blocked_run_count,
@@ -234,6 +351,25 @@ impl AgentRunPruneBlockedRunDto {
             reason: AgentRunPruneReasonDto::from(blocked.reason),
             block_reason: AgentRunPruneBlockReasonDto::from(blocked.block_reason),
             message: blocked.message,
+        }
+    }
+}
+
+impl AgentRunPruneFailedRunDto {
+    fn from_candidate(candidate: AgentRunPruneCandidate, message: String) -> Self {
+        Self {
+            run_id: candidate.run.id,
+            workspace_id: candidate.run.workspace_id,
+            stable_chat_id: candidate.run.stable_chat_id,
+            chat_ref: candidate.run.chat_ref,
+            status: candidate.run.status,
+            created_at: candidate.run.created_at,
+            updated_at: candidate.run.updated_at,
+            action: AgentRunPruneActionDto::from(candidate.action),
+            reason: AgentRunPruneReasonDto::from(candidate.reason),
+            file_count: candidate.stats.file_count,
+            byte_count: candidate.stats.byte_count,
+            message,
         }
     }
 }
@@ -401,6 +537,20 @@ fn normalize_prune_detail_limit(limit: usize) -> Result<usize, ApplicationError>
         )));
     }
     Ok(limit)
+}
+
+fn accumulate_apply_stats(
+    file_count: &mut usize,
+    byte_count: &mut u64,
+    stats: AgentRunStorageEntryStats,
+) -> Result<(), ApplicationError> {
+    *file_count = file_count.checked_add(stats.file_count).ok_or_else(|| {
+        ApplicationError::InternalError("agent.run_prune_file_count_overflow".to_string())
+    })?;
+    *byte_count = byte_count.checked_add(stats.byte_count).ok_or_else(|| {
+        ApplicationError::InternalError("agent.run_prune_byte_count_overflow".to_string())
+    })?;
+    Ok(())
 }
 
 fn normalize_cursor(
@@ -858,6 +1008,176 @@ mod tests {
         assert_eq!(plan.candidates.len(), 1);
         assert!(plan.candidate_details_truncated);
         assert!(plan.total_candidate_file_count >= 3);
+
+        let _ = fs::remove_dir_all(agent_root).await;
+        let _ = fs::remove_dir_all(settings_root).await;
+    }
+
+    #[tokio::test]
+    async fn apply_run_prune_executes_all_candidates_when_detail_limit_truncates() {
+        let agent_root = temp_root("agent-apply-detail-limit");
+        let settings_root = temp_root("settings-apply-detail-limit");
+        let run_repository = Arc::new(FileAgentRepository::new(agent_root.clone()));
+        let settings_repository = Arc::new(FileSettingsRepository::new(settings_root.clone()));
+        for index in 0..3 {
+            let run = run_with_id(
+                &format!("run_prune_apply_detail_limit_{index}"),
+                instant(&format!("2026-01-0{}T00:00:00Z", index + 1)),
+                AgentRunStatus::Completed,
+            );
+            run_repository.create_run(&run).await.expect("create run");
+            append_terminal_event(&run_repository, &run).await;
+            seed_heavy_file(&agent_root, &run, b"heavy").await;
+        }
+
+        let service = AgentRunHistoryService::new(
+            run_repository,
+            settings_repository,
+            TestRunActivity::none(),
+        );
+        let result = service
+            .apply_run_prune(AgentApplyRunPruneDto {
+                retention: Some(AgentRunPruneRetentionDto {
+                    keep_recent_terminal_runs: 0,
+                    keep_full_recent_runs: 0,
+                }),
+                detail_limit: 1,
+            })
+            .await
+            .expect("apply prune");
+
+        assert_eq!(result.deleted_run_count, 3);
+        assert_eq!(result.failed_run_count, 0);
+        assert!(result.removed_file_count >= 3);
+        assert_eq!(result.after_plan.delete_candidate_count, 0);
+        assert_eq!(result.after_plan.candidates.len(), 0);
+
+        let _ = fs::remove_dir_all(agent_root).await;
+        let _ = fs::remove_dir_all(settings_root).await;
+    }
+
+    #[tokio::test]
+    async fn apply_run_prune_serializes_concurrent_calls_without_false_failures() {
+        let agent_root = temp_root("agent-apply-concurrent");
+        let settings_root = temp_root("settings-apply-concurrent");
+        let run_repository = Arc::new(FileAgentRepository::new(agent_root.clone()));
+        let settings_repository = Arc::new(FileSettingsRepository::new(settings_root.clone()));
+        let run = run_with_id(
+            "run_prune_apply_concurrent",
+            instant("2026-01-04T00:00:00Z"),
+            AgentRunStatus::Completed,
+        );
+        run_repository.create_run(&run).await.expect("create run");
+        append_terminal_event(&run_repository, &run).await;
+        seed_heavy_file(&agent_root, &run, b"heavy").await;
+
+        let service = Arc::new(AgentRunHistoryService::new(
+            run_repository,
+            settings_repository,
+            TestRunActivity::none(),
+        ));
+        let dto = AgentApplyRunPruneDto {
+            retention: Some(AgentRunPruneRetentionDto {
+                keep_recent_terminal_runs: 0,
+                keep_full_recent_runs: 0,
+            }),
+            detail_limit: 8,
+        };
+        let left_service = service.clone();
+        let right_service = service.clone();
+        let left_dto = dto.clone();
+        let (left, right) = tokio::join!(
+            async move { left_service.apply_run_prune(left_dto).await },
+            async move { right_service.apply_run_prune(dto).await },
+        );
+        let left = left.expect("left apply prune");
+        let right = right.expect("right apply prune");
+
+        assert_eq!(left.failed_run_count + right.failed_run_count, 0);
+        assert_eq!(left.deleted_run_count + right.deleted_run_count, 1);
+        assert_eq!(left.after_plan.delete_candidate_count, 0);
+        assert_eq!(right.after_plan.delete_candidate_count, 0);
+
+        let _ = fs::remove_dir_all(agent_root).await;
+        let _ = fs::remove_dir_all(settings_root).await;
+    }
+
+    #[tokio::test]
+    async fn apply_run_prune_slims_core_window_and_deletes_history_window() {
+        let agent_root = temp_root("agent-apply-windows");
+        let settings_root = temp_root("settings-apply-windows");
+        let run_repository = Arc::new(FileAgentRepository::new(agent_root.clone()));
+        let settings_repository = Arc::new(FileSettingsRepository::new(settings_root.clone()));
+        let newest = run_with_id(
+            "run_prune_apply_newest",
+            instant("2026-01-04T00:00:00Z"),
+            AgentRunStatus::Completed,
+        );
+        let middle = run_with_id(
+            "run_prune_apply_middle",
+            instant("2026-01-03T00:00:00Z"),
+            AgentRunStatus::Failed,
+        );
+        let oldest = run_with_id(
+            "run_prune_apply_oldest",
+            instant("2026-01-02T00:00:00Z"),
+            AgentRunStatus::Cancelled,
+        );
+        for run in [&newest, &middle, &oldest] {
+            run_repository.create_run(run).await.expect("create run");
+            append_terminal_event(&run_repository, run).await;
+            seed_heavy_file(&agent_root, run, b"heavy").await;
+        }
+
+        let service = AgentRunHistoryService::new(
+            run_repository,
+            settings_repository,
+            TestRunActivity::none(),
+        );
+        let result = service
+            .apply_run_prune(AgentApplyRunPruneDto {
+                retention: Some(AgentRunPruneRetentionDto {
+                    keep_recent_terminal_runs: 2,
+                    keep_full_recent_runs: 1,
+                }),
+                detail_limit: 8,
+            })
+            .await
+            .expect("apply prune");
+
+        let run_dir = |run: &AgentRun| {
+            agent_root
+                .join("chats")
+                .join(&run.workspace_id)
+                .join("runs")
+                .join(&run.id)
+        };
+
+        assert_eq!(result.slimmed_run_count, 1);
+        assert_eq!(result.deleted_run_count, 1);
+        assert_eq!(result.failed_run_count, 0);
+        assert_eq!(result.after_plan.slim_candidate_count, 0);
+        assert_eq!(result.after_plan.delete_candidate_count, 0);
+        assert!(
+            run_dir(&newest)
+                .join("input")
+                .join("prompt_snapshot.json")
+                .exists()
+        );
+        assert!(run_dir(&middle).join("run.json").exists());
+        assert!(run_dir(&middle).join("events.jsonl").exists());
+        assert!(
+            !run_dir(&middle)
+                .join("input")
+                .join("prompt_snapshot.json")
+                .exists()
+        );
+        assert!(!run_dir(&oldest).exists());
+        assert!(
+            !agent_root
+                .join("index/runs/run_prune_apply_oldest.json")
+                .exists()
+        );
 
         let _ = fs::remove_dir_all(agent_root).await;
         let _ = fs::remove_dir_all(settings_root).await;

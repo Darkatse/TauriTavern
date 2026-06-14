@@ -1,4 +1,4 @@
-import { errorText, requireHostApi } from './host-api.js';
+import { confirmAction, errorText, requireHostApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 
 const RUN_PRUNE_DETAIL_LIMIT = 8;
@@ -10,6 +10,7 @@ export const RunRetentionPanel = {
             loading: false,
             saving: false,
             planning: false,
+            applying: false,
             error: '',
             retention: null,
             draft: {
@@ -21,7 +22,7 @@ export const RunRetentionPanel = {
     },
     computed: {
         busy() {
-            return this.loading || this.saving || this.planning;
+            return this.loading || this.saving || this.planning || this.applying;
         },
         draftIsDirty() {
             if (!this.retention) {
@@ -40,24 +41,29 @@ export const RunRetentionPanel = {
                 || Number(this.plan?.slimCandidateCount || 0) > 0
                 || Number(this.plan?.deleteCandidateCount || 0) > 0;
         },
+        canApplyPrune() {
+            return Boolean(this.plan && this.planHasWork && !this.busy);
+        },
         planStats() {
             const plan = this.plan;
             if (!plan) {
                 return [];
             }
+            const fullRetainedRunCount = Number(plan.fullRetainedRunCount || 0);
+            const reviewableRunCount = fullRetainedRunCount + Number(plan.coreRetainedRunCount || 0);
             return [
                 {
                     key: 'full',
                     icon: 'fa-box-archive',
                     label: tr('runRetentionFullKept'),
-                    value: this.formatCount(plan.fullRetainedRunCount),
+                    value: this.formatCount(fullRetainedRunCount),
                     tone: 'full',
                 },
                 {
                     key: 'core',
                     icon: 'fa-scroll',
                     label: tr('runRetentionCoreKept'),
-                    value: this.formatCount(plan.coreRetainedRunCount),
+                    value: this.formatCount(reviewableRunCount),
                     tone: 'core',
                 },
                 {
@@ -96,7 +102,8 @@ export const RunRetentionPanel = {
             const api = requireHostApi('agent').retention;
             if (typeof api?.readSettings !== 'function'
                 || typeof api.updateSettings !== 'function'
-                || typeof api.planPrune !== 'function') {
+                || typeof api.planPrune !== 'function'
+                || typeof api.applyPrune !== 'function') {
                 throw new Error(tr('hostAgentRetentionApiUnavailable'));
             }
             return api;
@@ -142,6 +149,58 @@ export const RunRetentionPanel = {
                 this.plan = null;
             } finally {
                 this.planning = false;
+            }
+        },
+        async applyPrune() {
+            if (!this.canApplyPrune) {
+                return;
+            }
+
+            this.error = '';
+            let confirmed;
+            try {
+                confirmed = await confirmAction(tr('runRetentionApplyConfirm', {
+                    bytes: this.formatBytes(this.plan.totalCandidateByteCount),
+                    files: this.formatFiles(this.plan.totalCandidateFileCount),
+                }));
+            } catch (error) {
+                this.error = errorText(error);
+                return;
+            }
+            if (!confirmed) {
+                return;
+            }
+
+            this.applying = true;
+            try {
+                const retention = this.retentionApi();
+                const result = normalizePruneApplyResult(await retention.applyPrune({
+                    retention: this.normalizedDraft(),
+                    detailLimit: RUN_PRUNE_DETAIL_LIMIT,
+                }));
+                this.plan = result.afterPlan;
+
+                const toastParams = {
+                    bytes: this.formatBytes(result.removedByteCount),
+                    files: this.formatFiles(result.removedFileCount),
+                    count: Number(result.failedRunCount || 0),
+                };
+                if (Number(result.failedRunCount || 0) > 0) {
+                    window.toastr?.warning?.(
+                        tr('runRetentionAppliedWithFailures', toastParams),
+                        tr('agentSystem'),
+                    );
+                } else {
+                    window.toastr?.success?.(
+                        tr('runRetentionApplied', toastParams),
+                        tr('agentSystem'),
+                    );
+                }
+                this.$emit?.('pruned', result);
+            } catch (error) {
+                this.error = errorText(error);
+            } finally {
+                this.applying = false;
             }
         },
         applyRetention(value) {
@@ -254,6 +313,10 @@ export const RunRetentionPanel = {
                     <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="busy" @click="analyzePrune">
                         <i class="fa-solid" :class="planning ? 'fa-spinner fa-spin' : 'fa-broom'"></i>
                         <span>{{ tr('runRetentionAnalyze') }}</span>
+                    </button>
+                    <button type="button" class="menu_button menu_button_icon ttas-danger-button ttas-retention-apply-button" :disabled="!canApplyPrune" @click="applyPrune">
+                        <i class="fa-solid" :class="applying ? 'fa-spinner fa-spin' : 'fa-trash-can'"></i>
+                        <span>{{ applying ? tr('runRetentionApplying') : tr('runRetentionApply') }}</span>
                     </button>
                 </div>
             </header>
@@ -391,6 +454,20 @@ function normalizePrunePlan(value) {
     }
     normalizeRetentionSettings(value.retention);
     return value;
+}
+
+function normalizePruneApplyResult(value) {
+    if (!plainObject(value)) {
+        throw new Error('agent.run_prune_apply_invalid: result must be an object');
+    }
+    if (!Array.isArray(value.failedRuns)) {
+        throw new Error('agent.run_prune_apply_invalid: result.failedRuns must be an array');
+    }
+    normalizeRetentionSettings(value.retention);
+    return {
+        ...value,
+        afterPlan: normalizePrunePlan(value.afterPlan),
+    };
 }
 
 function stripChatFileName(value) {

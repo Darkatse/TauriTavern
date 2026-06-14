@@ -492,10 +492,11 @@ test('Agent run retention panel uses the host retention facade', async () => {
     assert.match(source, /retention\.readSettings/);
     assert.match(source, /retention\.updateSettings/);
     assert.match(source, /retention\.planPrune/);
-    assert.doesNotMatch(source, /safeInvoke|plan_agent_run_prune|update_tauritavern_settings|localStorage/);
+    assert.match(source, /retention\.applyPrune/);
+    assert.doesNotMatch(source, /safeInvoke|plan_agent_run_prune|apply_agent_run_prune|update_tauritavern_settings|localStorage/);
 
     const calls = [];
-    installWindow({
+    const window = installWindow({
         agent: {
             retention: {
                 async readSettings() {
@@ -513,15 +514,58 @@ test('Agent run retention panel uses the host retention facade', async () => {
                     calls.push({ method: 'planPrune', input });
                     return {
                         retention: input.retention,
-                        candidates: [],
+                        candidates: [{
+                            runId: 'run-preview',
+                            action: 'delete_run',
+                            reason: 'outside_history_retention_window',
+                            fileCount: 1,
+                            byteCount: 5,
+                        }],
                         blockedRuns: [],
-                        totalCandidateFileCount: 0,
-                        totalCandidateByteCount: 0,
+                        totalCandidateFileCount: 1,
+                        totalCandidateByteCount: 5,
+                    };
+                },
+                async applyPrune(input) {
+                    calls.push({ method: 'applyPrune', input });
+                    return {
+                        retention: input.retention,
+                        detailLimit: input.detailLimit,
+                        slimmedRunCount: 0,
+                        deletedRunCount: 1,
+                        failedRunCount: 0,
+                        removedFileCount: 1,
+                        removedByteCount: 5,
+                        failedDetailsTruncated: false,
+                        failedRuns: [],
+                        afterPlan: {
+                            retention: input.retention,
+                            candidates: [],
+                            blockedRuns: [],
+                            totalCandidateFileCount: 0,
+                            totalCandidateByteCount: 0,
+                        },
                     };
                 },
             },
         },
     });
+    window.SillyTavern = {
+        getContext() {
+            return {
+                Popup: {
+                    show: {
+                        async confirm() {
+                            return 'affirmative';
+                        },
+                    },
+                },
+                POPUP_RESULT: {
+                    AFFIRMATIVE: 'affirmative',
+                },
+            };
+        },
+    };
 
     const { RunRetentionPanel } = await importFresh('src/scripts/extensions/agent-system/src/RunRetentionPanel.js');
     const vm = createComponentHarness(RunRetentionPanel);
@@ -529,6 +573,7 @@ test('Agent run retention panel uses the host retention facade', async () => {
     vm.setDraftValue('keepRecentTerminalRuns', { target: { value: '80' } });
     await vm.saveRetentionSettings();
     await vm.analyzePrune();
+    await vm.applyPrune();
 
     assert.deepEqual(calls, [
         { method: 'readSettings' },
@@ -549,9 +594,48 @@ test('Agent run retention panel uses the host retention facade', async () => {
                 detailLimit: 8,
             },
         },
+        {
+            method: 'applyPrune',
+            input: {
+                retention: {
+                    keepRecentTerminalRuns: 80,
+                    keepFullRecentRuns: 20,
+                },
+                detailLimit: 8,
+            },
+        },
     ]);
     assert.equal(vm.error, '');
     assert.deepEqual(vm.plan.candidates, []);
+});
+
+test('Agent run retention stats show review history as the total reviewable window', async () => {
+    const { RunRetentionPanel } = await importFresh('src/scripts/extensions/agent-system/src/RunRetentionPanel.js');
+    const vm = createComponentHarness(RunRetentionPanel);
+
+    vm.plan = {
+        fullRetainedRunCount: 240,
+        coreRetainedRunCount: 0,
+        slimCandidateCount: 0,
+        deleteCandidateCount: 0,
+        totalSlimByteCount: 0,
+        totalDeleteByteCount: 0,
+    };
+    let stats = Object.fromEntries(vm.planStats.map((stat) => [stat.key, stat]));
+    assert.equal(stats.full.value, '240');
+    assert.equal(stats.core.value, '240');
+
+    vm.plan = {
+        fullRetainedRunCount: 20,
+        coreRetainedRunCount: 220,
+        slimCandidateCount: 0,
+        deleteCandidateCount: 0,
+        totalSlimByteCount: 0,
+        totalDeleteByteCount: 0,
+    };
+    stats = Object.fromEntries(vm.planStats.map((stat) => [stat.key, stat]));
+    assert.equal(stats.full.value, '20');
+    assert.equal(stats.core.value, '240');
 });
 
 test('Embedded Agent Skill import isolates per-item preview and install failures', async () => {

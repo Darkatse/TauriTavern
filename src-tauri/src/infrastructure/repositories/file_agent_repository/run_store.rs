@@ -13,7 +13,7 @@ use crate::domain::models::agent::{
 };
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunListCursor, AgentRunListQuery, AgentRunRepository,
-    AgentRunStorageStats, event_belongs_to_invocation,
+    AgentRunStorageEntryStats, AgentRunStorageStats, event_belongs_to_invocation,
 };
 
 #[async_trait]
@@ -55,6 +55,17 @@ impl AgentRunRepository for FileAgentRepository {
         run: &AgentRun,
     ) -> Result<AgentRunStorageStats, DomainError> {
         FileAgentRepository::inspect_run_storage(self, run).await
+    }
+
+    async fn slim_run_heavy_artifacts(
+        &self,
+        run: &AgentRun,
+    ) -> Result<AgentRunStorageEntryStats, DomainError> {
+        FileAgentRepository::slim_run_heavy_artifacts(self, run).await
+    }
+
+    async fn delete_run(&self, run: &AgentRun) -> Result<AgentRunStorageEntryStats, DomainError> {
+        FileAgentRepository::delete_run(self, run).await
     }
 
     async fn load_run_summary_projection(

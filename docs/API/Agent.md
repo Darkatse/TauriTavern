@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 当前参考。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing、Agent run retention facade / dry-run plan preview，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval 等未来设计。
+状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing、Agent run retention facade / dry-run plan preview / manual apply prune，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval 等未来设计。
 
 `provider_state` 是 Rust 后端内部 continuation contract，不是 Host ABI。前端/扩展不应读写 `_tauritavern_provider_state`；需要诊断时通过 run events、`modelResponsePath` 与 LLM API log 观察。
 模型回合详情必须通过 `readModelTurn()` 读取后端投影 DTO；前端不解析 `model-responses/` raw JSON。
@@ -36,6 +36,10 @@ type TauriTavernAgentApi = {
       retention?: AgentRunRetentionSettings;
       detailLimit?: number;
     }): Promise<AgentRunPrunePlan>;
+    applyPrune(input?: {
+      retention?: AgentRunRetentionSettings;
+      detailLimit?: number;
+    }): Promise<AgentRunPruneApplyResult>;
   };
   profiles: {
     list(): Promise<AgentListProfilesResult>;
@@ -439,6 +443,10 @@ type AgentRunPruneBlockedRun = AgentRunPruneCandidate & {
   message?: string;
 };
 
+type AgentRunPruneFailedRun = AgentRunPruneCandidate & {
+  message: string;
+};
+
 type AgentRunPrunePlan = {
   retention: AgentRunRetentionSettings;
   detailLimit: number;
@@ -460,11 +468,24 @@ type AgentRunPrunePlan = {
   candidateDetailsTruncated: boolean;
   blockedDetailsTruncated: boolean;
 };
+
+type AgentRunPruneApplyResult = {
+  retention: AgentRunRetentionSettings;
+  detailLimit: number;
+  slimmedRunCount: number;
+  deletedRunCount: number;
+  failedRunCount: number;
+  removedFileCount: number;
+  removedByteCount: number;
+  failedDetailsTruncated: boolean;
+  failedRuns: AgentRunPruneFailedRun[];
+  afterPlan: AgentRunPrunePlan;
+};
 ```
 
 `retention.readSettings()` 读取 `tauritavern-settings.agent.retention` 并以 Host ABI 的 camelCase 形态返回。`retention.updateSettings()` 只保存策略，不触发清理；两个数量必须是 `0..10000` 的整数，且 `keepFullRecentRuns <= keepRecentTerminalRuns`。
 
-`retention.planPrune()` 是前端访问 `plan_agent_run_prune(dto)` 的 facade。它只返回 dry-run plan，可使用当前设置，也可传入一次性 `retention` override；`detailLimit` 只限制返回明细，不影响 totals。当前没有公共 apply prune Host ABI，UI 不应把 plan preview 表达为已经删除文件。
+`retention.planPrune()` 是前端访问 `plan_agent_run_prune(dto)` 的 facade。它只返回 dry-run plan，可使用当前设置，也可传入一次性 `retention` override；`detailLimit` 只限制返回明细，不影响 totals。`retention.applyPrune()` 访问 `apply_agent_run_prune(dto)`，后端会用同一 retention 重新规划全量候选再执行，不信任前端预览列表；同一服务实例内 apply 会串行执行，避免并发清理同一批 run 造成假失败。单个 run 执行失败会进入 `failedRuns` 并继续处理后续 candidate，结构性规划错误仍 fail-fast。结果包含 caller `detailLimit` 下的 `afterPlan`，供 UI 展示清理后的事实状态。
 
 ## 13. profiles / promptAssembly / tools
 
@@ -669,12 +690,15 @@ list_agent_tool_specs()
 cancel_agent_run(dto)
 list_agent_runs(dto)
 plan_agent_run_prune(dto)
+apply_agent_run_prune(dto)
 read_agent_run_events(dto)
 read_agent_workspace_file(dto)
 resolve_agent_chat_commit(dto)
 ```
 
 `plan_agent_run_prune(dto)` 是后端 dry-run command：它按 `tauritavern-settings.agent.retention` 或调用方传入的一次性 retention override 计算 `slim_heavy_artifacts` / `delete_run` 候选和 files/bytes，不执行删除。`slim_heavy_artifacts` 使用后端 Agent run storage class 统计，分类边界与 TT-Sync 的 Agent run dataset 词汇对齐，但不读取同步 profile 或 dataset selection。`dto.detailLimit` 控制返回的 candidate/blocked 明细数量，计数与 bytes totals 不受截断影响；`blockedRuns` 会显式报告 active run、缺失 terminal event、journal/storage 异常等不能安全清理的对象。Command 层必须是薄封装。Agent loop 不写在 command 内。
+
+`apply_agent_run_prune(dto)` 使用同一 planner 的 execution 模式重新生成执行计划，并以完整候选集执行 `slim_heavy_artifacts` / `delete_run`；同一服务实例内 apply 串行化。`slim_heavy_artifacts` 仅删除 run workspace 内非核心 history 的 artifact，保留 `run.json`、`events.jsonl`、run index 与 run summary projection；`delete_run` 删除 run workspace、run index 与 run summary projection。稳定 `persistent-states/` 不属于 run prune 范围。执行结果会返回删除文件/字节统计、失败 run 明细和执行后的 dry-run plan。
 
 后续命令：
 

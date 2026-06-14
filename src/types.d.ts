@@ -227,6 +227,10 @@ type TauriTavernAgentRunPruneBlockedRun = TauriTavernAgentRunPruneCandidate & {
     message?: string;
 };
 
+type TauriTavernAgentRunPruneFailedRun = TauriTavernAgentRunPruneCandidate & {
+    message: string;
+};
+
 type TauriTavernAgentRunPrunePlan = {
     retention: TauriTavernAgentRunRetentionSettings;
     detailLimit: number;
@@ -247,6 +251,19 @@ type TauriTavernAgentRunPrunePlan = {
     candidates: TauriTavernAgentRunPruneCandidate[];
     blockedDetailsTruncated: boolean;
     blockedRuns: TauriTavernAgentRunPruneBlockedRun[];
+};
+
+type TauriTavernAgentRunPruneApplyResult = {
+    retention: TauriTavernAgentRunRetentionSettings;
+    detailLimit: number;
+    slimmedRunCount: number;
+    deletedRunCount: number;
+    failedRunCount: number;
+    removedFileCount: number;
+    removedByteCount: number;
+    failedDetailsTruncated: boolean;
+    failedRuns: TauriTavernAgentRunPruneFailedRun[];
+    afterPlan: TauriTavernAgentRunPrunePlan;
 };
 
 type TauriTavernAgentModelTurn = {
@@ -468,6 +485,10 @@ type TauriTavernAgentRetentionApi = {
         retention?: TauriTavernAgentRunRetentionSettings;
         detailLimit?: number;
     }) => Promise<TauriTavernAgentRunPrunePlan>;
+    applyPrune: (input?: {
+        retention?: TauriTavernAgentRunRetentionSettings;
+        detailLimit?: number;
+    }) => Promise<TauriTavernAgentRunPruneApplyResult>;
 };
 
 type TauriTavernAgentApi = {

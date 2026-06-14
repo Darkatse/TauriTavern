@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tokio::fs;
 
@@ -17,18 +17,74 @@ impl FileAgentRepository {
         let run_dir = self.run_dir(run)?;
         let mut stats = AgentRunStorageStats::default();
 
-        inspect_run_dir(&run_dir, &mut stats).await?;
+        add_run_scan_stats(scan_run_storage(&run_dir).await?, &mut stats)?;
         add_required_index_file(&self.index_run_path(&run.id)?, &mut stats).await?;
         add_optional_index_file(&self.index_run_summary_path(&run.id)?, &mut stats).await?;
 
         Ok(stats)
     }
+
+    pub(super) async fn slim_run_heavy_artifacts(
+        &self,
+        run: &AgentRun,
+    ) -> Result<AgentRunStorageEntryStats, DomainError> {
+        let run_dir = self.run_dir(run)?;
+        let scan = scan_run_storage(&run_dir).await?;
+        let mut removed = AgentRunStorageEntryStats::default();
+
+        for file in scan.files {
+            if !file.storage_class.is_slim_artifact() {
+                continue;
+            }
+            fs::remove_file(&file.path).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to delete agent run artifact {}: {}",
+                    file.path.display(),
+                    error
+                ))
+            })?;
+            add_file(&mut removed, file.bytes, &file.path)?;
+        }
+
+        remove_empty_run_dirs(&run_dir, scan.dirs).await?;
+        Ok(removed)
+    }
+
+    pub(super) async fn delete_run(
+        &self,
+        run: &AgentRun,
+    ) -> Result<AgentRunStorageEntryStats, DomainError> {
+        let stats = self.inspect_run_storage(run).await?.total;
+        let run_dir = self.run_dir(run)?;
+
+        fs::remove_dir_all(&run_dir).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to delete agent run workspace {}: {}",
+                run_dir.display(),
+                error
+            ))
+        })?;
+
+        remove_index_file_if_exists(&self.index_run_path(&run.id)?, "agent run index").await?;
+        remove_index_file_if_exists(&self.index_run_summary_path(&run.id)?, "agent run summary")
+            .await?;
+
+        Ok(stats)
+    }
 }
 
-async fn inspect_run_dir(
-    run_dir: &Path,
-    stats: &mut AgentRunStorageStats,
-) -> Result<(), DomainError> {
+struct AgentRunStorageScan {
+    files: Vec<AgentRunStorageFile>,
+    dirs: Vec<PathBuf>,
+}
+
+struct AgentRunStorageFile {
+    path: PathBuf,
+    storage_class: AgentRunStorageClass,
+    bytes: u64,
+}
+
+async fn scan_run_storage(run_dir: &Path) -> Result<AgentRunStorageScan, DomainError> {
     let metadata = fs::symlink_metadata(run_dir).await.map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             DomainError::InvalidData(format!(
@@ -50,6 +106,8 @@ async fn inspect_run_dir(
         )));
     }
 
+    let mut files = Vec::new();
+    let mut dirs = Vec::new();
     let mut pending = vec![(run_dir.to_path_buf(), String::new())];
     while let Some((dir, relative_dir)) = pending.pop() {
         let mut entries = fs::read_dir(&dir).await.map_err(|error| {
@@ -105,11 +163,66 @@ async fn inspect_run_dir(
             }
 
             let storage_class = AgentRunStorageClass::from_run_relative_path(&relative_path);
-            add_file_for_class(stats, storage_class, metadata.len(), &path)?;
+            files.push(AgentRunStorageFile {
+                path,
+                storage_class,
+                bytes: metadata.len(),
+            });
+        }
+
+        if dir != run_dir {
+            dirs.push(dir);
         }
     }
 
+    Ok(AgentRunStorageScan { files, dirs })
+}
+
+fn add_run_scan_stats(
+    scan: AgentRunStorageScan,
+    stats: &mut AgentRunStorageStats,
+) -> Result<(), DomainError> {
+    for file in scan.files {
+        add_file_for_class(stats, file.storage_class, file.bytes, &file.path)?;
+    }
     Ok(())
+}
+
+async fn remove_empty_run_dirs(run_dir: &Path, mut dirs: Vec<PathBuf>) -> Result<(), DomainError> {
+    dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for dir in dirs {
+        if dir == run_dir {
+            continue;
+        }
+        match fs::remove_dir(&dir).await {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) => {}
+            Err(error) => {
+                return Err(DomainError::InternalError(format!(
+                    "Failed to remove empty agent run artifact directory {}: {}",
+                    dir.display(),
+                    error
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn remove_index_file_if_exists(path: &Path, label: &str) -> Result<(), DomainError> {
+    match fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(DomainError::InternalError(format!(
+            "Failed to delete {label} {}: {}",
+            path.display(),
+            error
+        ))),
+    }
 }
 
 async fn add_required_index_file(

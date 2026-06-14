@@ -3098,6 +3098,27 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     margin: 0;
 }
 
+.ttas-retention-actions .ttas-retention-apply-button:not(:disabled) {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+}
+
+.ttas-retention-actions .ttas-retention-apply-button:not(:disabled)::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ttas-danger) 16%, transparent), transparent);
+    transform: translateX(-120%);
+    transition: transform 420ms ease;
+}
+
+.ttas-retention-actions .ttas-retention-apply-button:not(:disabled):hover::after,
+.ttas-retention-actions .ttas-retention-apply-button:not(:disabled):focus-visible::after {
+    transform: translateX(120%);
+}
+
 .ttas-retention-controls {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

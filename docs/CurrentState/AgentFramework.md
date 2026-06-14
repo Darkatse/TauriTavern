@@ -25,7 +25,7 @@
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；实际 root run 使用扩展设置中的 `activeProfileId`。Profile 面板的 `editingProfileId` 只表示当前正在编辑的配置档案，不影响生成。Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
 - Agent System 前端已提供 run timeline / detail panel；timeline 以 `readEvents(beforeSeq, limit)` 读取最新页并按需补拉更早 journal 页，默认视图只投影用户可见操作，DOM 使用窗口化渲染避免长 run 在低端移动设备上堆积节点；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。前端实现将 timeline 数据会话、projection 规范化、详情读取、显示格式与 Vue 外壳拆分：运行中贴片、历史回看弹窗与 SubAgent 局部 timeline 共享同一 session/detail primitives，但各自仍通过 Host ABI 表达运行态、只读历史态与 `invocationId` 局部事件页。
 - Agent run history 已提供只读 `listRuns()` / `list_agent_runs(dto)` 入口；首版从 `_tauritavern/agent-workspaces/index/runs/*.json` 读取 `AgentRun` 摘要，支持 `chatRef`、`stableChatId`、`statuses`、时间游标与 limit。列表会维护 `_tauritavern/agent-workspaces/index/run-summaries/<run-id>.json` projection，从 `chat_commit_completed.messageId` 派生提交当时的 `messageIndex`；该索引是提交时快照，不扫描聊天消息、不反查当前楼层。只有已经写入 terminal event 的终态 run 会复用/落盘 summary projection，运行中或终态事件尚未出现的窗口只即时投影。
-- Agent run retention policy 已进入 `tauritavern-settings.agent.retention`：`keep_recent_terminal_runs` 默认 100，表示保留最近 terminal run 的核心历史；`keep_full_recent_runs` 默认 20，表示其中保留完整 workspace/debug artifacts 的窗口。两者允许为 0，最大 10000，且 full 窗口必须是 history 窗口子集。前端 Host ABI 已提供 `api.agent.retention.readSettings()` / `updateSettings()` / `planPrune()` facade，Agent System Runs 面板可保存策略并显示 dry-run 清理预览。后端已提供只读 `plan_agent_run_prune(dto)` command，用当前设置或一次性 override 生成 `slim_heavy_artifacts` / `delete_run` 候选与 files/bytes 统计；`slim_heavy_artifacts` 基于 Agent run storage class，路径归属词汇与 TT-Sync Agent run datasets 对齐，但 retention 不依赖同步 profile。明细受 `detailLimit` 限制但 totals 不截断，active run、缺失 terminal event、journal/storage 异常会进入 `blockedRuns`。当前不会自动触发 run prune，也不执行删除。
+- Agent run retention policy 已进入 `tauritavern-settings.agent.retention`：`keep_recent_terminal_runs` 默认 100，表示保留最近 terminal run 的核心历史；`keep_full_recent_runs` 默认 20，表示其中保留完整 workspace/debug artifacts 的窗口。两者允许为 0，最大 10000，且 full 窗口必须是 history 窗口子集。前端 Host ABI 已提供 `api.agent.retention.readSettings()` / `updateSettings()` / `planPrune()` / `applyPrune()` facade，Agent System Runs 面板可保存策略、显示 dry-run 清理预览，并在用户确认后执行手动清理。后端已提供 `plan_agent_run_prune(dto)` 与 `apply_agent_run_prune(dto)` command，用当前设置或一次性 override 生成并执行 `slim_heavy_artifacts` / `delete_run` 候选；`apply` 使用显式 execution plan 模式，在后端重新规划全量候选，不信任前端预览明细，且同一服务实例内串行执行。`slim_heavy_artifacts` 基于 Agent run storage class，路径归属词汇与 TT-Sync Agent run datasets 对齐，但 retention 不依赖同步 profile。明细受 `detailLimit` 限制但 totals 不截断，active run、缺失 terminal event、journal/storage 异常会进入 `blockedRuns`；单个执行失败会进入 `failedRuns`。当前不会自动触发 run prune。
 - 输入框 Agent 快捷开关 `#ttas_agent_send_toggle` 可以在 Agent System 扩展抽屉中隐藏；该状态只是扩展 UI 偏好，不改变 `agentModeEnabled`、生成路由、Agent Host ABI、journal 或 Rust runtime。
 
 ## 当前 Host ABI
@@ -41,6 +41,7 @@ api.agent.listRuns(input?)
 api.agent.retention.readSettings()
 api.agent.retention.updateSettings(input)
 api.agent.retention.planPrune(input?)
+api.agent.retention.applyPrune(input?)
 api.agent.readEvents(input)
 api.agent.readWorkspaceFile(input)
 api.agent.readModelTurn(input)

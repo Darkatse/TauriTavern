@@ -97,6 +97,24 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
         });
     }
 
+    async function applyRunPrune(input = {}) {
+        if (!isPlainObject(input)) {
+            throw new Error('Agent applyRunPrune input must be an object');
+        }
+
+        const retention = input.retention == null
+            ? undefined
+            : normalizeRetentionSettings(input.retention);
+        const detailLimit = normalizeRunPruneDetailLimit(input.detailLimit ?? input.detail_limit);
+
+        return safeInvoke('apply_agent_run_prune', {
+            dto: {
+                ...(retention ? { retention } : {}),
+                ...(detailLimit == null ? {} : { detailLimit }),
+            },
+        });
+    }
+
     async function readEvents(input) {
         const runId = requireRunId(input?.runId);
         const hasInvocationId = Object.prototype.hasOwnProperty.call(input || {}, 'invocationId');
@@ -234,6 +252,7 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
             readSettings: readRetentionSettings,
             updateSettings: updateRetentionSettings,
             planPrune: planRunPrune,
+            applyPrune: applyRunPrune,
         },
         readEvents,
         readWorkspaceFile,

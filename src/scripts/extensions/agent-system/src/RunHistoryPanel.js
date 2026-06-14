@@ -253,7 +253,7 @@ export const RunHistoryPanel = {
                 </div>
             </header>
 
-            <RunRetentionPanel />
+            <RunRetentionPanel @pruned="refreshRuns" />
 
             <div v-if="error" class="ttas-error">
                 <i class="fa-solid fa-triangle-exclamation"></i>

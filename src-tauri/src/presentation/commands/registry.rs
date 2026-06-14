@@ -300,6 +300,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::agent_commands::cancel_agent_run,
         super::agent_commands::list_agent_runs,
         super::agent_commands::plan_agent_run_prune,
+        super::agent_commands::apply_agent_run_prune,
         super::agent_commands::read_agent_run_events,
         super::agent_commands::read_agent_workspace_file,
         super::agent_commands::read_agent_model_turn,

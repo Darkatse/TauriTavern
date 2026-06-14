@@ -561,6 +561,126 @@ async fn inspect_run_storage_counts_total_and_heavy_artifacts() {
 }
 
 #[tokio::test]
+async fn slim_run_heavy_artifacts_removes_only_non_core_run_files() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_prune_slim");
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "run_completed",
+            Value::Null,
+        )
+        .await
+        .expect("append event");
+
+    let run_dir = root
+        .join("chats")
+        .join(&run.workspace_id)
+        .join("runs")
+        .join(&run.id);
+    fs::write(run_dir.join("manifest.json"), b"{}")
+        .await
+        .expect("write manifest");
+    fs::create_dir_all(run_dir.join("input"))
+        .await
+        .expect("create input");
+    fs::write(run_dir.join("input").join("prompt_snapshot.json"), b"12345")
+        .await
+        .expect("write prompt snapshot");
+    fs::create_dir_all(run_dir.join("output"))
+        .await
+        .expect("create output");
+    fs::write(run_dir.join("output").join("main.md"), b"hi")
+        .await
+        .expect("write output");
+    repository
+        .save_run_summary_projection(&AgentRunSummaryProjection {
+            schema_version: AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION,
+            run_id: run.id.clone(),
+            source_run_updated_at: run.updated_at,
+            commit_count: 0,
+            committed_message: None,
+            terminal_at: Some(run.updated_at),
+        })
+        .await
+        .expect("save summary");
+
+    let removed = repository
+        .slim_run_heavy_artifacts(&run)
+        .await
+        .expect("slim heavy artifacts");
+
+    assert_eq!(removed.file_count, 3);
+    assert_eq!(removed.byte_count, 9);
+    assert!(run_dir.join("run.json").exists());
+    assert!(run_dir.join("events.jsonl").exists());
+    assert!(root.join("index/runs/run_prune_slim.json").exists());
+    assert!(
+        root.join("index/run-summaries/run_prune_slim.json")
+            .exists()
+    );
+    assert!(!run_dir.join("manifest.json").exists());
+    assert!(!run_dir.join("input").exists());
+    assert!(!run_dir.join("output").exists());
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn delete_run_removes_workspace_index_and_summary_projection() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_prune_delete");
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .append_event(&run.id, AgentRunEventLevel::Info, "run_failed", Value::Null)
+        .await
+        .expect("append event");
+    repository
+        .save_run_summary_projection(&AgentRunSummaryProjection {
+            schema_version: AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION,
+            run_id: run.id.clone(),
+            source_run_updated_at: run.updated_at,
+            commit_count: 0,
+            committed_message: None,
+            terminal_at: Some(run.updated_at),
+        })
+        .await
+        .expect("save summary");
+
+    let run_dir = root
+        .join("chats")
+        .join(&run.workspace_id)
+        .join("runs")
+        .join(&run.id);
+    fs::create_dir_all(run_dir.join("input"))
+        .await
+        .expect("create input");
+    fs::write(
+        run_dir.join("input").join("prompt_snapshot.json"),
+        b"payload",
+    )
+    .await
+    .expect("write prompt snapshot");
+
+    let removed = repository.delete_run(&run).await.expect("delete run");
+
+    assert!(removed.file_count >= 5);
+    assert!(!run_dir.exists());
+    assert!(!root.join("index/runs/run_prune_delete.json").exists());
+    assert!(
+        !root
+            .join("index/run-summaries/run_prune_delete.json")
+            .exists()
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn list_runs_rejects_index_file_with_mismatched_run_id() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());

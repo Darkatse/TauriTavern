@@ -308,6 +308,15 @@ pub struct AgentPlanRunPruneDto {
     pub detail_limit: usize,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentApplyRunPruneDto {
+    #[serde(default)]
+    pub retention: Option<AgentRunPruneRetentionDto>,
+    #[serde(default = "default_run_prune_detail_limit")]
+    pub detail_limit: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRunPruneRetentionDto {
@@ -370,6 +379,38 @@ pub struct AgentRunPruneBlockedRunDto {
     pub block_reason: AgentRunPruneBlockReasonDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunPruneFailedRunDto {
+    pub run_id: String,
+    pub workspace_id: String,
+    pub stable_chat_id: String,
+    pub chat_ref: AgentChatRef,
+    pub status: AgentRunStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub action: AgentRunPruneActionDto,
+    pub reason: AgentRunPruneReasonDto,
+    pub file_count: usize,
+    pub byte_count: u64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunPruneApplyResultDto {
+    pub retention: AgentRunPruneRetentionDto,
+    pub detail_limit: usize,
+    pub slimmed_run_count: usize,
+    pub deleted_run_count: usize,
+    pub failed_run_count: usize,
+    pub removed_file_count: usize,
+    pub removed_byte_count: u64,
+    pub failed_details_truncated: bool,
+    pub failed_runs: Vec<AgentRunPruneFailedRunDto>,
+    pub after_plan: AgentRunPrunePlanDto,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

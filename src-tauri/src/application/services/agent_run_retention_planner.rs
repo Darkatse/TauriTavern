@@ -11,14 +11,13 @@ pub const MAX_AGENT_RUN_PRUNE_DETAIL_LIMIT: usize = 1_000;
 
 pub struct AgentRunRetentionPlanInput {
     pub retention: AgentRunRetentionSettings,
-    pub detail_limit: usize,
+    pub detail_mode: AgentRunRetentionPlanDetailMode,
     pub active_run_ids: BTreeSet<String>,
 }
 
 #[derive(Debug)]
 pub struct AgentRunRetentionPlan {
     pub retention: AgentRunRetentionSettings,
-    pub detail_limit: usize,
     pub terminal_run_count: usize,
     pub non_terminal_run_count: usize,
     pub blocked_run_count: usize,
@@ -33,6 +32,7 @@ pub struct AgentRunRetentionPlan {
     pub candidates: Vec<AgentRunPruneCandidate>,
     pub blocked_details_truncated: bool,
     pub blocked_runs: Vec<AgentRunPruneBlockedRun>,
+    detail_mode: AgentRunRetentionPlanDetailMode,
 }
 
 #[derive(Debug)]
@@ -72,6 +72,12 @@ pub enum AgentRunPruneBlockReason {
     InvalidStorage,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRunRetentionPlanDetailMode {
+    Preview { detail_limit: usize },
+    Execution,
+}
+
 pub struct AgentRunRetentionPlanner<'a> {
     run_repository: &'a dyn AgentRunRepository,
 }
@@ -95,7 +101,7 @@ impl<'a> AgentRunRetentionPlanner<'a> {
         let runs = self.run_repository.list_all_runs().await?;
 
         let mut terminal_runs = Vec::new();
-        let mut plan = AgentRunRetentionPlan::new(input.retention, input.detail_limit);
+        let mut plan = AgentRunRetentionPlan::new(input.retention, input.detail_mode);
         for run in runs {
             if run.status.is_terminal() {
                 terminal_runs.push(run);
@@ -278,10 +284,12 @@ impl<'a> AgentRunRetentionPlanner<'a> {
 }
 
 impl AgentRunRetentionPlan {
-    fn new(retention: AgentRunRetentionSettings, detail_limit: usize) -> Self {
+    fn new(
+        retention: AgentRunRetentionSettings,
+        detail_mode: AgentRunRetentionPlanDetailMode,
+    ) -> Self {
         Self {
             retention,
-            detail_limit,
             terminal_run_count: 0,
             non_terminal_run_count: 0,
             blocked_run_count: 0,
@@ -296,6 +304,7 @@ impl AgentRunRetentionPlan {
             candidates: Vec::new(),
             blocked_details_truncated: false,
             blocked_runs: Vec::new(),
+            detail_mode,
         }
     }
 
@@ -314,20 +323,32 @@ impl AgentRunRetentionPlan {
             }
         }
 
-        if self.candidates.len() < self.detail_limit {
-            self.candidates.push(candidate);
-        } else {
-            self.candidate_details_truncated = true;
+        match self.detail_mode {
+            AgentRunRetentionPlanDetailMode::Preview { detail_limit } => {
+                if self.candidates.len() < detail_limit {
+                    self.candidates.push(candidate);
+                } else {
+                    self.candidate_details_truncated = true;
+                }
+            }
+            AgentRunRetentionPlanDetailMode::Execution => {
+                self.candidates.push(candidate);
+            }
         }
         Ok(())
     }
 
     fn push_blocked(&mut self, blocked: AgentRunPruneBlockedRun) {
         self.blocked_run_count += 1;
-        if self.blocked_runs.len() < self.detail_limit {
-            self.blocked_runs.push(blocked);
-        } else {
-            self.blocked_details_truncated = true;
+        match self.detail_mode {
+            AgentRunRetentionPlanDetailMode::Preview { detail_limit } => {
+                if self.blocked_runs.len() < detail_limit {
+                    self.blocked_runs.push(blocked);
+                } else {
+                    self.blocked_details_truncated = true;
+                }
+            }
+            AgentRunRetentionPlanDetailMode::Execution => {}
         }
     }
 }

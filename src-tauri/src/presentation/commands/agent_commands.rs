@@ -7,17 +7,17 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::agent_dto::{
-    AgentCancelRunDto, AgentListProfilesResultDto, AgentListRunsDto, AgentListRunsResultDto,
-    AgentListToolSpecsResultDto, AgentLoadProfileResultDto, AgentModelTurnDisplayDto,
-    AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto,
-    AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto, AgentPruneChatPersistentStatesDto,
-    AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto, AgentReadEventsResultDto,
-    AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto, AgentReadWorkspaceFileDto,
-    AgentRepairProfileFileDto, AgentResolveChatCommitDto,
+    AgentApplyRunPruneDto, AgentCancelRunDto, AgentListProfilesResultDto, AgentListRunsDto,
+    AgentListRunsResultDto, AgentListToolSpecsResultDto, AgentLoadProfileResultDto,
+    AgentModelTurnDisplayDto, AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto,
+    AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto,
+    AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
+    AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
+    AgentReadWorkspaceFileDto, AgentRepairProfileFileDto, AgentResolveChatCommitDto,
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
     AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRetargetPresetRefsDto,
-    AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentRunPrunePlanDto, AgentSaveProfileDto,
-    AgentStartRunDto, AgentWorkspaceFileDto,
+    AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentRunPruneApplyResultDto,
+    AgentRunPrunePlanDto, AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
@@ -259,6 +259,20 @@ pub async fn plan_agent_run_prune(
         .plan_run_prune(dto)
         .await
         .map_err(map_command_error("Failed to plan agent run prune"))
+}
+
+#[tauri::command]
+pub async fn apply_agent_run_prune(
+    dto: AgentApplyRunPruneDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentRunPruneApplyResultDto, CommandError> {
+    log_command("apply_agent_run_prune");
+
+    app_state
+        .agent_run_history_service
+        .apply_run_prune(dto)
+        .await
+        .map_err(map_command_error("Failed to apply agent run prune"))
 }
 
 #[tauri::command]
