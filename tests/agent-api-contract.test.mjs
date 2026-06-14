@@ -18,18 +18,19 @@ function ensureCustomEvent() {
     };
 }
 
-async function installHarness() {
+async function installHarness(options = {}) {
     const calls = [];
     ensureCustomEvent();
     globalThis.window = new EventTarget();
     globalThis.window.__TAURITAVERN__ = { api: {} };
+    const safeInvoke = options.safeInvoke || (async (command, args) => {
+        calls.push({ command, args });
+        return { command, args };
+    });
 
     const { installAgentApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent.js')));
     installAgentApi({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            return { command, args };
-        },
+        safeInvoke,
     });
 
     return {
@@ -287,6 +288,126 @@ test('api.agent.listRuns fails fast on invalid history filters', async () => {
     await assert.rejects(
         () => agent.listRuns({ limit: 0 }),
         /limit must be an integer between 1 and 200/,
+    );
+    assert.deepEqual(calls, []);
+});
+
+test('api.agent.retention forwards settings and prune plan contracts', async () => {
+    const calls = [];
+    const { agent } = await installHarness({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            if (command === 'get_tauritavern_settings') {
+                return {
+                    agent: {
+                        retention: {
+                            keep_recent_terminal_runs: 100,
+                            keep_full_recent_runs: 20,
+                        },
+                    },
+                };
+            }
+            if (command === 'update_tauritavern_settings') {
+                return {
+                    agent: {
+                        retention: {
+                            keep_recent_terminal_runs: args.dto.agent.retention.keep_recent_terminal_runs,
+                            keep_full_recent_runs: args.dto.agent.retention.keep_full_recent_runs,
+                        },
+                    },
+                };
+            }
+            return { ok: true };
+        },
+    });
+
+    assert.deepEqual(await agent.retention.readSettings(), {
+        keepRecentTerminalRuns: 100,
+        keepFullRecentRuns: 20,
+    });
+    assert.deepEqual(await agent.retention.updateSettings({
+        keepRecentTerminalRuns: '80',
+        keepFullRecentRuns: 12,
+    }), {
+        keepRecentTerminalRuns: 80,
+        keepFullRecentRuns: 12,
+    });
+    await agent.retention.planPrune({
+        retention: {
+            keepRecentTerminalRuns: 80,
+            keepFullRecentRuns: 12,
+        },
+        detailLimit: 8,
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'get_tauritavern_settings',
+            args: undefined,
+        },
+        {
+            command: 'update_tauritavern_settings',
+            args: {
+                dto: {
+                    agent: {
+                        retention: {
+                            keep_recent_terminal_runs: 80,
+                            keep_full_recent_runs: 12,
+                        },
+                    },
+                },
+            },
+        },
+        {
+            command: 'plan_agent_run_prune',
+            args: {
+                dto: {
+                    retention: {
+                        keepRecentTerminalRuns: 80,
+                        keepFullRecentRuns: 12,
+                    },
+                    detailLimit: 8,
+                },
+            },
+        },
+    ]);
+});
+
+test('api.agent.retention fails fast on invalid retention inputs', async () => {
+    const { calls, agent } = await installHarness();
+
+    await assert.rejects(
+        () => agent.retention.updateSettings(null),
+        /Agent retention settings update must be an object/,
+    );
+    await assert.rejects(
+        () => agent.retention.updateSettings({}),
+        /Agent retention update cannot be empty/,
+    );
+    await assert.rejects(
+        () => agent.retention.updateSettings({ keepRecentTerminalRuns: -1 }),
+        /keepRecentTerminalRuns must be an integer between 0 and 10000/,
+    );
+    await assert.rejects(
+        () => agent.retention.updateSettings({ keepRecentTerminalRuns: 10, keepFullRecentRuns: 11 }),
+        /keepFullRecentRuns must be less than or equal to keepRecentTerminalRuns/,
+    );
+    await assert.rejects(
+        () => agent.retention.planPrune(null),
+        /Agent planRunPrune input must be an object/,
+    );
+    await assert.rejects(
+        () => agent.retention.planPrune({ detailLimit: -1 }),
+        /detailLimit must be an integer between 0 and 1000/,
+    );
+    await assert.rejects(
+        () => agent.retention.planPrune({
+            retention: {
+                keepRecentTerminalRuns: 10,
+                keepFullRecentRuns: 11,
+            },
+        }),
+        /keepFullRecentRuns must be less than or equal to keepRecentTerminalRuns/,
     );
     assert.deepEqual(calls, []);
 });

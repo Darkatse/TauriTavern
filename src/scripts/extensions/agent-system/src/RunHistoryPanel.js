@@ -1,5 +1,6 @@
 import { errorText, requireHostApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
+import { RunRetentionPanel } from './RunRetentionPanel.js';
 import { openAgentRunTimelineDialog } from './run-timeline-panel.js';
 
 const RUN_HISTORY_PAGE_LIMIT = 50;
@@ -11,6 +12,9 @@ const TERMINAL_RUN_STATUSES = Object.freeze([
 ]);
 
 export const RunHistoryPanel = {
+    components: {
+        RunRetentionPanel,
+    },
     data() {
         return {
             runs: [],
@@ -248,6 +252,8 @@ export const RunHistoryPanel = {
                     </button>
                 </div>
             </header>
+
+            <RunRetentionPanel />
 
             <div v-if="error" class="ttas-error">
                 <i class="fa-solid fa-triangle-exclamation"></i>

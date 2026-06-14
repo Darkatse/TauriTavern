@@ -30,16 +30,15 @@ import {
     RunTimelineEventList,
     SubAgentTray,
 } from './run-timeline-components.js';
-import { readTimelineDetailSections } from './run-timeline-detail-reader.js';
+import { createTimelineDetailState } from './run-timeline-detail-state.js';
 import {
     shortRunId,
-    subAgentStatusLabel,
-    subAgentTaskStyle,
     timelineItemTitle,
 } from './run-timeline-display.js';
 import { isTimelineProjectionStructuralEvent } from './run-timeline-projection.js';
 import { createRunTimelineSession } from './run-timeline-session.js';
 import { virtualizeTimelineItems } from './run-timeline-virtual-list.js';
+import { SubAgentTimelineDialog } from './subagent-timeline-dialog.js';
 
 const MOUNT_ID = 'ttas_agent_run_timeline_mount';
 
@@ -52,6 +51,7 @@ function createAgentRunTimelineApp(options = {}) {
         components: {
             RunTimelineDetailPane,
             RunTimelineEventList,
+            SubAgentTimelineDialog,
             SubAgentTray,
         },
         data() {
@@ -74,19 +74,8 @@ function createAgentRunTimelineApp(options = {}) {
                 detailsOpen: false,
                 selectedSeq: null,
                 autoStick: true,
-                detailLoading: false,
-                detailError: '',
-                detailSections: [],
-                detailRequestId: 0,
+                detail: createTimelineDetailState(),
                 subAgentTrayExpanded: false,
-                subAgentDialogOpen: false,
-                selectedSubAgentInvocationId: '',
-                subAgentSession: createRunTimelineSession(),
-                subAgentSelectedSeq: null,
-                subAgentDetailLoading: false,
-                subAgentDetailError: '',
-                subAgentDetailSections: [],
-                subAgentDetailRequestId: 0,
                 panelHeightPx: null,
                 resizing: false,
                 resizeStartY: 0,
@@ -94,8 +83,6 @@ function createAgentRunTimelineApp(options = {}) {
                 resizeBounds: null,
                 timelineScrollTop: 0,
                 timelineViewportHeight: 1,
-                subAgentTimelineScrollTop: 0,
-                subAgentTimelineViewportHeight: 1,
                 unsubscribeSettings: null,
                 unsubscribeRunState: null,
                 unsubscribeRunEvents: null,
@@ -128,15 +115,6 @@ function createAgentRunTimelineApp(options = {}) {
             },
             loadingOlderHistory() {
                 return this.timelineSession.loadingOlder;
-            },
-            subAgentEvents() {
-                return this.subAgentSession.events;
-            },
-            subAgentLoadingHistory() {
-                return this.subAgentSession.loading;
-            },
-            subAgentLoadingOlderHistory() {
-                return this.subAgentSession.loadingOlder;
             },
             isRunning() {
                 return Boolean(this.activeRun?.runId && this.currentRun?.runId === this.activeRun.runId);
@@ -250,9 +228,6 @@ function createAgentRunTimelineApp(options = {}) {
             subAgentTasks() {
                 return this.runProjection.subAgentTasks;
             },
-            hasSubAgentTasks() {
-                return this.subAgentTasks.length > 0;
-            },
             subAgentTrayTitle() {
                 const running = this.runProjection.runningSubAgentCount;
                 const failed = this.runProjection.failedSubAgentCount;
@@ -263,64 +238,6 @@ function createAgentRunTimelineApp(options = {}) {
                     return tr('timelineSubAgentsFailed', { count: failed });
                 }
                 return tr('timelineSubAgentsCompleted', { count: this.runProjection.terminalSubAgentCount });
-            },
-            selectedSubAgentTask() {
-                return this.subAgentTasks.find((task) => task.childInvocationId === this.selectedSubAgentInvocationId) || null;
-            },
-            selectedSubAgentTaskStyle() {
-                return this.selectedSubAgentTask ? subAgentTaskStyle(this.selectedSubAgentTask) : {};
-            },
-            subAgentDialogTitle() {
-                return this.selectedSubAgentTask?.displayName || tr('subAgent');
-            },
-            subAgentDialogSubtitle() {
-                const task = this.selectedSubAgentTask;
-                if (!task) {
-                    return '';
-                }
-                return [subAgentStatusLabel(task.status), task.workspaceKey].filter(Boolean).join(' | ');
-            },
-            subAgentDisplayItems() {
-                if (!this.selectedSubAgentInvocationId) {
-                    return [];
-                }
-                return timelineItemsFromEvents(this.subAgentEvents, {
-                    invocationId: this.selectedSubAgentInvocationId,
-                });
-            },
-            virtualSubAgentDisplayItems() {
-                return virtualizeTimelineItems(
-                    this.subAgentDisplayItems,
-                    this.subAgentTimelineScrollTop,
-                    this.subAgentTimelineViewportHeight,
-                );
-            },
-            selectedSubAgentDisplaySeq() {
-                return this.selectedSubAgentItem?.seq ?? null;
-            },
-            selectedSubAgentItem() {
-                if (this.subAgentSelectedSeq != null) {
-                    const selected = this.subAgentDisplayItems.find((item) => item.seq === this.subAgentSelectedSeq);
-                    if (selected) {
-                        return selected;
-                    }
-                }
-                return this.subAgentDisplayItems[this.subAgentDisplayItems.length - 1] || null;
-            },
-            subAgentDetailTitle() {
-                return this.selectedSubAgentItem ? timelineItemTitle(this.selectedSubAgentItem) : tr('timelineDetails');
-            },
-            subAgentDetailTargets() {
-                if (!this.selectedSubAgentItem) {
-                    return [];
-                }
-                return buildEventDetailTargets(this.selectedSubAgentItem, this.subAgentEvents);
-            },
-            subAgentHasDetails() {
-                return this.subAgentDetailTargets.length > 0;
-            },
-            subAgentNavItems() {
-                return this.subAgentDisplayItems.slice(-20);
             },
             panelStyle() {
                 if (this.isHistoryMode) {
@@ -343,22 +260,6 @@ function createAgentRunTimelineApp(options = {}) {
             detailsOpen(value) {
                 if (value) {
                     void this.loadDetails();
-                }
-            },
-            subAgentSelectedSeq() {
-                if (this.subAgentDialogOpen) {
-                    void this.loadSubAgentDetails();
-                }
-            },
-            selectedSubAgentInvocationId(value) {
-                this.subAgentSelectedSeq = null;
-                this.subAgentDetailLoading = false;
-                this.subAgentDetailSections = [];
-                this.subAgentDetailError = '';
-                this.subAgentTimelineScrollTop = 0;
-                this.resetSubAgentEvents();
-                if (value) {
-                    void this.loadSubAgentHistory(value);
                 }
             },
         },
@@ -386,7 +287,7 @@ function createAgentRunTimelineApp(options = {}) {
         },
         unmounted() {
             this.stopResize(false);
-            this.closeSubAgentDialog(false);
+            this.$refs.subAgentDialog?.reset?.();
             if (this.timelineProjectionRefreshTimer) {
                 clearTimeout(this.timelineProjectionRefreshTimer);
                 this.timelineProjectionRefreshTimer = null;
@@ -425,16 +326,9 @@ function createAgentRunTimelineApp(options = {}) {
                 this.collapsed = Boolean(this.initialCollapsed);
                 this.detailsOpen = false;
                 this.timelineScrollTop = 0;
-                this.subAgentTimelineScrollTop = 0;
                 this.subAgentTrayExpanded = false;
-                this.subAgentDialogOpen = false;
-                this.selectedSubAgentInvocationId = '';
-                this.resetSubAgentEvents();
-                this.subAgentSelectedSeq = null;
-                this.detailSections = [];
-                this.detailError = '';
-                this.subAgentDetailSections = [];
-                this.subAgentDetailError = '';
+                this.detail.reset();
+                this.$refs.subAgentDialog?.reset?.();
                 await this.loadRunHistory();
             },
             async loadRunHistory() {
@@ -469,77 +363,10 @@ function createAgentRunTimelineApp(options = {}) {
                     window.toastr?.error?.(errorText(error));
                 }
             },
-            resetSubAgentEvents() {
-                this.subAgentSession.reset();
-            },
-            async loadSubAgentHistory(invocationId) {
-                const runId = this.currentRun?.runId;
-                const normalizedInvocationId = String(invocationId || '').trim();
-                if (!runId || !normalizedInvocationId) {
-                    return;
-                }
-
-                this.subAgentSession.reset({
-                    runId,
-                    invocationId: normalizedInvocationId,
-                });
-                try {
-                    const applied = await this.subAgentSession.loadInitial(this.readAgentEvents);
-                    if (applied
-                        && this.currentRun?.runId === runId
-                        && String(this.selectedSubAgentInvocationId || '').trim() === normalizedInvocationId) {
-                        this.$nextTick(() => {
-                            this.measureTimelineViewport();
-                            this.stickSubAgentTimelineToBottom();
-                            if (this.subAgentDialogOpen) {
-                                void this.loadSubAgentDetails();
-                            }
-                        });
-                    }
-                } catch (error) {
-                    console.error('[AgentSystem] Failed to load SubAgent events', error);
-                    window.toastr?.error?.(errorText(error));
-                }
-            },
-            async loadOlderSubAgentHistory() {
-                if (!this.currentRun?.runId || !this.selectedSubAgentInvocationId) {
-                    return;
-                }
-
-                const anchor = this.$refs.subAgentTimelineList?.captureScrollAnchor?.();
-                try {
-                    const applied = await this.subAgentSession.loadOlder(this.readAgentEvents);
-                    if (applied) {
-                        this.$nextTick(() => {
-                            this.$refs.subAgentTimelineList?.restoreScrollAnchor?.(anchor);
-                        });
-                    }
-                } catch (error) {
-                    console.error('[AgentSystem] Failed to load older SubAgent events', error);
-                    window.toastr?.error?.(errorText(error));
-                }
-            },
             receiveRunEvents(events) {
                 this.timelineSession.receiveEvents(events);
+                this.$refs.subAgentDialog?.receiveEvents?.(events);
                 this.$nextTick(() => this.stickToBottomIfNeeded());
-            },
-            receiveSubAgentEvents(events) {
-                this.subAgentSession.receiveEvents(events);
-            },
-            receiveSubAgentEvent(event, options = {}) {
-                const shouldStick = !options.skipStick && this.isSubAgentTimelineNearBottom();
-                if (!this.subAgentSession.receiveEvent(event)) {
-                    return;
-                }
-                if (!options.skipDetail
-                    && this.subAgentDialogOpen
-                    && this.subAgentSelectedSeq == null
-                    && (isDisplayableRunEvent(event) || event.type === 'model_completed')) {
-                    void this.loadSubAgentDetails();
-                }
-                if (shouldStick) {
-                    this.$nextTick(() => this.stickSubAgentTimelineToBottom());
-                }
             },
             receiveRunEvent(event, options = {}) {
                 if (!event?.runId) {
@@ -550,9 +377,7 @@ function createAgentRunTimelineApp(options = {}) {
                 }
 
                 const addedToRun = this.timelineSession.receiveEvent(event);
-                if (this.selectedSubAgentInvocationId) {
-                    this.receiveSubAgentEvent(event);
-                }
+                this.$refs.subAgentDialog?.receiveEvent?.(event);
                 if (!addedToRun) {
                     return;
                 }
@@ -650,42 +475,24 @@ function createAgentRunTimelineApp(options = {}) {
                 if (!normalized) {
                     throw new Error('SubAgent invocationId is required.');
                 }
-                if (typeof HTMLDialogElement === 'undefined') {
+                if (!this.currentRun?.runId) {
+                    throw new Error('Agent run id is required.');
+                }
+
+                const dialog = this.$refs.subAgentDialog;
+                if (!dialog || typeof dialog.open !== 'function') {
                     throw new Error(tr('subAgentDialogUnsupported'));
                 }
 
-                this.selectedSubAgentInvocationId = normalized;
-                this.subAgentDialogOpen = true;
-                this.$nextTick(() => {
-                    const dialog = this.$refs.subAgentDialog;
-                    if (!(dialog instanceof HTMLDialogElement) || typeof dialog.showModal !== 'function') {
-                        throw new Error(tr('subAgentDialogUnsupported'));
-                    }
-                    if (!dialog.open) {
-                        dialog.showModal();
-                    }
-                    this.measureTimelineViewport();
+                const task = this.subAgentTasks.find((candidate) => (
+                    String(candidate?.childInvocationId || '').trim() === normalized
+                )) || null;
+                dialog.open({
+                    runId: this.currentRun.runId,
+                    invocationId: normalized,
+                    task,
+                    readOnly: this.readOnly,
                 });
-            },
-            closeSubAgentDialog(reset = true) {
-                const dialog = this.$refs.subAgentDialog;
-                if (dialog instanceof HTMLDialogElement && dialog.open) {
-                    dialog.close();
-                    return;
-                }
-                if (reset) {
-                    this.onSubAgentDialogClosed();
-                }
-            },
-            onSubAgentDialogClosed() {
-                this.subAgentDialogOpen = false;
-                this.selectedSubAgentInvocationId = '';
-                this.subAgentSelectedSeq = null;
-                this.subAgentDetailSections = [];
-                this.subAgentDetailError = '';
-            },
-            selectSubAgentItem(item) {
-                this.subAgentSelectedSeq = item.seq;
             },
             toggleCollapsed() {
                 this.collapsed = !this.collapsed;
@@ -729,22 +536,11 @@ function createAgentRunTimelineApp(options = {}) {
                 this.timelineViewportHeight = viewport.viewportHeight;
                 this.autoStick = viewport.nearBottom;
             },
-            onSubAgentTimelineViewport(viewport) {
-                this.subAgentTimelineScrollTop = viewport.scrollTop;
-                this.subAgentTimelineViewportHeight = viewport.viewportHeight;
-            },
             measureTimelineViewport() {
                 this.$refs.timelineList?.measureViewport?.();
-                this.$refs.subAgentTimelineList?.measureViewport?.();
             },
             stickTimelineToBottom() {
                 this.$refs.timelineList?.scrollToBottom?.();
-            },
-            stickSubAgentTimelineToBottom() {
-                this.$refs.subAgentTimelineList?.scrollToBottom?.();
-            },
-            isSubAgentTimelineNearBottom() {
-                return this.$refs.subAgentTimelineList?.isNearBottom?.() ?? true;
             },
             stickToBottomIfNeeded() {
                 if (!this.autoStick || this.collapsed) {
@@ -755,64 +551,15 @@ function createAgentRunTimelineApp(options = {}) {
             async loadDetails() {
                 const item = this.selectedItem;
                 if (!item || !this.currentRun?.runId) {
-                    this.detailSections = [];
-                    this.detailError = '';
+                    this.detail.reset();
                     return;
                 }
 
-                const requestId = ++this.detailRequestId;
-                this.detailLoading = true;
-                this.detailError = '';
-                try {
-                    const sections = await readTimelineDetailSections({
-                        runId: this.currentRun.runId,
-                        targets: this.selectedDetailTargets,
-                        readOnly: this.readOnly,
-                    });
-                    if (requestId === this.detailRequestId) {
-                        this.detailSections = sections;
-                    }
-                } catch (error) {
-                    if (requestId === this.detailRequestId) {
-                        this.detailError = errorText(error);
-                        this.detailSections = [];
-                    }
-                } finally {
-                    if (requestId === this.detailRequestId) {
-                        this.detailLoading = false;
-                    }
-                }
-            },
-            async loadSubAgentDetails() {
-                const item = this.selectedSubAgentItem;
-                if (!item || !this.currentRun?.runId) {
-                    this.subAgentDetailSections = [];
-                    this.subAgentDetailError = '';
-                    return;
-                }
-
-                const requestId = ++this.subAgentDetailRequestId;
-                this.subAgentDetailLoading = true;
-                this.subAgentDetailError = '';
-                try {
-                    const sections = await readTimelineDetailSections({
-                        runId: this.currentRun.runId,
-                        targets: this.subAgentDetailTargets,
-                        readOnly: this.readOnly,
-                    });
-                    if (requestId === this.subAgentDetailRequestId) {
-                        this.subAgentDetailSections = sections;
-                    }
-                } catch (error) {
-                    if (requestId === this.subAgentDetailRequestId) {
-                        this.subAgentDetailError = errorText(error);
-                        this.subAgentDetailSections = [];
-                    }
-                } finally {
-                    if (requestId === this.subAgentDetailRequestId) {
-                        this.subAgentDetailLoading = false;
-                    }
-                }
+                await this.detail.load({
+                    runId: this.currentRun.runId,
+                    targets: this.selectedDetailTargets,
+                    readOnly: this.readOnly,
+                });
             },
             measureResizeBounds() {
                 const panel = this.$refs.panelRoot;
@@ -1061,9 +808,9 @@ function createAgentRunTimelineApp(options = {}) {
                             :type="selectedItem ? selectedItem.type : ''"
                             :nav-items="navItems"
                             :selected-seq="selectedDisplaySeq"
-                            :loading="detailLoading"
-                            :error="detailError"
-                            :sections="detailSections"
+                            :loading="detail.loading"
+                            :error="detail.error"
+                            :sections="detail.sections"
                             :show-back="true"
                             @back="showTimeline"
                             @select-nav="selectNavItem"
@@ -1071,72 +818,10 @@ function createAgentRunTimelineApp(options = {}) {
                         />
                     </div>
                 </div>
-                <dialog
+                <SubAgentTimelineDialog
                     ref="subAgentDialog"
-                    class="ttas-dialog ttas-subagent-dialog"
-                    data-tt-mobile-surface="fullscreen-window"
-                    @cancel.prevent="closeSubAgentDialog"
-                    @close="onSubAgentDialogClosed"
-                >
-                    <div class="ttas-subagent-panel">
-                        <header class="ttas-subagent-titlebar">
-                            <div class="ttas-subagent-title">
-                                <span
-                                    class="ttas-subagent-title-dot"
-                                    :style="selectedSubAgentTaskStyle"
-                                    aria-hidden="true"
-                                ></span>
-                                <div>
-                                    <strong>{{ subAgentDialogTitle }}</strong>
-                                    <small>{{ subAgentDialogSubtitle }}</small>
-                                </div>
-                            </div>
-                            <button
-                                type="button"
-                                class="menu_button menu_button_icon ttas-run-icon-button"
-                                :title="tr('close')"
-                                :aria-label="tr('close')"
-                                @click="closeSubAgentDialog"
-                            >
-                                <i class="fa-solid fa-xmark"></i>
-                            </button>
-                        </header>
-                        <div class="ttas-subagent-body">
-                            <RunTimelineEventList
-                                ref="subAgentTimelineList"
-                                :aria-label="tr('timelineSubAgentTimeline')"
-                                surface-class="ttas-subagent-timeline"
-                                list-class="ttas-subagent-events"
-                                :loading="subAgentLoadingHistory"
-                                :loading-older="subAgentLoadingOlderHistory"
-                                :empty-text="tr('timelineNoEvents')"
-                                :items="subAgentDisplayItems"
-                                :virtual-items="virtualSubAgentDisplayItems"
-                                :selected-seq="selectedSubAgentDisplaySeq"
-                                :latest-seq="null"
-                                :active-seq="null"
-                                item-key-prefix="subagent-"
-                                :mark-latest="false"
-                                @select="selectSubAgentItem"
-                                @top-reached="loadOlderSubAgentHistory"
-                                @viewport="onSubAgentTimelineViewport"
-                            />
-                            <RunTimelineDetailPane
-                                root-class="ttas-subagent-detail"
-                                :aria-label="tr('timelineDetails')"
-                                :title="subAgentDetailTitle"
-                                :type="selectedSubAgentItem ? selectedSubAgentItem.type : ''"
-                                :nav-items="subAgentNavItems"
-                                :selected-seq="selectedSubAgentDisplaySeq"
-                                :loading="subAgentDetailLoading"
-                                :error="subAgentDetailError"
-                                :sections="subAgentDetailSections"
-                                @select-nav="selectSubAgentItem"
-                                @action="invokeDetailAction"
-                            />
-                        </div>
-                    </div>
-                </dialog>
+                    @action="invokeDetailAction"
+                />
             </section>
         `,
     });

@@ -89,6 +89,7 @@ function createAgentApi({ safeInvoke }) {
         readWorkspaceFile: runtime.readWorkspaceFile,
         readModelTurn: runtime.readModelTurn,
         pruneChatPersistentStates: runtime.pruneChatPersistentStates,
+        retention: runtime.retention,
         subscribe: runtime.subscribe,
         profiles,
         tools: {

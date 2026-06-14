@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 当前参考。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval 等未来设计。
+状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing、Agent run retention facade / dry-run plan preview，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval 等未来设计。
 
 `provider_state` 是 Rust 后端内部 continuation contract，不是 Host ABI。前端/扩展不应读写 `_tauritavern_provider_state`；需要诊断时通过 run events、`modelResponsePath` 与 LLM API log 观察。
 模型回合详情必须通过 `readModelTurn()` 读取后端投影 DTO；前端不解析 `model-responses/` raw JSON。
@@ -29,6 +29,14 @@ type TauriTavernAgentApi = {
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
   readModelTurn(input: AgentReadModelTurnInput): Promise<AgentModelTurn>;
   pruneChatPersistentStates(input: AgentPruneChatPersistentStatesInput): Promise<AgentPruneChatPersistentStatesResult>;
+  retention: {
+    readSettings(): Promise<AgentRunRetentionSettings>;
+    updateSettings(input: Partial<AgentRunRetentionSettings>): Promise<AgentRunRetentionSettings>;
+    planPrune(input?: {
+      retention?: AgentRunRetentionSettings;
+      detailLimit?: number;
+    }): Promise<AgentRunPrunePlan>;
+  };
   profiles: {
     list(): Promise<AgentListProfilesResult>;
     load(input: string | { profileId: string }): Promise<{ profile: AgentProfileDefinition | null }>;
@@ -404,7 +412,61 @@ type AgentPruneChatPersistentStatesResult = {
 
 当前只支持 character chat；group chat persistent state prune 会 fail-fast。删除整个 chat / group chat 时，生命周期服务仍删除对应的完整 Agent chat workspace，这不是本方法的职责。
 
-## 12. profiles / promptAssembly / tools
+## 12. retention
+
+```ts
+type AgentRunRetentionSettings = {
+  keepRecentTerminalRuns: number;
+  keepFullRecentRuns: number;
+};
+
+type AgentRunPruneCandidate = {
+  runId: string;
+  workspaceId: string;
+  stableChatId: string;
+  chatRef: AgentChatRef;
+  status: AgentRunStatus;
+  createdAt: string;
+  updatedAt: string;
+  action: 'slim_heavy_artifacts' | 'delete_run';
+  reason: 'outside_full_retention_window' | 'outside_history_retention_window';
+  fileCount: number;
+  byteCount: number;
+};
+
+type AgentRunPruneBlockedRun = AgentRunPruneCandidate & {
+  blockReason: 'active_run' | 'missing_terminal_event' | 'invalid_journal' | 'invalid_storage';
+  message?: string;
+};
+
+type AgentRunPrunePlan = {
+  retention: AgentRunRetentionSettings;
+  detailLimit: number;
+  terminalRunCount: number;
+  nonTerminalRunCount: number;
+  blockedRunCount: number;
+  fullRetainedRunCount: number;
+  coreRetainedRunCount: number;
+  slimCandidateCount: number;
+  deleteCandidateCount: number;
+  totalSlimFileCount: number;
+  totalSlimByteCount: number;
+  totalDeleteFileCount: number;
+  totalDeleteByteCount: number;
+  totalCandidateFileCount: number;
+  totalCandidateByteCount: number;
+  candidates: AgentRunPruneCandidate[];
+  blockedRuns: AgentRunPruneBlockedRun[];
+  candidateDetailsTruncated: boolean;
+  blockedDetailsTruncated: boolean;
+};
+```
+
+`retention.readSettings()` 读取 `tauritavern-settings.agent.retention` 并以 Host ABI 的 camelCase 形态返回。`retention.updateSettings()` 只保存策略，不触发清理；两个数量必须是 `0..10000` 的整数，且 `keepFullRecentRuns <= keepRecentTerminalRuns`。
+
+`retention.planPrune()` 是前端访问 `plan_agent_run_prune(dto)` 的 facade。它只返回 dry-run plan，可使用当前设置，也可传入一次性 `retention` override；`detailLimit` 只限制返回明细，不影响 totals。当前没有公共 apply prune Host ABI，UI 不应把 plan preview 表达为已经删除文件。
+
+## 13. profiles / promptAssembly / tools
 
 `profiles.*` 是当前 Agent Profile 管理入口。`profiles.list()` 的 summary 包含 `directRunnable`，供前端区分可直接启动的 root-run Profile 与只能作为 SubAgent / handoff target 的 Profile。列表扫描会返回可加载 Profile，同时把单个本地 Profile JSON 文件的内容损坏放入 `issues`，避免一个坏文件阻塞整个面板；`invalidJson` 建议用户确认后删除，`invalidFileIdentity` 可通过 `profiles.repairFile({ profileId, action: "normalizeIdentity" })` 尝试规范化文件 header / identity 键（`schemaVersion`、`kind`、`id`），其它 Profile 内容保持原样。若修复后整份 JSON 仍不能按 Agent Profile 契约读取，则拒绝写回并报告错误。`invalidProfile` 表示主体结构损坏，需要手动修复，不会自动替换为默认 Profile。目录读取失败、非法文件名等仓储契约错误仍然 fail-fast。Profile JSON 中的 `preset.mode = "ref"` 与 `model.mode = "connectionRef"` 会影响 prompt assembly 和最终模型连接；`model.mode = "requiresConfiguration"` 表示 Profile 需要本机重新选择模型，可保存但不可运行；`run.directRunnable = false` 表示该 Profile 不能直接启动，只能通过已实现的非直接入口运行（当前为 return-mode SubAgent）。前端“可作为子 Agent”会写入该非直接运行语义。保存时无效 schema 必须 fail-fast。
 
@@ -483,7 +545,7 @@ type AgentToolSpec = {
 
 `tools.list()` 返回当前后端 Agent Tool Registry 的 canonical specs。Profile 面板可以用它编辑 `tools.toolDescriptions`，但不得把返回值当作可修改的 registry。
 
-## 12. readDiff
+## 14. readDiff
 
 当前未实现 diff；`readDiff()` 会显式 throw。
 
@@ -509,7 +571,7 @@ type AgentDiff = {
 
 第一期可以只支持文本 artifact 的 diff。
 
-## 13. rollback
+## 15. rollback
 
 当前未实现 rollback；`rollback()` 会显式 throw。
 
@@ -526,7 +588,7 @@ type AgentRollbackInput = {
 - `workspace`：只恢复 run workspace，不修改 chat。
 - `committed-message`：重组 artifact 并修改已提交聊天消息，必须走 chat 保存契约。
 
-## 14. commit
+## 16. commit
 
 ```ts
 type AgentCommitInput = {
@@ -551,7 +613,7 @@ Chat commit 不是公开 Host API 方法，而是 Agent tool 与 host bridge 的
 - `append` 在本 run 尚无 commit 时不会报错，会创建本 run 的消息楼层。
 - 前台 run 在 `workspace.finish` 前必须至少成功 commit 一次；后台 run 可无 chat commit 完成。
 
-## 15. Event Envelope
+## 17. Event Envelope
 
 ```ts
 type AgentRunEvent = {
@@ -569,7 +631,7 @@ type AgentRunEvent = {
 
 Agent event 不等同 SillyTavern `eventSource` 事件，不得伪装成 `GENERATION_*` 或 `TOOL_CALLS_*`。
 
-## 16. Errors
+## 18. Errors
 
 错误建议结构：
 
@@ -599,7 +661,7 @@ commit.cursor_integrity
 commit.save_failed
 ```
 
-## 17. Rust Command
+## 19. Rust Command
 
 ```text
 start_agent_run(dto)
@@ -622,7 +684,7 @@ read_agent_diff(dto)
 rollback_agent_run(dto)
 ```
 
-## 18. Compatibility
+## 20. Compatibility
 
 Agent Mode off：
 
@@ -637,7 +699,7 @@ Agent Mode on：
 - dryRun 不返回 payload；Agent adapter 通过事件捕获 payload。
 - Agent tool loop 不递归 `Generate()`。
 
-## 17. 当前工具与手动验证
+## 21. 当前工具与手动验证
 
 当前开放十四个非 delegation 内建工具：
 

@@ -199,6 +199,56 @@ type TauriTavernAgentRunSummary = {
     terminalAt?: string;
 };
 
+type TauriTavernAgentRunRetentionSettings = {
+    keepRecentTerminalRuns: number;
+    keepFullRecentRuns: number;
+};
+
+type TauriTavernAgentRunPruneAction = 'slim_heavy_artifacts' | 'delete_run';
+type TauriTavernAgentRunPruneReason = 'outside_full_retention_window' | 'outside_history_retention_window';
+type TauriTavernAgentRunPruneBlockReason = 'active_run' | 'missing_terminal_event' | 'invalid_journal' | 'invalid_storage';
+
+type TauriTavernAgentRunPruneCandidate = {
+    runId: string;
+    workspaceId: string;
+    stableChatId: string;
+    chatRef: TauriTavernChatRef;
+    status: TauriTavernAgentRunStatus;
+    createdAt: string;
+    updatedAt: string;
+    action: TauriTavernAgentRunPruneAction;
+    reason: TauriTavernAgentRunPruneReason;
+    fileCount: number;
+    byteCount: number;
+};
+
+type TauriTavernAgentRunPruneBlockedRun = TauriTavernAgentRunPruneCandidate & {
+    blockReason: TauriTavernAgentRunPruneBlockReason;
+    message?: string;
+};
+
+type TauriTavernAgentRunPrunePlan = {
+    retention: TauriTavernAgentRunRetentionSettings;
+    detailLimit: number;
+    terminalRunCount: number;
+    nonTerminalRunCount: number;
+    blockedRunCount: number;
+    fullRetainedRunCount: number;
+    coreRetainedRunCount: number;
+    slimCandidateCount: number;
+    deleteCandidateCount: number;
+    totalSlimFileCount: number;
+    totalSlimByteCount: number;
+    totalDeleteFileCount: number;
+    totalDeleteByteCount: number;
+    totalCandidateFileCount: number;
+    totalCandidateByteCount: number;
+    candidateDetailsTruncated: boolean;
+    candidates: TauriTavernAgentRunPruneCandidate[];
+    blockedDetailsTruncated: boolean;
+    blockedRuns: TauriTavernAgentRunPruneBlockedRun[];
+};
+
 type TauriTavernAgentModelTurn = {
     runId: string;
     round: number;
@@ -411,6 +461,15 @@ type TauriTavernAgentPromptAssemblyApi = {
     }>;
 };
 
+type TauriTavernAgentRetentionApi = {
+    readSettings: () => Promise<TauriTavernAgentRunRetentionSettings>;
+    updateSettings: (input: Partial<TauriTavernAgentRunRetentionSettings>) => Promise<TauriTavernAgentRunRetentionSettings>;
+    planPrune: (input?: {
+        retention?: TauriTavernAgentRunRetentionSettings;
+        detailLimit?: number;
+    }) => Promise<TauriTavernAgentRunPrunePlan>;
+};
+
 type TauriTavernAgentApi = {
     startRunWithPromptSnapshot: (input: {
         chatRef: TauriTavernChatRef;
@@ -463,6 +522,7 @@ type TauriTavernAgentApi = {
     profiles: TauriTavernAgentProfilesApi;
     tools: TauriTavernAgentToolsApi;
     promptAssembly: TauriTavernAgentPromptAssemblyApi;
+    retention: TauriTavernAgentRetentionApi;
     approveToolCall: () => never;
     listRuns: (input?: {
         chatRef?: TauriTavernChatRef;

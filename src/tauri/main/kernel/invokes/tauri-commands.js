@@ -129,6 +129,7 @@ export {};
  *   | 'move_extension'
  *   | 'move_skill'
  *   | 'normalize_world_info_name'
+ *   | 'plan_agent_run_prune'
  *   | 'read_secret_state'
  *   | 'read_secret_settings'
  *   | 'read_agent_run_events'

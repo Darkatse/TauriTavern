@@ -300,6 +300,53 @@ test('Agent run timeline session keeps paging and invocation scope explicit', as
     }), false);
 });
 
+test('Agent run timeline detail state ignores stale async loads', async () => {
+    const { createTimelineDetailState } = await importFresh(
+        'src/scripts/extensions/agent-system/src/run-timeline-detail-state.js',
+    );
+    const pending = [];
+    const state = createTimelineDetailState({
+        readSections(input) {
+            return new Promise((resolve) => {
+                pending.push({ input, resolve });
+            });
+        },
+    });
+
+    const firstLoad = state.load({
+        runId: 'run-1',
+        targets: [{ type: 'file', path: 'first.txt' }],
+        readOnly: false,
+    });
+    const secondLoad = state.load({
+        runId: 'run-1',
+        targets: [{ type: 'file', path: 'second.txt' }],
+        readOnly: true,
+    });
+
+    assert.equal(pending.length, 2);
+    assert.equal(pending[0].input.readOnly, false);
+    assert.equal(pending[1].input.readOnly, true);
+
+    pending[1].resolve([{ labelKey: 'second' }]);
+    assert.equal(await secondLoad, true);
+    assert.deepEqual(state.sections, [{ labelKey: 'second' }]);
+    assert.equal(state.loading, false);
+
+    pending[0].resolve([{ labelKey: 'first' }]);
+    assert.equal(await firstLoad, false);
+    assert.deepEqual(state.sections, [{ labelKey: 'second' }]);
+
+    state.reset();
+    assert.equal(state.loading, false);
+    assert.equal(state.error, '');
+    assert.deepEqual(state.sections, []);
+    assert.throws(
+        () => createTimelineDetailState({ readSections: null }),
+        /readSections dependency must be a function/,
+    );
+});
+
 test('Agent run timeline virtualizer windows DOM items without dropping timeline entries', async () => {
     const virtualList = await importFresh('src/scripts/extensions/agent-system/src/run-timeline-virtual-list.js');
     const items = Array.from({ length: 120 }, (_, index) => ({ id: `item-${index + 1}` }));
@@ -347,6 +394,25 @@ test('Agent run timeline panel does not cap visible history with tail-only slice
     assert.doesNotMatch(source, /\.slice\(-90\)/);
     assert.match(source, /loadOlderRunHistory/);
     assert.match(source, /virtualDisplayItems/);
+});
+
+test('Agent run timeline keeps SubAgent dialog state outside the main panel', async () => {
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-panel.js',
+    ), 'utf8');
+    const dialogSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/subagent-timeline-dialog.js',
+    ), 'utf8');
+
+    assert.match(panelSource, /SubAgentTimelineDialog/);
+    assert.doesNotMatch(panelSource, /subAgentSession/);
+    assert.doesNotMatch(panelSource, /subAgentDetail/);
+    assert.doesNotMatch(panelSource, /loadSubAgentHistory|loadSubAgentDetails/);
+    assert.match(dialogSource, /createRunTimelineSession/);
+    assert.match(dialogSource, /createTimelineDetailState/);
+    assert.match(dialogSource, /receiveEvent/);
 });
 
 test('Agent run history panel uses the backend run index as its source of truth', async () => {
@@ -415,6 +481,77 @@ test('Agent run history panel preserves backend list and current chat contracts'
     assert.match(malformedVm.error, /result\.runs must be an array/);
     assert.deepEqual(malformedVm.runs, []);
     assert.equal(malformedVm.nextCursor, null);
+});
+
+test('Agent run retention panel uses the host retention facade', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/RunRetentionPanel.js',
+    ), 'utf8');
+
+    assert.match(source, /retention\.readSettings/);
+    assert.match(source, /retention\.updateSettings/);
+    assert.match(source, /retention\.planPrune/);
+    assert.doesNotMatch(source, /safeInvoke|plan_agent_run_prune|update_tauritavern_settings|localStorage/);
+
+    const calls = [];
+    installWindow({
+        agent: {
+            retention: {
+                async readSettings() {
+                    calls.push({ method: 'readSettings' });
+                    return {
+                        keepRecentTerminalRuns: 100,
+                        keepFullRecentRuns: 20,
+                    };
+                },
+                async updateSettings(input) {
+                    calls.push({ method: 'updateSettings', input });
+                    return input;
+                },
+                async planPrune(input) {
+                    calls.push({ method: 'planPrune', input });
+                    return {
+                        retention: input.retention,
+                        candidates: [],
+                        blockedRuns: [],
+                        totalCandidateFileCount: 0,
+                        totalCandidateByteCount: 0,
+                    };
+                },
+            },
+        },
+    });
+
+    const { RunRetentionPanel } = await importFresh('src/scripts/extensions/agent-system/src/RunRetentionPanel.js');
+    const vm = createComponentHarness(RunRetentionPanel);
+    await vm.loadRetentionSettings();
+    vm.setDraftValue('keepRecentTerminalRuns', { target: { value: '80' } });
+    await vm.saveRetentionSettings();
+    await vm.analyzePrune();
+
+    assert.deepEqual(calls, [
+        { method: 'readSettings' },
+        {
+            method: 'updateSettings',
+            input: {
+                keepRecentTerminalRuns: 80,
+                keepFullRecentRuns: 20,
+            },
+        },
+        {
+            method: 'planPrune',
+            input: {
+                retention: {
+                    keepRecentTerminalRuns: 80,
+                    keepFullRecentRuns: 20,
+                },
+                detailLimit: 8,
+            },
+        },
+    ]);
+    assert.equal(vm.error, '');
+    assert.deepEqual(vm.plan.candidates, []);
 });
 
 test('Embedded Agent Skill import isolates per-item preview and install failures', async () => {
