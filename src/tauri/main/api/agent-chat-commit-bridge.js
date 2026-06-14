@@ -1,5 +1,7 @@
 // @ts-check
 
+import { resolveStableChatId } from './agent-chat-identity.js';
+
 const activeCommitBridges = new Map();
 const TERMINAL_EVENTS = new Set(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 
@@ -379,20 +381,6 @@ function sameChatRef(a, b) {
             && String(a.fileName || '') === String(b.fileName || '');
     }
     return String(a.chatId || '') === String(b.chatId || '');
-}
-
-async function resolveStableChatId(chatRef) {
-    const chatApi = window.__TAURITAVERN__?.api?.chat;
-    if (!chatApi || typeof chatApi.open !== 'function') {
-        throw new Error('api.chat is required to resolve stableChatId');
-    }
-
-    const handle = chatApi.open(chatRef);
-    if (!handle || typeof handle.stableId !== 'function') {
-        throw new Error('api.chat.open(ref).stableId is required to resolve stableChatId');
-    }
-
-    return String(await handle.stableId()).trim();
 }
 
 function mergePlainObject(base, patch) {

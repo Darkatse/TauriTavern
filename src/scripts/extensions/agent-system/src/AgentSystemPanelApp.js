@@ -20,6 +20,7 @@ import {
     normalizeProfileId,
     profileForEdit,
 } from './profile-model.js';
+import { RunHistoryPanel } from './RunHistoryPanel.js';
 import { loadSettings, patchSettings } from './settings-store.js';
 import { downloadBlobWithRuntime } from '../../../file-export.js';
 import { subscribeAgentProfilesChanged } from '../../../tauritavern/agent/agent-profile-events.js';
@@ -154,6 +155,9 @@ function uniqueMessages(messages) {
 
 export function createAgentSystemPanelRoot({ requestClose }) {
     return {
+        components: {
+            RunHistoryPanel,
+        },
         data() {
             return {
                 initialized: false,
@@ -181,6 +185,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 profileSelectionToken: 0,
                 tabs: [
                     { id: 'profiles', labelKey: 'profiles', icon: 'fa-id-card-clip' },
+                    { id: 'runs', labelKey: 'runs', icon: 'fa-clock-rotate-left' },
                 ],
                 toolSpecs: [],
                 toolNames: [...KNOWN_TOOLS],
@@ -1822,6 +1827,9 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                 </div>
                             </div>
                         </div>
+                    </section>
+                    <section v-else-if="activeTab === 'runs'" key="runs" class="ttas-panel">
+                        <RunHistoryPanel />
                     </section>
                     </transition>
                 </div>

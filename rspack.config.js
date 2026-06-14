@@ -25,9 +25,8 @@ const libraryCacheInputs = [
 
 const agentSystemCacheInputs = [
   ...commonCacheInputs,
-  'src/scripts/extensions/agent-system/src/index.js',
-  'src/scripts/tauritavern/agent/agent-run-controller.js',
-  'src/scripts/tauritavern/agent/agent-run-retry.js',
+  ...listJavaScriptFiles('src/scripts/extensions/agent-system/src'),
+  ...listJavaScriptFiles('src/scripts/tauritavern/agent'),
 ];
 
 const tauriSettingUiCacheInputs = [

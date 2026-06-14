@@ -15,6 +15,10 @@ async function importFresh(relativePath) {
 async function createAgentPanelHarness() {
     const { createAgentSystemPanelRoot } = await importFresh('src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js');
     const options = createAgentSystemPanelRoot({ requestClose() {} });
+    return createComponentHarness(options);
+}
+
+function createComponentHarness(options) {
     const vm = options.data();
     for (const [name, method] of Object.entries(options.methods || {})) {
         vm[name] = method.bind(vm);
@@ -157,6 +161,21 @@ test('Agent System entry keeps quick toggles before profile and panel entry', as
     assert.ok(activeProfileIndex < openPanelIndex);
 });
 
+test('Agent System panel exposes read-only run history as the second tab', async () => {
+    const { createAgentSystemPanelRoot } = await importFresh('src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js');
+    const options = createAgentSystemPanelRoot({ requestClose() {} });
+    const vm = options.data();
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js',
+    ), 'utf8');
+
+    assert.deepEqual(vm.tabs.map(tab => tab.id), ['profiles', 'runs']);
+    assert.match(panelSource, /import \{ RunHistoryPanel \}/);
+    assert.match(panelSource, /activeTab === 'runs'/);
+    assert.match(panelSource, /<RunHistoryPanel \/>/);
+});
+
 test('Agent input toggle visibility follows the drawer preference', async () => {
     const source = await readFile(path.join(
         REPO_ROOT,
@@ -202,6 +221,83 @@ test('Agent run timeline event store keeps ordered history without tail truncati
     assert.deepEqual(store.events().map(event => event.seq), [1, 2, 3]);
     assert.equal(store.oldestSeq(), 1);
     assert.throws(() => store.add({ seq: 0, runId: 'run-1' }), /positive integer/);
+});
+
+test('Agent run timeline session keeps paging and invocation scope explicit', async () => {
+    const sessionModule = await importFresh('src/scripts/extensions/agent-system/src/run-timeline-session.js');
+    const projection = {
+        foregroundInvocationIds: ['inv_root'],
+        invocations: [],
+        delegationEdges: [],
+    };
+    const calls = [];
+    const session = sessionModule.createRunTimelineSession({
+        runId: 'run-1',
+        includeTimelineProjection: true,
+    });
+
+    await session.loadInitial(async (input) => {
+        calls.push(input);
+        return {
+            events: [
+                { seq: 3, id: 'evt-3', runId: 'run-1', type: 'tool_call_completed', payload: {} },
+                { seq: 4, id: 'evt-4', runId: 'run-1', type: 'run_completed', payload: {} },
+            ],
+            timelineProjection: projection,
+        };
+    });
+
+    assert.equal(session.events.length, 2);
+    assert.equal(session.terminalEvent.type, 'run_completed');
+    assert.equal(calls[0].runId, 'run-1');
+    assert.equal(calls[0].beforeSeq, Number.MAX_SAFE_INTEGER);
+    assert.equal(calls[0].limit, 240);
+    assert.equal(calls[0].includeTimelineProjection, true);
+    assert.equal(Object.hasOwn(calls[0], 'invocationId'), false);
+
+    session.hasMoreBefore = true;
+    await session.loadOlder(async (input) => {
+        calls.push(input);
+        return {
+            events: [
+                { seq: 1, id: 'evt-1', runId: 'run-1', type: 'run_created', payload: {} },
+                { seq: 2, id: 'evt-2', runId: 'run-1', type: 'model_completed', payload: {} },
+            ],
+            timelineProjection: projection,
+        };
+    });
+
+    assert.equal(calls[1].beforeSeq, 3);
+    assert.deepEqual(session.events.map(event => event.seq), [1, 2, 3, 4]);
+
+    const childSession = sessionModule.createRunTimelineSession({
+        runId: 'run-1',
+        invocationId: 'inv-child',
+    });
+    await childSession.loadInitial(async (input) => {
+        calls.push(input);
+        return {
+            events: [
+                {
+                    seq: 5,
+                    id: 'evt-child',
+                    runId: 'run-1',
+                    type: 'tool_call_completed',
+                    payload: { invocationId: 'inv-child' },
+                },
+            ],
+        };
+    });
+
+    assert.equal(calls[2].invocationId, 'inv-child');
+    assert.equal(Object.hasOwn(calls[2], 'includeTimelineProjection'), false);
+    assert.equal(childSession.receiveEvent({
+        seq: 6,
+        id: 'evt-root',
+        runId: 'run-1',
+        type: 'tool_call_completed',
+        payload: { invocationId: 'inv_root' },
+    }), false);
 });
 
 test('Agent run timeline virtualizer windows DOM items without dropping timeline entries', async () => {
@@ -251,6 +347,74 @@ test('Agent run timeline panel does not cap visible history with tail-only slice
     assert.doesNotMatch(source, /\.slice\(-90\)/);
     assert.match(source, /loadOlderRunHistory/);
     assert.match(source, /virtualDisplayItems/);
+});
+
+test('Agent run history panel uses the backend run index as its source of truth', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/RunHistoryPanel.js',
+    ), 'utf8');
+
+    assert.match(source, /listRuns/);
+    assert.match(source, /TERMINAL_RUN_STATUSES/);
+    assert.match(source, /openAgentRunTimelineDialog/);
+    assert.doesNotMatch(source, /localStorage|tryGetJson|setJson/);
+    assert.doesNotMatch(source, /findLastMessage|historyTail|historyBefore|readEvents/);
+});
+
+test('Agent run history panel preserves backend list and current chat contracts', async () => {
+    const calls = [];
+    const chatRef = {
+        kind: 'character',
+        characterId: 'Seraphina',
+        fileName: 'Seraphina.jsonl',
+    };
+    installWindow({
+        agent: {
+            async listRuns(input) {
+                calls.push(input);
+                return { runs: [], nextCursor: null };
+            },
+        },
+        chat: {
+            current: {
+                ref() {
+                    return chatRef;
+                },
+                handle() {
+                    return {
+                        async stableId() {
+                            return 'stable-current-chat';
+                        },
+                    };
+                },
+            },
+        },
+    });
+
+    const { RunHistoryPanel } = await importFresh('src/scripts/extensions/agent-system/src/RunHistoryPanel.js');
+    const currentChatVm = createComponentHarness(RunHistoryPanel);
+    currentChatVm.filter = 'current';
+    await currentChatVm.refreshRuns();
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].chatRef, chatRef);
+    assert.equal(calls[0].stableChatId, 'stable-current-chat');
+
+    installWindow({
+        agent: {
+            async listRuns() {
+                return { nextCursor: null };
+            },
+        },
+    });
+
+    const malformedVm = createComponentHarness(RunHistoryPanel);
+    await malformedVm.refreshRuns();
+
+    assert.match(malformedVm.error, /result\.runs must be an array/);
+    assert.deepEqual(malformedVm.runs, []);
+    assert.equal(malformedVm.nextCursor, null);
 });
 
 test('Embedded Agent Skill import isolates per-item preview and install failures', async () => {
@@ -2901,6 +3065,19 @@ test('Run failure detail surfaces a retry action and userRetryable field when al
     assert.equal(userRetryableField.value, 'true');
     assert.deepEqual(drift.actions.map(action => action.kind), ['retry']);
 
+    const readOnlyDrift = formatRunFailureDetail({
+        labelKey: 'timelineErrorDetails',
+        event: {
+            payload: {
+                code: 'agent.tool_after_finish',
+                message: 'fatal',
+                retryable: false,
+                userRetryable: true,
+            },
+        },
+    }, { allowRetry: false });
+    assert.deepEqual(readOnlyDrift.actions, []);
+
     const fatal = formatRunFailureDetail({
         labelKey: 'timelineErrorDetails',
         event: { payload: { code: 'agent.internal_error', message: 'boom', retryable: false } },
@@ -2996,6 +3173,24 @@ test('Agent timeline retry action does not invoke the SillyTavern regenerate DOM
     assert.match(source, /retryAgentRunFailure/);
     assert.doesNotMatch(source, /option_regenerate/);
     assert.doesNotMatch(source, /globalThis\.jQuery|globalThis\.\$/);
+});
+
+test('Agent history timeline dialog is read-only and uses an independent timeline instance', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-panel.js',
+    ), 'utf8');
+    const detailReaderSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-detail-reader.js',
+    ), 'utf8');
+
+    assert.match(source, /export function openAgentRunTimelineDialog/);
+    assert.match(source, /mode: 'history'/);
+    assert.match(source, /readOnly: true/);
+    assert.match(source, /createRunTimelineSession/);
+    assert.match(detailReaderSource, /allowRetry: !readOnly/);
+    assert.match(source, /rootId: `ttas_agent_run_timeline_history_/);
 });
 
 test('Partial success detail keeps error visible without retry action', async () => {

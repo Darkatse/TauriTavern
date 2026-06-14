@@ -203,11 +203,12 @@ export function formatPatchDiffDetail(target, file) {
     };
 }
 
-export function formatRunFailureDetail(target) {
+export function formatRunFailureDetail(target, options = {}) {
     if (target?.event?.type === 'run_partial_success') {
         return formatRunPartialSuccessDetail(target);
     }
 
+    const allowRetry = options.allowRetry !== false;
     const presentation = presentAgentRunFailure(target.event);
     const fields = [];
     const blocks = [];
@@ -225,7 +226,7 @@ export function formatRunFailureDetail(target) {
         });
     }
 
-    if (presentation.userRetryable) {
+    if (presentation.userRetryable && allowRetry) {
         actions.push({
             kind: 'retry',
             labelKey: 'timelineActionRetry',

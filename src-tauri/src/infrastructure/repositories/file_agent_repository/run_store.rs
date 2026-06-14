@@ -6,6 +6,7 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use super::FileAgentRepository;
+use super::run_record::{read_agent_run_record, write_agent_run_record};
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::{
     AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunSummaryProjection,
@@ -27,12 +28,12 @@ impl AgentRunRepository for FileAgentRepository {
             ))
         })?;
 
-        Self::write_json_atomic(&run_dir.join("run.json"), run).await?;
-        Self::write_json_atomic(&self.index_run_path(&run.id)?, run).await
+        write_agent_run_record(&run_dir.join("run.json"), run).await?;
+        write_agent_run_record(&self.index_run_path(&run.id)?, run).await
     }
 
     async fn load_run(&self, run_id: &str) -> Result<AgentRun, DomainError> {
-        Self::read_json(&self.index_run_path(run_id)?).await
+        read_agent_run_record(&self.index_run_path(run_id)?).await
     }
 
     async fn list_runs(&self, query: AgentRunListQuery) -> Result<Vec<AgentRun>, DomainError> {
@@ -86,8 +87,8 @@ impl AgentRunRepository for FileAgentRepository {
 
     async fn save_run(&self, run: &AgentRun) -> Result<(), DomainError> {
         let run_dir = self.run_dir(run)?;
-        Self::write_json_atomic(&run_dir.join("run.json"), run).await?;
-        Self::write_json_atomic(&self.index_run_path(&run.id)?, run).await
+        write_agent_run_record(&run_dir.join("run.json"), run).await?;
+        write_agent_run_record(&self.index_run_path(&run.id)?, run).await
     }
 
     async fn append_event(
@@ -265,7 +266,7 @@ impl FileAgentRepository {
                 })?;
             super::paths::validate_segment(run_id, "run_id")?;
 
-            let run: AgentRun = Self::read_json(&path).await?;
+            let run = read_agent_run_record(&path).await?;
             if run.id != run_id {
                 return Err(DomainError::InvalidData(format!(
                     "Agent run index id mismatch in {}: expected {}, found {}",

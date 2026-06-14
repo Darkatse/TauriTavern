@@ -352,6 +352,83 @@ async fn list_runs_filters_by_chat_stable_id_and_status() {
 }
 
 #[tokio::test]
+async fn list_runs_accepts_legacy_index_without_presentation() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_legacy_without_presentation");
+    repository.create_run(&run).await.expect("create run");
+
+    let index_path = root.join("index/runs/run_legacy_without_presentation.json");
+    let mut legacy = serde_json::to_value(&run).expect("serialize legacy run");
+    legacy
+        .as_object_mut()
+        .expect("run json object")
+        .remove("presentation");
+    FileAgentRepository::write_json_atomic(&index_path, &legacy)
+        .await
+        .expect("write legacy index");
+
+    let listed = repository
+        .list_runs(AgentRunListQuery {
+            chat_ref: None,
+            stable_chat_id: None,
+            statuses: None,
+            before: None,
+            limit: 10,
+        })
+        .await
+        .expect("list legacy run");
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, run.id);
+    assert_eq!(listed[0].presentation, AgentRunPresentation::Foreground);
+
+    let loaded = repository.load_run(&run.id).await.expect("load legacy run");
+    assert_eq!(loaded.presentation, AgentRunPresentation::Foreground);
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn list_runs_accepts_legacy_awaiting_commit_status() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let mut run = sample_run_with_id("run_legacy_awaiting_commit");
+    run.status = AgentRunStatus::AwaitingHostCommit;
+    repository.create_run(&run).await.expect("create run");
+
+    let index_path = root.join("index/runs/run_legacy_awaiting_commit.json");
+    let mut legacy = serde_json::to_value(&run).expect("serialize legacy run");
+    legacy.as_object_mut().expect("run json object").insert(
+        "status".to_string(),
+        Value::String("awaiting_commit".to_string()),
+    );
+    FileAgentRepository::write_json_atomic(&index_path, &legacy)
+        .await
+        .expect("write legacy index");
+
+    let listed = repository
+        .list_runs(AgentRunListQuery {
+            chat_ref: None,
+            stable_chat_id: None,
+            statuses: None,
+            before: None,
+            limit: 10,
+        })
+        .await
+        .expect("list legacy run");
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, run.id);
+    assert_eq!(listed[0].status, AgentRunStatus::AwaitingHostCommit);
+
+    let loaded = repository.load_run(&run.id).await.expect("load legacy run");
+    assert_eq!(loaded.status, AgentRunStatus::AwaitingHostCommit);
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn list_runs_returns_empty_when_index_is_missing() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
