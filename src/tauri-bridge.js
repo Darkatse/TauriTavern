@@ -30,7 +30,11 @@ function getInvokeFn() {
 }
 
 function isPlainObject(value) {
-    return Object.prototype.toString.call(value) === '[object Object]';
+    if (Object.prototype.toString.call(value) !== '[object Object]') {
+        return false;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === null || prototype === Object.prototype;
 }
 
 function withTauriArgumentAliases(args) {
@@ -185,7 +189,7 @@ export async function updateTauriTavernSettings(dto) {
     if (!invokeFn) {
         throw new Error('Tauri invoke is unavailable');
     }
-    if (!dto || typeof dto !== 'object') {
+    if (!isPlainObject(dto)) {
         throw new Error('Invalid TauriTavern settings DTO');
     }
 
@@ -214,7 +218,7 @@ export async function openDialog(options = {}) {
         throw new Error('Tauri invoke is unavailable');
     }
 
-    if (options && typeof options !== 'object') {
+    if (!isPlainObject(options)) {
         throw new Error('Invalid dialog options: expected an object');
     }
 
