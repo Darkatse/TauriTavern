@@ -41,6 +41,7 @@ pub async fn update_tauritavern_settings(
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
 
+    let agent_retention_settings_updated = has_agent_retention_settings_update(&dto);
     let request_proxy_settings: Option<RequestProxySettings> =
         dto.request_proxy.clone().map(Into::into);
     if let Some(settings) = request_proxy_settings.as_ref() {
@@ -75,6 +76,12 @@ pub async fn update_tauritavern_settings(
 
     llm_api_logs.apply_settings(settings.dev.llm_api_keep);
 
+    if agent_retention_settings_updated {
+        app_state
+            .agent_run_retention_automation_service
+            .notify_settings_changed();
+    }
+
     Ok(settings)
 }
 
@@ -89,6 +96,7 @@ pub async fn update_tauritavern_settings(
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
 
+    let agent_retention_settings_updated = has_agent_retention_settings_update(&dto);
     let request_proxy_settings: Option<RequestProxySettings> =
         dto.request_proxy.clone().map(Into::into);
     if let Some(settings) = request_proxy_settings.as_ref() {
@@ -121,6 +129,12 @@ pub async fn update_tauritavern_settings(
     }
 
     llm_api_logs.apply_settings(settings.dev.llm_api_keep);
+
+    if agent_retention_settings_updated {
+        app_state
+            .agent_run_retention_automation_service
+            .notify_settings_changed();
+    }
 
     Ok(settings)
 }
@@ -204,4 +218,11 @@ pub async fn restore_settings_snapshot(
         .restore_snapshot(&name)
         .await
         .map_err(map_command_error("Failed to restore settings snapshot"))
+}
+
+fn has_agent_retention_settings_update(dto: &UpdateTauriTavernSettingsDto) -> bool {
+    dto.agent
+        .as_ref()
+        .and_then(|agent| agent.retention.as_ref())
+        .is_some()
 }

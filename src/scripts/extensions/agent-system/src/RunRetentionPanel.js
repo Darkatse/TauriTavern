@@ -14,6 +14,7 @@ export const RunRetentionPanel = {
             error: '',
             retention: null,
             draft: {
+                autoPruneEnabled: false,
                 keepRecentTerminalRuns: 100,
                 keepFullRecentRuns: 20,
             },
@@ -30,7 +31,8 @@ export const RunRetentionPanel = {
             }
             try {
                 const draft = this.normalizedDraft();
-                return draft.keepRecentTerminalRuns !== this.retention.keepRecentTerminalRuns
+                return draft.autoPruneEnabled !== this.retention.autoPruneEnabled
+                    || draft.keepRecentTerminalRuns !== this.retention.keepRecentTerminalRuns
                     || draft.keepFullRecentRuns !== this.retention.keepFullRecentRuns;
             } catch {
                 return true;
@@ -216,6 +218,13 @@ export const RunRetentionPanel = {
             };
             this.plan = null;
         },
+        setDraftChecked(key, event) {
+            this.draft = {
+                ...this.draft,
+                [key]: Boolean(event?.target?.checked),
+            };
+            this.plan = null;
+        },
         normalizedDraft() {
             return normalizeRetentionSettings(this.draft);
         },
@@ -322,6 +331,21 @@ export const RunRetentionPanel = {
             </header>
 
             <div class="ttas-retention-controls">
+                <div class="ttas-retention-automation" :data-ttas-enabled="draft.autoPruneEnabled ? 'true' : 'false'">
+                    <label class="ttas-retention-auto-toggle">
+                        <input type="checkbox" :checked="draft.autoPruneEnabled" @change="setDraftChecked('autoPruneEnabled', $event)" />
+                        <span class="ttas-retention-auto-track" aria-hidden="true">
+                            <span></span>
+                        </span>
+                        <span class="ttas-retention-auto-copy">
+                            <strong>{{ tr('runRetentionAutoPrune') }}</strong>
+                            <small>{{ tr('runRetentionAutoPruneHint') }}</small>
+                        </span>
+                    </label>
+                    <span class="ttas-retention-auto-state">
+                        {{ draft.autoPruneEnabled ? tr('runRetentionAutoPruneOn') : tr('runRetentionAutoPruneOff') }}
+                    </span>
+                </div>
                 <label class="ttas-field">
                     <span>{{ tr('runRetentionKeepHistory') }}</span>
                     <input class="text_pole" type="number" min="0" :max="10000" step="1" :value="draft.keepRecentTerminalRuns" @input="setDraftValue('keepRecentTerminalRuns', $event)" />
@@ -340,6 +364,10 @@ export const RunRetentionPanel = {
                 <span>
                     <i class="fa-solid fa-scroll" aria-hidden="true"></i>
                     {{ tr('runRetentionCoreSummary', { count: draft.keepRecentTerminalRuns }) }}
+                </span>
+                <span class="ttas-retention-auto-pill" :data-ttas-enabled="draft.autoPruneEnabled ? 'true' : 'false'">
+                    <i class="fa-solid" :class="draft.autoPruneEnabled ? 'fa-clock-rotate-left' : 'fa-pause'" aria-hidden="true"></i>
+                    {{ draft.autoPruneEnabled ? tr('runRetentionAutoSummaryOn') : tr('runRetentionAutoSummaryOff') }}
                 </span>
             </div>
 
@@ -414,6 +442,10 @@ function normalizeRetentionSettings(value) {
     if (!plainObject(value)) {
         throw new Error('agent.retention_settings_invalid: settings must be an object');
     }
+    const autoPruneEnabled = normalizeRetentionAutoPrune(
+        value.autoPruneEnabled ?? value.auto_prune_enabled ?? false,
+        'autoPruneEnabled',
+    );
     const keepRecentTerminalRuns = normalizeRetentionCount(
         value.keepRecentTerminalRuns ?? value.keep_recent_terminal_runs,
         'keepRecentTerminalRuns',
@@ -426,9 +458,17 @@ function normalizeRetentionSettings(value) {
         throw new Error(tr('runRetentionFullExceedsHistory'));
     }
     return {
+        autoPruneEnabled,
         keepRecentTerminalRuns,
         keepFullRecentRuns,
     };
+}
+
+function normalizeRetentionAutoPrune(value, label) {
+    if (typeof value !== 'boolean') {
+        throw new Error(`${label} must be a boolean`);
+    }
+    return value;
 }
 
 function normalizeRetentionCount(value, label) {

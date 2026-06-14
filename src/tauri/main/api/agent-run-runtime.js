@@ -91,7 +91,7 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
 
         return safeInvoke('plan_agent_run_prune', {
             dto: {
-                ...(retention ? { retention } : {}),
+                ...(retention ? { retention: toRunPruneRetention(retention) } : {}),
                 ...(detailLimit == null ? {} : { detailLimit }),
             },
         });
@@ -109,7 +109,7 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
 
         return safeInvoke('apply_agent_run_prune', {
             dto: {
-                ...(retention ? { retention } : {}),
+                ...(retention ? { retention: toRunPruneRetention(retention) } : {}),
                 ...(detailLimit == null ? {} : { detailLimit }),
             },
         });
@@ -355,6 +355,10 @@ function normalizeRetentionSettings(value) {
         throw new Error('Agent retention settings must be an object');
     }
 
+    const autoPruneEnabled = normalizeRetentionAutoPrune(
+        value.autoPruneEnabled ?? value.auto_prune_enabled ?? false,
+        'autoPruneEnabled',
+    );
     const keepRecentTerminalRuns = normalizeRetentionRunCount(
         value.keepRecentTerminalRuns ?? value.keep_recent_terminal_runs,
         'keepRecentTerminalRuns',
@@ -369,6 +373,7 @@ function normalizeRetentionSettings(value) {
     }
 
     return {
+        autoPruneEnabled,
         keepRecentTerminalRuns,
         keepFullRecentRuns,
     };
@@ -380,6 +385,13 @@ function normalizeRetentionSettingsPatch(value) {
     }
 
     const patch = {};
+    if (Object.prototype.hasOwnProperty.call(value, 'autoPruneEnabled')
+        || Object.prototype.hasOwnProperty.call(value, 'auto_prune_enabled')) {
+        patch.autoPruneEnabled = normalizeRetentionAutoPrune(
+            value.autoPruneEnabled ?? value.auto_prune_enabled,
+            'autoPruneEnabled',
+        );
+    }
     if (Object.prototype.hasOwnProperty.call(value, 'keepRecentTerminalRuns')
         || Object.prototype.hasOwnProperty.call(value, 'keep_recent_terminal_runs')) {
         patch.keepRecentTerminalRuns = normalizeRetentionRunCount(
@@ -400,6 +412,13 @@ function normalizeRetentionSettingsPatch(value) {
         throw new Error('keepFullRecentRuns must be less than or equal to keepRecentTerminalRuns');
     }
     return patch;
+}
+
+function normalizeRetentionAutoPrune(value, label) {
+    if (typeof value !== 'boolean') {
+        throw new Error(`${label} must be a boolean`);
+    }
+    return value;
 }
 
 function normalizeRetentionRunCount(value, label) {
@@ -426,12 +445,22 @@ function normalizeRunPruneDetailLimit(value) {
 
 function toSettingsRetentionPatch(retention) {
     return {
+        ...(retention.autoPruneEnabled == null ? {} : {
+            auto_prune_enabled: retention.autoPruneEnabled,
+        }),
         ...(retention.keepRecentTerminalRuns == null ? {} : {
             keep_recent_terminal_runs: retention.keepRecentTerminalRuns,
         }),
         ...(retention.keepFullRecentRuns == null ? {} : {
             keep_full_recent_runs: retention.keepFullRecentRuns,
         }),
+    };
+}
+
+function toRunPruneRetention(retention) {
+    return {
+        keepRecentTerminalRuns: retention.keepRecentTerminalRuns,
+        keepFullRecentRuns: retention.keepFullRecentRuns,
     };
 }
 

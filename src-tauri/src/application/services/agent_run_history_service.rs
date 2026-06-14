@@ -115,6 +115,27 @@ impl AgentRunHistoryService {
     ) -> Result<AgentRunPruneApplyResultDto, ApplicationError> {
         let detail_limit = normalize_prune_detail_limit(dto.detail_limit)?;
         let _guard = self.run_prune_apply_lock.lock().await;
+        self.apply_run_prune_locked(dto, detail_limit).await
+    }
+
+    pub(crate) async fn try_apply_run_prune_for_automation(
+        &self,
+        dto: AgentApplyRunPruneDto,
+    ) -> Result<Option<AgentRunPruneApplyResultDto>, ApplicationError> {
+        let detail_limit = normalize_prune_detail_limit(dto.detail_limit)?;
+        let Ok(_guard) = self.run_prune_apply_lock.try_lock() else {
+            return Ok(None);
+        };
+        self.apply_run_prune_locked(dto, detail_limit)
+            .await
+            .map(Some)
+    }
+
+    async fn apply_run_prune_locked(
+        &self,
+        dto: AgentApplyRunPruneDto,
+        detail_limit: usize,
+    ) -> Result<AgentRunPruneApplyResultDto, ApplicationError> {
         let retention = self.resolve_prune_retention(dto.retention).await?;
         let retention_dto = AgentRunPruneRetentionDto::from(retention.clone());
         let execution_plan = self
@@ -192,6 +213,7 @@ impl AgentRunHistoryService {
     ) -> Result<AgentRunRetentionSettings, ApplicationError> {
         let retention = if let Some(dto) = dto {
             AgentRunRetentionSettings {
+                auto_prune_enabled: false,
                 keep_recent_terminal_runs: dto.keep_recent_terminal_runs,
                 keep_full_recent_runs: dto.keep_full_recent_runs,
             }
@@ -706,7 +728,7 @@ mod tests {
             .expect("write heavy input file");
     }
 
-    async fn append_terminal_event(repository: &FileAgentRepository, run: &AgentRun) {
+    async fn append_terminal_event(root: &std::path::Path, run: &AgentRun) {
         let event_type = match run.status {
             AgentRunStatus::Completed => "run_completed",
             AgentRunStatus::PartialSuccess => "run_partial_success",
@@ -714,15 +736,24 @@ mod tests {
             AgentRunStatus::Failed => "run_failed",
             _ => return,
         };
-        repository
-            .append_event(
-                run.id.as_str(),
-                AgentRunEventLevel::Info,
-                event_type,
-                Value::Null,
-            )
+        let event = AgentRunEvent {
+            seq: 1,
+            id: format!("evt_{}", run.id),
+            run_id: run.id.clone(),
+            timestamp: run.updated_at,
+            level: AgentRunEventLevel::Info,
+            event_type: event_type.to_string(),
+            payload: Value::Null,
+        };
+        let run_dir = root
+            .join("chats")
+            .join(&run.workspace_id)
+            .join("runs")
+            .join(&run.id);
+        let line = serde_json::to_string(&event).expect("serialize terminal event");
+        fs::write(run_dir.join("events.jsonl"), format!("{line}\n"))
             .await
-            .expect("append terminal event");
+            .expect("write terminal event");
     }
 
     #[test]
@@ -808,6 +839,7 @@ mod tests {
         let mut settings = TauriTavernSettings::default();
         settings.agent = AgentSettings {
             retention: AgentRunRetentionSettings {
+                auto_prune_enabled: false,
                 keep_recent_terminal_runs: 2,
                 keep_full_recent_runs: 1,
             },
@@ -839,7 +871,7 @@ mod tests {
         );
         for run in [&newest, &middle, &oldest, &active] {
             run_repository.create_run(run).await.expect("create run");
-            append_terminal_event(&run_repository, run).await;
+            append_terminal_event(&agent_root, run).await;
             seed_heavy_file(&agent_root, run, b"heavy").await;
         }
 
@@ -877,6 +909,64 @@ mod tests {
                 ),
                 ("run_prune_oldest", AgentRunPruneActionDto::DeleteRun),
             ]
+        );
+
+        let _ = fs::remove_dir_all(agent_root).await;
+        let _ = fs::remove_dir_all(settings_root).await;
+    }
+
+    #[tokio::test]
+    async fn run_prune_plan_ranks_terminal_runs_by_terminal_event_time() {
+        let agent_root = temp_root("agent-terminal-rank");
+        let settings_root = temp_root("settings-terminal-rank");
+        let run_repository = Arc::new(FileAgentRepository::new(agent_root.clone()));
+        let settings_repository = Arc::new(FileSettingsRepository::new(settings_root.clone()));
+
+        let mut created_newer_terminal_older = run_with_id(
+            "run_prune_created_newer_terminal_older",
+            instant("2026-01-10T00:00:00Z"),
+            AgentRunStatus::Completed,
+        );
+        created_newer_terminal_older.updated_at = instant("2026-01-10T00:05:00Z");
+
+        let mut created_older_terminal_newer = run_with_id(
+            "run_prune_created_older_terminal_newer",
+            instant("2026-01-01T00:00:00Z"),
+            AgentRunStatus::Completed,
+        );
+        created_older_terminal_newer.updated_at = instant("2026-01-11T00:05:00Z");
+
+        for run in [&created_newer_terminal_older, &created_older_terminal_newer] {
+            run_repository.create_run(run).await.expect("create run");
+            append_terminal_event(&agent_root, run).await;
+            seed_heavy_file(&agent_root, run, b"heavy").await;
+        }
+
+        let service = AgentRunHistoryService::new(
+            run_repository,
+            settings_repository,
+            TestRunActivity::none(),
+        );
+        let plan = service
+            .plan_run_prune(AgentPlanRunPruneDto {
+                retention: Some(AgentRunPruneRetentionDto {
+                    keep_recent_terminal_runs: 1,
+                    keep_full_recent_runs: 1,
+                }),
+                detail_limit: 200,
+            })
+            .await
+            .expect("plan prune");
+
+        assert_eq!(plan.terminal_run_count, 2);
+        assert_eq!(plan.full_retained_run_count, 1);
+        assert_eq!(plan.delete_candidate_count, 1);
+        assert_eq!(
+            plan.candidates
+                .iter()
+                .map(|candidate| candidate.run_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["run_prune_created_newer_terminal_older"]
         );
 
         let _ = fs::remove_dir_all(agent_root).await;
@@ -941,7 +1031,7 @@ mod tests {
             AgentRunStatus::Completed,
         );
         run_repository.create_run(&run).await.expect("create run");
-        append_terminal_event(&run_repository, &run).await;
+        append_terminal_event(&agent_root, &run).await;
         seed_heavy_file(&agent_root, &run, b"heavy").await;
 
         let service = AgentRunHistoryService::new(
@@ -984,7 +1074,7 @@ mod tests {
                 AgentRunStatus::Completed,
             );
             run_repository.create_run(&run).await.expect("create run");
-            append_terminal_event(&run_repository, &run).await;
+            append_terminal_event(&agent_root, &run).await;
             seed_heavy_file(&agent_root, &run, b"heavy").await;
         }
 
@@ -1026,7 +1116,7 @@ mod tests {
                 AgentRunStatus::Completed,
             );
             run_repository.create_run(&run).await.expect("create run");
-            append_terminal_event(&run_repository, &run).await;
+            append_terminal_event(&agent_root, &run).await;
             seed_heavy_file(&agent_root, &run, b"heavy").await;
         }
 
@@ -1068,7 +1158,7 @@ mod tests {
             AgentRunStatus::Completed,
         );
         run_repository.create_run(&run).await.expect("create run");
-        append_terminal_event(&run_repository, &run).await;
+        append_terminal_event(&agent_root, &run).await;
         seed_heavy_file(&agent_root, &run, b"heavy").await;
 
         let service = Arc::new(AgentRunHistoryService::new(
@@ -1103,6 +1193,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn try_apply_run_prune_for_automation_skips_when_apply_lock_is_held() {
+        let agent_root = temp_root("agent-apply-lock-held");
+        let settings_root = temp_root("settings-apply-lock-held");
+        let run_repository = Arc::new(FileAgentRepository::new(agent_root.clone()));
+        let settings_repository = Arc::new(FileSettingsRepository::new(settings_root.clone()));
+        let service = AgentRunHistoryService::new(
+            run_repository,
+            settings_repository,
+            TestRunActivity::none(),
+        );
+
+        let _guard = service.run_prune_apply_lock.lock().await;
+        let result = service
+            .try_apply_run_prune_for_automation(AgentApplyRunPruneDto {
+                retention: Some(AgentRunPruneRetentionDto {
+                    keep_recent_terminal_runs: 0,
+                    keep_full_recent_runs: 0,
+                }),
+                detail_limit: 8,
+            })
+            .await
+            .expect("try apply should not fail");
+
+        assert!(result.is_none());
+
+        let _ = fs::remove_dir_all(agent_root).await;
+        let _ = fs::remove_dir_all(settings_root).await;
+    }
+
+    #[tokio::test]
     async fn apply_run_prune_slims_core_window_and_deletes_history_window() {
         let agent_root = temp_root("agent-apply-windows");
         let settings_root = temp_root("settings-apply-windows");
@@ -1125,7 +1245,7 @@ mod tests {
         );
         for run in [&newest, &middle, &oldest] {
             run_repository.create_run(run).await.expect("create run");
-            append_terminal_event(&run_repository, run).await;
+            append_terminal_event(&agent_root, run).await;
             seed_heavy_file(&agent_root, run, b"heavy").await;
         }
 

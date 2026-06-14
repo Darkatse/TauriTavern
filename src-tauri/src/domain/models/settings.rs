@@ -222,6 +222,8 @@ impl Default for AgentSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRunRetentionSettings {
+    #[serde(default)]
+    pub auto_prune_enabled: bool,
     #[serde(default = "default_agent_retention_keep_recent_terminal_runs")]
     pub keep_recent_terminal_runs: u32,
     #[serde(default = "default_agent_retention_keep_full_recent_runs")]
@@ -231,6 +233,7 @@ pub struct AgentRunRetentionSettings {
 impl Default for AgentRunRetentionSettings {
     fn default() -> Self {
         Self {
+            auto_prune_enabled: false,
             keep_recent_terminal_runs: DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS,
             keep_full_recent_runs: DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS,
         }
@@ -455,6 +458,7 @@ mod tests {
     fn agent_retention_defaults_to_recent_terminal_history_policy() {
         let settings = TauriTavernSettings::default();
 
+        assert!(!settings.agent.retention.auto_prune_enabled);
         assert_eq!(
             settings.agent.retention.keep_recent_terminal_runs,
             DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS
@@ -472,6 +476,7 @@ mod tests {
         )
         .expect("parse settings");
 
+        assert!(!settings.agent.retention.auto_prune_enabled);
         assert_eq!(
             settings.agent.retention.keep_recent_terminal_runs,
             DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS

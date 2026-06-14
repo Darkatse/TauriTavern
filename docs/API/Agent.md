@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 当前参考。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing、Agent run retention facade / dry-run plan preview / manual apply prune，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval 等未来设计。
+状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing、Agent run retention facade / dry-run plan preview / manual apply prune / backend auto prune，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval 等未来设计。
 
 `provider_state` 是 Rust 后端内部 continuation contract，不是 Host ABI。前端/扩展不应读写 `_tauritavern_provider_state`；需要诊断时通过 run events、`modelResponsePath` 与 LLM API log 观察。
 模型回合详情必须通过 `readModelTurn()` 读取后端投影 DTO；前端不解析 `model-responses/` raw JSON。
@@ -33,11 +33,11 @@ type TauriTavernAgentApi = {
     readSettings(): Promise<AgentRunRetentionSettings>;
     updateSettings(input: Partial<AgentRunRetentionSettings>): Promise<AgentRunRetentionSettings>;
     planPrune(input?: {
-      retention?: AgentRunRetentionSettings;
+      retention?: AgentRunPruneRetention | AgentRunRetentionSettings;
       detailLimit?: number;
     }): Promise<AgentRunPrunePlan>;
     applyPrune(input?: {
-      retention?: AgentRunRetentionSettings;
+      retention?: AgentRunPruneRetention | AgentRunRetentionSettings;
       detailLimit?: number;
     }): Promise<AgentRunPruneApplyResult>;
   };
@@ -419,9 +419,13 @@ type AgentPruneChatPersistentStatesResult = {
 ## 12. retention
 
 ```ts
-type AgentRunRetentionSettings = {
+type AgentRunPruneRetention = {
   keepRecentTerminalRuns: number;
   keepFullRecentRuns: number;
+};
+
+type AgentRunRetentionSettings = AgentRunPruneRetention & {
+  autoPruneEnabled: boolean;
 };
 
 type AgentRunPruneCandidate = {
@@ -448,7 +452,7 @@ type AgentRunPruneFailedRun = AgentRunPruneCandidate & {
 };
 
 type AgentRunPrunePlan = {
-  retention: AgentRunRetentionSettings;
+  retention: AgentRunPruneRetention;
   detailLimit: number;
   terminalRunCount: number;
   nonTerminalRunCount: number;
@@ -470,7 +474,7 @@ type AgentRunPrunePlan = {
 };
 
 type AgentRunPruneApplyResult = {
-  retention: AgentRunRetentionSettings;
+  retention: AgentRunPruneRetention;
   detailLimit: number;
   slimmedRunCount: number;
   deletedRunCount: number;
@@ -483,9 +487,11 @@ type AgentRunPruneApplyResult = {
 };
 ```
 
-`retention.readSettings()` 读取 `tauritavern-settings.agent.retention` 并以 Host ABI 的 camelCase 形态返回。`retention.updateSettings()` 只保存策略，不触发清理；两个数量必须是 `0..10000` 的整数，且 `keepFullRecentRuns <= keepRecentTerminalRuns`。
+`retention.readSettings()` 读取 `tauritavern-settings.agent.retention` 并以 Host ABI 的 camelCase 形态返回。`autoPruneEnabled` 默认 `false`，表示 Rust 后端在 TauriTavern 进程运行期间按当前保留策略进行周期性 Agent run 清理。`retention.updateSettings()` 只保存策略并唤醒后端调度器重读配置，不同步执行清理；两个数量必须是 `0..10000` 的整数，且 `keepFullRecentRuns <= keepRecentTerminalRuns`。
 
-`retention.planPrune()` 是前端访问 `plan_agent_run_prune(dto)` 的 facade。它只返回 dry-run plan，可使用当前设置，也可传入一次性 `retention` override；`detailLimit` 只限制返回明细，不影响 totals。`retention.applyPrune()` 访问 `apply_agent_run_prune(dto)`，后端会用同一 retention 重新规划全量候选再执行，不信任前端预览列表；同一服务实例内 apply 会串行执行，避免并发清理同一批 run 造成假失败。单个 run 执行失败会进入 `failedRuns` 并继续处理后续 candidate，结构性规划错误仍 fail-fast。结果包含 caller `detailLimit` 下的 `afterPlan`，供 UI 展示清理后的事实状态。
+`retention.planPrune()` 是前端访问 `plan_agent_run_prune(dto)` 的 facade。它只返回 dry-run plan，可使用当前设置，也可传入一次性 `retention` override；override 中的 `autoPruneEnabled` 不参与规划，真正的候选只由两个保留数量决定；`detailLimit` 只限制返回明细，不影响 totals。`retention.applyPrune()` 访问 `apply_agent_run_prune(dto)`，后端会用同一 retention 重新规划全量候选再执行，不信任前端预览列表；同一服务实例内 apply 会串行执行，避免并发清理同一批 run 造成假失败。单个 run 执行失败会进入 `failedRuns` 并继续处理后续 candidate，结构性规划错误仍 fail-fast。结果包含 caller `detailLimit` 下的 `afterPlan`，供 UI 展示清理后的事实状态。
+
+自动清理由 Rust `AgentRunRetentionAutomationService` 拥有生命周期，不依赖 Agent System 面板打开，也不使用前端 `setInterval`。当前策略是启动/设置变更后延迟一次执行，之后固定周期维护；它复用 `apply_agent_run_prune` 的后端规划与执行路径，不定义第二套删除规则。
 
 ## 13. profiles / promptAssembly / tools
 

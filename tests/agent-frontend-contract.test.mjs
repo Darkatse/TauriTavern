@@ -502,6 +502,7 @@ test('Agent run retention panel uses the host retention facade', async () => {
                 async readSettings() {
                     calls.push({ method: 'readSettings' });
                     return {
+                        autoPruneEnabled: true,
                         keepRecentTerminalRuns: 100,
                         keepFullRecentRuns: 20,
                     };
@@ -570,6 +571,7 @@ test('Agent run retention panel uses the host retention facade', async () => {
     const { RunRetentionPanel } = await importFresh('src/scripts/extensions/agent-system/src/RunRetentionPanel.js');
     const vm = createComponentHarness(RunRetentionPanel);
     await vm.loadRetentionSettings();
+    vm.setDraftChecked('autoPruneEnabled', { target: { checked: false } });
     vm.setDraftValue('keepRecentTerminalRuns', { target: { value: '80' } });
     await vm.saveRetentionSettings();
     await vm.analyzePrune();
@@ -580,6 +582,7 @@ test('Agent run retention panel uses the host retention facade', async () => {
         {
             method: 'updateSettings',
             input: {
+                autoPruneEnabled: false,
                 keepRecentTerminalRuns: 80,
                 keepFullRecentRuns: 20,
             },
@@ -588,6 +591,7 @@ test('Agent run retention panel uses the host retention facade', async () => {
             method: 'planPrune',
             input: {
                 retention: {
+                    autoPruneEnabled: false,
                     keepRecentTerminalRuns: 80,
                     keepFullRecentRuns: 20,
                 },
@@ -598,6 +602,7 @@ test('Agent run retention panel uses the host retention facade', async () => {
             method: 'applyPrune',
             input: {
                 retention: {
+                    autoPruneEnabled: false,
                     keepRecentTerminalRuns: 80,
                     keepFullRecentRuns: 20,
                 },

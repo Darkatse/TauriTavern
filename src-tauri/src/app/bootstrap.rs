@@ -8,6 +8,7 @@ use crate::application::services::agent_model_gateway::ChatCompletionAgentModelG
 use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
 use crate::application::services::agent_profile_service::AgentProfileService;
 use crate::application::services::agent_run_history_service::AgentRunHistoryService;
+use crate::application::services::agent_run_retention_automation_service::AgentRunRetentionAutomationService;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::agent_workspace_lifecycle_service::{
     AgentRunActivity, AgentWorkspaceLifecycleService,
@@ -143,6 +144,7 @@ pub(super) struct AppServices {
     pub agent_profile_diagnostic_service: Arc<AgentProfileDiagnosticService>,
     pub prompt_assembly_service: Arc<PromptAssemblyService>,
     pub agent_run_history_service: Arc<AgentRunHistoryService>,
+    pub agent_run_retention_automation_service: Arc<AgentRunRetentionAutomationService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub llm_connection_service: Arc<LlmConnectionService>,
@@ -306,6 +308,10 @@ pub(super) async fn build_services(
         repositories.settings_repository.clone(),
         agent_runtime_service.clone() as Arc<dyn AgentRunActivity>,
     ));
+    let agent_run_retention_automation_service = Arc::new(AgentRunRetentionAutomationService::new(
+        repositories.settings_repository.clone(),
+        agent_run_history_service.clone(),
+    ));
     let agent_workspace_lifecycle_service = Arc::new(AgentWorkspaceLifecycleService::new(
         repositories.agent_workspace_lifecycle_repository.clone(),
         agent_runtime_service.clone() as Arc<dyn AgentRunActivity>,
@@ -407,6 +413,7 @@ pub(super) async fn build_services(
         agent_profile_diagnostic_service,
         prompt_assembly_service,
         agent_run_history_service,
+        agent_run_retention_automation_service,
         agent_runtime_service,
         chat_completion_service,
         llm_connection_service,

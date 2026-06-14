@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use chrono::{DateTime, Utc};
+
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::AgentRun;
 use crate::domain::models::settings::AgentRunRetentionSettings;
@@ -104,12 +106,19 @@ impl<'a> AgentRunRetentionPlanner<'a> {
         let mut plan = AgentRunRetentionPlan::new(input.retention, input.detail_mode);
         for run in runs {
             if run.status.is_terminal() {
-                terminal_runs.push(run);
+                terminal_runs.push(self.rank_terminal_run(run).await);
             } else {
                 plan.non_terminal_run_count += 1;
             }
         }
         plan.terminal_run_count = terminal_runs.len();
+        terminal_runs.sort_by(|left, right| {
+            right
+                .sort_timestamp()
+                .cmp(&left.sort_timestamp())
+                .then_with(|| right.run.created_at.cmp(&left.run.created_at))
+                .then_with(|| right.run.id.cmp(&left.run.id))
+        });
 
         for (rank, run) in terminal_runs.into_iter().enumerate() {
             if rank < keep_full_recent_runs {
@@ -143,25 +152,22 @@ impl<'a> AgentRunRetentionPlanner<'a> {
         &self,
         plan: &mut AgentRunRetentionPlan,
         active_run_ids: &BTreeSet<String>,
-        run: AgentRun,
+        run: RankedTerminalRun,
     ) -> Result<(), ApplicationError> {
         let action = AgentRunPruneAction::SlimHeavyArtifacts;
         let reason = AgentRunPruneReason::OutsideFullRetentionWindow;
-        if self.blocked_by_active_run(plan, active_run_ids, &run, action, reason) {
+        if self.blocked_by_active_run(plan, active_run_ids, &run.run, action, reason) {
             return Ok(());
         }
-        if self
-            .blocked_by_missing_terminal_event(plan, &run, action, reason)
-            .await
-        {
+        if self.blocked_by_terminal_journal(plan, &run, action, reason) {
             return Ok(());
         }
 
-        let storage = match self.run_repository.inspect_run_storage(&run).await {
+        let storage = match self.run_repository.inspect_run_storage(&run.run).await {
             Ok(storage) => storage,
             Err(error) => {
                 plan.push_blocked(AgentRunPruneBlockedRun {
-                    run,
+                    run: run.run,
                     action,
                     reason,
                     block_reason: AgentRunPruneBlockReason::InvalidStorage,
@@ -175,7 +181,7 @@ impl<'a> AgentRunRetentionPlanner<'a> {
         }
 
         plan.push_candidate(AgentRunPruneCandidate {
-            run,
+            run: run.run,
             action,
             reason,
             stats: storage.heavy_artifacts,
@@ -186,25 +192,22 @@ impl<'a> AgentRunRetentionPlanner<'a> {
         &self,
         plan: &mut AgentRunRetentionPlan,
         active_run_ids: &BTreeSet<String>,
-        run: AgentRun,
+        run: RankedTerminalRun,
     ) -> Result<(), ApplicationError> {
         let action = AgentRunPruneAction::DeleteRun;
         let reason = AgentRunPruneReason::OutsideHistoryRetentionWindow;
-        if self.blocked_by_active_run(plan, active_run_ids, &run, action, reason) {
+        if self.blocked_by_active_run(plan, active_run_ids, &run.run, action, reason) {
             return Ok(());
         }
-        if self
-            .blocked_by_missing_terminal_event(plan, &run, action, reason)
-            .await
-        {
+        if self.blocked_by_terminal_journal(plan, &run, action, reason) {
             return Ok(());
         }
 
-        let storage = match self.run_repository.inspect_run_storage(&run).await {
+        let storage = match self.run_repository.inspect_run_storage(&run.run).await {
             Ok(storage) => storage,
             Err(error) => {
                 plan.push_blocked(AgentRunPruneBlockedRun {
-                    run,
+                    run: run.run,
                     action,
                     reason,
                     block_reason: AgentRunPruneBlockReason::InvalidStorage,
@@ -215,7 +218,7 @@ impl<'a> AgentRunRetentionPlanner<'a> {
         };
 
         plan.push_candidate(AgentRunPruneCandidate {
-            run,
+            run: run.run,
             action,
             reason,
             stats: storage.total,
@@ -244,42 +247,67 @@ impl<'a> AgentRunRetentionPlanner<'a> {
         true
     }
 
-    async fn blocked_by_missing_terminal_event(
+    async fn rank_terminal_run(&self, run: AgentRun) -> RankedTerminalRun {
+        match self.run_repository.read_all_events(&run.id).await {
+            Ok(events) => RankedTerminalRun {
+                run,
+                terminal_event_at: events
+                    .iter()
+                    .filter(|event| is_terminal_run_event(&event.event_type))
+                    .map(|event| event.timestamp)
+                    .last(),
+                terminal_event_error: None,
+            },
+            Err(error) => RankedTerminalRun {
+                run,
+                terminal_event_at: None,
+                terminal_event_error: Some(error.to_string()),
+            },
+        }
+    }
+
+    fn blocked_by_terminal_journal(
         &self,
         plan: &mut AgentRunRetentionPlan,
-        run: &AgentRun,
+        run: &RankedTerminalRun,
         action: AgentRunPruneAction,
         reason: AgentRunPruneReason,
     ) -> bool {
-        match self.run_repository.read_all_events(&run.id).await {
-            Ok(events)
-                if events
-                    .iter()
-                    .any(|event| is_terminal_run_event(&event.event_type)) =>
-            {
-                false
-            }
-            Ok(_) => {
-                plan.push_blocked(AgentRunPruneBlockedRun {
-                    run: run.clone(),
-                    action,
-                    reason,
-                    block_reason: AgentRunPruneBlockReason::MissingTerminalEvent,
-                    message: None,
-                });
-                true
-            }
-            Err(error) => {
-                plan.push_blocked(AgentRunPruneBlockedRun {
-                    run: run.clone(),
-                    action,
-                    reason,
-                    block_reason: AgentRunPruneBlockReason::InvalidJournal,
-                    message: Some(error.to_string()),
-                });
-                true
-            }
+        if let Some(message) = &run.terminal_event_error {
+            plan.push_blocked(AgentRunPruneBlockedRun {
+                run: run.run.clone(),
+                action,
+                reason,
+                block_reason: AgentRunPruneBlockReason::InvalidJournal,
+                message: Some(message.clone()),
+            });
+            return true;
         }
+
+        if run.terminal_event_at.is_some() {
+            return false;
+        }
+
+        plan.push_blocked(AgentRunPruneBlockedRun {
+            run: run.run.clone(),
+            action,
+            reason,
+            block_reason: AgentRunPruneBlockReason::MissingTerminalEvent,
+            message: None,
+        });
+        true
+    }
+}
+
+struct RankedTerminalRun {
+    run: AgentRun,
+    terminal_event_at: Option<DateTime<Utc>>,
+    terminal_event_error: Option<String>,
+}
+
+impl RankedTerminalRun {
+    fn sort_timestamp(&self) -> DateTime<Utc> {
+        self.terminal_event_at.unwrap_or(self.run.updated_at)
     }
 }
 

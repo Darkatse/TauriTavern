@@ -199,9 +199,13 @@ type TauriTavernAgentRunSummary = {
     terminalAt?: string;
 };
 
-type TauriTavernAgentRunRetentionSettings = {
+type TauriTavernAgentRunPruneRetention = {
     keepRecentTerminalRuns: number;
     keepFullRecentRuns: number;
+};
+
+type TauriTavernAgentRunRetentionSettings = TauriTavernAgentRunPruneRetention & {
+    autoPruneEnabled: boolean;
 };
 
 type TauriTavernAgentRunPruneAction = 'slim_heavy_artifacts' | 'delete_run';
@@ -232,7 +236,7 @@ type TauriTavernAgentRunPruneFailedRun = TauriTavernAgentRunPruneCandidate & {
 };
 
 type TauriTavernAgentRunPrunePlan = {
-    retention: TauriTavernAgentRunRetentionSettings;
+    retention: TauriTavernAgentRunPruneRetention;
     detailLimit: number;
     terminalRunCount: number;
     nonTerminalRunCount: number;
@@ -254,7 +258,7 @@ type TauriTavernAgentRunPrunePlan = {
 };
 
 type TauriTavernAgentRunPruneApplyResult = {
-    retention: TauriTavernAgentRunRetentionSettings;
+    retention: TauriTavernAgentRunPruneRetention;
     detailLimit: number;
     slimmedRunCount: number;
     deletedRunCount: number;
@@ -482,11 +486,11 @@ type TauriTavernAgentRetentionApi = {
     readSettings: () => Promise<TauriTavernAgentRunRetentionSettings>;
     updateSettings: (input: Partial<TauriTavernAgentRunRetentionSettings>) => Promise<TauriTavernAgentRunRetentionSettings>;
     planPrune: (input?: {
-        retention?: TauriTavernAgentRunRetentionSettings;
+        retention?: TauriTavernAgentRunPruneRetention | TauriTavernAgentRunRetentionSettings;
         detailLimit?: number;
     }) => Promise<TauriTavernAgentRunPrunePlan>;
     applyPrune: (input?: {
-        retention?: TauriTavernAgentRunRetentionSettings;
+        retention?: TauriTavernAgentRunPruneRetention | TauriTavernAgentRunRetentionSettings;
         detailLimit?: number;
     }) => Promise<TauriTavernAgentRunPruneApplyResult>;
 };

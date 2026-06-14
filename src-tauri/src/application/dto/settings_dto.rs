@@ -65,12 +65,14 @@ pub struct UpdateAgentSettingsDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRunRetentionSettingsDto {
+    pub auto_prune_enabled: bool,
     pub keep_recent_terminal_runs: u32,
     pub keep_full_recent_runs: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateAgentRunRetentionSettingsDto {
+    pub auto_prune_enabled: Option<bool>,
     pub keep_recent_terminal_runs: Option<u32>,
     pub keep_full_recent_runs: Option<u32>,
 }
@@ -229,6 +231,7 @@ impl From<AgentSettings> for AgentSettingsDto {
 impl From<AgentRunRetentionSettings> for AgentRunRetentionSettingsDto {
     fn from(settings: AgentRunRetentionSettings) -> Self {
         Self {
+            auto_prune_enabled: settings.auto_prune_enabled,
             keep_recent_terminal_runs: settings.keep_recent_terminal_runs,
             keep_full_recent_runs: settings.keep_full_recent_runs,
         }

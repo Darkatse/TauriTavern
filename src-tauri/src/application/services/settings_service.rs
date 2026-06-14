@@ -230,6 +230,10 @@ impl SettingsService {
         if let Some(retention) = dto.retention {
             let mut next = settings.retention.clone();
 
+            if let Some(auto_prune_enabled) = retention.auto_prune_enabled {
+                next.auto_prune_enabled = auto_prune_enabled;
+            }
+
             if let Some(keep_recent_terminal_runs) = retention.keep_recent_terminal_runs {
                 next.keep_recent_terminal_runs = keep_recent_terminal_runs;
             }
@@ -411,6 +415,7 @@ mod tests {
             &mut settings,
             UpdateAgentSettingsDto {
                 retention: Some(UpdateAgentRunRetentionSettingsDto {
+                    auto_prune_enabled: None,
                     keep_recent_terminal_runs: Some(50),
                     keep_full_recent_runs: Some(10),
                 }),
@@ -420,6 +425,26 @@ mod tests {
 
         assert_eq!(settings.retention.keep_recent_terminal_runs, 50);
         assert_eq!(settings.retention.keep_full_recent_runs, 10);
+        assert!(!settings.retention.auto_prune_enabled);
+    }
+
+    #[test]
+    fn agent_retention_update_applies_auto_prune_flag() {
+        let mut settings = AgentSettings::default();
+
+        SettingsService::apply_agent_settings_update(
+            &mut settings,
+            UpdateAgentSettingsDto {
+                retention: Some(UpdateAgentRunRetentionSettingsDto {
+                    auto_prune_enabled: Some(true),
+                    keep_recent_terminal_runs: None,
+                    keep_full_recent_runs: None,
+                }),
+            },
+        )
+        .expect("apply agent settings");
+
+        assert!(settings.retention.auto_prune_enabled);
     }
 
     #[test]
@@ -430,6 +455,7 @@ mod tests {
             &mut settings,
             UpdateAgentSettingsDto {
                 retention: Some(UpdateAgentRunRetentionSettingsDto {
+                    auto_prune_enabled: None,
                     keep_recent_terminal_runs: Some(0),
                     keep_full_recent_runs: Some(0),
                 }),
@@ -449,6 +475,7 @@ mod tests {
             &mut settings,
             UpdateAgentSettingsDto {
                 retention: Some(UpdateAgentRunRetentionSettingsDto {
+                    auto_prune_enabled: None,
                     keep_recent_terminal_runs: Some(10),
                     keep_full_recent_runs: Some(11),
                 }),

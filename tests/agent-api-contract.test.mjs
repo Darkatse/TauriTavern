@@ -301,6 +301,7 @@ test('api.agent.retention forwards settings and prune contracts', async () => {
                 return {
                     agent: {
                         retention: {
+                            auto_prune_enabled: true,
                             keep_recent_terminal_runs: 100,
                             keep_full_recent_runs: 20,
                         },
@@ -311,6 +312,7 @@ test('api.agent.retention forwards settings and prune contracts', async () => {
                 return {
                     agent: {
                         retention: {
+                            auto_prune_enabled: args.dto.agent.retention.auto_prune_enabled,
                             keep_recent_terminal_runs: args.dto.agent.retention.keep_recent_terminal_runs,
                             keep_full_recent_runs: args.dto.agent.retention.keep_full_recent_runs,
                         },
@@ -322,13 +324,16 @@ test('api.agent.retention forwards settings and prune contracts', async () => {
     });
 
     assert.deepEqual(await agent.retention.readSettings(), {
+        autoPruneEnabled: true,
         keepRecentTerminalRuns: 100,
         keepFullRecentRuns: 20,
     });
     assert.deepEqual(await agent.retention.updateSettings({
+        autoPruneEnabled: false,
         keepRecentTerminalRuns: '80',
         keepFullRecentRuns: 12,
     }), {
+        autoPruneEnabled: false,
         keepRecentTerminalRuns: 80,
         keepFullRecentRuns: 12,
     });
@@ -358,6 +363,7 @@ test('api.agent.retention forwards settings and prune contracts', async () => {
                 dto: {
                     agent: {
                         retention: {
+                            auto_prune_enabled: false,
                             keep_recent_terminal_runs: 80,
                             keep_full_recent_runs: 12,
                         },
@@ -406,6 +412,10 @@ test('api.agent.retention fails fast on invalid retention inputs', async () => {
     await assert.rejects(
         () => agent.retention.updateSettings({ keepRecentTerminalRuns: -1 }),
         /keepRecentTerminalRuns must be an integer between 0 and 10000/,
+    );
+    await assert.rejects(
+        () => agent.retention.updateSettings({ autoPruneEnabled: 'true' }),
+        /autoPruneEnabled must be a boolean/,
     );
     await assert.rejects(
         () => agent.retention.updateSettings({ keepRecentTerminalRuns: 10, keepFullRecentRuns: 11 }),

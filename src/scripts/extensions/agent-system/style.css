@@ -3126,6 +3126,127 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     min-width: 0;
 }
 
+.ttas-retention-automation {
+    display: flex;
+    grid-column: 1 / -1;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+    padding: 8px 9px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 14%, transparent);
+    border-radius: var(--ttas-radius-sm);
+    background-color: color-mix(in srgb, var(--SmartThemeBodyColor) 5%, transparent);
+    transition:
+        border-color var(--ttas-transition),
+        background-color var(--ttas-transition),
+        box-shadow var(--ttas-transition);
+}
+
+.ttas-retention-automation[data-ttas-enabled="true"] {
+    border-color: color-mix(in srgb, var(--ttas-accent) 34%, var(--ttas-border-soft));
+    background:
+        linear-gradient(90deg, color-mix(in srgb, var(--ttas-accent) 9%, transparent), transparent 64%),
+        color-mix(in srgb, var(--SmartThemeBodyColor) 5%, transparent);
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ttas-accent) 72%, transparent);
+}
+
+.ttas-retention-auto-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.ttas-retention-auto-toggle input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.ttas-retention-auto-track {
+    display: inline-flex;
+    flex: 0 0 38px;
+    align-items: center;
+    width: 38px;
+    height: 20px;
+    padding: 2px;
+    color: var(--ttas-muted);
+    border: 1px solid color-mix(in srgb, currentColor 34%, transparent);
+    border-radius: 999px;
+    background-color: color-mix(in srgb, currentColor 9%, transparent);
+    transition:
+        color var(--ttas-transition),
+        background-color var(--ttas-transition),
+        border-color var(--ttas-transition);
+}
+
+.ttas-retention-auto-track span {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background-color: currentColor;
+    box-shadow: 0 1px 4px color-mix(in srgb, black 34%, transparent);
+    transform: translateX(0);
+    transition: transform 180ms ease;
+}
+
+.ttas-retention-auto-toggle input:checked + .ttas-retention-auto-track {
+    color: var(--ttas-accent);
+    background-color: color-mix(in srgb, var(--ttas-accent) 15%, transparent);
+}
+
+.ttas-retention-auto-toggle input:checked + .ttas-retention-auto-track span {
+    transform: translateX(18px);
+}
+
+.ttas-retention-auto-toggle input:focus-visible + .ttas-retention-auto-track {
+    outline: 2px solid color-mix(in srgb, var(--ttas-accent) 58%, transparent);
+    outline-offset: 2px;
+}
+
+.ttas-retention-auto-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.ttas-retention-auto-copy strong,
+.ttas-retention-auto-copy small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ttas-retention-auto-copy strong {
+    font-size: 0.82rem;
+    line-height: 1.2;
+}
+
+.ttas-retention-auto-copy small,
+.ttas-retention-auto-state {
+    color: var(--ttas-muted);
+    font-size: 0.72rem;
+    line-height: 1.2;
+}
+
+.ttas-retention-auto-state {
+    flex: 0 0 auto;
+    padding: 3px 7px;
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-radius: 999px;
+    background-color: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.ttas-retention-automation[data-ttas-enabled="true"] .ttas-retention-auto-state {
+    color: var(--ttas-accent);
+}
+
 .ttas-retention-band {
     display: flex;
     flex-wrap: wrap;
@@ -3151,6 +3272,10 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 .ttas-retention-band i,
 .ttas-retention-note i {
     color: var(--ttas-accent);
+}
+
+.ttas-retention-auto-pill[data-ttas-enabled="false"] i {
+    color: var(--ttas-muted);
 }
 
 .ttas-retention-error {
@@ -4845,6 +4970,11 @@ textarea.ttas-json {
     .ttas-retention-controls,
     .ttas-retention-stat-grid {
         grid-template-columns: 1fr;
+    }
+
+    .ttas-retention-automation {
+        align-items: flex-start;
+        flex-direction: column;
     }
 
     .ttas-segmented-control {
