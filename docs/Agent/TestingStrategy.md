@@ -173,6 +173,7 @@ future APIs approveToolCall/readDiff/rollback throw explicitly
 run timeline/detail view switching has a single explicit state source and does not derive detailsOpen from scrollLeft
 run timeline main panel does not use horizontal scroll-snap or smooth scroll as a view state machine
 run timeline closes detail by resetting detail state and does not measure or auto-stick hidden timeline scrollers
+run timeline mobile view gesture uses Pointer Events only as an input shortcut and commits through openDetails/showTimeline
 ```
 
 Provider normalizer tests 必须覆盖可见 reasoning 提取：Claude `thinking`、Gemini `thought` 文本、OpenAI Responses reasoning summary 进入 `reasoning_content`；signature / encrypted continuation 仍作为 native/provider state 保留，不能作为可展示文本。

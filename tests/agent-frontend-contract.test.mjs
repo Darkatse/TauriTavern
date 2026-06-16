@@ -448,11 +448,31 @@ test('Agent run timeline view switching is not driven by horizontal scroll state
     assert.doesNotMatch(panelSource, /@scroll\.passive="onPagesScroll"/);
     assert.match(panelSource, /v-show="!detailsOpen"/);
     assert.match(panelSource, /v-if="detailsOpen"/);
+    assert.match(panelSource, /run-timeline-view-gesture\.js/);
+    assert.match(panelSource, /@pointerdown\.passive="startViewGesture"/);
+    assert.match(panelSource, /@pointermove\.passive="trackViewGesture"/);
+    assert.match(panelSource, /@pointerup\.passive="finishViewGesture"/);
+    assert.match(panelSource, /@pointercancel\.passive="cancelViewGesture"/);
 
     const showTimelineSource = sourceBetween(
         panelSource,
         'showTimeline() {',
-        'onTimelineViewport(viewport) {',
+        'startViewGesture(event) {',
+    );
+    const startGestureSource = sourceBetween(
+        panelSource,
+        'startViewGesture(event) {',
+        'trackViewGesture(event) {',
+    );
+    const trackGestureSource = sourceBetween(
+        panelSource,
+        'trackViewGesture(event) {',
+        'finishViewGesture(event) {',
+    );
+    const finishGestureSource = sourceBetween(
+        panelSource,
+        'finishViewGesture(event) {',
+        'cancelViewGesture(event = null) {',
     );
     const measureTimelineSource = sourceBetween(
         panelSource,
@@ -465,13 +485,119 @@ test('Agent run timeline view switching is not driven by horizontal scroll state
         'async loadDetails() {',
     );
     assert.match(showTimelineSource, /this\.detailsOpen = false;\s*this\.detail\.reset\(\);/);
+    assert.doesNotMatch(startGestureSource, /preventDefault/);
+    assert.doesNotMatch(trackGestureSource, /preventDefault/);
+    assert.doesNotMatch(finishGestureSource, /preventDefault/);
+    assert.match(finishGestureSource, /this\.openDetails\(\);/);
+    assert.match(finishGestureSource, /this\.showTimeline\(\);/);
     assert.match(measureTimelineSource, /if \(this\.collapsed \|\| this\.detailsOpen\) \{\s*return;\s*\}/);
     assert.match(stickToBottomSource, /if \(!this\.autoStick \|\| this\.collapsed \|\| this\.detailsOpen\) \{\s*return;\s*\}/);
 
     assert.doesNotMatch(styleSource, /\.ttas-run-pages/);
     assert.doesNotMatch(styleSource, /scroll-snap-type/);
     assert.doesNotMatch(styleSource, /scroll-snap-align/);
+    assert.match(styleSource, /touch-action:\s*pan-y pinch-zoom;/);
     assert.match(styleSource, /\.ttas-run-view/);
+});
+
+test('Agent run timeline mobile view gesture commits only conservative touch intent', async () => {
+    const gesture = await importFresh(
+        'src/scripts/extensions/agent-system/src/run-timeline-view-gesture.js',
+    );
+    const target = { closest: () => null };
+    const textTarget = { parentElement: target };
+    const detailActionTarget = {
+        closest(selector) {
+            return selector.includes('.ttas-run-detail-actions') ? {} : null;
+        },
+    };
+    const touch = (clientX, clientY, overrides = {}) => ({
+        pointerId: 7,
+        pointerType: 'touch',
+        isPrimary: true,
+        clientX,
+        clientY,
+        ...overrides,
+    });
+
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20),
+        target,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), true);
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20),
+        target: textTarget,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), true);
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20, { pointerType: 'mouse' }),
+        target,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), false);
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20, { isPrimary: false }),
+        target,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), false);
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20),
+        target,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: false,
+        selectedHasDetails: false,
+    }), false);
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20),
+        target: detailActionTarget,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: true,
+        selectedHasDetails: false,
+    }), false);
+
+    const timelineSwipe = gesture.createRunTimelineViewGesture(touch(220, 30), false);
+    assert.equal(gesture.resolveRunTimelineViewGesture(timelineSwipe, touch(150, 34), {
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), gesture.RUN_TIMELINE_VIEW_GESTURE_ACTION_DETAILS);
+    assert.equal(gesture.resolveRunTimelineViewGesture(timelineSwipe, touch(150, 34), {
+        detailsOpen: false,
+        selectedHasDetails: false,
+    }), null);
+    assert.equal(gesture.resolveRunTimelineViewGesture(timelineSwipe, touch(170, 88), {
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), null);
+    assert.equal(gesture.resolveRunTimelineViewGesture(timelineSwipe, touch(150, 34), {
+        detailsOpen: true,
+        selectedHasDetails: true,
+    }), null);
+
+    const detailSwipe = gesture.createRunTimelineViewGesture(touch(80, 30), true);
+    assert.equal(gesture.resolveRunTimelineViewGesture(detailSwipe, touch(154, 33), {
+        detailsOpen: true,
+        selectedHasDetails: false,
+    }), gesture.RUN_TIMELINE_VIEW_GESTURE_ACTION_TIMELINE);
+    assert.equal(gesture.resolveRunTimelineViewGesture(detailSwipe, touch(8, 33), {
+        detailsOpen: true,
+        selectedHasDetails: false,
+    }), null);
+    assert.equal(gesture.shouldCancelRunTimelineViewGesture(detailSwipe, touch(84, 72)), true);
+    assert.equal(gesture.shouldCancelRunTimelineViewGesture(detailSwipe, touch(150, 60)), false);
 });
 
 test('Agent run timeline refresh predicates use narrated model turns explicitly', async () => {

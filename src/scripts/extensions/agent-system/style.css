@@ -635,6 +635,14 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     overscroll-behavior: contain;
 }
 
+@media (pointer: coarse) {
+    .ttas-run-body,
+    .ttas-run-event-scroll,
+    .ttas-run-detail-scroll {
+        touch-action: pan-y pinch-zoom;
+    }
+}
+
 .ttas-run-detail-scroll {
     flex: 1;
     height: auto;

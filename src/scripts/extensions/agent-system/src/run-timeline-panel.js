@@ -12,6 +12,14 @@ import {
     runTimelineHeightBounds,
 } from './run-timeline-resize.js';
 import {
+    canStartRunTimelineViewGesture,
+    createRunTimelineViewGesture,
+    resolveRunTimelineViewGesture,
+    RUN_TIMELINE_VIEW_GESTURE_ACTION_DETAILS,
+    RUN_TIMELINE_VIEW_GESTURE_ACTION_TIMELINE,
+    shouldCancelRunTimelineViewGesture,
+} from './run-timeline-view-gesture.js';
+import {
     projectAgentInvocations,
 } from './run-invocation-projector.js';
 import {
@@ -82,6 +90,7 @@ function createAgentRunTimelineApp(options = {}) {
                 resizeStartY: 0,
                 resizeStartHeightPx: 0,
                 resizeBounds: null,
+                viewGesture: null,
                 timelineScrollTop: 0,
                 timelineViewportHeight: 1,
                 unsubscribeSettings: null,
@@ -288,6 +297,7 @@ function createAgentRunTimelineApp(options = {}) {
         },
         unmounted() {
             this.stopResize(false);
+            this.cancelViewGesture();
             this.$refs.subAgentDialog?.reset?.();
             if (this.timelineProjectionRefreshTimer) {
                 clearTimeout(this.timelineProjectionRefreshTimer);
@@ -328,6 +338,7 @@ function createAgentRunTimelineApp(options = {}) {
                 this.detailsOpen = false;
                 this.timelineScrollTop = 0;
                 this.subAgentTrayExpanded = false;
+                this.cancelViewGesture();
                 this.detail.reset();
                 this.$refs.subAgentDialog?.reset?.();
                 await this.loadRunHistory();
@@ -513,6 +524,47 @@ function createAgentRunTimelineApp(options = {}) {
                     this.measureTimelineViewport();
                     this.stickToBottomIfNeeded();
                 });
+            },
+            startViewGesture(event) {
+                if (this.viewGesture || !canStartRunTimelineViewGesture({
+                    event,
+                    target: event.target,
+                    collapsed: this.collapsed,
+                    resizing: this.resizing,
+                    detailsOpen: this.detailsOpen,
+                    selectedHasDetails: this.selectedHasDetails,
+                })) {
+                    return;
+                }
+                this.viewGesture = createRunTimelineViewGesture(event, this.detailsOpen);
+            },
+            trackViewGesture(event) {
+                if (shouldCancelRunTimelineViewGesture(this.viewGesture, event)) {
+                    this.cancelViewGesture(event);
+                }
+            },
+            finishViewGesture(event) {
+                const gesture = this.viewGesture;
+                if (!gesture || event.pointerId !== gesture.pointerId) {
+                    return;
+                }
+                this.viewGesture = null;
+
+                const action = resolveRunTimelineViewGesture(gesture, event, {
+                    detailsOpen: this.detailsOpen,
+                    selectedHasDetails: this.selectedHasDetails,
+                });
+                if (action === RUN_TIMELINE_VIEW_GESTURE_ACTION_DETAILS) {
+                    this.openDetails();
+                } else if (action === RUN_TIMELINE_VIEW_GESTURE_ACTION_TIMELINE) {
+                    this.showTimeline();
+                }
+            },
+            cancelViewGesture(event = null) {
+                if (event && this.viewGesture && event.pointerId !== this.viewGesture.pointerId) {
+                    return;
+                }
+                this.viewGesture = null;
             },
             onTimelineViewport(viewport) {
                 this.timelineScrollTop = viewport.scrollTop;
@@ -759,7 +811,15 @@ function createAgentRunTimelineApp(options = {}) {
                     </div>
                 </header>
 
-                <div v-if="!collapsed" ref="panelBody" class="ttas-run-body">
+                <div
+                    v-if="!collapsed"
+                    ref="panelBody"
+                    class="ttas-run-body"
+                    @pointerdown.passive="startViewGesture"
+                    @pointermove.passive="trackViewGesture"
+                    @pointerup.passive="finishViewGesture"
+                    @pointercancel.passive="cancelViewGesture"
+                >
                     <section
                         v-show="!detailsOpen"
                         class="ttas-run-view ttas-run-view-events"
