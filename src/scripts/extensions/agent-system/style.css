@@ -606,38 +606,22 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     height: var(--ttas-run-panel-height);
     min-height: 0;
     border-top: 1px solid var(--ttas-run-panel-border-soft);
+    overflow: hidden;
 }
 
-.ttas-run-pages {
-    display: flex;
+.ttas-run-view {
     width: 100%;
     height: 100%;
     min-width: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scroll-snap-type: x mandatory;
-    scrollbar-width: none;
-    touch-action: pan-x pan-y;
-}
-
-.ttas-run-pages::-webkit-scrollbar {
-    display: none;
-}
-
-.ttas-run-page {
-    flex: 0 0 100%;
-    min-width: 0;
-    height: 100%;
-    scroll-snap-align: start;
-}
-
-.ttas-run-page-events {
-    display: flex;
-    flex-direction: column;
     min-height: 0;
 }
 
-.ttas-run-page-details {
+.ttas-run-view-events {
+    display: flex;
+    flex-direction: column;
+}
+
+.ttas-run-view-details {
     position: relative;
     display: flex;
     flex-direction: column;
@@ -656,7 +640,7 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     height: auto;
 }
 
-.ttas-run-page-events > .ttas-run-event-scroll {
+.ttas-run-view-events > .ttas-run-event-scroll {
     flex: 1 1 auto;
     height: auto;
     min-height: 0;

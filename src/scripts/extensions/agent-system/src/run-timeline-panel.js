@@ -418,12 +418,6 @@ function createAgentRunTimelineApp(options = {}) {
                 this.collapsed = false;
                 this.selectedSeq = Number(event?.seq || 0) || this.selectedSeq;
                 this.detailsOpen = true;
-                this.$nextTick(() => {
-                    const pages = this.$refs.pages;
-                    if (pages instanceof HTMLElement) {
-                        pages.scrollTo({ left: pages.clientWidth, behavior: 'smooth' });
-                    }
-                });
             },
             async invokeDetailAction(action) {
                 if (!action) {
@@ -511,28 +505,14 @@ function createAgentRunTimelineApp(options = {}) {
                     return;
                 }
                 this.detailsOpen = true;
-                this.$nextTick(() => {
-                    const pages = this.$refs.pages;
-                    if (pages instanceof HTMLElement) {
-                        pages.scrollTo({ left: pages.clientWidth, behavior: 'smooth' });
-                    }
-                });
             },
             showTimeline() {
                 this.detailsOpen = false;
+                this.detail.reset();
                 this.$nextTick(() => {
-                    const pages = this.$refs.pages;
-                    if (pages instanceof HTMLElement) {
-                        pages.scrollTo({ left: 0, behavior: 'smooth' });
-                    }
+                    this.measureTimelineViewport();
+                    this.stickToBottomIfNeeded();
                 });
-            },
-            onPagesScroll() {
-                const pages = this.$refs.pages;
-                if (!(pages instanceof HTMLElement)) {
-                    return;
-                }
-                this.detailsOpen = pages.scrollLeft > pages.clientWidth * 0.55;
             },
             onTimelineViewport(viewport) {
                 this.timelineScrollTop = viewport.scrollTop;
@@ -540,13 +520,16 @@ function createAgentRunTimelineApp(options = {}) {
                 this.autoStick = viewport.nearBottom;
             },
             measureTimelineViewport() {
+                if (this.collapsed || this.detailsOpen) {
+                    return;
+                }
                 this.$refs.timelineList?.measureViewport?.();
             },
             stickTimelineToBottom() {
                 this.$refs.timelineList?.scrollToBottom?.();
             },
             stickToBottomIfNeeded() {
-                if (!this.autoStick || this.collapsed) {
+                if (!this.autoStick || this.collapsed || this.detailsOpen) {
                     return;
                 }
                 this.stickTimelineToBottom();
@@ -777,49 +760,52 @@ function createAgentRunTimelineApp(options = {}) {
                 </header>
 
                 <div v-if="!collapsed" ref="panelBody" class="ttas-run-body">
-                    <div ref="pages" class="ttas-run-pages" @scroll.passive="onPagesScroll">
-                        <section class="ttas-run-page ttas-run-page-events" :aria-label="tr('agentTimeline')">
-                            <RunTimelineEventList
-                                ref="timelineList"
-                                :aria-label="tr('agentTimeline')"
-                                surface-class="ttas-run-event-scroll"
-                                :loading="loadingHistory"
-                                :loading-older="loadingOlderHistory"
-                                :empty-text="emptyTimelineText"
-                                :items="displayItems"
-                                :virtual-items="virtualDisplayItems"
-                                :selected-seq="selectedDisplaySeq"
-                                :latest-seq="latestDisplaySeq"
-                                :active-seq="activeDisplaySeq"
-                                @select="selectItem"
-                                @top-reached="loadOlderRunHistory"
-                                @viewport="onTimelineViewport"
-                            />
-                            <SubAgentTray
-                                :expanded="subAgentTrayExpanded"
-                                :tasks="subAgentTasks"
-                                :title="subAgentTrayTitle"
-                                @toggle="toggleSubAgentTray"
-                                @select="selectSubAgentTask"
-                            />
-                        </section>
-
-                        <RunTimelineDetailPane
-                            root-class="ttas-run-page ttas-run-page-details"
-                            :aria-label="tr('timelineDetails')"
-                            :title="detailTitle"
-                            :type="selectedItem ? selectedItem.type : ''"
-                            :nav-items="navItems"
+                    <section
+                        v-show="!detailsOpen"
+                        class="ttas-run-view ttas-run-view-events"
+                        :aria-label="tr('agentTimeline')"
+                    >
+                        <RunTimelineEventList
+                            ref="timelineList"
+                            :aria-label="tr('agentTimeline')"
+                            surface-class="ttas-run-event-scroll"
+                            :loading="loadingHistory"
+                            :loading-older="loadingOlderHistory"
+                            :empty-text="emptyTimelineText"
+                            :items="displayItems"
+                            :virtual-items="virtualDisplayItems"
                             :selected-seq="selectedDisplaySeq"
-                            :loading="detail.loading"
-                            :error="detail.error"
-                            :sections="detail.sections"
-                            :show-back="true"
-                            @back="showTimeline"
-                            @select-nav="selectNavItem"
-                            @action="invokeDetailAction"
+                            :latest-seq="latestDisplaySeq"
+                            :active-seq="activeDisplaySeq"
+                            @select="selectItem"
+                            @top-reached="loadOlderRunHistory"
+                            @viewport="onTimelineViewport"
                         />
-                    </div>
+                        <SubAgentTray
+                            :expanded="subAgentTrayExpanded"
+                            :tasks="subAgentTasks"
+                            :title="subAgentTrayTitle"
+                            @toggle="toggleSubAgentTray"
+                            @select="selectSubAgentTask"
+                        />
+                    </section>
+
+                    <RunTimelineDetailPane
+                        v-if="detailsOpen"
+                        root-class="ttas-run-view ttas-run-view-details"
+                        :aria-label="tr('timelineDetails')"
+                        :title="detailTitle"
+                        :type="selectedItem ? selectedItem.type : ''"
+                        :nav-items="navItems"
+                        :selected-seq="selectedDisplaySeq"
+                        :loading="detail.loading"
+                        :error="detail.error"
+                        :sections="detail.sections"
+                        :show-back="true"
+                        @back="showTimeline"
+                        @select-nav="selectNavItem"
+                        @action="invokeDetailAction"
+                    />
                 </div>
                 <SubAgentTimelineDialog
                     ref="subAgentDialog"

@@ -35,6 +35,14 @@ function createComponentHarness(options) {
     return vm;
 }
 
+function sourceBetween(source, startNeedle, endNeedle) {
+    const start = source.indexOf(startNeedle);
+    assert.notEqual(start, -1, `Missing source marker: ${startNeedle}`);
+    const end = source.indexOf(endNeedle, start + startNeedle.length);
+    assert.notEqual(end, -1, `Missing source marker: ${endNeedle}`);
+    return source.slice(start, end);
+}
+
 function ensureCustomEvent() {
     if (typeof globalThis.CustomEvent === 'function') {
         return;
@@ -422,6 +430,48 @@ test('Agent run timeline panel does not cap visible history with tail-only slice
     assert.doesNotMatch(source, /\.slice\(-90\)/);
     assert.match(source, /loadOlderRunHistory/);
     assert.match(source, /virtualDisplayItems/);
+});
+
+test('Agent run timeline view switching is not driven by horizontal scroll state', async () => {
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-panel.js',
+    ), 'utf8');
+    const styleSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/style.css',
+    ), 'utf8');
+
+    assert.doesNotMatch(panelSource, /onPagesScroll/);
+    assert.doesNotMatch(panelSource, /scrollLeft/);
+    assert.doesNotMatch(panelSource, /scrollTo\(\{\s*left:/);
+    assert.doesNotMatch(panelSource, /@scroll\.passive="onPagesScroll"/);
+    assert.match(panelSource, /v-show="!detailsOpen"/);
+    assert.match(panelSource, /v-if="detailsOpen"/);
+
+    const showTimelineSource = sourceBetween(
+        panelSource,
+        'showTimeline() {',
+        'onTimelineViewport(viewport) {',
+    );
+    const measureTimelineSource = sourceBetween(
+        panelSource,
+        'measureTimelineViewport() {',
+        'stickTimelineToBottom() {',
+    );
+    const stickToBottomSource = sourceBetween(
+        panelSource,
+        'stickToBottomIfNeeded() {',
+        'async loadDetails() {',
+    );
+    assert.match(showTimelineSource, /this\.detailsOpen = false;\s*this\.detail\.reset\(\);/);
+    assert.match(measureTimelineSource, /if \(this\.collapsed \|\| this\.detailsOpen\) \{\s*return;\s*\}/);
+    assert.match(stickToBottomSource, /if \(!this\.autoStick \|\| this\.collapsed \|\| this\.detailsOpen\) \{\s*return;\s*\}/);
+
+    assert.doesNotMatch(styleSource, /\.ttas-run-pages/);
+    assert.doesNotMatch(styleSource, /scroll-snap-type/);
+    assert.doesNotMatch(styleSource, /scroll-snap-align/);
+    assert.match(styleSource, /\.ttas-run-view/);
 });
 
 test('Agent run timeline refresh predicates use narrated model turns explicitly', async () => {
