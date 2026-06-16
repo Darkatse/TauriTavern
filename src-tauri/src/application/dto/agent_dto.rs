@@ -542,6 +542,7 @@ pub struct AgentModelTurnDisplayDto {
     pub model_response_path: String,
     pub provider: AgentModelTurnProviderDto,
     pub assistant: AgentModelTurnTextDto,
+    pub narration: Option<AgentModelTurnNarrationDto>,
     pub reasoning: Vec<AgentModelTurnReasoningDto>,
     pub tool_calls: Vec<AgentModelTurnToolCallDto>,
 }
@@ -568,6 +569,16 @@ pub struct AgentModelTurnTextDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentModelTurnReasoningDto {
+    pub source: String,
+    pub text: String,
+    pub total_chars: usize,
+    pub total_words: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelTurnNarrationDto {
     pub source: String,
     pub text: String,
     pub total_chars: usize,

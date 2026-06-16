@@ -2,6 +2,7 @@ import { errorText, requireHostApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import {
     buildEventDetailTargets,
+    hasModelTurnNarration,
     isDisplayableRunEvent,
     timelineItemsFromEvents,
 } from './run-event-presenter.js';
@@ -242,7 +243,7 @@ export const SubAgentTimelineDialog = {
             for (const event of events) {
                 const added = this.timelineSession.receiveEvent(event);
                 shouldRefreshDetails = shouldRefreshDetails
-                    || (added && this.selectedSeq == null && (isDisplayableRunEvent(event) || event.type === 'model_completed'));
+                    || (added && this.selectedSeq == null && (isDisplayableRunEvent(event) || hasModelTurnNarration(event)));
             }
             if (shouldRefreshDetails) {
                 void this.loadDetails();
@@ -261,7 +262,7 @@ export const SubAgentTimelineDialog = {
             }
             if (!options.skipDetail
                 && this.selectedSeq == null
-                && (isDisplayableRunEvent(event) || event.type === 'model_completed')) {
+                && (isDisplayableRunEvent(event) || hasModelTurnNarration(event))) {
                 void this.loadDetails();
             }
             if (shouldStick) {

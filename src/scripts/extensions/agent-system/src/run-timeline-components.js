@@ -7,6 +7,7 @@ import {
     timelineItemTime,
     timelineItemTitle,
 } from './run-timeline-display.js';
+import { timelineItemHeightPx, timelineItemRowSpan } from './run-timeline-virtual-list.js';
 
 const HISTORY_TOP_LOAD_THRESHOLD_PX = 72;
 
@@ -51,6 +52,14 @@ export const RunTimelineEventList = {
         },
         itemKey(item) {
             return `${this.itemKeyPrefix}${item.id}`;
+        },
+        itemRowSpan(item) {
+            return timelineItemRowSpan(item);
+        },
+        itemRowStyle(item) {
+            return {
+                '--ttas-run-event-item-height': `${timelineItemHeightPx(item)}px`,
+            };
         },
         captureScrollAnchor() {
             const scroller = this.$refs.scroller;
@@ -148,6 +157,8 @@ export const RunTimelineEventList = {
                     :key="itemKey(item)"
                     class="ttas-run-event"
                     :data-ttas-kind="item.kind"
+                    :data-ttas-row-span="itemRowSpan(item)"
+                    :style="itemRowStyle(item)"
                     :class="[
                         'tone-' + item.tone,
                         'kind-' + item.kind,

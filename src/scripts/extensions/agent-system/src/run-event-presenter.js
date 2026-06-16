@@ -37,6 +37,9 @@ const DISPLAY_EVENT_TYPES = new Set([
     'run_failed',
 ]);
 
+const NARRATION_EXPANDED_CHAR_THRESHOLD = 36;
+const NARRATION_EXPANDED_ROW_SPAN = 2;
+
 export const TERMINAL_EVENT_TYPES = Object.freeze(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 
 const SIDE_EFFECT_TOOL_COMPLETIONS = new Set([
@@ -82,6 +85,7 @@ const EVENT_META = Object.freeze({
     chat_commit_failed: { icon: 'fa-circle-exclamation', tone: 'error', kind: 'fail', titleKey: 'timelineEventCommitFailed' },
     persistent_changes_committed: { icon: 'fa-database', tone: 'success', kind: 'persist', titleKey: 'timelineEventPersistentCommitted' },
     drift_recovery_attempted: { icon: 'fa-arrows-rotate', tone: 'warn', kind: 'recover', titleKey: 'timelineEventDriftRecoveryAttempted' },
+    model_completed: { icon: 'fa-quote-left', tone: 'info', kind: 'narration', titleKey: 'timelineEventNarration' },
     run_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'done', titleKey: 'timelineEventRunCompleted' },
     run_partial_success: { icon: 'fa-circle-exclamation', tone: 'warn', kind: 'partial', titleKey: 'timelineEventRunPartialSuccess' },
     run_cancelled: { icon: 'fa-ban', tone: 'warn', kind: 'cancel', titleKey: 'timelineEventRunCancelled' },
@@ -90,6 +94,11 @@ const EVENT_META = Object.freeze({
 
 export function isDisplayableRunEvent(event) {
     return DISPLAY_EVENT_TYPES.has(String(event?.type || ''));
+}
+
+export function hasModelTurnNarration(event) {
+    return String(event?.type || '') === 'model_completed'
+        && Boolean(modelTurnNarration(event?.payload));
 }
 
 export function timelineItemsFromEvents(events, options = {}) {
@@ -143,6 +152,7 @@ export function presentRunEvent(event, allEvents = []) {
         tone: event?.level === 'error' ? 'error' : 'info',
         titleKey: 'timelineEventGeneric',
     };
+    const rowSpan = eventRowSpan(type, payload);
 
     return {
         id: String(event?.id || `${event?.runId || 'run'}:${event?.seq || type}`),
@@ -158,6 +168,7 @@ export function presentRunEvent(event, allEvents = []) {
         titleParams: eventTitleParams(type, payload),
         summary: eventSummary(type, payload, allEvents),
         rawEvent: event,
+        ...(rowSpan > 1 ? { rowSpan } : {}),
     };
 }
 
@@ -205,7 +216,21 @@ export function buildEventDetailTargets(item, allEvents) {
             ...invocationTargetFields(normalizedInvocationId),
         });
     };
+    const addModelNarration = (round, invocationId) => {
+        const normalized = Number(round);
+        if (!Number.isInteger(normalized) || normalized <= 0 || !modelTurnNarration(payload)) {
+            return;
+        }
+        const normalizedInvocationId = normalizeInvocationId(invocationId);
+        targets.push({
+            type: 'modelNarration',
+            labelKey: 'timelineNarration',
+            round: normalized,
+            ...invocationTargetFields(normalizedInvocationId),
+        });
+    };
 
+    addModelNarration(payload.round, payload.invocationId);
     addModelReasoning(payload.round, payload.invocationId);
     const associatedTurn = findAssociatedToolTurn(event, allEvents);
     addModelReasoning(associatedTurn?.round, associatedTurn?.invocationId);
@@ -296,9 +321,10 @@ function buildPatchDiffTarget(event, events) {
 
 function shouldShowEvent(event, completedToolCalls, resolvedCommits, options = {}) {
     if (event?.type === 'model_completed') {
-        return false;
-    }
-    if (!isDisplayableRunEvent(event)) {
+        if (!hasModelTurnNarration(event)) {
+            return false;
+        }
+    } else if (!isDisplayableRunEvent(event)) {
         return false;
     }
     if (options.foregroundInvocationIds) {
@@ -346,6 +372,21 @@ function shouldShowEvent(event, completedToolCalls, resolvedCommits, options = {
         return !commitId || !resolvedCommits.has(commitId);
     }
     return true;
+}
+
+function eventRowSpan(type, payload) {
+    if (type !== 'model_completed') {
+        return 1;
+    }
+    const narration = modelTurnNarration(payload);
+    if (!narration) {
+        return 1;
+    }
+    const totalChars = Number(payload?.narration?.totalChars);
+    const length = Number.isFinite(totalChars) && totalChars > 0
+        ? totalChars
+        : narration.length;
+    return length > NARRATION_EXPANDED_CHAR_THRESHOLD ? NARRATION_EXPANDED_ROW_SPAN : 1;
 }
 
 function findToolResultPath(events, callId) {
@@ -549,6 +590,8 @@ function modelTurnHasReasoning(events, round, invocationId) {
 
 function eventTitleParams(type, payload) {
     switch (type) {
+        case 'model_completed':
+            return { text: modelTurnNarration(payload) };
         case 'agent_handoff_accepted':
             return { agent: payload.targetProfileId || payload.newInvocationId || '' };
         case 'agent_delegate_started':
@@ -587,6 +630,8 @@ function eventTitleParams(type, payload) {
 
 function eventSummary(type, payload, allEvents) {
     switch (type) {
+        case 'model_completed':
+            return '';
         case 'agent_handoff_accepted':
             return [payload.sourceInvocationId, payload.workspaceKey].filter(Boolean).join(' | ');
         case 'agent_delegate_started':
@@ -634,6 +679,11 @@ function eventSummary(type, payload, allEvents) {
         default:
             return '';
     }
+}
+
+function modelTurnNarration(payload) {
+    const narration = plainObject(payload?.narration) ? payload.narration : null;
+    return String(narration?.text || '').trim();
 }
 
 function eventKind(type, payload, fallback) {

@@ -22,6 +22,7 @@ import {
 import { retryAgentRunFailure } from '../../../tauritavern/agent/agent-run-retry.js';
 import {
     buildEventDetailTargets,
+    hasModelTurnNarration,
     isDisplayableRunEvent,
     timelineItemsFromEvents,
 } from './run-event-presenter.js';
@@ -387,7 +388,9 @@ function createAgentRunTimelineApp(options = {}) {
                 if (isTimelineProjectionStructuralEvent(event.type)) {
                     this.scheduleTimelineProjectionRefresh();
                 }
-                if (this.detailsOpen && this.selectedSeq == null && isDisplayableRunEvent(event)) {
+                if (this.detailsOpen
+                    && this.selectedSeq == null
+                    && (isDisplayableRunEvent(event) || hasModelTurnNarration(event))) {
                     void this.loadDetails();
                 }
                 if (!options.skipStick) {

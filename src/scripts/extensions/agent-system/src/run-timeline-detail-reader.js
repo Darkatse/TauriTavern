@@ -35,7 +35,7 @@ export async function readTimelineDetailTarget({ runId, target, readOnly = false
     if (target.type === 'subAgentTask') {
         return formatSubAgentTaskDetail(target);
     }
-    if (target.type === 'modelTurn' || target.type === 'modelReasoning') {
+    if (target.type === 'modelTurn' || target.type === 'modelReasoning' || target.type === 'modelNarration') {
         const input = {
             runId: normalizedRunId,
             round: target.round,

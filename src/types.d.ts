@@ -287,6 +287,13 @@ type TauriTavernAgentModelTurn = {
         totalWords: number;
         truncated: boolean;
     };
+    narration?: {
+        source: 'assistantText';
+        text: string;
+        totalChars: number;
+        totalWords: number;
+        truncated: boolean;
+    } | null;
     reasoning: Array<{
         source: string;
         text: string;

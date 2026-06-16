@@ -29,6 +29,8 @@ export function timelineItemShortLabel(item) {
             return tr('timelineOpCancel');
         case 'model':
             return tr('timelineOpModel');
+        case 'narration':
+            return tr('timelineOpNarration');
         case 'handoff':
             return tr('timelineOpHandoff');
         case 'subagent':

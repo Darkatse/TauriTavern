@@ -373,6 +373,13 @@ type AgentModelTurn = {
     totalWords: number;
     truncated: boolean;
   };
+  narration?: {
+    source: 'assistantText';
+    text: string;
+    totalChars: number;
+    totalWords: number;
+    truncated: boolean;
+  } | null;
   reasoning: Array<{
     source: string;
     text: string;
@@ -388,12 +395,14 @@ type AgentModelTurn = {
 };
 ```
 
-`assistant.text` 与 `reasoning[].text` 会按 `maxChars` 截断；`totalChars` / `totalWords` 始终表示截断前完整文本的字词统计。
+`narration` 是带工具调用的模型回合中可展示给用户的 assistant visible text 投影，用于表达模型在工具调用前后的简短叙述、意图或转场。它不是 runtime status，不从 reasoning / thinking / thought 提取，也不解析 assistant text 内部的 JSON 字段。无工具调用或空文本时为 `null` 或缺省。
+
+`assistant.text`、`narration.text` 与 `reasoning[].text` 会按 `maxChars` 截断；`totalChars` / `totalWords` 始终表示截断前完整文本的字词统计。
 
 `round` 必须大于 0。`maxChars` 省略时由后端使用默认上限；传入时必须大于 0。
 `invocationId` 省略时读取 root invocation；读取 SubAgent / handoff invocation 的模型回合时必须传入对应 invocation id。
 
-该方法返回面向 UI 的白名单投影：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。它不会暴露完整 raw response、provider-private native continuation、签名或 encrypted reasoning。需要完整诊断时仍使用 run workspace 中的 `modelResponsePath` 与 LLM API log。
+该方法返回面向 UI 的白名单投影：assistant 输出、narration、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。它不会暴露完整 raw response、provider-private native continuation、签名或 encrypted reasoning。需要完整诊断时仍使用 run workspace 中的 `modelResponsePath` 与 LLM API log。
 
 ## 11. pruneChatPersistentStates
 

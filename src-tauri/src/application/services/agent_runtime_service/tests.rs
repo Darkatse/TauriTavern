@@ -3328,6 +3328,12 @@ async fn agent_loop_writes_artifact_and_completes() {
     assert_eq!(model_turn.assistant.total_chars, 26);
     assert_eq!(model_turn.assistant.total_words, 5);
     assert!(!model_turn.assistant.truncated);
+    let narration = model_turn.narration.as_ref().expect("model turn narration");
+    assert_eq!(narration.source, "assistantText");
+    assert_eq!(narration.text, "I will write the artifact.");
+    assert_eq!(narration.total_chars, 26);
+    assert_eq!(narration.total_words, 5);
+    assert!(!narration.truncated);
     assert_eq!(model_turn.reasoning.len(), 1);
     assert_eq!(
         model_turn.reasoning[0].text,
@@ -3353,6 +3359,14 @@ async fn agent_loop_writes_artifact_and_completes() {
     assert_eq!(truncated_model_turn.assistant.total_chars, 26);
     assert_eq!(truncated_model_turn.assistant.total_words, 5);
     assert!(truncated_model_turn.assistant.truncated);
+    let truncated_narration = truncated_model_turn
+        .narration
+        .as_ref()
+        .expect("truncated narration");
+    assert_eq!(truncated_narration.text, "I wi");
+    assert_eq!(truncated_narration.total_chars, 26);
+    assert_eq!(truncated_narration.total_words, 5);
+    assert!(truncated_narration.truncated);
 
     let model_requests = model_gateway_probe.requests().await;
     let second_request = model_requests.get(1).expect("second model request");
@@ -3407,6 +3421,18 @@ async fn agent_loop_writes_artifact_and_completes() {
     assert_eq!(model_completed.payload["hasReasoning"], json!(true));
     assert_eq!(model_completed.payload["assistantTextChars"], json!(26));
     assert_eq!(model_completed.payload["assistantTextWords"], json!(5));
+    assert_eq!(
+        model_completed.payload["narration"]["text"],
+        json!("I will write the artifact.")
+    );
+    assert_eq!(
+        model_completed.payload["narration"]["source"],
+        json!("assistantText")
+    );
+    assert_eq!(
+        model_completed.payload["narration"]["totalChars"],
+        json!(26)
+    );
 
     let tool_requested = events
         .iter()

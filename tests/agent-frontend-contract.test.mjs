@@ -384,6 +384,34 @@ test('Agent run timeline virtualizer windows DOM items without dropping timeline
     assert.equal(clampedWindow.bottomPadding, 0);
 });
 
+test('Agent run timeline virtualizer accounts for expanded row spans', async () => {
+    const virtualList = await importFresh('src/scripts/extensions/agent-system/src/run-timeline-virtual-list.js');
+    const items = [
+        { id: 'item-1' },
+        { id: 'item-2', rowSpan: 2 },
+        { id: 'item-3' },
+        { id: 'item-4' },
+    ];
+
+    assert.equal(virtualList.timelineItemRowSpan(items[0]), 1);
+    assert.equal(virtualList.timelineItemRowSpan(items[1]), 2);
+    assert.equal(virtualList.timelineItemHeightPx(items[1], 58), 116);
+
+    const window = virtualList.virtualizeTimelineItems(items, 58, 116, {
+        rowHeight: 58,
+        overscan: 0,
+    });
+    assert.deepEqual(window.items.map(item => item.id), ['item-2', 'item-3']);
+    assert.equal(window.topPadding, 58);
+    assert.equal(window.bottomPadding, 58);
+    assert.equal(window.totalHeight, 290);
+
+    assert.throws(
+        () => virtualList.virtualizeTimelineItems([{ id: 'bad', rowSpan: 0 }], 0, 58),
+        /rowSpan must be a positive integer/,
+    );
+});
+
 test('Agent run timeline panel does not cap visible history with tail-only slices', async () => {
     const source = await readFile(path.join(
         REPO_ROOT,
@@ -394,6 +422,21 @@ test('Agent run timeline panel does not cap visible history with tail-only slice
     assert.doesNotMatch(source, /\.slice\(-90\)/);
     assert.match(source, /loadOlderRunHistory/);
     assert.match(source, /virtualDisplayItems/);
+});
+
+test('Agent run timeline refresh predicates use narrated model turns explicitly', async () => {
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-panel.js',
+    ), 'utf8');
+    const dialogSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/subagent-timeline-dialog.js',
+    ), 'utf8');
+
+    assert.match(panelSource, /hasModelTurnNarration/);
+    assert.match(dialogSource, /hasModelTurnNarration/);
+    assert.doesNotMatch(dialogSource, /event\.type === 'model_completed'/);
 });
 
 test('Agent run timeline keeps SubAgent dialog state outside the main panel', async () => {
@@ -413,6 +456,59 @@ test('Agent run timeline keeps SubAgent dialog state outside the main panel', as
     assert.match(dialogSource, /createRunTimelineSession/);
     assert.match(dialogSource, /createTimelineDetailState/);
     assert.match(dialogSource, /receiveEvent/);
+});
+
+test('SubAgent timeline detail refresh ignores non-narrated model turns', async () => {
+    const { SubAgentTimelineDialog } = await importFresh('src/scripts/extensions/agent-system/src/subagent-timeline-dialog.js');
+    const vm = createComponentHarness(SubAgentTimelineDialog);
+    vm.$refs = {
+        timelineList: {
+            isNearBottom: () => false,
+            scrollToBottom() {},
+        },
+    };
+    vm.dialogOpen = true;
+    vm.runId = 'run-1';
+    vm.invocationId = 'inv-child';
+    vm.timelineSession.reset({ runId: vm.runId, invocationId: vm.invocationId });
+
+    let detailLoads = 0;
+    vm.loadDetails = () => {
+        detailLoads += 1;
+    };
+
+    vm.receiveEvent({
+        seq: 1,
+        id: 'evt-model-hidden',
+        runId: 'run-1',
+        type: 'model_completed',
+        payload: {
+            invocationId: 'inv-child',
+            round: 1,
+            hasReasoning: true,
+            reasoningChars: 24,
+        },
+    }, { skipStick: true });
+    assert.equal(detailLoads, 0);
+
+    vm.receiveEvent({
+        seq: 2,
+        id: 'evt-model-narration',
+        runId: 'run-1',
+        type: 'model_completed',
+        payload: {
+            invocationId: 'inv-child',
+            round: 2,
+            narration: {
+                source: 'assistantText',
+                text: '正在检查子任务结果。',
+                totalChars: 9,
+                totalWords: 1,
+                truncated: false,
+            },
+        },
+    }, { skipStick: true });
+    assert.equal(detailLoads, 1);
 });
 
 test('Agent run history panel uses the backend run index as its source of truth', async () => {
@@ -2903,6 +2999,7 @@ test('Agent run event presenter keeps model turns out of timeline and exposes re
     };
 
     assert.equal(presenter.isDisplayableRunEvent(modelEvent), false);
+    assert.equal(presenter.hasModelTurnNarration(modelEvent), false);
     assert.deepEqual(presenter.timelineItemsFromEvents([modelEvent]).map(item => item.type), []);
     assert.deepEqual(presenter.timelineItemsFromEvents([modelEvent], { includeModelTurns: true }).map(item => item.type), []);
 
@@ -2913,6 +3010,77 @@ test('Agent run event presenter keeps model turns out of timeline and exposes re
     assert.deepEqual(targets, [
         { type: 'modelReasoning', labelKey: 'timelineReasoning', round: 2 },
     ]);
+});
+
+test('Agent run event presenter surfaces model turn narration without displaying all model turns', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const modelEvent = {
+        seq: 4,
+        id: 'evt-model',
+        runId: 'run-1',
+        type: 'model_completed',
+        timestamp: '2026-05-04T12:00:00Z',
+        level: 'info',
+        payload: {
+            round: 2,
+            invocationId: 'inv_root',
+            modelResponsePath: 'model-responses/round-002.json',
+            toolCallCount: 1,
+            narration: {
+                source: 'assistantText',
+                text: '已经撰写完成，进行最后提交',
+                totalChars: 14,
+                totalWords: 1,
+                truncated: false,
+            },
+        },
+    };
+
+    assert.equal(presenter.isDisplayableRunEvent(modelEvent), false);
+    assert.equal(presenter.hasModelTurnNarration(modelEvent), true);
+    const items = presenter.timelineItemsFromEvents([modelEvent]);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].type, 'model_completed');
+    assert.equal(items[0].kind, 'narration');
+    assert.equal(items[0].icon, 'fa-quote-left');
+    assert.equal(items[0].titleKey, 'timelineEventNarration');
+    assert.deepEqual(items[0].titleParams, { text: '已经撰写完成，进行最后提交' });
+    assert.equal(items[0].summary, '');
+    assert.equal(items[0].rowSpan ?? 1, 1);
+
+    const targets = presenter.buildEventDetailTargets(items[0], [modelEvent]);
+    assert.deepEqual(targets, [
+        { type: 'modelNarration', labelKey: 'timelineNarration', round: 2 },
+    ]);
+});
+
+test('Agent run event presenter expands long model turn narration rows', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const modelEvent = {
+        seq: 4,
+        id: 'evt-model-long',
+        runId: 'run-1',
+        type: 'model_completed',
+        timestamp: '2026-05-04T12:00:00Z',
+        level: 'info',
+        payload: {
+            round: 2,
+            invocationId: 'inv_root',
+            toolCallCount: 1,
+            narration: {
+                source: 'assistantText',
+                text: '正在整理上下文并检查前后逻辑，随后会把修改范围收束到最小并执行最终验证。',
+                totalChars: 40,
+                totalWords: 1,
+                truncated: false,
+            },
+        },
+    };
+
+    const items = presenter.timelineItemsFromEvents([modelEvent]);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].kind, 'narration');
+    assert.equal(items[0].rowSpan, 2);
 });
 
 test('Agent run event presenter restores reasoning for collapsed side-effect events', async () => {
@@ -3205,6 +3373,54 @@ test('Agent run detail formatter renders model turn display DTO', async () => {
     assert.equal(section.blocks[0].meta, 'reasoning_content · 30 chars / 5 words');
     assert.match(section.blocks[0].text, /Need to inspect/);
 
+});
+
+test('Agent run detail formatter renders model turn narration DTO', async () => {
+    const { formatModelTurnDetail } = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
+    const turn = {
+        runId: 'run-1',
+        round: 2,
+        modelResponsePath: 'model-responses/round-002.json',
+        provider: {
+            source: 'openai',
+            format: 'compatible',
+            model: 'deepseek-v4',
+        },
+        assistant: {
+            text: '已经撰写完成，进行最后提交',
+            totalChars: 14,
+            totalWords: 1,
+            truncated: false,
+        },
+        narration: {
+            source: 'assistantText',
+            text: '已经撰写完成，进行最后提交',
+            totalChars: 14,
+            totalWords: 1,
+            truncated: false,
+        },
+        reasoning: [{
+            source: 'reasoning_content',
+            text: 'finish now',
+            totalChars: 10,
+            totalWords: 2,
+            truncated: false,
+        }],
+        toolCalls: [{
+            callId: 'call-1',
+            name: 'workspace.finish',
+        }],
+    };
+    const section = formatModelTurnDetail(
+        { type: 'modelNarration', labelKey: 'timelineNarration', round: 2 },
+        turn,
+    );
+
+    assert.equal(section.labelKey, 'timelineNarration');
+    assert.deepEqual(section.blocks.map(block => block.labelKey), ['timelineNarration']);
+    assert.equal(section.blocks[0].kind, 'assistant');
+    assert.equal(section.blocks[0].meta, '14 chars / 1 words');
+    assert.equal(section.blocks[0].text, '已经撰写完成，进行最后提交');
 });
 
 test('Agent error presenter surfaces userRetryable from run_failed payload', async () => {

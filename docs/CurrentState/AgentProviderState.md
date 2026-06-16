@@ -139,7 +139,7 @@ Agent run event 当前会记录：
 
 - `provider_state_updated`：只记录摘要字段，便于诊断 continuation。
 - `model_response_stored`：保存完整 `AgentModelResponse` 到 `model-responses/round-XXX.json`。
-- `model_completed`：包含 `round`、`modelResponsePath`、工具调用数与 assistant/reasoning 字节摘要。
+- `model_completed`：包含 `round`、`modelResponsePath`、工具调用数、assistant/reasoning 字节摘要；带工具调用且存在可展示 assistant visible text 时包含可选 `narration` preview。
 
 `model-responses/` 是 run workspace 内部诊断目录，不属于模型工具可见 roots。前端 Timeline 通过 `api.agent.readModelTurn({ runId, round })` 获取显示 DTO，不直接解析该目录中的 raw 文件。
 

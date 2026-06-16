@@ -45,6 +45,15 @@ export function formatModelTurnDetail(target, turn) {
     }
 
     const blocks = [];
+    if (target.type === 'modelNarration' && typeof turn?.narration?.text === 'string' && turn.narration.text.trim()) {
+        addBlock(blocks, 'timelineNarration', turn.narration.text, DETAIL_TEXT_LIMIT, turn.narration.truncated === true, {
+            kind: 'assistant',
+            meta: textMetricsSummary({
+                chars: turn.narration.totalChars,
+                words: turn.narration.totalWords,
+            }),
+        });
+    }
     if (target.type === 'modelTurn' && typeof turn?.assistant?.text === 'string' && turn.assistant.text.trim()) {
         addBlock(blocks, 'timelineAssistantText', turn.assistant.text, DETAIL_TEXT_LIMIT, turn.assistant.truncated === true, {
             kind: 'assistant',
@@ -54,12 +63,14 @@ export function formatModelTurnDetail(target, turn) {
             }),
         });
     }
-    for (const item of Array.isArray(turn?.reasoning) ? turn.reasoning : []) {
-        addBlock(blocks, 'timelineReasoning', item.text, DETAIL_TEXT_LIMIT, item.truncated === true, {
-            kind: 'reasoning',
-            defaultOpen: false,
-            meta: reasoningMeta(item),
-        });
+    if (target.type !== 'modelNarration') {
+        for (const item of Array.isArray(turn?.reasoning) ? turn.reasoning : []) {
+            addBlock(blocks, 'timelineReasoning', item.text, DETAIL_TEXT_LIMIT, item.truncated === true, {
+                kind: 'reasoning',
+                defaultOpen: false,
+                meta: reasoningMeta(item),
+            });
+        }
     }
     if (target.type === 'modelTurn' && Array.isArray(turn?.toolCalls) && turn.toolCalls.length > 0) {
         addBlock(blocks, 'timelineModelToolCalls', renderModelToolCalls(turn.toolCalls), NESTED_TEXT_LIMIT, false, {

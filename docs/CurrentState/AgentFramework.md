@@ -76,7 +76,7 @@ api.skill.export(input)
 
 `api.skill` 是用户/UI/扩展侧的 Skill 管理入口；Agent run 内只通过 `skill.list` / `skill.search` / `skill.read` 工具消费已安装 Skill。
 
-`readModelTurn()` 读取指定 run/round/invocation 的模型回合显示 DTO：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要；`invocationId` 省略时读取 root invocation。前端 Timeline 不直接解析 `model-responses/` raw 文件。
+`readModelTurn()` 读取指定 run/round/invocation 的模型回合显示 DTO：assistant 输出、narration、可见/摘要化 reasoning、工具调用摘要与 provider 摘要；`invocationId` 省略时读取 root invocation。前端 Timeline 不直接解析 `model-responses/` raw 文件。
 
 明确不存在公共 `api.agent.startRun()` alias。启动入口必须表达 prompt 来源：
 
@@ -376,7 +376,7 @@ run_failed
 
 Provider stream chunk 不是 Agent run event。Agent UI 必须订阅 `api.agent.subscribe(runId, handler)` 的 run event。
 
-`model_completed` payload 当前包含 `round`、`modelResponsePath`、`toolCallCount`、assistant/reasoning 字节摘要与 `hasAssistantText` / `hasReasoning`。工具相关事件携带同一 `round`，便于 UI 从任意工具事件跳回本轮模型回合。
+`model_completed` payload 当前包含 `round`、`modelResponsePath`、`toolCallCount`、assistant/reasoning 字节摘要与 `hasAssistantText` / `hasReasoning`。带工具调用且存在可展示 assistant visible text 的模型回合会额外携带可选 `narration` preview；它是模型轮次展示投影，不是 runtime status，不从 reasoning / thinking / thought 提取。工具相关事件携带同一 `round`，便于 UI 从任意工具事件跳回本轮模型回合。
 
 `run_partial_success` 是 warning 级终态：当 run 已经有 host-confirmed `workspace.commit`，但之后因 drift、dispatch、persistent commit 或 persistent metadata 写回错误未能干净完成时，保留已提交 chat 输出，并在 payload 中暴露原始错误与 `preservedCommits`。它不是 `run_completed`，也不触发自动 rollback。partial success 消息不会带可复用的 `persistStateId`；下一轮 Agent run 会跳过它，继续寻找更早的 committed persistent state。
 

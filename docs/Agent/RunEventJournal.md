@@ -347,11 +347,20 @@ model_failed
   "hasAssistantText": true,
   "assistantTextChars": 26,
   "assistantTextWords": 5,
+  "narration": {
+    "source": "assistantText",
+    "text": "I will write the artifact.",
+    "totalChars": 26,
+    "totalWords": 5,
+    "truncated": false
+  },
   "hasReasoning": true,
   "reasoningChars": 30,
   "reasoningWords": 6
 }
 ```
+
+`narration` 是可选字段，仅在模型回合包含工具调用且存在可展示 assistant visible text 时写入；它是模型轮次的展示投影，不是新的 run status，也不从 reasoning / thinking / thought 提取。事件中只保存短 preview；完整文本仍通过 `readModelTurn({ runId, round })` 的白名单 DTO 读取。
 
 前端读取详情时使用 Host ABI `readModelTurn({ runId, round })`，不直接解析 `modelResponsePath` 指向的 raw 文件。
 
