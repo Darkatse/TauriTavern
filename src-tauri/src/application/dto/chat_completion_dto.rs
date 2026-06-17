@@ -14,7 +14,7 @@ pub struct ChatCompletionStatusRequestDto {
     #[serde(default)]
     pub custom_url: String,
     #[serde(default)]
-    pub custom_include_headers: String,
+    pub custom_include_headers: Value,
     #[serde(default)]
     pub siliconflow_endpoint: String,
     #[serde(default)]

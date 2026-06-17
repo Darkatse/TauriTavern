@@ -81,7 +81,7 @@ pub(super) async fn resolve_status_api_config(
 
     let custom_url = dto.custom_url.trim();
     let additional_parameters =
-        AdditionalParameters::from_status_headers(dto.custom_include_headers.as_str());
+        AdditionalParameters::from_status_headers(&dto.custom_include_headers)?;
     let additional_headers = additional_parameters.headers()?;
 
     resolve_api_config(
@@ -934,7 +934,7 @@ mod tests {
         let dto = ChatCompletionStatusRequestDto {
             chat_completion_source: "custom".to_string(),
             custom_url: "https://example.com/v1".to_string(),
-            custom_include_headers: "Authorization: \"Bearer override\"\nX-Trace: abc".to_string(),
+            custom_include_headers: json!("Authorization: \"Bearer override\"\nX-Trace: abc"),
             ..Default::default()
         };
 
@@ -956,6 +956,63 @@ mod tests {
                 .then_some(value.as_str())),
             Some("Bearer override")
         );
+    }
+
+    #[tokio::test]
+    async fn custom_status_accepts_object_form_additional_headers() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::CUSTOM,
+            "saved-secret",
+        ));
+        let dto = ChatCompletionStatusRequestDto {
+            chat_completion_source: "custom".to_string(),
+            custom_url: "https://example.com/v1".to_string(),
+            custom_include_headers: json!({
+                "Content-Type": "application/json",
+                "Authorization": "Bearer override"
+            }),
+            ..Default::default()
+        };
+
+        let config =
+            resolve_status_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect("status config should resolve");
+
+        assert_eq!(
+            config
+                .additional_headers
+                .get("Content-Type")
+                .map(String::as_str),
+            Some("application/json")
+        );
+        assert_eq!(
+            config.additional_headers.iter().find_map(|(key, value)| key
+                .eq_ignore_ascii_case("authorization")
+                .then_some(value.as_str())),
+            Some("Bearer override")
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_status_scalar_additional_headers_fail_fast() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::CUSTOM,
+            "saved-secret",
+        ));
+        let dto = ChatCompletionStatusRequestDto {
+            chat_completion_source: "custom".to_string(),
+            custom_url: "https://example.com/v1".to_string(),
+            custom_include_headers: json!(42),
+            ..Default::default()
+        };
+
+        let error =
+            resolve_status_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect_err("numeric custom headers should fail");
+
+        assert!(error.to_string().contains("custom_include_headers"));
     }
 
     #[tokio::test]
@@ -1251,7 +1308,7 @@ mod tests {
             reverse_proxy: "https://proxy.example.com/v1".to_string(),
             proxy_password: "proxy-secret".to_string(),
             custom_url: "https://example.com/v1".to_string(),
-            custom_include_headers: "X-Trace: abc".to_string(),
+            custom_include_headers: json!("X-Trace: abc"),
             ..Default::default()
         };
 
@@ -1280,7 +1337,7 @@ mod tests {
             reverse_proxy: "https://proxy.example.com/v1".to_string(),
             proxy_password: "proxy-secret".to_string(),
             custom_url: "".to_string(),
-            custom_include_headers: "X-Trace: abc".to_string(),
+            custom_include_headers: json!("X-Trace: abc"),
             ..Default::default()
         };
 

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name={{name}}
+GenericName=AI roleplay chat client
+Comment={{comment}}
+Exec={{exec}}
+Icon={{icon}}
+Terminal=false
+Categories=Network;Chat;
+Keywords=AI;Chat;LLM;SillyTavern;Tavern;Character;Roleplay;
+StartupNotify=true
+StartupWMClass=tauritavern
+SingleMainWindow=true

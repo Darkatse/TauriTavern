@@ -130,6 +130,39 @@ test('chat completion status route forwards secret_id to Rust DTO', async () => 
     assert.equal(calls[0].args.dto.secret_id, 'profile-secret');
 });
 
+test('chat completion status route preserves object custom headers for Rust DTO', async () => {
+    installBrowserShims();
+    const { registerAiRoutes } = await import('../src/tauri/main/routes/ai-routes.js');
+    const router = createRouteRegistry();
+    const calls = [];
+
+    registerAiRoutes(router, {
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            return { data: [] };
+        },
+    }, { jsonResponse });
+
+    const customHeaders = {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer proxy-secret',
+    };
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/backends/chat-completions/status',
+        body: {
+            chat_completion_source: 'custom',
+            custom_include_headers: customHeaders,
+        },
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, 'get_chat_completions_status');
+    assert.deepEqual(calls[0].args.dto.custom_include_headers, customHeaders);
+});
+
 test('chat completion status frontend includes active secret id snapshot', async () => {
     const source = await readFile(
         new URL('../src/scripts/openai.js', import.meta.url),
