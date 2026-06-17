@@ -292,6 +292,8 @@
     "openai_reasoning_effort_maximum": "极高",
     "openai_reasoning_effort_xhigh": "超高",
     "OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.": "OpenAI式选项：低、中、高，以及支持时的超高。极低会映射为 minimal 或低；极高会映射为高。不支持超高时，超高等同于高。选择自动不会传入推理强度参数。",
+    "DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.": "DeepSeek 选项：自动不会发送推理强度字段；极低到高都会请求 high 推理强度；极高会请求 max 推理强度。",
+    "Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, Low and Medium request high effort, and XHigh requests max effort.": "Z.AI GLM-5.2 选项：自动不会发送推理强度字段；极低会跳过思考过程；低和中会请求 high 推理强度；超高会请求 max 推理强度。",
     "Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on Claude Opus 4.7/4.8; otherwise it behaves like Maximum. Auto does not request thinking.": "Claude 选项：旧式思维链会将推理强度映射为词符预算；自适应思维链会映射为 output_config.effort。只有 Claude Opus 4.7/4.8 会发送 XHigh，其他模型等同于极高。选择“自动”不会请求模型思维链。",
     "Allocates a portion of the response length for thinking (min: 1024 tokens, low: 10%, medium: 25%, high: 50%, max: 95%), but minimum 1024 tokens. Auto does not request thinking.": "将最大回复空间的一部分分配给思维链（极低：1024词符，低：10%，中：25%，高：50%，极高：95%），最低1024词符。选择“自动”不会请求模型思维链。",
     "Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.": "设置动态推理强度等级（3 Flash / 3 Pro）。两者都支持高和低，但极低和中只有 3 Flash 支持。自动会让模型自己选择。",

@@ -47,7 +47,7 @@ pub(super) fn build_payload(
         ChatCompletionSource::Chutes => chutes::build(payload),
         ChatCompletionSource::WorkersAi => workers_ai::build(payload),
         ChatCompletionSource::OpenRouter => openrouter::build(payload),
-        ChatCompletionSource::Zai => Ok(zai::build(payload)),
+        ChatCompletionSource::Zai => zai::build(payload),
         ChatCompletionSource::MiniMax => Ok(minimax::build(payload)),
         ChatCompletionSource::Custom => custom::build(payload),
         ChatCompletionSource::Claude => Ok(claude::build(payload)?),

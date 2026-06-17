@@ -3881,6 +3881,36 @@ function getAimlapiModelTemplate(option) {
 }
 
 /**
+ * Check whether a Z.AI model supports reasoning_effort.
+ * @param {string} model Model name
+ * @returns {boolean}
+ */
+function isZaiReasoningEffortModel(model) {
+    return String(model ?? '').trim().toLowerCase() === 'glm-5.2';
+}
+
+/**
+ * Get Z.AI reasoning effort for models that expose the official field.
+ * @param {ChatCompletionSettings} settings Chat completion settings
+ * @param {string} model Model name
+ * @returns {string|undefined}
+ */
+function getZaiReasoningEffort(settings, model) {
+    if (!settings.show_thoughts || !isZaiReasoningEffortModel(model)) {
+        return undefined;
+    }
+
+    switch (settings.reasoning_effort) {
+        case reasoning_effort_types.auto:
+            return undefined;
+        case reasoning_effort_types.min:
+            return 'minimal';
+        default:
+            return settings.reasoning_effort;
+    }
+}
+
+/**
  * Get the reasoning effort from chat completion settings
  * @param {ChatCompletionSettings} settings Chat completion settings
  * @param {string} model Model name (optional, used for ElectronHub)
@@ -3889,6 +3919,10 @@ function getAimlapiModelTemplate(option) {
 function getReasoningEffort(settings = null, model = null) {
     settings = settings ?? oai_settings;
     model = model ?? getChatCompletionModel(settings);
+
+    if (settings.chat_completion_source === chat_completion_sources.ZAI) {
+        return getZaiReasoningEffort(settings, model);
+    }
 
     // These sources expect the effort as string.
     const reasoningEffortSources = [
@@ -8345,6 +8379,17 @@ function updateFeatureSupportFlags() {
             element.dataset.ccToggle = String(value ?? false);
         }
     }
+
+    updateReasoningEffortControlVisibility();
+}
+
+function updateReasoningEffortControlVisibility() {
+    const block = $('#openai_reasoning_effort_block');
+    if (!block.length || oai_settings.chat_completion_source !== chat_completion_sources.ZAI) {
+        return;
+    }
+
+    block.toggle(isZaiReasoningEffortModel(oai_settings.zai_model));
 }
 
 export function initOpenAI() {

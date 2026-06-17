@@ -2644,6 +2644,8 @@
     "Scan depth cannot exceed ${0}": "掃描深度不能超過 ${0}",
     "Reasoning Template": "推理範本",
     "OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.": "OpenAI 式選項：低、中、高，以及支援時的超高。Minimum 會映射為 minimal 或低；Maximum 會映射為高。不支援超高時，超高等同於高。選擇 Auto（自動）不會傳送推理耗費等級。",
+    "DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.": "DeepSeek 選項：自動不會傳送推理耗費欄位；最小到高都會請求 high 推理耗費；最大會請求 max 推理耗費。",
+    "Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, Low and Medium request high effort, and XHigh requests max effort.": "Z.AI GLM-5.2 選項：自動不會傳送推理耗費欄位；最小會略過思考過程；低和中會請求 high 推理耗費；超高會請求 max 推理耗費。",
     "Branch or tag name (optional)": "分支／標籤名稱（可留空）",
     "Update enabled": "僅更新啟用項目",
     "Sort: Loading Order": "排序：載入順序",

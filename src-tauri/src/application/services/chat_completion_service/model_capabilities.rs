@@ -84,6 +84,30 @@ pub(super) fn map_openrouter_reasoning_effort(
     }
 }
 
+pub(super) fn is_zai_reasoning_effort_model(model: &str) -> bool {
+    model.trim().eq_ignore_ascii_case("glm-5.2")
+}
+
+pub(super) fn map_zai_reasoning_effort(
+    model: &str,
+    value: &str,
+) -> Result<Option<&'static str>, ApplicationError> {
+    let effort = parse_known_reasoning_effort(value, "Z.AI")?;
+    match effort {
+        RequestedReasoningEffort::Auto => Ok(None),
+        _ if !is_zai_reasoning_effort_model(model) => Err(ApplicationError::ValidationError(
+            "Z.AI reasoning_effort is only supported by glm-5.2".to_string(),
+        )),
+        RequestedReasoningEffort::None => Ok(Some("none")),
+        RequestedReasoningEffort::Minimal => Ok(Some("minimal")),
+        RequestedReasoningEffort::Low => Ok(Some("low")),
+        RequestedReasoningEffort::Medium => Ok(Some("medium")),
+        RequestedReasoningEffort::High => Ok(Some("high")),
+        RequestedReasoningEffort::Max => Ok(Some("max")),
+        RequestedReasoningEffort::XHigh => Ok(Some("xhigh")),
+    }
+}
+
 pub(super) fn is_gemini_thinking_config_model(model: &str) -> bool {
     classify_gemini_thinking_model(model).is_some()
 }
@@ -266,8 +290,8 @@ fn gemini_3_pro_medium_level(effort: RequestedReasoningEffort) -> Option<&'stati
 mod tests {
     use super::{
         GeminiThinkingControl, RequestedReasoningEffort, is_gemini_thinking_config_model,
-        is_openrouter_claude_model_name, map_gemini_thinking_control,
-        map_openrouter_reasoning_effort,
+        is_openrouter_claude_model_name, is_zai_reasoning_effort_model,
+        map_gemini_thinking_control, map_openrouter_reasoning_effort, map_zai_reasoning_effort,
     };
 
     #[test]
@@ -330,6 +354,58 @@ mod tests {
             error
                 .to_string()
                 .contains("Unsupported OpenRouter reasoning_effort")
+        );
+    }
+
+    #[test]
+    fn zai_reasoning_effort_classifier_matches_glm52() {
+        assert!(is_zai_reasoning_effort_model(" glm-5.2 "));
+        assert!(!is_zai_reasoning_effort_model("glm-5.1"));
+        assert!(!is_zai_reasoning_effort_model("glm-5"));
+    }
+
+    #[test]
+    fn zai_reasoning_effort_maps_project_aliases_to_zai_enum() {
+        for (input, expected) in [
+            ("auto", None),
+            ("", None),
+            ("none", Some("none")),
+            ("min", Some("minimal")),
+            ("minimum", Some("minimal")),
+            ("minimal", Some("minimal")),
+            ("low", Some("low")),
+            ("medium", Some("medium")),
+            ("high", Some("high")),
+            ("max", Some("max")),
+            ("maximum", Some("max")),
+            ("xhigh", Some("xhigh")),
+        ] {
+            assert_eq!(
+                map_zai_reasoning_effort("glm-5.2", input).expect("known effort must map"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn zai_reasoning_effort_rejects_unknown_values() {
+        let error = map_zai_reasoning_effort("glm-5.2", "turbo")
+            .expect_err("unknown effort should fail locally");
+        assert!(
+            error
+                .to_string()
+                .contains("Unsupported Z.AI reasoning_effort")
+        );
+    }
+
+    #[test]
+    fn zai_reasoning_effort_rejects_unsupported_models() {
+        let error =
+            map_zai_reasoning_effort("glm-5.1", "high").expect_err("unsupported model should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Z.AI reasoning_effort is only supported by glm-5.2")
         );
     }
 
