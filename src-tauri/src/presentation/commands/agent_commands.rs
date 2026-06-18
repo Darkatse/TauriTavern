@@ -17,7 +17,8 @@ use crate::application::dto::agent_dto::{
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
     AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRetargetPresetRefsDto,
     AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentRunPruneApplyResultDto,
-    AgentRunPrunePlanDto, AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
+    AgentRunPrunePlanDto, AgentSaveProfileDto, AgentStartRunDto, AgentSubmitGuidanceDto,
+    AgentSubmitGuidanceResultDto, AgentWorkspaceFileDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
@@ -231,6 +232,20 @@ pub async fn cancel_agent_run(
         .cancel_run(dto)
         .await
         .map_err(map_command_error("Failed to cancel agent run"))
+}
+
+#[tauri::command]
+pub async fn submit_agent_run_guidance(
+    dto: AgentSubmitGuidanceDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentSubmitGuidanceResultDto, CommandError> {
+    log_command("submit_agent_run_guidance");
+
+    app_state
+        .agent_runtime_service
+        .submit_guidance(dto)
+        .await
+        .map_err(map_command_error("Failed to submit agent run guidance"))
 }
 
 #[tauri::command]

@@ -25,6 +25,7 @@ type TauriTavernAgentApi = {
   startRunWithPromptSnapshot(input: AgentStartRunWithPromptSnapshotInput): Promise<AgentRunHandle>;
   subscribe(runId: string, handler: (event: AgentRunEvent) => void, options?: AgentSubscribeOptions): TauriTavernHostUnsubscribe;
   cancel(runId: string): Promise<AgentRunHandle>;
+  submitGuidance(input: AgentSubmitGuidanceInput): Promise<AgentSubmitGuidanceResult>;
   readEvents(input: AgentReadEventsInput): Promise<AgentReadEventsResult>;
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
   readModelTurn(input: AgentReadModelTurnInput): Promise<AgentModelTurn>;
@@ -247,6 +248,43 @@ await agent.cancel(runId);
 - Cancel 不是 failure。
 - Cancel 后不能自动 commit。
 - 返回最新 `AgentRunHandle`。
+
+## 6.1 submitGuidance
+
+```ts
+await agent.submitGuidance({
+  runId,
+  text: "Prefer the quieter ending and keep the character's agency clear.",
+  clientGuidanceId: "optional-client-correlation-id",
+});
+```
+
+```ts
+type AgentSubmitGuidanceInput = {
+  runId: string;
+  text: string;
+  clientGuidanceId?: string;
+};
+
+type AgentSubmitGuidanceResult = {
+  runId: string;
+  guidanceId: string;
+  clientGuidanceId?: string;
+  status: 'queued';
+  preview: string;
+  chars: number;
+  words: number;
+  pendingCount: number;
+};
+```
+
+语义：
+
+- `submitGuidance()` 是 active AgentRun 的 run-scoped 输入通道，不是普通聊天发送，不写入 SillyTavern chat history，也不会启动新的 Generate。
+- Runtime 会先写 `user_guidance_submitted`，再将 guidance 放入当前 active run mailbox；下一次 root / handoff 前台 invocation 创建模型请求前，pending guidance 会合并为一条 canonical `role=user` message，并写 `user_guidance_applied`。
+- 已经发出的 provider request 不会被热修改。若当前模型调用正在进行，guidance 只影响后续模型请求边界。
+- `cancel()`、run finish、run failure / partial success 会关闭 mailbox；尚未应用的 guidance 写 `user_guidance_discarded`。
+- 空文本、过长文本、非 active run、`finishing` / `cancelling` / terminal run、mailbox 已满都会 fail-fast，不做静默丢弃。
 
 ## 7. approveToolCall
 

@@ -615,6 +615,92 @@ test('Agent run timeline refresh predicates use narrated model turns explicitly'
     assert.doesNotMatch(dialogSource, /event\.type === 'model_completed'/);
 });
 
+test('Agent run timeline displays user guidance events with inline detail targets', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const detailFormat = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
+    const events = [
+        {
+            seq: 1,
+            id: 'evt-guidance-submitted',
+            runId: 'run-1',
+            type: 'user_guidance_submitted',
+            payload: {
+                guidanceId: 'guidance_1',
+                clientGuidanceId: 'client_1',
+                invocationId: 'inv_root',
+                status: 'queued',
+                text: 'Keep the next step focused on the revised ending.',
+                preview: 'Keep the next step focused on the revised ending.',
+                chars: 52,
+                words: 9,
+            },
+        },
+        {
+            seq: 2,
+            id: 'evt-guidance-applied',
+            runId: 'run-1',
+            type: 'user_guidance_applied',
+            payload: {
+                guidanceIds: ['guidance_1'],
+                clientGuidanceIds: ['client_1'],
+                invocationId: 'inv_root',
+                round: 2,
+                count: 1,
+                status: 'applied',
+                preview: 'Keep the next step focused on the revised ending.',
+                chars: 52,
+                words: 9,
+            },
+        },
+        {
+            seq: 3,
+            id: 'evt-guidance-discarded',
+            runId: 'run-1',
+            type: 'user_guidance_discarded',
+            payload: {
+                guidanceIds: ['guidance_2'],
+                clientGuidanceIds: [],
+                invocationId: 'inv_root',
+                count: 1,
+                status: 'discarded',
+                reason: 'run_cancelled',
+                preview: 'Ignore the previous outline.',
+                chars: 28,
+                words: 4,
+            },
+        },
+    ];
+
+    const items = presenter.timelineItemsFromEvents(events);
+    assert.deepEqual(items.map(item => item.type), [
+        'user_guidance_submitted',
+        'user_guidance_applied',
+        'user_guidance_discarded',
+    ]);
+    assert.deepEqual(items.map(item => item.kind), ['guidance', 'guidance', 'guidance']);
+    assert.deepEqual(items.map(item => item.titleKey), [
+        'timelineEventGuidanceSubmitted',
+        'timelineEventGuidanceApplied',
+        'timelineEventGuidanceDiscarded',
+    ]);
+    assert.equal(items[0].summary, 'Keep the next step focused on the revised ending.');
+    assert.equal(items[1].titleParams.count, 1);
+    assert.equal(items[2].summary, 'run_cancelled | Ignore the previous outline.');
+
+    const targets = presenter.buildEventDetailTargets(items[0], events);
+    assert.equal(targets.length, 1);
+    assert.equal(targets[0].type, 'guidance');
+    assert.deepEqual(targets[0].guidanceIds, ['guidance_1']);
+    assert.deepEqual(targets[0].clientGuidanceIds, ['client_1']);
+    assert.equal(targets[0].text, 'Keep the next step focused on the revised ending.');
+
+    const section = detailFormat.formatGuidanceDetail(targets[0]);
+    assert.equal(section.labelKey, 'timelineGuidance');
+    assert.equal(section.blocks[0].kind, 'user');
+    assert.equal(section.blocks[0].text, 'Keep the next step focused on the revised ending.');
+    assert.ok(section.fields.some(field => field.value === 'guidance_1'));
+});
+
 test('Agent run timeline keeps SubAgent dialog state outside the main panel', async () => {
     const panelSource = await readFile(path.join(
         REPO_ROOT,
@@ -2800,6 +2886,85 @@ test('Agent run controller tracks active runs until terminal events', async () =
     assert.equal(stopped, true);
     assert.equal(controller.hasActiveAgentRun(), false);
     assert.equal(stateChanges.at(-1).lastEvent.type, 'run_completed');
+});
+
+test('Agent run controller submits guidance through the active run facade', async () => {
+    let listener = null;
+    const submissions = [];
+    installWindow({
+        agent: {
+            async startRunWithPromptSnapshot(input) {
+                return { runId: 'run-guidance', input };
+            },
+            subscribe(runId, callback) {
+                assert.equal(runId, 'run-guidance');
+                listener = callback;
+                return () => {};
+            },
+            async submitGuidance(input) {
+                submissions.push(input);
+                return {
+                    runId: input.runId,
+                    guidanceId: 'guidance_1',
+                    status: 'queued',
+                    preview: input.text,
+                    chars: input.text.length,
+                    words: 1,
+                    pendingCount: 1,
+                };
+            },
+        },
+    });
+
+    const controller = await importFresh('src/scripts/tauritavern/agent/agent-run-controller.js');
+    const run = controller.startAndWaitForAgentRun({ generationType: 'normal' });
+    await Promise.resolve();
+
+    assert.equal(controller.hasActiveAgentRun(), true);
+    await controller.submitGuidanceToActiveAgentRun('Steer the next step.');
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0].runId, 'run-guidance');
+    assert.equal(submissions[0].text, 'Steer the next step.');
+    assert.match(submissions[0].clientGuidanceId, /^client_guidance_/);
+
+    listener({ type: 'run_completed', payload: {} });
+    await run;
+});
+
+test('Agent guidance composer intercepts active-run sends before busy generation gates', async () => {
+    const scriptSource = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+    const styleSource = await readFile(path.join(REPO_ROOT, 'src/style.css'), 'utf8');
+
+    const sendStart = scriptSource.indexOf('export async function sendTextareaMessage() {');
+    assert.ok(sendStart >= 0, 'sendTextareaMessage must exist');
+    const sendGateEnd = scriptSource.indexOf('hideSwipeButtons();', sendStart);
+    assert.ok(sendGateEnd > sendStart, 'sendTextareaMessage gate block must be present');
+    const sendGateSource = scriptSource.slice(sendStart, sendGateEnd);
+    const guidanceGateIndex = sendGateSource.indexOf('await maybeSubmitAgentGuidanceFromComposer()');
+    const sendPressIndex = sendGateSource.indexOf('if (is_send_press) return;');
+    assert.ok(guidanceGateIndex >= 0, 'Agent guidance gate must run from sendTextareaMessage');
+    assert.ok(sendPressIndex >= 0, 'is_send_press gate must stay explicit');
+    assert.ok(guidanceGateIndex < sendPressIndex, 'guidance must be offered before active generation blocks sends');
+
+    const clickSource = sourceBetween(
+        scriptSource,
+        'const userInputGenerateMutex = new SimpleMutex(sendTextareaMessage);',
+        '    //menu buttons setup',
+    );
+    assert.ok(clickSource.indexOf('await maybeSubmitAgentGuidanceFromComposer()') >= 0);
+    assert.ok(clickSource.indexOf('await maybeSubmitAgentGuidanceFromComposer()') < clickSource.indexOf('userInputGenerateMutex.update()'));
+    const guidanceOfferSource = sourceBetween(
+        scriptSource,
+        'function shouldOfferAgentGuidanceFromComposer() {',
+        'function syncAgentGuidanceComposerState() {',
+    );
+    assert.match(guidanceOfferSource, /hasActiveAgentRun\(\)/);
+    assert.match(guidanceOfferSource, /getAgentGuidanceComposerText\(\)/);
+    assert.doesNotMatch(guidanceOfferSource, /swipeState|isExecutingCommandsFromChatInput|regenerate/);
+    assert.match(scriptSource, /subscribeAgentRunState\(syncAgentGuidanceComposerState\)/);
+    assert.match(scriptSource, /Popup\.show\.confirm\(\s*'是否引导Agent行为？'/);
+    assert.match(styleSource, /body\[data-generating="true"\]\[data-agent-guidance-ready="true"\] #rightSendForm > #send_but\s*\{\s*display:\s*flex !important;/);
+    assert.match(styleSource, /body\[data-generating="true"\]\[data-agent-guidance-ready="true"\] #mes_stop/);
 });
 
 test('Agent run controller treats partial success as a terminal resolved run', async () => {

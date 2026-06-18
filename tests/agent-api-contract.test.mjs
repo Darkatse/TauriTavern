@@ -211,6 +211,55 @@ test('api.agent.readEvents requests timeline projection only when asked', async 
     ]);
 });
 
+test('api.agent.submitGuidance forwards camelCase DTO and fails fast on invalid input', async () => {
+    const { calls, agent } = await installHarness();
+
+    await agent.submitGuidance({
+        runId: ' run_guidance ',
+        text: '  Keep the ending restrained.  ',
+        clientGuidanceId: ' client-guidance-1 ',
+    });
+    await agent.submitGuidance({
+        runId: 'run_guidance',
+        text: 'No client id.',
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'submit_agent_run_guidance',
+            args: {
+                dto: {
+                    runId: 'run_guidance',
+                    text: 'Keep the ending restrained.',
+                    clientGuidanceId: 'client-guidance-1',
+                },
+            },
+        },
+        {
+            command: 'submit_agent_run_guidance',
+            args: {
+                dto: {
+                    runId: 'run_guidance',
+                    text: 'No client id.',
+                },
+            },
+        },
+    ]);
+
+    await assert.rejects(
+        () => agent.submitGuidance(null),
+        /Agent submitGuidance input must be an object/,
+    );
+    await assert.rejects(
+        () => agent.submitGuidance({ runId: '', text: 'hello' }),
+        /runId is required/,
+    );
+    await assert.rejects(
+        () => agent.submitGuidance({ runId: 'run_guidance', text: '   ' }),
+        /guidance text is required/,
+    );
+});
+
 test('api.agent.listRuns forwards run history filters with camelCase DTOs', async () => {
     const { calls, agent } = await installHarness();
     const chatRef = { kind: 'character', characterId: 'char-1', fileName: 'Char.json' };

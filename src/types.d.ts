@@ -167,6 +167,17 @@ type TauriTavernAgentRunHandle = {
     status: TauriTavernAgentRunStatus;
 };
 
+type TauriTavernAgentGuidanceResult = {
+    runId: string;
+    guidanceId: string;
+    clientGuidanceId?: string;
+    status: 'queued';
+    preview: string;
+    chars: number;
+    words: number;
+    pendingCount: number;
+};
+
 type TauriTavernAgentRunListCursor = {
     createdAt: string;
     runId: string;
@@ -525,6 +536,11 @@ type TauriTavernAgentApi = {
         options?: { presentation?: TauriTavernAgentRunPresentation; stream?: false };
     }) => Promise<TauriTavernAgentRunHandle>;
     cancel: (runId: string) => Promise<TauriTavernAgentRunHandle>;
+    submitGuidance: (input: {
+        runId: string;
+        text: string;
+        clientGuidanceId?: string;
+    }) => Promise<TauriTavernAgentGuidanceResult>;
     readEvents: (input: {
         runId: string;
         afterSeq?: number;

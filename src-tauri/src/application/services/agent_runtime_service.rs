@@ -31,6 +31,7 @@ mod commit_ledger;
 mod delegation;
 mod error_payload;
 mod executor;
+mod guidance;
 mod input_context;
 mod invocation;
 mod journal;

@@ -85,6 +85,7 @@ function createAgentApi({ safeInvoke }) {
         startRunWithPromptSnapshot,
         startRunFromLegacyGenerate,
         cancel: runtime.cancel,
+        submitGuidance: runtime.submitGuidance,
         readEvents: runtime.readEvents,
         readWorkspaceFile: runtime.readWorkspaceFile,
         readModelTurn: runtime.readModelTurn,

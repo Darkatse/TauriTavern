@@ -35,6 +35,8 @@ export function timelineItemShortLabel(item) {
             return tr('timelineOpHandoff');
         case 'subagent':
             return tr('timelineOpSubAgent');
+        case 'guidance':
+            return tr('timelineOpGuidance');
         default:
             break;
     }

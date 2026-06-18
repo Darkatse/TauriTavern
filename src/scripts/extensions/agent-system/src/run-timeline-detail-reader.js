@@ -2,6 +2,7 @@ import { requireHostApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import {
     formatDetailFile,
+    formatGuidanceDetail,
     formatHandoffDetail,
     formatModelTurnDetail,
     formatPatchDiffDetail,
@@ -34,6 +35,9 @@ export async function readTimelineDetailTarget({ runId, target, readOnly = false
     }
     if (target.type === 'subAgentTask') {
         return formatSubAgentTaskDetail(target);
+    }
+    if (target.type === 'guidance') {
+        return formatGuidanceDetail(target);
     }
     if (target.type === 'modelTurn' || target.type === 'modelReasoning' || target.type === 'modelNarration') {
         const input = {

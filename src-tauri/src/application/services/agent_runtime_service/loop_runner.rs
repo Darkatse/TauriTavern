@@ -53,6 +53,10 @@ impl AgentRuntimeService {
         for round in 1..=profile.tools.max_rounds {
             let updates_run_status = exit_policy == AgentInvocationExitPolicy::RunFinishAllowed;
             if updates_run_status {
+                self.apply_pending_guidance_to_request(run_id, invocation_id, round, &mut request)
+                    .await?;
+            }
+            if updates_run_status {
                 self.transition_status(run_id, AgentRunStatus::CallingModel)
                     .await?;
             }

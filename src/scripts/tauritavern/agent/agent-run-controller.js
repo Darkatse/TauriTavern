@@ -8,6 +8,7 @@ const ROLLBACK_EVENT_TYPE = 'run_rollback_targets';
 
 let activeRun = null;
 let rollbackScriptOverride = null;
+let guidanceSequence = 0;
 
 function requireAgentApi() {
     const agent = window.__TAURITAVERN__?.api?.agent;
@@ -87,6 +88,19 @@ export async function cancelActiveAgentRun() {
 
     await requireAgentApi().cancel(activeRun.runId);
     return true;
+}
+
+export async function submitGuidanceToActiveAgentRun(text) {
+    const runId = String(activeRun?.runId || '').trim();
+    if (!runId) {
+        throw new Error('agent.guidance_active_run_missing: no active Agent run');
+    }
+
+    return requireAgentApi().submitGuidance({
+        runId,
+        text,
+        clientGuidanceId: createClientGuidanceId(),
+    });
 }
 
 export async function startAndWaitForAgentRun(input) {
@@ -170,6 +184,16 @@ async function handleRollbackEvent(runId, event) {
     }
     const script = await loadRollbackScript();
     await rollbackAgentRunDriftMessages({ runId, targets, script });
+}
+
+function createClientGuidanceId() {
+    const randomId = globalThis.crypto?.randomUUID?.();
+    if (randomId) {
+        return `client_guidance_${randomId}`;
+    }
+
+    guidanceSequence += 1;
+    return `client_guidance_${Date.now()}_${guidanceSequence}`;
 }
 
 export function subscribeAgentRunState(listener) {

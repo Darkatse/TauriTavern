@@ -15,10 +15,10 @@ use super::commit_ledger::RunCommitLedger;
 use super::delegation::workspace_policy::InvocationWorkspaceRepository;
 use super::skill_scope::{resolve_run_skill_scope_refs, skill_scope_order_for_profile};
 use crate::application::dto::agent_dto::{
-    AgentPromptAssemblyScopeDto, AgentReadEventsDto, AgentReadModelTurnDto,
+    AgentCancelRunDto, AgentPromptAssemblyScopeDto, AgentReadEventsDto, AgentReadModelTurnDto,
     AgentReadPromptAssemblyRequestDto, AgentResolveChatCommitDto,
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
-    AgentSkillScopeRefsDto, AgentStartRunDto, AgentStartRunOptionsDto,
+    AgentSkillScopeRefsDto, AgentStartRunDto, AgentStartRunOptionsDto, AgentSubmitGuidanceDto,
 };
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
@@ -7809,6 +7809,279 @@ async fn return_mode_child_write_rejects_non_writable_visible_root() {
     ));
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn submitted_guidance_is_applied_to_next_model_request() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-guidance-apply-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_finish_guidance",
+                    "type": "function",
+                    "function": {
+                        "name": "workspace_finish",
+                        "arguments": "{}"
+                    }
+                }]
+            }
+        }]
+    })]));
+    let model_gateway_probe = model_gateway.clone();
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+        test_llm_connection_service(&root),
+    ));
+    let run = guidance_test_run("run_guidance_apply");
+    repository.create_run(&run).await.expect("create run");
+    insert_active_run_handle(&service, &run.id).await;
+
+    let submitted = service
+        .submit_guidance(AgentSubmitGuidanceDto {
+            run_id: run.id.clone(),
+            text: "Focus the next step on the user's revised direction.".to_string(),
+            client_guidance_id: Some("client-guidance-apply".to_string()),
+        })
+        .await
+        .expect("submit guidance");
+    assert_eq!(submitted.status, "queued");
+    assert_eq!(submitted.pending_count, 1);
+
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("write the initial draft")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let profile = test_resolved_profile(&root).await;
+
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+
+    let requests = model_gateway_probe.requests().await;
+    assert_eq!(requests.len(), 1);
+    let user_texts = requests[0]
+        .messages
+        .iter()
+        .filter(|message| message.role == AgentModelRole::User)
+        .filter_map(first_text_part)
+        .collect::<Vec<_>>();
+    let guidance_message = user_texts.last().expect("guidance user message");
+    assert_eq!(
+        *guidance_message,
+        concat!(
+            "<user_guidance>\n",
+            "The user sent the following guidance while you were working. ",
+            "Apply the guidance in order as the user's latest direction for your next step, ",
+            "within your existing instructions and tool rules.\n\n",
+            "Focus the next step on the user's revised direction.\n",
+            "</user_guidance>"
+        )
+    );
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+                invocation_id: None,
+            },
+        )
+        .await
+        .expect("read events");
+    let submitted_event_index = events
+        .iter()
+        .position(|event| event.event_type == "user_guidance_submitted")
+        .expect("submitted event");
+    let applied_event_index = events
+        .iter()
+        .position(|event| event.event_type == "user_guidance_applied")
+        .expect("applied event");
+    let request_event_index = events
+        .iter()
+        .position(|event| event.event_type == "model_request_created")
+        .expect("model request event");
+    assert!(submitted_event_index < applied_event_index);
+    assert!(applied_event_index < request_event_index);
+
+    let submitted_event = events
+        .iter()
+        .find(|event| event.event_type == "user_guidance_submitted")
+        .expect("submitted event");
+    assert_eq!(
+        submitted_event.payload["text"],
+        "Focus the next step on the user's revised direction."
+    );
+    let applied = events
+        .iter()
+        .find(|event| event.event_type == "user_guidance_applied")
+        .expect("applied event");
+    assert_eq!(
+        applied.payload["guidanceIds"],
+        json!([submitted.guidance_id])
+    );
+    assert_eq!(
+        applied.payload["clientGuidanceIds"],
+        json!(["client-guidance-apply"])
+    );
+    assert_eq!(applied.payload["count"], 1);
+    assert_eq!(applied.payload["status"], "applied");
+    let model_request = events
+        .iter()
+        .find(|event| event.event_type == "model_request_created")
+        .expect("model request event");
+    assert_eq!(model_request.payload["request"]["messageCount"], 3);
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "user_guidance_discarded")
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn cancel_run_discards_pending_guidance_and_closes_mailbox() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-guidance-cancel-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        test_profile_service(&root),
+        test_llm_connection_service(&root),
+    ));
+    let run = guidance_test_run("run_guidance_cancel");
+    repository.create_run(&run).await.expect("create run");
+    insert_active_run_handle(&service, &run.id).await;
+
+    let submitted = service
+        .submit_guidance(AgentSubmitGuidanceDto {
+            run_id: run.id.clone(),
+            text: "Change direction before the next model call.".to_string(),
+            client_guidance_id: Some("client-guidance-cancel".to_string()),
+        })
+        .await
+        .expect("submit guidance");
+
+    let cancelled = service
+        .cancel_run(AgentCancelRunDto {
+            run_id: run.id.clone(),
+        })
+        .await
+        .expect("cancel run");
+    assert_eq!(cancelled.status, AgentRunStatus::Cancelling);
+
+    let retry_error = service
+        .submit_guidance(AgentSubmitGuidanceDto {
+            run_id: run.id.clone(),
+            text: "This should be rejected after cancellation.".to_string(),
+            client_guidance_id: None,
+        })
+        .await
+        .expect_err("cancelled run must reject guidance");
+    assert!(
+        retry_error
+            .to_string()
+            .contains("agent.guidance_run_not_accepting")
+    );
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+                invocation_id: None,
+            },
+        )
+        .await
+        .expect("read events");
+    let discarded = events
+        .iter()
+        .find(|event| event.event_type == "user_guidance_discarded")
+        .expect("discarded event");
+    assert_eq!(
+        discarded.payload["guidanceIds"],
+        json!([submitted.guidance_id])
+    );
+    assert_eq!(
+        discarded.payload["clientGuidanceIds"],
+        json!(["client-guidance-cancel"])
+    );
+    assert_eq!(discarded.payload["reason"], "run_cancel_requested");
+    assert_eq!(discarded.payload["status"], "discarded");
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+fn guidance_test_run(run_id: &str) -> AgentRun {
+    let now = Utc::now();
+    AgentRun {
+        id: run_id.to_string(),
+        workspace_id: format!("chat_{run_id}"),
+        stable_chat_id: format!("stable_{run_id}"),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: AgentRunSkillScopeRefs::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn first_text_part(message: &crate::domain::models::agent::AgentModelMessage) -> Option<&str> {
+    message.parts.iter().find_map(|part| match part {
+        AgentModelContentPart::Text { text } => Some(text.as_str()),
+        _ => None,
+    })
 }
 
 fn prompt_messages(user_content: &str) -> Value {

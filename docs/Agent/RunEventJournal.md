@@ -289,6 +289,20 @@ run_failed
 - 恢复失败（模型再次返回 0 tool_calls 且已没有下一轮预算）→ 若没有成功 chat commit，写 `run_failed`（`userRetryable=true`）；若已有成功 chat commit，写 `run_partial_success` 并保留输出
 - 上述 rollback / partial-success 语义与前端入口无关；普通发送、`/trigger`、regenerate 与 overswipe 只要进入 Agent run，都必须遵守同一 journal 与 host commit 契约。
 
+### 4.1.1 User Guidance
+
+```text
+user_guidance_submitted
+user_guidance_applied
+user_guidance_discarded
+```
+
+User guidance 是 active AgentRun 的 run-scoped 用户输入，不是普通聊天消息。提交成功后 runtime 必须先写 `user_guidance_submitted`，再将 guidance 放入当前 run mailbox；下一次 root / handoff 前台 invocation 创建模型请求前，runtime 将 pending guidance 合并为一条 canonical `role=user` message，并写 `user_guidance_applied`。
+
+已经发出的 provider request 不可被热修改。若 guidance 在模型调用、工具调用、host commit 等过程中提交，只能影响后续安全模型请求边界。run cancel、finish、failure / partial success 会关闭 mailbox，并对尚未应用的 guidance 写 `user_guidance_discarded`。
+
+事件 payload 必须包含 `guidanceId` 或 `guidanceIds`、`chars`、`words`、`preview`、`status`，并带 `invocationId` / canonical `eventScope` 以便 Timeline 可以归入前台 Agent 链。`user_guidance_submitted` 在 V1 直接内联受长度限制的完整 `text`，便于 Timeline detail 和审计读取；applied / discarded 事件用 ids、统计和 preview 关联，不重复写全文。guidance 文本不应写入普通 chat history。
+
 ### 4.2 Workspace
 
 ```text

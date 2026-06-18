@@ -234,6 +234,29 @@ pub struct AgentRunHandleDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentSubmitGuidanceDto {
+    pub run_id: String,
+    pub text: String,
+    #[serde(default)]
+    pub client_guidance_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSubmitGuidanceResultDto {
+    pub run_id: String,
+    pub guidance_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_guidance_id: Option<String>,
+    pub status: String,
+    pub preview: String,
+    pub chars: usize,
+    pub words: usize,
+    pub pending_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentListRunsDto {
     #[serde(default)]
     pub chat_ref: Option<AgentChatRef>,

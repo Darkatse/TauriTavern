@@ -52,6 +52,8 @@ import {
     cancelActiveAgentRun,
     hasActiveAgentRun,
     startAndWaitForAgentRun,
+    submitGuidanceToActiveAgentRun,
+    subscribeAgentRunState,
 } from './scripts/tauritavern/agent/agent-run-controller.js';
 import { agentErrorMessage } from './scripts/tauritavern/agent/agent-error-presenter.js';
 import { normalizeAgentContextPolicy } from './scripts/tauritavern/agent/agent-context-policy.js';
@@ -2211,6 +2213,7 @@ export async function sendTextareaMessage() {
         return;
     }
     if (swipeState !== SWIPE_STATE.NONE) return; // don't proceed if mid-swipe.
+    if (await maybeSubmitAgentGuidanceFromComposer()) return;
     if (is_send_press) return;
     if (isExecutingCommandsFromChatInput) return;
 
@@ -2257,6 +2260,56 @@ export async function sendTextareaMessage() {
     } finally {
         showSwipeButtons();
     }
+}
+
+function getAgentGuidanceComposerText() {
+    return String($('#send_textarea').val() ?? '').trim();
+}
+
+function shouldOfferAgentGuidanceFromComposer() {
+    return hasActiveAgentRun()
+        && Boolean(getAgentGuidanceComposerText());
+}
+
+function syncAgentGuidanceComposerState() {
+    if (shouldOfferAgentGuidanceFromComposer()) {
+        document.body.dataset.agentGuidanceReady = 'true';
+        return;
+    }
+
+    delete document.body.dataset.agentGuidanceReady;
+}
+
+async function maybeSubmitAgentGuidanceFromComposer() {
+    if (!shouldOfferAgentGuidanceFromComposer()) {
+        syncAgentGuidanceComposerState();
+        return false;
+    }
+
+    const text = getAgentGuidanceComposerText();
+    const result = await Popup.show.confirm(
+        '是否引导Agent行为？',
+        '<p>这条内容会作为用户指引插入下一次 Agent 模型请求，不会作为普通聊天消息保存。</p>',
+        {
+            okButton: '是',
+            cancelButton: '否',
+        },
+    );
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        syncAgentGuidanceComposerState();
+        return true;
+    }
+
+    try {
+        await submitGuidanceToActiveAgentRun(text);
+    } catch (error) {
+        toastr.error(agentErrorMessage(error), t`Agent Mode`);
+        throw error;
+    }
+
+    $('#send_textarea').val('')[0]?.dispatchEvent(new Event('input', { bubbles: true }));
+    syncAgentGuidanceComposerState();
+    return true;
 }
 
 /**
@@ -7997,6 +8050,7 @@ export function activateSendButtons() {
     hideStopButton();
     showSwipeButtons();
     delete document.body.dataset.generating;
+    delete document.body.dataset.agentGuidanceReady;
 }
 
 /**
@@ -12514,6 +12568,9 @@ jQuery(async function () {
     $(document).on('click', '.api_loading', () => cancelStatusCheck('Canceled because connecting was manually canceled'));
 
     installChatInputFocusKeeper();
+    $('#send_textarea').on('input', syncAgentGuidanceComposerState);
+    subscribeAgentRunState(syncAgentGuidanceComposerState);
+    syncAgentGuidanceComposerState();
 
     $('#swipes-checkbox').on('change', function () {
         swipes = !!$('#swipes-checkbox').prop('checked');
@@ -12544,6 +12601,10 @@ jQuery(async function () {
 
     const userInputGenerateMutex = new SimpleMutex(sendTextareaMessage);
     $('#send_but').on('click', async function () {
+        if (await maybeSubmitAgentGuidanceFromComposer()) {
+            return;
+        }
+
         await userInputGenerateMutex.update();
     });
 

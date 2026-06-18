@@ -31,6 +31,9 @@ const DISPLAY_EVENT_TYPES = new Set([
     'chat_commit_failed',
     'persistent_changes_committed',
     'drift_recovery_attempted',
+    'user_guidance_submitted',
+    'user_guidance_applied',
+    'user_guidance_discarded',
     'run_completed',
     'run_partial_success',
     'run_cancelled',
@@ -85,6 +88,9 @@ const EVENT_META = Object.freeze({
     chat_commit_failed: { icon: 'fa-circle-exclamation', tone: 'error', kind: 'fail', titleKey: 'timelineEventCommitFailed' },
     persistent_changes_committed: { icon: 'fa-database', tone: 'success', kind: 'persist', titleKey: 'timelineEventPersistentCommitted' },
     drift_recovery_attempted: { icon: 'fa-arrows-rotate', tone: 'warn', kind: 'recover', titleKey: 'timelineEventDriftRecoveryAttempted' },
+    user_guidance_submitted: { icon: 'fa-user-pen', tone: 'active', kind: 'guidance', titleKey: 'timelineEventGuidanceSubmitted' },
+    user_guidance_applied: { icon: 'fa-share', tone: 'success', kind: 'guidance', titleKey: 'timelineEventGuidanceApplied' },
+    user_guidance_discarded: { icon: 'fa-ban', tone: 'warn', kind: 'guidance', titleKey: 'timelineEventGuidanceDiscarded' },
     model_completed: { icon: 'fa-quote-left', tone: 'info', kind: 'narration', titleKey: 'timelineEventNarration' },
     run_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'done', titleKey: 'timelineEventRunCompleted' },
     run_partial_success: { icon: 'fa-circle-exclamation', tone: 'warn', kind: 'partial', titleKey: 'timelineEventRunPartialSuccess' },
@@ -295,7 +301,29 @@ export function buildEventDetailTargets(item, allEvents) {
         addFile('timelineWorkspaceFile', payload.path, event.payload);
     }
 
+    if (event?.type === 'user_guidance_submitted'
+        || event?.type === 'user_guidance_applied'
+        || event?.type === 'user_guidance_discarded') {
+        targets.push(buildGuidanceDetailTarget(payload));
+    }
+
     return targets;
+}
+
+function buildGuidanceDetailTarget(payload) {
+    return {
+        type: 'guidance',
+        labelKey: 'timelineGuidance',
+        guidanceIds: normalizeGuidanceIds(payload),
+        clientGuidanceIds: normalizeClientGuidanceIds(payload),
+        invocationId: payload.invocationId || '',
+        round: payload.round,
+        status: payload.status || '',
+        reason: payload.reason || '',
+        text: payload.text || '',
+        preview: payload.preview || '',
+        ...textMetricFields(payload),
+    };
 }
 
 function buildPatchDiffTarget(event, events) {
@@ -621,6 +649,9 @@ function eventTitleParams(type, payload) {
             return { count: payload.changeCount ?? 0 };
         case 'drift_recovery_attempted':
             return { attempt: payload.attempt ?? 0, max: payload.maxAttempts ?? 0 };
+        case 'user_guidance_applied':
+        case 'user_guidance_discarded':
+            return { count: payload.count ?? normalizeGuidanceIds(payload).length };
         case 'run_partial_success':
             return { count: payload.preservedCommitCount ?? 0 };
         default:
@@ -670,6 +701,11 @@ function eventSummary(type, payload, allEvents) {
             return Array.isArray(payload.changes) ? payload.changes.map((change) => change.path).filter(Boolean).join(', ') : '';
         case 'drift_recovery_attempted':
             return payload.reasonCode || '';
+        case 'user_guidance_submitted':
+        case 'user_guidance_applied':
+            return guidanceSummary(payload);
+        case 'user_guidance_discarded':
+            return [payload.reason, guidanceSummary(payload)].filter(Boolean).join(' | ');
         case 'run_cancelled':
             return payload.message || '';
         case 'run_partial_success':
@@ -689,6 +725,9 @@ function modelTurnNarration(payload) {
 function eventKind(type, payload, fallback) {
     if (type === 'agent_handoff_accepted') {
         return 'handoff';
+    }
+    if (type.startsWith('user_guidance_')) {
+        return 'guidance';
     }
     if (type === 'tool_call_requested' || type === 'tool_call_completed') {
         return toolKind(payload.name);
@@ -752,6 +791,31 @@ function commitCompletedSummary(payload, events) {
     const requested = findCommitRequestedEvent(events, payload.commitId);
     parts.push(textMetricsSummary(payload) || textMetricsSummary(requested?.payload));
     return parts.filter(Boolean).join(' | ');
+}
+
+function guidanceSummary(payload) {
+    return String(payload.preview || '').trim()
+        || textMetricsSummary(payload)
+        || normalizeGuidanceIds(payload).join(', ');
+}
+
+function normalizeGuidanceIds(payload) {
+    const ids = normalizeStringArray(payload.guidanceIds);
+    const guidanceId = String(payload.guidanceId || '').trim();
+    return guidanceId ? [guidanceId, ...ids] : ids;
+}
+
+function normalizeClientGuidanceIds(payload) {
+    const ids = normalizeStringArray(payload.clientGuidanceIds);
+    const clientGuidanceId = String(payload.clientGuidanceId || '').trim();
+    return clientGuidanceId ? [clientGuidanceId, ...ids] : ids;
+}
+
+function normalizeStringArray(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
 }
 
 function findCommitRequestedEvent(events, commitId) {

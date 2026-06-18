@@ -165,6 +165,51 @@ export function formatHandoffDetail(target) {
     };
 }
 
+export function formatGuidanceDetail(target) {
+    const fields = [];
+    const blocks = [];
+
+    const guidanceIds = joinStringArray(target.guidanceIds);
+    if (guidanceIds) {
+        fields.push(field(tr('timelineDetailFieldGuidance'), guidanceIds));
+    }
+    const clientGuidanceIds = joinStringArray(target.clientGuidanceIds);
+    if (clientGuidanceIds) {
+        fields.push(field(tr('timelineDetailFieldClient'), clientGuidanceIds));
+    }
+    if (target.status) {
+        fields.push(field(tr('timelineDetailFieldStatus'), target.status));
+    }
+    if (target.invocationId) {
+        fields.push(field(tr('timelineDetailFieldInvocation'), target.invocationId));
+    }
+    if (target.round != null) {
+        fields.push(field(tr('timelineDetailFieldRound'), target.round));
+    }
+    if (target.reason) {
+        fields.push(field(tr('timelineDetailFieldReason'), target.reason));
+    }
+    const metrics = textMetricsSummary(target);
+    if (metrics) {
+        fields.push(field(tr('timelineDetailFieldTextMetrics'), metrics));
+    }
+
+    const text = String(target.text || target.preview || '').trim();
+    if (text) {
+        addBlock(blocks, 'timelineContent', text, DETAIL_TEXT_LIMIT, false, {
+            kind: 'user',
+        });
+    }
+
+    return {
+        labelKey: target.labelKey,
+        path: '',
+        fields,
+        blocks,
+        actions: [],
+    };
+}
+
 export function formatPatchDiffDetail(target, file) {
     const parsed = parseJson(String(file?.text || ''));
     if (!parsed.ok || !plainObject(parsed.value)) {
@@ -599,6 +644,13 @@ function describeInlineValue(value) {
 
 function field(label, value) {
     return { label, value: String(value) };
+}
+
+function joinStringArray(value) {
+    if (!Array.isArray(value)) {
+        return '';
+    }
+    return value.map((item) => String(item || '').trim()).filter(Boolean).join(', ');
 }
 
 function formatPrimitive(value) {

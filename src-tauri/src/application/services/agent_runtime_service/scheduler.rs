@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::watch;
 
 use super::AgentRuntimeService;
+use super::guidance::AgentGuidanceMailbox;
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::{
     AgentDelegationContinuation, AgentInvocationStatus, AgentTaskRecord, AgentTaskStatus,
@@ -13,6 +14,7 @@ use crate::domain::models::agent::{
 pub(super) struct ActiveRunHandle {
     pub(super) cancel_sender: watch::Sender<bool>,
     pub(super) scheduler: Arc<AgentTaskScheduler>,
+    pub(super) guidance_mailbox: Arc<AgentGuidanceMailbox>,
 }
 
 impl ActiveRunHandle {
@@ -24,6 +26,7 @@ impl ActiveRunHandle {
         Self {
             cancel_sender,
             scheduler: Arc::new(AgentTaskScheduler::new(service, run_id)),
+            guidance_mailbox: Arc::new(AgentGuidanceMailbox::new()),
         }
     }
 }

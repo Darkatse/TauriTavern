@@ -255,6 +255,12 @@ impl AgentRuntimeService {
         let active_handle = self.active_runs.read().await.get(&dto.run_id).cloned();
 
         let next = if let Some(handle) = active_handle {
+            self.close_guidance_mailbox_for_run(
+                &dto.run_id,
+                "run_cancel_requested",
+                AgentRunEventLevel::Info,
+            )
+            .await?;
             let _ = handle.cancel_sender.send(true);
             handle.scheduler.cancel_all_unfinished().await?;
             self.transition_status(&dto.run_id, AgentRunStatus::Cancelling)

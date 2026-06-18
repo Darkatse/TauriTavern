@@ -56,6 +56,13 @@ impl AgentRuntimeService {
         match result {
             Ok(()) => {}
             Err(ApplicationError::Cancelled(message)) => {
+                let _ = self
+                    .close_guidance_mailbox_for_run(
+                        run_id,
+                        "run_cancelled_before_next_model_request",
+                        AgentRunEventLevel::Info,
+                    )
+                    .await;
                 let _ = self.cancel_unfinished_child_tasks(run_id).await;
                 let _ = self
                     .finish_root_invocation(run_id, AgentInvocationStatus::Cancelled)
@@ -75,6 +82,18 @@ impl AgentRuntimeService {
                 self.active_runs.write().await.remove(run_id);
             }
             Err(error) => {
+                let guidance_discard_reason = if commit_ledger.is_empty() {
+                    "run_failed_before_next_model_request"
+                } else {
+                    "run_partial_success_before_next_model_request"
+                };
+                let _ = self
+                    .close_guidance_mailbox_for_run(
+                        run_id,
+                        guidance_discard_reason,
+                        AgentRunEventLevel::Warn,
+                    )
+                    .await;
                 let _ = self.cancel_unfinished_child_tasks(run_id).await;
                 let _ = self
                     .finish_root_invocation(run_id, AgentInvocationStatus::Failed)

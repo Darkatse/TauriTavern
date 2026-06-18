@@ -298,6 +298,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::agent_commands::repair_agent_profile_file,
         super::agent_commands::retarget_agent_profile_preset_refs,
         super::agent_commands::cancel_agent_run,
+        super::agent_commands::submit_agent_run_guidance,
         super::agent_commands::list_agent_runs,
         super::agent_commands::plan_agent_run_prune,
         super::agent_commands::apply_agent_run_prune,

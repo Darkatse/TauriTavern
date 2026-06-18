@@ -333,6 +333,12 @@ impl AgentRuntimeService {
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
         self.cancel_unfinished_child_tasks(run_id).await?;
+        self.close_guidance_mailbox_for_run(
+            run_id,
+            "run_finished_before_next_model_request",
+            AgentRunEventLevel::Info,
+        )
+        .await?;
         self.transition_status(run_id, AgentRunStatus::Finishing)
             .await?;
         let run = self.run_repository.load_run(run_id).await?;

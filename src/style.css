@@ -4772,6 +4772,14 @@ body:is([data-generating="true"], [data-swiping="true"]) :is(#send_but,
     display: none;
 }
 
+body[data-generating="true"][data-agent-guidance-ready="true"] #rightSendForm > #send_but {
+    display: flex !important;
+}
+
+body[data-generating="true"][data-agent-guidance-ready="true"] #mes_stop {
+    display: none !important;
+}
+
 #anchor_order {
     margin-bottom: 15px;
 }

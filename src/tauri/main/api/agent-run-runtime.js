@@ -1,7 +1,6 @@
 // @ts-check
-
 import { resolveStableChatId } from './agent-chat-identity.js';
-
+import { createAgentRunGuidanceApi } from './agent-run-guidance.js';
 const DEFAULT_EVENT_POLL_MS = 500;
 const MAX_RUN_LIST_LIMIT = 200;
 const MAX_RUN_PRUNE_DETAIL_LIMIT = 1000;
@@ -27,6 +26,8 @@ const AGENT_RUN_STATUSES = new Set([
  * @param {{ safeInvoke: (command: string, args?: any) => Promise<any> }} deps
  */
 export function createAgentRunRuntimeApi({ safeInvoke }) {
+    const guidance = createAgentRunGuidanceApi({ safeInvoke });
+
     async function cancel(runId) {
         const normalizedRunId = requireRunId(runId);
         return safeInvoke('cancel_agent_run', { dto: { runId: normalizedRunId } });
@@ -247,6 +248,7 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
 
     return {
         cancel,
+        submitGuidance: guidance.submitGuidance,
         listRuns,
         retention: {
             readSettings: readRetentionSettings,
