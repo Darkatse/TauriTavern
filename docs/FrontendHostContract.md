@@ -181,6 +181,7 @@
   - 当前已落地 Host ABI：`list()`、`load()`、`save()`、`delete()`。
   - Profile 只保存 `model.mode = "connectionRef"`、`connectionRef` 与 `modelId`，或保存分享/导入用的 `model.mode = "requiresConfiguration"`；不直接保存 Connection Manager 的 Model Target id。
   - Connection Manager Model Target 可以作为 UI 输入来源，但转换成 LLM Connection 时必须保真；无法表达的字段必须显式报错，不得静默丢弃。
+  - Agent System 负责在启动、Model Target 创建/更新、Profile 保存和 Agent run 启动前同步 `model-target-*` LLM Connection；启动 reconcile 或更新无法保真物化时会删除对应派生 connection；删除 Model Target 不隐式删除已物化 LLM Connection。
   - Rust command 名与 repository/file layout 属于 Internal 实现细节，不是第三方 Public Contract。
 
 - `api.skill`：TauriTavern Agent Skill 管理 API。用于列出、预览导入、安装、读取和导出本地 Skill。

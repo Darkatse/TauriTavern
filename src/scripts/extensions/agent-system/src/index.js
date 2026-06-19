@@ -8,6 +8,7 @@ import { mountAgentRunTimelinePanel } from './run-timeline-panel.js';
 import { mountSkillManagerSettingsPanel } from './skill-manager/settings-entry.js';
 import { openAgentSystemPanel } from './panel-popup.js';
 import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
+import { startModelTargetLlmConnectionSync, syncSavedModelTargetLlmConnections } from './model-target-connection.js';
 import { subscribeAgentProfilesChanged } from '../../../tauritavern/agent/agent-profile-events.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../tauritavern/agent/agent-system-settings.js';
 
@@ -175,6 +176,9 @@ function createAgentSystemEntryApp() {
 
 async function mountAgentSystem() {
     await waitForHostReady();
+    startModelTargetLlmConnectionSync();
+    await syncSavedModelTargetLlmConnections();
+
     const container = document.getElementById('agent_system_container');
     if (!(container instanceof HTMLElement)) {
         throw new Error(tr('mountContainerNotFound'));

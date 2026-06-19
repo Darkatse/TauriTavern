@@ -160,6 +160,8 @@ const DEFAULT_MESSAGES = Object.freeze({
     modelRequiresConfiguration: 'Select a model before running',
     modelRetries: 'Model Retries',
     modelSource: 'Model Source',
+    modelTargetInvalidationFailed: 'Saved model "{name}" could not remove its stale Agent LLM connection: {error}',
+    modelTargetSyncFailed: 'Saved model "{name}" could not be synced to Agent LLM connections: {error}',
     noPromptPreset: 'No preset',
     noSavedModelTargets: 'No saved models. Save a model in Connection Manager first.',
     moveToScope: 'Move to',

@@ -11,6 +11,7 @@
 - `model.connectionRef + modelId` 与 preset provider source 解耦；preset 不拥有 endpoint、secret、最终 source/model。
 - Profile 导出或嵌入到 Preset/Character 时必须移除本机 `connectionRef + modelId`，写为 `model.mode = "requiresConfiguration"`。
 - 错误必须 fail-fast，不允许静默回退 Legacy Generate 或当前 UI preset/model。
+- Connection Manager Model Target 只是 Profile 面板的 UI 输入来源；Agent System 会在启动、Model Target 创建/更新、Profile 保存和 Agent run 启动前物化对应 LLM Connection，Rust prompt assembly 与 runtime 只读取 LLM Connection contract。
 
 ## Profile 绑定语义
 
@@ -40,6 +41,8 @@
 - `currentPromptSnapshot`：沿用 prompt snapshot 中已有 source/model。
 - `connectionRef`：通过 `LlmConnectionService` 解析 connection 与 `modelId`，覆盖组装 settings 与最终 runtime payload。
 - `requiresConfiguration`：可保存、可导入、可展示的未配置模型状态；运行或 prompt assembly 前必须 fail-fast，用户需在本机重新选择模型后才能使用。
+
+`modelId` 是 Profile binding 的一部分，不随 Model Target 更新自动漂移。更新 Model Target 的 API key、endpoint、provider source 会通过重新物化 LLM Connection 对后续 resolution 生效；Agent run 启动前会按当前保存的 `connectionRef` 再物化一次，避免 prompt assembly 或 runtime 使用旧的派生 connection，但不会改写 Profile 的 `modelId`。若更新后的 Model Target 无法保真物化，Agent System 会删除对应派生 LLM Connection，让后续 resolution fail-fast。更新 Model Target 的模型名需要用户在 Profile 面板重新选择后才会写入 Profile。
 
 独立 preset 当前只支持 OpenAI/chat-completion preset，因为真实组装入口复用 `src/scripts/openai.js` 的 PromptManager 链路。
 

@@ -10,6 +10,7 @@ import { createSharedRunEventSubscribe } from './agent-run-event-subscription.js
 import { normalizeAgentRunOptions } from './agent-run-options.js';
 import { createAgentRunRuntimeApi } from './agent-run-runtime.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../scripts/tauritavern/agent/agent-system-settings.js';
+import { ensureModelTargetLlmConnectionForProfile } from '../../../scripts/tauritavern/agent/model-target-llm-connection.js';
 
 /**
  * @typedef {{ kind: 'character'; characterId: string; fileName: string }} CharacterChatRef
@@ -26,7 +27,15 @@ function createAgentApi({ safeInvoke }) {
     const runtime = createAgentRunRuntimeApi({ safeInvoke });
 
     async function startRunWithPromptSnapshot(input) {
-        const dto = await normalizePromptSnapshotRunInput(input, { safeInvoke });
+        return startRunWithPromptSnapshotInternal(input, { ensureModelTargetConnection: true });
+    }
+
+    async function startRunWithPromptSnapshotInternal(input, { ensureModelTargetConnection, runProfile = null } = {}) {
+        const dto = await normalizePromptSnapshotRunInput(input, {
+            safeInvoke,
+            ensureModelTargetConnection,
+            runProfile,
+        });
         const handle = await safeInvoke('start_agent_run', { dto });
         const hostSubscribe = createSharedRunEventSubscribe(handle?.runId, runtime.subscribe);
         attachHostCommitBridge({
@@ -51,6 +60,7 @@ function createAgentApi({ safeInvoke }) {
 
         const generationType = normalizeGenerationType(input.generationType);
         const agentOptions = normalizeAgentRunOptions(input.options, input.presentation);
+        const runProfile = await ensureRunProfileModelTargetConnection(input.profileId, safeInvoke);
         const legacySnapshot = await buildAgentPromptSnapshotSeed({
             generationType,
             generateOptions: input.generateOptions,
@@ -64,7 +74,7 @@ function createAgentApi({ safeInvoke }) {
             promptAssembly,
         });
 
-        return startRunWithPromptSnapshot({
+        return startRunWithPromptSnapshotInternal({
             chatRef: input.chatRef,
             stableChatId: input.stableChatId,
             generationType,
@@ -74,6 +84,9 @@ function createAgentApi({ safeInvoke }) {
             frozenRunInputSnapshot: snapshot.frozenRunInputSnapshot,
             generationIntent: mergePlainObject(snapshot.generationIntent, input.generationIntent),
             options: agentOptions,
+        }, {
+            ensureModelTargetConnection: false,
+            runProfile,
         });
     }
 
@@ -114,7 +127,7 @@ function normalizeGenerationType(value) {
     return String(value || 'normal').trim() || 'normal';
 }
 
-async function normalizePromptSnapshotRunInput(input, { safeInvoke }) {
+async function normalizePromptSnapshotRunInput(input, { safeInvoke, ensureModelTargetConnection = true, runProfile = null }) {
     if (!input || typeof input !== 'object') {
         throw new Error('Agent startRunWithPromptSnapshot input is required');
     }
@@ -129,7 +142,11 @@ async function normalizePromptSnapshotRunInput(input, { safeInvoke }) {
         throw new Error('stableChatId is required');
     }
 
-    const skillScopeRefs = await resolveSkillScopeRefsForRun(input, safeInvoke);
+    let resolvedRunProfile = runProfile;
+    if (ensureModelTargetConnection) {
+        resolvedRunProfile = await ensureRunProfileModelTargetConnection(input.profileId ?? input.profile_id, safeInvoke);
+    }
+    const skillScopeRefs = await resolveSkillScopeRefsForRun(input, safeInvoke, resolvedRunProfile);
 
     return {
         ...input,
@@ -141,13 +158,13 @@ async function normalizePromptSnapshotRunInput(input, { safeInvoke }) {
     };
 }
 
-async function resolveSkillScopeRefsForRun(input, safeInvoke) {
+async function resolveSkillScopeRefsForRun(input, safeInvoke, runProfile = null) {
     const refs = normalizeSkillScopeRefs(input.skillScopeRefs ?? input.skill_scope_refs);
     if (refs.preset) {
         return refs;
     }
 
-    const profile = await loadRunProfile(input.profileId ?? input.profile_id, safeInvoke);
+    const profile = runProfile || await loadRunProfile(input.profileId ?? input.profile_id, safeInvoke);
     if (profile?.preset?.mode !== 'currentPromptSnapshot') {
         return refs;
     }
@@ -169,6 +186,12 @@ async function loadRunProfile(profileId, safeInvoke) {
     if (!profile) {
         throw new Error(`agent.profile_not_found: Agent Profile '${resolvedProfileId}' was not found`);
     }
+    return profile;
+}
+
+async function ensureRunProfileModelTargetConnection(profileId, safeInvoke) {
+    const profile = await loadRunProfile(profileId, safeInvoke);
+    await ensureModelTargetLlmConnectionForProfile(profile);
     return profile;
 }
 

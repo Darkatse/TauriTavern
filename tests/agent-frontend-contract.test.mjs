@@ -1531,6 +1531,97 @@ test('Agent generation router uses the global toggle for normal regenerate and s
     );
 });
 
+test('Agent generation router refreshes Model Target LLM connection before Agent Mode options', async () => {
+    const currentTarget = {
+        schemaVersion: 1,
+        kind: 'tauritavern.modelTarget',
+        id: 'Writer Target',
+        mode: 'cc',
+        name: 'Writer model',
+        api: 'custom_claude_messages',
+        model: 'claude-3-7-sonnet',
+        'api-url': 'https://example.test/v1',
+        secretRef: {
+            key: 'api_key_custom',
+            id: 'secret-current',
+            labelSnapshot: 'Current custom key',
+        },
+    };
+    const savedConnections = [];
+    const window = installWindow({
+        extension: {
+            store: {
+                async tryGetJson() {
+                    return {
+                        found: true,
+                        value: {
+                            agentModeEnabled: true,
+                            activeProfileId: 'writer',
+                            editingProfileId: 'writer',
+                            activeTab: 'profiles',
+                            runTimelineHeightPx: null,
+                        },
+                    };
+                },
+            },
+        },
+        llmConnections: {
+            async save({ connection }) {
+                savedConnections.push(connection);
+            },
+        },
+        agent: {
+            profiles: {
+                async load({ profileId }) {
+                    assert.equal(profileId, 'writer');
+                    return {
+                        profile: {
+                            run: { directRunnable: true },
+                            model: {
+                                mode: 'connectionRef',
+                                connectionRef: 'model-target-writer-target',
+                                modelId: 'claude-3-7-sonnet',
+                            },
+                            context: {
+                                initialChatHistoryMessages: 4,
+                                includeActivatedWorldInfo: false,
+                            },
+                        },
+                    };
+                },
+                async resolveSystemPrompt({ profileId }) {
+                    assert.equal(profileId, 'writer');
+                    assert.equal(savedConnections.length, 1);
+                    return { agentSystemPrompt: 'Resolved Agent System Prompt.' };
+                },
+            },
+        },
+    });
+    window.SillyTavern = {
+        getContext: () => ({
+            extensionSettings: {
+                connectionManager: {
+                    modelTargets: [currentTarget],
+                },
+            },
+        }),
+    };
+
+    const router = await importFresh('src/scripts/tauritavern/agent/agent-generation-router.js');
+
+    const options = await router.getAgentGenerationOptions({
+        generationType: 'normal',
+        mainApi: 'openai',
+    });
+
+    assert.equal(savedConnections.length, 1);
+    assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
+    assert.deepEqual(options.agentContextPolicy, {
+        initialChatHistoryMessages: 4,
+        includeActivatedWorldInfo: false,
+    });
+});
+
 test('Agent generation router rejects non-direct callable profiles before direct generation', async () => {
     installWindow({
         extension: {
@@ -2270,6 +2361,61 @@ test('Agent profile selection stays editable when system prompt preview fails', 
     assert.match(vm.profilePreviewError, /agent\.profile_preset_missing/);
     assert.deepEqual(vm.availablePresetOptions, ['Missing Writer Preset']);
     assert.ok(vm.profileConfigurationWarnings.some((warning) => warning.includes('Missing Writer Preset')));
+});
+
+test('Agent profile model binding persistence uses current saved Model Target state', async () => {
+    const staleTarget = {
+        schemaVersion: 1,
+        kind: 'tauritavern.modelTarget',
+        id: 'Writer Target',
+        mode: 'cc',
+        name: 'Writer model',
+        api: 'custom_claude_messages',
+        model: 'claude-3-7-sonnet',
+        'api-url': 'https://example.test/v1',
+        secretRef: {
+            key: 'api_key_custom',
+            id: 'secret-stale',
+        },
+    };
+    const currentTarget = {
+        ...staleTarget,
+        secretRef: {
+            key: 'api_key_custom',
+            id: 'secret-current',
+        },
+    };
+    const savedConnections = [];
+    const window = installWindow({
+        llmConnections: {
+            async save({ connection }) {
+                savedConnections.push(connection);
+            },
+        },
+    });
+    window.SillyTavern = {
+        getContext: () => ({
+            extensionSettings: {
+                connectionManager: {
+                    modelTargets: [currentTarget],
+                },
+            },
+        }),
+    };
+
+    const vm = await createAgentPanelHarness();
+    vm.modelTargets = [staleTarget];
+    await vm.persistProfileModelBinding({
+        model: {
+            mode: 'connectionRef',
+            connectionRef: 'model-target-writer-target',
+            modelId: 'claude-3-7-sonnet',
+        },
+    });
+
+    assert.equal(savedConnections.length, 1);
+    assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
+    assert.equal(vm.modelTargets[0].secretRef.id, 'secret-current');
 });
 
 test('Agent profile save keeps non-direct callable profiles out of direct default selection', async () => {

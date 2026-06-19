@@ -12,6 +12,8 @@ import {
     listSavedModelTargets,
     modelBindingFromTarget,
     saveModelTargetAsLlmConnection,
+    modelTargetIdFromConnectionRef,
+    subscribeModelTargetChanges,
 } from './model-target-connection.js';
 import {
     defaultProfile,
@@ -26,6 +28,7 @@ import { downloadBlobWithRuntime } from '../../../file-export.js';
 import { subscribeAgentProfilesChanged } from '../../../tauritavern/agent/agent-profile-events.js';
 import { AGENT_MODEL_REQUIRES_CONFIGURATION, sanitizePortableAgentProfile } from '../../../tauritavern/agent/agent-profile-portable.js';
 import { normalizeAgentSystemPrompt } from '../../../tauritavern/agent/agent-system-prompt.js';
+import { subscribeLlmConnectionsChanged } from '../../../tauritavern/agent/llm-connection-events.js';
 
 const PROFILE_EXPORT_CONTENT_TYPE = 'application/json';
 const CHAT_COMPLETION_PRESET_API_ID = 'openai';
@@ -165,6 +168,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 saving: false,
                 error: '',
                 unsubscribeProfilesChanged: null,
+                unsubscribeModelTargetsChanged: null,
+                unsubscribeLlmConnectionsChanged: null,
                 externalProfileChangePending: false,
                 settings: {},
                 profiles: [],
@@ -441,9 +446,17 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             this.unsubscribeProfilesChanged = subscribeAgentProfilesChanged(() => {
                 void this.handleProfilesChanged();
             });
+            this.unsubscribeModelTargetsChanged = subscribeModelTargetChanges(() => {
+                void this.handleModelTargetsChanged();
+            });
+            this.unsubscribeLlmConnectionsChanged = subscribeLlmConnectionsChanged(() => {
+                void this.handleLlmConnectionsChanged();
+            });
         },
         unmounted() {
             this.unsubscribeProfilesChanged?.();
+            this.unsubscribeModelTargetsChanged?.();
+            this.unsubscribeLlmConnectionsChanged?.();
         },
         methods: {
             async initialize() {
@@ -662,6 +675,43 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                         throw error;
                     });
                 }
+            },
+            async handleModelTargetsChanged() {
+                if (!this.initialized) {
+                    return;
+                }
+                try {
+                    await this.refreshModelTargets();
+                    if (!this.saving) {
+                        await this.refreshCurrentProfileRuntimeState();
+                    }
+                } catch (error) {
+                    this.reportError(error);
+                    queueMicrotask(() => {
+                        throw error;
+                    });
+                }
+            },
+            async handleLlmConnectionsChanged() {
+                if (!this.initialized || this.saving) {
+                    return;
+                }
+                try {
+                    await this.refreshCurrentProfileRuntimeState();
+                } catch (error) {
+                    this.reportError(error);
+                    queueMicrotask(() => {
+                        throw error;
+                    });
+                }
+            },
+            async refreshCurrentProfileRuntimeState() {
+                if (!this.isProfileRuntimeStateCurrent) {
+                    return;
+                }
+                const profileId = this.editingProfileId || DEFAULT_PROFILE_ID;
+                const selectionToken = this.profileSelectionToken;
+                await this.refreshProfileRuntimeState(requireAgentApi().profiles, profileId, selectionToken);
             },
             async refreshToolSpecs() {
                 const api = requireAgentApi().tools;
@@ -983,7 +1033,12 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 );
             },
             async persistProfileModelBinding(profile) {
-                const target = findModelTargetForBinding(this.modelTargets, profile.model);
+                if (profile?.model?.mode !== 'connectionRef' || !modelTargetIdFromConnectionRef(profile.model.connectionRef)) {
+                    return;
+                }
+                const modelTargets = listSavedModelTargets();
+                this.modelTargets = modelTargets;
+                const target = findModelTargetForBinding(modelTargets, profile.model);
                 if (!target) {
                     return;
                 }

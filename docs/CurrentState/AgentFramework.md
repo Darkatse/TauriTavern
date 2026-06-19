@@ -61,7 +61,7 @@ api.llmConnections.save(input)
 api.llmConnections.delete(input)
 ```
 
-`startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` 支持可选 `profileId`。Profile 管理、工具列表与 prompt assembly broker API 已封装到 `window.__TAURITAVERN__.api.agent` 与 `src/types.d.ts`；LLM Connection 管理已封装到 `window.__TAURITAVERN__.api.llmConnections`。Agent Profile 面板已提供独立 preset / model 选择，model 选择以 Connection Manager 的 Model Target 作为 UI 输入来源，保存时物化为 Agent domain 的 LLM Connection，并在 Profile 中持久化 `connectionRef + modelId`。
+`startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` 支持可选 `profileId`。Profile 管理、工具列表与 prompt assembly broker API 已封装到 `window.__TAURITAVERN__.api.agent` 与 `src/types.d.ts`；LLM Connection 管理已封装到 `window.__TAURITAVERN__.api.llmConnections`。Agent Profile 面板已提供独立 preset / model 选择，model 选择以 Connection Manager 的 Model Target 作为 UI 输入来源，Agent System 启动、Model Target 创建/更新、Profile 保存和 Agent run 启动前会物化为 Agent domain 的 LLM Connection；Profile 中只持久化 `connectionRef + modelId`，保存前会重新读取当前 Model Target，避免旧 UI 快照覆盖新 connection。
 
 Skill 管理 API 已落地：
 
@@ -107,7 +107,7 @@ _tauritavern/agent-profiles/
 - 非缺省 `profileId` 不存在时 fail-fast，不创建 run。
 - `instructions.agentSystemPrompt` 省略或为 `null` 时使用 resolved profile 默认 Agent system prompt；设置为非空字符串时完整替换默认 prompt；空白字符串 fail-fast。Preset 控制 `agentSystemPrompt` 的位置与 role，不能编辑其内容。
 - `preset.mode = "ref"` 会加载指定 OpenAI/chat-completion preset，经 Frontend PromptAssemblyBroker 真实复用 SillyTavern PromptManager 组装；`currentPromptSnapshot` / `none` 保留兼容路径。
-- `model.mode = "connectionRef"` 要求 `connectionRef` 与 `modelId`，组装阶段会把 source/model 覆盖到 prompt settings，runtime 发送前会再次以 LLM Connection 权威覆盖 payload。
+- `model.mode = "connectionRef"` 要求 `connectionRef` 与 `modelId`；若引用 `model-target-*`，Agent run 启动前会按当前保存 Model Target 重新物化 LLM Connection，但不会改写 Profile 的 `modelId`。组装阶段会把 source/model 覆盖到 prompt settings，runtime 发送前会再次以 LLM Connection 权威覆盖 payload。
 - `model.mode = "requiresConfiguration"` 表示外部导入/分享后的 Profile 需要本机重新选择模型；该状态可保存、可展示，但 root run、SubAgent 与 prompt assembly 都会 fail-fast。
 - `context.initialChatHistoryMessages` 只作用于 PromptManager 组装期的初始聊天历史窗口：`-1` 不做显式楼数裁剪，`0` 不向初始 prompt 注入真实聊天楼层，正数最多注入最近 N 楼。`FrozenRunInputSnapshot.promptInputs.messages` 保留 SillyTavern PromptManager 的 latest-first 完整候选历史；组装期只能 materialize 工作副本后裁剪、注入和反转，不能污染 frozen input，便于 child / handoff 按 target Profile 重新组装；`chat.read_messages`、`chat.search` 与 persist base 仍按 Rust runtime 的 run input prefix 工作。
 - `tools.allow` / `tools.deny` 决定模型可见工具，dispatcher 会二次拦截不可见工具。

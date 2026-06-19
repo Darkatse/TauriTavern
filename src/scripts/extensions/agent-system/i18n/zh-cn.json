@@ -98,6 +98,8 @@
     "agent_system.mountContainerNotFound": "未找到 agent_system_container 容器",
     "agent_system.modelRetries": "模型重试次数",
     "agent_system.modelSource": "模型来源",
+    "agent_system.modelTargetInvalidationFailed": "已保存模型“{name}”无法移除过期的 Agent LLM 连接：{error}",
+    "agent_system.modelTargetSyncFailed": "已保存模型“{name}”无法同步到 Agent LLM 连接：{error}",
     "agent_system.name": "名称",
     "agent_system.new": "新建",
     "agent_system.newAgentProfile": "新Agent 配置",

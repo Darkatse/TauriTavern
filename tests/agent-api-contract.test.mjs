@@ -173,6 +173,97 @@ test('api.agent.promptAssembly prepares backend broker requests', async () => {
     ]);
 });
 
+test('api.agent.startRunWithPromptSnapshot refreshes Model Target LLM connection before starting run', async () => {
+    const sequence = [];
+    const savedConnections = [];
+    const currentTarget = {
+        schemaVersion: 1,
+        kind: 'tauritavern.modelTarget',
+        id: 'Writer Target',
+        mode: 'cc',
+        name: 'Writer model',
+        api: 'custom_claude_messages',
+        model: 'claude-3-7-sonnet',
+        'api-url': 'https://example.test/v1',
+        secretRef: {
+            key: 'api_key_custom',
+            id: 'secret-current',
+        },
+    };
+    const { agent } = await installHarness({
+        safeInvoke: async (command, args) => {
+            sequence.push(command);
+            if (command === 'load_agent_profile') {
+                assert.equal(args.dto.profileId, 'writer');
+                return {
+                    profile: {
+                        model: {
+                            mode: 'connectionRef',
+                            connectionRef: 'model-target-writer-target',
+                            modelId: 'claude-3-7-sonnet',
+                        },
+                        preset: {
+                            mode: 'ref',
+                        },
+                    },
+                };
+            }
+            if (command === 'start_agent_run') {
+                return { runId: 'run-model-target' };
+            }
+            if (command === 'read_agent_run_events') {
+                return {
+                    events: [{
+                        id: 'evt-terminal',
+                        seq: 1,
+                        runId: 'run-model-target',
+                        type: 'run_completed',
+                        payload: {},
+                    }],
+                };
+            }
+            return {};
+        },
+    });
+    globalThis.window.__TAURITAVERN__.api.llmConnections = {
+        async save({ connection }) {
+            sequence.push('llm_connections.save');
+            savedConnections.push(connection);
+        },
+    };
+    globalThis.window.SillyTavern = {
+        getContext: () => ({
+            extensionSettings: {
+                connectionManager: {
+                    modelTargets: [currentTarget],
+                },
+            },
+        }),
+    };
+
+    const handle = await agent.startRunWithPromptSnapshot({
+        chatRef: { kind: 'character', characterId: 'char-1', fileName: 'Char.json' },
+        stableChatId: 'stable-chat-1',
+        generationType: 'normal',
+        profileId: 'writer',
+        promptSnapshot: {
+            contextPolicy: {},
+            chatCompletionPayload: {
+                messages: [],
+            },
+        },
+        options: {
+            stream: false,
+        },
+    });
+
+    assert.deepEqual(handle, { runId: 'run-model-target' });
+    assert.equal(savedConnections.length, 1);
+    assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
+    assert.ok(sequence.indexOf('llm_connections.save') < sequence.indexOf('start_agent_run'));
+    await waitFor(() => sequence.includes('read_agent_run_events'));
+});
+
 test('api.agent.readEvents requests timeline projection only when asked', async () => {
     const { calls, agent } = await installHarness();
 
