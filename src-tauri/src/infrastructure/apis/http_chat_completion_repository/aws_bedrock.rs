@@ -458,6 +458,7 @@ async fn forward_eventstream_response(
     mode: StreamMode,
 ) -> Result<(), DomainError> {
     let mut buffer = Vec::<u8>::new();
+    let endpoint = response.url().clone();
 
     loop {
         if *cancel.borrow() {
@@ -472,9 +473,25 @@ async fn forward_eventstream_response(
                 continue;
             }
             chunk = response.chunk() => {
-                chunk.map_err(|error| DomainError::transient(format!(
-                    "{BEDROCK_PROVIDER_NAME} stream read failed: {error}"
-                )))?
+                chunk.map_err(|error| {
+                    let failure = crate::infrastructure::http_error::reqwest_body_failure(
+                        &error,
+                        Some(&endpoint),
+                    );
+                    tracing::warn!(
+                        provider = BEDROCK_PROVIDER_NAME,
+                        operation = "eventstream",
+                        code = %failure.code,
+                        category = %failure.category,
+                        endpoint = failure.endpoint.as_deref().unwrap_or(""),
+                        timeout = error.is_timeout(),
+                        connect = error.is_connect(),
+                        body = error.is_body(),
+                        request = error.is_request(),
+                        "upstream event stream read failed",
+                    );
+                    DomainError::upstream_failure(failure)
+                })?
             }
         };
 

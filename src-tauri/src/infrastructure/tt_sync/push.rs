@@ -11,29 +11,31 @@ use ttsync_contract::peer::DeviceId;
 use ttsync_contract::plan::{PlanId, SyncPlan};
 use ttsync_contract::session::SessionToken;
 use ttsync_contract::sync::{SyncMode, SyncPhase};
+use ttsync_core::dataset::ResolvedDatasetPolicy;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
-use crate::infrastructure::tt_sync::bundle::{
-    FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, copy_exact, write_u32_be,
-};
-use crate::infrastructure::tt_sync::fs::scan_manifest;
+use crate::infrastructure::sync_bundle::{BUNDLE_STREAM_BUFFER_SIZE, copy_exact, write_u32_be};
+use crate::infrastructure::sync_v2::{SyncV2OperationOptions, bundle_transport_for_status};
+use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 use crate::infrastructure::tt_sync::transfer;
-use crate::infrastructure::tt_sync::v2_api::TtSyncV2Api;
+use crate::infrastructure::tt_sync::v2_api::{TtSyncV2Api, ensure_dataset_scope_v1};
 
 pub async fn push_to_server(
     runtime: Arc<TtSyncRuntime>,
     server_device_id: &DeviceId,
     mode: SyncMode,
+    options: SyncV2OperationOptions,
 ) -> Result<TtSyncCompletedEvent, DomainError> {
     let mut server = runtime.get_paired_server(server_device_id).await?;
     let identity = runtime.store.load_or_create_identity().await?;
 
     let api = TtSyncV2Api::new(server.base_url.clone(), server.spki_sha256.clone())?;
-    let features = api.status_features().await.unwrap_or_default();
-    let prefer_bundle = features.iter().any(|f| f == FEATURE_BUNDLE_V1);
-    let allow_zstd = prefer_bundle && features.iter().any(|f| f == FEATURE_ZSTD_V1);
+    let status = api.status().await?;
+    ensure_dataset_scope_v1(&status, "TT-Sync server")?;
+    let transport =
+        bundle_transport_for_status(&status, "TT-Sync server", options.require_bundle_zstd)?;
 
     let session = api
         .open_session(&identity.device_id, &identity.ed25519_seed)
@@ -63,7 +65,11 @@ pub async fn push_to_server(
         current_path: None,
     })?;
 
-    let source_manifest = scan_manifest(runtime.sync_root.clone()).await?;
+    let selection = options.selection;
+    let policy = ResolvedDatasetPolicy::from_selection(&selection)
+        .map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let source_manifest =
+        scan_manifest_with_policy(runtime.sync_root.clone(), policy.clone()).await?;
 
     runtime.emit_progress(TtSyncProgressEvent {
         direction: TtSyncDirection::Push,
@@ -76,8 +82,9 @@ pub async fn push_to_server(
     })?;
 
     let plan = api
-        .push_plan(&session.session_token, mode, source_manifest)
+        .push_plan(&session.session_token, mode, selection, source_manifest)
         .await?;
+    validate_plan_scope(&plan, &policy)?;
 
     let plan_files_total = plan.files_total;
     let plan_bytes_total = plan.bytes_total;
@@ -93,8 +100,8 @@ pub async fn push_to_server(
         &session.session_token,
         plan,
         mode,
-        prefer_bundle,
-        allow_zstd,
+        transport.prefer_bundle,
+        transport.use_zstd,
     )
     .await?;
 
@@ -141,7 +148,7 @@ async fn apply_push_plan(
         let (progress_tx, mut progress_rx) =
             tokio::sync::mpsc::unbounded_channel::<BundleProgress>();
 
-        let (reader, writer) = tokio::io::duplex(64 * 1024);
+        let (reader, writer) = tokio::io::duplex(BUNDLE_STREAM_BUFFER_SIZE);
         let writer_task = tokio::spawn(write_bundle_upload(
             runtime.sync_root.clone(),
             transfer_entries,
@@ -150,12 +157,15 @@ async fn apply_push_plan(
         ));
 
         let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = if allow_zstd {
-            Box::new(ZstdEncoder::new(BufReader::new(reader)))
+            Box::new(ZstdEncoder::new(BufReader::with_capacity(
+                BUNDLE_STREAM_BUFFER_SIZE,
+                reader,
+            )))
         } else {
             Box::new(reader)
         };
 
-        let stream = ReaderStream::with_capacity(reader, 64 * 1024);
+        let stream = ReaderStream::with_capacity(reader, BUNDLE_STREAM_BUFFER_SIZE);
         let body = reqwest::Body::wrap_stream(stream);
 
         let mut upload_fut = Box::pin(api.upload_bundle(session_token, &plan_id, body, allow_zstd));
@@ -312,6 +322,8 @@ async fn write_bundle_upload(
     mut out: tokio::io::DuplexStream,
     progress: tokio::sync::mpsc::UnboundedSender<BundleProgress>,
 ) -> Result<(), DomainError> {
+    let mut buffer = vec![0u8; BUNDLE_STREAM_BUFFER_SIZE];
+
     for entry in transfer {
         let path_bytes = entry.path.as_str().as_bytes();
         let path_len = u32::try_from(path_bytes.len()).map_err(|_| {
@@ -328,7 +340,7 @@ async fn write_bundle_upload(
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
-        copy_exact(&mut file, &mut out, entry.size_bytes).await?;
+        copy_exact(&mut file, &mut out, entry.size_bytes, &mut buffer).await?;
         let _ = progress.send(BundleProgress {
             path: entry.path.to_string(),
             size_bytes: entry.size_bytes,
@@ -368,7 +380,7 @@ async fn upload_one(
         .await
         .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
-    let stream = ReaderStream::with_capacity(file, 64 * 1024);
+    let stream = ReaderStream::with_capacity(file, BUNDLE_STREAM_BUFFER_SIZE);
     let body = reqwest::Body::wrap_stream(stream);
     api.upload_file(session_token, plan_id, &entry.path, body)
         .await?;

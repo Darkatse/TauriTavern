@@ -61,7 +61,7 @@
 
 额外兼容层：
 
-- `src/lib.js` 会把部分上游常用库挂到 `window`
+- `src/lib.js` 会把部分上游常用库挂到 `window`；其中 `window._`（lodash）是正式兼容 ABI，因为 JS-Slash-Runner、ST-Prompt-Template、MagVarUpdate 等生态扩展会在模块求值阶段直接访问 `_`
 - `src/tauri/main/compat/mobile/mobile-runtime-compat.js` 负责旧 WebView 缺失 JS API 的 polyfills（仅 Tauri mobile）
 - 第三方浮层/窗口 mobile surface compat（仅 Tauri mobile）：
   - 分类/契约输出：`src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`

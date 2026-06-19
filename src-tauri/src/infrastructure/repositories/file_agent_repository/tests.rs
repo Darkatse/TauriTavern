@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use tokio::fs;
 use uuid::Uuid;
@@ -16,17 +16,20 @@ use crate::domain::models::agent::profile::{
     ResolvedAgentProfile,
 };
 use crate::domain::models::agent::{
-    AgentChatRef, AgentInvocation, AgentInvocationExitPolicy, AgentInvocationKind,
-    AgentInvocationStatus, AgentRun, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    ArtifactSpec, ArtifactTarget, CommitPolicy, WorkspaceInputManifest, WorkspaceManifest,
-    WorkspacePath, WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount,
-    WorkspaceRootScope, WorkspaceRootSpec,
+    AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION, AgentChatRef, AgentInvocation,
+    AgentInvocationExitPolicy, AgentInvocationKind, AgentInvocationStatus, AgentRun,
+    AgentRunCommittedMessageProjection, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
+    AgentRunSummaryProjection, ArtifactSpec, ArtifactTarget, CommitPolicy, WorkspaceInputManifest,
+    WorkspaceManifest, WorkspacePath, WorkspaceRootCommit, WorkspaceRootLifecycle,
+    WorkspaceRootMount, WorkspaceRootScope, WorkspaceRootSpec,
 };
 use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
 use crate::domain::repositories::agent_run_repository::{
-    AgentRunEventReadQuery, AgentRunRepository,
+    AgentRunEventReadQuery, AgentRunListCursor, AgentRunListQuery, AgentRunRepository,
 };
-use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
+use crate::domain::repositories::agent_workspace_lifecycle_repository::{
+    AgentPersistentStatePruneRequest, AgentWorkspaceLifecycleRepository,
+};
 use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
 use crate::domain::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
 fn temp_root() -> PathBuf {
@@ -56,6 +59,12 @@ fn sample_run_with_id(id: &str) -> AgentRun {
         created_at: Utc::now(),
         updated_at: Utc::now(),
     }
+}
+
+fn instant(value: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(value)
+        .expect("valid timestamp")
+        .with_timezone(&Utc)
 }
 
 fn sample_manifest(run: &AgentRun) -> WorkspaceManifest {
@@ -220,6 +229,7 @@ async fn repository_round_trips_run_workspace_event_and_checkpoint() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 10,
+                invocation_id: None,
             },
         )
         .await
@@ -232,6 +242,466 @@ async fn repository_round_trips_run_workspace_event_and_checkpoint() {
         .expect("checkpoint");
     assert_eq!(checkpoint.files[0].bytes, 5);
 
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn list_runs_reads_index_sorted_and_cursor_paginated() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let mut oldest = sample_run_with_id("run_page_oldest");
+    let mut tied_a = sample_run_with_id("run_page_a");
+    let mut tied_b = sample_run_with_id("run_page_b");
+    let mut newest = sample_run_with_id("run_page_newest");
+
+    oldest.created_at = instant("2026-01-01T00:00:00Z");
+    oldest.updated_at = oldest.created_at;
+    tied_a.created_at = instant("2026-01-02T00:00:00Z");
+    tied_a.updated_at = tied_a.created_at;
+    tied_b.created_at = tied_a.created_at;
+    tied_b.updated_at = tied_b.created_at;
+    newest.created_at = instant("2026-01-03T00:00:00Z");
+    newest.updated_at = newest.created_at;
+
+    for run in [&oldest, &tied_a, &tied_b, &newest] {
+        repository.create_run(run).await.expect("create run");
+    }
+
+    let first_page = repository
+        .list_runs(AgentRunListQuery {
+            chat_ref: None,
+            stable_chat_id: None,
+            statuses: None,
+            before: None,
+            limit: 2,
+        })
+        .await
+        .expect("list first page");
+    assert_eq!(
+        first_page
+            .iter()
+            .map(|run| run.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run_page_newest", "run_page_b"]
+    );
+
+    let second_page = repository
+        .list_runs(AgentRunListQuery {
+            chat_ref: None,
+            stable_chat_id: None,
+            statuses: None,
+            before: Some(AgentRunListCursor {
+                created_at: tied_b.created_at,
+                run_id: tied_b.id.clone(),
+            }),
+            limit: 10,
+        })
+        .await
+        .expect("list second page");
+    assert_eq!(
+        second_page
+            .iter()
+            .map(|run| run.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run_page_a", "run_page_oldest"]
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn list_runs_filters_by_chat_stable_id_and_status() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let mut matching = sample_run_with_id("run_filter_match");
+    matching.status = AgentRunStatus::Completed;
+    matching.stable_chat_id = "stable_filter".to_string();
+    matching.profile_id = Some("writer".to_string());
+
+    let mut wrong_status = sample_run_with_id("run_filter_wrong_status");
+    wrong_status.status = AgentRunStatus::Failed;
+    wrong_status.stable_chat_id = matching.stable_chat_id.clone();
+
+    let mut wrong_chat = sample_run_with_id("run_filter_wrong_chat");
+    wrong_chat.status = AgentRunStatus::Completed;
+    wrong_chat.stable_chat_id = matching.stable_chat_id.clone();
+    wrong_chat.chat_ref = AgentChatRef::Group {
+        chat_id: "group_filter".to_string(),
+    };
+
+    for run in [&matching, &wrong_status, &wrong_chat] {
+        repository.create_run(run).await.expect("create run");
+    }
+
+    let listed = repository
+        .list_runs(AgentRunListQuery {
+            chat_ref: Some(matching.chat_ref.clone()),
+            stable_chat_id: Some(matching.stable_chat_id.clone()),
+            statuses: Some(vec![AgentRunStatus::Completed]),
+            before: None,
+            limit: 10,
+        })
+        .await
+        .expect("list filtered runs");
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, matching.id);
+    assert_eq!(listed[0].profile_id.as_deref(), Some("writer"));
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn list_runs_accepts_legacy_index_without_presentation() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_legacy_without_presentation");
+    repository.create_run(&run).await.expect("create run");
+
+    let index_path = root.join("index/runs/run_legacy_without_presentation.json");
+    let mut legacy = serde_json::to_value(&run).expect("serialize legacy run");
+    legacy
+        .as_object_mut()
+        .expect("run json object")
+        .remove("presentation");
+    FileAgentRepository::write_json_atomic(&index_path, &legacy)
+        .await
+        .expect("write legacy index");
+
+    let listed = repository
+        .list_runs(AgentRunListQuery {
+            chat_ref: None,
+            stable_chat_id: None,
+            statuses: None,
+            before: None,
+            limit: 10,
+        })
+        .await
+        .expect("list legacy run");
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, run.id);
+    assert_eq!(listed[0].presentation, AgentRunPresentation::Foreground);
+
+    let loaded = repository.load_run(&run.id).await.expect("load legacy run");
+    assert_eq!(loaded.presentation, AgentRunPresentation::Foreground);
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn list_runs_accepts_legacy_awaiting_commit_status() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let mut run = sample_run_with_id("run_legacy_awaiting_commit");
+    run.status = AgentRunStatus::AwaitingHostCommit;
+    repository.create_run(&run).await.expect("create run");
+
+    let index_path = root.join("index/runs/run_legacy_awaiting_commit.json");
+    let mut legacy = serde_json::to_value(&run).expect("serialize legacy run");
+    legacy.as_object_mut().expect("run json object").insert(
+        "status".to_string(),
+        Value::String("awaiting_commit".to_string()),
+    );
+    FileAgentRepository::write_json_atomic(&index_path, &legacy)
+        .await
+        .expect("write legacy index");
+
+    let listed = repository
+        .list_runs(AgentRunListQuery {
+            chat_ref: None,
+            stable_chat_id: None,
+            statuses: None,
+            before: None,
+            limit: 10,
+        })
+        .await
+        .expect("list legacy run");
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, run.id);
+    assert_eq!(listed[0].status, AgentRunStatus::AwaitingHostCommit);
+
+    let loaded = repository.load_run(&run.id).await.expect("load legacy run");
+    assert_eq!(loaded.status, AgentRunStatus::AwaitingHostCommit);
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn list_runs_returns_empty_when_index_is_missing() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+
+    let listed = repository
+        .list_runs(AgentRunListQuery {
+            chat_ref: None,
+            stable_chat_id: None,
+            statuses: None,
+            before: None,
+            limit: 10,
+        })
+        .await
+        .expect("list empty index");
+
+    assert!(listed.is_empty());
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn run_summary_projection_round_trips_by_run_id() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_summary_projection");
+    repository.create_run(&run).await.expect("create run");
+
+    let projection = AgentRunSummaryProjection {
+        schema_version: AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION,
+        run_id: run.id.clone(),
+        source_run_updated_at: run.updated_at,
+        commit_count: 1,
+        committed_message: Some(AgentRunCommittedMessageProjection {
+            commit_id: "commit_test".to_string(),
+            message_id: "7".to_string(),
+            message_index: Some(7),
+            committed_at: instant("2026-01-04T00:00:00Z"),
+        }),
+        terminal_at: Some(instant("2026-01-04T00:01:00Z")),
+    };
+
+    assert!(
+        repository
+            .load_run_summary_projection(&run.id)
+            .await
+            .expect("load missing projection")
+            .is_none()
+    );
+    repository
+        .save_run_summary_projection(&projection)
+        .await
+        .expect("save projection");
+    let loaded = repository
+        .load_run_summary_projection(&run.id)
+        .await
+        .expect("load projection")
+        .expect("projection exists");
+
+    assert_eq!(loaded.run_id, run.id);
+    assert_eq!(loaded.commit_count, 1);
+    assert_eq!(
+        loaded
+            .committed_message
+            .as_ref()
+            .map(|message| message.message_index),
+        Some(Some(7))
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn inspect_run_storage_counts_total_and_heavy_artifacts() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_prune_stats");
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "run_completed",
+            Value::Null,
+        )
+        .await
+        .expect("append event");
+
+    let run_dir = root
+        .join("chats")
+        .join(&run.workspace_id)
+        .join("runs")
+        .join(&run.id);
+    fs::write(run_dir.join("manifest.json"), b"{}")
+        .await
+        .expect("write manifest");
+    fs::create_dir_all(run_dir.join("input"))
+        .await
+        .expect("create input");
+    fs::write(run_dir.join("input").join("prompt_snapshot.json"), b"12345")
+        .await
+        .expect("write prompt snapshot");
+    fs::create_dir_all(run_dir.join("output"))
+        .await
+        .expect("create output");
+    fs::write(run_dir.join("output").join("main.md"), b"hi")
+        .await
+        .expect("write output");
+    repository
+        .save_run_summary_projection(&AgentRunSummaryProjection {
+            schema_version: AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION,
+            run_id: run.id.clone(),
+            source_run_updated_at: run.updated_at,
+            commit_count: 0,
+            committed_message: None,
+            terminal_at: Some(run.updated_at),
+        })
+        .await
+        .expect("save summary");
+
+    let stats = repository
+        .inspect_run_storage(&run)
+        .await
+        .expect("inspect storage");
+
+    assert_eq!(stats.heavy_artifacts.file_count, 3);
+    assert_eq!(stats.heavy_artifacts.byte_count, 9);
+    assert_eq!(stats.total.file_count, 7);
+    assert!(stats.total.byte_count > stats.heavy_artifacts.byte_count);
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn slim_run_heavy_artifacts_removes_only_non_core_run_files() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_prune_slim");
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "run_completed",
+            Value::Null,
+        )
+        .await
+        .expect("append event");
+
+    let run_dir = root
+        .join("chats")
+        .join(&run.workspace_id)
+        .join("runs")
+        .join(&run.id);
+    fs::write(run_dir.join("manifest.json"), b"{}")
+        .await
+        .expect("write manifest");
+    fs::create_dir_all(run_dir.join("input"))
+        .await
+        .expect("create input");
+    fs::write(run_dir.join("input").join("prompt_snapshot.json"), b"12345")
+        .await
+        .expect("write prompt snapshot");
+    fs::create_dir_all(run_dir.join("output"))
+        .await
+        .expect("create output");
+    fs::write(run_dir.join("output").join("main.md"), b"hi")
+        .await
+        .expect("write output");
+    repository
+        .save_run_summary_projection(&AgentRunSummaryProjection {
+            schema_version: AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION,
+            run_id: run.id.clone(),
+            source_run_updated_at: run.updated_at,
+            commit_count: 0,
+            committed_message: None,
+            terminal_at: Some(run.updated_at),
+        })
+        .await
+        .expect("save summary");
+
+    let removed = repository
+        .slim_run_heavy_artifacts(&run)
+        .await
+        .expect("slim heavy artifacts");
+
+    assert_eq!(removed.file_count, 3);
+    assert_eq!(removed.byte_count, 9);
+    assert!(run_dir.join("run.json").exists());
+    assert!(run_dir.join("events.jsonl").exists());
+    assert!(root.join("index/runs/run_prune_slim.json").exists());
+    assert!(
+        root.join("index/run-summaries/run_prune_slim.json")
+            .exists()
+    );
+    assert!(!run_dir.join("manifest.json").exists());
+    assert!(!run_dir.join("input").exists());
+    assert!(!run_dir.join("output").exists());
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn delete_run_removes_workspace_index_and_summary_projection() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_prune_delete");
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .append_event(&run.id, AgentRunEventLevel::Info, "run_failed", Value::Null)
+        .await
+        .expect("append event");
+    repository
+        .save_run_summary_projection(&AgentRunSummaryProjection {
+            schema_version: AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION,
+            run_id: run.id.clone(),
+            source_run_updated_at: run.updated_at,
+            commit_count: 0,
+            committed_message: None,
+            terminal_at: Some(run.updated_at),
+        })
+        .await
+        .expect("save summary");
+
+    let run_dir = root
+        .join("chats")
+        .join(&run.workspace_id)
+        .join("runs")
+        .join(&run.id);
+    fs::create_dir_all(run_dir.join("input"))
+        .await
+        .expect("create input");
+    fs::write(
+        run_dir.join("input").join("prompt_snapshot.json"),
+        b"payload",
+    )
+    .await
+    .expect("write prompt snapshot");
+
+    let removed = repository.delete_run(&run).await.expect("delete run");
+
+    assert!(removed.file_count >= 5);
+    assert!(!run_dir.exists());
+    assert!(!root.join("index/runs/run_prune_delete.json").exists());
+    assert!(
+        !root
+            .join("index/run-summaries/run_prune_delete.json")
+            .exists()
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn list_runs_rejects_index_file_with_mismatched_run_id() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_index_real");
+    repository.create_run(&run).await.expect("create run");
+    FileAgentRepository::write_json_atomic(&root.join("index/runs/run_index_wrong.json"), &run)
+        .await
+        .expect("write mismatched index");
+
+    let error = repository
+        .list_runs(AgentRunListQuery {
+            chat_ref: None,
+            stable_chat_id: None,
+            statuses: None,
+            before: None,
+            limit: 10,
+        })
+        .await
+        .expect_err("mismatched index file must fail");
+
+    assert!(matches!(error, DomainError::InvalidData(_)));
     fs::remove_dir_all(root).await.expect("cleanup");
 }
 
@@ -477,6 +947,28 @@ async fn delete_chat_workspace_removes_runs_and_indexes() {
         .create_run(&second)
         .await
         .expect("create second run");
+    repository
+        .save_run_summary_projection(&AgentRunSummaryProjection {
+            schema_version: AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION,
+            run_id: first.id.clone(),
+            source_run_updated_at: first.updated_at,
+            commit_count: 0,
+            committed_message: None,
+            terminal_at: None,
+        })
+        .await
+        .expect("save first summary");
+    repository
+        .save_run_summary_projection(&AgentRunSummaryProjection {
+            schema_version: AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION,
+            run_id: second.id.clone(),
+            source_run_updated_at: second.updated_at,
+            commit_count: 0,
+            committed_message: None,
+            terminal_at: None,
+        })
+        .await
+        .expect("save second summary");
     fs::write(
         root.join("chats")
             .join(&first.workspace_id)
@@ -500,12 +992,14 @@ async fn delete_chat_workspace_removes_runs_and_indexes() {
     assert!(!root.join("chats").join(&first.workspace_id).exists());
     assert!(!root.join("index/runs/run_delete_a.json").exists());
     assert!(!root.join("index/runs/run_delete_b.json").exists());
+    assert!(!root.join("index/run-summaries/run_delete_a.json").exists());
+    assert!(!root.join("index/run-summaries/run_delete_b.json").exists());
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
-async fn prune_persistent_states_ignores_platform_metadata_files() {
+async fn prune_persistent_states_removes_only_unretained_candidates() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
     let states_dir = root
@@ -518,19 +1012,65 @@ async fn prune_persistent_states_ignores_platform_metadata_files() {
     fs::create_dir_all(states_dir.join("state_drop"))
         .await
         .expect("create removed state");
+    fs::create_dir_all(states_dir.join("state_orphan_not_candidate"))
+        .await
+        .expect("create non-candidate state");
     fs::write(states_dir.join(".DS_Store"), b"finder metadata")
         .await
         .expect("write platform metadata");
 
     let prune = repository
-        .prune_persistent_states("chat_prune", &["state_keep".to_string()])
+        .prune_persistent_states(
+            "chat_prune",
+            AgentPersistentStatePruneRequest {
+                retained_state_ids: vec!["state_keep".to_string()],
+                candidate_state_ids: vec![
+                    "state_keep".to_string(),
+                    "state_drop".to_string(),
+                    "state_missing".to_string(),
+                ],
+            },
+        )
         .await
         .expect("prune persistent states");
 
     assert_eq!(prune.removed_state_ids, vec!["state_drop".to_string()]);
     assert!(states_dir.join("state_keep").exists());
     assert!(!states_dir.join("state_drop").exists());
+    assert!(states_dir.join("state_orphan_not_candidate").exists());
     assert!(states_dir.join(".DS_Store").exists());
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn prune_persistent_states_rejects_candidate_file() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let states_dir = root
+        .join("chats")
+        .join("chat_prune")
+        .join("persistent-states");
+    fs::create_dir_all(&states_dir)
+        .await
+        .expect("create states dir");
+    fs::write(states_dir.join("state_file"), b"not a directory")
+        .await
+        .expect("write candidate file");
+
+    let error = repository
+        .prune_persistent_states(
+            "chat_prune",
+            AgentPersistentStatePruneRequest {
+                retained_state_ids: Vec::new(),
+                candidate_state_ids: vec!["state_file".to_string()],
+            },
+        )
+        .await
+        .expect_err("candidate file should fail");
+
+    assert!(matches!(error, DomainError::InvalidData(_)));
+    assert!(states_dir.join("state_file").exists());
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }

@@ -1,6 +1,11 @@
 // @ts-check
 
-const CHARACTER_FILE_NAME_FORBIDDEN_PATTERN = /[\/\\\u0000]/;
+import { CHARACTER_PATH_SEGMENT_FORBIDDEN_PATTERN } from './character-identity.js';
+
+export {
+    assertCharacterAvatarFileName,
+    characterStemFromAvatarFileName,
+} from './character-identity.js';
 
 /**
  * Validates an upstream character filename field without changing caller intent.
@@ -18,7 +23,7 @@ export function assertCharacterFileName(value, fieldName, { required = false } =
         return '';
     }
 
-    if (CHARACTER_FILE_NAME_FORBIDDEN_PATTERN.test(text)) {
+    if (CHARACTER_PATH_SEGMENT_FORBIDDEN_PATTERN.test(text)) {
         throw new Error(`Bad request: invalid ${fieldName}`);
     }
 

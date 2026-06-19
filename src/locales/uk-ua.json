@@ -1,4 +1,12 @@
 {
+    "Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.": "Приховує повідомлення чату з промпту. Використовуйте <code>all</code>, щоб приховати весь чат, або <code>before</code>, щоб приховати лише повідомлення до завантаженого вікна.",
+    "Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.": "Повертає повідомлення до промпту. Використовуйте <code>all</code>, щоб показати весь чат, або <code>before</code>, щоб показати лише повідомлення до завантаженого вікна.",
+    "message index (starts with 0) or range, or \"all\" / \"before\" (messages before the loaded window), defaults to the last message index if not provided": "індекс повідомлення (починається з 0) або діапазон, чи \"all\" / \"before\" (повідомлення до завантаженого вікна); за замовчуванням — індекс останнього повідомлення",
+    "every message in the chat, including unloaded ones": "усі повідомлення чату, включно з незавантаженими",
+    "only unloaded messages before the current window": "лише незавантажені повідомлення до поточного вікна",
+    "All messages are already loaded. Use /hide with a message range instead.": "Усі повідомлення вже завантажено. Використовуйте /hide з діапазоном повідомлень.",
+    "There are no unloaded messages before the current window.": "Перед поточним вікном немає незавантажених повідомлень.",
+    "Failed to update messages before the loaded window. Reload the chat and try again.": "Не вдалося оновити повідомлення до завантаженого вікна. Перезавантажте чат і спробуйте ще раз.",
     "Favorite": "улюблений",
     "Tag": "Тег",
     "Duplicate": "дублікат",

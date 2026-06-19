@@ -62,17 +62,31 @@ pub trait GroupChatRepository: Send + Sync {
         cursor: ChatPayloadCursor,
         header: String,
         lines: Vec<String>,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError>;
 
     /// Patch a windowed group chat payload by applying an operation at the tail.
+    /// `expected_window_line_count` is the window baseline contract: how many message
+    /// lines the caller's last successful load/save left between cursor.offset and EOF.
     async fn patch_group_chat_payload_windowed(
         &self,
         chat_id: &str,
         cursor: ChatPayloadCursor,
         header: String,
         op: ChatPayloadPatchOp,
+        expected_window_line_count: usize,
         force: bool,
+    ) -> Result<ChatPayloadCursor, DomainError>;
+
+    /// Set the hidden flag (`is_system`) on all messages stored before the window cursor.
+    async fn hide_group_chat_payload_before_cursor(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        hide: bool,
+        name_filter: Option<String>,
+        expected_window_line_count: usize,
     ) -> Result<ChatPayloadCursor, DomainError>;
 
     /// Save raw JSONL bytes for a group chat payload from an existing file path.

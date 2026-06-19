@@ -10,7 +10,6 @@ const CONTROLLER_KEY = '__TAURITAVERN_MOBILE_OVERLAY_COMPAT__';
 
 const SURFACE_SETTLE_FRAMES = 2;
 const SURFACE_ATTRIBUTE_FILTER = ['class', 'style', 'hidden', 'open', 'aria-hidden'];
-const FREE_WINDOW_SURFACE = 'free-window';
 const INLINE_SURFACE_LIFECYCLE_STYLE_PROPERTIES = [
     'display',
     'visibility',
@@ -162,17 +161,16 @@ export function installMobileOverlayCompatController() {
     };
 
     const shouldRevalidateStyleMutation = (element) => {
-        const currentSurface = String(element.getAttribute(SURFACE_ATTR) || '').trim();
         const wasSettling = (surfaceSettleRemaining.get(element) ?? 0) > 0;
         const previousSignature = inlineSurfaceLifecycleStyleSignatures.get(element);
         const nextSignature = readInlineSurfaceLifecycleStyleSignature(element);
         inlineSurfaceLifecycleStyleSignatures.set(element, nextSignature);
 
-        if (currentSurface !== FREE_WINDOW_SURFACE || wasSettling) {
+        if (wasSettling) {
             return true;
         }
 
-        // Stable free-window surfaces are user-positioned; only lifecycle style changes re-enter classification.
+        // Stable surfaces are already admitted; host contract vars and geometry-only writes must not re-enter classification.
         return previousSignature !== nextSignature;
     };
 

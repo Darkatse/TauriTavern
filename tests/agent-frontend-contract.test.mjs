@@ -15,6 +15,10 @@ async function importFresh(relativePath) {
 async function createAgentPanelHarness() {
     const { createAgentSystemPanelRoot } = await importFresh('src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js');
     const options = createAgentSystemPanelRoot({ requestClose() {} });
+    return createComponentHarness(options);
+}
+
+function createComponentHarness(options) {
     const vm = options.data();
     for (const [name, method] of Object.entries(options.methods || {})) {
         vm[name] = method.bind(vm);
@@ -29,6 +33,14 @@ async function createAgentPanelHarness() {
     vm.$el = { querySelector: () => null };
     vm.$nextTick = (callback) => callback();
     return vm;
+}
+
+function sourceBetween(source, startNeedle, endNeedle) {
+    const start = source.indexOf(startNeedle);
+    assert.notEqual(start, -1, `Missing source marker: ${startNeedle}`);
+    const end = source.indexOf(endNeedle, start + startNeedle.length);
+    assert.notEqual(end, -1, `Missing source marker: ${endNeedle}`);
+    return source.slice(start, end);
 }
 
 function ensureCustomEvent() {
@@ -50,6 +62,10 @@ function installWindow(api) {
     window.__TAURITAVERN__ = { api };
     globalThis.window = window;
     return window;
+}
+
+function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
 }
 
 function installRollbackEventCapture(script, updates = []) {
@@ -89,6 +105,7 @@ test('Agent System settings use the extension store and publish changes', async 
     const loaded = await settings.loadAgentSystemSettings();
     assert.deepEqual(loaded, {
         agentModeEnabled: false,
+        chatInputToggleHidden: false,
         activeProfileId: 'default-writer',
         editingProfileId: 'default-writer',
         activeTab: 'profiles',
@@ -102,6 +119,7 @@ test('Agent System settings use the extension store and publish changes', async 
     };
     assert.deepEqual(await settings.loadAgentSystemSettings(), {
         agentModeEnabled: true,
+        chatInputToggleHidden: false,
         activeProfileId: 'legacy-writer',
         editingProfileId: 'legacy-writer',
         activeTab: 'profiles',
@@ -114,6 +132,7 @@ test('Agent System settings use the extension store and publish changes', async 
     });
     const saved = await settings.saveAgentSystemSettings({
         agentModeEnabled: true,
+        chatInputToggleHidden: true,
         activeProfileId: 'writer',
         editingProfileId: 'editor',
     });
@@ -121,12 +140,57 @@ test('Agent System settings use the extension store and publish changes', async 
 
     assert.deepEqual(saved, {
         agentModeEnabled: true,
+        chatInputToggleHidden: true,
         activeProfileId: 'writer',
         editingProfileId: 'editor',
         activeTab: 'profiles',
         runTimelineHeightPx: null,
     });
     assert.deepEqual(emitted, saved);
+});
+
+test('Agent System entry keeps quick toggles before profile and panel entry', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/index.js',
+    ), 'utf8');
+
+    const agentModeIndex = source.indexOf('@click="toggleAgentMode"');
+    const inputToggleIndex = source.indexOf('@click="toggleChatInputToggleVisibility"');
+    const activeProfileIndex = source.indexOf('ttas-entry-active-profile');
+    const openPanelIndex = source.indexOf('@click="openPanel"');
+
+    assert.notEqual(agentModeIndex, -1);
+    assert.notEqual(inputToggleIndex, -1);
+    assert.notEqual(activeProfileIndex, -1);
+    assert.notEqual(openPanelIndex, -1);
+    assert.ok(agentModeIndex < inputToggleIndex);
+    assert.ok(inputToggleIndex < activeProfileIndex);
+    assert.ok(activeProfileIndex < openPanelIndex);
+});
+
+test('Agent System panel exposes read-only run history as the second tab', async () => {
+    const { createAgentSystemPanelRoot } = await importFresh('src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js');
+    const options = createAgentSystemPanelRoot({ requestClose() {} });
+    const vm = options.data();
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js',
+    ), 'utf8');
+
+    assert.deepEqual(vm.tabs.map(tab => tab.id), ['profiles', 'runs']);
+    assert.match(panelSource, /import \{ RunHistoryPanel \}/);
+    assert.match(panelSource, /activeTab === 'runs'/);
+    assert.match(panelSource, /<RunHistoryPanel \/>/);
+});
+
+test('Agent input toggle visibility follows the drawer preference', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/chat-input-toggle.js',
+    ), 'utf8');
+
+    assert.match(source, /Boolean\(settings\?\.chatInputToggleHidden\)/);
 });
 
 test('Agent run timeline resize geometry is deterministic', async () => {
@@ -167,6 +231,130 @@ test('Agent run timeline event store keeps ordered history without tail truncati
     assert.throws(() => store.add({ seq: 0, runId: 'run-1' }), /positive integer/);
 });
 
+test('Agent run timeline session keeps paging and invocation scope explicit', async () => {
+    const sessionModule = await importFresh('src/scripts/extensions/agent-system/src/run-timeline-session.js');
+    const projection = {
+        foregroundInvocationIds: ['inv_root'],
+        invocations: [],
+        delegationEdges: [],
+    };
+    const calls = [];
+    const session = sessionModule.createRunTimelineSession({
+        runId: 'run-1',
+        includeTimelineProjection: true,
+    });
+
+    await session.loadInitial(async (input) => {
+        calls.push(input);
+        return {
+            events: [
+                { seq: 3, id: 'evt-3', runId: 'run-1', type: 'tool_call_completed', payload: {} },
+                { seq: 4, id: 'evt-4', runId: 'run-1', type: 'run_completed', payload: {} },
+            ],
+            timelineProjection: projection,
+        };
+    });
+
+    assert.equal(session.events.length, 2);
+    assert.equal(session.terminalEvent.type, 'run_completed');
+    assert.equal(calls[0].runId, 'run-1');
+    assert.equal(calls[0].beforeSeq, Number.MAX_SAFE_INTEGER);
+    assert.equal(calls[0].limit, 240);
+    assert.equal(calls[0].includeTimelineProjection, true);
+    assert.equal(Object.hasOwn(calls[0], 'invocationId'), false);
+
+    session.hasMoreBefore = true;
+    await session.loadOlder(async (input) => {
+        calls.push(input);
+        return {
+            events: [
+                { seq: 1, id: 'evt-1', runId: 'run-1', type: 'run_created', payload: {} },
+                { seq: 2, id: 'evt-2', runId: 'run-1', type: 'model_completed', payload: {} },
+            ],
+            timelineProjection: projection,
+        };
+    });
+
+    assert.equal(calls[1].beforeSeq, 3);
+    assert.deepEqual(session.events.map(event => event.seq), [1, 2, 3, 4]);
+
+    const childSession = sessionModule.createRunTimelineSession({
+        runId: 'run-1',
+        invocationId: 'inv-child',
+    });
+    await childSession.loadInitial(async (input) => {
+        calls.push(input);
+        return {
+            events: [
+                {
+                    seq: 5,
+                    id: 'evt-child',
+                    runId: 'run-1',
+                    type: 'tool_call_completed',
+                    payload: { invocationId: 'inv-child' },
+                },
+            ],
+        };
+    });
+
+    assert.equal(calls[2].invocationId, 'inv-child');
+    assert.equal(Object.hasOwn(calls[2], 'includeTimelineProjection'), false);
+    assert.equal(childSession.receiveEvent({
+        seq: 6,
+        id: 'evt-root',
+        runId: 'run-1',
+        type: 'tool_call_completed',
+        payload: { invocationId: 'inv_root' },
+    }), false);
+});
+
+test('Agent run timeline detail state ignores stale async loads', async () => {
+    const { createTimelineDetailState } = await importFresh(
+        'src/scripts/extensions/agent-system/src/run-timeline-detail-state.js',
+    );
+    const pending = [];
+    const state = createTimelineDetailState({
+        readSections(input) {
+            return new Promise((resolve) => {
+                pending.push({ input, resolve });
+            });
+        },
+    });
+
+    const firstLoad = state.load({
+        runId: 'run-1',
+        targets: [{ type: 'file', path: 'first.txt' }],
+        readOnly: false,
+    });
+    const secondLoad = state.load({
+        runId: 'run-1',
+        targets: [{ type: 'file', path: 'second.txt' }],
+        readOnly: true,
+    });
+
+    assert.equal(pending.length, 2);
+    assert.equal(pending[0].input.readOnly, false);
+    assert.equal(pending[1].input.readOnly, true);
+
+    pending[1].resolve([{ labelKey: 'second' }]);
+    assert.equal(await secondLoad, true);
+    assert.deepEqual(state.sections, [{ labelKey: 'second' }]);
+    assert.equal(state.loading, false);
+
+    pending[0].resolve([{ labelKey: 'first' }]);
+    assert.equal(await firstLoad, false);
+    assert.deepEqual(state.sections, [{ labelKey: 'second' }]);
+
+    state.reset();
+    assert.equal(state.loading, false);
+    assert.equal(state.error, '');
+    assert.deepEqual(state.sections, []);
+    assert.throws(
+        () => createTimelineDetailState({ readSections: null }),
+        /readSections dependency must be a function/,
+    );
+});
+
 test('Agent run timeline virtualizer windows DOM items without dropping timeline entries', async () => {
     const virtualList = await importFresh('src/scripts/extensions/agent-system/src/run-timeline-virtual-list.js');
     const items = Array.from({ length: 120 }, (_, index) => ({ id: `item-${index + 1}` }));
@@ -204,6 +392,34 @@ test('Agent run timeline virtualizer windows DOM items without dropping timeline
     assert.equal(clampedWindow.bottomPadding, 0);
 });
 
+test('Agent run timeline virtualizer accounts for expanded row spans', async () => {
+    const virtualList = await importFresh('src/scripts/extensions/agent-system/src/run-timeline-virtual-list.js');
+    const items = [
+        { id: 'item-1' },
+        { id: 'item-2', rowSpan: 2 },
+        { id: 'item-3' },
+        { id: 'item-4' },
+    ];
+
+    assert.equal(virtualList.timelineItemRowSpan(items[0]), 1);
+    assert.equal(virtualList.timelineItemRowSpan(items[1]), 2);
+    assert.equal(virtualList.timelineItemHeightPx(items[1], 58), 116);
+
+    const window = virtualList.virtualizeTimelineItems(items, 58, 116, {
+        rowHeight: 58,
+        overscan: 0,
+    });
+    assert.deepEqual(window.items.map(item => item.id), ['item-2', 'item-3']);
+    assert.equal(window.topPadding, 58);
+    assert.equal(window.bottomPadding, 58);
+    assert.equal(window.totalHeight, 290);
+
+    assert.throws(
+        () => virtualList.virtualizeTimelineItems([{ id: 'bad', rowSpan: 0 }], 0, 58),
+        /rowSpan must be a positive integer/,
+    );
+});
+
 test('Agent run timeline panel does not cap visible history with tail-only slices', async () => {
     const source = await readFile(path.join(
         REPO_ROOT,
@@ -216,9 +432,629 @@ test('Agent run timeline panel does not cap visible history with tail-only slice
     assert.match(source, /virtualDisplayItems/);
 });
 
+test('Agent run timeline view switching is not driven by horizontal scroll state', async () => {
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-panel.js',
+    ), 'utf8');
+    const styleSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/style.css',
+    ), 'utf8');
+
+    assert.doesNotMatch(panelSource, /onPagesScroll/);
+    assert.doesNotMatch(panelSource, /scrollLeft/);
+    assert.doesNotMatch(panelSource, /scrollTo\(\{\s*left:/);
+    assert.doesNotMatch(panelSource, /@scroll\.passive="onPagesScroll"/);
+    assert.match(panelSource, /v-show="!detailsOpen"/);
+    assert.match(panelSource, /v-if="detailsOpen"/);
+    assert.match(panelSource, /run-timeline-view-gesture\.js/);
+    assert.match(panelSource, /@pointerdown\.passive="startViewGesture"/);
+    assert.match(panelSource, /@pointermove\.passive="trackViewGesture"/);
+    assert.match(panelSource, /@pointerup\.passive="finishViewGesture"/);
+    assert.match(panelSource, /@pointercancel\.passive="cancelViewGesture"/);
+
+    const showTimelineSource = sourceBetween(
+        panelSource,
+        'showTimeline() {',
+        'startViewGesture(event) {',
+    );
+    const startGestureSource = sourceBetween(
+        panelSource,
+        'startViewGesture(event) {',
+        'trackViewGesture(event) {',
+    );
+    const trackGestureSource = sourceBetween(
+        panelSource,
+        'trackViewGesture(event) {',
+        'finishViewGesture(event) {',
+    );
+    const finishGestureSource = sourceBetween(
+        panelSource,
+        'finishViewGesture(event) {',
+        'cancelViewGesture(event = null) {',
+    );
+    const measureTimelineSource = sourceBetween(
+        panelSource,
+        'measureTimelineViewport() {',
+        'stickTimelineToBottom() {',
+    );
+    const stickToBottomSource = sourceBetween(
+        panelSource,
+        'stickToBottomIfNeeded() {',
+        'async loadDetails() {',
+    );
+    assert.match(showTimelineSource, /this\.detailsOpen = false;\s*this\.detail\.reset\(\);/);
+    assert.doesNotMatch(startGestureSource, /preventDefault/);
+    assert.doesNotMatch(trackGestureSource, /preventDefault/);
+    assert.doesNotMatch(finishGestureSource, /preventDefault/);
+    assert.match(finishGestureSource, /this\.openDetails\(\);/);
+    assert.match(finishGestureSource, /this\.showTimeline\(\);/);
+    assert.match(measureTimelineSource, /if \(this\.collapsed \|\| this\.detailsOpen\) \{\s*return;\s*\}/);
+    assert.match(stickToBottomSource, /if \(!this\.autoStick \|\| this\.collapsed \|\| this\.detailsOpen\) \{\s*return;\s*\}/);
+
+    assert.doesNotMatch(styleSource, /\.ttas-run-pages/);
+    assert.doesNotMatch(styleSource, /scroll-snap-type/);
+    assert.doesNotMatch(styleSource, /scroll-snap-align/);
+    assert.match(styleSource, /touch-action:\s*pan-y pinch-zoom;/);
+    assert.match(styleSource, /\.ttas-run-view/);
+});
+
+test('Agent run timeline mobile view gesture commits only conservative touch intent', async () => {
+    const gesture = await importFresh(
+        'src/scripts/extensions/agent-system/src/run-timeline-view-gesture.js',
+    );
+    const target = { closest: () => null };
+    const textTarget = { parentElement: target };
+    const detailActionTarget = {
+        closest(selector) {
+            return selector.includes('.ttas-run-detail-actions') ? {} : null;
+        },
+    };
+    const touch = (clientX, clientY, overrides = {}) => ({
+        pointerId: 7,
+        pointerType: 'touch',
+        isPrimary: true,
+        clientX,
+        clientY,
+        ...overrides,
+    });
+
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20),
+        target,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), true);
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20),
+        target: textTarget,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), true);
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20, { pointerType: 'mouse' }),
+        target,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), false);
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20, { isPrimary: false }),
+        target,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), false);
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20),
+        target,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: false,
+        selectedHasDetails: false,
+    }), false);
+    assert.equal(gesture.canStartRunTimelineViewGesture({
+        event: touch(200, 20),
+        target: detailActionTarget,
+        collapsed: false,
+        resizing: false,
+        detailsOpen: true,
+        selectedHasDetails: false,
+    }), false);
+
+    const timelineSwipe = gesture.createRunTimelineViewGesture(touch(220, 30), false);
+    assert.equal(gesture.resolveRunTimelineViewGesture(timelineSwipe, touch(150, 34), {
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), gesture.RUN_TIMELINE_VIEW_GESTURE_ACTION_DETAILS);
+    assert.equal(gesture.resolveRunTimelineViewGesture(timelineSwipe, touch(150, 34), {
+        detailsOpen: false,
+        selectedHasDetails: false,
+    }), null);
+    assert.equal(gesture.resolveRunTimelineViewGesture(timelineSwipe, touch(170, 88), {
+        detailsOpen: false,
+        selectedHasDetails: true,
+    }), null);
+    assert.equal(gesture.resolveRunTimelineViewGesture(timelineSwipe, touch(150, 34), {
+        detailsOpen: true,
+        selectedHasDetails: true,
+    }), null);
+
+    const detailSwipe = gesture.createRunTimelineViewGesture(touch(80, 30), true);
+    assert.equal(gesture.resolveRunTimelineViewGesture(detailSwipe, touch(154, 33), {
+        detailsOpen: true,
+        selectedHasDetails: false,
+    }), gesture.RUN_TIMELINE_VIEW_GESTURE_ACTION_TIMELINE);
+    assert.equal(gesture.resolveRunTimelineViewGesture(detailSwipe, touch(8, 33), {
+        detailsOpen: true,
+        selectedHasDetails: false,
+    }), null);
+    assert.equal(gesture.shouldCancelRunTimelineViewGesture(detailSwipe, touch(84, 72)), true);
+    assert.equal(gesture.shouldCancelRunTimelineViewGesture(detailSwipe, touch(150, 60)), false);
+});
+
+test('Agent run timeline refresh predicates use narrated model turns explicitly', async () => {
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-panel.js',
+    ), 'utf8');
+    const dialogSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/subagent-timeline-dialog.js',
+    ), 'utf8');
+
+    assert.match(panelSource, /hasModelTurnNarration/);
+    assert.match(dialogSource, /hasModelTurnNarration/);
+    assert.doesNotMatch(dialogSource, /event\.type === 'model_completed'/);
+});
+
+test('Agent run timeline displays user guidance events with inline detail targets', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const detailFormat = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
+    const events = [
+        {
+            seq: 1,
+            id: 'evt-guidance-submitted',
+            runId: 'run-1',
+            type: 'user_guidance_submitted',
+            payload: {
+                guidanceId: 'guidance_1',
+                clientGuidanceId: 'client_1',
+                invocationId: 'inv_root',
+                status: 'queued',
+                text: 'Keep the next step focused on the revised ending.',
+                preview: 'Keep the next step focused on the revised ending.',
+                chars: 52,
+                words: 9,
+            },
+        },
+        {
+            seq: 2,
+            id: 'evt-guidance-applied',
+            runId: 'run-1',
+            type: 'user_guidance_applied',
+            payload: {
+                guidanceIds: ['guidance_1'],
+                clientGuidanceIds: ['client_1'],
+                invocationId: 'inv_root',
+                round: 2,
+                count: 1,
+                status: 'applied',
+                preview: 'Keep the next step focused on the revised ending.',
+                chars: 52,
+                words: 9,
+            },
+        },
+        {
+            seq: 3,
+            id: 'evt-guidance-discarded',
+            runId: 'run-1',
+            type: 'user_guidance_discarded',
+            payload: {
+                guidanceIds: ['guidance_2'],
+                clientGuidanceIds: [],
+                invocationId: 'inv_root',
+                count: 1,
+                status: 'discarded',
+                reason: 'run_cancelled',
+                preview: 'Ignore the previous outline.',
+                chars: 28,
+                words: 4,
+            },
+        },
+    ];
+
+    const items = presenter.timelineItemsFromEvents(events);
+    assert.deepEqual(items.map(item => item.type), [
+        'user_guidance_submitted',
+        'user_guidance_applied',
+        'user_guidance_discarded',
+    ]);
+    assert.deepEqual(items.map(item => item.kind), ['guidance', 'guidance', 'guidance']);
+    assert.deepEqual(items.map(item => item.titleKey), [
+        'timelineEventGuidanceSubmitted',
+        'timelineEventGuidanceApplied',
+        'timelineEventGuidanceDiscarded',
+    ]);
+    assert.equal(items[0].summary, 'Keep the next step focused on the revised ending.');
+    assert.equal(items[1].titleParams.count, 1);
+    assert.equal(items[2].summary, 'run_cancelled | Ignore the previous outline.');
+
+    const targets = presenter.buildEventDetailTargets(items[0], events);
+    assert.equal(targets.length, 1);
+    assert.equal(targets[0].type, 'guidance');
+    assert.deepEqual(targets[0].guidanceIds, ['guidance_1']);
+    assert.deepEqual(targets[0].clientGuidanceIds, ['client_1']);
+    assert.equal(targets[0].text, 'Keep the next step focused on the revised ending.');
+
+    const section = detailFormat.formatGuidanceDetail(targets[0]);
+    assert.equal(section.labelKey, 'timelineGuidance');
+    assert.equal(section.blocks[0].kind, 'user');
+    assert.equal(section.blocks[0].text, 'Keep the next step focused on the revised ending.');
+    assert.ok(section.fields.some(field => field.value === 'guidance_1'));
+});
+
+test('Agent run timeline keeps SubAgent dialog state outside the main panel', async () => {
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-panel.js',
+    ), 'utf8');
+    const dialogSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/subagent-timeline-dialog.js',
+    ), 'utf8');
+
+    assert.match(panelSource, /SubAgentTimelineDialog/);
+    assert.doesNotMatch(panelSource, /subAgentSession/);
+    assert.doesNotMatch(panelSource, /subAgentDetail/);
+    assert.doesNotMatch(panelSource, /loadSubAgentHistory|loadSubAgentDetails/);
+    assert.match(dialogSource, /createRunTimelineSession/);
+    assert.match(dialogSource, /createTimelineDetailState/);
+    assert.match(dialogSource, /receiveEvent/);
+});
+
+test('SubAgent timeline detail refresh ignores non-narrated model turns', async () => {
+    const { SubAgentTimelineDialog } = await importFresh('src/scripts/extensions/agent-system/src/subagent-timeline-dialog.js');
+    const vm = createComponentHarness(SubAgentTimelineDialog);
+    vm.$refs = {
+        timelineList: {
+            isNearBottom: () => false,
+            scrollToBottom() {},
+        },
+    };
+    vm.dialogOpen = true;
+    vm.runId = 'run-1';
+    vm.invocationId = 'inv-child';
+    vm.timelineSession.reset({ runId: vm.runId, invocationId: vm.invocationId });
+
+    let detailLoads = 0;
+    vm.loadDetails = () => {
+        detailLoads += 1;
+    };
+
+    vm.receiveEvent({
+        seq: 1,
+        id: 'evt-model-hidden',
+        runId: 'run-1',
+        type: 'model_completed',
+        payload: {
+            invocationId: 'inv-child',
+            round: 1,
+            hasReasoning: true,
+            reasoningChars: 24,
+        },
+    }, { skipStick: true });
+    assert.equal(detailLoads, 0);
+
+    vm.receiveEvent({
+        seq: 2,
+        id: 'evt-model-narration',
+        runId: 'run-1',
+        type: 'model_completed',
+        payload: {
+            invocationId: 'inv-child',
+            round: 2,
+            narration: {
+                source: 'assistantText',
+                text: '正在检查子任务结果。',
+                totalChars: 9,
+                totalWords: 1,
+                truncated: false,
+            },
+        },
+    }, { skipStick: true });
+    assert.equal(detailLoads, 1);
+});
+
+test('Agent run history panel uses the backend run index as its source of truth', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/RunHistoryPanel.js',
+    ), 'utf8');
+
+    assert.match(source, /listRuns/);
+    assert.match(source, /TERMINAL_RUN_STATUSES/);
+    assert.match(source, /openAgentRunTimelineDialog/);
+    assert.doesNotMatch(source, /localStorage|tryGetJson|setJson/);
+    assert.doesNotMatch(source, /findLastMessage|historyTail|historyBefore|readEvents/);
+});
+
+test('Agent run history panel preserves backend list and current chat contracts', async () => {
+    const calls = [];
+    const chatRef = {
+        kind: 'character',
+        characterId: 'Seraphina',
+        fileName: 'Seraphina.jsonl',
+    };
+    installWindow({
+        agent: {
+            async listRuns(input) {
+                calls.push(input);
+                return { runs: [], nextCursor: null };
+            },
+        },
+        chat: {
+            current: {
+                ref() {
+                    return chatRef;
+                },
+                handle() {
+                    return {
+                        async stableId() {
+                            return 'stable-current-chat';
+                        },
+                    };
+                },
+            },
+        },
+    });
+
+    const { RunHistoryPanel } = await importFresh('src/scripts/extensions/agent-system/src/RunHistoryPanel.js');
+    const currentChatVm = createComponentHarness(RunHistoryPanel);
+    currentChatVm.filter = 'current';
+    await currentChatVm.refreshRuns();
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].chatRef, chatRef);
+    assert.equal(calls[0].stableChatId, 'stable-current-chat');
+
+    installWindow({
+        agent: {
+            async listRuns() {
+                return { nextCursor: null };
+            },
+        },
+    });
+
+    const malformedVm = createComponentHarness(RunHistoryPanel);
+    await malformedVm.refreshRuns();
+
+    assert.match(malformedVm.error, /result\.runs must be an array/);
+    assert.deepEqual(malformedVm.runs, []);
+    assert.equal(malformedVm.nextCursor, null);
+});
+
+test('Agent run retention panel uses the host retention facade', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/RunRetentionPanel.js',
+    ), 'utf8');
+
+    assert.match(source, /retention\.readSettings/);
+    assert.match(source, /retention\.updateSettings/);
+    assert.match(source, /retention\.planPrune/);
+    assert.match(source, /retention\.applyPrune/);
+    assert.doesNotMatch(source, /safeInvoke|plan_agent_run_prune|apply_agent_run_prune|update_tauritavern_settings|localStorage/);
+
+    const calls = [];
+    const window = installWindow({
+        agent: {
+            retention: {
+                async readSettings() {
+                    calls.push({ method: 'readSettings' });
+                    return {
+                        autoPruneEnabled: true,
+                        keepRecentTerminalRuns: 100,
+                        keepFullRecentRuns: 20,
+                    };
+                },
+                async updateSettings(input) {
+                    calls.push({ method: 'updateSettings', input });
+                    return input;
+                },
+                async planPrune(input) {
+                    calls.push({ method: 'planPrune', input });
+                    return {
+                        retention: input.retention,
+                        candidates: [{
+                            runId: 'run-preview',
+                            action: 'delete_run',
+                            reason: 'outside_history_retention_window',
+                            fileCount: 1,
+                            byteCount: 5,
+                        }],
+                        blockedRuns: [],
+                        totalCandidateFileCount: 1,
+                        totalCandidateByteCount: 5,
+                    };
+                },
+                async applyPrune(input) {
+                    calls.push({ method: 'applyPrune', input });
+                    return {
+                        retention: input.retention,
+                        detailLimit: input.detailLimit,
+                        slimmedRunCount: 0,
+                        deletedRunCount: 1,
+                        failedRunCount: 0,
+                        removedFileCount: 1,
+                        removedByteCount: 5,
+                        failedDetailsTruncated: false,
+                        failedRuns: [],
+                        afterPlan: {
+                            retention: input.retention,
+                            candidates: [],
+                            blockedRuns: [],
+                            totalCandidateFileCount: 0,
+                            totalCandidateByteCount: 0,
+                        },
+                    };
+                },
+            },
+        },
+    });
+    window.SillyTavern = {
+        getContext() {
+            return {
+                Popup: {
+                    show: {
+                        async confirm() {
+                            return 'affirmative';
+                        },
+                    },
+                },
+                POPUP_RESULT: {
+                    AFFIRMATIVE: 'affirmative',
+                },
+            };
+        },
+    };
+
+    const { RunRetentionPanel } = await importFresh('src/scripts/extensions/agent-system/src/RunRetentionPanel.js');
+    const vm = createComponentHarness(RunRetentionPanel);
+    await vm.loadRetentionSettings();
+    vm.setDraftChecked('autoPruneEnabled', { target: { checked: false } });
+    vm.setDraftValue('keepRecentTerminalRuns', { target: { value: '80' } });
+    await vm.saveRetentionSettings();
+    await vm.analyzePrune();
+    await vm.applyPrune();
+
+    assert.deepEqual(calls, [
+        { method: 'readSettings' },
+        {
+            method: 'updateSettings',
+            input: {
+                autoPruneEnabled: false,
+                keepRecentTerminalRuns: 80,
+                keepFullRecentRuns: 20,
+            },
+        },
+        {
+            method: 'planPrune',
+            input: {
+                retention: {
+                    autoPruneEnabled: false,
+                    keepRecentTerminalRuns: 80,
+                    keepFullRecentRuns: 20,
+                },
+                detailLimit: 8,
+            },
+        },
+        {
+            method: 'applyPrune',
+            input: {
+                retention: {
+                    autoPruneEnabled: false,
+                    keepRecentTerminalRuns: 80,
+                    keepFullRecentRuns: 20,
+                },
+                detailLimit: 8,
+            },
+        },
+    ]);
+    assert.equal(vm.error, '');
+    assert.deepEqual(vm.plan.candidates, []);
+});
+
+test('Agent run retention stats show review history as the total reviewable window', async () => {
+    const { RunRetentionPanel } = await importFresh('src/scripts/extensions/agent-system/src/RunRetentionPanel.js');
+    const vm = createComponentHarness(RunRetentionPanel);
+
+    vm.plan = {
+        fullRetainedRunCount: 240,
+        coreRetainedRunCount: 0,
+        slimCandidateCount: 0,
+        deleteCandidateCount: 0,
+        totalSlimByteCount: 0,
+        totalDeleteByteCount: 0,
+    };
+    let stats = Object.fromEntries(vm.planStats.map((stat) => [stat.key, stat]));
+    assert.equal(stats.full.value, '240');
+    assert.equal(stats.core.value, '240');
+
+    vm.plan = {
+        fullRetainedRunCount: 20,
+        coreRetainedRunCount: 220,
+        slimCandidateCount: 0,
+        deleteCandidateCount: 0,
+        totalSlimByteCount: 0,
+        totalDeleteByteCount: 0,
+    };
+    stats = Object.fromEntries(vm.planStats.map((stat) => [stat.key, stat]));
+    assert.equal(stats.full.value, '20');
+    assert.equal(stats.core.value, '240');
+});
+
+test('Embedded Agent Skill import isolates per-item preview and install failures', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/tauri/agent-skills/embedded-import.js',
+    ), 'utf8');
+
+    assert.doesNotMatch(source, /preview:\s*await skillApi\.previewImport/);
+    assert.doesNotMatch(source, /results\.push\(await skillApi\.installImport/);
+    assert.match(source, /reportEmbeddedSkillItemError\('preview', item, error\)/);
+    assert.match(source, /reportEmbeddedSkillItemError\('install', decision\.item, error\)/);
+    assert.match(source, /if \(!hadItemError\) {\s*setSkillImportReminder\(storageKey\);/);
+});
+
 test('Agent run timeline projects SubAgent tasks without flattening child events into root', async () => {
     const projector = await importFresh('src/scripts/extensions/agent-system/src/run-invocation-projector.js');
     const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const timelineProjection = {
+        foregroundInvocationIds: ['inv_root'],
+        invocations: [
+            {
+                invocationId: 'inv_root',
+                profileId: 'writer',
+                kind: 'root',
+                status: 'running',
+                exitPolicy: 'run_finish_allowed',
+                createdAt: '2026-06-07T00:00:00.000Z',
+                updatedAt: '2026-06-07T00:00:00.000Z',
+            },
+            {
+                invocationId: 'inv-child',
+                parentInvocationId: 'inv_root',
+                profileId: 'scene-critic',
+                kind: 'subagent',
+                status: 'completed',
+                exitPolicy: 'task_return_required',
+                createdAt: '2026-06-07T00:00:01.000Z',
+                updatedAt: '2026-06-07T00:00:05.000Z',
+            },
+        ],
+        delegationEdges: [
+            {
+                taskId: 'task-1',
+                sourceInvocationId: 'inv_root',
+                targetInvocationId: 'inv-child',
+                targetProfileId: 'scene-critic',
+                workspaceKey: 'scene-critic',
+                continuation: projector.RETURN_TO_PARENT_CONTINUATION,
+                status: 'completed',
+                resultRef: 'agent-results/inv-child.json',
+                createdAt: '2026-06-07T00:00:01.000Z',
+                updatedAt: '2026-06-07T00:00:05.000Z',
+            },
+        ],
+    };
     const events = [
         {
             seq: 1,
@@ -238,6 +1074,10 @@ test('Agent run timeline projects SubAgent tasks without flattening child events
                 childInvocationId: 'inv-child',
                 targetProfileId: 'scene-critic',
                 workspaceKey: 'scene-critic',
+                eventScope: {
+                    invocationId: 'inv_root',
+                    relatedInvocationIds: ['inv-child'],
+                },
             },
         },
         {
@@ -247,9 +1087,14 @@ test('Agent run timeline projects SubAgent tasks without flattening child events
             type: 'agent_task_started',
             payload: {
                 taskId: 'task-1',
+                parentInvocationId: 'inv_root',
                 childInvocationId: 'inv-child',
                 targetProfileId: 'scene-critic',
                 status: 'running',
+                eventScope: {
+                    invocationId: 'inv_root',
+                    relatedInvocationIds: ['inv-child'],
+                },
             },
         },
         {
@@ -280,30 +1125,321 @@ test('Agent run timeline projects SubAgent tasks without flattening child events
             type: 'task_return_completed',
             payload: {
                 taskId: 'task-1',
+                parentInvocationId: 'inv_root',
                 childInvocationId: 'inv-child',
                 status: 'completed',
                 resultRef: 'agent-results/inv-child.json',
                 summaryRef: 'summaries/scene-critic-result.md',
+                eventScope: {
+                    invocationId: 'inv-child',
+                    relatedInvocationIds: ['inv_root'],
+                },
             },
         },
     ];
 
-    const projection = projector.projectAgentInvocations(events);
+    const projection = projector.projectAgentInvocations(timelineProjection);
     assert.equal(projection.subAgentTasks.length, 1);
     assert.equal(projection.subAgentTasks[0].displayName, 'scene-critic');
     assert.equal(projection.subAgentTasks[0].status, 'completed');
 
-    const rootItems = presenter.timelineItemsFromEvents(events, { invocationId: projector.ROOT_INVOCATION_ID });
+    const rootItems = presenter.timelineItemsFromEvents(events, {
+        foregroundInvocationIds: projection.foregroundInvocationIds,
+        delegationEdges: timelineProjection.delegationEdges,
+    });
     assert.deepEqual(rootItems.map(item => item.type), ['agent_delegate_started']);
 
+    const childEvents = [
+        events[1],
+        events[2],
+        events[3],
+        events[4],
+        events[5],
+    ];
     const childItems = presenter.timelineItemsFromEvents(
-        projector.eventsForInvocation(events, 'inv-child'),
+        childEvents,
         { invocationId: 'inv-child' },
     );
     assert.deepEqual(childItems.map(item => item.type), [
         'agent_delegate_started',
         'agent_task_started',
         'task_return_completed',
+    ]);
+});
+
+test('Agent run timeline projects Handoff as foreground chain', async () => {
+    const projector = await importFresh('src/scripts/extensions/agent-system/src/run-invocation-projector.js');
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const timelineProjection = {
+        foregroundInvocationIds: ['inv_root', 'inv-editor'],
+        invocations: [
+            {
+                invocationId: 'inv_root',
+                profileId: 'writer',
+                kind: 'root',
+                status: 'transferred',
+                exitPolicy: 'run_finish_allowed',
+                createdAt: '2026-06-07T00:00:00.000Z',
+                updatedAt: '2026-06-07T00:00:02.000Z',
+            },
+            {
+                invocationId: 'inv-editor',
+                parentInvocationId: 'inv_root',
+                profileId: 'line-editor',
+                kind: 'handoff',
+                status: 'running',
+                exitPolicy: 'run_finish_allowed',
+                createdAt: '2026-06-07T00:00:02.000Z',
+                updatedAt: '2026-06-07T00:00:05.000Z',
+            },
+        ],
+        delegationEdges: [
+            {
+                taskId: 'handoff-1',
+                sourceInvocationId: 'inv_root',
+                targetInvocationId: 'inv-editor',
+                targetProfileId: 'line-editor',
+                workspaceKey: 'line-editor',
+                continuation: projector.TRANSFER_CONTROL_CONTINUATION,
+                status: 'completed',
+                createdAt: '2026-06-07T00:00:02.000Z',
+                updatedAt: '2026-06-07T00:00:02.000Z',
+            },
+        ],
+    };
+    const events = [
+        {
+            seq: 1,
+            id: 'evt-handoff-tool',
+            runId: 'run-1',
+            type: 'tool_call_completed',
+            payload: { invocationId: 'inv_root', callId: 'call_handoff', name: 'agent.handoff' },
+        },
+        {
+            seq: 2,
+            id: 'evt-handoff-accepted',
+            runId: 'run-1',
+            type: 'agent_handoff_accepted',
+            payload: {
+                taskId: 'handoff-1',
+                sourceInvocationId: 'inv_root',
+                newInvocationId: 'inv-editor',
+                targetProfileId: 'line-editor',
+                workspaceKey: 'line-editor',
+                eventScope: {
+                    invocationId: 'inv_root',
+                    relatedInvocationIds: ['inv-editor'],
+                },
+            },
+        },
+        {
+            seq: 3,
+            id: 'evt-editor-started',
+            runId: 'run-1',
+            type: 'agent_invocation_started',
+            payload: {
+                invocationId: 'inv-editor',
+                parentInvocationId: 'inv_root',
+                profileId: 'line-editor',
+                kind: 'handoff',
+                status: 'running',
+            },
+        },
+        {
+            seq: 4,
+            id: 'evt-editor-read',
+            runId: 'run-1',
+            type: 'tool_call_completed',
+            payload: {
+                invocationId: 'inv-editor',
+                callId: 'call-read',
+                name: 'workspace.read_file',
+                displayMetrics: { chars: 80, words: 12 },
+            },
+        },
+        {
+            seq: 5,
+            id: 'evt-editor-patch',
+            runId: 'run-1',
+            type: 'workspace_patch_applied',
+            payload: {
+                invocationId: 'inv-editor',
+                path: 'output/main.md',
+                chars: 120,
+                words: 18,
+                replacements: 1,
+            },
+        },
+        {
+            seq: 6,
+            id: 'evt-run-completed',
+            runId: 'run-1',
+            type: 'run_completed',
+            payload: {},
+        },
+    ];
+
+    const projection = projector.projectAgentInvocations(timelineProjection);
+    assert.deepEqual(projection.foregroundInvocationIds, ['inv_root', 'inv-editor']);
+    assert.equal(projection.handoffTasks.length, 1);
+    assert.equal(projection.handoffTasks[0].displayName, 'line-editor');
+    assert.equal(projection.subAgentTasks.length, 0);
+
+    const mainItems = presenter.timelineItemsFromEvents(events, {
+        foregroundInvocationIds: projection.foregroundInvocationIds,
+        delegationEdges: timelineProjection.delegationEdges,
+    });
+    assert.deepEqual(mainItems.map(item => item.type), [
+        'agent_handoff_accepted',
+        'tool_call_completed',
+        'workspace_patch_applied',
+        'run_completed',
+    ]);
+    assert.equal(mainItems[0].kind, 'handoff');
+    assert.equal(mainItems[0].titleKey, 'timelineEventHandoffAccepted');
+    assert.deepEqual(mainItems[0].titleParams, { agent: 'line-editor' });
+
+    const targets = presenter.buildEventDetailTargets(mainItems[0], events);
+    assert.deepEqual(targets, [
+        {
+            type: 'handoff',
+            labelKey: 'timelineHandoff',
+            taskId: 'handoff-1',
+            sourceInvocationId: 'inv_root',
+            newInvocationId: 'inv-editor',
+            targetProfileId: 'line-editor',
+            workspaceKey: 'line-editor',
+            status: 'accepted',
+        },
+    ]);
+});
+
+test('Agent run timeline shows Handoff invocation start when only foreground projection is available', async () => {
+    const projector = await importFresh('src/scripts/extensions/agent-system/src/run-invocation-projector.js');
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const timelineProjection = {
+        foregroundInvocationIds: ['inv_root', 'inv-editor'],
+        invocations: [
+            {
+                invocationId: 'inv_root',
+                profileId: 'writer',
+                kind: 'root',
+                status: 'transferred',
+                exitPolicy: 'run_finish_allowed',
+                createdAt: '2026-06-07T00:00:00.000Z',
+                updatedAt: '2026-06-07T00:00:09.000Z',
+            },
+            {
+                invocationId: 'inv-editor',
+                parentInvocationId: 'inv_root',
+                profileId: 'line-editor',
+                kind: 'handoff',
+                status: 'running',
+                exitPolicy: 'run_finish_allowed',
+                createdAt: '2026-06-07T00:00:10.000Z',
+                updatedAt: '2026-06-07T00:00:11.000Z',
+            },
+        ],
+        delegationEdges: [],
+    };
+    const events = [
+        {
+            seq: 10,
+            id: 'evt-editor-started',
+            runId: 'run-1',
+            type: 'agent_invocation_started',
+            payload: {
+                invocationId: 'inv-editor',
+                parentInvocationId: 'inv_root',
+                profileId: 'line-editor',
+                kind: 'handoff',
+                status: 'running',
+            },
+        },
+        {
+            seq: 11,
+            id: 'evt-editor-read',
+            runId: 'run-1',
+            type: 'tool_call_completed',
+            payload: { invocationId: 'inv-editor', callId: 'call-read', name: 'workspace.read_file' },
+        },
+    ];
+
+    const projection = projector.projectAgentInvocations(timelineProjection);
+    assert.deepEqual(projection.foregroundInvocationIds, ['inv_root', 'inv-editor']);
+    const mainItems = presenter.timelineItemsFromEvents(events, {
+        foregroundInvocationIds: projection.foregroundInvocationIds,
+    });
+    assert.deepEqual(mainItems.map(item => item.type), [
+        'agent_invocation_started',
+        'tool_call_completed',
+    ]);
+});
+
+test('Agent run timeline uses projection envelope when Handoff markers are outside the loaded page', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const events = [
+        {
+            seq: 42,
+            id: 'evt-editor-read',
+            runId: 'run-1',
+            type: 'tool_call_completed',
+            timestamp: '2026-06-07T00:00:00.000Z',
+            payload: {
+                invocationId: 'inv-editor',
+                callId: 'call-read',
+                name: 'workspace.read_file',
+            },
+        },
+        {
+            seq: 43,
+            id: 'evt-editor-patch',
+            runId: 'run-1',
+            type: 'workspace_patch_applied',
+            payload: {
+                invocationId: 'inv-editor',
+                path: 'output/main.md',
+                chars: 120,
+                words: 18,
+                replacements: 1,
+            },
+        },
+    ];
+
+    const mainItems = presenter.timelineItemsFromEvents(events, {
+        foregroundInvocationIds: ['inv_root', 'inv-editor'],
+        delegationEdges: [
+            {
+                taskId: 'handoff-1',
+                sourceInvocationId: 'inv_root',
+                targetInvocationId: 'inv-editor',
+                targetProfileId: 'line-editor',
+                workspaceKey: 'line-editor',
+                continuation: 'transfer_control',
+                status: 'running',
+            },
+        ],
+    });
+
+    assert.deepEqual(mainItems.map(item => item.type), [
+        'agent_handoff_boundary',
+        'tool_call_completed',
+        'workspace_patch_applied',
+    ]);
+    assert.equal(mainItems[0].kind, 'handoff');
+    assert.equal(mainItems[0].titleKey, 'timelineEventHandoffAccepted');
+    assert.deepEqual(mainItems[0].titleParams, { agent: 'line-editor' });
+    assert.deepEqual(presenter.buildEventDetailTargets(mainItems[0], events), [
+        {
+            type: 'handoff',
+            labelKey: 'timelineHandoff',
+            taskId: 'handoff-1',
+            sourceInvocationId: 'inv_root',
+            newInvocationId: 'inv-editor',
+            targetProfileId: 'line-editor',
+            workspaceKey: 'line-editor',
+            status: 'running',
+        },
     ]);
 });
 
@@ -393,6 +1529,97 @@ test('Agent generation router uses the global toggle for normal regenerate and s
         () => router.getAgentGenerationOptions({ generationType: 'normal', mainApi: 'openai', selectedGroup: 'group-1' }),
         /agent\.group_chat_unsupported/,
     );
+});
+
+test('Agent generation router refreshes Model Target LLM connection before Agent Mode options', async () => {
+    const currentTarget = {
+        schemaVersion: 1,
+        kind: 'tauritavern.modelTarget',
+        id: 'Writer Target',
+        mode: 'cc',
+        name: 'Writer model',
+        api: 'custom_claude_messages',
+        model: 'claude-3-7-sonnet',
+        'api-url': 'https://example.test/v1',
+        secretRef: {
+            key: 'api_key_custom',
+            id: 'secret-current',
+            labelSnapshot: 'Current custom key',
+        },
+    };
+    const savedConnections = [];
+    const window = installWindow({
+        extension: {
+            store: {
+                async tryGetJson() {
+                    return {
+                        found: true,
+                        value: {
+                            agentModeEnabled: true,
+                            activeProfileId: 'writer',
+                            editingProfileId: 'writer',
+                            activeTab: 'profiles',
+                            runTimelineHeightPx: null,
+                        },
+                    };
+                },
+            },
+        },
+        llmConnections: {
+            async save({ connection }) {
+                savedConnections.push(connection);
+            },
+        },
+        agent: {
+            profiles: {
+                async load({ profileId }) {
+                    assert.equal(profileId, 'writer');
+                    return {
+                        profile: {
+                            run: { directRunnable: true },
+                            model: {
+                                mode: 'connectionRef',
+                                connectionRef: 'model-target-writer-target',
+                                modelId: 'claude-3-7-sonnet',
+                            },
+                            context: {
+                                initialChatHistoryMessages: 4,
+                                includeActivatedWorldInfo: false,
+                            },
+                        },
+                    };
+                },
+                async resolveSystemPrompt({ profileId }) {
+                    assert.equal(profileId, 'writer');
+                    assert.equal(savedConnections.length, 1);
+                    return { agentSystemPrompt: 'Resolved Agent System Prompt.' };
+                },
+            },
+        },
+    });
+    window.SillyTavern = {
+        getContext: () => ({
+            extensionSettings: {
+                connectionManager: {
+                    modelTargets: [currentTarget],
+                },
+            },
+        }),
+    };
+
+    const router = await importFresh('src/scripts/tauritavern/agent/agent-generation-router.js');
+
+    const options = await router.getAgentGenerationOptions({
+        generationType: 'normal',
+        mainApi: 'openai',
+    });
+
+    assert.equal(savedConnections.length, 1);
+    assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
+    assert.deepEqual(options.agentContextPolicy, {
+        initialChatHistoryMessages: 4,
+        includeActivatedWorldInfo: false,
+    });
 });
 
 test('Agent generation router rejects non-direct callable profiles before direct generation', async () => {
@@ -654,6 +1881,129 @@ test('Agent System confirmations use SillyTavern Popup instead of window.confirm
     assert.deepEqual(calls, [{ header: null, message: 'Delete Skill "test-skill"?' }]);
 });
 
+test('Agent System repairs profile list file issues without blocking profile list refresh', async () => {
+    const lists = [
+        {
+            profiles: [
+                { id: 'default-writer', displayName: 'Default Writer', directRunnable: true },
+            ],
+            issues: [
+                {
+                    profileId: 'broken-json',
+                    kind: 'invalidJson',
+                    recommendedAction: 'delete',
+                    message: 'Invalid JSON',
+                },
+                {
+                    profileId: 'bad-schema',
+                    kind: 'invalidFileIdentity',
+                    recommendedAction: 'normalizeIdentity',
+                    message: 'Invalid profile kind',
+                },
+            ],
+        },
+        {
+            profiles: [
+                { id: 'default-writer', displayName: 'Default Writer', directRunnable: true },
+                { id: 'bad-schema', displayName: 'bad-schema', directRunnable: true },
+            ],
+            issues: [],
+        },
+    ];
+    const repairs = [];
+    const confirmations = [];
+    installWindow({
+        agent: {
+            profiles: {
+                async list() {
+                    return lists.shift();
+                },
+                async repairFile(input) {
+                    repairs.push(input);
+                },
+            },
+        },
+    });
+    globalThis.window.SillyTavern = {
+        getContext() {
+            return {
+                POPUP_RESULT: { AFFIRMATIVE: 1 },
+                Popup: {
+                    show: {
+                        async confirm(header, message) {
+                            confirmations.push({ header, message });
+                            return 1;
+                        },
+                    },
+                },
+            };
+        },
+    };
+    const vm = await createAgentPanelHarness();
+    const warnings = [];
+    vm.warn = (message) => warnings.push(message);
+
+    await vm.refreshProfiles();
+
+    assert.deepEqual(repairs, [
+        { profileId: 'broken-json', action: 'delete' },
+        { profileId: 'bad-schema', action: 'normalizeIdentity' },
+    ]);
+    assert.equal(confirmations.length, 1);
+    assert.match(confirmations[0].message, /broken-json/);
+    assert.match(confirmations[0].message, /Invalid JSON/);
+    assert.deepEqual(
+        vm.profiles.map((profile) => profile.id),
+        ['default-writer', 'bad-schema'],
+    );
+    assert.deepEqual(warnings, [
+        'Deleted corrupt Agent profile file: broken-json',
+        'Repaired Agent profile file identity: bad-schema',
+    ]);
+});
+
+test('Agent System leaves invalid profile body for manual repair without blocking healthy profiles', async () => {
+    let repairCalled = false;
+    installWindow({
+        agent: {
+            profiles: {
+                async list() {
+                    return {
+                        profiles: [
+                            { id: 'default-writer', displayName: 'Default Writer', directRunnable: true },
+                        ],
+                        issues: [
+                            {
+                                profileId: 'bad-schema',
+                                kind: 'invalidProfile',
+                                message: 'Invalid profile body',
+                            },
+                        ],
+                    };
+                },
+                async repairFile() {
+                    repairCalled = true;
+                    throw new Error('cannot repair without replacing profile content');
+                },
+            },
+        },
+    });
+    const vm = await createAgentPanelHarness();
+    const errors = [];
+    const warnings = [];
+    vm.reportError = (error) => errors.push(String(error?.message || error));
+    vm.warn = (message) => warnings.push(message);
+
+    await vm.refreshProfiles();
+
+    assert.equal(repairCalled, false);
+    assert.deepEqual(vm.profiles.map((profile) => profile.id), ['default-writer']);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(warnings, [
+        'Agent profile file needs manual repair: bad-schema. Invalid profile body',
+    ]);
+});
+
 test('Agent System CSS does not globally override upstream utility classes', async () => {
     const css = await readFile(path.join(
         REPO_ROOT,
@@ -718,21 +2068,62 @@ test('Agent profile save normalization keeps delegation tools contract-shaped', 
     } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
 
     const draft = profileForEdit(defaultProfile('delegate-writer'));
+    assert.equal(draft.delegation.resultBudgetTokens, 8000);
+    assert.equal(draft.delegation.maxHandoffDepth, 8);
     draft.delegation.canDelegate = true;
+    draft.delegation.canHandoff = true;
     draft.tools.allow.push('task.return');
 
     const saved = normalizeProfileForSave(draft);
     assert.equal(saved.delegation.canDelegate, true);
+    assert.equal(saved.delegation.canHandoff, true);
     assert(saved.tools.allow.includes('agent.list'));
     assert(saved.tools.allow.includes('agent.delegate'));
     assert(saved.tools.allow.includes('agent.await'));
+    assert(saved.tools.allow.includes('agent.handoff'));
     assert(!saved.tools.allow.includes('task.return'));
 
     saved.delegation.canDelegate = false;
-    const disabled = normalizeProfileForSave(profileForEdit(saved));
+    const handoffOnly = normalizeProfileForSave(profileForEdit(saved));
+    assert(handoffOnly.tools.allow.includes('agent.list'));
+    assert(handoffOnly.tools.allow.includes('agent.handoff'));
+    assert(!handoffOnly.tools.allow.includes('agent.delegate'));
+    assert(!handoffOnly.tools.allow.includes('agent.await'));
+
+    handoffOnly.delegation.canHandoff = false;
+    const disabled = normalizeProfileForSave(profileForEdit(handoffOnly));
     assert(!disabled.tools.allow.includes('agent.list'));
     assert(!disabled.tools.allow.includes('agent.delegate'));
     assert(!disabled.tools.allow.includes('agent.await'));
+    assert(!disabled.tools.allow.includes('agent.handoff'));
+});
+
+test('Agent profile delegation tool allow-list normalizer handles subagent and handoff modes', async () => {
+    const {
+        normalizeDelegationToolAllowList,
+    } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
+    const toolOrder = ['agent.list', 'agent.delegate', 'agent.await', 'agent.handoff', 'workspace.write_file'];
+
+    assert.deepEqual(
+        normalizeDelegationToolAllowList(['workspace.write_file'], { canDelegate: true, canHandoff: false }, toolOrder),
+        ['agent.list', 'agent.delegate', 'agent.await', 'workspace.write_file'],
+    );
+    assert.deepEqual(
+        normalizeDelegationToolAllowList(['workspace.write_file'], { canDelegate: false, canHandoff: true }, toolOrder),
+        ['agent.list', 'agent.handoff', 'workspace.write_file'],
+    );
+    assert.deepEqual(
+        normalizeDelegationToolAllowList(['workspace.write_file'], { canDelegate: true, canHandoff: true }, toolOrder),
+        ['agent.list', 'agent.delegate', 'agent.await', 'agent.handoff', 'workspace.write_file'],
+    );
+    assert.deepEqual(
+        normalizeDelegationToolAllowList(
+            ['agent.list', 'agent.delegate', 'agent.await', 'agent.handoff', 'task.return', 'workspace.write_file'],
+            { canDelegate: false, canHandoff: false },
+            toolOrder,
+        ),
+        ['workspace.write_file'],
+    );
 });
 
 test('Agent profile callable SubAgent toggle owns non-direct run semantics', async () => {
@@ -761,6 +2152,64 @@ test('Agent profile callable SubAgent toggle owns non-direct run semantics', asy
     assert.equal(vm.profileEditMode, 'main');
     assert.equal(vm.draft.run.directRunnable, true);
     assert.equal(vm.draft.run.presentation, 'foreground');
+});
+
+test('Agent profile handoff target toggle keeps direct run semantics', async () => {
+    const vm = await createAgentPanelHarness();
+    vm.draft.id = 'line-editor';
+    vm.draft.run.presentation = 'foreground';
+    vm.seedMainAgentPresentation();
+
+    vm.setCallableAsHandoffTarget(true);
+
+    assert.equal(vm.draft.delegation.callable, true);
+    assert.equal(vm.draft.delegation.allowAsHandoffTarget, true);
+    assert.equal(vm.draft.run.directRunnable, true);
+    assert.equal(vm.draft.run.presentation, 'foreground');
+    assert.equal(vm.isSubAgentPresentationLocked, false);
+
+    vm.setCallableAsHandoffTarget(false);
+    assert.equal(vm.draft.delegation.callable, false);
+    assert.equal(vm.draft.delegation.allowAsHandoffTarget, false);
+    assert.equal(vm.draft.run.directRunnable, true);
+    assert.equal(vm.draft.run.presentation, 'foreground');
+});
+
+test('Agent profile cooperation summary includes handoff target from the main Agent view', async () => {
+    const vm = await createAgentPanelHarness();
+    vm.draft.id = 'summary-writer';
+
+    assert.equal(vm.delegationSummaryLabel, 'Delegation off');
+
+    vm.setCallableAsHandoffTarget(true);
+    assert.equal(vm.delegationSummaryLabel, 'Handoff target');
+
+    vm.setCanHandoff(true);
+    assert.equal(vm.delegationSummaryLabel, 'Can hand off / Handoff target');
+
+    vm.setCanDelegate(true);
+    assert.equal(vm.delegationSummaryLabel, 'Can delegate + hand off / Handoff target');
+
+    vm.setProfileEditMode('subagent');
+    assert.equal(vm.delegationSummaryLabel, 'Not callable');
+
+    vm.setCallableAsSubAgent(true);
+    assert.equal(vm.delegationSummaryLabel, 'Available as SubAgent');
+});
+
+test('Agent profile panel keeps handoff target controls in the main Agent section', async () => {
+    const panelSource = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js'), 'utf8');
+    const mainStart = panelSource.indexOf('data-ttas-profile-section="main-delegation"');
+    const subagentStart = panelSource.indexOf('data-ttas-profile-section="subagent-access"');
+    const runStart = panelSource.indexOf('data-ttas-profile-section="run"');
+
+    assert(mainStart > 0);
+    assert(subagentStart > mainStart);
+    assert(runStart > subagentStart);
+    assert.doesNotMatch(panelSource, /data-ttas-profile-section="agent-access"|id: 'agent-access'|labelKey: 'agentAccess'/);
+    assert.match(panelSource.slice(mainStart, subagentStart), /callableHandoffTargetToggle/);
+    assert.doesNotMatch(panelSource.slice(subagentStart, runStart), /callableHandoffTargetToggle/);
+    assert.match(panelSource.slice(subagentStart, runStart), /callableSubAgentToggle/);
 });
 
 test('Agent profile edit mode follows loaded profile without mutating run policy', async () => {
@@ -842,6 +2291,133 @@ test('Agent profile edit mode follows loaded profile without mutating run policy
     assert.equal(vm.draft.run.presentation, 'background');
 });
 
+test('Agent profile selection stays editable when system prompt preview fails', async () => {
+    const {
+        defaultProfile,
+    } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
+    const profile = defaultProfile('dangling-writer');
+    profile.preset = {
+        mode: 'ref',
+        ref: {
+            apiId: 'openai',
+            name: 'Missing Writer Preset',
+        },
+        required: true,
+    };
+    let settings = null;
+    installWindow({
+        extension: {
+            store: {
+                async setJson(request) {
+                    settings = request.value;
+                },
+            },
+        },
+        agent: {
+            profiles: {
+                async load({ profileId }) {
+                    assert.equal(profileId, profile.id);
+                    return { profile };
+                },
+                async diagnose({ profileId }) {
+                    assert.equal(profileId, profile.id);
+                    return {
+                        profileId,
+                        previewAvailable: true,
+                        promptAssemblyAvailable: false,
+                        directRunAvailable: false,
+                        subAgentAvailable: false,
+                        diagnostics: [{
+                            code: 'agent.profile_preset_missing',
+                            severity: 'error',
+                            path: '$.preset.ref.name',
+                            message: 'agent.profile_preset_missing: required preset is missing',
+                            resource: {
+                                kind: 'preset',
+                                apiId: 'openai',
+                                name: 'Missing Writer Preset',
+                            },
+                            blocks: ['promptAssembly', 'directRun', 'subAgent'],
+                            repairActions: ['selectPreset'],
+                        }],
+                    };
+                },
+                async resolveSystemPrompt() {
+                    throw new Error('agent.profile_preset_missing: required preset is missing');
+                },
+            },
+        },
+    });
+
+    const vm = await createAgentPanelHarness();
+    vm.presetOptions = ['Missing Writer Preset'];
+    await vm.selectProfile(profile.id);
+
+    assert.equal(vm.editingProfileId, profile.id);
+    assert.equal(vm.draft.id, profile.id);
+    assert.equal(settings.editingProfileId, profile.id);
+    assert.equal(vm.resolvedAgentSystemPrompt, '');
+    assert.equal(vm.profileHealth.promptAssemblyAvailable, false);
+    assert.match(vm.profilePreviewError, /agent\.profile_preset_missing/);
+    assert.deepEqual(vm.availablePresetOptions, ['Missing Writer Preset']);
+    assert.ok(vm.profileConfigurationWarnings.some((warning) => warning.includes('Missing Writer Preset')));
+});
+
+test('Agent profile model binding persistence uses current saved Model Target state', async () => {
+    const staleTarget = {
+        schemaVersion: 1,
+        kind: 'tauritavern.modelTarget',
+        id: 'Writer Target',
+        mode: 'cc',
+        name: 'Writer model',
+        api: 'custom_claude_messages',
+        model: 'claude-3-7-sonnet',
+        'api-url': 'https://example.test/v1',
+        secretRef: {
+            key: 'api_key_custom',
+            id: 'secret-stale',
+        },
+    };
+    const currentTarget = {
+        ...staleTarget,
+        secretRef: {
+            key: 'api_key_custom',
+            id: 'secret-current',
+        },
+    };
+    const savedConnections = [];
+    const window = installWindow({
+        llmConnections: {
+            async save({ connection }) {
+                savedConnections.push(connection);
+            },
+        },
+    });
+    window.SillyTavern = {
+        getContext: () => ({
+            extensionSettings: {
+                connectionManager: {
+                    modelTargets: [currentTarget],
+                },
+            },
+        }),
+    };
+
+    const vm = await createAgentPanelHarness();
+    vm.modelTargets = [staleTarget];
+    await vm.persistProfileModelBinding({
+        model: {
+            mode: 'connectionRef',
+            connectionRef: 'model-target-writer-target',
+            modelId: 'claude-3-7-sonnet',
+        },
+    });
+
+    assert.equal(savedConnections.length, 1);
+    assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
+    assert.equal(vm.modelTargets[0].secretRef.id, 'secret-current');
+});
+
 test('Agent profile save keeps non-direct callable profiles out of direct default selection', async () => {
     const {
         defaultProfile,
@@ -912,6 +2488,83 @@ test('Agent profile save keeps non-direct callable profiles out of direct defaul
     assert.equal(settings.editingProfileId, profile.id);
 });
 
+test('Agent profile save refuses to overwrite externally changed dirty draft', async () => {
+    const {
+        defaultProfile,
+    } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
+    const profile = defaultProfile('writer');
+    profile.preset = {
+        mode: 'ref',
+        ref: { apiId: 'openai', name: 'Old Preset' },
+        required: true,
+    };
+    let diskProfile = cloneJson(profile);
+    const saves = [];
+    installWindow({
+        extension: {
+            store: {
+                async setJson() {},
+            },
+        },
+        agent: {
+            profiles: {
+                async list() {
+                    return {
+                        profiles: [{
+                            id: diskProfile.id,
+                            displayName: diskProfile.displayName,
+                            directRunnable: true,
+                        }],
+                    };
+                },
+                async load({ profileId }) {
+                    assert.equal(profileId, profile.id);
+                    return { profile: cloneJson(diskProfile) };
+                },
+                async resolveSystemPrompt() {
+                    return { agentSystemPrompt: 'Resolved Agent system prompt.' };
+                },
+                async save({ profile }) {
+                    saves.push(profile);
+                },
+            },
+        },
+    });
+
+    const vm = await createAgentPanelHarness();
+    const warnings = [];
+    vm.warn = (message) => warnings.push(message);
+    vm.settings = {
+        agentModeEnabled: true,
+        activeProfileId: profile.id,
+        editingProfileId: profile.id,
+        activeTab: 'profiles',
+        runTimelineHeightPx: null,
+    };
+
+    await vm.selectProfile(profile.id);
+    vm.initialized = true;
+    vm.draft.displayName = 'Unsaved local edit';
+    diskProfile = cloneJson(diskProfile);
+    diskProfile.preset.ref.name = 'New Preset';
+
+    await vm.handleProfilesChanged();
+
+    assert.equal(vm.externalProfileChangePending, true);
+    assert.deepEqual(warnings, [
+        'Agent profiles changed outside this panel. Reload this profile before saving.',
+    ]);
+    await vm.handleProfilesChanged();
+    assert.deepEqual(warnings, [
+        'Agent profiles changed outside this panel. Reload this profile before saving.',
+    ]);
+    await assert.rejects(
+        () => vm.saveProfile(),
+        /Reload this profile before saving/,
+    );
+    assert.deepEqual(saves, []);
+});
+
 test('Agent System profile panel no longer owns legacy Skill management UI', async () => {
     const panelSource = await readFile(path.join(
         REPO_ROOT,
@@ -961,6 +2614,22 @@ test('Agent System profile panel does not statically bundle main app modules', a
     assert.match(modelTargetConnectionSource, /requireSillyTavernContext/);
 });
 
+test('Agent run helpers keep main runtime imports native for the extension bundle', async () => {
+    const controllerSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/tauritavern/agent/agent-run-controller.js',
+    ), 'utf8');
+    const retrySource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/tauritavern/agent/agent-run-retry.js',
+    ), 'utf8');
+
+    assert.match(controllerSource, /import\(['"]\/script\.js['"]\s*\/\*\s*webpackIgnore:\s*true\s*\*\/\)/);
+    assert.match(retrySource, /import\(['"]\/script\.js['"]\s*\/\*\s*webpackIgnore:\s*true\s*\*\/\)/);
+    assert.match(retrySource, /import\(['"]\/scripts\/group-chats\.js['"]\s*\/\*\s*webpackIgnore:\s*true\s*\*\/\)/);
+    assert.match(retrySource, /import\(['"]\/scripts\/tauritavern\/agent\/agent-generation-router\.js['"]\s*\/\*\s*webpackIgnore:\s*true\s*\*\/\)/);
+});
+
 test('Skill extension resolves active scoped sections from SillyTavern context', async () => {
     const hostWindow = installWindow({});
     hostWindow.SillyTavern = {
@@ -982,7 +2651,7 @@ test('Skill extension resolves active scoped sections from SillyTavern context',
                 characters: [
                     {
                         name: 'Aurelia',
-                        avatar: 'characters/Aurelia.png',
+                        avatar: 'Aurelia.png',
                     },
                 ],
             };
@@ -1166,7 +2835,7 @@ test('Skill extension portability sync writes character embedded Skills without 
     try {
         const character = {
             name: 'Aurelia',
-            avatar: 'characters/Aurelia.png',
+            avatar: 'Aurelia.png',
             data: {
                 extensions: {
                     tauritavern: {
@@ -1363,6 +3032,85 @@ test('Agent run controller tracks active runs until terminal events', async () =
     assert.equal(stopped, true);
     assert.equal(controller.hasActiveAgentRun(), false);
     assert.equal(stateChanges.at(-1).lastEvent.type, 'run_completed');
+});
+
+test('Agent run controller submits guidance through the active run facade', async () => {
+    let listener = null;
+    const submissions = [];
+    installWindow({
+        agent: {
+            async startRunWithPromptSnapshot(input) {
+                return { runId: 'run-guidance', input };
+            },
+            subscribe(runId, callback) {
+                assert.equal(runId, 'run-guidance');
+                listener = callback;
+                return () => {};
+            },
+            async submitGuidance(input) {
+                submissions.push(input);
+                return {
+                    runId: input.runId,
+                    guidanceId: 'guidance_1',
+                    status: 'queued',
+                    preview: input.text,
+                    chars: input.text.length,
+                    words: 1,
+                    pendingCount: 1,
+                };
+            },
+        },
+    });
+
+    const controller = await importFresh('src/scripts/tauritavern/agent/agent-run-controller.js');
+    const run = controller.startAndWaitForAgentRun({ generationType: 'normal' });
+    await Promise.resolve();
+
+    assert.equal(controller.hasActiveAgentRun(), true);
+    await controller.submitGuidanceToActiveAgentRun('Steer the next step.');
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0].runId, 'run-guidance');
+    assert.equal(submissions[0].text, 'Steer the next step.');
+    assert.match(submissions[0].clientGuidanceId, /^client_guidance_/);
+
+    listener({ type: 'run_completed', payload: {} });
+    await run;
+});
+
+test('Agent guidance composer intercepts active-run sends before busy generation gates', async () => {
+    const scriptSource = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+    const styleSource = await readFile(path.join(REPO_ROOT, 'src/style.css'), 'utf8');
+
+    const sendStart = scriptSource.indexOf('export async function sendTextareaMessage() {');
+    assert.ok(sendStart >= 0, 'sendTextareaMessage must exist');
+    const sendGateEnd = scriptSource.indexOf('hideSwipeButtons();', sendStart);
+    assert.ok(sendGateEnd > sendStart, 'sendTextareaMessage gate block must be present');
+    const sendGateSource = scriptSource.slice(sendStart, sendGateEnd);
+    const guidanceGateIndex = sendGateSource.indexOf('await maybeSubmitAgentGuidanceFromComposer()');
+    const sendPressIndex = sendGateSource.indexOf('if (is_send_press) return;');
+    assert.ok(guidanceGateIndex >= 0, 'Agent guidance gate must run from sendTextareaMessage');
+    assert.ok(sendPressIndex >= 0, 'is_send_press gate must stay explicit');
+    assert.ok(guidanceGateIndex < sendPressIndex, 'guidance must be offered before active generation blocks sends');
+
+    const clickSource = sourceBetween(
+        scriptSource,
+        'const userInputGenerateMutex = new SimpleMutex(sendTextareaMessage);',
+        '    //menu buttons setup',
+    );
+    assert.ok(clickSource.indexOf('await maybeSubmitAgentGuidanceFromComposer()') >= 0);
+    assert.ok(clickSource.indexOf('await maybeSubmitAgentGuidanceFromComposer()') < clickSource.indexOf('userInputGenerateMutex.update()'));
+    const guidanceOfferSource = sourceBetween(
+        scriptSource,
+        'function shouldOfferAgentGuidanceFromComposer() {',
+        'function syncAgentGuidanceComposerState() {',
+    );
+    assert.match(guidanceOfferSource, /hasActiveAgentRun\(\)/);
+    assert.match(guidanceOfferSource, /getAgentGuidanceComposerText\(\)/);
+    assert.doesNotMatch(guidanceOfferSource, /swipeState|isExecutingCommandsFromChatInput|regenerate/);
+    assert.match(scriptSource, /subscribeAgentRunState\(syncAgentGuidanceComposerState\)/);
+    assert.match(scriptSource, /Popup\.show\.confirm\(\s*'是否引导Agent行为？'/);
+    assert.match(styleSource, /body\[data-generating="true"\]\[data-agent-guidance-ready="true"\] #rightSendForm > #send_but\s*\{\s*display:\s*flex !important;/);
+    assert.match(styleSource, /body\[data-generating="true"\]\[data-agent-guidance-ready="true"\] #mes_stop/);
 });
 
 test('Agent run controller treats partial success as a terminal resolved run', async () => {
@@ -1591,6 +3339,7 @@ test('Agent run event presenter keeps timeline projection focused', async () => 
 test('Agent run tool labels stay user-facing in timeline projection', async () => {
     const { displayToolName } = await importFresh('src/scripts/extensions/agent-system/src/run-tool-labels.js');
 
+    assert.equal(displayToolName('agent.handoff'), 'handing off');
     assert.equal(displayToolName('skill.read'), 'reading a skill');
     assert.equal(displayToolName('workspace.write_file'), 'writing a file');
     assert.equal(displayToolName('vendor.custom_action'), 'custom action');
@@ -1737,6 +3486,7 @@ test('Agent run event presenter keeps model turns out of timeline and exposes re
     };
 
     assert.equal(presenter.isDisplayableRunEvent(modelEvent), false);
+    assert.equal(presenter.hasModelTurnNarration(modelEvent), false);
     assert.deepEqual(presenter.timelineItemsFromEvents([modelEvent]).map(item => item.type), []);
     assert.deepEqual(presenter.timelineItemsFromEvents([modelEvent], { includeModelTurns: true }).map(item => item.type), []);
 
@@ -1747,6 +3497,77 @@ test('Agent run event presenter keeps model turns out of timeline and exposes re
     assert.deepEqual(targets, [
         { type: 'modelReasoning', labelKey: 'timelineReasoning', round: 2 },
     ]);
+});
+
+test('Agent run event presenter surfaces model turn narration without displaying all model turns', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const modelEvent = {
+        seq: 4,
+        id: 'evt-model',
+        runId: 'run-1',
+        type: 'model_completed',
+        timestamp: '2026-05-04T12:00:00Z',
+        level: 'info',
+        payload: {
+            round: 2,
+            invocationId: 'inv_root',
+            modelResponsePath: 'model-responses/round-002.json',
+            toolCallCount: 1,
+            narration: {
+                source: 'assistantText',
+                text: '已经撰写完成，进行最后提交',
+                totalChars: 14,
+                totalWords: 1,
+                truncated: false,
+            },
+        },
+    };
+
+    assert.equal(presenter.isDisplayableRunEvent(modelEvent), false);
+    assert.equal(presenter.hasModelTurnNarration(modelEvent), true);
+    const items = presenter.timelineItemsFromEvents([modelEvent]);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].type, 'model_completed');
+    assert.equal(items[0].kind, 'narration');
+    assert.equal(items[0].icon, 'fa-quote-left');
+    assert.equal(items[0].titleKey, 'timelineEventNarration');
+    assert.deepEqual(items[0].titleParams, { text: '已经撰写完成，进行最后提交' });
+    assert.equal(items[0].summary, '');
+    assert.equal(items[0].rowSpan ?? 1, 1);
+
+    const targets = presenter.buildEventDetailTargets(items[0], [modelEvent]);
+    assert.deepEqual(targets, [
+        { type: 'modelNarration', labelKey: 'timelineNarration', round: 2 },
+    ]);
+});
+
+test('Agent run event presenter expands long model turn narration rows', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const modelEvent = {
+        seq: 4,
+        id: 'evt-model-long',
+        runId: 'run-1',
+        type: 'model_completed',
+        timestamp: '2026-05-04T12:00:00Z',
+        level: 'info',
+        payload: {
+            round: 2,
+            invocationId: 'inv_root',
+            toolCallCount: 1,
+            narration: {
+                source: 'assistantText',
+                text: '正在整理上下文并检查前后逻辑，随后会把修改范围收束到最小并执行最终验证。',
+                totalChars: 40,
+                totalWords: 1,
+                truncated: false,
+            },
+        },
+    };
+
+    const items = presenter.timelineItemsFromEvents([modelEvent]);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].kind, 'narration');
+    assert.equal(items[0].rowSpan, 2);
 });
 
 test('Agent run event presenter restores reasoning for collapsed side-effect events', async () => {
@@ -2041,6 +3862,54 @@ test('Agent run detail formatter renders model turn display DTO', async () => {
 
 });
 
+test('Agent run detail formatter renders model turn narration DTO', async () => {
+    const { formatModelTurnDetail } = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
+    const turn = {
+        runId: 'run-1',
+        round: 2,
+        modelResponsePath: 'model-responses/round-002.json',
+        provider: {
+            source: 'openai',
+            format: 'compatible',
+            model: 'deepseek-v4',
+        },
+        assistant: {
+            text: '已经撰写完成，进行最后提交',
+            totalChars: 14,
+            totalWords: 1,
+            truncated: false,
+        },
+        narration: {
+            source: 'assistantText',
+            text: '已经撰写完成，进行最后提交',
+            totalChars: 14,
+            totalWords: 1,
+            truncated: false,
+        },
+        reasoning: [{
+            source: 'reasoning_content',
+            text: 'finish now',
+            totalChars: 10,
+            totalWords: 2,
+            truncated: false,
+        }],
+        toolCalls: [{
+            callId: 'call-1',
+            name: 'workspace.finish',
+        }],
+    };
+    const section = formatModelTurnDetail(
+        { type: 'modelNarration', labelKey: 'timelineNarration', round: 2 },
+        turn,
+    );
+
+    assert.equal(section.labelKey, 'timelineNarration');
+    assert.deepEqual(section.blocks.map(block => block.labelKey), ['timelineNarration']);
+    assert.equal(section.blocks[0].kind, 'assistant');
+    assert.equal(section.blocks[0].meta, '14 chars / 1 words');
+    assert.equal(section.blocks[0].text, '已经撰写完成，进行最后提交');
+});
+
 test('Agent error presenter surfaces userRetryable from run_failed payload', async () => {
     const presenter = await importFresh('src/scripts/tauritavern/agent/agent-error-presenter.js');
 
@@ -2124,6 +3993,19 @@ test('Run failure detail surfaces a retry action and userRetryable field when al
     assert.ok(userRetryableField, 'user-retryable field must be present');
     assert.equal(userRetryableField.value, 'true');
     assert.deepEqual(drift.actions.map(action => action.kind), ['retry']);
+
+    const readOnlyDrift = formatRunFailureDetail({
+        labelKey: 'timelineErrorDetails',
+        event: {
+            payload: {
+                code: 'agent.tool_after_finish',
+                message: 'fatal',
+                retryable: false,
+                userRetryable: true,
+            },
+        },
+    }, { allowRetry: false });
+    assert.deepEqual(readOnlyDrift.actions, []);
 
     const fatal = formatRunFailureDetail({
         labelKey: 'timelineErrorDetails',
@@ -2220,6 +4102,24 @@ test('Agent timeline retry action does not invoke the SillyTavern regenerate DOM
     assert.match(source, /retryAgentRunFailure/);
     assert.doesNotMatch(source, /option_regenerate/);
     assert.doesNotMatch(source, /globalThis\.jQuery|globalThis\.\$/);
+});
+
+test('Agent history timeline dialog is read-only and uses an independent timeline instance', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-panel.js',
+    ), 'utf8');
+    const detailReaderSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-detail-reader.js',
+    ), 'utf8');
+
+    assert.match(source, /export function openAgentRunTimelineDialog/);
+    assert.match(source, /mode: 'history'/);
+    assert.match(source, /readOnly: true/);
+    assert.match(source, /createRunTimelineSession/);
+    assert.match(detailReaderSource, /allowRetry: !readOnly/);
+    assert.match(source, /rootId: `ttas_agent_run_timeline_history_/);
 });
 
 test('Partial success detail keeps error visible without retry action', async () => {

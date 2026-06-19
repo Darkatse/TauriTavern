@@ -6,13 +6,6 @@ function isNotFoundError(error) {
         || message.includes('os error 2');
 }
 
-function sanitizeFileName(value) {
-    return String(value || '')
-        .replace(/[\/\\:*?"<>|\u0000-\u001f]/g, '_')
-        .replace(/[. ]+$/g, '')
-        .trim();
-}
-
 function parseCommandErrorStatus(error) {
     const message = String(error?.message || error || '');
     if (message.startsWith('Bad request:')) {
@@ -46,13 +39,14 @@ function hasOwn(value, key) {
 
 export function registerResourceRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/files/sanitize-filename', async ({ body }) => {
-        const sanitized = sanitizeFileName(body?.fileName || '');
-
-        if (!sanitized) {
-            return jsonResponse({ error: 'Invalid filename' }, 400);
+        const fileName = String(body?.fileName ?? '');
+        if (!fileName) {
+            return textResponse('No fileName specified', 400);
         }
 
-        return jsonResponse({ fileName: sanitized });
+        const sanitized = await context.safeInvoke('sanitize_filename', { file_name: fileName });
+
+        return jsonResponse({ fileName: String(sanitized ?? '') });
     });
 
     router.post('/api/files/upload', async ({ body }) => {
@@ -366,12 +360,8 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
         }
 
         const rawFilename = file instanceof File ? file.name : 'background.png';
-        const filename = sanitizeFileName(rawFilename);
-        if (!filename) {
-            return jsonResponse({ error: 'Invalid filename' }, 400);
-        }
-
         const fileInfo = await context.materializeUploadFile(file, {
+            kind: 'background',
             preferredName: rawFilename,
         });
         if (!fileInfo?.filePath) {
@@ -381,11 +371,11 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
 
         try {
             const uploaded = await context.safeInvoke('upload_background_from_path', {
-                filename,
+                filename: rawFilename,
                 file_path: fileInfo.filePath,
             });
             context.invalidateInvokeAll('read_thumbnail_asset');
-            return textResponse(String(uploaded || filename));
+            return textResponse(String(uploaded || rawFilename));
         } finally {
             await fileInfo.cleanup?.();
         }

@@ -2,6 +2,7 @@ import { loadAgentSystemSettings } from './agent-system-settings.js';
 import { agentContextPolicyForProfile } from './agent-context-policy.js';
 import { AGENT_MODEL_REQUIRES_CONFIGURATION } from './agent-profile-portable.js';
 import { loadResolvedAgentSystemPrompt } from './agent-system-prompt.js';
+import { ensureModelTargetLlmConnectionForProfile } from './model-target-llm-connection.js';
 
 const AGENT_GENERATION_TYPES = new Set(['normal', 'regenerate', 'swipe']);
 
@@ -25,6 +26,7 @@ export async function getAgentGenerationOptions({
 
     const activeProfileId = settings.activeProfileId;
     const selectedProfile = await loadDirectRunnableProfile(activeProfileId);
+    await ensureModelTargetLlmConnectionForProfile(selectedProfile);
     const agentSystemPrompt = await loadResolvedAgentSystemPrompt(activeProfileId);
 
     return {

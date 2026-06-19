@@ -66,7 +66,7 @@ import { extension_prompt_roles, extension_prompt_types } from './extension-prom
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommandParserError } from './slash-commands/SlashCommandParserError.js';
 import { getMessageTimeStamp, isMobile } from './RossAscends-mods.js';
-import { hideChatMessageRange } from './chats.js';
+import { hideChatMessageRange, hideChatMessageScope } from './chats.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { findGroupMemberId, groups, is_group_generating, openGroupById, regenerateGroup, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
@@ -303,6 +303,19 @@ export function initDefaultSlashCommands() {
 
     async function disableInstructCallback() {
         $('#instruct_enabled').prop('checked', false).trigger('input').trigger('change');
+        return '';
+    }
+
+    function getSlashCommandErrorMessage(error) {
+        return error?.message ? String(error.message) : String(error);
+    }
+
+    async function runTauriTavernPanelSlashCommand(openPanel, reportError) {
+        try {
+            await openPanel();
+        } catch (error) {
+            reportError(getSlashCommandErrorMessage(error));
+        }
         return '';
     }
 
@@ -1869,13 +1882,17 @@ export function initDefaultSlashCommands() {
         ],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
-                description: t`message index (starts with 0) or range, defaults to the last message index if not provided`,
-                typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE],
+                description: t`message index (starts with 0) or range, or "all" / "before" (messages before the loaded window), defaults to the last message index if not provided`,
+                typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE, ARGUMENT_TYPE.STRING],
                 isRequired: false,
-                enumProvider: commonEnumProviders.messages(),
+                enumProvider: (executor, scope) => [
+                    new SlashCommandEnumValue('all', t`every message in the chat, including unloaded ones`),
+                    new SlashCommandEnumValue('before', t`only unloaded messages before the current window`),
+                    ...commonEnumProviders.messages()(executor, scope),
+                ],
             }),
         ],
-        helpString: t`Hides a chat message from the prompt.`,
+        helpString: t`Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.`,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'unhide',
@@ -1892,13 +1909,17 @@ export function initDefaultSlashCommands() {
         ],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
-                description: t`message index (starts with 0) or range, defaults to the last message index if not provided`,
-                typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE],
+                description: t`message index (starts with 0) or range, or "all" / "before" (messages before the loaded window), defaults to the last message index if not provided`,
+                typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE, ARGUMENT_TYPE.STRING],
                 isRequired: false,
-                enumProvider: commonEnumProviders.messages(),
+                enumProvider: (executor, scope) => [
+                    new SlashCommandEnumValue('all', t`every message in the chat, including unloaded ones`),
+                    new SlashCommandEnumValue('before', t`only unloaded messages before the current window`),
+                    ...commonEnumProviders.messages()(executor, scope),
+                ],
             }),
         ],
-        helpString: t`Unhides a message from the prompt.`,
+        helpString: t`Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.`,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'member-get',
@@ -3649,26 +3670,75 @@ export function initDefaultSlashCommands() {
         `,
     }));
 
-    // 新增 /llmlog 斜杠命令，快捷打开 LLM API 日志窗口（TauriTavern 专有功能）
-    // 无需进入设置面板即可直接打开日志查看器
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'llmlog',
         aliases: ['apilog'],
         callback: async () => {
-            // 检查 Tauri 宿主环境是否可用
             if (!window.__TAURITAVERN__?.api?.dev) {
                 toastr.error(t`LLM API logs are only available in TauriTavern.`);
                 return '';
             }
-            try {
+
+            return runTauriTavernPanelSlashCommand(async () => {
                 const { openLlmApiLogsPanel } = await import('./tauri/setting/dev-logs.js');
                 await openLlmApiLogsPanel();
-            } catch (error) {
-                toastr.error(t`Failed to open LLM API logs: ${error?.message || error}`);
-            }
-            return '';
+            }, (message) => toastr.error(t`Failed to open LLM API logs: ${message}`));
         },
         helpString: t`Open the LLM API log viewer (TauriTavern only).`,
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'frontendlog',
+        aliases: ['consolelog'],
+        callback: async () => {
+            if (!window.__TAURITAVERN__?.api?.dev) {
+                toastr.error(t`Frontend logs are only available in TauriTavern.`);
+                return '';
+            }
+
+            return runTauriTavernPanelSlashCommand(async () => {
+                const { openFrontendLogsPanel } = await import('./tauri/setting/dev-logs.js');
+                await openFrontendLogsPanel();
+            }, (message) => toastr.error(t`Failed to open frontend logs: ${message}`));
+        },
+        helpString: t`Open the frontend log viewer (TauriTavern only).`,
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'backendlog',
+        callback: async () => {
+            if (!window.__TAURITAVERN__?.api?.dev) {
+                toastr.error(t`Backend logs are only available in TauriTavern.`);
+                return '';
+            }
+
+            return runTauriTavernPanelSlashCommand(async () => {
+                const { openBackendLogsPanel } = await import('./tauri/setting/dev-logs.js');
+                await openBackendLogsPanel();
+            }, (message) => toastr.error(t`Failed to open backend logs: ${message}`));
+        },
+        helpString: t`Open the backend log viewer (TauriTavern only).`,
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'syncpanel',
+        aliases: ['lansync'],
+        callback: async () => {
+            if (typeof window.__TAURI__?.core?.invoke !== 'function') {
+                toastr.error(t`LAN Sync panel is only available in TauriTavern.`);
+                return '';
+            }
+            if (getActiveIosPolicyCapabilities()?.sync?.lan === false) {
+                toastr.error(t`LAN Sync is disabled by the active iOS policy.`);
+                return '';
+            }
+
+            return runTauriTavernPanelSlashCommand(async () => {
+                const { openSyncPopup } = await import('./tauri/setting/setting-panel/sync-popup.js');
+                await openSyncPopup();
+            }, (message) => toastr.error(t`Failed to open LAN Sync panel: ${message}`));
+        },
+        helpString: t`Open the LAN Sync panel (TauriTavern only).`,
     }));
 
 
@@ -4779,7 +4849,20 @@ async function askCharacter(args, text) {
     return await slashCommandReturnHelper.doReturn(args.return ?? 'pipe', message, { objectToStringFunc: x => x.mes });
 }
 
+function parseHideScopeKeyword(value) {
+    const keyword = String(value ?? '').trim().toLowerCase();
+    return keyword === 'all' || keyword === 'before' ? keyword : null;
+}
+
 async function hideMessageCallback(args, value) {
+    const nameFilter = String(args.name ?? '').trim();
+
+    const scope = parseHideScopeKeyword(value);
+    if (scope) {
+        await hideChatMessageScope(scope, false, nameFilter);
+        return '';
+    }
+
     const range = value ? stringToRange(value, 0, chat.length - 1) : { start: chat.length - 1, end: chat.length - 1 };
 
     if (!range) {
@@ -4787,12 +4870,19 @@ async function hideMessageCallback(args, value) {
         return '';
     }
 
-    const nameFilter = String(args.name ?? '').trim();
     await hideChatMessageRange(range.start, range.end, false, nameFilter);
     return '';
 }
 
 async function unhideMessageCallback(args, value) {
+    const nameFilter = String(args.name ?? '').trim();
+
+    const scope = parseHideScopeKeyword(value);
+    if (scope) {
+        await hideChatMessageScope(scope, true, nameFilter);
+        return '';
+    }
+
     const range = value ? stringToRange(value, 0, chat.length - 1) : { start: chat.length - 1, end: chat.length - 1 };
 
     if (!range) {
@@ -4800,7 +4890,6 @@ async function unhideMessageCallback(args, value) {
         return '';
     }
 
-    const nameFilter = String(args.name ?? '').trim();
     await hideChatMessageRange(range.start, range.end, true, nameFilter);
     return '';
 }

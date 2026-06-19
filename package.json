@@ -1,7 +1,7 @@
 {
   "name": "tauritavern",
   "private": true,
-  "version": "2.1.0",
+  "version": "2.1.1",
   "type": "module",
   "scripts": {
     "tauri": "tauri",
@@ -16,8 +16,8 @@
     "check:contracts": "pnpm run test:contracts",
     "test": "pnpm run test:contracts",
     "test:contracts": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\"",
-    "web:build": "webpack --config webpack.config.js",
-    "web:dev": "webpack --config webpack.config.js --watch",
+    "web:build": "rspack build --config rspack.config.js",
+    "web:dev": "rspack build --config rspack.config.js --watch",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:build:portable": "node scripts/build-portable.mjs",
@@ -32,19 +32,19 @@
     "fastools:run": "cargo run --manifest-path fastools/Cargo.toml"
   },
   "devDependencies": {
+    "@rspack/cli": "^2.0.8",
+    "@rspack/core": "^2.0.8",
     "@tauri-apps/cli": "^2.10.0",
     "@types/jquery": "^3.5.33",
     "@types/jquery-cropper": "^1.0.4",
     "@types/jquery.transit": "^0.9.33",
     "@types/jqueryui": "^1.12.24",
     "@types/lodash": "^4.17.24",
-    "@types/node": "^18.19.84",
+    "@types/node": "^20.19.43",
     "@types/select2": "^4.0.63",
     "@types/toastr": "^2.1.43",
     "es-module-lexer": "^2.0.0",
-    "typescript": "^5.9.3",
-    "webpack": "^5.105.4",
-    "webpack-cli": "^5.1.4"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@adobe/css-tools": "^4.4.4",
@@ -70,6 +70,6 @@
     "vue": "^3.5.33"
   },
   "engines": {
-    "node": ">= 20"
+    "node": "^20.19.0 || >=22.12.0"
   }
 }

@@ -6,9 +6,10 @@ use tokio::fs;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::character::sanitize_filename;
 use crate::domain::models::chat::{normalize_chat_file_name, normalize_chat_file_stem};
+use crate::domain::models::filename::sanitize_filename;
 use crate::infrastructure::persistence::file_system::unique_temp_path;
+use crate::infrastructure::repositories::chat_directory_identity::sanitize_chat_dir_key;
 
 use super::FileChatRepository;
 
@@ -47,13 +48,8 @@ impl FileChatRepository {
         Ok(())
     }
 
-    fn sanitize_path_component(value: &str, fallback: &str) -> String {
-        let sanitized = sanitize_filename(value.trim());
-        if sanitized.is_empty() {
-            fallback.to_string()
-        } else {
-            sanitized
-        }
+    pub(super) fn sanitize_path_component(value: &str, fallback: &str) -> String {
+        sanitize_chat_dir_key(value, fallback)
     }
 
     pub(super) async fn acquire_payload_write_lock(&self, path: &Path) -> OwnedMutexGuard<()> {
@@ -108,10 +104,8 @@ impl FileChatRepository {
             .ok_or_else(|| DomainError::InvalidData("Invalid chat file name".to_string()))
     }
 
-    /// Get the path to a character's chat directory
-    pub(super) fn get_character_dir(&self, character_name: &str) -> PathBuf {
-        self.chats_dir
-            .join(Self::sanitize_path_component(character_name, "character"))
+    pub(super) fn get_character_dir_for_key(&self, dir_key: &str) -> PathBuf {
+        self.chats_dir.join(dir_key)
     }
 
     /// Normalize chat file names with SillyTavern-compatible `.jsonl` sanitization.
@@ -194,16 +188,6 @@ impl FileChatRepository {
             Self::backup_file_prefix(character_name),
             Self::backup_timestamp()
         )
-    }
-
-    /// Get the path to a chat file
-    pub(super) fn get_chat_path(
-        &self,
-        character_name: &str,
-        file_name: &str,
-    ) -> Result<PathBuf, DomainError> {
-        let normalized = Self::normalize_jsonl_file_name(file_name)?;
-        Ok(self.get_character_dir(character_name).join(normalized))
     }
 
     /// Get the path to a group chat file

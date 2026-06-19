@@ -29,8 +29,15 @@ import {
     getMediaDisplay,
     chatElement,
     markWindowedChatDirtyFromIndex,
+    enqueueChatSave,
+    saveChat,
 } from '../script.js';
-import { selected_group } from './group-chats.js';
+import { selected_group, saveGroupChat } from './group-chats.js';
+import { getWindowedChatKey, getWindowedChatState, setWindowedChatState } from './tauri/chat/windowed-state.js';
+import {
+    hideCharacterChatPayloadBeforeCursor,
+    hideGroupChatPayloadBeforeCursor,
+} from './tauri/chat/transport.js';
 import { power_user } from './power-user.js';
 import {
     extractTextFromHTML,
@@ -177,6 +184,99 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
     }
 
     await saveChatConditional();
+}
+
+/**
+ * Mark all messages in the chat as hidden ("is_system") or not, including
+ * messages stored before the loaded window in windowed mode.
+ * @param {'all'|'before'} scope 'all' covers the entire chat, 'before' only messages before the loaded window
+ * @param {boolean} unhide If true, unhide the messages instead.
+ * @param {string} nameFilter Optional name filter
+ * @returns {Promise<void>}
+ */
+export async function hideChatMessageScope(scope, unhide, nameFilter = null) {
+    const hide = !unhide;
+
+    if (scope === 'all') {
+        await hideChatMessageRange(0, chat.length - 1, unhide, nameFilter);
+    }
+
+    const windowState = getWindowedChatState();
+    const currentChatId = getCurrentChatId();
+    const stateMatchesCurrentChat = windowState?.cursor && (windowState.kind === 'group'
+        ? windowState.id === currentChatId
+        : windowState.fileName === currentChatId);
+
+    if (!stateMatchesCurrentChat) {
+        if (scope === 'before') {
+            toastr.info(t`All messages are already loaded. Use /hide with a message range instead.`);
+        }
+        return;
+    }
+
+    if (scope === 'before' && !windowState.hasMoreBefore) {
+        toastr.info(t`There are no unloaded messages before the current window.`);
+        return;
+    }
+
+    try {
+        // Flush pending window changes through the save queue so the cursor
+        // is fresh; unlike saveChatConditional these rethrow on failure and
+        // abort the backend rewrite.
+        if (windowState.kind === 'group') {
+            await saveGroupChat(selected_group, false);
+        } else {
+            await saveChat();
+        }
+
+        // The rewrite and the cursor swap run as one queued task: no other
+        // save can move the cursor between the read and the swap.
+        await enqueueChatSave(async () => {
+            const freshState = getWindowedChatState();
+            const freshChatId = getCurrentChatId();
+            const freshMatches = freshState?.cursor && (freshState.kind === 'group'
+                ? freshState.id === freshChatId
+                : freshState.fileName === freshChatId);
+
+            if (!freshMatches) {
+                return;
+            }
+
+            const newCursor = freshState.kind === 'group'
+                ? await hideGroupChatPayloadBeforeCursor({
+                    id: freshState.id,
+                    cursor: freshState.cursor,
+                    hide,
+                    nameFilter,
+                    expectedWindowLineCount: freshState.savedMessageCount,
+                })
+                : await hideCharacterChatPayloadBeforeCursor({
+                    characterName: freshState.characterName,
+                    avatarUrl: freshState.avatarUrl,
+                    fileName: freshState.fileName,
+                    cursor: freshState.cursor,
+                    hide,
+                    nameFilter,
+                    expectedWindowLineCount: freshState.savedMessageCount,
+                });
+
+            // The window may still have been extended by a concurrent
+            // "show more" (which runs outside the save queue); stamping the
+            // new cursor onto a different state would corrupt later saves.
+            const activeState = getWindowedChatState();
+            if (activeState?.cursor
+                && getWindowedChatKey(activeState) === getWindowedChatKey(freshState)
+                && activeState.cursor.offset === freshState.cursor.offset) {
+                setWindowedChatState({ ...activeState, cursor: newCursor });
+            } else {
+                console.warn('Windowed chat state changed during hide rewrite; dropping returned cursor');
+            }
+        });
+    } catch (error) {
+        console.error('Failed to update hidden state before the chat window', error);
+        toastr.error(t`Failed to update messages before the loaded window. Reload the chat and try again.`);
+        throw error;
+    }
 }
 
 /**

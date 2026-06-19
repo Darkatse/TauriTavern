@@ -1,4 +1,12 @@
 {
+    "Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.": "يخفي رسالة الدردشة من المطالبة. استخدم <code>all</code> لإخفاء الدردشة بأكملها، أو <code>before</code> لإخفاء الرسائل المخزنة قبل النافذة المحمّلة فقط.",
+    "Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.": "يعيد إظهار رسالة في المطالبة. استخدم <code>all</code> لإظهار الدردشة بأكملها، أو <code>before</code> لإظهار الرسائل المخزنة قبل النافذة المحمّلة فقط.",
+    "message index (starts with 0) or range, or \"all\" / \"before\" (messages before the loaded window), defaults to the last message index if not provided": "فهرس الرسالة (يبدأ من 0) أو نطاق، أو \"all\" / \"before\" (الرسائل قبل النافذة المحمّلة)؛ الافتراضي هو فهرس آخر رسالة",
+    "every message in the chat, including unloaded ones": "كل رسائل الدردشة، بما في ذلك غير المحمّلة",
+    "only unloaded messages before the current window": "الرسائل غير المحمّلة قبل النافذة الحالية فقط",
+    "All messages are already loaded. Use /hide with a message range instead.": "تم تحميل جميع الرسائل بالفعل. استخدم /hide مع نطاق رسائل بدلاً من ذلك.",
+    "There are no unloaded messages before the current window.": "لا توجد رسائل غير محمّلة قبل النافذة الحالية.",
+    "Failed to update messages before the loaded window. Reload the chat and try again.": "فشل تحديث الرسائل قبل النافذة المحمّلة. أعد فتح الدردشة وحاول مرة أخرى.",
     "Favorite": "مفضل",
     "Tag": "بطاقة شعار",
     "Duplicate": "ينسخ",

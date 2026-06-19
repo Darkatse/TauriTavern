@@ -5,12 +5,16 @@ use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::watch;
 
 use super::AgentRuntimeService;
+use super::guidance::AgentGuidanceMailbox;
 use crate::application::errors::ApplicationError;
-use crate::domain::models::agent::{AgentInvocationStatus, AgentTaskRecord, AgentTaskStatus};
+use crate::domain::models::agent::{
+    AgentDelegationContinuation, AgentInvocationStatus, AgentTaskRecord, AgentTaskStatus,
+};
 
 pub(super) struct ActiveRunHandle {
     pub(super) cancel_sender: watch::Sender<bool>,
     pub(super) scheduler: Arc<AgentTaskScheduler>,
+    pub(super) guidance_mailbox: Arc<AgentGuidanceMailbox>,
 }
 
 impl ActiveRunHandle {
@@ -22,6 +26,7 @@ impl ActiveRunHandle {
         Self {
             cancel_sender,
             scheduler: Arc::new(AgentTaskScheduler::new(service, run_id)),
+            guidance_mailbox: Arc::new(AgentGuidanceMailbox::new()),
         }
     }
 }
@@ -107,6 +112,7 @@ impl AgentTaskScheduler {
         let tasks = tasks
             .into_iter()
             .filter(|task| task.parent_invocation_id == parent_invocation_id)
+            .filter(|task| task.continuation == AgentDelegationContinuation::ReturnToParent)
             .filter(task_is_unfinished)
             .collect::<Vec<_>>();
         self.cancel_unfinished_tasks(
@@ -125,6 +131,7 @@ impl AgentTaskScheduler {
             .await?;
         let tasks = tasks
             .into_iter()
+            .filter(|task| task.continuation == AgentDelegationContinuation::ReturnToParent)
             .filter(task_is_unfinished)
             .collect::<Vec<_>>();
         self.cancel_unfinished_tasks(&service, tasks, "cancelled because the Agent run stopped")

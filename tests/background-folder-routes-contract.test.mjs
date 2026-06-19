@@ -108,6 +108,60 @@ test('/api/image-metadata/folders/assign rejects missing paths array', async () 
     assert.deepEqual(await response.json(), { error: '"paths" array is required.' });
 });
 
+test('/api/backgrounds/upload leaves filename sanitization to Rust storage boundary', async () => {
+    const calls = [];
+    const cleanupCalls = [];
+    const router = createResourceRouter({
+        async materializeUploadFile(file, options) {
+            calls.push({ command: 'materializeUploadFile', fileName: file.name, options });
+            return {
+                filePath: '/tmp/staged-background',
+                cleanup: async () => cleanupCalls.push('cleanup'),
+            };
+        },
+        async safeInvoke(command, args) {
+            calls.push({ command, args });
+            assert.notEqual(command, 'sanitize_filename');
+            assert.equal(command, 'upload_background_from_path');
+            assert.deepEqual(args, {
+                filename: 'CON ',
+                file_path: '/tmp/staged-background',
+            });
+            return 'CON';
+        },
+        invalidateInvokeAll(scope) {
+            calls.push({ command: 'invalidateInvokeAll', scope });
+        },
+    });
+
+    const body = new FormData();
+    body.append('avatar', new File(['image'], 'CON ', { type: 'image/png' }));
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/backgrounds/upload',
+        url: new URL('http://localhost/api/backgrounds/upload'),
+        body,
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'CON');
+    assert.deepEqual(cleanupCalls, ['cleanup']);
+    assert.deepEqual(calls, [
+        {
+            command: 'materializeUploadFile',
+            fileName: 'CON ',
+            options: { kind: 'background', preferredName: 'CON ' },
+        },
+        {
+            command: 'upload_background_from_path',
+            args: { filename: 'CON ', file_path: '/tmp/staged-background' },
+        },
+        { command: 'invalidateInvokeAll', scope: 'read_thumbnail_asset' },
+    ]);
+});
+
 test('background folder tile cover failures are reported at tile scope', () => {
     assert.match(backgroundsSource, /getFolderCoverUrl\(folder\)\.then\(coverUrl =>/);
     assert.match(backgroundsSource, /\.catch\(error => \{\s*console\.warn\(`Failed to load background folder cover/);

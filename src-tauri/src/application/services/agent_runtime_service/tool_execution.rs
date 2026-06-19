@@ -9,8 +9,8 @@ use super::delegation::workspace_policy::InvocationWorkspaceRepository;
 use crate::application::errors::ApplicationError;
 
 use crate::application::services::agent_tools::{
-    AGENT_AWAIT, AGENT_DELEGATE, AGENT_LIST, AgentToolDispatchOutcome, AgentToolEffect,
-    AgentToolSession, TASK_RETURN,
+    AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, AgentToolDispatchOutcome,
+    AgentToolEffect, AgentToolSession, TASK_RETURN,
 };
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
@@ -169,6 +169,9 @@ impl AgentRuntimeService {
                 cancel,
             )
             .await
+        } else if call.name == AGENT_HANDOFF {
+            self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile)
+                .await
         } else if call.name == TASK_RETURN {
             self.dispatch_task_return_tool(run_id, invocation_id, call, exit_policy, profile)
                 .await
@@ -382,6 +385,7 @@ fn tool_is_visible(
             || name == "workspace.finish"
             || name == AGENT_LIST
             || name == AGENT_DELEGATE
+            || name == AGENT_HANDOFF
             || name == AGENT_AWAIT
         {
             return false;

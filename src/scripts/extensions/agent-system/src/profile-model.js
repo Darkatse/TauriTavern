@@ -1,4 +1,12 @@
-import { AGENT_DELEGATION_TOOLS, DEFAULT_PROFILE_ID, KNOWN_TOOLS, RUNTIME_ONLY_TOOLS, WORKSPACE_ROOTS } from './constants.js';
+import {
+    AGENT_DELEGATION_TOOLS,
+    AGENT_HANDOFF_TOOLS,
+    AGENT_SUBAGENT_TOOLS,
+    DEFAULT_PROFILE_ID,
+    KNOWN_TOOLS,
+    RUNTIME_ONLY_TOOLS,
+    WORKSPACE_ROOTS,
+} from './constants.js';
 import { clone } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import { AGENT_MODEL_REQUIRES_CONFIGURATION } from '../../../tauritavern/agent/agent-profile-portable.js';
@@ -152,7 +160,7 @@ function defaultDelegationPolicy() {
         maxConcurrentInvocations: 3,
         maxInvocationsPerRun: 8,
         resultBudgetTokens: 8000,
-        maxHandoffDepth: 5,
+        maxHandoffDepth: 8,
     };
 }
 
@@ -180,32 +188,54 @@ function normalizeDelegationPolicy(value) {
     };
 }
 
-function applyDelegationToolPolicy(profile) {
-    const delegation = profile.delegation || defaultDelegationPolicy();
+export function normalizeDelegationToolAllowList(
+    allowList,
+    delegationPolicy,
+    preferredOrder = [...AGENT_DELEGATION_TOOLS, ...KNOWN_TOOLS],
+) {
+    const delegation = delegationPolicy || defaultDelegationPolicy();
     const runtimeOnly = new Set(RUNTIME_ONLY_TOOLS);
-    const allow = new Set((Array.isArray(profile.tools?.allow) ? profile.tools.allow : [])
+    const allow = new Set((Array.isArray(allowList) ? allowList : [])
         .filter((tool) => !runtimeOnly.has(tool)));
 
     if (delegation.canDelegate) {
-        for (const tool of AGENT_DELEGATION_TOOLS) {
+        for (const tool of AGENT_SUBAGENT_TOOLS) {
             allow.add(tool);
         }
     } else {
         allow.delete('agent.delegate');
         allow.delete('agent.await');
-        if (!delegation.canHandoff) {
-            allow.delete('agent.list');
-        }
     }
 
-    const preferredOrder = [
-        ...AGENT_DELEGATION_TOOLS,
-        ...KNOWN_TOOLS,
+    if (delegation.canHandoff) {
+        for (const tool of AGENT_HANDOFF_TOOLS) {
+            allow.add(tool);
+        }
+    } else {
+        allow.delete('agent.handoff');
+    }
+
+    if (!delegation.canDelegate && !delegation.canHandoff) {
+        allow.delete('agent.list');
+    }
+
+    const ordered = Array.isArray(preferredOrder) ? preferredOrder : [];
+    const orderedSet = new Set(ordered);
+    return [
+        ...ordered.filter((tool) => allow.has(tool)),
+        ...[...allow].filter((tool) => !orderedSet.has(tool)),
     ];
-    profile.tools.allow = [
-        ...preferredOrder.filter((tool) => allow.has(tool)),
-        ...[...allow].filter((tool) => !preferredOrder.includes(tool)),
-    ];
+}
+
+function applyDelegationToolPolicy(profile) {
+    profile.tools.allow = normalizeDelegationToolAllowList(
+        profile.tools?.allow,
+        profile.delegation,
+        [
+            ...AGENT_DELEGATION_TOOLS,
+            ...KNOWN_TOOLS,
+        ],
+    );
 }
 
 export function defaultProfile(id = DEFAULT_PROFILE_ID) {

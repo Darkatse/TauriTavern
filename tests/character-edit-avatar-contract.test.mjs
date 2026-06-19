@@ -6,7 +6,10 @@ import { resolveHostErrorResponse } from '../src/tauri/main/kernel/host-error-re
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerCharacterRoutes } from '../src/tauri/main/routes/character-routes.js';
 import { createCharacterService } from '../src/tauri/main/services/characters/character-service.js';
-import { createCharacterCreateService } from '../src/tauri/main/services/characters/character-create-service.js';
+import {
+    CHARACTER_CREATE_WARNINGS,
+    createCharacterCreateService,
+} from '../src/tauri/main/services/characters/character-create-service.js';
 import { formDataToCreateCharacterDto, payloadToCreateCharacterDto } from '../src/tauri/main/services/characters/character-create-mapper.js';
 import { createCharacterFormService } from '../src/tauri/main/services/characters/character-form-service.js';
 
@@ -72,7 +75,7 @@ test('/api/characters/create accepts upstream JSON character payloads', async ()
         },
         createCharacterFromPayload: async (payload) => {
             calls.push({ type: 'payload', payload });
-            return { avatar: 'Alice.png' };
+            return { character: { avatar: 'Alice.png' }, warnings: [] };
         },
         getAllCharacters: async (options) => {
             calls.push({ type: 'refresh', options });
@@ -102,6 +105,53 @@ test('/api/characters/create accepts upstream JSON character payloads', async ()
     assert.equal(await response.text(), 'Alice.png');
     assert.deepEqual(calls, [
         { type: 'payload', payload },
+        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
+    ]);
+});
+
+test('/api/characters/create keeps text body and exposes avatar fallback warning header', async () => {
+    const router = createRouteRegistry();
+    const calls = [];
+    const context = {
+        createCharacterFromForm: async (formData, url) => {
+            calls.push({ type: 'form', formData, url });
+            return {
+                character: { avatar: 'Alice.png' },
+                warnings: [{
+                    code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
+                    message: 'Unable to access avatar file path: simulated failure',
+                }],
+            };
+        },
+        createCharacterFromPayload: async () => {
+            throw new Error('createCharacterFromPayload should not be called');
+        },
+        getAllCharacters: async (options) => {
+            calls.push({ type: 'refresh', options });
+            return [];
+        },
+    };
+
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+
+    const body = new FormData();
+    body.set('ch_name', 'Alice');
+    body.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'avatar.png');
+    const url = new URL('http://localhost/api/characters/create');
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/create',
+        url,
+        body,
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'Alice.png');
+    assert.equal(response.headers.get('x-tauritavern-warning'), CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED);
+    assert.deepEqual(calls, [
+        { type: 'form', formData: body, url },
         { type: 'refresh', options: { shallow: true, forceRefresh: true } },
     ]);
 });
@@ -226,6 +276,110 @@ test('/api/characters/duplicate rejects path-like avatar_url before resolving ch
     assert.deepEqual(await response.json(), { error: 'invalid avatar_url' });
 });
 
+test('/api/characters/delete resolves avatar_url as an exact filename before invoking backend delete', async () => {
+    const router = createRouteRegistry();
+    const calls = [];
+    const context = {
+        resolveCharacterId: async ({ avatar, fallbackName }) => {
+            calls.push({ type: 'resolve', avatar, fallbackName });
+            return 'Alice#1';
+        },
+        safeInvoke: async (command, args) => {
+            calls.push({ type: 'invoke', command, args });
+        },
+        getAllCharacters: async (options) => {
+            calls.push({ type: 'refresh', options });
+            return [];
+        },
+    };
+
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/delete',
+        url: new URL('http://localhost/api/characters/delete'),
+        body: { avatar_url: 'Alice#1.png', name: 'Alice', delete_chats: true },
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls, [
+        { type: 'resolve', avatar: 'Alice#1.png', fallbackName: 'Alice' },
+        {
+            type: 'invoke',
+            command: 'delete_character',
+            args: { dto: { name: 'Alice#1', delete_chats: true } },
+        },
+        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
+    ]);
+});
+
+test('/api/characters/delete returns 400 for URL-like avatar_url without backend mutation', async () => {
+    const router = createRouteRegistry();
+    const context = {
+        resolveCharacterId: async () => {
+            throw new Error('Bad request: invalid avatar_url');
+        },
+        safeInvoke: async () => {
+            throw new Error('safeInvoke should not be called');
+        },
+        getAllCharacters: async () => [],
+    };
+
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/delete',
+        url: new URL('http://localhost/api/characters/delete'),
+        body: { avatar_url: 'Alice.png#hash', name: 'Alice' },
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'invalid avatar_url' });
+});
+
+test('/api/characters/export uses exact avatar filename identities for backend export', async () => {
+    const router = createRouteRegistry();
+    const calls = [];
+    const context = {
+        resolveCharacterId: async ({ avatar, fallbackName }) => {
+            calls.push({ type: 'resolve', avatar, fallbackName });
+            return 'Alice%2FB';
+        },
+        safeInvoke: async (command, args) => {
+            calls.push({ type: 'invoke', command, args });
+            return {
+                data: new TextEncoder().encode('{"name":"Alice"}'),
+                mime_type: 'application/json',
+            };
+        },
+    };
+
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/export',
+        url: new URL('http://localhost/api/characters/export'),
+        body: { avatar_url: 'Alice%2FB.png', name: 'Alice', format: 'json' },
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls, [
+        { type: 'resolve', avatar: 'Alice%2FB.png', fallbackName: 'Alice' },
+        {
+            type: 'invoke',
+            command: 'export_character_content',
+            args: { dto: { name: 'Alice%2FB', format: 'json' } },
+        },
+    ]);
+    assert.equal(await response.text(), '{"name":"Alice"}');
+});
+
 test('/api/characters/merge-attributes supports upstream bulk mode', async () => {
     const router = createRouteRegistry();
     const calls = [];
@@ -271,6 +425,80 @@ test('/api/characters/merge-attributes supports upstream bulk mode', async () =>
         },
         { type: 'refresh', options: { shallow: true, forceRefresh: true } },
     ]);
+});
+
+test('/api/characters/merge-attributes preserves exact avatar filenames in single mode', async () => {
+    const router = createRouteRegistry();
+    const calls = [];
+    const context = {
+        resolveCharacterId: async ({ avatar, fallbackName }) => {
+            calls.push({ type: 'resolve', avatar, fallbackName });
+            return 'Alice#1';
+        },
+        safeInvoke: async (command, args) => {
+            calls.push({ type: 'invoke', command, args });
+        },
+        getAllCharacters: async (options) => {
+            calls.push({ type: 'refresh', options });
+            return [];
+        },
+    };
+
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/merge-attributes',
+        url: new URL('http://localhost/api/characters/merge-attributes'),
+        body: { avatar: 'Alice#1.png', name: 'Alice', data: { description: 'Updated' } },
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls, [
+        { type: 'resolve', avatar: 'Alice#1.png', fallbackName: 'Alice' },
+        {
+            type: 'invoke',
+            command: 'merge_character_card_data',
+            args: {
+                name: 'Alice#1',
+                dto: {
+                    update: {
+                        avatar: 'Alice#1.png',
+                        name: 'Alice',
+                        data: { description: 'Updated' },
+                    },
+                },
+            },
+        },
+        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
+    ]);
+});
+
+test('/api/characters/merge-attributes rejects invalid bulk avatar filenames before backend work', async () => {
+    const router = createRouteRegistry();
+    const context = {
+        safeInvoke: async () => {
+            throw new Error('safeInvoke should not be called');
+        },
+        getAllCharacters: async () => [],
+    };
+
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/merge-attributes',
+        url: new URL('http://localhost/api/characters/merge-attributes'),
+        body: {
+            avatars: ['Alice.png', 'Alice.png?cache=1'],
+            data: { data: { description: 'Updated' } },
+        },
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'invalid avatars[1]' });
 });
 
 test('/api/characters/merge-attributes rejects path-like single avatar fields', async () => {
@@ -319,7 +547,7 @@ test('character form service maps edit-avatar to update_avatar without full char
         },
         materializeUploadFile: async (file, options) => {
             assert.ok(file instanceof Blob);
-            assert.deepEqual(options, { preferredName: 'avatar.png' });
+            assert.deepEqual(options, { kind: 'avatar', preferredName: 'avatar.png' });
             return {
                 filePath: '/tmp/avatar.png',
                 cleanup: async () => cleanups.push('avatar.png'),
@@ -435,7 +663,7 @@ test('character create service maps upstream JSON create payload to create_chara
         },
     });
 
-    const created = await service.createCharacterFromPayload({
+    const outcome = await service.createCharacterFromPayload({
         file_name: 'AliceCard',
         ch_name: 'Alice',
         description: 'A friendly assistant',
@@ -450,7 +678,7 @@ test('character create service maps upstream JSON create payload to create_chara
         extensions: '{}',
     });
 
-    assert.deepEqual(created, { avatar: 'Alice.png' });
+    assert.deepEqual(outcome, { character: { avatar: 'Alice.png' }, warnings: [] });
     assert.deepEqual(invokes, [
         {
             command: 'create_character',
@@ -500,7 +728,7 @@ test('character create service maps multipart creates with avatar to create_char
         },
         materializeUploadFile: async (file, options) => {
             assert.ok(file instanceof Blob);
-            assert.deepEqual(options, { preferredName: 'assistant.png' });
+            assert.deepEqual(options, { kind: 'avatar', preferredName: 'assistant.png' });
             return {
                 filePath: '/tmp/assistant.png',
                 cleanup: async () => cleanups.push('assistant.png'),
@@ -514,12 +742,12 @@ test('character create service maps multipart creates with avatar to create_char
     formData.set('creator_notes', 'Automatically created character.');
     formData.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'assistant.png');
 
-    const created = await service.createCharacterFromForm(
+    const outcome = await service.createCharacterFromForm(
         formData,
         new URL('http://localhost/api/characters/create?crop=%7B%22x%22%3A0%2C%22y%22%3A0%2C%22width%22%3A300%2C%22height%22%3A400%2C%22want_resize%22%3Atrue%7D'),
     );
 
-    assert.deepEqual(created, { avatar: 'Assistant.png' });
+    assert.deepEqual(outcome, { character: { avatar: 'Assistant.png' }, warnings: [] });
     assert.deepEqual(invokes, [
         {
             command: 'create_character_with_avatar',
@@ -568,6 +796,127 @@ test('character create service maps multipart creates with avatar to create_char
         },
     ]);
     assert.deepEqual(cleanups, ['assistant.png']);
+});
+
+test('character create service propagates Rust avatar fallback warnings', async () => {
+    const service = createCharacterCreateService({
+        safeInvoke: async (command) => {
+            assert.equal(command, 'create_character_with_avatar');
+            return {
+                character: { avatar: 'Assistant.png' },
+                warnings: [{
+                    code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
+                    message: 'Uploaded avatar could not be processed; default avatar was used.',
+                }],
+            };
+        },
+        materializeUploadFile: async () => ({
+            filePath: '/tmp/assistant.png',
+        }),
+    });
+
+    const formData = new FormData();
+    formData.set('ch_name', 'Neutral Assistant');
+    formData.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'assistant.png');
+
+    const outcome = await service.createCharacterFromForm(
+        formData,
+        new URL('http://localhost/api/characters/create'),
+    );
+
+    assert.deepEqual(outcome, {
+        character: { avatar: 'Assistant.png' },
+        warnings: [{
+            code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
+            message: 'Uploaded avatar could not be processed; default avatar was used.',
+        }],
+    });
+});
+
+test('character create service uses default avatar when upload materialization fails', async () => {
+    const invokes = [];
+    const originalWarn = console.warn;
+    const warnings = [];
+    console.warn = (...args) => warnings.push(args);
+
+    try {
+        const service = createCharacterCreateService({
+            safeInvoke: async (command, args) => {
+                invokes.push({ command, args });
+                if (command !== 'create_character') {
+                    throw new Error(`unexpected command: ${command}`);
+                }
+                return { avatar: 'Assistant.png' };
+            },
+            materializeUploadFile: async (file, options) => {
+                assert.ok(file instanceof Blob);
+                assert.deepEqual(options, { kind: 'avatar', preferredName: 'assistant.png' });
+                return {
+                    filePath: '',
+                    error: 'simulated temp write failure',
+                    isTemporary: false,
+                };
+            },
+        });
+
+        const formData = new FormData();
+        formData.set('file_name', 'Assistant');
+        formData.set('ch_name', 'Neutral Assistant');
+        formData.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'assistant.png');
+
+        const outcome = await service.createCharacterFromForm(
+            formData,
+            new URL('http://localhost/api/characters/create'),
+        );
+
+        assert.deepEqual(outcome, {
+            character: { avatar: 'Assistant.png' },
+            warnings: [{
+                code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
+                message: 'Unable to access avatar file path: simulated temp write failure',
+            }],
+        });
+        assert.deepEqual(invokes, [
+            {
+                command: 'create_character',
+                args: {
+                    dto: {
+                        file_name: 'Assistant',
+                        json_data: null,
+                        primary_lorebook: null,
+                        name: 'Neutral Assistant',
+                        description: '',
+                        personality: '',
+                        scenario: '',
+                        first_mes: '',
+                        mes_example: '',
+                        creator: '',
+                        creator_notes: '',
+                        character_version: '',
+                        tags: [],
+                        talkativeness: 0.5,
+                        fav: false,
+                        alternate_greetings: [],
+                        system_prompt: '',
+                        post_history_instructions: '',
+                        extensions: {
+                            world: '',
+                            depth_prompt: {
+                                prompt: '',
+                                depth: 4,
+                                role: 'system',
+                            },
+                            talkativeness: 0.5,
+                            fav: false,
+                        },
+                    },
+                },
+            },
+        ]);
+        assert.equal(warnings.length, 1);
+    } finally {
+        console.warn = originalWarn;
+    }
 });
 
 test('character form service fails fast on invalid avatar_url', async () => {
@@ -640,31 +989,36 @@ test('character service strict resolver does not synthesize missing avatar ids',
     const service = createCharacterService({
         safeInvoke: async (command, args) => {
             invokes.push({ command, args });
-            assert.equal(command, 'get_all_characters');
-            assert.deepEqual(args, { shallow: true });
-            return [];
+            assert.equal(command, 'get_character');
+            assert.deepEqual(args, { name: 'Missing' });
+            throw new Error('Not found: Character not found: Missing');
         },
     });
 
     assert.equal(await service.resolveExistingCharacterId({ avatar: 'Missing.png' }), null);
     assert.equal(await service.resolveCharacterId({ avatar: 'Missing.png' }), 'Missing');
-    assert.equal(invokes.length, 2);
+    assert.deepEqual(invokes, [
+        { command: 'get_character', args: { name: 'Missing' } },
+    ]);
 });
 
-test('character service strict resolver refreshes stale caches before missing verdicts', async () => {
-    const responses = [
-        [{ name: 'Alice', avatar: 'Alice.png' }],
-        [],
-    ];
+test('character service strict resolver verifies exact avatar ids without list refreshes', async () => {
+    const invokes = [];
     const service = createCharacterService({
         safeInvoke: async (command, args) => {
-            assert.equal(command, 'get_all_characters');
-            assert.deepEqual(args, { shallow: true });
-            return responses.shift() || [];
+            invokes.push({ command, args });
+            assert.equal(command, 'get_character');
+            if (args.name === 'Alice') {
+                return { name: 'Alice', avatar: 'Alice.png', data: { extensions: {} } };
+            }
+            throw new Error(`Not found: Character not found: ${args.name}`);
         },
     });
 
     assert.equal(await service.resolveExistingCharacterId({ avatar: 'Alice.png' }), 'Alice');
     assert.equal(await service.resolveExistingCharacterId({ avatar: 'Missing.png' }), null);
-    assert.equal(responses.length, 0);
+    assert.deepEqual(invokes, [
+        { command: 'get_character', args: { name: 'Alice' } },
+        { command: 'get_character', args: { name: 'Missing' } },
+    ]);
 });

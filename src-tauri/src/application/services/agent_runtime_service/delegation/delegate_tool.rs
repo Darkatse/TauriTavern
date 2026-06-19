@@ -17,6 +17,8 @@ use crate::domain::models::agent::{
     AgentRunEventLevel, AgentTaskBudget, AgentTaskStatus, AgentToolCall, AgentToolResult,
 };
 
+const MAX_AGENT_DELEGATION_TASK_FIELD_CHARS: usize = 8_000;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AgentDelegateArgs {
@@ -221,7 +223,7 @@ impl AgentRuntimeService {
         Ok(Ok(()))
     }
 
-    async fn allocate_child_workspace_key(
+    pub(in crate::application::services::agent_runtime_service) async fn allocate_child_workspace_key(
         &self,
         run_id: &str,
         target_profile_id: &str,
@@ -273,8 +275,10 @@ fn validate_optional_task_string(value: &Value, key: &str) -> Result<(), String>
 }
 
 fn validate_task_string_len(value: &str, key: &str) -> Result<(), String> {
-    if value.len() > 4_000 {
-        return Err(format!("task.{key} must be <= 4000 chars"));
+    if value.len() > MAX_AGENT_DELEGATION_TASK_FIELD_CHARS {
+        return Err(format!(
+            "task.{key} must be <= {MAX_AGENT_DELEGATION_TASK_FIELD_CHARS} chars"
+        ));
     }
     Ok(())
 }
@@ -343,5 +347,26 @@ mod tests {
         .expect_err("non-string title should fail");
 
         assert_eq!(error, "task.title must be a string when provided");
+    }
+
+    #[test]
+    fn delegate_task_packet_accepts_8000_char_fields() {
+        let task = json!({
+            "title": "Critique",
+            "objective": "a".repeat(8_000)
+        });
+
+        assert!(validate_delegate_task_packet(&task).is_ok());
+    }
+
+    #[test]
+    fn delegate_task_packet_rejects_fields_over_8000_chars() {
+        let error = validate_delegate_task_packet(&json!({
+            "title": "Critique",
+            "objective": "a".repeat(8_001)
+        }))
+        .expect_err("overlong objective should fail");
+
+        assert_eq!(error, "task.objective must be <= 8000 chars");
     }
 }

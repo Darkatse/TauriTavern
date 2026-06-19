@@ -7,6 +7,8 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 use crate::domain::repositories::prompt_cache_repository::PromptCacheKey;
 
+use super::model_capabilities::is_openrouter_claude_model_name;
+
 const CUSTOM_CLAUDE_PROMPT_CACHING_FIELD: &str = "custom_claude_prompt_caching";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -109,8 +111,7 @@ fn is_openrouter_claude_model(payload: &Value) -> bool {
         .as_object()
         .and_then(|object| object.get("model"))
         .and_then(Value::as_str)
-        .map(str::trim)
-        .is_some_and(|model| model.to_ascii_lowercase().starts_with("anthropic/claude"))
+        .is_some_and(is_openrouter_claude_model_name)
 }
 
 fn is_nanogpt_claude_payload(payload: &Value) -> bool {

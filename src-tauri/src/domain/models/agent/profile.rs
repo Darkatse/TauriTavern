@@ -17,7 +17,7 @@ pub const DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES: i64 = -1;
 pub const DEFAULT_AGENT_DELEGATION_MAX_CONCURRENT_INVOCATIONS: usize = 3;
 pub const DEFAULT_AGENT_DELEGATION_MAX_INVOCATIONS_PER_RUN: usize = 8;
 pub const DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS: usize = 8_000;
-pub const DEFAULT_AGENT_HANDOFF_MAX_DEPTH: usize = 5;
+pub const DEFAULT_AGENT_HANDOFF_MAX_DEPTH: usize = 8;
 
 fn default_agent_run_direct_runnable() -> bool {
     true
@@ -433,6 +433,9 @@ mod tests {
 
     #[test]
     fn profile_definition_applies_schema_defaults_for_optional_fields() {
+        assert_eq!(DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS, 8_000);
+        assert_eq!(DEFAULT_AGENT_HANDOFF_MAX_DEPTH, 8);
+
         let profile: AgentProfileDefinition = serde_json::from_value(json!({
             "schemaVersion": 1,
             "kind": "tauritavern.agentProfile",

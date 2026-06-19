@@ -1202,6 +1202,194 @@ async fn deletes_skill_when_last_linked_source_is_deleted() {
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
+#[tokio::test]
+async fn list_skills_filters_index_entries_with_missing_directories_without_saving() {
+    let root = temp_root("list-filter-missing-dir");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill("test-skill", vec![]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+    let skill_root = repository
+        .installed_scope_root(&global_scope())
+        .expect("global root")
+        .join("test-skill");
+    tokio_fs::remove_dir_all(&skill_root)
+        .await
+        .expect("remove installed directory");
+
+    let listed = repository
+        .list_skills(global_filter())
+        .await
+        .expect("list filters stale entry");
+
+    assert!(listed.is_empty());
+    assert_eq!(
+        repository
+            .load_index()
+            .await
+            .expect("load raw index")
+            .skills
+            .len(),
+        1
+    );
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn preview_import_filters_missing_directory_without_saving_and_install_repairs() {
+    let root = temp_root("preview-filter-missing-dir");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill("test-skill", vec![]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+    let skill_root = repository
+        .installed_scope_root(&global_scope())
+        .expect("global root")
+        .join("test-skill");
+    tokio_fs::remove_dir_all(&skill_root)
+        .await
+        .expect("remove installed directory");
+
+    let preview = repository
+        .preview_import(inline_skill("test-skill", vec![]), global_scope())
+        .await
+        .expect("preview after stale index");
+    assert_eq!(preview.conflict.kind, SkillImportConflictKind::New);
+    assert_eq!(
+        repository
+            .load_index()
+            .await
+            .expect("load raw index")
+            .skills
+            .len(),
+        1
+    );
+
+    let result = repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill("test-skill", vec![]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("reinstall after stale index");
+    assert_eq!(result.action, SkillInstallAction::Installed);
+    assert!(skill_root.exists());
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn install_import_restores_matching_orphan_directory_index_entry() {
+    let root = temp_root("install-adopt-orphan-dir");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill("test-skill", vec![("references/a.md", "hello")]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+    let mut index = repository.load_index().await.expect("load index");
+    index.skills.clear();
+    repository.save_index(&index).await.expect("clear index");
+
+    let preview = repository
+        .preview_import(
+            inline_skill_with_source(
+                "test-skill",
+                vec![("references/a.md", "hello")],
+                json!({"kind":"preset","id":"preset:openai:One","label":"One"}),
+            ),
+            global_scope(),
+        )
+        .await
+        .expect("preview orphan directory");
+    assert_eq!(preview.conflict.kind, SkillImportConflictKind::Same);
+    assert!(
+        repository
+            .list_skills(global_filter())
+            .await
+            .expect("list remains index-backed")
+            .is_empty()
+    );
+
+    let result = repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill_with_source(
+                "test-skill",
+                vec![("references/a.md", "hello")],
+                json!({"kind":"preset","id":"preset:openai:One","label":"One"}),
+            ),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("repair orphan directory");
+    assert_eq!(result.action, SkillInstallAction::AlreadyInstalled);
+    let listed = repository
+        .list_skills(global_filter())
+        .await
+        .expect("list restored skill");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].source_refs.len(), 1);
+    assert_eq!(listed[0].source_refs[0].id, "preset:openai:One");
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn delete_skills_for_source_prunes_missing_linked_skill_directory() {
+    let root = temp_root("delete-source-prune-missing-dir");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill_with_source(
+                "test-skill",
+                vec![],
+                json!({"kind":"preset","id":"preset:openai:One","label":"One"}),
+            ),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install linked skill");
+    let skill_root = repository
+        .installed_scope_root(&global_scope())
+        .expect("global root")
+        .join("test-skill");
+    tokio_fs::remove_dir_all(&skill_root)
+        .await
+        .expect("remove installed directory");
+
+    let deleted = repository
+        .delete_skills_for_source("preset", "preset:openai:One")
+        .await
+        .expect("delete linked stale skill");
+
+    assert_eq!(deleted, vec!["global/test-skill"]);
+    assert!(
+        repository
+            .list_skills(global_filter())
+            .await
+            .expect("list")
+            .is_empty()
+    );
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn delete_skills_for_source_keeps_directory_when_index_save_fails() {

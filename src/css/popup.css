@@ -216,15 +216,68 @@ body.no-blur .popup[open]::backdrop {
     backface-visibility: hidden;
 }
 
+@media screen and (max-width: 1000px) {
+    .popup.tt-tauritavern-panel-popup[data-tt-mobile-surface="fullscreen-window"] {
+        padding: 0;
+        box-sizing: border-box;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .popup.tt-tauritavern-panel-popup[data-tt-mobile-surface="fullscreen-window"] .popup-body {
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        max-height: none;
+        padding: 0;
+    }
+
+    .popup.tt-tauritavern-panel-popup[data-tt-mobile-surface="fullscreen-window"] .popup-content {
+        flex: 1 1 auto;
+        min-height: 0;
+        margin: 0;
+        padding: 10px;
+        overflow-y: auto;
+        overscroll-behavior-y: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .popup.tt-tauritavern-panel-popup[data-tt-mobile-surface="fullscreen-window"] .popup-controls {
+        flex: 0 0 auto;
+        flex-wrap: wrap;
+        width: 100%;
+        gap: 8px;
+        justify-content: center;
+        align-self: stretch;
+        margin-top: 0;
+        padding: 8px 10px 10px;
+        border-top: 1px solid var(--SmartThemeBorderColor);
+        background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 92%, transparent);
+    }
+
+    .popup.tt-tauritavern-panel-popup[data-tt-mobile-surface="fullscreen-window"] .popup-controls .menu_button {
+        flex: 1 1 130px;
+        min-width: 0;
+        justify-content: center;
+    }
+
+    .popup.tt-tauritavern-panel-popup[data-tt-mobile-surface="fullscreen-window"] .popup-button-close {
+        top: 8px;
+        right: 8px;
+    }
+}
+
 .popup.tt-fullscreen-text-viewer-popup {
     width: 100vw;
     width: 100dvw;
     height: 100vh;
-    height: 100dvh;
+    height: var(--tt-base-viewport-height, 100dvh);
     max-width: 100vw;
     max-width: 100dvw;
     max-height: 100vh;
-    max-height: 100dvh;
+    max-height: var(--tt-base-viewport-height, 100dvh);
+    min-height: 0;
     margin: 0;
     inset: 0;
     padding: 0;

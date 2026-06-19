@@ -5,20 +5,9 @@ import {
     saveGroupChatPayload,
 } from '../../../scripts/tauri/chat/transport.js';
 import { payloadToJsonl } from '../../../scripts/tauri/chat/jsonl.js';
+import { resolveRouteCharacterId } from './character-route-utils.js';
+import { mapChatSummaryResults } from './chat-route-utils.js';
 import { registerChatRecentRoutes } from './chat-recent-routes.js';
-
-function mapChatSummaryResults(context, results) {
-    return Array.isArray(results)
-        ? results.map((entry) => ({
-            // SillyTavern's /api/chats/search exposes the extensionless file id as file_name.
-            file_name: context.stripJsonl(entry.file_name),
-            file_size: context.formatFileSize(entry.file_size),
-            message_count: Number(entry.message_count || 0),
-            preview_message: entry.preview || '',
-            last_mes: Number(entry.date || 0),
-        }))
-        : [];
-}
 
 export function registerChatRoutes(router, context, { jsonResponse }) {
     const allowMissingChat = (body) => Boolean(body?.allow_not_found ?? body?.allowNotFound);
@@ -40,10 +29,14 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/chats/get', async ({ body }) => {
         const allowNotFound = allowMissingChat(body);
-        const characterId = await context.resolveCharacterId({
+        const resolved = await resolveRouteCharacterId(context, {
             avatar: body?.avatar_url,
             fallbackName: body?.ch_name || body?.character_name,
         });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const characterId = resolved.characterId;
 
         const fileName = context.stripJsonl(body?.file_name || body?.chatfile || body?.file);
 
@@ -71,10 +64,14 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/chats/save', async ({ body }) => {
-        const characterId = await context.resolveCharacterId({
+        const resolved = await resolveRouteCharacterId(context, {
             avatar: body?.avatar_url,
             fallbackName: body?.ch_name || body?.character_name,
         });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const characterId = resolved.characterId;
 
         const fileName = context.stripJsonl(body?.file_name || body?.chatfile || body?.file);
         if (!characterId || !fileName.trim() || !Array.isArray(body?.chat)) {
@@ -106,10 +103,14 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/chats/delete', async ({ body }) => {
-        const characterId = await context.resolveCharacterId({
+        const resolved = await resolveRouteCharacterId(context, {
             avatar: body?.avatar_url,
             fallbackName: body?.ch_name || body?.character_name,
         });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const characterId = resolved.characterId;
 
         const fileName = context.stripJsonl(body?.chatfile || body?.file_name || body?.file);
         if (!characterId || !fileName.trim()) {
@@ -157,7 +158,11 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             }
         }
 
-        const characterId = await context.resolveCharacterId({ avatar: body?.avatar_url });
+        const resolved = await resolveRouteCharacterId(context, { avatar: body?.avatar_url });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const characterId = resolved.characterId;
         if (!characterId) {
             return jsonResponse({ error: 'Invalid rename payload' }, 400);
         }
@@ -208,7 +213,11 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse(mapped);
         }
 
-        const characterId = await context.resolveCharacterId({ avatar: body?.avatar_url });
+        const resolved = await resolveRouteCharacterId(context, { avatar: body?.avatar_url });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const characterId = resolved.characterId;
         const results = hasQuery
             ? await context.safeInvoke('search_chats', {
                 query,
@@ -240,10 +249,14 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             if (isGroup) {
                 payload = await loadGroupChatPayload({ id: fileName, allowNotFound: false });
             } else {
-                const characterId = await context.resolveCharacterId({
+                const resolved = await resolveRouteCharacterId(context, {
                     avatar: body?.avatar_url,
                     fallbackName: body?.ch_name,
                 });
+                if (resolved.responseBody) {
+                    return jsonResponse(resolved.responseBody, 400);
+                }
+                const characterId = resolved.characterId;
 
                 if (!characterId) {
                     return jsonResponse({ message: 'Invalid export payload' }, 400);
@@ -292,16 +305,21 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         }
 
         const characterDisplayName = String(body.get('character_name') || '').trim();
-        const characterId = await context.resolveCharacterId({
+        const resolved = await resolveRouteCharacterId(context, {
             avatar: body.get('avatar_url'),
             fallbackName: characterDisplayName,
         });
+        if (resolved.responseBody) {
+            return jsonResponse(resolved.responseBody, 400);
+        }
+        const characterId = resolved.characterId;
         if (!characterId) {
             return jsonResponse({ error: true }, 400);
         }
 
         const preferredName = file instanceof File && file.name ? file.name : `import.${fileType}`;
         const fileInfo = await context.materializeUploadFile(file, {
+            kind: 'chat-import',
             preferredName,
             preferredExtension: fileType,
         });
@@ -458,6 +476,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
 
         const preferredName = file instanceof File && file.name ? file.name : 'group-chat.jsonl';
         const fileInfo = await context.materializeUploadFile(file, {
+            kind: 'chat-import',
             preferredName,
             preferredExtension: 'jsonl',
         });

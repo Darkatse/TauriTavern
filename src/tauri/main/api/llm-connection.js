@@ -1,5 +1,7 @@
 // @ts-check
 
+import { emitLlmConnectionsChanged } from '../../../scripts/tauritavern/agent/llm-connection-events.js';
+
 /**
  * @param {unknown} value
  * @param {string} label
@@ -44,20 +46,24 @@ function createLlmConnectionsApi({ safeInvoke }) {
 
     async function save(input) {
         const connection = requirePlainObject(input?.connection ?? input, 'connection');
-        return safeInvoke('save_llm_connection', {
+        const result = await safeInvoke('save_llm_connection', {
             dto: {
                 connection,
             },
         });
+        emitLlmConnectionsChanged();
+        return result;
     }
 
     async function deleteConnection(input) {
         const connectionId = requireNonEmptyString(input?.connectionId ?? input?.connection_id ?? input, 'connectionId');
-        return safeInvoke('delete_llm_connection', {
+        const result = await safeInvoke('delete_llm_connection', {
             dto: {
                 connectionId,
             },
         });
+        emitLlmConnectionsChanged();
+        return result;
     }
 
     return {

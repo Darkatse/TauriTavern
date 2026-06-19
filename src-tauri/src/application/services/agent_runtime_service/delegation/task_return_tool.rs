@@ -150,6 +150,7 @@ impl AgentRuntimeService {
             "task_return_completed",
             json!({
                 "taskId": task.id.as_str(),
+                "parentInvocationId": task.parent_invocation_id.as_str(),
                 "childInvocationId": invocation_id,
                 "status": task.status,
                 "resultRef": result_ref.as_str(),

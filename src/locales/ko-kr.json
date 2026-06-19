@@ -1,4 +1,12 @@
 {
+    "Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.": "프롬프트에서 채팅 메시지를 숨깁니다. <code>all</code>은 전체 채팅을, <code>before</code>는 로드된 창 이전에 저장된 메시지만 숨깁니다.",
+    "Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.": "프롬프트에서 메시지를 다시 표시합니다. <code>all</code>은 전체 채팅을, <code>before</code>는 로드된 창 이전에 저장된 메시지만 다시 표시합니다.",
+    "message index (starts with 0) or range, or \"all\" / \"before\" (messages before the loaded window), defaults to the last message index if not provided": "메시지 인덱스(0부터 시작) 또는 범위, 혹은 \"all\" / \"before\"(로드된 창 이전의 메시지). 지정하지 않으면 마지막 메시지 인덱스가 사용됩니다",
+    "every message in the chat, including unloaded ones": "로드되지 않은 메시지를 포함한 채팅의 모든 메시지",
+    "only unloaded messages before the current window": "현재 창 이전의 로드되지 않은 메시지만",
+    "All messages are already loaded. Use /hide with a message range instead.": "모든 메시지가 이미 로드되어 있습니다. 대신 메시지 범위로 /hide를 사용하세요.",
+    "There are no unloaded messages before the current window.": "현재 창 이전에 로드되지 않은 메시지가 없습니다.",
+    "Failed to update messages before the loaded window. Reload the chat and try again.": "로드된 창 이전 메시지 업데이트에 실패했습니다. 채팅을 다시 열고 다시 시도하세요.",
     "Favorite": "가장 좋아하는",
     "Tag": "태그",
     "Duplicate": "복제하기",

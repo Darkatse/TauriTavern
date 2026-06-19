@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 
@@ -18,6 +20,7 @@ pub struct TtSyncRuntime {
     pub sync_root: PathBuf,
     pub store: TtSyncStore,
     sync_permit: Arc<Semaphore>,
+    auto_event_depth: Arc<AtomicUsize>,
     paired_servers_cache: Mutex<Option<HashMap<String, TtSyncPairedServer>>>,
 }
 
@@ -33,6 +36,7 @@ impl TtSyncRuntime {
             sync_root,
             store: TtSyncStore::new(store_root),
             sync_permit,
+            auto_event_depth: Arc::new(AtomicUsize::new(0)),
             paired_servers_cache: Mutex::new(None),
         }
     }
@@ -46,6 +50,16 @@ impl TtSyncRuntime {
             .clone()
             .try_acquire_owned()
             .map_err(|_| DomainError::InvalidData("TT-Sync already running".to_string()))
+    }
+
+    #[must_use]
+    pub fn auto_event_guard(&self) -> TtSyncAutoEventGuard {
+        // TT-Sync jobs are serialized by the shared sync permit, so this depth
+        // marker is scoped to the single active transfer.
+        self.auto_event_depth.fetch_add(1, Ordering::AcqRel);
+        TtSyncAutoEventGuard {
+            auto_event_depth: self.auto_event_depth.clone(),
+        }
     }
 
     pub async fn load_paired_servers(&self) -> Result<Vec<TtSyncPairedServer>, DomainError> {
@@ -141,20 +155,47 @@ impl TtSyncRuntime {
     }
 
     pub fn emit_progress(&self, payload: TtSyncProgressEvent) -> Result<(), DomainError> {
-        self.app_handle
-            .emit("tt_sync:progress", payload)
-            .map_err(|error| DomainError::InternalError(error.to_string()))
+        self.emit_with_origin("tt_sync:progress", payload)
     }
 
     pub fn emit_completed(&self, payload: TtSyncCompletedEvent) -> Result<(), DomainError> {
-        self.app_handle
-            .emit("tt_sync:completed", payload)
-            .map_err(|error| DomainError::InternalError(error.to_string()))
+        self.emit_with_origin("tt_sync:completed", payload)
     }
 
     pub fn emit_error(&self, payload: TtSyncErrorEvent) -> Result<(), DomainError> {
+        self.emit_with_origin("tt_sync:error", payload)
+    }
+
+    fn emit_with_origin<T: Serialize>(&self, event: &str, payload: T) -> Result<(), DomainError> {
+        let mut payload = serde_json::to_value(payload)
+            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        if let serde_json::Value::Object(map) = &mut payload {
+            map.insert(
+                "origin".to_string(),
+                serde_json::Value::String(self.current_event_origin().to_string()),
+            );
+        }
+
         self.app_handle
-            .emit("tt_sync:error", payload)
+            .emit(event, payload)
             .map_err(|error| DomainError::InternalError(error.to_string()))
+    }
+
+    fn current_event_origin(&self) -> &'static str {
+        if self.auto_event_depth.load(Ordering::Acquire) > 0 {
+            "auto"
+        } else {
+            "manual"
+        }
+    }
+}
+
+pub struct TtSyncAutoEventGuard {
+    auto_event_depth: Arc<AtomicUsize>,
+}
+
+impl Drop for TtSyncAutoEventGuard {
+    fn drop(&mut self) {
+        self.auto_event_depth.fetch_sub(1, Ordering::AcqRel);
     }
 }

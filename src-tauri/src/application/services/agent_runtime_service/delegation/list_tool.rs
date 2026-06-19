@@ -94,7 +94,7 @@ impl AgentRuntimeService {
 
         let profiles = self
             .profile_service
-            .list_resolved_profiles(self.tool_registry.specs())
+            .list_resolved_profiles_for_discovery(self.tool_registry.specs())
             .await?;
         let mut agents = profiles
             .into_iter()
@@ -150,14 +150,14 @@ fn validate_agent_list_capability(
             profile.id.as_str()
         )),
         AgentListPurpose::Handoff if !profile.delegation.can_handoff => Err(format!(
-            "agent.profile_cannot_handoff: profile `{}` cannot hand off control",
+            "agent.profile_cannot_handoff: your current Agent configuration `{}` does not allow handoff",
             profile.id.as_str()
         )),
         AgentListPurpose::Any
             if !profile.delegation.can_delegate && !profile.delegation.can_handoff =>
         {
             Err(format!(
-                "agent.profile_cannot_delegate: profile `{}` cannot delegate or hand off control",
+                "agent.profile_cannot_delegate: your current Agent configuration `{}` does not allow delegation or handoff",
                 profile.id.as_str()
             ))
         }

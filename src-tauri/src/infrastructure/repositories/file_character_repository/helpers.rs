@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::character::{Character, sanitize_filename};
+use crate::domain::models::character::Character;
 use crate::domain::models::chat::parse_message_timestamp;
+use crate::domain::models::filename::sanitize_filename;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
     list_files_with_extension, replace_file_with_fallback, unique_temp_path,
@@ -16,6 +17,7 @@ use crate::infrastructure::persistence::file_system::{
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
+use crate::infrastructure::repositories::chat_directory_identity;
 
 use super::FileCharacterRepository;
 
@@ -178,8 +180,19 @@ impl FileCharacterRepository {
         self.chats_dir.join(name)
     }
 
+    pub(crate) async fn resolve_chat_directory(&self, name: &str) -> Result<PathBuf, DomainError> {
+        let dir_key = chat_directory_identity::resolve_character_chat_dir_key(
+            &self.characters_dir,
+            &self.chats_dir,
+            &self.chat_aliases,
+            name,
+        )
+        .await?;
+        Ok(self.get_chat_directory(&dir_key))
+    }
+
     pub(crate) async fn calculate_chat_stats(&self, name: &str) -> Result<(u64, i64), DomainError> {
-        let chat_dir = self.get_chat_directory(name);
+        let chat_dir = self.resolve_chat_directory(name).await?;
 
         if !chat_dir.exists() {
             return Ok((0, 0));

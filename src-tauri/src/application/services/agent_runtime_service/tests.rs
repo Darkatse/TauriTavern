@@ -15,10 +15,10 @@ use super::commit_ledger::RunCommitLedger;
 use super::delegation::workspace_policy::InvocationWorkspaceRepository;
 use super::skill_scope::{resolve_run_skill_scope_refs, skill_scope_order_for_profile};
 use crate::application::dto::agent_dto::{
-    AgentPromptAssemblyScopeDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
-    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
-    AgentResolvePromptAssemblyDto, AgentSkillScopeRefsDto, AgentStartRunDto,
-    AgentStartRunOptionsDto,
+    AgentCancelRunDto, AgentPromptAssemblyScopeDto, AgentReadEventsDto, AgentReadModelTurnDto,
+    AgentReadPromptAssemblyRequestDto, AgentResolveChatCommitDto,
+    AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
+    AgentSkillScopeRefsDto, AgentStartRunDto, AgentStartRunOptionsDto, AgentSubmitGuidanceDto,
 };
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
@@ -41,10 +41,11 @@ use crate::domain::models::agent::profile::{
     AgentProfileId, ResolvedAgentProfile,
 };
 use crate::domain::models::agent::{
-    AgentChatRef, AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart,
-    AgentModelRequest, AgentModelRole, AgentRun, AgentRunEventLevel, AgentRunPresentation,
-    AgentRunSkillScopeRefs, AgentRunStatus, AgentTaskStatus, AgentToolCall, AgentToolResult,
-    WorkspaceFileWriteMode, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
+    AgentChatRef, AgentDelegationContinuation, AgentInvocationExitPolicy, AgentInvocationStatus,
+    AgentModelContentPart, AgentModelRequest, AgentModelRole, AgentRun, AgentRunEventLevel,
+    AgentRunPresentation, AgentRunSkillScopeRefs, AgentRunStatus, AgentTaskStatus, AgentToolCall,
+    AgentToolResult, WorkspaceFileWriteMode, WorkspaceManifest, WorkspacePath,
+    WorkspacePersistentChangeSet,
 };
 use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::domain::models::skill::{
@@ -52,7 +53,7 @@ use crate::domain::models::skill::{
 };
 use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
 use crate::domain::repositories::agent_run_repository::{
-    AgentRunEventReadQuery, AgentRunRepository,
+    AgentRunEventReadQuery, AgentRunRepository, event_belongs_to_invocation,
 };
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
@@ -61,6 +62,7 @@ use crate::domain::repositories::workspace_repository::{
     WorkspaceAppendResult, WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
     WorkspaceWriteGuard,
 };
+use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
@@ -114,6 +116,68 @@ async fn resolves_agent_system_prompt_through_runtime_boundary() {
     assert!(prompt.contains("tool_choice: required"));
     assert!(prompt.contains("workspace_commit"));
     assert!(prompt.contains("workspace_finish"));
+}
+
+#[tokio::test]
+async fn system_prompt_preview_allows_dangling_required_preset_profile() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-system-prompt-dangling-preset-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let profile_service = test_profile_service(&root);
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        profile_service.clone(),
+        test_llm_connection_service(&root),
+    ));
+
+    let mut profile = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    profile.id = AgentProfileId::parse("dangling-writer").expect("profile id");
+    profile.display_name = "Dangling Writer".to_string();
+    profile.preset.mode = AgentPresetBindingMode::Ref;
+    profile.preset.ref_ = Some(AgentPresetRef {
+        api_id: "openai".to_string(),
+        name: "Missing Writer Preset".to_string(),
+    });
+    profile.preset.required = true;
+    profile_service
+        .save_profile(profile, service.tool_specs())
+        .await
+        .expect("dangling preset profile remains editable");
+
+    let strict_error = profile_service
+        .resolve_profile(AgentProfileResolveInput {
+            profile_id: Some("dangling-writer"),
+            known_tools: service.tool_specs(),
+        })
+        .await
+        .expect_err("strict run resolution still requires preset");
+    assert!(
+        strict_error
+            .to_string()
+            .contains("agent.profile_preset_missing")
+    );
+
+    let prompt = service
+        .resolve_agent_system_prompt(Some("dangling-writer"))
+        .await
+        .expect("system prompt preview should not require preset file");
+
+    assert!(prompt.contains("# Agent Mode is active."));
+    assert!(prompt.contains("workspace_finish"));
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
@@ -189,6 +253,36 @@ async fn agent_list_returns_callable_profiles_allowed_by_delegation_policy() {
         .save_profile(unconfigured, service.tool_specs())
         .await
         .expect("save unconfigured callable profile");
+    let mut dangling_preset = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    dangling_preset.id = AgentProfileId::parse("dangling-preset-editor").expect("profile id");
+    dangling_preset.display_name = "Dangling Preset Editor".to_string();
+    dangling_preset.preset.mode = AgentPresetBindingMode::Ref;
+    dangling_preset.preset.ref_ = Some(AgentPresetRef {
+        api_id: "openai".to_string(),
+        name: "Missing Editor Preset".to_string(),
+    });
+    dangling_preset.preset.required = true;
+    dangling_preset.tools.allow.retain(|name| {
+        !matches!(
+            name.as_str(),
+            "agent.list" | "agent.delegate" | "agent.await"
+        )
+    });
+    dangling_preset.delegation = AgentDelegationPolicy {
+        callable: true,
+        allow_as_subagent: true,
+        allowed_callers: vec!["default-writer".to_string()],
+        description_for_agents: Some("Would edit scenes if its preset existed.".to_string()),
+        ..Default::default()
+    };
+    profile_service
+        .save_profile(dangling_preset, service.tool_specs())
+        .await
+        .expect("save dangling preset callable profile");
 
     let mut profile = profile_service
         .resolve_profile(AgentProfileResolveInput {
@@ -972,6 +1066,7 @@ async fn subagent_current_prompt_snapshot_reads_ambient_preset_and_character_ski
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -1301,6 +1396,86 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
     assert_eq!(child_model_turn.tool_calls.len(), 2);
     assert_eq!(child_model_turn.tool_calls[0].name, "workspace.write_file");
 
+    let child_event_page = service
+        .read_events(AgentReadEventsDto {
+            run_id: run.id.clone(),
+            after_seq: Some(0),
+            before_seq: None,
+            limit: 300,
+            invocation_id: Some(task.child_invocation_id.clone()),
+            include_timeline_projection: false,
+        })
+        .await
+        .expect("read child invocation events");
+    assert!(!child_event_page.events.is_empty());
+    assert!(
+        child_event_page
+            .events
+            .iter()
+            .all(|event| event_belongs_to_invocation(event, &task.child_invocation_id))
+    );
+    assert!(child_event_page.events.iter().any(|event| {
+        event.event_type == "model_completed"
+            && event.payload["invocationId"] == task.child_invocation_id
+    }));
+    let delegate_event = child_event_page
+        .events
+        .iter()
+        .find(|event| event.event_type == "agent_delegate_started")
+        .expect("delegate event belongs to child invocation through canonical related scope");
+    assert_eq!(
+        delegate_event.payload["eventScope"]["invocationId"],
+        "inv_root"
+    );
+    assert_eq!(
+        delegate_event.payload["eventScope"]["relatedInvocationIds"][0],
+        task.child_invocation_id
+    );
+    let task_return_event = child_event_page
+        .events
+        .iter()
+        .find(|event| event.event_type == "task_return_completed")
+        .expect("task return event");
+    assert_eq!(task_return_event.payload["parentInvocationId"], "inv_root");
+    assert_eq!(
+        task_return_event.payload["childInvocationId"],
+        task.child_invocation_id
+    );
+    assert_eq!(
+        task_return_event.payload["eventScope"]["invocationId"],
+        task.child_invocation_id
+    );
+    assert_eq!(
+        task_return_event.payload["eventScope"]["relatedInvocationIds"][0],
+        "inv_root"
+    );
+    assert!(
+        !child_event_page
+            .events
+            .iter()
+            .any(|event| event.event_type == "run_completed")
+    );
+    assert!(child_event_page.timeline_projection.is_none());
+
+    let child_event_tail = service
+        .read_events(AgentReadEventsDto {
+            run_id: run.id.clone(),
+            after_seq: None,
+            before_seq: Some(u64::MAX),
+            limit: 2,
+            invocation_id: Some(task.child_invocation_id.clone()),
+            include_timeline_projection: false,
+        })
+        .await
+        .expect("read child invocation event tail");
+    assert_eq!(child_event_tail.events.len(), 2);
+    assert!(
+        child_event_tail
+            .events
+            .iter()
+            .all(|event| event_belongs_to_invocation(event, &task.child_invocation_id))
+    );
+
     let requests = model_gateway_probe.requests().await;
     assert_eq!(requests.len(), 4);
     assert_eq!(requests[0].provider_state["invocationId"], "inv_root");
@@ -1466,6 +1641,656 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
 }
 
 #[tokio::test]
+async fn agent_handoff_continues_after_prior_commit() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-handoff-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let profile_service = test_profile_service(&root);
+    let mut editor_profile = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    editor_profile.id = AgentProfileId::parse("final-editor").expect("profile id");
+    editor_profile.display_name = "Final Editor".to_string();
+    editor_profile.description =
+        Some("Takes over a draft and prepares the final message.".to_string());
+    editor_profile.tools.allow.retain(|name| {
+        !matches!(
+            name.as_str(),
+            "agent.list" | "agent.delegate" | "agent.await"
+        )
+    });
+    editor_profile.tools.allow.push("agent.handoff".to_string());
+    editor_profile.delegation = AgentDelegationPolicy {
+        can_handoff: true,
+        callable: true,
+        allow_as_handoff_target: true,
+        allowed_callers: vec!["default-writer".to_string()],
+        description_for_agents: Some(
+            "Revise the current draft and pass it to the acceptance finisher.".to_string(),
+        ),
+        ..Default::default()
+    };
+    let mut acceptance_profile = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    acceptance_profile.id = AgentProfileId::parse("acceptance-finisher").expect("profile id");
+    acceptance_profile.display_name = "Acceptance Finisher".to_string();
+    acceptance_profile.description = Some(
+        "Takes over after a final commit and closes the run if no further edit is needed."
+            .to_string(),
+    );
+    acceptance_profile.tools.allow.retain(|name| {
+        matches!(
+            name.as_str(),
+            "workspace.finish" | "workspace.read_file" | "workspace.write_file"
+        )
+    });
+    acceptance_profile.run.direct_runnable = false;
+    acceptance_profile.run.presentation = AgentRunPresentation::Foreground;
+    acceptance_profile.delegation = AgentDelegationPolicy {
+        callable: true,
+        allow_as_handoff_target: true,
+        allowed_callers: vec!["final-editor".to_string()],
+        description_for_agents: Some(
+            "Accept the already committed final draft and finish the run.".to_string(),
+        ),
+        ..Default::default()
+    };
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_root_draft",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_write_file",
+                                "arguments": "{\"path\":\"output/main.md\",\"content\":\"Draft scene.\"}"
+                            }
+                        },
+                        {
+                            "id": "call_root_commit",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_commit",
+                                "arguments": "{}"
+                            }
+                        },
+                        {
+                            "id": "call_root_handoff",
+                            "type": "function",
+                            "function": {
+                                "name": "agent_handoff",
+                                "arguments": serde_json::to_string(&json!({
+                                    "agentId": "final-editor",
+                                    "handoff": {
+                                        "title": "Final edit",
+                                        "reason": "The draft has been committed and needs final revision.",
+                                        "objective": "Read output/main.md, revise it, commit the final message, then hand off for acceptance.",
+                                        "contextSummary": "The current draft is already visible in chat but may be revised.",
+                                        "workspaceRefs": ["output/main.md"],
+                                        "mustPreserve": ["Keep the scene quiet."],
+                                        "completionCriteria": ["Read output/main.md", "Commit the revised message", "Hand off to acceptance-finisher"]
+                                    }
+                                })).unwrap()
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_editor_read",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_read_file",
+                            "arguments": "{\"path\":\"output/main.md\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_editor_patch",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_apply_patch",
+                                "arguments": serde_json::to_string(&json!({
+                                    "path": "output/main.md",
+                                    "old_string": "Draft scene.",
+                                    "new_string": "Final quiet scene."
+                                })).unwrap()
+                            }
+                        },
+                        {
+                            "id": "call_editor_commit",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_commit",
+                                "arguments": "{}"
+                            }
+                        },
+                        {
+                            "id": "call_editor_handoff",
+                            "type": "function",
+                            "function": {
+                                "name": "agent_handoff",
+                                "arguments": serde_json::to_string(&json!({
+                                    "agentId": "acceptance-finisher",
+                                    "handoff": {
+                                        "title": "Acceptance finish",
+                                        "reason": "The final draft has been committed; this stage only needs to close the run if acceptable.",
+                                        "objective": "Read output/main.md if needed, then finish the run without creating a new chat commit.",
+                                        "contextSummary": "Final quiet scene has already been committed to chat.",
+                                        "workspaceRefs": ["output/main.md"],
+                                        "mustPreserve": ["Do not create a duplicate chat commit."],
+                                        "completionCriteria": ["Finish the run"]
+                                    }
+                                })).unwrap()
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_acceptance_finish",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_finish",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+    ]));
+    let model_gateway_probe = model_gateway.clone();
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        profile_service.clone(),
+        test_llm_connection_service(&root),
+    ));
+    profile_service
+        .save_profile(editor_profile, service.tool_specs())
+        .await
+        .expect("save editor profile");
+    profile_service
+        .save_profile(acceptance_profile, service.tool_specs())
+        .await
+        .expect("save acceptance profile");
+    let run = AgentRun {
+        id: "run_handoff_test".to_string(),
+        workspace_id: "chat_handoff_test".to_string(),
+        stable_chat_id: "stable_handoff_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: Default::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Foreground,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    insert_active_run_handle(&service, &run.id).await;
+
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("draft then hand off to editor")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.presentation = AgentRunPresentation::Foreground;
+    profile.delegation.can_handoff = true;
+    profile.tools.allow.push("agent.handoff".to_string());
+
+    let resolver = tokio::spawn(resolve_chat_commits_and_persistent_state_update(
+        service.clone(),
+        repository.clone(),
+        run.id.clone(),
+        vec!["message_draft", "message_final"],
+    ));
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+    resolver.await.expect("resolver task");
+
+    let saved = repository.load_run(&run.id).await.expect("load run");
+    assert_eq!(saved.status, AgentRunStatus::Completed);
+    let tasks = repository.list_tasks(&run.id).await.expect("list tasks");
+    assert_eq!(tasks.len(), 2);
+    let editor_task = tasks
+        .iter()
+        .find(|task| task.target_profile_id == "final-editor")
+        .expect("editor handoff task");
+    let acceptance_task = tasks
+        .iter()
+        .find(|task| task.target_profile_id == "acceptance-finisher")
+        .expect("acceptance handoff task");
+    assert_eq!(
+        editor_task.continuation,
+        AgentDelegationContinuation::TransferControl
+    );
+    assert_eq!(
+        acceptance_task.continuation,
+        AgentDelegationContinuation::TransferControl
+    );
+    assert_eq!(editor_task.status, AgentTaskStatus::Completed);
+    assert_eq!(acceptance_task.status, AgentTaskStatus::Completed);
+    let root_invocation = repository
+        .load_invocation(&run.id, "inv_root")
+        .await
+        .expect("load root invocation");
+    assert_eq!(root_invocation.status, AgentInvocationStatus::Transferred);
+    let editor_invocation = repository
+        .load_invocation(&run.id, editor_task.child_invocation_id.as_str())
+        .await
+        .expect("load editor invocation");
+    assert_eq!(
+        editor_invocation.kind,
+        crate::domain::models::agent::AgentInvocationKind::Handoff
+    );
+    assert_eq!(editor_invocation.status, AgentInvocationStatus::Transferred);
+    assert_eq!(
+        editor_invocation.exit_policy,
+        AgentInvocationExitPolicy::RunFinishAllowed
+    );
+    let acceptance_invocation = repository
+        .load_invocation(&run.id, acceptance_task.child_invocation_id.as_str())
+        .await
+        .expect("load acceptance invocation");
+    assert_eq!(
+        acceptance_invocation.kind,
+        crate::domain::models::agent::AgentInvocationKind::Handoff
+    );
+    assert_eq!(
+        acceptance_invocation.status,
+        AgentInvocationStatus::Completed
+    );
+    let final_output = repository
+        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .await
+        .expect("read final output");
+    assert_eq!(final_output.text, "Final quiet scene.");
+
+    let requests = model_gateway_probe.requests().await;
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0].provider_state["invocationId"], "inv_root");
+    assert_eq!(
+        requests[1].provider_state["invocationId"],
+        editor_task.child_invocation_id
+    );
+    assert_eq!(
+        requests[2].provider_state["invocationId"],
+        editor_task.child_invocation_id
+    );
+    assert_eq!(
+        requests[3].provider_state["invocationId"],
+        acceptance_task.child_invocation_id
+    );
+    let handoff_prompt = requests[1]
+        .messages
+        .iter()
+        .find(|message| message.role == AgentModelRole::User)
+        .and_then(|message| {
+            message.parts.iter().find_map(|part| match part {
+                AgentModelContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+        })
+        .expect("handoff prompt");
+    assert!(handoff_prompt.contains("# Handoff Brief"));
+    assert!(handoff_prompt.contains("You are now responsible for the next stage of this run."));
+    assert!(handoff_prompt.contains("output/main.md"));
+    assert!(!handoff_prompt.contains("inv_"));
+    assert!(!handoff_prompt.contains("active work"));
+    assert!(!handoff_prompt.contains("this Agent run"));
+    assert!(!handoff_prompt.contains("your Agent"));
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 300,
+                invocation_id: None,
+            },
+        )
+        .await
+        .expect("read events");
+    let handoff_event = events
+        .iter()
+        .find(|event| event.event_type == "agent_handoff_accepted")
+        .expect("handoff accepted event");
+    assert_eq!(handoff_event.payload["taskId"], editor_task.id);
+    assert_eq!(
+        handoff_event.payload["newInvocationId"],
+        editor_task.child_invocation_id
+    );
+    assert_eq!(
+        handoff_event.payload["eventScope"]["invocationId"],
+        "inv_root"
+    );
+    assert_eq!(
+        handoff_event.payload["eventScope"]["relatedInvocationIds"][0],
+        editor_task.child_invocation_id
+    );
+    assert!(events.iter().any(|event| {
+        event.event_type == "agent_handoff_accepted"
+            && event.payload["taskId"] == acceptance_task.id
+            && event.payload["newInvocationId"] == acceptance_task.child_invocation_id
+    }));
+    let acceptance_handoff_event = events
+        .iter()
+        .find(|event| {
+            event.event_type == "agent_handoff_accepted"
+                && event.payload["taskId"] == acceptance_task.id
+        })
+        .expect("acceptance handoff event");
+    assert_eq!(
+        acceptance_handoff_event.payload["eventScope"]["invocationId"],
+        editor_task.child_invocation_id
+    );
+    assert_eq!(
+        acceptance_handoff_event.payload["eventScope"]["relatedInvocationIds"][0],
+        acceptance_task.child_invocation_id
+    );
+    let plain_page = service
+        .read_events(AgentReadEventsDto {
+            run_id: run.id.clone(),
+            after_seq: Some(0),
+            before_seq: None,
+            limit: 1,
+            invocation_id: None,
+            include_timeline_projection: false,
+        })
+        .await
+        .expect("read event page without projection");
+    assert_eq!(plain_page.events.len(), 1);
+    assert!(plain_page.timeline_projection.is_none());
+    let projected_page = service
+        .read_events(AgentReadEventsDto {
+            run_id: run.id.clone(),
+            after_seq: Some(0),
+            before_seq: None,
+            limit: 1,
+            invocation_id: None,
+            include_timeline_projection: true,
+        })
+        .await
+        .expect("read projected event page");
+    assert_eq!(projected_page.events.len(), 1);
+    let projection = projected_page
+        .timeline_projection
+        .expect("timeline projection");
+    assert_eq!(
+        projection.foreground_invocation_ids,
+        vec![
+            "inv_root".to_string(),
+            editor_task.child_invocation_id.clone(),
+            acceptance_task.child_invocation_id.clone(),
+        ]
+    );
+    assert_eq!(projection.invocations.len(), 3);
+    assert!(
+        projection
+            .invocations
+            .iter()
+            .any(|invocation| invocation.invocation_id == "inv_root")
+    );
+    assert_eq!(projection.delegation_edges.len(), 2);
+    assert_eq!(
+        projection.delegation_edges[0].task_id,
+        editor_task.id.as_str()
+    );
+    assert_eq!(
+        projection.delegation_edges[0].source_invocation_id,
+        "inv_root"
+    );
+    assert_eq!(
+        projection.delegation_edges[0].target_invocation_id,
+        editor_task.child_invocation_id.as_str()
+    );
+    assert_eq!(
+        projection.delegation_edges[0].continuation,
+        AgentDelegationContinuation::TransferControl
+    );
+    assert_eq!(
+        projection.delegation_edges[0].status,
+        AgentTaskStatus::Completed
+    );
+    assert_eq!(
+        projection.delegation_edges[1].task_id,
+        acceptance_task.id.as_str()
+    );
+
+    wait_for_closed_sessions(
+        &model_gateway_probe,
+        vec![
+            "run_handoff_test:inv_root".to_string(),
+            format!("run_handoff_test:{}", editor_task.child_invocation_id),
+            format!("run_handoff_test:{}", acceptance_task.child_invocation_id),
+        ],
+    )
+    .await;
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn agent_handoff_denies_pending_delegated_tasks() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-handoff-pending-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let profile_service = test_profile_service(&root);
+    let mut child_profile = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    child_profile.id = AgentProfileId::parse("scene-critic").expect("profile id");
+    child_profile.display_name = "Scene Critic".to_string();
+    child_profile.tools.allow.retain(|name| {
+        !matches!(
+            name.as_str(),
+            "agent.list" | "agent.delegate" | "agent.handoff" | "agent.await"
+        )
+    });
+    child_profile.delegation = AgentDelegationPolicy {
+        callable: true,
+        allow_as_subagent: true,
+        allowed_callers: vec!["default-writer".to_string()],
+        description_for_agents: Some("Return concise notes.".to_string()),
+        ..Default::default()
+    };
+
+    let model_gateway = Arc::new(PendingDelegateHandoffModelGateway::new());
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway.clone(),
+        profile_service.clone(),
+        test_llm_connection_service(&root),
+    ));
+    profile_service
+        .save_profile(child_profile, service.tool_specs())
+        .await
+        .expect("save child profile");
+    let run = AgentRun {
+        id: "run_handoff_pending_test".to_string(),
+        workspace_id: "chat_handoff_pending_test".to_string(),
+        stable_chat_id: "stable_handoff_pending_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: Default::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    insert_active_run_handle(&service, &run.id).await;
+
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("delegate then try to hand off too early")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.delegation.can_handoff = true;
+    profile.tools.allow.push("agent.handoff".to_string());
+
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+
+    let saved = repository.load_run(&run.id).await.expect("load run");
+    assert_eq!(saved.status, AgentRunStatus::Completed);
+    let tasks = repository.list_tasks(&run.id).await.expect("list tasks");
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(
+        tasks[0].continuation,
+        AgentDelegationContinuation::ReturnToParent
+    );
+    assert_eq!(tasks[0].status, AgentTaskStatus::Cancelled);
+    let invocations = repository
+        .list_invocations(&run.id)
+        .await
+        .expect("list invocations");
+    assert!(
+        invocations.iter().all(|invocation| invocation.kind
+            != crate::domain::models::agent::AgentInvocationKind::Handoff)
+    );
+
+    let requests = model_gateway.requests().await;
+    assert_eq!(requests[0].provider_state["invocationId"], "inv_root");
+    let root_round_two = requests
+        .iter()
+        .filter(|request| request.provider_state["invocationId"].as_str() == Some("inv_root"))
+        .nth(1)
+        .expect("root second request");
+    let root_round_two_results = tool_results_from_request(root_round_two);
+    let handoff_result = root_round_two_results
+        .iter()
+        .find(|result| result.name == "agent.handoff")
+        .expect("handoff tool result");
+    assert!(handoff_result.is_error);
+    assert_eq!(
+        handoff_result.error_code.as_deref(),
+        Some("agent.handoff_pending_tasks")
+    );
+    assert!(handoff_result.content.contains(
+        "You still have unfinished delegated tasks. Use agent.await before handing off."
+    ));
+    assert!(!handoff_result.content.contains("this Agent"));
+    assert!(!handoff_result.content.contains("terminal"));
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 300,
+                invocation_id: None,
+            },
+        )
+        .await
+        .expect("read events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "agent_handoff_requested")
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| event.event_type != "agent_handoff_accepted")
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-child-prompt-assembly-{}",
@@ -1479,8 +2304,11 @@ async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
             "openai_model": "preset-model"
         }),
     ));
+    let agent_profile_repository =
+        Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles")));
     let profile_service = Arc::new(AgentProfileService::new(
-        Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles"))),
+        agent_profile_repository.clone(),
+        agent_profile_repository,
         preset_repository.clone(),
     ));
     let llm_connection_service = test_llm_connection_service(&root);
@@ -1614,6 +2442,10 @@ async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
         "inv_child_prompt_assembly"
     );
     assert_eq!(payload["scope"]["taskId"], "task_child_prompt_assembly");
+    assert_eq!(
+        payload["eventScope"]["invocationId"],
+        "inv_child_prompt_assembly"
+    );
     assert!(payload.get("request").is_none());
     assert_eq!(
         payload["requestKind"],
@@ -1732,6 +2564,7 @@ async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -2105,6 +2938,7 @@ async fn cancelled_child_task_does_not_emit_failed_event() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -2245,6 +3079,7 @@ async fn workspace_finish_cancels_unawaited_delegated_task() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -2493,6 +3328,12 @@ async fn agent_loop_writes_artifact_and_completes() {
     assert_eq!(model_turn.assistant.total_chars, 26);
     assert_eq!(model_turn.assistant.total_words, 5);
     assert!(!model_turn.assistant.truncated);
+    let narration = model_turn.narration.as_ref().expect("model turn narration");
+    assert_eq!(narration.source, "assistantText");
+    assert_eq!(narration.text, "I will write the artifact.");
+    assert_eq!(narration.total_chars, 26);
+    assert_eq!(narration.total_words, 5);
+    assert!(!narration.truncated);
     assert_eq!(model_turn.reasoning.len(), 1);
     assert_eq!(
         model_turn.reasoning[0].text,
@@ -2518,6 +3359,14 @@ async fn agent_loop_writes_artifact_and_completes() {
     assert_eq!(truncated_model_turn.assistant.total_chars, 26);
     assert_eq!(truncated_model_turn.assistant.total_words, 5);
     assert!(truncated_model_turn.assistant.truncated);
+    let truncated_narration = truncated_model_turn
+        .narration
+        .as_ref()
+        .expect("truncated narration");
+    assert_eq!(truncated_narration.text, "I wi");
+    assert_eq!(truncated_narration.total_chars, 26);
+    assert_eq!(truncated_narration.total_words, 5);
+    assert!(truncated_narration.truncated);
 
     let model_requests = model_gateway_probe.requests().await;
     let second_request = model_requests.get(1).expect("second model request");
@@ -2549,6 +3398,7 @@ async fn agent_loop_writes_artifact_and_completes() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -2571,6 +3421,18 @@ async fn agent_loop_writes_artifact_and_completes() {
     assert_eq!(model_completed.payload["hasReasoning"], json!(true));
     assert_eq!(model_completed.payload["assistantTextChars"], json!(26));
     assert_eq!(model_completed.payload["assistantTextWords"], json!(5));
+    assert_eq!(
+        model_completed.payload["narration"]["text"],
+        json!("I will write the artifact.")
+    );
+    assert_eq!(
+        model_completed.payload["narration"]["source"],
+        json!("assistantText")
+    );
+    assert_eq!(
+        model_completed.payload["narration"]["totalChars"],
+        json!(26)
+    );
 
     let tool_requested = events
         .iter()
@@ -2912,6 +3774,7 @@ async fn agent_loop_stores_tool_audit_files_with_hashed_call_id_paths() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -3098,6 +3961,7 @@ async fn agent_loop_retries_retryable_model_errors() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -3200,6 +4064,7 @@ async fn agent_loop_does_not_retry_non_retryable_model_errors() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -3360,6 +4225,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -3519,6 +4385,7 @@ async fn finish_promotes_persistent_workspace_projection() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -3659,6 +4526,7 @@ async fn foreground_run_commits_chat_message_before_finish() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -3866,6 +4734,7 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -4110,6 +4979,7 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -4334,6 +5204,7 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -4475,6 +5346,7 @@ async fn foreground_run_without_commit_still_fails_when_drift_recovery_hits_max_
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -4649,6 +5521,7 @@ async fn foreground_run_with_commit_becomes_partial_success_when_persistent_comm
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 200,
+                invocation_id: None,
             },
         )
         .await
@@ -4829,6 +5702,7 @@ async fn foreground_finish_before_commit_returns_recoverable_error() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -4980,6 +5854,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
                 after_seq: Some(0),
                 before_seq: None,
                 limit: 100,
+                invocation_id: None,
             },
         )
         .await
@@ -6936,6 +7811,279 @@ async fn return_mode_child_write_rejects_non_writable_visible_root() {
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
 
+#[tokio::test]
+async fn submitted_guidance_is_applied_to_next_model_request() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-guidance-apply-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_finish_guidance",
+                    "type": "function",
+                    "function": {
+                        "name": "workspace_finish",
+                        "arguments": "{}"
+                    }
+                }]
+            }
+        }]
+    })]));
+    let model_gateway_probe = model_gateway.clone();
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+        test_llm_connection_service(&root),
+    ));
+    let run = guidance_test_run("run_guidance_apply");
+    repository.create_run(&run).await.expect("create run");
+    insert_active_run_handle(&service, &run.id).await;
+
+    let submitted = service
+        .submit_guidance(AgentSubmitGuidanceDto {
+            run_id: run.id.clone(),
+            text: "Focus the next step on the user's revised direction.".to_string(),
+            client_guidance_id: Some("client-guidance-apply".to_string()),
+        })
+        .await
+        .expect("submit guidance");
+    assert_eq!(submitted.status, "queued");
+    assert_eq!(submitted.pending_count, 1);
+
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("write the initial draft")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let profile = test_resolved_profile(&root).await;
+
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+
+    let requests = model_gateway_probe.requests().await;
+    assert_eq!(requests.len(), 1);
+    let user_texts = requests[0]
+        .messages
+        .iter()
+        .filter(|message| message.role == AgentModelRole::User)
+        .filter_map(first_text_part)
+        .collect::<Vec<_>>();
+    let guidance_message = user_texts.last().expect("guidance user message");
+    assert_eq!(
+        *guidance_message,
+        concat!(
+            "<user_guidance>\n",
+            "The user sent the following guidance while you were working. ",
+            "Apply the guidance in order as the user's latest direction for your next step, ",
+            "within your existing instructions and tool rules.\n\n",
+            "Focus the next step on the user's revised direction.\n",
+            "</user_guidance>"
+        )
+    );
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+                invocation_id: None,
+            },
+        )
+        .await
+        .expect("read events");
+    let submitted_event_index = events
+        .iter()
+        .position(|event| event.event_type == "user_guidance_submitted")
+        .expect("submitted event");
+    let applied_event_index = events
+        .iter()
+        .position(|event| event.event_type == "user_guidance_applied")
+        .expect("applied event");
+    let request_event_index = events
+        .iter()
+        .position(|event| event.event_type == "model_request_created")
+        .expect("model request event");
+    assert!(submitted_event_index < applied_event_index);
+    assert!(applied_event_index < request_event_index);
+
+    let submitted_event = events
+        .iter()
+        .find(|event| event.event_type == "user_guidance_submitted")
+        .expect("submitted event");
+    assert_eq!(
+        submitted_event.payload["text"],
+        "Focus the next step on the user's revised direction."
+    );
+    let applied = events
+        .iter()
+        .find(|event| event.event_type == "user_guidance_applied")
+        .expect("applied event");
+    assert_eq!(
+        applied.payload["guidanceIds"],
+        json!([submitted.guidance_id])
+    );
+    assert_eq!(
+        applied.payload["clientGuidanceIds"],
+        json!(["client-guidance-apply"])
+    );
+    assert_eq!(applied.payload["count"], 1);
+    assert_eq!(applied.payload["status"], "applied");
+    let model_request = events
+        .iter()
+        .find(|event| event.event_type == "model_request_created")
+        .expect("model request event");
+    assert_eq!(model_request.payload["request"]["messageCount"], 3);
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "user_guidance_discarded")
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn cancel_run_discards_pending_guidance_and_closes_mailbox() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-guidance-cancel-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        test_profile_service(&root),
+        test_llm_connection_service(&root),
+    ));
+    let run = guidance_test_run("run_guidance_cancel");
+    repository.create_run(&run).await.expect("create run");
+    insert_active_run_handle(&service, &run.id).await;
+
+    let submitted = service
+        .submit_guidance(AgentSubmitGuidanceDto {
+            run_id: run.id.clone(),
+            text: "Change direction before the next model call.".to_string(),
+            client_guidance_id: Some("client-guidance-cancel".to_string()),
+        })
+        .await
+        .expect("submit guidance");
+
+    let cancelled = service
+        .cancel_run(AgentCancelRunDto {
+            run_id: run.id.clone(),
+        })
+        .await
+        .expect("cancel run");
+    assert_eq!(cancelled.status, AgentRunStatus::Cancelling);
+
+    let retry_error = service
+        .submit_guidance(AgentSubmitGuidanceDto {
+            run_id: run.id.clone(),
+            text: "This should be rejected after cancellation.".to_string(),
+            client_guidance_id: None,
+        })
+        .await
+        .expect_err("cancelled run must reject guidance");
+    assert!(
+        retry_error
+            .to_string()
+            .contains("agent.guidance_run_not_accepting")
+    );
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+                invocation_id: None,
+            },
+        )
+        .await
+        .expect("read events");
+    let discarded = events
+        .iter()
+        .find(|event| event.event_type == "user_guidance_discarded")
+        .expect("discarded event");
+    assert_eq!(
+        discarded.payload["guidanceIds"],
+        json!([submitted.guidance_id])
+    );
+    assert_eq!(
+        discarded.payload["clientGuidanceIds"],
+        json!(["client-guidance-cancel"])
+    );
+    assert_eq!(discarded.payload["reason"], "run_cancel_requested");
+    assert_eq!(discarded.payload["status"], "discarded");
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+fn guidance_test_run(run_id: &str) -> AgentRun {
+    let now = Utc::now();
+    AgentRun {
+        id: run_id.to_string(),
+        workspace_id: format!("chat_{run_id}"),
+        stable_chat_id: format!("stable_{run_id}"),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: AgentRunSkillScopeRefs::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn first_text_part(message: &crate::domain::models::agent::AgentModelMessage) -> Option<&str> {
+    message.parts.iter().find_map(|part| match part {
+        AgentModelContentPart::Text { text } => Some(text.as_str()),
+        _ => None,
+    })
+}
+
 fn prompt_messages(user_content: &str) -> Value {
     json!([
         {
@@ -6994,6 +8142,12 @@ struct FinishCancelsDelegateModelGateway {
     closed_sessions: Mutex<Vec<String>>,
 }
 
+struct PendingDelegateHandoffModelGateway {
+    root_calls: Mutex<usize>,
+    requests: Mutex<Vec<AgentModelRequest>>,
+    closed_sessions: Mutex<Vec<String>>,
+}
+
 fn test_skill_service(root: &Path) -> Arc<SkillService> {
     Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
         root.join("skills"),
@@ -7030,11 +8184,12 @@ async fn install_inline_skill(
 }
 
 fn test_chat_repository(root: &Path) -> Arc<FileChatRepository> {
-    Arc::new(FileChatRepository::new(
+    Arc::new(FileChatRepository::with_chat_aliases(
         root.join("characters"),
         root.join("chats"),
         root.join("group_chats"),
         root.join("backups"),
+        new_shared_chat_alias_store_for_user_dir(root),
     ))
 }
 
@@ -7050,8 +8205,11 @@ fn test_dispatcher(repository: Arc<FileAgentRepository>, root: &Path) -> AgentTo
 }
 
 fn test_profile_service(root: &Path) -> Arc<AgentProfileService> {
+    let agent_profile_repository =
+        Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles")));
     Arc::new(AgentProfileService::new(
-        Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles"))),
+        agent_profile_repository.clone(),
+        agent_profile_repository,
         Arc::new(NullPresetRepository),
     ))
 }
@@ -7090,6 +8248,7 @@ async fn resolve_next_chat_commit(
                         after_seq: Some(0),
                         before_seq: None,
                         limit: 100,
+                        invocation_id: None,
                     },
                 )
                 .await
@@ -7118,6 +8277,94 @@ async fn resolve_next_chat_commit(
         .expect("resolve chat commit");
 }
 
+async fn resolve_chat_commits_and_persistent_state_update(
+    service: Arc<AgentRuntimeService>,
+    repository: Arc<FileAgentRepository>,
+    run_id: String,
+    message_ids: Vec<&'static str>,
+) {
+    let mut resolved_commit_ids = Vec::<String>::new();
+    for message_id in message_ids {
+        let commit_id = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let events = repository
+                    .read_events(
+                        &run_id,
+                        AgentRunEventReadQuery {
+                            after_seq: Some(0),
+                            before_seq: None,
+                            limit: 300,
+                            invocation_id: None,
+                        },
+                    )
+                    .await
+                    .expect("read events");
+                if let Some(commit_id) = events
+                    .iter()
+                    .filter(|event| event.event_type == "chat_commit_requested")
+                    .filter_map(|event| event.payload["commitId"].as_str())
+                    .find(|commit_id| {
+                        !resolved_commit_ids
+                            .iter()
+                            .any(|resolved| resolved == *commit_id)
+                    })
+                {
+                    return commit_id.to_string();
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("chat commit request");
+        service
+            .resolve_chat_commit(AgentResolveChatCommitDto {
+                run_id: run_id.clone(),
+                commit_id: commit_id.clone(),
+                message_id: Some(message_id.to_string()),
+                error: None,
+            })
+            .await
+            .expect("resolve chat commit");
+        resolved_commit_ids.push(commit_id);
+    }
+
+    let update_id = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let events = repository
+                .read_events(
+                    &run_id,
+                    AgentRunEventReadQuery {
+                        after_seq: Some(0),
+                        before_seq: None,
+                        limit: 300,
+                        invocation_id: None,
+                    },
+                )
+                .await
+                .expect("read events");
+            if let Some(update_id) = events
+                .iter()
+                .find(|event| event.event_type == "persistent_state_metadata_update_requested")
+                .and_then(|event| event.payload["updateId"].as_str())
+            {
+                return update_id.to_string();
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("persistent state metadata update request");
+
+    service
+        .resolve_persistent_state_metadata_update(AgentResolvePersistentStateMetadataUpdateDto {
+            run_id,
+            update_id,
+            error: None,
+        })
+        .await
+        .expect("resolve persistent state metadata update");
+}
+
 async fn wait_for_event_payload(
     repository: Arc<FileAgentRepository>,
     run_id: String,
@@ -7132,6 +8379,7 @@ async fn wait_for_event_payload(
                         after_seq: Some(0),
                         before_seq: None,
                         limit: 200,
+                        invocation_id: None,
                     },
                 )
                 .await
@@ -7173,6 +8421,7 @@ async fn resolve_next_chat_commit_and_persistent_state_update(
                         after_seq: Some(0),
                         before_seq: None,
                         limit: 200,
+                        invocation_id: None,
                     },
                 )
                 .await
@@ -7295,6 +8544,20 @@ impl FinishCancelsDelegateModelGateway {
             .await
             .expect("delegated child model call cancelled")
             .expect("child cancellation signal");
+    }
+}
+
+impl PendingDelegateHandoffModelGateway {
+    fn new() -> Self {
+        Self {
+            root_calls: Mutex::new(0),
+            requests: Mutex::new(Vec::new()),
+            closed_sessions: Mutex::new(Vec::new()),
+        }
+    }
+
+    async fn requests(&self) -> Vec<AgentModelRequest> {
+        self.requests.lock().await.clone()
     }
 }
 
@@ -7552,6 +8815,58 @@ impl AgentModelGateway for MockAgentModelGateway {
 }
 
 #[async_trait]
+impl AgentModelGateway for PendingDelegateHandoffModelGateway {
+    async fn generate_with_cancel(
+        &self,
+        request: AgentModelRequest,
+        mut cancel: watch::Receiver<bool>,
+    ) -> Result<AgentModelExchange, ApplicationError> {
+        self.requests.lock().await.push(request.clone());
+        let invocation_id = request
+            .provider_state
+            .get("invocationId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if invocation_id == "inv_root" {
+            let mut root_calls = self.root_calls.lock().await;
+            let response = if *root_calls == 0 {
+                *root_calls += 1;
+                pending_handoff_delegate_and_handoff_response()
+            } else {
+                *root_calls += 1;
+                finish_cancel_finish_response()
+            };
+            let response = decode_chat_completion_response(response, &request.tools)?;
+            return Ok(AgentModelExchange {
+                response,
+                provider_state: request.provider_state,
+            });
+        }
+
+        loop {
+            if *cancel.borrow() {
+                return Err(ApplicationError::Cancelled(
+                    "mock child cancelled while handoff was pending".to_string(),
+                ));
+            }
+            cancel.changed().await.map_err(|_| {
+                ApplicationError::Cancelled(
+                    "mock child cancel channel closed while handoff was pending".to_string(),
+                )
+            })?;
+        }
+    }
+
+    async fn close_session(&self, session_id: &str) {
+        self.closed_sessions
+            .lock()
+            .await
+            .push(session_id.to_string());
+    }
+}
+
+#[async_trait]
 impl AgentModelGateway for FinishCancelsDelegateModelGateway {
     async fn generate_with_cancel(
         &self,
@@ -7637,6 +8952,51 @@ fn finish_cancel_delegate_response() -> Value {
                         })).unwrap()
                     }
                 }]
+            }
+        }]
+    })
+}
+
+fn pending_handoff_delegate_and_handoff_response() -> Value {
+    json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                    {
+                        "id": "call_delegate_before_handoff",
+                        "type": "function",
+                        "function": {
+                            "name": "agent_delegate",
+                            "arguments": serde_json::to_string(&json!({
+                                "agentId": "scene-critic",
+                                "task": {
+                                    "title": "Critique scene",
+                                    "objective": "Find one concrete improvement.",
+                                    "context": { "draft": "A quiet scene." },
+                                    "expectedOutput": { "format": "short capsule" }
+                                },
+                                "budget": { "maxRounds": 4, "maxToolCalls": 4 }
+                            })).unwrap()
+                        }
+                    },
+                    {
+                        "id": "call_handoff_with_pending_task",
+                        "type": "function",
+                        "function": {
+                            "name": "agent_handoff",
+                            "arguments": serde_json::to_string(&json!({
+                                "agentId": "final-editor",
+                                "handoff": {
+                                    "objective": "Take over after the critic finishes.",
+                                    "contextSummary": "This should be rejected because a delegated task is still pending.",
+                                    "workspaceRefs": ["output/main.md"]
+                                }
+                            })).unwrap()
+                        }
+                    }
+                ]
             }
         }]
     })

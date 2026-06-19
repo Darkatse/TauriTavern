@@ -38,10 +38,10 @@ test('windowed-state: getWindowedChatKey preserves upstream-significant chat id 
 
     assert.equal(getWindowedChatKey({
         kind: 'character',
-        characterName: ' Alice ',
-        avatarUrl: ' /User%20Avatars/a.png ',
+        characterName: ' Alice',
+        avatarUrl: ' Alice.png',
         fileName: ' chat-1 ',
-    }), 'character:Alice|/User%20Avatars/a.png| chat-1 ');
+    }), 'character: Alice| Alice.png| chat-1 ');
 });
 
 test('windowed-state: mergeWindowedChatCursorOffset applies header delta to active offset', async () => {
@@ -131,6 +131,8 @@ test('windowed-state: buildWindowedPayloadPatch rewriteFromIndex when dirtyFromI
     assert.deepEqual(result.patch.lines, messages.slice(2).map((entry) => JSON.stringify(entry)));
     assert.equal(result.savedMessageCount, messages.length);
     assert.equal(result.dirtyFromIndex, messages.length);
+    // Window baseline contract: declares the PRE-write on-disk line count, not the new one.
+    assert.equal(result.expectedWindowLineCount, 5);
 });
 
 test('windowed-state: buildWindowedPayloadPatch truncates when messages shorter than savedMessageCount', async () => {
@@ -144,6 +146,7 @@ test('windowed-state: buildWindowedPayloadPatch truncates when messages shorter 
     assert.deepEqual(result.patch, { kind: 'rewriteFromIndex', startIndex: 3, lines: [] });
     assert.equal(result.savedMessageCount, messages.length);
     assert.equal(result.dirtyFromIndex, messages.length);
+    assert.equal(result.expectedWindowLineCount, 5);
 });
 
 test('windowed-state: buildWindowedPayloadPatch appends when messages longer than savedMessageCount', async () => {
@@ -158,6 +161,9 @@ test('windowed-state: buildWindowedPayloadPatch appends when messages longer tha
     assert.deepEqual(result.patch.lines, messages.slice(3).map((entry) => JSON.stringify(entry)));
     assert.equal(result.savedMessageCount, messages.length);
     assert.equal(result.dirtyFromIndex, messages.length);
+    // Append must declare the OLD count (3) so the backend rejects a stale
+    // cursor whose window no longer holds 3 lines — not the post-append count.
+    assert.equal(result.expectedWindowLineCount, 3);
 });
 
 test('windowed-state: buildWindowedPayloadPatch full rewrite when unchanged but non-empty', async () => {
@@ -183,6 +189,42 @@ test('windowed-state: buildWindowedPayloadPatch returns empty append for empty m
     assert.deepEqual(result.patch, { kind: 'append', lines: [] });
     assert.equal(result.savedMessageCount, 0);
     assert.equal(result.dirtyFromIndex, 0);
+    assert.equal(result.expectedWindowLineCount, 0);
+});
+
+test('windowed-state: buildWindowedPayloadPatch baseline always equals the pre-write savedMessageCount', async () => {
+    const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/windowed-state.js'));
+    const { buildWindowedPayloadPatch } = mod;
+
+    // The contract the backend relies on: expectedWindowLineCount is the line
+    // count the window had on disk BEFORE this write, regardless of which patch
+    // branch is taken (append / rewrite / truncate / full). If this ever drifts
+    // to messages.length, every stale-cursor write would be silently accepted.
+    const cases = [
+        { messages: 5, savedMessageCount: 5, dirtyFromIndex: 2 }, // rewriteFromIndex
+        { messages: 3, savedMessageCount: 5, dirtyFromIndex: 5 }, // truncate
+        { messages: 5, savedMessageCount: 3, dirtyFromIndex: 3 }, // append
+        { messages: 2, savedMessageCount: 2, dirtyFromIndex: 2 }, // full rewrite
+        { messages: 0, savedMessageCount: 0, dirtyFromIndex: 0 }, // empty
+    ];
+
+    for (const { messages, savedMessageCount, dirtyFromIndex } of cases) {
+        const result = buildWindowedPayloadPatch(
+            buildMessages(messages),
+            { savedMessageCount, dirtyFromIndex },
+            'chat',
+        );
+        assert.equal(
+            result.expectedWindowLineCount,
+            savedMessageCount,
+            `baseline must equal pre-write savedMessageCount=${savedMessageCount}, got ${result.expectedWindowLineCount}`,
+        );
+        assert.notEqual(
+            result.expectedWindowLineCount === messages && messages !== savedMessageCount,
+            true,
+            'baseline must not drift to the post-write message count',
+        );
+    }
 });
 
 test('windowed-state: shiftWindowedMessageSaveState shifts counters without mutating original', async () => {

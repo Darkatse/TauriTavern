@@ -5,6 +5,8 @@ mod invocation_store;
 mod lifecycle_store;
 mod paths;
 mod persistent_store;
+mod run_prune_store;
+mod run_record;
 mod run_store;
 mod workspace_store;
 

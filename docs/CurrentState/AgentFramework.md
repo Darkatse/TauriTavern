@@ -6,7 +6,7 @@
 
 ## 当前基线
 
-截至 2026-05-30，Agent 当前基线：
+截至 2026-06-06，Agent 当前基线：
 
 - Rust 后端已有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 前端已挂载 `window.__TAURITAVERN__.api.agent` Host ABI。
@@ -14,15 +14,19 @@
 - LLM 调用仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 或取消链路。Responses WebSocket 建连已收敛到 `HttpClientPool` 的 ChatCompletion WebSocket profile，见 `docs/CurrentState/NativeApiFormats.md`。
 - Agent runtime 已不再把 OpenAI-compatible raw JSON 当作内部事实；运行时使用 canonical `AgentModelRequest` / `AgentModelResponse` / `AgentModelMessage` / `AgentModelContentPart`。
 - `AgentModelGateway` 在 Agent canonical IR 与现有 `ChatCompletionGenerateRequestDto` 之间转换；provider-native metadata 作为 opaque `Native` part 保留。
-- `provider_state` 已是 run-scoped continuation contract；OpenAI Responses 使用它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
+- `provider_state` 已是 run-owned、invocation-scoped continuation contract；OpenAI Responses 使用它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 - Agent Skill 管理、导入导出、embedded skill 提示导入、`skill.list` / `skill.search` / `skill.read` 已落地。
 - Phase 3 Agent Profile 基线已落地：`profileId` 会解析为 `ResolvedAgentProfile`，驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds 与 model-facing prompt/tool descriptions。
 - PromptManager 已为 Agent Mode 提供 `agentSystemPrompt` 组装位置与 reserved no-op `agentResults` 位置标记；`agentSystemPrompt` 内容只由 Agent Profile 提供，前端在该 PromptManager index materialize，runtime 只消费最终 messages 并拒绝内部 marker 泄漏；`agentResults` 不再向模型注入历史 commit 内容。
-- Profile 已能通过 `preset.mode = "ref"` 使用独立 OpenAI/chat-completion preset，并通过 `model.mode = "connectionRef"` + `modelId` 使用独立 LLM Connection。当前完整 PromptAssemblyBroker 组装只覆盖 root run 启动前；return-mode child invocation 会使用 target Profile 的 system prompt 与 model binding，但运行中 subagent/handoff 的完整 preset assembly handshake 仍待实现。
-- Return-mode SubAgent MVP 已落地：root/active invocation 可通过 `agent.list`、`agent.delegate`、`agent.await` 创建、查看或等待子任务；child invocation 使用 `task.return` 结束，不能直接 `workspace.commit` 或 `workspace.finish`。当前 child task 已由 run-scoped scheduler 后台并行执行；`agent.await` 只等待/查询结果，未显式 await 的 terminal results 会在父 Agent 下一次 tool turn 后注入下一轮模型请求。
+- Profile 已能通过 `preset.mode = "ref"` 使用独立 OpenAI/chat-completion preset，并通过 `model.mode = "connectionRef"` + `modelId` 使用独立 LLM Connection。当前完整 PromptAssemblyBroker 组装覆盖 root run 启动前、return-mode child invocation 与 handoff invocation；运行中 invocation 仍走 host bridge handshake，Rust runtime 不手写替代 PromptManager。
+- Return-mode SubAgent MVP 已落地：root/active invocation 可通过 `agent.list`、`agent.delegate`、`agent.await` 创建、查看或等待子任务；child invocation 使用 `task.return` 结束，不能直接 `workspace.commit`、`workspace.finish` 或 `agent.handoff`。当前 child task 已由 run-scoped scheduler 后台并行执行；`agent.await` 只等待/查询结果，未显式 await 的 terminal results 会在父 Agent 下一次 tool turn 后注入下一轮模型请求。
+- Handoff MVP 已落地：具备 `delegation.canHandoff` 且显式暴露 `agent.handoff` 的 foreground owner 可把同一 `AgentRun` 的下一阶段交给 `allowAsHandoffTarget` 的 target Profile。handoff 创建 `TransferControl` task 与 `Handoff` invocation，不进入后台 scheduler；当前 invocation 记为 `Transferred` 后，executor 在同一 run 内继续目标 Agent 的工具循环。已经 `workspace.commit` 过的 Agent 仍允许 handoff，最终 handoff owner 可继续修订、再次 commit 并 `workspace.finish`。实现框架、结构体与事件序列见 `docs/Agent/Handoff.md`。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；实际 root run 使用扩展设置中的 `activeProfileId`。Profile 面板的 `editingProfileId` 只表示当前正在编辑的配置档案，不影响生成。Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
-- Agent System 前端已提供 run timeline / detail panel；timeline 以 `readEvents(beforeSeq, limit)` 读取最新页并按需补拉更早 journal 页，默认视图只投影用户可见操作，DOM 使用窗口化渲染避免长 run 在低端移动设备上堆积节点；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。
+- Agent System 前端已提供 run timeline / detail panel；timeline 以 `readEvents(beforeSeq, limit)` 读取最新页并按需补拉更早 journal 页，默认视图只投影用户可见操作，DOM 使用窗口化渲染避免长 run 在低端移动设备上堆积节点；Timeline / Detail 使用 `detailsOpen` 单一事实源驱动互斥视图，不再依赖横向 scroll-snap、smooth scroll 或 scroll 事件反写状态，避免低端 WebView 在切换中进入半页卡住状态；移动端横向滑动只作为 Pointer Events 输入快捷方式，最终仍调用 `openDetails()` / `showTimeline()`，并通过 `touch-action: pan-y pinch-zoom` 保留原生纵向滚动与缩放；关闭 Detail 会 reset detail state 并取消 stale detail load，Detail 打开期间不测量或贴底隐藏的 timeline scroller；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。前端实现将 timeline 数据会话、projection 规范化、详情读取、显示格式与 Vue 外壳拆分：运行中贴片、历史回看弹窗与 SubAgent 局部 timeline 共享同一 session/detail primitives，但各自仍通过 Host ABI 表达运行态、只读历史态与 `invocationId` 局部事件页。
+- Agent run history 已提供只读 `listRuns()` / `list_agent_runs(dto)` 入口；首版从 `_tauritavern/agent-workspaces/index/runs/*.json` 读取 `AgentRun` 摘要，支持 `chatRef`、`stableChatId`、`statuses`、时间游标与 limit。列表会维护 `_tauritavern/agent-workspaces/index/run-summaries/<run-id>.json` projection，从 `chat_commit_completed.messageId` 派生提交当时的 `messageIndex`；该索引是提交时快照，不扫描聊天消息、不反查当前楼层。只有已经写入 terminal event 的终态 run 会复用/落盘 summary projection，运行中或终态事件尚未出现的窗口只即时投影。
+- Agent run retention policy 已进入 `tauritavern-settings.agent.retention`：`auto_prune_enabled` 默认 `false`，控制 Rust 后端是否在 TauriTavern 进程运行期间周期性执行自动清理；`keep_recent_terminal_runs` 默认 100，表示保留最近 terminal run 的核心历史；`keep_full_recent_runs` 默认 20，表示其中保留完整 workspace/debug artifacts 的窗口。两个数量允许为 0，最大 10000，且 full 窗口必须是 history 窗口子集。前端 Host ABI 已提供 `api.agent.retention.readSettings()` / `updateSettings()` / `planPrune()` / `applyPrune()` facade，Agent System Runs 面板可保存策略、显示 dry-run 清理预览，并在用户确认后执行手动清理。后端已提供 `plan_agent_run_prune(dto)` 与 `apply_agent_run_prune(dto)` command，用当前设置或一次性 override 生成并执行 `slim_heavy_artifacts` / `delete_run` 候选；`apply` 使用显式 execution plan 模式，在后端重新规划全量候选，不信任前端预览明细，且同一服务实例内串行执行。自动清理由 `AgentRunRetentionAutomationService` 拥有生命周期，不依赖 Agent System 面板打开；保存 retention 设置只唤醒调度器重读配置，不同步执行清理。`slim_heavy_artifacts` 基于 Agent run storage class，路径归属词汇与 TT-Sync Agent run datasets 对齐，但 retention 不依赖同步 profile。明细受 `detailLimit` 限制但 totals 不截断，active run、缺失 terminal event、journal/storage 异常会进入 `blockedRuns`；单个执行失败会进入 `failedRuns`。
+- 输入框 Agent 快捷开关 `#ttas_agent_send_toggle` 可以在 Agent System 扩展抽屉中隐藏；该状态只是扩展 UI 偏好，不改变 `agentModeEnabled`、生成路由、Agent Host ABI、journal 或 Rust runtime。
 
 ## 当前 Host ABI
 
@@ -33,6 +37,12 @@ api.agent.startRunFromLegacyGenerate(input?)
 api.agent.startRunWithPromptSnapshot(input)
 api.agent.subscribe(runId, handler, options?)
 api.agent.cancel(runId)
+api.agent.submitGuidance(input)
+api.agent.listRuns(input?)
+api.agent.retention.readSettings()
+api.agent.retention.updateSettings(input)
+api.agent.retention.planPrune(input?)
+api.agent.retention.applyPrune(input?)
 api.agent.readEvents(input)
 api.agent.readWorkspaceFile(input)
 api.agent.readModelTurn(input)
@@ -40,6 +50,7 @@ api.agent.promptAssembly.prepare(input)
 api.agent.promptAssembly.buildSnapshot(input)
 api.agent.profiles.list()
 api.agent.profiles.load(input)
+api.agent.profiles.diagnose(input)
 api.agent.profiles.resolveSystemPrompt(input?)
 api.agent.profiles.save(input)
 api.agent.profiles.delete(input)
@@ -50,7 +61,7 @@ api.llmConnections.save(input)
 api.llmConnections.delete(input)
 ```
 
-`startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` 支持可选 `profileId`。Profile 管理、工具列表与 prompt assembly broker API 已封装到 `window.__TAURITAVERN__.api.agent` 与 `src/types.d.ts`；LLM Connection 管理已封装到 `window.__TAURITAVERN__.api.llmConnections`。Agent Profile 面板已提供独立 preset / model 选择，model 选择以 Connection Manager 的 Model Target 作为 UI 输入来源，保存时物化为 Agent domain 的 LLM Connection，并在 Profile 中持久化 `connectionRef + modelId`。
+`startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` 支持可选 `profileId`。Profile 管理、工具列表与 prompt assembly broker API 已封装到 `window.__TAURITAVERN__.api.agent` 与 `src/types.d.ts`；LLM Connection 管理已封装到 `window.__TAURITAVERN__.api.llmConnections`。Agent Profile 面板已提供独立 preset / model 选择，model 选择以 Connection Manager 的 Model Target 作为 UI 输入来源，Agent System 启动、Model Target 创建/更新、Profile 保存和 Agent run 启动前会物化为 Agent domain 的 LLM Connection；Profile 中只持久化 `connectionRef + modelId`，保存前会重新读取当前 Model Target，避免旧 UI 快照覆盖新 connection。
 
 Skill 管理 API 已落地：
 
@@ -66,7 +77,7 @@ api.skill.export(input)
 
 `api.skill` 是用户/UI/扩展侧的 Skill 管理入口；Agent run 内只通过 `skill.list` / `skill.search` / `skill.read` 工具消费已安装 Skill。
 
-`readModelTurn()` 读取指定 run/round/invocation 的模型回合显示 DTO：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要；`invocationId` 省略时读取 root invocation。前端 Timeline 不直接解析 `model-responses/` raw 文件。
+`readModelTurn()` 读取指定 run/round/invocation 的模型回合显示 DTO：assistant 输出、narration、可见/摘要化 reasoning、工具调用摘要与 provider 摘要；`invocationId` 省略时读取 root invocation。前端 Timeline 不直接解析 `model-responses/` raw 文件。
 
 明确不存在公共 `api.agent.startRun()` alias。启动入口必须表达 prompt 来源：
 
@@ -96,7 +107,7 @@ _tauritavern/agent-profiles/
 - 非缺省 `profileId` 不存在时 fail-fast，不创建 run。
 - `instructions.agentSystemPrompt` 省略或为 `null` 时使用 resolved profile 默认 Agent system prompt；设置为非空字符串时完整替换默认 prompt；空白字符串 fail-fast。Preset 控制 `agentSystemPrompt` 的位置与 role，不能编辑其内容。
 - `preset.mode = "ref"` 会加载指定 OpenAI/chat-completion preset，经 Frontend PromptAssemblyBroker 真实复用 SillyTavern PromptManager 组装；`currentPromptSnapshot` / `none` 保留兼容路径。
-- `model.mode = "connectionRef"` 要求 `connectionRef` 与 `modelId`，组装阶段会把 source/model 覆盖到 prompt settings，runtime 发送前会再次以 LLM Connection 权威覆盖 payload。
+- `model.mode = "connectionRef"` 要求 `connectionRef` 与 `modelId`；若引用 `model-target-*`，Agent run 启动前会按当前保存 Model Target 重新物化 LLM Connection，但不会改写 Profile 的 `modelId`。组装阶段会把 source/model 覆盖到 prompt settings，runtime 发送前会再次以 LLM Connection 权威覆盖 payload。
 - `model.mode = "requiresConfiguration"` 表示外部导入/分享后的 Profile 需要本机重新选择模型；该状态可保存、可展示，但 root run、SubAgent 与 prompt assembly 都会 fail-fast。
 - `context.initialChatHistoryMessages` 只作用于 PromptManager 组装期的初始聊天历史窗口：`-1` 不做显式楼数裁剪，`0` 不向初始 prompt 注入真实聊天楼层，正数最多注入最近 N 楼。`FrozenRunInputSnapshot.promptInputs.messages` 保留 SillyTavern PromptManager 的 latest-first 完整候选历史；组装期只能 materialize 工作副本后裁剪、注入和反转，不能污染 frozen input，便于 child / handoff 按 target Profile 重新组装；`chat.read_messages`、`chat.search` 与 persist base 仍按 Rust runtime 的 run input prefix 工作。
 - `tools.allow` / `tools.deny` 决定模型可见工具，dispatcher 会二次拦截不可见工具。
@@ -104,10 +115,11 @@ _tauritavern/agent-profiles/
 - `skills.visible` / `skills.deny` 控制 `skill.list`、`skill.search` 与 `skill.read`，`maxReadCharsPerCall` / `maxReadCharsPerRun` 控制 Skill 读取预算。
 - 每个 invocation 按 `global -> preset -> profile -> character` 解析 active Skill scopes。root run 会固化 ambient `skillScopeRefs`；return-mode child 使用 target Profile 的 Skill policy，并按 target preset / run ambient character 解析可读 Skill。
 - `workspace.visibleRoots` / `workspace.writableRoots` 只能收窄 root universe：`output`、`scratch`、`plan`、`summaries`、`persist`。
-- `run.presentation` 区分 `foreground` / `background`，默认 built-in profile 为前台；`run.directRunnable` 控制 Profile 是否可被用户直接启动。直接可运行 Profile 必须暴露 `workspace.finish`，前台直接运行还必须暴露 `workspace.commit`；前端“可作为子 Agent”会将 Profile 设为 `directRunnable = false`，该模式当前要求同时允许作为 return-mode SubAgent。
+- `run.presentation` 区分 `foreground` / `background`，默认 built-in profile 为前台；`run.directRunnable` 控制 Profile 是否可被用户直接启动。直接可运行 Profile 必须暴露 `workspace.finish`，前台直接运行还必须暴露 `workspace.commit`；非直接运行 Profile 必须可作为 return-mode SubAgent 或 handoff target。仅作为 handoff target 的前台 Profile 可以不暴露 `workspace.finish`，只要它仍能继续 handoff；若要成为最终收尾 Agent，则应暴露 `workspace.commit` / `workspace.finish`。
 - `profiles.list()` 的 summary 暴露 `directRunnable`，Agent System UI 只允许直接可运行 Profile 成为 `activeProfileId`。保存或删除当前生效 Profile 导致其不可直接运行时，前端会把 `activeProfileId` 显式切回 built-in `default-writer`；不会把当前正在编辑的 Profile 自动设为生效。
+- `profiles.diagnose()` 返回管理态 `AgentProfileHealth`，用于展示可加载 Profile 的外部资源健康度。第一期覆盖 missing/unsupported preset ref、`model.requiresConfiguration`、LLM Connection 缺失或无效；该 API 不改变 run / prompt assembly 的 fail-fast 语义，也不会让运行静默回退当前 UI preset/model。
 - `run.modelRetry` 控制单次模型调用的瞬时错误重试；默认 `maxRetries = 3`、`intervalMs = 3000`。当前只重试 rate limit / transient transport-provider 错误，不重试 prompt/schema/native metadata/tool id 等契约错误。
-- `delegation` 控制多 Agent 能力：`canDelegate` 决定当前 Agent 是否可见 `agent.delegate` / `agent.await`，`callable`、`allowAsSubagent`、`allowedCallers` 决定该 Profile 是否可被其他 Agent 作为 return-mode SubAgent 调用。`canHandoff` / `allowAsHandoffTarget` / `maxHandoffDepth` 已在 schema 中存在，但 `agent.handoff` 仍未实现。
+- `delegation` 控制多 Agent 能力：`canDelegate` 决定当前 Agent 是否可见 `agent.delegate` / `agent.await`，`callable`、`allowAsSubagent`、`allowedCallers` 决定该 Profile 是否可被其他 Agent 作为 return-mode SubAgent 调用；`canHandoff` 决定当前 Agent 是否可见 `agent.handoff`，`allowAsHandoffTarget`、`allowedCallers` 与 `maxHandoffDepth` 决定该 Profile 是否可作为接力目标以及接力深度上限。
 - `output.artifacts` 当前必须包含且只能包含一个 `messageBody` artifact；`workspace.commit` 默认发布该 artifact 的 path。
 - Plan Mode schema 已存在，但当前只支持 `plan.mode = "none"`；其他 mode fail-fast。
 - 每个 run 会在 `input/resolved_profile.json` 固化解析结果。
@@ -122,6 +134,7 @@ Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swi
 | --- | --- | --- | --- |
 | `agent.list` | `agent_list` | read-only | 列出当前 Profile policy 允许调用的 Agent 目录；用于软渐进式披露可委派 Agent。 |
 | `agent.delegate` | `agent_delegate` | control/mutating | 创建 return-mode 子任务与 child invocation，并提交 run-scoped scheduler 后台执行。 |
+| `agent.handoff` | `agent_handoff` | control/mutating | 创建 TransferControl task 与 handoff invocation，让目标 Agent 接手同一 run 的下一阶段；调用方 handoff 后必须停止继续调用工具。 |
 | `agent.await` | `agent_await` | read-only/control | 查询或等待当前 invocation 创建的 delegated task；不驱动 child task 执行。 |
 | `task.return` | `task_return` | control/mutating | runtime-only child invocation 工具，提交 delegated task 结果并结束 child work。 |
 | `chat.search` | `chat_search` | read-only | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。 |
@@ -137,9 +150,9 @@ Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swi
 | `workspace.write_file` | `workspace_write_file` | mutating | 写 UTF-8 文件；`mode` 默认为完整替换，`append` 会原样追加并在缺失时创建文件；成功后按内容可知性更新 read-state 并创建 checkpoint。 |
 | `workspace.apply_patch` | `workspace_apply_patch` | mutating | 单文件 `old_string` / `new_string` 精确替换；`old_string` 必须来自本 run 已读文本或本 run 创建/完整替换的文件；失败后同文件再次 patch 必须先全文读取。 |
 | `workspace.commit` | `workspace_commit` | control/mutating | 将可见 workspace 文件提交到当前聊天；无参数等价于 `replace output/main.md`，`append` 首次创建消息、后续追加同一消息。 |
-| `workspace.finish` | `workspace_finish` | control | 结束 root/active 工具循环；前台 run 必须已成功 commit，后台 run 可无 commit；return-mode child invocation 不可用；当前会取消 unfinished child tasks 而不阻塞完成。 |
+| `workspace.finish` | `workspace_finish` | control | 结束 root/active 工具循环；前台 run 必须已有至少一次 run-level 成功 commit，后台 run 可无 commit；return-mode child invocation 不可用；当前会取消 unfinished return-mode child tasks 而不阻塞完成。 |
 
-当前没有 MCP 工具、shell 工具、外部 extension tools、tool approval、profile routing、模型可见 task cancel 或 `agent.handoff`。
+当前没有 MCP 工具、shell 工具、外部 extension tools、tool approval、profile routing 或模型可见 task cancel。
 
 ## Model Gateway 当前事实
 
@@ -364,7 +377,7 @@ run_failed
 
 Provider stream chunk 不是 Agent run event。Agent UI 必须订阅 `api.agent.subscribe(runId, handler)` 的 run event。
 
-`model_completed` payload 当前包含 `round`、`modelResponsePath`、`toolCallCount`、assistant/reasoning 字节摘要与 `hasAssistantText` / `hasReasoning`。工具相关事件携带同一 `round`，便于 UI 从任意工具事件跳回本轮模型回合。
+`model_completed` payload 当前包含 `round`、`modelResponsePath`、`toolCallCount`、assistant/reasoning 字节摘要与 `hasAssistantText` / `hasReasoning`。带工具调用且存在可展示 assistant visible text 的模型回合会额外携带可选 `narration` preview；它是模型轮次展示投影，不是 runtime status，不从 reasoning / thinking / thought 提取。工具相关事件携带同一 `round`，便于 UI 从任意工具事件跳回本轮模型回合。
 
 `run_partial_success` 是 warning 级终态：当 run 已经有 host-confirmed `workspace.commit`，但之后因 drift、dispatch、persistent commit 或 persistent metadata 写回错误未能干净完成时，保留已提交 chat 输出，并在 payload 中暴露原始错误与 `preservedCommits`。它不是 `run_completed`，也不触发自动 rollback。partial success 消息不会带可复用的 `persistStateId`；下一轮 Agent run 会跳过它，继续寻找更早的 committed persistent state。
 
@@ -475,17 +488,17 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 
 - `pnpm run check:frontend`
 - `pnpm run check:types`
-- `pnpm run check:contracts`：218 passed
+- `pnpm run check:contracts`：570 passed
 - `git diff --check`
 
 ## 已知待办
 
 - 将 `PromptSnapshot` 过渡输入逐步替换为 `GenerationIntent + ContextFrame`。
 - 将 Profile overlay 扩展到 preset / character resolver。
-- 为 return-mode subagent / handoff 增加完整运行中 prompt assembly handshake 与 invocation-scoped prompt snapshot；当前 child 已有独立 provider_state 与 model binding。
-- 实现 `agent.handoff`、模型可见 task cancel 与更完整的 scheduler policy。
+- 继续完善运行中 prompt assembly 的恢复/诊断体验；当前 child / handoff 已有独立 provider_state、model binding 与 host bridge prompt assembly handshake。
+- 实现模型可见 task cancel 与更完整的 scheduler policy。
 - 明确多 Agent provider/model switch policy；root run 的 `connectionRef` 模型绑定已经可用。
-- 实现 readDiff、rollback、listRuns、resume-run、streaming 的明确策略。
+- 实现 readDiff、rollback、resume-run、streaming 的明确策略。
 
 ## 每次 Agent 相关变更必须更新
 

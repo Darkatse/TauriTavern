@@ -30,7 +30,7 @@
 
 - **框架**: 保留SillyTavern原有的前端代码
 - **核心技术**: HTML, CSS, JavaScript (jQuery)
-- **构建工具**: Webpack (用于库打包)
+- **构建工具**: Rspack (用于前端资源打包)
 
 ## 2. 后端技术栈
 
@@ -78,8 +78,7 @@
 
 ### 3.2 前端构建工具
 
-- **Webpack**: 用于打包第三方库
-- **Babel**: JavaScript转译
+- **Rspack**: 用于打包第三方库与 TauriTavern 前端入口
 
 ### 3.3 前端与后端通信
 
@@ -160,7 +159,7 @@
 - **资源加载**: 优化资源加载顺序
 - **库注入链路**: `lib.js` 静态导入 `src/dist/lib.core.bundle.js`；重库通过 `getHljs()/getReadability()` 动态加载 `src/dist/lib.optional.bundle.js`
 - **延迟加载**: 非关键资源延迟加载
-- **构建缓存**: webpack filesystem cache 提升增量构建速度
+- **构建缓存**: Rspack persistent cache 提升增量构建速度
 
 ## 8. 兼容性和迁移
 

@@ -4,12 +4,13 @@ import { buildAgentPromptSnapshotSeed } from './agent-prompt-snapshot.js';
 import { assemblePromptSnapshotForProfile, createPromptAssemblyApi } from './agent-prompt-assembly-run.js';
 import { attachHostCommitBridge } from './agent-chat-commit-bridge.js';
 import { attachHostPromptAssemblyBridge } from './agent-prompt-assembly-bridge.js';
+import { resolveStableChatId } from './agent-chat-identity.js';
+import { createAgentProfilesApi } from './agent-profiles.js';
 import { createSharedRunEventSubscribe } from './agent-run-event-subscription.js';
 import { normalizeAgentRunOptions } from './agent-run-options.js';
+import { createAgentRunRuntimeApi } from './agent-run-runtime.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../scripts/tauritavern/agent/agent-system-settings.js';
-import { emitAgentProfilesChanged } from '../../../scripts/tauritavern/agent/agent-profile-events.js';
-
-const DEFAULT_EVENT_POLL_MS = 500;
+import { ensureModelTargetLlmConnectionForProfile } from '../../../scripts/tauritavern/agent/model-target-llm-connection.js';
 
 /**
  * @typedef {{ kind: 'character'; characterId: string; fileName: string }} CharacterChatRef
@@ -22,15 +23,25 @@ const DEFAULT_EVENT_POLL_MS = 500;
  */
 function createAgentApi({ safeInvoke }) {
     const promptAssembly = createPromptAssemblyApi({ safeInvoke });
+    const profiles = createAgentProfilesApi({ safeInvoke });
+    const runtime = createAgentRunRuntimeApi({ safeInvoke });
 
     async function startRunWithPromptSnapshot(input) {
-        const dto = await normalizePromptSnapshotRunInput(input, { safeInvoke });
+        return startRunWithPromptSnapshotInternal(input, { ensureModelTargetConnection: true });
+    }
+
+    async function startRunWithPromptSnapshotInternal(input, { ensureModelTargetConnection, runProfile = null } = {}) {
+        const dto = await normalizePromptSnapshotRunInput(input, {
+            safeInvoke,
+            ensureModelTargetConnection,
+            runProfile,
+        });
         const handle = await safeInvoke('start_agent_run', { dto });
-        const hostSubscribe = createSharedRunEventSubscribe(handle?.runId, subscribe);
+        const hostSubscribe = createSharedRunEventSubscribe(handle?.runId, runtime.subscribe);
         attachHostCommitBridge({
             runId: handle?.runId,
             safeInvoke,
-            readWorkspaceFile,
+            readWorkspaceFile: runtime.readWorkspaceFile,
             subscribe: hostSubscribe,
         });
         attachHostPromptAssemblyBridge({
@@ -49,6 +60,7 @@ function createAgentApi({ safeInvoke }) {
 
         const generationType = normalizeGenerationType(input.generationType);
         const agentOptions = normalizeAgentRunOptions(input.options, input.presentation);
+        const runProfile = await ensureRunProfileModelTargetConnection(input.profileId, safeInvoke);
         const legacySnapshot = await buildAgentPromptSnapshotSeed({
             generationType,
             generateOptions: input.generateOptions,
@@ -62,7 +74,7 @@ function createAgentApi({ safeInvoke }) {
             promptAssembly,
         });
 
-        return startRunWithPromptSnapshot({
+        return startRunWithPromptSnapshotInternal({
             chatRef: input.chatRef,
             stableChatId: input.stableChatId,
             generationType,
@@ -72,187 +84,28 @@ function createAgentApi({ safeInvoke }) {
             frozenRunInputSnapshot: snapshot.frozenRunInputSnapshot,
             generationIntent: mergePlainObject(snapshot.generationIntent, input.generationIntent),
             options: agentOptions,
+        }, {
+            ensureModelTargetConnection: false,
+            runProfile,
         });
-    }
-
-    async function cancel(runId) {
-        const normalizedRunId = requireRunId(runId);
-        return safeInvoke('cancel_agent_run', { dto: { runId: normalizedRunId } });
-    }
-
-    async function readEvents(input) {
-        const runId = requireRunId(input?.runId);
-        return safeInvoke('read_agent_run_events', {
-            dto: {
-                runId,
-                afterSeq: input?.afterSeq,
-                beforeSeq: input?.beforeSeq,
-                limit: input?.limit,
-            },
-        });
-    }
-
-    async function readWorkspaceFile(input) {
-        const runId = requireRunId(input?.runId);
-        const path = String(input?.path || '').trim();
-        if (!path) {
-            throw new Error('path is required');
-        }
-
-        return safeInvoke('read_agent_workspace_file', { dto: { runId, path } });
-    }
-
-    async function readModelTurn(input) {
-        const runId = requireRunId(input?.runId);
-        const round = Number(input?.round);
-        if (!Number.isInteger(round) || round <= 0) {
-            throw new Error('round must be a positive integer');
-        }
-        const maxChars = input?.maxChars == null ? undefined : Number(input.maxChars);
-        if (maxChars != null && (!Number.isInteger(maxChars) || maxChars <= 0)) {
-            throw new Error('maxChars must be a positive integer');
-        }
-        const invocationId = String(input?.invocationId || '').trim();
-
-        return safeInvoke('read_agent_model_turn', {
-            dto: {
-                runId,
-                round,
-                ...(invocationId ? { invocationId } : {}),
-                ...(maxChars == null ? {} : { maxChars }),
-            },
-        });
-    }
-
-    async function pruneChatPersistentStates(input = {}) {
-        if (!input || typeof input !== 'object' || Array.isArray(input)) {
-            throw new Error('Agent pruneChatPersistentStates input must be an object');
-        }
-        const chatRef = input.chatRef || window.__TAURITAVERN__?.api?.chat?.current?.ref?.();
-        if (!chatRef || typeof chatRef !== 'object') {
-            throw new Error('chatRef is required');
-        }
-        const stableChatId = String(input.stableChatId || '').trim() || await resolveStableChatId(chatRef);
-        if (!stableChatId) {
-            throw new Error('stableChatId is required');
-        }
-
-        return safeInvoke('prune_agent_chat_persistent_states', {
-            dto: {
-                chatRef,
-                stableChatId,
-            },
-        });
-    }
-
-    function subscribe(runId, handler, options = {}) {
-        const normalizedRunId = requireRunId(runId);
-        if (typeof handler !== 'function') {
-            throw new Error('handler is required');
-        }
-
-        const intervalMs = normalizePollInterval(options?.intervalMs);
-        let afterSeq = Number(options?.afterSeq || 0);
-        let stopped = false;
-        let timer = null;
-
-        const tick = async () => {
-            if (stopped) {
-                return;
-            }
-
-            try {
-                const result = await readEvents({
-                    runId: normalizedRunId,
-                    afterSeq,
-                    limit: options?.limit || 100,
-                });
-                const events = Array.isArray(result?.events) ? result.events : [];
-                for (const event of events) {
-                    afterSeq = Math.max(afterSeq, Number(event?.seq || 0));
-                    handler(event);
-                }
-            } catch (error) {
-                if (typeof options?.onError === 'function') {
-                    options.onError(error);
-                } else {
-                    queueMicrotask(() => {
-                        throw error;
-                    });
-                }
-            } finally {
-                if (!stopped) {
-                    timer = setTimeout(tick, intervalMs);
-                }
-            }
-        };
-
-        timer = setTimeout(tick, 0);
-
-        return function unsubscribe() {
-            stopped = true;
-            if (timer !== null) {
-                clearTimeout(timer);
-                timer = null;
-            }
-        };
-    }
-
-    async function listProfiles() {
-        return safeInvoke('list_agent_profiles');
     }
 
     async function listToolSpecs() {
         return safeInvoke('list_agent_tool_specs');
     }
 
-    async function loadProfile(input) {
-        const profileId = requireProfileId(input?.profileId ?? input?.profile_id ?? input);
-        return safeInvoke('load_agent_profile', { dto: { profileId } });
-    }
-
-    async function resolveSystemPrompt(input = {}) {
-        const profileId = normalizeOptionalString(input?.profileId ?? input?.profile_id ?? input);
-        return safeInvoke('resolve_agent_system_prompt', {
-            dto: {
-                ...(profileId ? { profileId } : {}),
-            },
-        });
-    }
-
-    async function saveProfile(input) {
-        const profile = input?.profile ?? input;
-        if (!isPlainObject(profile)) {
-            throw new Error('agent.profile_required: profile must be an object');
-        }
-        const result = await safeInvoke('save_agent_profile', { dto: { profile } });
-        emitAgentProfilesChanged();
-        return result;
-    }
-
-    async function deleteProfile(input) {
-        const profileId = requireProfileId(input?.profileId ?? input?.profile_id ?? input);
-        const result = await safeInvoke('delete_agent_profile', { dto: { profileId } });
-        emitAgentProfilesChanged();
-        return result;
-    }
-
     return {
         startRunWithPromptSnapshot,
         startRunFromLegacyGenerate,
-        cancel,
-        readEvents,
-        readWorkspaceFile,
-        readModelTurn,
-        pruneChatPersistentStates,
-        subscribe,
-        profiles: {
-            list: listProfiles,
-            load: loadProfile,
-            resolveSystemPrompt,
-            save: saveProfile,
-            delete: deleteProfile,
-        },
+        cancel: runtime.cancel,
+        submitGuidance: runtime.submitGuidance,
+        readEvents: runtime.readEvents,
+        readWorkspaceFile: runtime.readWorkspaceFile,
+        readModelTurn: runtime.readModelTurn,
+        pruneChatPersistentStates: runtime.pruneChatPersistentStates,
+        retention: runtime.retention,
+        subscribe: runtime.subscribe,
+        profiles,
         tools: {
             list: listToolSpecs,
         },
@@ -260,9 +113,7 @@ function createAgentApi({ safeInvoke }) {
         approveToolCall() {
             throw new Error('approveToolCall is not implemented in Agent Phase 2B');
         },
-        listRuns() {
-            throw new Error('listRuns is not implemented in Agent Phase 2B');
-        },
+        listRuns: runtime.listRuns,
         readDiff() {
             throw new Error('readDiff is not implemented in Agent Phase 2B');
         },
@@ -276,7 +127,7 @@ function normalizeGenerationType(value) {
     return String(value || 'normal').trim() || 'normal';
 }
 
-async function normalizePromptSnapshotRunInput(input, { safeInvoke }) {
+async function normalizePromptSnapshotRunInput(input, { safeInvoke, ensureModelTargetConnection = true, runProfile = null }) {
     if (!input || typeof input !== 'object') {
         throw new Error('Agent startRunWithPromptSnapshot input is required');
     }
@@ -291,7 +142,11 @@ async function normalizePromptSnapshotRunInput(input, { safeInvoke }) {
         throw new Error('stableChatId is required');
     }
 
-    const skillScopeRefs = await resolveSkillScopeRefsForRun(input, safeInvoke);
+    let resolvedRunProfile = runProfile;
+    if (ensureModelTargetConnection) {
+        resolvedRunProfile = await ensureRunProfileModelTargetConnection(input.profileId ?? input.profile_id, safeInvoke);
+    }
+    const skillScopeRefs = await resolveSkillScopeRefsForRun(input, safeInvoke, resolvedRunProfile);
 
     return {
         ...input,
@@ -303,13 +158,13 @@ async function normalizePromptSnapshotRunInput(input, { safeInvoke }) {
     };
 }
 
-async function resolveSkillScopeRefsForRun(input, safeInvoke) {
+async function resolveSkillScopeRefsForRun(input, safeInvoke, runProfile = null) {
     const refs = normalizeSkillScopeRefs(input.skillScopeRefs ?? input.skill_scope_refs);
     if (refs.preset) {
         return refs;
     }
 
-    const profile = await loadRunProfile(input.profileId ?? input.profile_id, safeInvoke);
+    const profile = runProfile || await loadRunProfile(input.profileId ?? input.profile_id, safeInvoke);
     if (profile?.preset?.mode !== 'currentPromptSnapshot') {
         return refs;
     }
@@ -331,6 +186,12 @@ async function loadRunProfile(profileId, safeInvoke) {
     if (!profile) {
         throw new Error(`agent.profile_not_found: Agent Profile '${resolvedProfileId}' was not found`);
     }
+    return profile;
+}
+
+async function ensureRunProfileModelTargetConnection(profileId, safeInvoke) {
+    const profile = await loadRunProfile(profileId, safeInvoke);
+    await ensureModelTargetLlmConnectionForProfile(profile);
     return profile;
 }
 
@@ -393,50 +254,12 @@ function resolveCurrentPresetRef() {
     return { apiId, name };
 }
 
-async function resolveStableChatId(chatRef) {
-    const chatApi = window.__TAURITAVERN__?.api?.chat;
-    if (!chatApi || typeof chatApi.open !== 'function') {
-        throw new Error('api.chat is required to resolve stableChatId');
-    }
-
-    const handle = chatApi.open(chatRef);
-    if (!handle || typeof handle.stableId !== 'function') {
-        throw new Error('api.chat.open(ref).stableId is required to resolve stableChatId');
-    }
-
-    return String(await handle.stableId()).trim();
-}
-
-function requireRunId(value) {
-    const runId = String(value || '').trim();
-    if (!runId) {
-        throw new Error('runId is required');
-    }
-    return runId;
-}
-
-function requireProfileId(value) {
-    const profileId = String(value || '').trim();
-    if (!profileId) {
-        throw new Error('profileId is required');
-    }
-    return profileId;
-}
-
 function normalizeOptionalString(value) {
     if (value == null || value === '') {
         return undefined;
     }
     const text = String(value).trim();
     return text || undefined;
-}
-
-function normalizePollInterval(value) {
-    const intervalMs = Number(value || DEFAULT_EVENT_POLL_MS);
-    if (!Number.isFinite(intervalMs) || intervalMs < 100) {
-        return DEFAULT_EVENT_POLL_MS;
-    }
-    return intervalMs;
 }
 
 function mergePlainObject(base, patch) {

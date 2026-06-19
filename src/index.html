@@ -2150,7 +2150,7 @@
                                             </strong>
                                         </div>
                                     </div>
-                                    <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,claude,aws_bedrock,xai,makersuite,vertexai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek">
+                                    <div id="openai_reasoning_effort_block" class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,claude,aws_bedrock,xai,makersuite,vertexai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek,zai">
                                         <div class="flex-container oneline-dropdown" title="Constrains effort on reasoning for reasoning models.&#10;Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning in a response." data-i18n="[title]Constrains effort on reasoning for reasoning models.">
                                             <label for="openai_reasoning_effort">
                                                 <span data-i18n="Reasoning Effort">Reasoning Effort</span>
@@ -2168,8 +2168,11 @@
                                             <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.">
                                                 OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek">
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.">
                                                 DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.
+                                            </div>
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, Low and Medium request high effort, and XHigh requests max effort.">
+                                                Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, Low and Medium request high effort, and XHigh requests max effort.
                                             </div>
                                             <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
                                                 Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
@@ -4032,6 +4035,7 @@
                             </select>
                             <h4 data-i18n="Z.AI Model">Z.AI Model</h4>
                             <select id="model_zai_select">
+                                <option value="glm-5.2">glm-5.2</option>
                                 <option value="glm-5-turbo">glm-5-turbo</option>
                                 <option value="glm-5v-turbo">glm-5v-turbo</option>
                                 <option value="glm-5.1">glm-5.1</option>

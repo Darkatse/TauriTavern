@@ -6,24 +6,19 @@ import { createGenerationLifecycleService } from '../services/ai/generation-life
 import { createGenerationStatusBridge } from '../services/ai/generation-status-bridge.js';
 import { createSystemNotificationService } from '../services/notifications/system-notification-service.js';
 import { registerOpenAiTokenizerRoutes } from './openai-tokenizer-routes.js';
+import {
+    asUpstreamFailureDetails,
+    getErrorMessage,
+    getUpstreamFailureDetails,
+    getUserFacingErrorMessage,
+    translateApiErrorLabel,
+} from './ai-error-presenter.js';
 import { createChannel } from '../../../tauri-bridge.js';
 import { stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
 import { createAbortError, isAbortError } from '../kernel/abort-error.js';
 
 function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-}
-
-function getErrorMessage(error) {
-    if (!error) {
-        return 'Unknown error';
-    }
-
-    if (typeof error === 'string') {
-        return error;
-    }
-
-    return error.message || error.toString?.() || 'Unknown error';
 }
 
 function encodeSseDataFrame(data) {
@@ -39,7 +34,6 @@ function encodeSseDataFrame(data) {
 
 const DEFAULT_COMPLETION_MODEL = 'tauritavern-error';
 const DEFAULT_ERROR_MESSAGE = 'Chat completion request failed';
-const ERROR_LABEL = '[API Error]';
 const STREAM_FRAME_INTERVAL_MS = 10;
 const STREAM_RESPONSE_HEADERS = Object.freeze({
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -220,20 +214,32 @@ function getCompletionModel(payload) {
 }
 
 function buildErrorAssistantText(error) {
-    const rawMessage = getErrorMessage(error);
-    const normalizedMessage = stripCommandErrorPrefixes(rawMessage) || DEFAULT_ERROR_MESSAGE;
-    if (normalizedMessage.startsWith(ERROR_LABEL)) {
+    const normalizedMessage = getUserFacingErrorMessage(error);
+    const errorLabel = translateApiErrorLabel();
+    if (normalizedMessage.startsWith(errorLabel) || normalizedMessage.startsWith('[API Error]')) {
         return normalizedMessage;
     }
 
-    return `${ERROR_LABEL}\n${normalizedMessage}`;
+    return `${errorLabel}\n${normalizedMessage}`;
 }
 
 function buildLegacyErrorPayload(error) {
+    const details = getUpstreamFailureDetails(error);
+    const payload = {
+        message: getUserFacingErrorMessage(error),
+    };
+
+    if (details) {
+        payload.code = details.code;
+        payload.category = details.category;
+        payload.message_key = details.messageKey;
+        if (details.endpoint) {
+            payload.endpoint = details.endpoint;
+        }
+    }
+
     return {
-        error: {
-            message: getErrorMessage(error),
-        },
+        error: payload,
     };
 }
 
@@ -524,12 +530,17 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
         }
 
         if (eventType === 'error') {
-            const message = typeof eventPayload.message === 'string' && eventPayload.message.trim()
+            const rawMessage = typeof eventPayload.message === 'string' && eventPayload.message.trim()
                 ? eventPayload.message
                 : 'Chat completion stream failed';
+            const error = {
+                message: rawMessage,
+                details: asUpstreamFailureDetails(eventPayload.details),
+            };
+            const message = getUserFacingErrorMessage(error);
             void closeStream({
                 appendDone: true,
-                errorPayload: buildErrorStreamChunk(message, payload),
+                errorPayload: buildErrorStreamChunk(error, payload),
                 failureMessage: message,
             });
             return;
@@ -547,7 +558,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             try {
                 channel = createChannel(onStreamEvent);
             } catch (error) {
-                const message = getErrorMessage(error);
+                const message = getUserFacingErrorMessage(error);
                 await closeStream({
                     appendDone: true,
                     errorPayload: buildErrorStreamChunk(message, payload),
@@ -583,7 +594,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                     await requestUpstreamCancel();
                 }
             } catch (error) {
-                const message = getErrorMessage(error);
+                const message = getUserFacingErrorMessage(error);
                 await closeStream({
                     appendDone: true,
                     errorPayload: buildErrorStreamChunk(message, payload),
@@ -650,10 +661,17 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             return jsonResponse(result || { data: [] });
         } catch (error) {
             console.error('Chat completion status failed:', error);
+            const details = getUpstreamFailureDetails(error);
             return jsonResponse(
                 {
                     error: true,
-                    message: getErrorMessage(error),
+                    message: getUserFacingErrorMessage(error),
+                    ...(details ? {
+                        code: details.code,
+                        category: details.category,
+                        message_key: details.messageKey,
+                        ...(details.endpoint ? { endpoint: details.endpoint } : {}),
+                    } : {}),
                     data: { data: [] },
                 },
                 200,
@@ -678,9 +696,10 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             await lifecycle.finish({ success: true });
             return jsonResponse(completion || {});
         } catch (error) {
-            const errorMessage = getErrorMessage(error);
+            const rawErrorMessage = getErrorMessage(error);
+            const errorMessage = getUserFacingErrorMessage(error);
             const aborted = isAbortError(error)
-                || /generation cancelled by user/i.test(errorMessage);
+                || /generation cancelled by user/i.test(rawErrorMessage);
 
             await lifecycle.finish({
                 success: false,

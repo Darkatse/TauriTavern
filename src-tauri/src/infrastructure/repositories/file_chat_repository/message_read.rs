@@ -20,7 +20,9 @@ impl FileChatRepository {
         file_name: &str,
         indices: &[usize],
     ) -> Result<ChatMessagesReadResult, DomainError> {
-        let path = self.get_chat_path(character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         read_chat_messages_from_path(&path, indices).await
     }
 

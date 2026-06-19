@@ -3,6 +3,20 @@ use crate::domain::models::character::Character;
 use async_trait::async_trait;
 use std::path::Path;
 
+pub const CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED: &str = "avatar-import-failed";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharacterCreateWarning {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CharacterCreateResult {
+    pub character: Character,
+    pub warnings: Vec<CharacterCreateWarning>,
+}
+
 /// Repository interface for character management
 #[async_trait]
 pub trait CharacterRepository: Send + Sync {
@@ -70,7 +84,7 @@ pub trait CharacterRepository: Send + Sync {
         character: &Character,
         avatar_path: Option<&Path>,
         crop: Option<ImageCrop>,
-    ) -> Result<Character, DomainError>;
+    ) -> Result<CharacterCreateResult, DomainError>;
 
     /// Update a character's avatar
     async fn update_avatar(

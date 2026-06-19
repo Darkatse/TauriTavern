@@ -6,12 +6,12 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-test('settings popup gates data directory selection by runtime (not Bowser isMobile)', async () => {
-    const popupPath = path.join(
+test('settings view model gates data directory selection by runtime (not Bowser isMobile)', async () => {
+    const viewModelPath = path.join(
         REPO_ROOT,
-        'src/scripts/tauri/setting/setting-panel/settings-popup.js',
+        'src/scripts/tauri/setting/setting-panel/settings-view-model.js',
     );
-    const source = await readFile(popupPath, 'utf8');
+    const source = await readFile(viewModelPath, 'utf8');
 
     assert.match(
         source,
@@ -22,4 +22,3 @@ test('settings popup gates data directory selection by runtime (not Bowser isMob
 
     assert.match(source, /const\s+runtimePaths\s*=\s*supportsDataRootSelection\s*\?\s*await\s+getRuntimePaths\(\)\s*:\s*null\s*;/);
 });
-

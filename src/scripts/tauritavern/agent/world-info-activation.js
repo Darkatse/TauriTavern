@@ -10,7 +10,7 @@ export function normalizeWorldInfoActivationBatch(payload) {
 function normalizeWorldInfoEntry(entry) {
     const position = normalizeWorldInfoPosition(entry?.position);
     return {
-        world: String(entry?.world || '').trim(),
+        world: typeof entry?.world === 'string' ? entry.world : '',
         uid: typeof entry?.uid === 'number' ? entry.uid : String(entry?.uid ?? '').trim(),
         displayName: normalizeWorldInfoDisplayName(entry),
         constant: Boolean(entry?.constant),

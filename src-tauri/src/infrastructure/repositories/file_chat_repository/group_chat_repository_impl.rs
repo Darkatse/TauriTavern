@@ -161,10 +161,18 @@ impl GroupChatRepository for FileChatRepository {
         cursor: ChatPayloadCursor,
         header: String,
         lines: Vec<String>,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError> {
-        self.save_group_payload_windowed(chat_id, cursor, header, lines, force)
-            .await
+        self.save_group_payload_windowed(
+            chat_id,
+            cursor,
+            header,
+            lines,
+            expected_window_line_count,
+            force,
+        )
+        .await
     }
 
     async fn patch_group_chat_payload_windowed(
@@ -173,10 +181,36 @@ impl GroupChatRepository for FileChatRepository {
         cursor: ChatPayloadCursor,
         header: String,
         op: ChatPayloadPatchOp,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError> {
-        self.patch_group_payload_windowed(chat_id, cursor, header, op, force)
-            .await
+        self.patch_group_payload_windowed(
+            chat_id,
+            cursor,
+            header,
+            op,
+            expected_window_line_count,
+            force,
+        )
+        .await
+    }
+
+    async fn hide_group_chat_payload_before_cursor(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        hide: bool,
+        name_filter: Option<String>,
+        expected_window_line_count: usize,
+    ) -> Result<ChatPayloadCursor, DomainError> {
+        self.hide_group_payload_before_cursor(
+            chat_id,
+            cursor,
+            hide,
+            name_filter,
+            expected_window_line_count,
+        )
+        .await
     }
 
     async fn save_group_chat_payload_from_path(

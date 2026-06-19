@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
 use crate::application::services::agent_profile_service::AgentProfileService;
+use crate::application::services::agent_run_history_service::AgentRunHistoryService;
+use crate::application::services::agent_run_retention_automation_service::AgentRunRetentionAutomationService;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::asset_service::AssetService;
 use crate::application::services::avatar_service::AvatarService;
@@ -27,6 +30,7 @@ use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
 use crate::application::services::skill_service::SkillService;
 use crate::application::services::stable_diffusion_service::StableDiffusionService;
+use crate::application::services::sync_automation_service::SyncAutomationService;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::translate_service::TranslateService;
@@ -63,7 +67,10 @@ pub struct AppState {
     pub preset_service: Arc<PresetService>,
     pub quick_reply_service: Arc<QuickReplyService>,
     pub agent_profile_service: Arc<AgentProfileService>,
+    pub agent_profile_diagnostic_service: Arc<AgentProfileDiagnosticService>,
     pub prompt_assembly_service: Arc<PromptAssemblyService>,
+    pub agent_run_history_service: Arc<AgentRunHistoryService>,
+    pub agent_run_retention_automation_service: Arc<AgentRunRetentionAutomationService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub llm_connection_service: Arc<LlmConnectionService>,
@@ -75,6 +82,7 @@ pub struct AppState {
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
+    pub sync_automation_service: Arc<SyncAutomationService>,
     pub update_service: Arc<UpdateService>,
     pub native_regex_service: Arc<NativeRegexService>,
     pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
@@ -118,7 +126,10 @@ impl AppState {
             preset_service: services.preset_service,
             quick_reply_service: services.quick_reply_service,
             agent_profile_service: services.agent_profile_service,
+            agent_profile_diagnostic_service: services.agent_profile_diagnostic_service,
             prompt_assembly_service: services.prompt_assembly_service,
+            agent_run_history_service: services.agent_run_history_service,
+            agent_run_retention_automation_service: services.agent_run_retention_automation_service,
             agent_runtime_service: services.agent_runtime_service,
             chat_completion_service: services.chat_completion_service,
             llm_connection_service: services.llm_connection_service,
@@ -130,6 +141,7 @@ impl AppState {
             world_info_service: services.world_info_service,
             lan_sync_service: services.lan_sync_service,
             tt_sync_service: services.tt_sync_service,
+            sync_automation_service: services.sync_automation_service,
             update_service: services.update_service,
             native_regex_service: services.native_regex_service,
             ios_policy: services.ios_policy,
@@ -169,6 +181,18 @@ pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) 
                     Ok(_) => tracing::debug!("Successfully initialized default content"),
                     Err(error) => tracing::warn!("Failed to initialize default content: {}", error),
                 }
+
+                let sync_automation_service = app_handle
+                    .state::<Arc<AppState>>()
+                    .sync_automation_service
+                    .clone();
+                sync_automation_service.start();
+
+                let agent_run_retention_automation_service = app_handle
+                    .state::<Arc<AppState>>()
+                    .agent_run_retention_automation_service
+                    .clone();
+                agent_run_retention_automation_service.start();
 
                 match app_handle.emit("app-ready", ()) {
                     Ok(_) => tracing::debug!("Application is ready"),

@@ -13,6 +13,12 @@ import { Popup } from './popup.js';
 import { t, translate } from './i18n.js';
 import { isMobile } from './RossAscends-mods.js';
 import { INJECTION_POSITION, getPromptInjectionPosition } from './prompt-injections.js';
+import {
+    assertPromptOrderReferences,
+    isPromptManagerImportDataValid,
+    repairNullPromptManagerEntries,
+    resolvePromptOrderFromDomIdentifiers,
+} from './prompt-manager-order-utils.js';
 
 function debouncePromise(func, delay) {
     let timeoutId;
@@ -1024,6 +1030,10 @@ class PromptManager {
     sanitizeServiceSettings() {
         this.serviceSettings.prompts = this.serviceSettings.prompts ?? [];
         this.serviceSettings.prompt_order = this.serviceSettings.prompt_order ?? [];
+        const removedNullEntries = repairNullPromptManagerEntries(this.serviceSettings);
+        if (removedNullEntries > 0) {
+            this.log(`Removed ${removedNullEntries} null PromptManager entries.`);
+        }
 
         if ('global' === this.configuration.promptOrder.strategy) {
             const dummyCharacter = { id: this.configuration.promptOrder.dummyId };
@@ -1373,6 +1383,7 @@ class PromptManager {
      * @param {Array<Object>} promptOrder - Array of prompt objects
      */
     addPromptOrderForCharacter(character, promptOrder) {
+        assertPromptOrderReferences(promptOrder, 'promptOrder');
         this.serviceSettings.prompt_order.push({
             character_id: character.id,
             order: JSON.parse(JSON.stringify(promptOrder)),
@@ -2019,6 +2030,11 @@ class PromptManager {
             return;
         }
 
+        if (!isPromptManagerImportDataValid(importData)) {
+            toastr.warning(t`Could not import prompts. Export failed validation.`);
+            return;
+        }
+
         const prompts = mergeKeepNewer(this.serviceSettings.prompts, importData.data.prompts);
 
         this.setPrompts(prompts);
@@ -2100,8 +2116,14 @@ class PromptManager {
             update: (event, ui) => {
                 const promptOrder = this.getPromptOrderForCharacter(this.activeCharacter);
                 const promptListElement = $(`#${this.configuration.prefix}prompt_manager_list`).sortable('toArray', { attribute: 'data-pm-identifier' });
-                const idToObjectMap = new Map(promptOrder.map(prompt => [prompt.identifier, prompt]));
-                const updatedPromptOrder = promptListElement.map(identifier => idToObjectMap.get(identifier));
+                let updatedPromptOrder;
+                try {
+                    updatedPromptOrder = resolvePromptOrderFromDomIdentifiers(promptOrder, promptListElement);
+                } catch (error) {
+                    console.error('Prompt order update failed:', error);
+                    toastr.error(t`Prompt order could not be saved. Reload the page and try again.`);
+                    return;
+                }
 
                 this.removePromptOrderForCharacter(this.activeCharacter);
                 this.addPromptOrderForCharacter(this.activeCharacter, updatedPromptOrder);

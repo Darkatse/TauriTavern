@@ -5,7 +5,10 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::Semaphore;
 
 use crate::application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
+use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
 use crate::application::services::agent_profile_service::AgentProfileService;
+use crate::application::services::agent_run_history_service::AgentRunHistoryService;
+use crate::application::services::agent_run_retention_automation_service::AgentRunRetentionAutomationService;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::agent_workspace_lifecycle_service::{
     AgentRunActivity, AgentWorkspaceLifecycleService,
@@ -33,6 +36,7 @@ use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
 use crate::application::services::skill_service::SkillService;
 use crate::application::services::stable_diffusion_service::StableDiffusionService;
+use crate::application::services::sync_automation_service::SyncAutomationService;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::translate_service::TranslateService;
@@ -45,6 +49,7 @@ use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
 use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
+use crate::domain::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
 use crate::domain::repositories::asset_repository::AssetRepository;
@@ -90,6 +95,7 @@ use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
 use crate::infrastructure::persistence::file_system::DataDirectory;
+use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_asset_repository::FileAssetRepository;
@@ -135,7 +141,10 @@ pub(super) struct AppServices {
     pub preset_service: Arc<PresetService>,
     pub quick_reply_service: Arc<QuickReplyService>,
     pub agent_profile_service: Arc<AgentProfileService>,
+    pub agent_profile_diagnostic_service: Arc<AgentProfileDiagnosticService>,
     pub prompt_assembly_service: Arc<PromptAssemblyService>,
+    pub agent_run_history_service: Arc<AgentRunHistoryService>,
+    pub agent_run_retention_automation_service: Arc<AgentRunRetentionAutomationService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub llm_connection_service: Arc<LlmConnectionService>,
@@ -147,6 +156,7 @@ pub(super) struct AppServices {
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
+    pub sync_automation_service: Arc<SyncAutomationService>,
     pub update_service: Arc<UpdateService>,
     pub native_regex_service: Arc<NativeRegexService>,
     pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
@@ -174,6 +184,7 @@ struct AppRepositories {
     preset_repository: Arc<dyn PresetRepository>,
     quick_reply_repository: Arc<dyn QuickReplyRepository>,
     agent_profile_repository: Arc<dyn AgentProfileRepository>,
+    agent_profile_storage_health_repository: Arc<dyn AgentProfileStorageHealthRepository>,
     agent_run_repository: Arc<dyn AgentRunRepository>,
     agent_invocation_repository: Arc<dyn AgentInvocationRepository>,
     agent_workspace_lifecycle_repository: Arc<dyn AgentWorkspaceLifecycleRepository>,
@@ -252,7 +263,13 @@ pub(super) async fn build_services(
     ));
     let agent_profile_service = Arc::new(AgentProfileService::new(
         repositories.agent_profile_repository.clone(),
+        repositories.agent_profile_storage_health_repository.clone(),
         repositories.preset_repository.clone(),
+    ));
+    let agent_profile_diagnostic_service = Arc::new(AgentProfileDiagnosticService::new(
+        agent_profile_service.clone(),
+        repositories.preset_repository.clone(),
+        llm_connection_service.clone(),
     ));
     let prompt_assembly_service = Arc::new(PromptAssemblyService::new(
         agent_profile_service.clone(),
@@ -285,6 +302,15 @@ pub(super) async fn build_services(
         agent_profile_service.clone(),
         llm_connection_service.clone(),
         prompt_assembly_service.clone(),
+    ));
+    let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
+        repositories.agent_run_repository.clone(),
+        repositories.settings_repository.clone(),
+        agent_runtime_service.clone() as Arc<dyn AgentRunActivity>,
+    ));
+    let agent_run_retention_automation_service = Arc::new(AgentRunRetentionAutomationService::new(
+        repositories.settings_repository.clone(),
+        agent_run_history_service.clone(),
     ));
     let agent_workspace_lifecycle_service = Arc::new(AgentWorkspaceLifecycleService::new(
         repositories.agent_workspace_lifecycle_repository.clone(),
@@ -350,6 +376,13 @@ pub(super) async fn build_services(
         data_directory.default_user().to_path_buf(),
         sync_permit,
     ));
+    let sync_automation_service = Arc::new(SyncAutomationService::new(
+        app_handle.clone(),
+        data_directory.default_user().to_path_buf(),
+        lan_sync_service.clone(),
+        tt_sync_service.clone(),
+        ios_policy.capabilities.sync.lan,
+    ));
 
     let secret_service = Arc::new(SecretService::new(
         repositories.secret_repository,
@@ -377,7 +410,10 @@ pub(super) async fn build_services(
         preset_service,
         quick_reply_service,
         agent_profile_service,
+        agent_profile_diagnostic_service,
         prompt_assembly_service,
+        agent_run_history_service,
+        agent_run_retention_automation_service,
         agent_runtime_service,
         chat_completion_service,
         llm_connection_service,
@@ -389,6 +425,7 @@ pub(super) async fn build_services(
         world_info_service,
         lan_sync_service,
         tt_sync_service,
+        sync_automation_service,
         update_service,
         native_regex_service,
         ios_policy,
@@ -402,9 +439,10 @@ fn build_repositories(
     let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
     let data_root = data_directory.root().to_path_buf();
     let default_user_dir = data_directory.default_user().to_path_buf();
+    let chat_aliases = new_shared_chat_alias_store_for_user_dir(data_directory.default_user());
 
     let character_repository: Arc<dyn CharacterRepository> =
-        Arc::new(FileCharacterRepository::new(
+        Arc::new(FileCharacterRepository::with_chat_aliases(
             data_directory.characters().to_path_buf(),
             data_directory.chats().to_path_buf(),
             data_directory
@@ -412,13 +450,15 @@ fn build_repositories(
                 .join("thumbnails")
                 .join("avatar"),
             data_directory.default_avatar().to_path_buf(),
+            chat_aliases.clone(),
         ));
 
-    let file_chat_repository = Arc::new(FileChatRepository::new(
+    let file_chat_repository = Arc::new(FileChatRepository::with_chat_aliases(
         data_directory.characters().to_path_buf(),
         data_directory.chats().to_path_buf(),
         data_directory.group_chats().to_path_buf(),
         data_directory.backups().to_path_buf(),
+        chat_aliases,
     ));
     let chat_repository: Arc<dyn ChatRepository> = file_chat_repository.clone();
     let group_chat_repository: Arc<dyn GroupChatRepository> = file_chat_repository;
@@ -500,9 +540,13 @@ fn build_repositories(
     let quick_reply_repository: Arc<dyn QuickReplyRepository> = Arc::new(
         FileQuickReplyRepository::new(data_directory.default_user().join("QuickReplies")),
     );
-    let agent_profile_repository: Arc<dyn AgentProfileRepository> = Arc::new(
-        FileAgentProfileRepository::new(data_root.join("_tauritavern").join("agent-profiles")),
-    );
+    let agent_profile_file_repository = Arc::new(FileAgentProfileRepository::new(
+        data_root.join("_tauritavern").join("agent-profiles"),
+    ));
+    let agent_profile_repository: Arc<dyn AgentProfileRepository> =
+        agent_profile_file_repository.clone();
+    let agent_profile_storage_health_repository: Arc<dyn AgentProfileStorageHealthRepository> =
+        agent_profile_file_repository;
     let llm_connection_repository: Arc<dyn LlmConnectionRepository> = Arc::new(
         FileLlmConnectionRepository::new(data_root.join("_tauritavern").join("llm-connections")),
     );
@@ -572,6 +616,7 @@ fn build_repositories(
         preset_repository,
         quick_reply_repository,
         agent_profile_repository,
+        agent_profile_storage_health_repository,
         agent_run_repository,
         agent_invocation_repository,
         agent_workspace_lifecycle_repository,

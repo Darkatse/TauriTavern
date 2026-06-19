@@ -515,6 +515,12 @@ fn save_staged_archive_to_downloads(
     source_path: &Path,
     file_name: &str,
 ) -> Result<PathBuf, DomainError> {
+    if cfg!(target_os = "android") {
+        return Err(DomainError::InternalError(
+            "Android archive exports must use the native document save bridge".to_string(),
+        ));
+    }
+
     if !source_path.is_file() {
         return Err(DomainError::NotFound(format!(
             "Export archive file not found: {}",

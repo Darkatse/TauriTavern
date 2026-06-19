@@ -1,7 +1,11 @@
 // Application services
 pub mod agent_identity;
 pub mod agent_model_gateway;
+pub mod agent_profile_diagnostic_service;
 pub mod agent_profile_service;
+pub mod agent_run_history_service;
+pub mod agent_run_retention_automation_service;
+pub mod agent_run_retention_planner;
 pub mod agent_runtime_service;
 pub mod agent_tools;
 pub mod agent_workspace_lifecycle_service;
@@ -27,9 +31,11 @@ pub mod prompt_assembly_service;
 pub mod provider_metadata_service;
 pub mod quick_reply_service;
 pub mod secret_service;
+mod settings_repair;
 pub mod settings_service;
 pub mod skill_service;
 pub mod stable_diffusion_service;
+pub mod sync_automation_service;
 pub mod theme_service;
 pub mod tokenization_service;
 pub mod translate_service;

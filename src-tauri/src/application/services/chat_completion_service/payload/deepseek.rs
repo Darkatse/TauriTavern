@@ -2,6 +2,9 @@ use serde_json::{Map, Value};
 
 use crate::application::errors::ApplicationError;
 
+use super::super::model_capabilities::{
+    RequestedReasoningEffort, parse_known_reasoning_effort, unsupported_reasoning_effort,
+};
 use super::openai;
 use super::prompt_post_processing::{PromptNames, PromptProcessingType, post_process_prompt};
 use super::tool_calls;
@@ -87,13 +90,14 @@ fn resolve_thinking_mode(
 }
 
 fn normalize_reasoning_effort(value: &str) -> Result<Option<&'static str>, ApplicationError> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "" | "auto" => Ok(None),
-        "min" | "minimum" | "low" | "medium" | "high" => Ok(Some("high")),
-        "max" | "maximum" | "xhigh" => Ok(Some("max")),
-        other => Err(ApplicationError::ValidationError(format!(
-            "Unsupported DeepSeek reasoning_effort: {other}"
-        ))),
+    match parse_known_reasoning_effort(value, "DeepSeek")? {
+        RequestedReasoningEffort::Auto => Ok(None),
+        RequestedReasoningEffort::None => Err(unsupported_reasoning_effort("DeepSeek", value)),
+        RequestedReasoningEffort::Minimal
+        | RequestedReasoningEffort::Low
+        | RequestedReasoningEffort::Medium
+        | RequestedReasoningEffort::High => Ok(Some("high")),
+        RequestedReasoningEffort::Max | RequestedReasoningEffort::XHigh => Ok(Some("max")),
     }
 }
 
@@ -309,6 +313,26 @@ mod tests {
         assert!(body.get("top_p").is_none());
         assert!(body.get("presence_penalty").is_none());
         assert!(body.get("frequency_penalty").is_none());
+    }
+
+    #[test]
+    fn deepseek_reasoning_accepts_shared_minimal_alias() {
+        let payload = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{"role": "user", "content": "hello"}],
+            "include_reasoning": true,
+            "reasoning_effort": "minimal",
+            "chat_completion_source": "deepseek"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("payload should build");
+        assert_eq!(
+            upstream.get("reasoning_effort").and_then(Value::as_str),
+            Some("high")
+        );
     }
 
     #[test]

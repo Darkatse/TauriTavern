@@ -239,6 +239,41 @@ mod tests {
         .expect("create global source state directory");
         std::fs::create_dir_all(root.join("default-user").join("user").join("lan-sync"))
             .expect("create lan sync state directory");
+        std::fs::create_dir_all(
+            root.join("_tauritavern")
+                .join("agent-profiles")
+                .join("profiles"),
+        )
+        .expect("create agent profile directory");
+        std::fs::create_dir_all(
+            root.join("_tauritavern")
+                .join("agent-workspaces")
+                .join("chats")
+                .join("workspace")
+                .join("persistent-states")
+                .join("run-1"),
+        )
+        .expect("create agent persistent state directory");
+        std::fs::create_dir_all(root.join("_tauritavern").join("prompt-cache"))
+            .expect("create prompt cache directory");
+        std::fs::create_dir_all(
+            root.join("_tauritavern")
+                .join("agent-workspaces")
+                .join("chats")
+                .join("workspace")
+                .join("runs")
+                .join("run-done"),
+        )
+        .expect("create terminal run directory");
+        std::fs::create_dir_all(
+            root.join("_tauritavern")
+                .join("agent-workspaces")
+                .join("chats")
+                .join("workspace")
+                .join("runs")
+                .join("run-active"),
+        )
+        .expect("create active run directory");
 
         std::fs::write(
             root.join("default-user")
@@ -280,6 +315,76 @@ mod tests {
             b"{}",
         )
         .expect("write lan sync config");
+        std::fs::write(
+            root.join("_tauritavern")
+                .join("agent-profiles")
+                .join("profiles")
+                .join("writer.json"),
+            b"{}",
+        )
+        .expect("write agent profile");
+        std::fs::write(
+            root.join("_tauritavern")
+                .join("agent-workspaces")
+                .join("chats")
+                .join("workspace")
+                .join("persistent-states")
+                .join("run-1")
+                .join("manifest.json"),
+            b"{}",
+        )
+        .expect("write agent persistent state");
+        std::fs::write(
+            root.join("_tauritavern")
+                .join("prompt-cache")
+                .join("cache.json"),
+            b"{}",
+        )
+        .expect("write prompt cache");
+        std::fs::write(
+            root.join("_tauritavern")
+                .join("agent-workspaces")
+                .join("chats")
+                .join("workspace")
+                .join("runs")
+                .join("run-done")
+                .join("run.json"),
+            br#"{"status":"completed"}"#,
+        )
+        .expect("write terminal run");
+        std::fs::write(
+            root.join("_tauritavern")
+                .join("agent-workspaces")
+                .join("chats")
+                .join("workspace")
+                .join("runs")
+                .join("run-done")
+                .join("events.jsonl"),
+            b"{}\n",
+        )
+        .expect("write terminal event");
+        std::fs::write(
+            root.join("_tauritavern")
+                .join("agent-workspaces")
+                .join("chats")
+                .join("workspace")
+                .join("runs")
+                .join("run-active")
+                .join("run.json"),
+            br#"{"status":"calling_model"}"#,
+        )
+        .expect("write active run");
+        std::fs::write(
+            root.join("_tauritavern")
+                .join("agent-workspaces")
+                .join("chats")
+                .join("workspace")
+                .join("runs")
+                .join("run-active")
+                .join("events.jsonl"),
+            b"{}\n",
+        )
+        .expect("write active event");
 
         let manifest = scan_manifest_sync(&root).expect("scan sync manifest");
         let relative_paths = manifest
@@ -301,6 +406,26 @@ mod tests {
         assert!(
             !relative_paths.contains(&"default-user/user/lan-sync/config.json".to_string()),
             "lan sync state must never be part of the sync manifest"
+        );
+        assert!(
+            !relative_paths
+                .contains(&"_tauritavern/agent-profiles/profiles/writer.json".to_string()),
+            "LAN v1 is legacy scope and must not grow to include Agent data"
+        );
+        assert!(!relative_paths.contains(
+            &"_tauritavern/agent-workspaces/chats/workspace/persistent-states/run-1/manifest.json"
+                .to_string()
+        ));
+        assert!(
+            !relative_paths.contains(&"_tauritavern/prompt-cache/cache.json".to_string()),
+            "prompt cache must stay local"
+        );
+        assert!(
+            !relative_paths.contains(
+                &"_tauritavern/agent-workspaces/chats/workspace/runs/run-done/events.jsonl"
+                    .to_string()
+            ),
+            "LAN v1 must not include Agent run history"
         );
 
         std::fs::remove_dir_all(&root).expect("remove temp lan sync test root");

@@ -13,6 +13,7 @@ use super::prompt_snapshot::{
 use super::skill_scope::{
     resolve_run_skill_scope_refs, skill_event_summary, skill_scope_order_for_profile,
 };
+use super::timeline_projection::build_run_timeline_projection;
 use crate::application::dto::agent_dto::{
     AgentCancelRunDto, AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
     AgentRunHandleDto, AgentStartRunDto, AgentWorkspaceFileDto,
@@ -254,6 +255,12 @@ impl AgentRuntimeService {
         let active_handle = self.active_runs.read().await.get(&dto.run_id).cloned();
 
         let next = if let Some(handle) = active_handle {
+            self.close_guidance_mailbox_for_run(
+                &dto.run_id,
+                "run_cancel_requested",
+                AgentRunEventLevel::Info,
+            )
+            .await?;
             let _ = handle.cancel_sender.send(true);
             handle.scheduler.cancel_all_unfinished().await?;
             self.transition_status(&dto.run_id, AgentRunStatus::Cancelling)
@@ -285,6 +292,7 @@ impl AgentRuntimeService {
         &self,
         dto: AgentReadEventsDto,
     ) -> Result<AgentReadEventsResultDto, ApplicationError> {
+        let invocation_id = normalize_read_events_invocation_id(dto.invocation_id.as_deref())?;
         let events = self
             .run_repository
             .read_events(
@@ -293,11 +301,25 @@ impl AgentRuntimeService {
                     after_seq: dto.after_seq,
                     before_seq: dto.before_seq,
                     limit: dto.limit,
+                    invocation_id,
                 },
             )
             .await?;
+        let timeline_projection = if dto.include_timeline_projection {
+            let invocations = self
+                .invocation_repository
+                .list_invocations(&dto.run_id)
+                .await?;
+            let tasks = self.invocation_repository.list_tasks(&dto.run_id).await?;
+            Some(build_run_timeline_projection(&invocations, &tasks)?)
+        } else {
+            None
+        };
 
-        Ok(AgentReadEventsResultDto { events })
+        Ok(AgentReadEventsResultDto {
+            events,
+            timeline_projection,
+        })
     }
 
     pub async fn read_workspace_file(
@@ -321,19 +343,46 @@ impl AgentRuntimeService {
     }
 }
 
+fn normalize_read_events_invocation_id(
+    value: Option<&str>,
+) -> Result<Option<String>, ApplicationError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let invocation_id = value.trim();
+    if invocation_id.is_empty() {
+        return Err(ApplicationError::ValidationError(
+            "agent.read_events_invocation_id_invalid: invocationId cannot be empty".to_string(),
+        ));
+    }
+    if invocation_id.contains('/') || invocation_id.contains('\\') {
+        return Err(ApplicationError::ValidationError(
+            "agent.read_events_invocation_id_invalid: invocationId must not contain path separators"
+                .to_string(),
+        ));
+    }
+    Ok(Some(invocation_id.to_string()))
+}
+
 #[async_trait::async_trait]
 impl AgentRunActivity for AgentRuntimeService {
-    async fn active_run_ids_for_workspace(
-        &self,
-        workspace_id: &str,
-    ) -> Result<Vec<String>, ApplicationError> {
-        let run_ids = self
+    async fn active_run_ids(&self) -> Result<Vec<String>, ApplicationError> {
+        let mut run_ids = self
             .active_runs
             .read()
             .await
             .keys()
             .cloned()
             .collect::<Vec<_>>();
+        run_ids.sort();
+        Ok(run_ids)
+    }
+
+    async fn active_run_ids_for_workspace(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<String>, ApplicationError> {
+        let run_ids = self.active_run_ids().await?;
         let mut active = Vec::new();
         for run_id in run_ids {
             let run = self.run_repository.load_run(&run_id).await?;

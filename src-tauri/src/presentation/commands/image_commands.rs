@@ -8,6 +8,7 @@ use tauri::State;
 use tokio::fs;
 
 use crate::app::AppState;
+use crate::domain::models::filename::sanitize_filename;
 use crate::presentation::commands::helpers::log_command;
 use crate::presentation::errors::CommandError;
 
@@ -23,19 +24,6 @@ const MEDIA_REQUEST_AUDIO: u32 = 0b100;
 #[derive(Debug, Serialize)]
 pub struct UserImageUploadResult {
     pub path: String,
-}
-
-fn sanitize_filename(filename: &str) -> String {
-    let sanitized = filename
-        .chars()
-        .map(|character| match character {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ if character.is_control() => '_',
-            _ => character,
-        })
-        .collect::<String>();
-
-    sanitized.trim().trim_end_matches(['.', ' ']).to_string()
 }
 
 fn remove_last_extension(filename: &str) -> &str {
@@ -109,7 +97,6 @@ pub async fn upload_user_image(
 
     let raw_filename = filename
         .as_deref()
-        .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| format!("{}.{}", remove_last_extension(value), format))
         .unwrap_or_else(|| format!("{}.{}", chrono::Utc::now().timestamp_millis(), format));
@@ -120,7 +107,6 @@ pub async fn upload_user_image(
 
     let safe_folder = ch_name
         .as_deref()
-        .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(sanitize_filename)
         .filter(|value| !value.is_empty());
@@ -241,12 +227,16 @@ pub async fn list_user_images(
 ) -> Result<Vec<String>, CommandError> {
     log_command("list_user_images");
 
-    let folder = folder.trim();
     if folder.is_empty() {
         return Err(CommandError::BadRequest("No folder specified".to_string()));
     }
 
-    let sanitized_folder = sanitize_filename(folder);
+    let sanitized_folder = sanitize_filename(&folder);
+    if sanitized_folder.is_empty() {
+        return Err(CommandError::BadRequest(
+            "Invalid folder specified".to_string(),
+        ));
+    }
     let sort_field = sort_field
         .as_deref()
         .map(str::trim)
@@ -392,8 +382,9 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_filename_replaces_illegal_chars() {
-        assert_eq!(sanitize_filename("a:b*c?.png"), "a_b_c_.png");
+    fn sanitize_filename_matches_upstream_contract() {
+        assert_eq!(sanitize_filename("a:b*c?.png"), "abc.png");
+        assert_eq!(sanitize_filename(" image.png "), " image.png");
     }
 
     #[test]

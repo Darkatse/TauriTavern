@@ -250,6 +250,7 @@ impl AgentRuntimeService {
 
         match host_result {
             Ok(result) => {
+                let message_index = message_index_from_message_id(result.message_id.as_deref());
                 commit_ledger.record(&path, mode, result.message_id.clone(), round);
                 self.transition_status(run_id, AgentRunStatus::DispatchingTool)
                     .await?;
@@ -264,6 +265,7 @@ impl AgentRuntimeService {
                         "path": path.as_str(),
                         "mode": mode,
                         "messageId": result.message_id.as_deref(),
+                        "messageIndex": message_index,
                     }),
                 )
                 .await?;
@@ -285,6 +287,7 @@ impl AgentRuntimeService {
                             "path": path.as_str(),
                             "mode": mode,
                             "messageId": result.message_id.as_deref(),
+                            "messageIndex": message_index,
                             "chars": file_metrics.chars,
                             "words": file_metrics.words,
                         }),
@@ -325,10 +328,17 @@ impl AgentRuntimeService {
     pub(super) async fn finish_run(
         &self,
         run_id: &str,
+        final_invocation_id: &str,
         commit_ledger: &RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
         self.cancel_unfinished_child_tasks(run_id).await?;
+        self.close_guidance_mailbox_for_run(
+            run_id,
+            "run_finished_before_next_model_request",
+            AgentRunEventLevel::Info,
+        )
+        .await?;
         self.transition_status(run_id, AgentRunStatus::Finishing)
             .await?;
         let run = self.run_repository.load_run(run_id).await?;
@@ -382,8 +392,12 @@ impl AgentRuntimeService {
         .await?;
         self.active_runs.write().await.remove(run_id);
         self.clear_pending_host_requests_for_run(run_id).await;
-        self.finish_root_invocation(run_id, AgentInvocationStatus::Completed)
-            .await?;
+        self.finish_invocation(
+            run_id,
+            final_invocation_id,
+            AgentInvocationStatus::Completed,
+        )
+        .await?;
 
         Ok(())
     }
@@ -526,6 +540,10 @@ fn persistent_change_payloads(changes: &WorkspacePersistentChangeSet) -> Vec<Val
             })
         })
         .collect()
+}
+
+fn message_index_from_message_id(message_id: Option<&str>) -> Option<usize> {
+    message_id?.trim().parse::<usize>().ok()
 }
 
 fn recoverable_tool_error(

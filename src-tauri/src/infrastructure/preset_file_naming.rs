@@ -5,14 +5,9 @@ use serde_json::Value;
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
+use crate::domain::models::filename::sanitize_filename;
 use crate::infrastructure::persistence::file_system::list_files_with_extension;
 use crate::infrastructure::sillytavern_sorting::sort_paths_by_file_name_sillytavern_name;
-
-const INVALID_FILE_CHARS: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
-const WINDOWS_RESERVED_NAMES: [&str; 22] = [
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-];
 
 #[derive(Debug, Clone)]
 pub(crate) struct NamedPresetFile {
@@ -107,13 +102,9 @@ impl PresetFilePaths {
 }
 
 pub(crate) fn canonical_preset_file_stem(logical_name: &str) -> Result<String, DomainError> {
-    let sanitized = logical_name
-        .chars()
-        .filter(|character| !INVALID_FILE_CHARS.contains(character) && !character.is_control())
-        .collect::<String>();
-    let sanitized = sanitized.trim_end_matches(['.', ' ']).to_string();
+    let sanitized = sanitize_filename(logical_name);
 
-    if sanitized.is_empty() || is_windows_reserved_name(&sanitized) {
+    if sanitized.is_empty() {
         return Err(DomainError::InvalidData(format!(
             "Preset name is invalid for filesystem storage: '{}'",
             logical_name
@@ -211,13 +202,6 @@ fn preset_name_from_value(file_stem: &str, value: &Value) -> String {
         .filter(|name| !name.is_empty())
         .unwrap_or(file_stem)
         .to_string()
-}
-
-fn is_windows_reserved_name(file_stem: &str) -> bool {
-    let base_name = file_stem.split('.').next().unwrap_or(file_stem);
-    WINDOWS_RESERVED_NAMES
-        .iter()
-        .any(|reserved| reserved.eq_ignore_ascii_case(base_name))
 }
 
 #[cfg(test)]

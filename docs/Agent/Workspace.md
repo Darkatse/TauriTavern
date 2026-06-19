@@ -397,15 +397,26 @@ rollbackCommittedMessage(runId, checkpointId)
 - 删除角色且级联删除聊天、删除群组时，会批量清理对应聊天 workspace。
 - 若 workspace 仍有关联 active run，删除必须 fail-fast；用户应先取消 run 再删除聊天。
 - 旧聊天缺少稳定 `integrity` 时，不存在可可靠定位的 Agent workspace，保持普通聊天删除语义。
+- `tauritavern-settings.agent.retention.auto_prune_enabled` 默认 `false`，控制 Rust 后端是否在 TauriTavern 进程运行期间周期性执行自动清理。
+- `tauritavern-settings.agent.retention.keep_recent_terminal_runs` 是 terminal run 核心历史窗口，默认 100。
+- `tauritavern-settings.agent.retention.keep_full_recent_runs` 是完整 workspace/debug artifacts 窗口，默认 20，必须小于等于 `keep_recent_terminal_runs`。
+- 两个 retention 数量都允许为 0，最大 10000；run prune 只作用于 terminal runs，active/non-terminal run 保持不可清理。
+- 前端只通过 `api.agent.retention.readSettings()` / `updateSettings()` / `planPrune()` / `applyPrune()` facade 接触该策略；`updateSettings()` 只保存设置并唤醒后端调度器重读配置，不同步执行清理。
+- `plan_agent_run_prune(dto)` 是 dry-run command：读取当前设置或调用方传入的一次性 retention override，生成候选动作、原因、文件数与字节数，不删除 run workspace 或重型 artifacts。`detailLimit` 只截断返回明细，不截断 totals；active run、缺失 terminal event、journal/storage 异常会进入 `blockedRuns`，不会被计为可执行 candidate。
+- `apply_agent_run_prune(dto)` 使用同一 planner 的 execution 模式在后端重新生成全量执行计划，不信任前端 preview candidates；同一服务实例内 apply 串行执行。它执行 `slim_heavy_artifacts` / `delete_run` 后返回删除统计、`failedRuns` 和 caller `detailLimit` 下的 `afterPlan`；单个 run 删除失败会显式返回并继续后续 candidate，结构性规划错误仍 fail-fast。
+- dry-run 和 apply 都使用 Agent run storage class 判断清理范围，并与 TT-Sync 的 Agent dataset 边界保持同一套路径归属词汇。核心 history 是 `run_journal`（run 目录根级 `run.json` / `events.jsonl` 与 index run）和本地 `run_summary_projection`；`slim_heavy_artifacts` 删除 `run_context`、`run_workspace_projection`、`run_tool_io`、`workspace_outputs`、`workspace_scratch`、`tasks`、`model_responses`、`checkpoints` 以及未知 run artifact。`delete_run` 删除完整 run 目录加 index run/summary 文件。稳定 `persistent-states/` 不属于 run prune 范围。
 
-建议后续提供设置：
+run prune 由上述两个窗口推导动作：
 
 ```text
-keepCompletedRuns
-keepFailedRuns
-maxRunWorkspacesPerChat
-maxCheckpointBytesPerRun
-autoPruneAfterDays
+rank < keep_full_recent_runs:
+  keep full workspace/debug artifacts
+
+keep_full_recent_runs <= rank < keep_recent_terminal_runs:
+  keep core history, slim heavy artifacts
+
+rank >= keep_recent_terminal_runs:
+  delete terminal run history
 ```
 
 ## 12. 性能约束

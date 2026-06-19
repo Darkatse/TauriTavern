@@ -53,7 +53,7 @@ export function normalizeChatRef(ref) {
 
     const kind = String(ref.kind || '').trim();
     if (kind === 'character') {
-        const characterId = String(ref.characterId || '').trim();
+        const characterId = String(ref.characterId ?? '');
         const fileName = stripJsonl(ref.fileName);
         if (!characterId || !fileName.trim()) {
             throw new Error('Character ChatRef requires characterId and fileName');

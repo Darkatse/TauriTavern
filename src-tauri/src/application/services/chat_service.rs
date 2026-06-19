@@ -16,7 +16,9 @@ use crate::application::services::chat_file_validation::{
 };
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
-use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentPersistentStatePrune;
+use crate::domain::repositories::agent_workspace_lifecycle_repository::{
+    AgentPersistentStatePrune, AgentPersistentStatePruneRequest,
+};
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatRepository,
@@ -545,10 +547,10 @@ impl ChatService {
     pub async fn prune_agent_persistent_states(
         &self,
         target: &AgentChatWorkspaceTarget,
-        retained_state_ids: &[String],
+        request: AgentPersistentStatePruneRequest,
     ) -> Result<AgentPersistentStatePrune, ApplicationError> {
         self.agent_workspace_lifecycle_service
-            .prune_persistent_states(target, retained_state_ids)
+            .prune_persistent_states(target, request)
             .await
     }
 
@@ -627,13 +629,22 @@ impl ChatService {
         cursor: ChatPayloadCursor,
         header: String,
         lines: Vec<String>,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         validate_character_path_component(character_name)?;
         validate_chat_file_name(file_name, "Chat file name")?;
 
         self.chat_repository
-            .save_chat_payload_windowed(character_name, file_name, cursor, header, lines, force)
+            .save_chat_payload_windowed(
+                character_name,
+                file_name,
+                cursor,
+                header,
+                lines,
+                expected_window_line_count,
+                force,
+            )
             .await
             .map_err(Into::into)
     }
@@ -646,13 +657,48 @@ impl ChatService {
         cursor: ChatPayloadCursor,
         header: String,
         op: ChatPayloadPatchOp,
+        expected_window_line_count: usize,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         validate_character_path_component(character_name)?;
         validate_chat_file_name(file_name, "Chat file name")?;
 
         self.chat_repository
-            .patch_chat_payload_windowed(character_name, file_name, cursor, header, op, force)
+            .patch_chat_payload_windowed(
+                character_name,
+                file_name,
+                cursor,
+                header,
+                op,
+                expected_window_line_count,
+                force,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Set the hidden flag on all messages stored before the window cursor.
+    pub async fn hide_chat_payload_before_cursor(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        hide: bool,
+        name_filter: Option<String>,
+        expected_window_line_count: usize,
+    ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_character_path_component(character_name)?;
+        validate_chat_file_name(file_name, "Chat file name")?;
+
+        self.chat_repository
+            .hide_chat_payload_before_cursor(
+                character_name,
+                file_name,
+                cursor,
+                hide,
+                name_filter,
+                expected_window_line_count,
+            )
             .await
             .map_err(Into::into)
     }

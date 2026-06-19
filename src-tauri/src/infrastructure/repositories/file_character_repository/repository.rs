@@ -10,7 +10,8 @@ use crate::domain::json_merge::merge_json_value;
 use crate::domain::models::character::Character;
 use crate::domain::models::chat::parse_message_timestamp_value;
 use crate::domain::repositories::character_repository::{
-    CharacterChat, CharacterRepository, ImageCrop,
+    CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterChat, CharacterCreateResult,
+    CharacterCreateWarning, CharacterRepository, ImageCrop,
 };
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::png_utils::{
@@ -19,6 +20,24 @@ use crate::infrastructure::persistence::png_utils::{
 use crate::infrastructure::persistence::thumbnail_cache::invalidate_thumbnail_cache;
 
 use super::FileCharacterRepository;
+
+struct CreateAvatarCarrier {
+    image_data: Vec<u8>,
+    can_fallback_to_default: bool,
+    warnings: Vec<CharacterCreateWarning>,
+}
+
+fn is_png_bytes(image_data: &[u8]) -> bool {
+    const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    image_data.starts_with(&PNG_SIGNATURE)
+}
+
+fn avatar_import_warning(message: impl Into<String>) -> CharacterCreateWarning {
+    CharacterCreateWarning {
+        code: CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED.to_string(),
+        message: message.into(),
+    }
+}
 
 impl FileCharacterRepository {
     fn with_storage_identity_and_json(
@@ -39,6 +58,108 @@ impl FileCharacterRepository {
             .thumbnails_avatar_dir
             .join(format!("{}.png", file_name));
         invalidate_thumbnail_cache(&thumbnail_path).await
+    }
+
+    async fn default_create_avatar_carrier(&self) -> Result<CreateAvatarCarrier, DomainError> {
+        Ok(CreateAvatarCarrier {
+            image_data: self.read_default_avatar().await?,
+            can_fallback_to_default: false,
+            warnings: Vec::new(),
+        })
+    }
+
+    async fn resolve_create_avatar_carrier(
+        &self,
+        avatar_path: Option<&Path>,
+        crop: Option<ImageCrop>,
+    ) -> Result<CreateAvatarCarrier, DomainError> {
+        let Some(path) = avatar_path else {
+            return self.default_create_avatar_carrier().await;
+        };
+
+        let file_data = match fs::read(path).await {
+            Ok(file_data) => file_data,
+            Err(error) => {
+                logger::warn(&format!(
+                    "Failed to read avatar file for character create {}: {}. Using default avatar.",
+                    path.display(),
+                    error
+                ));
+                let mut carrier = self.default_create_avatar_carrier().await?;
+                carrier.warnings.push(avatar_import_warning(
+                    "Uploaded avatar could not be read; default avatar was used.",
+                ));
+                return Ok(carrier);
+            }
+        };
+
+        if crop.is_none() && is_png_bytes(&file_data) {
+            return Ok(CreateAvatarCarrier {
+                image_data: file_data,
+                can_fallback_to_default: true,
+                warnings: Vec::new(),
+            });
+        }
+
+        let raw_png_candidate = is_png_bytes(&file_data).then(|| file_data.clone());
+
+        match process_avatar_image(file_data, crop).await {
+            Ok(image_data) => Ok(CreateAvatarCarrier {
+                image_data,
+                can_fallback_to_default: true,
+                warnings: Vec::new(),
+            }),
+            Err(error) => {
+                let Some(image_data) = raw_png_candidate else {
+                    logger::warn(&format!(
+                        "Failed to process avatar file for character create {}: {}. Using default avatar.",
+                        path.display(),
+                        error
+                    ));
+                    let mut carrier = self.default_create_avatar_carrier().await?;
+                    carrier.warnings.push(avatar_import_warning(
+                        "Uploaded avatar could not be processed; default avatar was used.",
+                    ));
+                    return Ok(carrier);
+                };
+
+                logger::warn(&format!(
+                    "Failed to process avatar file for character create {}: {}. Trying raw PNG bytes before default avatar fallback.",
+                    path.display(),
+                    error
+                ));
+                Ok(CreateAvatarCarrier {
+                    image_data,
+                    can_fallback_to_default: true,
+                    warnings: vec![avatar_import_warning(
+                        "Uploaded avatar could not be processed; original PNG bytes were used.",
+                    )],
+                })
+            }
+        }
+    }
+
+    async fn write_create_character_png(
+        &self,
+        mut carrier: CreateAvatarCarrier,
+        json_data: &str,
+    ) -> Result<(Vec<u8>, Vec<CharacterCreateWarning>), DomainError> {
+        match write_character_data_to_png(&carrier.image_data, json_data) {
+            Ok(image_data) => Ok((image_data, carrier.warnings)),
+            Err(error) if carrier.can_fallback_to_default => {
+                logger::warn(&format!(
+                    "Failed to write character metadata to uploaded avatar: {}. Using default avatar.",
+                    error
+                ));
+                let default_avatar = self.read_default_avatar().await?;
+                carrier.warnings.push(avatar_import_warning(
+                    "Uploaded avatar could not store character data; default avatar was used.",
+                ));
+                let image_data = write_character_data_to_png(&default_avatar, json_data)?;
+                Ok((image_data, carrier.warnings))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn next_duplicate_file_stem(&self, source_file_stem: &str) -> Result<String, DomainError> {
@@ -281,7 +402,7 @@ impl CharacterRepository for FileCharacterRepository {
         })?;
 
         if delete_chats {
-            let chat_dir = self.get_chat_directory(name);
+            let chat_dir = self.resolve_chat_directory(name).await?;
             if chat_dir.exists() {
                 fs::remove_dir_all(&chat_dir).await.map_err(|e| {
                     logger::error(&format!("Failed to delete chat directory: {}", e));
@@ -419,7 +540,7 @@ impl CharacterRepository for FileCharacterRepository {
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
-        let old_chat_dir = self.get_chat_directory(old_name);
+        let old_chat_dir = self.resolve_chat_directory(old_name).await?;
         let new_chat_dir = self.get_chat_directory(&target_file_stem);
 
         if old_chat_dir.exists() && old_chat_dir != new_chat_dir && !new_chat_dir.exists() {
@@ -614,19 +735,12 @@ impl CharacterRepository for FileCharacterRepository {
         character: &Character,
         avatar_path: Option<&Path>,
         crop: Option<ImageCrop>,
-    ) -> Result<Character, DomainError> {
+    ) -> Result<CharacterCreateResult, DomainError> {
         self.ensure_directory_exists().await?;
 
-        let image_data = if let Some(path) = avatar_path {
-            let file_data = fs::read(path).await.map_err(|e| {
-                logger::error(&format!("Failed to read avatar file: {}", e));
-                DomainError::InternalError(format!("Failed to read avatar file: {}", e))
-            })?;
-
-            process_avatar_image(file_data, crop).await?
-        } else {
-            self.read_default_avatar().await?
-        };
+        let avatar_carrier = self
+            .resolve_create_avatar_carrier(avatar_path, crop)
+            .await?;
 
         let json_data = match character.json_data.as_deref() {
             Some(raw_json) if !raw_json.trim().is_empty() => {
@@ -639,7 +753,9 @@ impl CharacterRepository for FileCharacterRepository {
             _ => Self::serialize_character_card(character)?,
         };
 
-        let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
+        let (new_image_data, warnings) = self
+            .write_create_character_png(avatar_carrier, &json_data)
+            .await?;
 
         let base = Self::normalize_character_file_stem(&character.get_file_name())?;
         let file_name = self.ensure_unique_file_stem(&base);
@@ -656,7 +772,10 @@ impl CharacterRepository for FileCharacterRepository {
         let mut cache = self.memory_cache.lock().await;
         cache.set(file_name, stored_character.clone());
 
-        Ok(stored_character)
+        Ok(CharacterCreateResult {
+            character: stored_character,
+            warnings,
+        })
     }
 
     async fn update_avatar(
@@ -712,7 +831,7 @@ impl CharacterRepository for FileCharacterRepository {
         name: &str,
         simple: bool,
     ) -> Result<Vec<CharacterChat>, DomainError> {
-        let chat_dir = self.get_chat_directory(name);
+        let chat_dir = self.resolve_chat_directory(name).await?;
 
         if !chat_dir.exists() {
             return Ok(Vec::new());

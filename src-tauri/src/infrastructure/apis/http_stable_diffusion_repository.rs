@@ -14,7 +14,7 @@ use tokio::time::{Duration, sleep};
 use url::Url;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::character::sanitize_filename;
+use crate::domain::models::filename::sanitize_filename;
 use crate::domain::repositories::stable_diffusion_repository::{
     SdRouteCredentials, SdRouteRequest, SdRouteResponse, SdRouteResponseKind,
     StableDiffusionRepository,

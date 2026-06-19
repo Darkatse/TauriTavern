@@ -4,13 +4,6 @@ import { errorText, requireHostApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
 import {
-    formatDetailFile,
-    formatModelTurnDetail,
-    formatPatchDiffDetail,
-    formatRunFailureDetail,
-    formatSubAgentTaskDetail,
-} from './run-detail-format.js';
-import {
     clampRunTimelineHeightPx,
     heightFromTopEdgeDrag,
     normalizeRunTimelineHeightPx,
@@ -19,12 +12,15 @@ import {
     runTimelineHeightBounds,
 } from './run-timeline-resize.js';
 import {
-    eventBelongsToInvocation,
-    eventsForInvocation,
-    isActiveTaskStatus,
-    isRootInvocation,
+    canStartRunTimelineViewGesture,
+    createRunTimelineViewGesture,
+    resolveRunTimelineViewGesture,
+    RUN_TIMELINE_VIEW_GESTURE_ACTION_DETAILS,
+    RUN_TIMELINE_VIEW_GESTURE_ACTION_TIMELINE,
+    shouldCancelRunTimelineViewGesture,
+} from './run-timeline-view-gesture.js';
+import {
     projectAgentInvocations,
-    ROOT_INVOCATION_ID,
 } from './run-invocation-projector.js';
 import {
     getActiveAgentRun,
@@ -34,70 +30,101 @@ import {
 import { retryAgentRunFailure } from '../../../tauritavern/agent/agent-run-retry.js';
 import {
     buildEventDetailTargets,
+    hasModelTurnNarration,
     isDisplayableRunEvent,
     timelineItemsFromEvents,
-    TERMINAL_EVENT_TYPES,
 } from './run-event-presenter.js';
 import {
-    createRunTimelineEventStore,
-    RUN_EVENT_PAGE_LIMIT,
-    RUN_EVENT_TAIL_SEQ,
-} from './run-timeline-event-store.js';
+    RunTimelineDetailPane,
+    RunTimelineEventList,
+    SubAgentTray,
+} from './run-timeline-components.js';
+import { createTimelineDetailState } from './run-timeline-detail-state.js';
+import {
+    shortRunId,
+    timelineItemTitle,
+} from './run-timeline-display.js';
+import { isTimelineProjectionStructuralEvent } from './run-timeline-projection.js';
+import { createRunTimelineSession } from './run-timeline-session.js';
 import { virtualizeTimelineItems } from './run-timeline-virtual-list.js';
+import { SubAgentTimelineDialog } from './subagent-timeline-dialog.js';
 
 const MOUNT_ID = 'ttas_agent_run_timeline_mount';
-const HISTORY_TOP_LOAD_THRESHOLD_PX = 72;
 
-function createAgentRunTimelineApp() {
+let historyTimelineDialogCounter = 0;
+
+function createAgentRunTimelineApp(options = {}) {
+    const timelineOptions = normalizeTimelineOptions(options);
+
     return createApp({
+        components: {
+            RunTimelineDetailPane,
+            RunTimelineEventList,
+            SubAgentTimelineDialog,
+            SubAgentTray,
+        },
         data() {
             return {
+                timelineMode: timelineOptions.mode,
+                rootId: timelineOptions.rootId,
+                readOnly: timelineOptions.readOnly,
+                requestClose: timelineOptions.requestClose,
+                initialRun: timelineOptions.run,
+                initialCollapsed: timelineOptions.collapsed,
                 settings: {
                     agentModeEnabled: false,
                     runTimelineHeightPx: null,
                 },
                 currentRun: null,
                 activeRun: null,
-                eventStore: createRunTimelineEventStore(),
-                events: [],
-                terminalEvent: null,
+                timelineSession: createRunTimelineSession({ includeTimelineProjection: true }),
+                timelineProjectionRefreshTimer: null,
                 collapsed: true,
                 detailsOpen: false,
                 selectedSeq: null,
                 autoStick: true,
-                loadingHistory: false,
-                loadingOlderHistory: false,
-                hasMoreBefore: false,
-                historyRequestId: 0,
-                detailLoading: false,
-                detailError: '',
-                detailSections: [],
-                detailRequestId: 0,
+                detail: createTimelineDetailState(),
                 subAgentTrayExpanded: false,
-                subAgentDialogOpen: false,
-                selectedSubAgentInvocationId: '',
-                subAgentSelectedSeq: null,
-                subAgentDetailLoading: false,
-                subAgentDetailError: '',
-                subAgentDetailSections: [],
-                subAgentDetailRequestId: 0,
                 panelHeightPx: null,
                 resizing: false,
                 resizeStartY: 0,
                 resizeStartHeightPx: 0,
                 resizeBounds: null,
+                viewGesture: null,
                 timelineScrollTop: 0,
                 timelineViewportHeight: 1,
-                subAgentTimelineScrollTop: 0,
-                subAgentTimelineViewportHeight: 1,
                 unsubscribeSettings: null,
                 unsubscribeRunState: null,
                 unsubscribeRunEvents: null,
             };
         },
         computed: {
+            isHistoryMode() {
+                return this.timelineMode === 'history';
+            },
             visible() {
+                if (this.isHistoryMode) {
+                    return true;
+                }
                 return Boolean(this.settings.agentModeEnabled);
+            },
+            canResize() {
+                return !this.isHistoryMode;
+            },
+            events() {
+                return this.timelineSession.events;
+            },
+            timelineProjection() {
+                return this.timelineSession.timelineProjection;
+            },
+            terminalEvent() {
+                return this.timelineSession.terminalEvent;
+            },
+            loadingHistory() {
+                return this.timelineSession.loading;
+            },
+            loadingOlderHistory() {
+                return this.timelineSession.loadingOlder;
             },
             isRunning() {
                 return Boolean(this.activeRun?.runId && this.currentRun?.runId === this.activeRun.runId);
@@ -130,11 +157,12 @@ function createAgentRunTimelineApp() {
                 return this.detailsOpen ? 'details' : 'events';
             },
             runProjection() {
-                return projectAgentInvocations(this.events);
+                return projectAgentInvocations(this.timelineProjection);
             },
             displayItems() {
                 return timelineItemsFromEvents(this.events, {
-                    invocationId: ROOT_INVOCATION_ID,
+                    foregroundInvocationIds: this.timelineProjection.foregroundInvocationIds,
+                    delegationEdges: this.timelineProjection.delegationEdges,
                 });
             },
             virtualDisplayItems() {
@@ -143,6 +171,15 @@ function createAgentRunTimelineApp() {
                     this.timelineScrollTop,
                     this.timelineViewportHeight,
                 );
+            },
+            latestDisplaySeq() {
+                return this.latestDisplayItem?.seq ?? null;
+            },
+            selectedDisplaySeq() {
+                return this.selectedItem?.seq ?? null;
+            },
+            activeDisplaySeq() {
+                return this.isRunning ? this.latestDisplaySeq : null;
             },
             latestDisplayItem() {
                 return this.displayItems[this.displayItems.length - 1] || null;
@@ -176,12 +213,12 @@ function createAgentRunTimelineApp() {
             },
             headerSubtitle() {
                 if (this.latestDisplayItem) {
-                    return this.itemTitle(this.latestDisplayItem);
+                    return timelineItemTitle(this.latestDisplayItem);
                 }
-                return this.currentRun?.runId ? this.shortRunId(this.currentRun.runId) : tr('timelineIdle');
+                return this.currentRun?.runId ? shortRunId(this.currentRun.runId) : tr('timelineIdle');
             },
             detailTitle() {
-                return this.selectedItem ? this.itemTitle(this.selectedItem) : tr('timelineDetails');
+                return this.selectedItem ? timelineItemTitle(this.selectedItem) : tr('timelineDetails');
             },
             selectedDetailTargets() {
                 if (!this.selectedItem) {
@@ -201,9 +238,6 @@ function createAgentRunTimelineApp() {
             subAgentTasks() {
                 return this.runProjection.subAgentTasks;
             },
-            hasSubAgentTasks() {
-                return this.subAgentTasks.length > 0;
-            },
             subAgentTrayTitle() {
                 const running = this.runProjection.runningSubAgentCount;
                 const failed = this.runProjection.failedSubAgentCount;
@@ -215,65 +249,10 @@ function createAgentRunTimelineApp() {
                 }
                 return tr('timelineSubAgentsCompleted', { count: this.runProjection.terminalSubAgentCount });
             },
-            selectedSubAgentTask() {
-                return this.subAgentTasks.find((task) => task.childInvocationId === this.selectedSubAgentInvocationId) || null;
-            },
-            subAgentDialogTitle() {
-                return this.selectedSubAgentTask?.displayName || tr('subAgent');
-            },
-            subAgentDialogSubtitle() {
-                const task = this.selectedSubAgentTask;
-                if (!task) {
-                    return '';
-                }
-                return [this.subAgentStatusLabel(task.status), task.workspaceKey].filter(Boolean).join(' | ');
-            },
-            subAgentEvents() {
-                if (!this.selectedSubAgentInvocationId) {
-                    return [];
-                }
-                return eventsForInvocation(this.events, this.selectedSubAgentInvocationId);
-            },
-            subAgentDisplayItems() {
-                if (!this.selectedSubAgentInvocationId) {
-                    return [];
-                }
-                return timelineItemsFromEvents(this.subAgentEvents, {
-                    invocationId: this.selectedSubAgentInvocationId,
-                });
-            },
-            virtualSubAgentDisplayItems() {
-                return virtualizeTimelineItems(
-                    this.subAgentDisplayItems,
-                    this.subAgentTimelineScrollTop,
-                    this.subAgentTimelineViewportHeight,
-                );
-            },
-            selectedSubAgentItem() {
-                if (this.subAgentSelectedSeq != null) {
-                    const selected = this.subAgentDisplayItems.find((item) => item.seq === this.subAgentSelectedSeq);
-                    if (selected) {
-                        return selected;
-                    }
-                }
-                return this.subAgentDisplayItems[this.subAgentDisplayItems.length - 1] || null;
-            },
-            subAgentDetailTitle() {
-                return this.selectedSubAgentItem ? this.itemTitle(this.selectedSubAgentItem) : tr('timelineDetails');
-            },
-            subAgentDetailTargets() {
-                if (!this.selectedSubAgentItem) {
-                    return [];
-                }
-                return buildEventDetailTargets(this.selectedSubAgentItem, this.subAgentEvents);
-            },
-            subAgentHasDetails() {
-                return this.subAgentDetailTargets.length > 0;
-            },
-            subAgentNavItems() {
-                return this.subAgentDisplayItems.slice(-20);
-            },
             panelStyle() {
+                if (this.isHistoryMode) {
+                    return {};
+                }
                 if (this.panelHeightPx == null) {
                     return {};
                 }
@@ -293,22 +272,17 @@ function createAgentRunTimelineApp() {
                     void this.loadDetails();
                 }
             },
-            subAgentSelectedSeq() {
-                if (this.subAgentDialogOpen) {
-                    void this.loadSubAgentDetails();
-                }
-            },
-            selectedSubAgentInvocationId() {
-                this.subAgentSelectedSeq = null;
-                this.subAgentDetailSections = [];
-                this.subAgentDetailError = '';
-                this.subAgentTimelineScrollTop = 0;
-                if (this.subAgentDialogOpen) {
-                    void this.loadSubAgentDetails();
-                }
-            },
         },
         async mounted() {
+            if (this.isHistoryMode) {
+                this.settings = {
+                    agentModeEnabled: true,
+                    runTimelineHeightPx: null,
+                };
+                await this.startTrackingRun(this.initialRun);
+                return;
+            }
+
             this.applySettings(await loadSettings());
             this.unsubscribeSettings = subscribeSettings((settings) => {
                 this.applySettings(settings);
@@ -323,7 +297,12 @@ function createAgentRunTimelineApp() {
         },
         unmounted() {
             this.stopResize(false);
-            this.closeSubAgentDialog(false);
+            this.cancelViewGesture();
+            this.$refs.subAgentDialog?.reset?.();
+            if (this.timelineProjectionRefreshTimer) {
+                clearTimeout(this.timelineProjectionRefreshTimer);
+                this.timelineProjectionRefreshTimer = null;
+            }
             this.unsubscribeSettings?.();
             this.unsubscribeRunState?.();
             this.unsubscribeRunEvents?.();
@@ -331,6 +310,9 @@ function createAgentRunTimelineApp() {
         methods: {
             tr(key, params) {
                 return tr(key, params);
+            },
+            readAgentEvents(input) {
+                return requireHostApi('agent').readEvents(input);
             },
             applySettings(settings) {
                 this.settings = settings;
@@ -347,103 +329,55 @@ function createAgentRunTimelineApp() {
             },
             async startTrackingRun(run) {
                 this.currentRun = run;
-                this.eventStore = createRunTimelineEventStore();
-                this.events = [];
-                this.terminalEvent = null;
+                this.timelineSession.reset({
+                    runId: run.runId,
+                    includeTimelineProjection: true,
+                });
                 this.selectedSeq = null;
-                this.collapsed = true;
+                this.collapsed = Boolean(this.initialCollapsed);
                 this.detailsOpen = false;
-                this.loadingOlderHistory = false;
-                this.hasMoreBefore = false;
                 this.timelineScrollTop = 0;
-                this.subAgentTimelineScrollTop = 0;
                 this.subAgentTrayExpanded = false;
-                this.subAgentDialogOpen = false;
-                this.selectedSubAgentInvocationId = '';
-                this.subAgentSelectedSeq = null;
-                this.detailSections = [];
-                this.detailError = '';
-                this.subAgentDetailSections = [];
-                this.subAgentDetailError = '';
-                await this.loadRunHistory(run.runId);
+                this.cancelViewGesture();
+                this.detail.reset();
+                this.$refs.subAgentDialog?.reset?.();
+                await this.loadRunHistory();
             },
-            async loadRunHistory(runId) {
-                const requestId = ++this.historyRequestId;
-                this.loadingHistory = true;
+            async loadRunHistory() {
                 try {
-                    const result = await requireHostApi('agent').readEvents({
-                        runId,
-                        beforeSeq: RUN_EVENT_TAIL_SEQ,
-                        limit: RUN_EVENT_PAGE_LIMIT,
-                    });
-                    if (requestId !== this.historyRequestId) {
-                        return;
+                    const applied = await this.timelineSession.loadInitial(this.readAgentEvents);
+                    if (applied) {
+                        this.$nextTick(() => {
+                            this.measureTimelineViewport();
+                            this.stickTimelineToBottom();
+                        });
                     }
-                    const events = Array.isArray(result?.events) ? result.events : [];
-                    this.receiveRunEvents(events);
-                    this.hasMoreBefore = events.length >= RUN_EVENT_PAGE_LIMIT
-                        && Number(this.eventStore.oldestSeq() || 0) > 1;
-                    this.$nextTick(() => {
-                        this.measureTimelineViewport();
-                        this.stickTimelineToBottom();
-                    });
                 } catch (error) {
                     console.error('[AgentSystem] Failed to load Agent run events', error);
                     window.toastr?.error?.(errorText(error));
-                } finally {
-                    if (requestId === this.historyRequestId) {
-                        this.loadingHistory = false;
-                    }
                 }
             },
             async loadOlderRunHistory() {
-                if (this.loadingHistory || this.loadingOlderHistory || !this.hasMoreBefore || !this.currentRun?.runId) {
-                    return;
-                }
-                const beforeSeq = this.eventStore.oldestSeq();
-                if (beforeSeq == null || beforeSeq <= 1) {
-                    this.hasMoreBefore = false;
+                if (!this.currentRun?.runId) {
                     return;
                 }
 
-                const requestId = ++this.historyRequestId;
-                this.loadingOlderHistory = true;
-                const scroller = this.$refs.timelineScroller;
-                const previousScrollHeight = scroller instanceof HTMLElement ? scroller.scrollHeight : 0;
-                const previousScrollTop = scroller instanceof HTMLElement ? scroller.scrollTop : 0;
+                const anchor = this.$refs.timelineList?.captureScrollAnchor?.();
                 try {
-                    const result = await requireHostApi('agent').readEvents({
-                        runId: this.currentRun.runId,
-                        beforeSeq,
-                        limit: RUN_EVENT_PAGE_LIMIT,
-                    });
-                    if (requestId !== this.historyRequestId) {
-                        return;
+                    const applied = await this.timelineSession.loadOlder(this.readAgentEvents);
+                    if (applied) {
+                        this.$nextTick(() => {
+                            this.$refs.timelineList?.restoreScrollAnchor?.(anchor);
+                        });
                     }
-                    const events = Array.isArray(result?.events) ? result.events : [];
-                    this.receiveRunEvents(events);
-                    this.hasMoreBefore = events.length >= RUN_EVENT_PAGE_LIMIT
-                        && Number(this.eventStore.oldestSeq() || 0) > 1;
-                    this.$nextTick(() => {
-                        if (scroller instanceof HTMLElement) {
-                            const delta = scroller.scrollHeight - previousScrollHeight;
-                            scroller.scrollTop = previousScrollTop + Math.max(0, delta);
-                            this.timelineScrollTop = scroller.scrollTop;
-                        }
-                    });
                 } catch (error) {
                     console.error('[AgentSystem] Failed to load older Agent run events', error);
                     window.toastr?.error?.(errorText(error));
-                } finally {
-                    if (requestId === this.historyRequestId) {
-                        this.loadingOlderHistory = false;
-                    }
                 }
             },
             receiveRunEvents(events) {
-                for (const event of events) {
-                    this.receiveRunEvent(event, { skipStick: true });
-                }
+                this.timelineSession.receiveEvents(events);
+                this.$refs.subAgentDialog?.receiveEvents?.(events);
                 this.$nextTick(() => this.stickToBottomIfNeeded());
             },
             receiveRunEvent(event, options = {}) {
@@ -453,44 +387,48 @@ function createAgentRunTimelineApp() {
                 if (!this.currentRun?.runId) {
                     this.currentRun = this.activeRun || { runId: event.runId };
                 }
-                if (event.runId !== this.currentRun.runId) {
-                    return;
-                }
 
-                if (!this.eventStore.add(event)) {
+                const addedToRun = this.timelineSession.receiveEvent(event);
+                this.$refs.subAgentDialog?.receiveEvent?.(event);
+                if (!addedToRun) {
                     return;
                 }
-                this.events = this.eventStore.events();
-                if (TERMINAL_EVENT_TYPES.includes(event.type)) {
-                    this.terminalEvent = event;
-                    if (event.type === 'run_failed' && event?.payload?.userRetryable === true) {
-                        this.revealUserRetryableFailure(event);
-                    }
+                if (!this.readOnly && event.type === 'run_failed' && event?.payload?.userRetryable === true) {
+                    this.revealUserRetryableFailure(event);
                 }
-                if (this.detailsOpen && this.selectedSeq == null && isDisplayableRunEvent(event)) {
+                if (isTimelineProjectionStructuralEvent(event.type)) {
+                    this.scheduleTimelineProjectionRefresh();
+                }
+                if (this.detailsOpen
+                    && this.selectedSeq == null
+                    && (isDisplayableRunEvent(event) || hasModelTurnNarration(event))) {
                     void this.loadDetails();
-                }
-                if (this.subAgentDialogOpen
-                    && this.subAgentSelectedSeq == null
-                    && this.selectedSubAgentInvocationId
-                    && (isDisplayableRunEvent(event) || event.type === 'model_completed')
-                    && eventBelongsToInvocation(event, this.selectedSubAgentInvocationId)) {
-                    void this.loadSubAgentDetails();
                 }
                 if (!options.skipStick) {
                     this.$nextTick(() => this.stickToBottomIfNeeded());
+                }
+            },
+            scheduleTimelineProjectionRefresh() {
+                if (this.timelineProjectionRefreshTimer) {
+                    clearTimeout(this.timelineProjectionRefreshTimer);
+                }
+                this.timelineProjectionRefreshTimer = setTimeout(() => {
+                    this.timelineProjectionRefreshTimer = null;
+                    void this.refreshTimelineProjection();
+                }, 120);
+            },
+            async refreshTimelineProjection() {
+                try {
+                    await this.timelineSession.refreshProjection(this.readAgentEvents);
+                } catch (error) {
+                    console.error('[AgentSystem] Failed to refresh Agent timeline projection', error);
+                    window.toastr?.error?.(errorText(error), tr('agentSystem'));
                 }
             },
             revealUserRetryableFailure(event) {
                 this.collapsed = false;
                 this.selectedSeq = Number(event?.seq || 0) || this.selectedSeq;
                 this.detailsOpen = true;
-                this.$nextTick(() => {
-                    const pages = this.$refs.pages;
-                    if (pages instanceof HTMLElement) {
-                        pages.scrollTo({ left: pages.clientWidth, behavior: 'smooth' });
-                    }
-                });
             },
             async invokeDetailAction(action) {
                 if (!action) {
@@ -503,6 +441,9 @@ function createAgentRunTimelineApp() {
                 if (action.kind !== 'retry') {
                     return;
                 }
+                if (this.readOnly) {
+                    return;
+                }
                 try {
                     await retryAgentRunFailure({
                         run: this.currentRun,
@@ -513,97 +454,6 @@ function createAgentRunTimelineApp() {
                     console.error('[AgentSystem] Failed to retry Agent run', error);
                     window.toastr?.error?.(errorText(error), tr('agentSystem'));
                 }
-            },
-            itemTitle(item) {
-                return tr(item.titleKey, item.titleParams || {});
-            },
-            itemShortLabel(item) {
-                switch (String(item?.kind || '')) {
-                    case 'read':
-                        return tr('timelineOpRead');
-                    case 'search':
-                        return tr('timelineOpSearch');
-                    case 'list':
-                        return tr('timelineOpList');
-                    case 'write':
-                        return tr('timelineOpWrite');
-                    case 'patch':
-                        return tr('timelineOpPatch');
-                    case 'commit':
-                        return tr('timelineOpCommit');
-                    case 'persist':
-                        return tr('timelineOpPersist');
-                    case 'done':
-                        return tr('timelineOpDone');
-                    case 'fail':
-                        return tr('timelineOpFail');
-                    case 'cancel':
-                        return tr('timelineOpCancel');
-                    case 'model':
-                        return tr('timelineOpModel');
-                    case 'subagent':
-                        return tr('timelineOpSubAgent');
-                    default:
-                        break;
-                }
-
-                const type = String(item?.type || '');
-                if (type === 'workspace_file_written') {
-                    return tr('timelineOpWrite');
-                }
-                if (type === 'workspace_patch_applied') {
-                    return tr('timelineOpPatch');
-                }
-                if (type === 'chat_commit_completed' || type === 'chat_commit_requested') {
-                    return tr('timelineOpCommit');
-                }
-                if (type === 'persistent_changes_committed') {
-                    return tr('timelineOpPersist');
-                }
-                if (type === 'run_completed') {
-                    return tr('timelineOpDone');
-                }
-                if (type === 'run_partial_success') {
-                    return tr('timelineOpPartial');
-                }
-                if (type === 'run_failed' || type === 'tool_call_failed' || type === 'chat_commit_failed') {
-                    return tr('timelineOpFail');
-                }
-                if (type === 'run_cancelled') {
-                    return tr('timelineOpCancel');
-                }
-
-                const tool = String(item?.rawEvent?.payload?.name || item?.titleParams?.tool || '');
-                if (tool.includes('read')) {
-                    return tr('timelineOpRead');
-                }
-                if (tool.includes('search')) {
-                    return tr('timelineOpSearch');
-                }
-                if (tool.includes('list')) {
-                    return tr('timelineOpList');
-                }
-                return tr('timelineOpTool');
-            },
-            itemTime(item) {
-                if (!item.timestamp) {
-                    return '';
-                }
-                const date = new Date(item.timestamp);
-                if (Number.isNaN(date.getTime())) {
-                    return '';
-                }
-                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            },
-            shortRunId(runId) {
-                const value = String(runId || '');
-                if (value.length <= 14) {
-                    return value;
-                }
-                return `${value.slice(0, 10)}...`;
-            },
-            isLatestActiveItem(item) {
-                return Boolean(this.isRunning && this.latestDisplayItem?.seq === item.seq);
             },
             selectItem(item) {
                 const previousSeq = this.selectedSeq;
@@ -622,39 +472,6 @@ function createAgentRunTimelineApp() {
             toggleSubAgentTray() {
                 this.subAgentTrayExpanded = !this.subAgentTrayExpanded;
             },
-            subAgentStatusLabel(status) {
-                switch (String(status || '')) {
-                    case 'queued':
-                        return tr('timelineStatusQueued');
-                    case 'running':
-                        return tr('timelineStatusRunning');
-                    case 'completed':
-                        return tr('timelineStatusCompleted');
-                    case 'failed':
-                        return tr('timelineStatusFailed');
-                    case 'cancelled':
-                        return tr('timelineStatusCancelled');
-                    default:
-                        return String(status || '');
-                }
-            },
-            subAgentTaskStyle(task) {
-                return {
-                    '--ttas-subagent-color': task.color,
-                };
-            },
-            subAgentTaskTone(task) {
-                if (task.status === 'failed') {
-                    return 'failed';
-                }
-                if (task.status === 'cancelled') {
-                    return 'cancelled';
-                }
-                if (task.status === 'completed') {
-                    return 'completed';
-                }
-                return isActiveTaskStatus(task.status) ? 'running' : 'queued';
-            },
             selectSubAgentTask(task) {
                 if (!task?.childInvocationId) {
                     return;
@@ -666,42 +483,24 @@ function createAgentRunTimelineApp() {
                 if (!normalized) {
                     throw new Error('SubAgent invocationId is required.');
                 }
-                if (typeof HTMLDialogElement === 'undefined') {
+                if (!this.currentRun?.runId) {
+                    throw new Error('Agent run id is required.');
+                }
+
+                const dialog = this.$refs.subAgentDialog;
+                if (!dialog || typeof dialog.open !== 'function') {
                     throw new Error(tr('subAgentDialogUnsupported'));
                 }
 
-                this.selectedSubAgentInvocationId = normalized;
-                this.subAgentDialogOpen = true;
-                this.$nextTick(() => {
-                    const dialog = this.$refs.subAgentDialog;
-                    if (!(dialog instanceof HTMLDialogElement) || typeof dialog.showModal !== 'function') {
-                        throw new Error(tr('subAgentDialogUnsupported'));
-                    }
-                    if (!dialog.open) {
-                        dialog.showModal();
-                    }
-                    this.measureTimelineViewport();
+                const task = this.subAgentTasks.find((candidate) => (
+                    String(candidate?.childInvocationId || '').trim() === normalized
+                )) || null;
+                dialog.open({
+                    runId: this.currentRun.runId,
+                    invocationId: normalized,
+                    task,
+                    readOnly: this.readOnly,
                 });
-            },
-            closeSubAgentDialog(reset = true) {
-                const dialog = this.$refs.subAgentDialog;
-                if (dialog instanceof HTMLDialogElement && dialog.open) {
-                    dialog.close();
-                    return;
-                }
-                if (reset) {
-                    this.onSubAgentDialogClosed();
-                }
-            },
-            onSubAgentDialogClosed() {
-                this.subAgentDialogOpen = false;
-                this.selectedSubAgentInvocationId = '';
-                this.subAgentSelectedSeq = null;
-                this.subAgentDetailSections = [];
-                this.subAgentDetailError = '';
-            },
-            selectSubAgentItem(item) {
-                this.subAgentSelectedSeq = item.seq;
             },
             toggleCollapsed() {
                 this.collapsed = !this.collapsed;
@@ -717,177 +516,88 @@ function createAgentRunTimelineApp() {
                     return;
                 }
                 this.detailsOpen = true;
-                this.$nextTick(() => {
-                    const pages = this.$refs.pages;
-                    if (pages instanceof HTMLElement) {
-                        pages.scrollTo({ left: pages.clientWidth, behavior: 'smooth' });
-                    }
-                });
             },
             showTimeline() {
                 this.detailsOpen = false;
+                this.detail.reset();
                 this.$nextTick(() => {
-                    const pages = this.$refs.pages;
-                    if (pages instanceof HTMLElement) {
-                        pages.scrollTo({ left: 0, behavior: 'smooth' });
-                    }
+                    this.measureTimelineViewport();
+                    this.stickToBottomIfNeeded();
                 });
             },
-            onPagesScroll() {
-                const pages = this.$refs.pages;
-                if (!(pages instanceof HTMLElement)) {
+            startViewGesture(event) {
+                if (this.viewGesture || !canStartRunTimelineViewGesture({
+                    event,
+                    target: event.target,
+                    collapsed: this.collapsed,
+                    resizing: this.resizing,
+                    detailsOpen: this.detailsOpen,
+                    selectedHasDetails: this.selectedHasDetails,
+                })) {
                     return;
                 }
-                this.detailsOpen = pages.scrollLeft > pages.clientWidth * 0.55;
+                this.viewGesture = createRunTimelineViewGesture(event, this.detailsOpen);
             },
-            onTimelineScroll() {
-                const scroller = this.$refs.timelineScroller;
-                if (!(scroller instanceof HTMLElement)) {
-                    return;
-                }
-                this.timelineScrollTop = scroller.scrollTop;
-                this.timelineViewportHeight = Math.max(1, scroller.clientHeight);
-                const remaining = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
-                this.autoStick = remaining < 18;
-                if (scroller.scrollTop <= HISTORY_TOP_LOAD_THRESHOLD_PX) {
-                    void this.loadOlderRunHistory();
+            trackViewGesture(event) {
+                if (shouldCancelRunTimelineViewGesture(this.viewGesture, event)) {
+                    this.cancelViewGesture(event);
                 }
             },
-            onSubAgentTimelineScroll() {
-                const scroller = this.$refs.subAgentTimelineScroller;
-                if (!(scroller instanceof HTMLElement)) {
+            finishViewGesture(event) {
+                const gesture = this.viewGesture;
+                if (!gesture || event.pointerId !== gesture.pointerId) {
                     return;
                 }
-                this.subAgentTimelineScrollTop = scroller.scrollTop;
-                this.subAgentTimelineViewportHeight = Math.max(1, scroller.clientHeight);
+                this.viewGesture = null;
+
+                const action = resolveRunTimelineViewGesture(gesture, event, {
+                    detailsOpen: this.detailsOpen,
+                    selectedHasDetails: this.selectedHasDetails,
+                });
+                if (action === RUN_TIMELINE_VIEW_GESTURE_ACTION_DETAILS) {
+                    this.openDetails();
+                } else if (action === RUN_TIMELINE_VIEW_GESTURE_ACTION_TIMELINE) {
+                    this.showTimeline();
+                }
+            },
+            cancelViewGesture(event = null) {
+                if (event && this.viewGesture && event.pointerId !== this.viewGesture.pointerId) {
+                    return;
+                }
+                this.viewGesture = null;
+            },
+            onTimelineViewport(viewport) {
+                this.timelineScrollTop = viewport.scrollTop;
+                this.timelineViewportHeight = viewport.viewportHeight;
+                this.autoStick = viewport.nearBottom;
             },
             measureTimelineViewport() {
-                const scroller = this.$refs.timelineScroller;
-                if (scroller instanceof HTMLElement) {
-                    this.timelineScrollTop = scroller.scrollTop;
-                    this.timelineViewportHeight = Math.max(1, scroller.clientHeight);
-                }
-                const subAgentScroller = this.$refs.subAgentTimelineScroller;
-                if (subAgentScroller instanceof HTMLElement) {
-                    this.subAgentTimelineScrollTop = subAgentScroller.scrollTop;
-                    this.subAgentTimelineViewportHeight = Math.max(1, subAgentScroller.clientHeight);
-                }
-            },
-            stickTimelineToBottom() {
-                const scroller = this.$refs.timelineScroller;
-                if (scroller instanceof HTMLElement) {
-                    scroller.scrollTop = scroller.scrollHeight;
-                    this.timelineScrollTop = scroller.scrollTop;
-                    this.timelineViewportHeight = Math.max(1, scroller.clientHeight);
-                }
-            },
-            stickToBottomIfNeeded() {
-                if (!this.autoStick || this.collapsed) {
+                if (this.collapsed || this.detailsOpen) {
                     return;
                 }
-                const scroller = this.$refs.timelineScroller;
-                if (scroller instanceof HTMLElement) {
-                    scroller.scrollTop = scroller.scrollHeight;
-                    this.timelineScrollTop = scroller.scrollTop;
-                    this.timelineViewportHeight = Math.max(1, scroller.clientHeight);
+                this.$refs.timelineList?.measureViewport?.();
+            },
+            stickTimelineToBottom() {
+                this.$refs.timelineList?.scrollToBottom?.();
+            },
+            stickToBottomIfNeeded() {
+                if (!this.autoStick || this.collapsed || this.detailsOpen) {
+                    return;
                 }
+                this.stickTimelineToBottom();
             },
             async loadDetails() {
                 const item = this.selectedItem;
                 if (!item || !this.currentRun?.runId) {
-                    this.detailSections = [];
-                    this.detailError = '';
+                    this.detail.reset();
                     return;
                 }
 
-                const requestId = ++this.detailRequestId;
-                this.detailLoading = true;
-                this.detailError = '';
-                try {
-                    const targets = this.selectedDetailTargets;
-                    const sections = [];
-                    for (const target of targets) {
-                        sections.push(await this.readDetailTarget(target));
-                    }
-                    if (requestId === this.detailRequestId) {
-                        this.detailSections = sections;
-                    }
-                } catch (error) {
-                    if (requestId === this.detailRequestId) {
-                        this.detailError = errorText(error);
-                        this.detailSections = [];
-                    }
-                } finally {
-                    if (requestId === this.detailRequestId) {
-                        this.detailLoading = false;
-                    }
-                }
-            },
-            async loadSubAgentDetails() {
-                const item = this.selectedSubAgentItem;
-                if (!item || !this.currentRun?.runId) {
-                    this.subAgentDetailSections = [];
-                    this.subAgentDetailError = '';
-                    return;
-                }
-
-                const requestId = ++this.subAgentDetailRequestId;
-                this.subAgentDetailLoading = true;
-                this.subAgentDetailError = '';
-                try {
-                    const sections = [];
-                    for (const target of this.subAgentDetailTargets) {
-                        sections.push(await this.readDetailTarget(target));
-                    }
-                    if (requestId === this.subAgentDetailRequestId) {
-                        this.subAgentDetailSections = sections;
-                    }
-                } catch (error) {
-                    if (requestId === this.subAgentDetailRequestId) {
-                        this.subAgentDetailError = errorText(error);
-                        this.subAgentDetailSections = [];
-                    }
-                } finally {
-                    if (requestId === this.subAgentDetailRequestId) {
-                        this.subAgentDetailLoading = false;
-                    }
-                }
-            },
-            async readDetailTarget(target) {
-                if (target.type === 'subAgentTask') {
-                    return formatSubAgentTaskDetail(target);
-                }
-                if (target.type === 'modelTurn' || target.type === 'modelReasoning') {
-                    const input = {
-                        runId: this.currentRun.runId,
-                        round: target.round,
-                    };
-                    if (target.invocationId && !isRootInvocation(target.invocationId)) {
-                        input.invocationId = target.invocationId;
-                    }
-                    const turn = await requireHostApi('agent').readModelTurn({
-                        ...input,
-                    });
-                    return formatModelTurnDetail(target, turn);
-                }
-                if (target.type === 'patchDiff') {
-                    if (target.errorKey) {
-                        throw new Error(tr(target.errorKey, target.errorParams || {}));
-                    }
-                    const file = await requireHostApi('agent').readWorkspaceFile({
-                        runId: this.currentRun.runId,
-                        path: target.argumentsRef,
-                    });
-                    return formatPatchDiffDetail(target, file);
-                }
-                if (target.type === 'runFailure') {
-                    return formatRunFailureDetail(target);
-                }
-                const file = await requireHostApi('agent').readWorkspaceFile({
+                await this.detail.load({
                     runId: this.currentRun.runId,
-                    path: target.path,
+                    targets: this.selectedDetailTargets,
+                    readOnly: this.readOnly,
                 });
-                return formatDetailFile(target, file);
             },
             measureResizeBounds() {
                 const panel = this.$refs.panelRoot;
@@ -918,7 +628,7 @@ function createAgentRunTimelineApp() {
                 return Math.round(body.getBoundingClientRect().height);
             },
             startResize(event) {
-                if (this.collapsed) {
+                if (!this.canResize || this.collapsed) {
                     return;
                 }
 
@@ -969,16 +679,25 @@ function createAgentRunTimelineApp() {
                 }
             },
             async savePanelHeight(heightPx) {
+                if (!this.canResize) {
+                    return;
+                }
                 this.applySettings(await patchSettings(this.settings, {
                     runTimelineHeightPx: normalizeRunTimelineHeightPx(heightPx),
                 }));
             },
             async resetPanelHeight() {
+                if (!this.canResize) {
+                    return;
+                }
                 this.applySettings(await patchSettings(this.settings, {
                     runTimelineHeightPx: null,
                 }));
             },
             async onResizeKeydown(event) {
+                if (!this.canResize) {
+                    return;
+                }
                 const bounds = this.measureResizeBounds();
                 const current = clampRunTimelineHeightPx(
                     this.panelHeightPx ?? this.currentPanelHeightPx(),
@@ -1008,15 +727,21 @@ function createAgentRunTimelineApp() {
                 this.panelHeightPx = clampRunTimelineHeightPx(next, bounds);
                 await this.savePanelHeight(this.panelHeightPx);
             },
+            closeTimeline() {
+                if (typeof this.requestClose === 'function') {
+                    this.requestClose();
+                }
+            },
         },
         template: `
             <section
                 ref="panelRoot"
                 v-show="visible"
-                id="ttas_agent_run_timeline"
+                :id="rootId"
                 class="ttas-root ttas-run-panel"
                 :class="{
                     'is-collapsed': collapsed,
+                    'is-history': isHistoryMode,
                     'is-running': isRunning,
                     'is-details-open': detailsOpen,
                     'is-terminal': terminalType,
@@ -1030,7 +755,7 @@ function createAgentRunTimelineApp() {
                 aria-live="polite"
             >
                 <button
-                    v-if="!collapsed"
+                    v-if="canResize && !collapsed"
                     type="button"
                     class="ttas-run-resize-handle"
                     :title="tr('resizeTimelineHeight')"
@@ -1063,6 +788,17 @@ function createAgentRunTimelineApp() {
                             <i class="fa-solid" :class="detailsOpen ? 'fa-list' : 'fa-circle-info'"></i>
                         </button>
                         <button
+                            v-if="isHistoryMode"
+                            type="button"
+                            class="menu_button menu_button_icon ttas-run-icon-button"
+                            :title="tr('close')"
+                            :aria-label="tr('close')"
+                            @click="closeTimeline"
+                        >
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                        <button
+                            v-else
                             type="button"
                             class="menu_button menu_button_icon ttas-run-icon-button"
                             :title="collapsed ? tr('expandTimeline') : tr('collapseTimeline')"
@@ -1075,420 +811,148 @@ function createAgentRunTimelineApp() {
                     </div>
                 </header>
 
-                <div v-if="!collapsed" ref="panelBody" class="ttas-run-body">
-                    <div ref="pages" class="ttas-run-pages" @scroll.passive="onPagesScroll">
-                        <section class="ttas-run-page ttas-run-page-events" :aria-label="tr('agentTimeline')">
-                            <div ref="timelineScroller" class="ttas-run-event-scroll" @scroll.passive="onTimelineScroll">
-                                <div v-if="loadingHistory && displayItems.length === 0" class="ttas-run-empty">
-                                    <i class="fa-solid fa-spinner fa-spin"></i>
-                                    <span>{{ tr('timelineLoading') }}</span>
-                                </div>
-                                <div v-else-if="displayItems.length === 0" class="ttas-run-empty">
-                                    <i class="fa-solid fa-circle-dot"></i>
-                                    <span>{{ emptyTimelineText }}</span>
-                                </div>
-                                <ol v-else class="ttas-run-events is-windowed">
-                                    <li
-                                        v-if="loadingOlderHistory"
-                                        class="ttas-run-event-loader"
-                                        aria-live="polite"
-                                    >
-                                        <i class="fa-solid fa-spinner fa-spin"></i>
-                                        <span>{{ tr('timelineLoading') }}</span>
-                                    </li>
-                                    <li
-                                        v-if="virtualDisplayItems.topPadding > 0"
-                                        class="ttas-run-event-spacer"
-                                        :style="{ height: virtualDisplayItems.topPadding + 'px' }"
-                                        aria-hidden="true"
-                                    ></li>
-                                    <li
-                                        v-for="item in virtualDisplayItems.items"
-                                        :key="item.id"
-                                        class="ttas-run-event"
-                                        :data-ttas-kind="item.kind"
-                                        :class="[
-                                            'tone-' + item.tone,
-                                            'kind-' + item.kind,
-                                            {
-                                                'is-latest': latestDisplayItem && latestDisplayItem.seq === item.seq,
-                                                'is-active': isLatestActiveItem(item),
-                                                'is-selected': selectedItem && selectedItem.seq === item.seq,
-                                            },
-                                        ]"
-                                    >
-                                        <button type="button" @click="selectItem(item)">
-                                            <span class="ttas-run-event-icon" aria-hidden="true">
-                                                <i class="fa-solid" :class="item.icon"></i>
-                                            </span>
-                                            <span class="ttas-run-event-copy">
-                                                <span class="ttas-run-event-title">
-                                                    {{ itemTitle(item) }}
-                                                    <span v-if="isLatestActiveItem(item)" class="ttas-run-ellipsis" aria-hidden="true">
-                                                        <i>.</i><i>.</i><i>.</i>
-                                                    </span>
-                                                </span>
-                                                <small v-if="item.summary">{{ item.summary }}</small>
-                                            </span>
-                                            <span class="ttas-run-event-meta">
-                                                <em>{{ itemShortLabel(item) }}</em>
-                                                <time v-if="itemTime(item)">{{ itemTime(item) }}</time>
-                                            </span>
-                                        </button>
-                                    </li>
-                                    <li
-                                        v-if="virtualDisplayItems.bottomPadding > 0"
-                                        class="ttas-run-event-spacer"
-                                        :style="{ height: virtualDisplayItems.bottomPadding + 'px' }"
-                                        aria-hidden="true"
-                                    ></li>
-                                </ol>
-                            </div>
-                            <aside
-                                v-if="hasSubAgentTasks"
-                                class="ttas-subagent-tray"
-                                :class="{ 'is-expanded': subAgentTrayExpanded }"
-                            >
-                                <button
-                                    type="button"
-                                    class="ttas-subagent-tray-toggle"
-                                    :aria-expanded="String(subAgentTrayExpanded)"
-                                    :title="subAgentTrayExpanded ? tr('timelineCollapseSubAgents') : tr('timelineExpandSubAgents')"
-                                    @click="toggleSubAgentTray"
-                                >
-                                    <span class="ttas-subagent-stack" aria-hidden="true">
-                                        <i
-                                            v-for="task in subAgentTasks.slice(0, 4)"
-                                            :key="'dot-' + task.taskId"
-                                            :style="subAgentTaskStyle(task)"
-                                        ></i>
-                                    </span>
-                                    <strong>{{ subAgentTrayTitle }}</strong>
-                                    <i class="fa-solid" :class="subAgentTrayExpanded ? 'fa-chevron-down' : 'fa-chevron-up'" aria-hidden="true"></i>
-                                </button>
-                                <div v-if="subAgentTrayExpanded" class="ttas-subagent-list">
-                                    <button
-                                        v-for="task in subAgentTasks"
-                                        :key="task.taskId"
-                                        type="button"
-                                        class="ttas-subagent-item"
-                                        :data-ttas-status="subAgentTaskTone(task)"
-                                        :style="subAgentTaskStyle(task)"
-                                        @click="selectSubAgentTask(task)"
-                                    >
-                                        <span class="ttas-subagent-color" aria-hidden="true"></span>
-                                        <span class="ttas-subagent-copy">
-                                            <strong>{{ task.displayName }}</strong>
-                                            <small>{{ subAgentStatusLabel(task.status) }}</small>
-                                        </span>
-                                        <span class="ttas-subagent-open">
-                                            <i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i>
-                                            <span>{{ tr('timelineOpenSubAgent') }}</span>
-                                        </span>
-                                    </button>
-                                </div>
-                            </aside>
-                        </section>
-
-                        <section class="ttas-run-page ttas-run-page-details" :aria-label="tr('timelineDetails')">
-                            <div class="ttas-run-detail-head">
-                                <button
-                                    type="button"
-                                    class="menu_button menu_button_icon ttas-run-icon-button"
-                                    :title="tr('showTimelineEvents')"
-                                    :aria-label="tr('showTimelineEvents')"
-                                    @click="showTimeline"
-                                >
-                                    <i class="fa-solid fa-arrow-left"></i>
-                                </button>
-                                <div>
-                                    <strong>{{ detailTitle }}</strong>
-                                    <small v-if="selectedItem">{{ selectedItem.type }}</small>
-                                </div>
-                            </div>
-
-                            <div
-                                v-if="navItems.length > 1"
-                                class="ttas-run-detail-nav"
-                            >
-                                <div class="ttas-run-nav-list">
-                                    <button
-                                        v-for="item in navItems"
-                                        :key="'nav-' + item.id"
-                                        type="button"
-                                        :class="{ 'is-selected': selectedItem && selectedItem.seq === item.seq }"
-                                        :title="itemTitle(item)"
-                                        @click.stop="selectNavItem(item)"
-                                    >
-                                        <i aria-hidden="true"></i>
-                                        <span>{{ itemShortLabel(item) }}</span>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div class="ttas-run-detail-scroll">
-                                <div v-if="detailLoading" class="ttas-run-empty">
-                                    <i class="fa-solid fa-spinner fa-spin"></i>
-                                    <span>{{ tr('timelineLoadingDetails') }}</span>
-                                </div>
-                                <div v-else-if="detailError" class="ttas-run-detail-error">
-                                    <i class="fa-solid fa-triangle-exclamation"></i>
-                                    <span>{{ detailError }}</span>
-                                </div>
-                                <div v-else-if="detailSections.length === 0" class="ttas-run-empty">
-                                    <i class="fa-solid fa-file-circle-question"></i>
-                                    <span>{{ tr('timelineDetailEmpty') }}</span>
-                                </div>
-                                <article v-for="(section, index) in detailSections" :key="index" class="ttas-run-detail-section">
-                                    <div class="ttas-run-detail-section-head">
-                                        <strong>{{ tr(section.labelKey) }}</strong>
-                                        <small v-if="section.path">{{ section.path }}</small>
-                                    </div>
-                                    <div v-if="section.actions && section.actions.length" class="ttas-run-detail-actions">
-                                        <button
-                                            v-for="action in section.actions"
-                                            :key="action.kind"
-                                            type="button"
-                                            class="menu_button ttas-run-detail-action"
-                                            :data-ttas-action="action.kind"
-                                            :title="action.hintKey ? tr(action.hintKey) : tr(action.labelKey)"
-                                            @click.stop="invokeDetailAction(action)"
-                                        >
-                                            <i v-if="action.icon" class="fa-solid" :class="action.icon" aria-hidden="true"></i>
-                                            <span>{{ tr(action.labelKey) }}</span>
-                                        </button>
-                                    </div>
-                                    <div v-if="section.fields && section.fields.length" class="ttas-run-detail-fields">
-                                        <span v-for="field in section.fields" :key="field.label">
-                                            <b>{{ field.label }}</b>
-                                            <em>{{ field.value }}</em>
-                                        </span>
-                                    </div>
-                                    <div v-if="section.blocks && section.blocks.length" class="ttas-run-detail-blocks">
-                                        <details
-                                            v-for="(block, blockIndex) in section.blocks"
-                                            :key="blockIndex"
-                                            class="ttas-run-detail-block"
-                                            :class="'kind-' + (block.kind || 'text')"
-                                            :data-ttas-block-kind="block.kind || 'text'"
-                                            :open="block.defaultOpen !== false"
-                                        >
-                                            <summary class="ttas-run-detail-block-head">
-                                                <strong>{{ block.labelKey ? tr(block.labelKey) : block.label }}</strong>
-                                                <span class="ttas-run-detail-block-badges">
-                                                    <small v-if="block.meta">{{ block.meta }}</small>
-                                                    <small v-if="block.truncated">{{ tr('timelineTruncated') }}</small>
-                                                    <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
-                                                </span>
-                                            </summary>
-                                            <div v-if="block.kind === 'diff'" class="ttas-run-diff" role="table">
-                                                <div
-                                                    v-for="(row, rowIndex) in block.rows"
-                                                    :key="rowIndex"
-                                                    class="ttas-run-diff-row"
-                                                    :data-ttas-diff-row="row.type"
-                                                    role="row"
-                                                >
-                                                    <span class="ttas-run-diff-gutter" role="cell">{{ row.oldLine || '' }}</span>
-                                                    <span class="ttas-run-diff-gutter" role="cell">{{ row.newLine || '' }}</span>
-                                                    <span class="ttas-run-diff-marker" role="cell">{{ row.marker }}</span>
-                                                    <code class="ttas-run-diff-code" role="cell">{{ row.text }}</code>
-                                                </div>
-                                            </div>
-                                            <pre v-else>{{ block.text }}</pre>
-                                        </details>
-                                    </div>
-                                </article>
-                            </div>
-                        </section>
-                    </div>
-                </div>
-                <dialog
-                    ref="subAgentDialog"
-                    class="ttas-dialog ttas-subagent-dialog"
-                    data-tt-mobile-surface="fullscreen-window"
-                    @cancel.prevent="closeSubAgentDialog"
-                    @close="onSubAgentDialogClosed"
+                <div
+                    v-if="!collapsed"
+                    ref="panelBody"
+                    class="ttas-run-body"
+                    @pointerdown.passive="startViewGesture"
+                    @pointermove.passive="trackViewGesture"
+                    @pointerup.passive="finishViewGesture"
+                    @pointercancel.passive="cancelViewGesture"
                 >
-                    <div class="ttas-subagent-panel">
-                        <header class="ttas-subagent-titlebar">
-                            <div class="ttas-subagent-title">
-                                <span
-                                    class="ttas-subagent-title-dot"
-                                    :style="selectedSubAgentTask ? subAgentTaskStyle(selectedSubAgentTask) : {}"
-                                    aria-hidden="true"
-                                ></span>
-                                <div>
-                                    <strong>{{ subAgentDialogTitle }}</strong>
-                                    <small>{{ subAgentDialogSubtitle }}</small>
-                                </div>
-                            </div>
-                            <button
-                                type="button"
-                                class="menu_button menu_button_icon ttas-run-icon-button"
-                                :title="tr('close')"
-                                :aria-label="tr('close')"
-                                @click="closeSubAgentDialog"
-                            >
-                                <i class="fa-solid fa-xmark"></i>
-                            </button>
-                        </header>
-                        <div class="ttas-subagent-body">
-                            <section
-                                ref="subAgentTimelineScroller"
-                                class="ttas-subagent-timeline"
-                                :aria-label="tr('timelineSubAgentTimeline')"
-                                @scroll.passive="onSubAgentTimelineScroll"
-                            >
-                                <div v-if="subAgentDisplayItems.length === 0" class="ttas-run-empty">
-                                    <i class="fa-solid fa-circle-dot"></i>
-                                    <span>{{ tr('timelineNoEvents') }}</span>
-                                </div>
-                                <ol v-else class="ttas-run-events ttas-subagent-events is-windowed">
-                                    <li
-                                        v-if="virtualSubAgentDisplayItems.topPadding > 0"
-                                        class="ttas-run-event-spacer"
-                                        :style="{ height: virtualSubAgentDisplayItems.topPadding + 'px' }"
-                                        aria-hidden="true"
-                                    ></li>
-                                    <li
-                                        v-for="item in virtualSubAgentDisplayItems.items"
-                                        :key="'subagent-' + item.id"
-                                        class="ttas-run-event"
-                                        :data-ttas-kind="item.kind"
-                                        :class="[
-                                            'tone-' + item.tone,
-                                            'kind-' + item.kind,
-                                            {
-                                                'is-selected': selectedSubAgentItem && selectedSubAgentItem.seq === item.seq,
-                                            },
-                                        ]"
-                                    >
-                                        <button type="button" @click="selectSubAgentItem(item)">
-                                            <span class="ttas-run-event-icon" aria-hidden="true">
-                                                <i class="fa-solid" :class="item.icon"></i>
-                                            </span>
-                                            <span class="ttas-run-event-copy">
-                                                <span class="ttas-run-event-title">{{ itemTitle(item) }}</span>
-                                                <small v-if="item.summary">{{ item.summary }}</small>
-                                            </span>
-                                            <span class="ttas-run-event-meta">
-                                                <em>{{ itemShortLabel(item) }}</em>
-                                                <time v-if="itemTime(item)">{{ itemTime(item) }}</time>
-                                            </span>
-                                        </button>
-                                    </li>
-                                    <li
-                                        v-if="virtualSubAgentDisplayItems.bottomPadding > 0"
-                                        class="ttas-run-event-spacer"
-                                        :style="{ height: virtualSubAgentDisplayItems.bottomPadding + 'px' }"
-                                        aria-hidden="true"
-                                    ></li>
-                                </ol>
-                            </section>
-                            <section class="ttas-subagent-detail" :aria-label="tr('timelineDetails')">
-                                <div class="ttas-run-detail-head">
-                                    <div>
-                                        <strong>{{ subAgentDetailTitle }}</strong>
-                                        <small v-if="selectedSubAgentItem">{{ selectedSubAgentItem.type }}</small>
-                                    </div>
-                                </div>
-                                <div v-if="subAgentNavItems.length > 1" class="ttas-run-detail-nav">
-                                    <div class="ttas-run-nav-list">
-                                        <button
-                                            v-for="item in subAgentNavItems"
-                                            :key="'sub-nav-' + item.id"
-                                            type="button"
-                                            :class="{ 'is-selected': selectedSubAgentItem && selectedSubAgentItem.seq === item.seq }"
-                                            :title="itemTitle(item)"
-                                            @click.stop="selectSubAgentItem(item)"
-                                        >
-                                            <i aria-hidden="true"></i>
-                                            <span>{{ itemShortLabel(item) }}</span>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="ttas-run-detail-scroll">
-                                    <div v-if="subAgentDetailLoading" class="ttas-run-empty">
-                                        <i class="fa-solid fa-spinner fa-spin"></i>
-                                        <span>{{ tr('timelineLoadingDetails') }}</span>
-                                    </div>
-                                    <div v-else-if="subAgentDetailError" class="ttas-run-detail-error">
-                                        <i class="fa-solid fa-triangle-exclamation"></i>
-                                        <span>{{ subAgentDetailError }}</span>
-                                    </div>
-                                    <div v-else-if="subAgentDetailSections.length === 0" class="ttas-run-empty">
-                                        <i class="fa-solid fa-file-circle-question"></i>
-                                        <span>{{ tr('timelineDetailEmpty') }}</span>
-                                    </div>
-                                    <article v-for="(section, index) in subAgentDetailSections" :key="'sub-section-' + index" class="ttas-run-detail-section">
-                                        <div class="ttas-run-detail-section-head">
-                                            <strong>{{ tr(section.labelKey) }}</strong>
-                                            <small v-if="section.path">{{ section.path }}</small>
-                                        </div>
-                                        <div v-if="section.actions && section.actions.length" class="ttas-run-detail-actions">
-                                            <button
-                                                v-for="action in section.actions"
-                                                :key="action.kind"
-                                                type="button"
-                                                class="menu_button ttas-run-detail-action"
-                                                :data-ttas-action="action.kind"
-                                                :title="action.hintKey ? tr(action.hintKey) : tr(action.labelKey)"
-                                                @click.stop="invokeDetailAction(action)"
-                                            >
-                                                <i v-if="action.icon" class="fa-solid" :class="action.icon" aria-hidden="true"></i>
-                                                <span>{{ tr(action.labelKey) }}</span>
-                                            </button>
-                                        </div>
-                                        <div v-if="section.fields && section.fields.length" class="ttas-run-detail-fields">
-                                            <span v-for="field in section.fields" :key="field.label">
-                                                <b>{{ field.label }}</b>
-                                                <em>{{ field.value }}</em>
-                                            </span>
-                                        </div>
-                                        <div v-if="section.blocks && section.blocks.length" class="ttas-run-detail-blocks">
-                                            <details
-                                                v-for="(block, blockIndex) in section.blocks"
-                                                :key="blockIndex"
-                                                class="ttas-run-detail-block"
-                                                :class="'kind-' + (block.kind || 'text')"
-                                                :data-ttas-block-kind="block.kind || 'text'"
-                                                :open="block.defaultOpen !== false"
-                                            >
-                                                <summary class="ttas-run-detail-block-head">
-                                                    <strong>{{ block.labelKey ? tr(block.labelKey) : block.label }}</strong>
-                                                    <span class="ttas-run-detail-block-badges">
-                                                        <small v-if="block.meta">{{ block.meta }}</small>
-                                                        <small v-if="block.truncated">{{ tr('timelineTruncated') }}</small>
-                                                        <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
-                                                    </span>
-                                                </summary>
-                                                <div v-if="block.kind === 'diff'" class="ttas-run-diff" role="table">
-                                                    <div
-                                                        v-for="(row, rowIndex) in block.rows"
-                                                        :key="rowIndex"
-                                                        class="ttas-run-diff-row"
-                                                        :data-ttas-diff-row="row.type"
-                                                        role="row"
-                                                    >
-                                                        <span class="ttas-run-diff-gutter" role="cell">{{ row.oldLine || '' }}</span>
-                                                        <span class="ttas-run-diff-gutter" role="cell">{{ row.newLine || '' }}</span>
-                                                        <span class="ttas-run-diff-marker" role="cell">{{ row.marker }}</span>
-                                                        <code class="ttas-run-diff-code" role="cell">{{ row.text }}</code>
-                                                    </div>
-                                                </div>
-                                                <pre v-else>{{ block.text }}</pre>
-                                            </details>
-                                        </div>
-                                    </article>
-                                </div>
-                            </section>
-                        </div>
-                    </div>
-                </dialog>
+                    <section
+                        v-show="!detailsOpen"
+                        class="ttas-run-view ttas-run-view-events"
+                        :aria-label="tr('agentTimeline')"
+                    >
+                        <RunTimelineEventList
+                            ref="timelineList"
+                            :aria-label="tr('agentTimeline')"
+                            surface-class="ttas-run-event-scroll"
+                            :loading="loadingHistory"
+                            :loading-older="loadingOlderHistory"
+                            :empty-text="emptyTimelineText"
+                            :items="displayItems"
+                            :virtual-items="virtualDisplayItems"
+                            :selected-seq="selectedDisplaySeq"
+                            :latest-seq="latestDisplaySeq"
+                            :active-seq="activeDisplaySeq"
+                            @select="selectItem"
+                            @top-reached="loadOlderRunHistory"
+                            @viewport="onTimelineViewport"
+                        />
+                        <SubAgentTray
+                            :expanded="subAgentTrayExpanded"
+                            :tasks="subAgentTasks"
+                            :title="subAgentTrayTitle"
+                            @toggle="toggleSubAgentTray"
+                            @select="selectSubAgentTask"
+                        />
+                    </section>
+
+                    <RunTimelineDetailPane
+                        v-if="detailsOpen"
+                        root-class="ttas-run-view ttas-run-view-details"
+                        :aria-label="tr('timelineDetails')"
+                        :title="detailTitle"
+                        :type="selectedItem ? selectedItem.type : ''"
+                        :nav-items="navItems"
+                        :selected-seq="selectedDisplaySeq"
+                        :loading="detail.loading"
+                        :error="detail.error"
+                        :sections="detail.sections"
+                        :show-back="true"
+                        @back="showTimeline"
+                        @select-nav="selectNavItem"
+                        @action="invokeDetailAction"
+                    />
+                </div>
+                <SubAgentTimelineDialog
+                    ref="subAgentDialog"
+                    @action="invokeDetailAction"
+                />
             </section>
         `,
     });
+}
+
+function normalizeTimelineOptions(options) {
+    const mode = options?.mode === 'history' ? 'history' : 'active';
+    if (mode === 'history') {
+        const runId = String(options?.run?.runId || '').trim();
+        if (!runId) {
+            throw new Error('Agent run id is required.');
+        }
+        return {
+            mode,
+            rootId: `ttas_agent_run_timeline_history_${++historyTimelineDialogCounter}`,
+            readOnly: true,
+            requestClose: typeof options.requestClose === 'function' ? options.requestClose : null,
+            run: {
+                ...options.run,
+                runId,
+            },
+            collapsed: false,
+        };
+    }
+
+    return {
+        mode: 'active',
+        rootId: 'ttas_agent_run_timeline',
+        readOnly: false,
+        requestClose: null,
+        run: null,
+        collapsed: true,
+    };
+}
+
+export function openAgentRunTimelineDialog(run) {
+    const runId = String(run?.runId || '').trim();
+    if (!runId) {
+        throw new Error('Agent run id is required.');
+    }
+    if (typeof HTMLDialogElement === 'undefined') {
+        throw new Error(tr('runHistoryDialogUnsupported'));
+    }
+
+    const dialog = document.createElement('dialog');
+    dialog.className = 'ttas-dialog ttas-run-history-dialog';
+    dialog.dataset.ttMobileSurface = 'fullscreen-window';
+
+    const mount = document.createElement('div');
+    mount.className = 'ttas-run-history-dialog-mount';
+    dialog.append(mount);
+    document.body.append(dialog);
+    if (typeof dialog.showModal !== 'function') {
+        dialog.remove();
+        throw new Error(tr('runHistoryDialogUnsupported'));
+    }
+
+    let app = null;
+    const close = () => {
+        if (dialog.open) {
+            dialog.close();
+        } else {
+            dialog.remove();
+        }
+    };
+
+    dialog.addEventListener('cancel', (event) => {
+        event.preventDefault();
+        close();
+    });
+    dialog.addEventListener('close', () => {
+        app?.unmount();
+        dialog.remove();
+    }, { once: true });
+
+    app = createAgentRunTimelineApp({
+        mode: 'history',
+        run: { ...run, runId },
+        requestClose: close,
+    });
+    app.mount(mount);
+    dialog.showModal();
 }
 
 export async function mountAgentRunTimelinePanel() {

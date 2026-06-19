@@ -93,6 +93,95 @@ pub(super) fn render_child_task_prompt(task: &AgentTaskRecord) -> String {
     lines.join("\n")
 }
 
+pub(super) fn render_handoff_task_prompt(task: &AgentTaskRecord) -> String {
+    let object = task.task.as_object();
+    let mut lines = vec![
+        "# Handoff Brief".to_string(),
+        String::new(),
+        "You are now responsible for the next stage of this run.".to_string(),
+        "Continue from the shared workspace paths and constraints below.".to_string(),
+        String::new(),
+    ];
+
+    push_task_section(
+        &mut lines,
+        "Title",
+        object.and_then(|object| object.get("title")),
+    );
+    push_task_section(
+        &mut lines,
+        "Reason",
+        object.and_then(|object| object.get("reason")),
+    );
+    push_task_section(
+        &mut lines,
+        "Objective",
+        object.and_then(|object| object.get("objective")),
+    );
+    push_task_section(
+        &mut lines,
+        "Context Summary",
+        object.and_then(|object| object.get("contextSummary")),
+    );
+    push_task_section(
+        &mut lines,
+        "Workspace References",
+        object.and_then(|object| object.get("workspaceRefs")),
+    );
+    push_task_section(
+        &mut lines,
+        "Must Preserve",
+        object.and_then(|object| object.get("mustPreserve")),
+    );
+    push_task_section(
+        &mut lines,
+        "Completion Criteria",
+        object.and_then(|object| object.get("completionCriteria")),
+    );
+
+    if let Some(object) = object {
+        let extras = object
+            .iter()
+            .filter(|(key, _)| {
+                !matches!(
+                    key.as_str(),
+                    "title"
+                        | "reason"
+                        | "objective"
+                        | "contextSummary"
+                        | "workspaceRefs"
+                        | "mustPreserve"
+                        | "completionCriteria"
+                )
+            })
+            .collect::<Vec<_>>();
+        if !extras.is_empty() {
+            lines.push("## Additional Instructions".to_string());
+            for (key, value) in extras {
+                lines.push(format!("- **{}**:", key));
+                lines.push(indent_lines(&render_markdown_value(value, 0), 2));
+            }
+            lines.push(String::new());
+        }
+    } else if !task.task.is_null() {
+        lines.push("## Handoff Details".to_string());
+        lines.push(render_markdown_value(&task.task, 0));
+        lines.push(String::new());
+    }
+
+    lines.extend([
+        "## Working Notes".to_string(),
+        "- Inspect the referenced workspace files before editing existing content.".to_string(),
+        "- Preserve previous decisions and committed text unless this brief asks you to revise them."
+            .to_string(),
+        "- If commit and finish tools are available to you, use them only when this run is ready to end.".to_string(),
+        "- If another Agent should continue after your stage, hand off with a clear brief."
+            .to_string(),
+    ]);
+
+    lines.join("\n")
+}
+
 pub(super) fn render_task_return_summary(result_doc: &Value) -> String {
     let summary = result_doc
         .get("summary")

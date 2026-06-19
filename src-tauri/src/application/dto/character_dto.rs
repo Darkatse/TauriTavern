@@ -1,6 +1,8 @@
 use crate::domain::json_merge::merge_json_value;
 use crate::domain::models::character::{Character, CharacterExtensions};
-use crate::domain::repositories::character_repository::{CharacterChat, ImageCrop};
+use crate::domain::repositories::character_repository::{
+    CharacterChat, CharacterCreateResult, CharacterCreateWarning, ImageCrop,
+};
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -35,10 +37,40 @@ pub struct CharacterDto {
     pub json_data: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterCreateWarningDto {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateCharacterWithAvatarResultDto {
+    pub character: CharacterDto,
+    pub warnings: Vec<CharacterCreateWarningDto>,
+}
+
 fn format_timestamp_millis(timestamp_millis: i64) -> Option<String> {
     Utc.timestamp_millis_opt(timestamp_millis)
         .single()
         .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true))
+}
+
+impl From<CharacterCreateWarning> for CharacterCreateWarningDto {
+    fn from(warning: CharacterCreateWarning) -> Self {
+        Self {
+            code: warning.code,
+            message: warning.message,
+        }
+    }
+}
+
+impl From<CharacterCreateResult> for CreateCharacterWithAvatarResultDto {
+    fn from(result: CharacterCreateResult) -> Self {
+        Self {
+            character: CharacterDto::from(result.character),
+            warnings: result.warnings.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 /// Character creation DTO
@@ -93,6 +125,37 @@ pub struct UpdateCharacterCardDataDto {
     pub card_json: String,
     pub avatar_path: Option<String>,
     pub crop: Option<ImageCropDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckCharacterLorebookConflictDto {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterLorebookConflictDto {
+    pub conflict: bool,
+    pub world: String,
+    pub embedded_name: Option<String>,
+    pub current_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CharacterLorebookConflictResolution {
+    Current,
+    Embedded,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveCharacterLorebookConflictDto {
+    pub name: String,
+    pub resolution: CharacterLorebookConflictResolution,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveCharacterLorebookConflictResultDto {
+    pub world: String,
 }
 
 /// Raw character card merge DTO used by upstream-compatible HTTP routes.

@@ -2,7 +2,8 @@
 
 import { getByPath, mergeObjects, setByPath, unsetByPath } from './form-object-utils.js';
 import { formDataToCreateCharacterDto, parseJsonObjectStrict } from './character-create-mapper.js';
-import { assertCharacterFileName, parseCropParam } from './character-request-utils.js';
+import { assertCharacterAvatarFileName } from './character-identity.js';
+import { parseCropParam } from './character-request-utils.js';
 
 /**
  * @typedef {import('../../context/types.js').MaterializedFileInfo} MaterializedFileInfo
@@ -13,7 +14,7 @@ import { assertCharacterFileName, parseCropParam } from './character-request-uti
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand) => void} InvalidateInvokeAllFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveCharacterIdFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveExistingCharacterIdFn
- * @typedef {(file: Blob, options?: { preferredName?: string; preferredExtension?: string }) => Promise<MaterializedFileInfo | null>} MaterializeUploadFileFn
+ * @typedef {(file: Blob, options?: { preferredName?: string; preferredExtension?: string; kind?: string }) => Promise<MaterializedFileInfo | null>} MaterializeUploadFileFn
  */
 
 /**
@@ -44,7 +45,7 @@ export function createCharacterFormService({
 
     /** @param {FormData} formData */
     function avatarUrlFromForm(formData) {
-        return assertCharacterFileName(formData.get('avatar_url'), 'avatar_url', { required: true });
+        return assertCharacterAvatarFileName(formData.get('avatar_url'), 'avatar_url', { required: true });
     }
 
     /**
@@ -105,7 +106,7 @@ export function createCharacterFormService({
             'data.extensions': mergedExtensions,
         });
 
-        if (typeof mergedExtensions.world === 'string' && mergedExtensions.world.trim()) {
+        if (typeof mergedExtensions.world === 'string' && mergedExtensions.world !== '') {
             unsetByPath(baseCard, 'data.character_book');
         }
 
@@ -132,9 +133,8 @@ export function createCharacterFormService({
 
     /** @param {FormData} formData @param {URL} requestUrl */
     async function editCharacterFromForm(formData, requestUrl) {
-        const avatar = stringFromForm(formData, 'avatar_url', '');
-        const fallbackName = stringFromForm(formData, 'ch_name', '');
-        const originalCharacterId = await resolveCharacterId({ avatar, fallbackName });
+        const avatar = avatarUrlFromForm(formData);
+        const originalCharacterId = await resolveCharacterId({ avatar });
 
         if (!originalCharacterId) {
             throw new Error('Character not found for edit');
@@ -147,6 +147,7 @@ export function createCharacterFormService({
         if (file instanceof Blob && file.size > 0) {
             const preferredName = file instanceof File ? file.name : '';
             const fileInfo = await materializeUploadFile(file, {
+                kind: 'avatar',
                 preferredName,
             });
 
@@ -199,6 +200,7 @@ export function createCharacterFormService({
         const crop = parseCropParam(requestUrl);
         const preferredName = file instanceof File ? file.name : '';
         const fileInfo = await materializeUploadFile(file, {
+            kind: 'avatar',
             preferredName,
         });
         if (!fileInfo?.filePath) {
@@ -233,6 +235,7 @@ export function createCharacterFormService({
 
         const preferredName = file instanceof File ? file.name : '';
         const fileInfo = await materializeUploadFile(file, {
+            kind: 'user-avatar',
             preferredName,
         });
         if (!fileInfo?.filePath) {

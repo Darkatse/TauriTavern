@@ -35,7 +35,7 @@ export function getWindowedChatKey(windowState) {
         return `group:${String(windowState.id ?? '')}`;
     }
 
-    return `character:${String(windowState.characterName || '').trim()}|${String(windowState.avatarUrl || '').trim()}|${String(windowState.fileName ?? '')}`;
+    return `character:${String(windowState.characterName ?? '')}|${String(windowState.avatarUrl ?? '')}|${String(windowState.fileName ?? '')}`;
 }
 
 export function mergeWindowedChatCursorOffset(activeCursor, nextCursor, expectedBaseOffset) {
@@ -122,5 +122,9 @@ export function buildWindowedPayloadPatch(messages, windowState, label = 'chat')
         patch,
         savedMessageCount: messages.length,
         dirtyFromIndex: messages.length,
+        // Window baseline contract: how many message lines the last successful
+        // load/save left between cursor.offset and EOF. The backend rejects the
+        // write if the file no longer matches.
+        expectedWindowLineCount: savedMessageCount,
     };
 }

@@ -2,7 +2,7 @@ const DEFAULT_FLUSH_INTERVAL_MS = 5;
 const DEFAULT_MAX_BATCH_NAMES = 50;
 
 function normalizeName(name) {
-    return String(name || '').trim();
+    return typeof name === 'string' ? name : '';
 }
 
 export function createWorldInfoBroker(options) {
@@ -41,7 +41,7 @@ export function createWorldInfoBroker(options) {
         const dataByName = new Map();
         for (const item of items) {
             const name = normalizeName(item?.name);
-            if (!name) {
+            if (name === '') {
                 continue;
             }
             dataByName.set(name, item?.data);
@@ -98,7 +98,7 @@ export function createWorldInfoBroker(options) {
 
     function get(name) {
         const key = normalizeName(name);
-        if (!key) {
+        if (key === '') {
             throw new Error('WorldInfoBroker name is required');
         }
 
@@ -130,4 +130,3 @@ export function createWorldInfoBroker(options) {
         get,
     };
 }
-

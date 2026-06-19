@@ -5,6 +5,7 @@ export const DEFAULT_AGENT_PROFILE_ID = 'default-writer';
 
 export const DEFAULT_AGENT_SYSTEM_SETTINGS = Object.freeze({
     agentModeEnabled: false,
+    chatInputToggleHidden: false,
     activeProfileId: DEFAULT_AGENT_PROFILE_ID,
     editingProfileId: DEFAULT_AGENT_PROFILE_ID,
     activeTab: 'profiles',

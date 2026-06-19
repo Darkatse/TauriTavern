@@ -52,6 +52,21 @@ fn claude_manual_reasoning_uses_legacy_thinking_and_clears_sampling() {
 }
 
 #[test]
+fn claude_reasoning_accepts_shared_minimal_alias() {
+    let mut payload = claude_payload("claude-sonnet-4-5");
+    payload.insert("max_tokens".to_string(), json!(4096));
+    payload.insert("reasoning_effort".to_string(), json!("minimal"));
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    assert_eq!(
+        upstream
+            .pointer("/thinking/budget_tokens")
+            .and_then(Value::as_i64),
+        Some(1024)
+    );
+}
+
+#[test]
 fn claude_opus_4_5_uses_legacy_thinking_with_output_effort() {
     let mut payload = claude_payload("claude-opus-4-5");
     payload.insert("max_tokens".to_string(), json!(4096));

@@ -7,7 +7,7 @@ export {};
  */
 
 /**
- * @typedef {(command: TauriInvokeCommand, args?: any) => Promise<any>} TauriInvokeFn
+ * @typedef {(command: TauriInvokeCommand, args?: any, options?: { headers?: HeadersInit }) => Promise<any>} TauriInvokeFn
  */
 
 /**
@@ -30,6 +30,20 @@ export {};
  *   isTemporary?: boolean;
  *   cleanup?: (() => Promise<void>) | undefined;
  * }} MaterializedFileInfo
+ */
+
+/**
+ * @typedef {{
+ *   code: string;
+ *   message: string;
+ * }} CharacterCreateWarning
+ */
+
+/**
+ * @typedef {{
+ *   character: any;
+ *   warnings: CharacterCreateWarning[];
+ * }} CharacterCreateOutcome
  */
 
 /**
@@ -78,12 +92,12 @@ export {};
  *   exportChatAsText: (frontendChat: any) => string;
  *   exportChatAsJsonl: (frontendChat: any[]) => string;
  *   findAvatarByCharacterId: (characterId: any) => string;
- *   createCharacterFromForm: (formData: FormData, requestUrl: URL) => Promise<any>;
- *   createCharacterFromPayload: (payload: Record<string, any>) => Promise<any>;
+ *   createCharacterFromForm: (formData: FormData, requestUrl: URL) => Promise<CharacterCreateOutcome>;
+ *   createCharacterFromPayload: (payload: Record<string, any>) => Promise<CharacterCreateOutcome>;
  *   editCharacterFromForm: (formData: FormData, requestUrl: URL) => Promise<void>;
  *   editCharacterAvatarFromForm: (formData: FormData, requestUrl: URL) => Promise<void>;
  *   uploadAvatarFromForm: (formData: FormData, requestUrl: URL) => Promise<any>;
- *   materializeUploadFile: (file: Blob, options?: { preferredName?: string; preferredExtension?: string }) => Promise<MaterializedFileInfo | null>;
+ *   materializeUploadFile: (file: Blob, options?: { preferredName?: string; preferredExtension?: string; kind?: string }) => Promise<MaterializedFileInfo | null>;
  *   materializeAndroidContentUriUpload: (contentUri: string) => Promise<MaterializedFileInfo>;
  *   materializeAndroidSkillImportArchive: (contentUri: string) => Promise<MaterializedFileInfo>;
  *   pickAndroidImportArchive: () => Promise<string>;

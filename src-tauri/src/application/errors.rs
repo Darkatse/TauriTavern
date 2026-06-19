@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use crate::domain::errors::DomainError;
+use crate::domain::models::upstream_failure::UpstreamFailure;
 
 #[derive(Error, Debug)]
 pub enum ApplicationError {
@@ -9,6 +10,9 @@ pub enum ApplicationError {
 
     #[error("{0}")]
     Transient(String),
+
+    #[error("{0}")]
+    UpstreamFailure(UpstreamFailure),
 
     #[error("{0}")]
     Cancelled(String),
@@ -39,6 +43,7 @@ impl From<DomainError> for ApplicationError {
             DomainError::InternalError(msg) => ApplicationError::InternalError(msg),
             DomainError::RateLimited { message } => ApplicationError::RateLimited(message),
             DomainError::Transient(msg) => ApplicationError::Transient(msg),
+            DomainError::UpstreamFailure(failure) => ApplicationError::UpstreamFailure(failure),
             DomainError::WorkspacePathIsDirectory { path } => {
                 ApplicationError::ValidationError(format!("Workspace path is a directory: {path}"))
             }

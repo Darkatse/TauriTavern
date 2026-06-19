@@ -18,18 +18,19 @@ function ensureCustomEvent() {
     };
 }
 
-async function installHarness() {
+async function installHarness(options = {}) {
     const calls = [];
     ensureCustomEvent();
     globalThis.window = new EventTarget();
     globalThis.window.__TAURITAVERN__ = { api: {} };
+    const safeInvoke = options.safeInvoke || (async (command, args) => {
+        calls.push({ command, args });
+        return { command, args };
+    });
 
     const { installAgentApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent.js')));
     installAgentApi({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            return { command, args };
-        },
+        safeInvoke,
     });
 
     return {
@@ -49,16 +50,33 @@ test('api.agent.profiles forwards profile commands with camelCase DTOs', async (
     assert.ok(agent.profiles);
     await agent.profiles.list();
     await agent.profiles.load({ profileId: 'writer' });
+    await agent.profiles.diagnose({ profileId: 'writer' });
     await agent.profiles.resolveSystemPrompt({ profileId: 'writer' });
+    await agent.profiles.retargetPresetRefs({
+        from: { apiId: 'openai', name: 'Old Preset' },
+        to: { apiId: 'openai', name: 'New Preset' },
+    });
     await agent.profiles.save({ profile });
     await agent.profiles.delete('writer');
+    await agent.profiles.repairFile({ profileId: 'writer', action: 'normalizeIdentity' });
 
     assert.deepEqual(calls, [
         { command: 'list_agent_profiles', args: undefined },
         { command: 'load_agent_profile', args: { dto: { profileId: 'writer' } } },
+        { command: 'diagnose_agent_profile', args: { dto: { profileId: 'writer' } } },
         { command: 'resolve_agent_system_prompt', args: { dto: { profileId: 'writer' } } },
+        {
+            command: 'retarget_agent_profile_preset_refs',
+            args: {
+                dto: {
+                    from: { apiId: 'openai', name: 'Old Preset' },
+                    to: { apiId: 'openai', name: 'New Preset' },
+                },
+            },
+        },
         { command: 'save_agent_profile', args: { dto: { profile } } },
         { command: 'delete_agent_profile', args: { dto: { profileId: 'writer' } } },
+        { command: 'repair_agent_profile_file', args: { dto: { profileId: 'writer', action: 'normalizeIdentity' } } },
     ]);
 });
 
@@ -74,10 +92,15 @@ test('api.agent.profiles publishes profile change events after successful mutati
     });
 
     await agent.profiles.save({ profile: { id: 'writer' } });
+    await agent.profiles.retargetPresetRefs({
+        from: { apiId: 'openai', name: 'Old Preset' },
+        to: { apiId: 'openai', name: 'New Preset' },
+    });
     await agent.profiles.delete('writer');
+    await agent.profiles.repairFile({ profileId: 'writer', action: 'delete' });
     unsubscribe();
 
-    assert.deepEqual(events, ['changed', 'changed']);
+    assert.deepEqual(events, ['changed', 'changed', 'changed', 'changed']);
 });
 
 test('api.agent.profiles fails fast on invalid profile inputs', async () => {
@@ -94,6 +117,14 @@ test('api.agent.profiles fails fast on invalid profile inputs', async () => {
     await assert.rejects(
         () => agent.profiles.save(null),
         /profile must be an object/,
+    );
+    await assert.rejects(
+        () => agent.profiles.retargetPresetRefs({ from: { apiId: 'openai' }, to: { apiId: 'openai', name: 'New' } }),
+        /from requires apiId and name/,
+    );
+    await assert.rejects(
+        () => agent.profiles.repairFile({ profileId: 'writer', action: 'archive' }),
+        /repair action must be delete or normalizeIdentity/,
     );
 });
 
@@ -142,6 +173,431 @@ test('api.agent.promptAssembly prepares backend broker requests', async () => {
     ]);
 });
 
+test('api.agent.startRunWithPromptSnapshot refreshes Model Target LLM connection before starting run', async () => {
+    const sequence = [];
+    const savedConnections = [];
+    const currentTarget = {
+        schemaVersion: 1,
+        kind: 'tauritavern.modelTarget',
+        id: 'Writer Target',
+        mode: 'cc',
+        name: 'Writer model',
+        api: 'custom_claude_messages',
+        model: 'claude-3-7-sonnet',
+        'api-url': 'https://example.test/v1',
+        secretRef: {
+            key: 'api_key_custom',
+            id: 'secret-current',
+        },
+    };
+    const { agent } = await installHarness({
+        safeInvoke: async (command, args) => {
+            sequence.push(command);
+            if (command === 'load_agent_profile') {
+                assert.equal(args.dto.profileId, 'writer');
+                return {
+                    profile: {
+                        model: {
+                            mode: 'connectionRef',
+                            connectionRef: 'model-target-writer-target',
+                            modelId: 'claude-3-7-sonnet',
+                        },
+                        preset: {
+                            mode: 'ref',
+                        },
+                    },
+                };
+            }
+            if (command === 'start_agent_run') {
+                return { runId: 'run-model-target' };
+            }
+            if (command === 'read_agent_run_events') {
+                return {
+                    events: [{
+                        id: 'evt-terminal',
+                        seq: 1,
+                        runId: 'run-model-target',
+                        type: 'run_completed',
+                        payload: {},
+                    }],
+                };
+            }
+            return {};
+        },
+    });
+    globalThis.window.__TAURITAVERN__.api.llmConnections = {
+        async save({ connection }) {
+            sequence.push('llm_connections.save');
+            savedConnections.push(connection);
+        },
+    };
+    globalThis.window.SillyTavern = {
+        getContext: () => ({
+            extensionSettings: {
+                connectionManager: {
+                    modelTargets: [currentTarget],
+                },
+            },
+        }),
+    };
+
+    const handle = await agent.startRunWithPromptSnapshot({
+        chatRef: { kind: 'character', characterId: 'char-1', fileName: 'Char.json' },
+        stableChatId: 'stable-chat-1',
+        generationType: 'normal',
+        profileId: 'writer',
+        promptSnapshot: {
+            contextPolicy: {},
+            chatCompletionPayload: {
+                messages: [],
+            },
+        },
+        options: {
+            stream: false,
+        },
+    });
+
+    assert.deepEqual(handle, { runId: 'run-model-target' });
+    assert.equal(savedConnections.length, 1);
+    assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
+    assert.ok(sequence.indexOf('llm_connections.save') < sequence.indexOf('start_agent_run'));
+    await waitFor(() => sequence.includes('read_agent_run_events'));
+});
+
+test('api.agent.readEvents requests timeline projection only when asked', async () => {
+    const { calls, agent } = await installHarness();
+
+    await agent.readEvents({ runId: 'run-1', afterSeq: 12, limit: 20 });
+    await agent.readEvents({
+        runId: 'run-1',
+        beforeSeq: 200,
+        limit: 50,
+        includeTimelineProjection: true,
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'read_agent_run_events',
+            args: {
+                dto: {
+                    runId: 'run-1',
+                    afterSeq: 12,
+                    beforeSeq: undefined,
+                    limit: 20,
+                },
+            },
+        },
+        {
+            command: 'read_agent_run_events',
+            args: {
+                dto: {
+                    runId: 'run-1',
+                    afterSeq: undefined,
+                    beforeSeq: 200,
+                    limit: 50,
+                    includeTimelineProjection: true,
+                },
+            },
+        },
+    ]);
+});
+
+test('api.agent.submitGuidance forwards camelCase DTO and fails fast on invalid input', async () => {
+    const { calls, agent } = await installHarness();
+
+    await agent.submitGuidance({
+        runId: ' run_guidance ',
+        text: '  Keep the ending restrained.  ',
+        clientGuidanceId: ' client-guidance-1 ',
+    });
+    await agent.submitGuidance({
+        runId: 'run_guidance',
+        text: 'No client id.',
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'submit_agent_run_guidance',
+            args: {
+                dto: {
+                    runId: 'run_guidance',
+                    text: 'Keep the ending restrained.',
+                    clientGuidanceId: 'client-guidance-1',
+                },
+            },
+        },
+        {
+            command: 'submit_agent_run_guidance',
+            args: {
+                dto: {
+                    runId: 'run_guidance',
+                    text: 'No client id.',
+                },
+            },
+        },
+    ]);
+
+    await assert.rejects(
+        () => agent.submitGuidance(null),
+        /Agent submitGuidance input must be an object/,
+    );
+    await assert.rejects(
+        () => agent.submitGuidance({ runId: '', text: 'hello' }),
+        /runId is required/,
+    );
+    await assert.rejects(
+        () => agent.submitGuidance({ runId: 'run_guidance', text: '   ' }),
+        /guidance text is required/,
+    );
+});
+
+test('api.agent.listRuns forwards run history filters with camelCase DTOs', async () => {
+    const { calls, agent } = await installHarness();
+    const chatRef = { kind: 'character', characterId: 'char-1', fileName: 'Char.json' };
+
+    await agent.listRuns();
+    await agent.listRuns({
+        chatRef,
+        stableChatId: ' stable_1 ',
+        statuses: ['completed', 'failed', 'completed'],
+        before: {
+            createdAt: '2026-01-02T11:04:05+08:00',
+            runId: ' run_b ',
+        },
+        limit: 25,
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'list_agent_runs',
+            args: { dto: {} },
+        },
+        {
+            command: 'list_agent_runs',
+            args: {
+                dto: {
+                    chatRef,
+                    stableChatId: 'stable_1',
+                    statuses: ['completed', 'failed'],
+                    before: {
+                        createdAt: '2026-01-02T03:04:05.000Z',
+                        runId: 'run_b',
+                    },
+                    limit: 25,
+                },
+            },
+        },
+    ]);
+});
+
+test('api.agent.listRuns fails fast on invalid history filters', async () => {
+    const { calls, agent } = await installHarness();
+
+    await assert.rejects(
+        () => agent.listRuns(null),
+        /Agent listRuns input must be an object/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ chatRef: 'bad' }),
+        /chatRef must be an object/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ statuses: 'completed' }),
+        /statuses must be an array/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ statuses: ['completed', ''] }),
+        /statuses contains an empty status/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ statuses: ['done'] }),
+        /unknown agent run status/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ before: { createdAt: '2026-01-02T03:04:05.000Z' } }),
+        /before.runId is required/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ before: { runId: 'run_a', createdAt: 'not-a-date' } }),
+        /before.createdAt must be a valid timestamp/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ before: { runId: 'run_a', createdAt: new Date(Number.NaN) } }),
+        /before.createdAt must be a valid timestamp/,
+    );
+    await assert.rejects(
+        () => agent.listRuns({ limit: 0 }),
+        /limit must be an integer between 1 and 200/,
+    );
+    assert.deepEqual(calls, []);
+});
+
+test('api.agent.retention forwards settings and prune contracts', async () => {
+    const calls = [];
+    const { agent } = await installHarness({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            if (command === 'get_tauritavern_settings') {
+                return {
+                    agent: {
+                        retention: {
+                            auto_prune_enabled: true,
+                            keep_recent_terminal_runs: 100,
+                            keep_full_recent_runs: 20,
+                        },
+                    },
+                };
+            }
+            if (command === 'update_tauritavern_settings') {
+                return {
+                    agent: {
+                        retention: {
+                            auto_prune_enabled: args.dto.agent.retention.auto_prune_enabled,
+                            keep_recent_terminal_runs: args.dto.agent.retention.keep_recent_terminal_runs,
+                            keep_full_recent_runs: args.dto.agent.retention.keep_full_recent_runs,
+                        },
+                    },
+                };
+            }
+            return { ok: true };
+        },
+    });
+
+    assert.deepEqual(await agent.retention.readSettings(), {
+        autoPruneEnabled: true,
+        keepRecentTerminalRuns: 100,
+        keepFullRecentRuns: 20,
+    });
+    assert.deepEqual(await agent.retention.updateSettings({
+        autoPruneEnabled: false,
+        keepRecentTerminalRuns: '80',
+        keepFullRecentRuns: 12,
+    }), {
+        autoPruneEnabled: false,
+        keepRecentTerminalRuns: 80,
+        keepFullRecentRuns: 12,
+    });
+    await agent.retention.planPrune({
+        retention: {
+            keepRecentTerminalRuns: 80,
+            keepFullRecentRuns: 12,
+        },
+        detailLimit: 8,
+    });
+    await agent.retention.applyPrune({
+        retention: {
+            keepRecentTerminalRuns: 80,
+            keepFullRecentRuns: 12,
+        },
+        detailLimit: 8,
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'get_tauritavern_settings',
+            args: undefined,
+        },
+        {
+            command: 'update_tauritavern_settings',
+            args: {
+                dto: {
+                    agent: {
+                        retention: {
+                            auto_prune_enabled: false,
+                            keep_recent_terminal_runs: 80,
+                            keep_full_recent_runs: 12,
+                        },
+                    },
+                },
+            },
+        },
+        {
+            command: 'plan_agent_run_prune',
+            args: {
+                dto: {
+                    retention: {
+                        keepRecentTerminalRuns: 80,
+                        keepFullRecentRuns: 12,
+                    },
+                    detailLimit: 8,
+                },
+            },
+        },
+        {
+            command: 'apply_agent_run_prune',
+            args: {
+                dto: {
+                    retention: {
+                        keepRecentTerminalRuns: 80,
+                        keepFullRecentRuns: 12,
+                    },
+                    detailLimit: 8,
+                },
+            },
+        },
+    ]);
+});
+
+test('api.agent.retention fails fast on invalid retention inputs', async () => {
+    const { calls, agent } = await installHarness();
+
+    await assert.rejects(
+        () => agent.retention.updateSettings(null),
+        /Agent retention settings update must be an object/,
+    );
+    await assert.rejects(
+        () => agent.retention.updateSettings({}),
+        /Agent retention update cannot be empty/,
+    );
+    await assert.rejects(
+        () => agent.retention.updateSettings({ keepRecentTerminalRuns: -1 }),
+        /keepRecentTerminalRuns must be an integer between 0 and 10000/,
+    );
+    await assert.rejects(
+        () => agent.retention.updateSettings({ autoPruneEnabled: 'true' }),
+        /autoPruneEnabled must be a boolean/,
+    );
+    await assert.rejects(
+        () => agent.retention.updateSettings({ keepRecentTerminalRuns: 10, keepFullRecentRuns: 11 }),
+        /keepFullRecentRuns must be less than or equal to keepRecentTerminalRuns/,
+    );
+    await assert.rejects(
+        () => agent.retention.planPrune(null),
+        /Agent planRunPrune input must be an object/,
+    );
+    await assert.rejects(
+        () => agent.retention.planPrune({ detailLimit: -1 }),
+        /detailLimit must be an integer between 0 and 1000/,
+    );
+    await assert.rejects(
+        () => agent.retention.planPrune({
+            retention: {
+                keepRecentTerminalRuns: 10,
+                keepFullRecentRuns: 11,
+            },
+        }),
+        /keepFullRecentRuns must be less than or equal to keepRecentTerminalRuns/,
+    );
+    await assert.rejects(
+        () => agent.retention.applyPrune(null),
+        /Agent applyRunPrune input must be an object/,
+    );
+    await assert.rejects(
+        () => agent.retention.applyPrune({ detailLimit: -1 }),
+        /detailLimit must be an integer between 0 and 1000/,
+    );
+    await assert.rejects(
+        () => agent.retention.applyPrune({
+            retention: {
+                keepRecentTerminalRuns: 10,
+                keepFullRecentRuns: 11,
+            },
+        }),
+        /keepFullRecentRuns must be less than or equal to keepRecentTerminalRuns/,
+    );
+    assert.deepEqual(calls, []);
+});
+
 test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid input', async () => {
     const { calls, agent } = await installHarness();
 
@@ -171,6 +627,52 @@ test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid i
         () => agent.readModelTurn({ runId: 'run-1', round: 1, maxChars: 0 }),
         /maxChars must be a positive integer/,
     );
+});
+
+test('api.agent.pruneChatPersistentStates forwards explicit candidate state ids', async () => {
+    const { calls, agent } = await installHarness();
+    const chatRef = { kind: 'character', characterId: 'char-1', fileName: 'Char.json' };
+
+    await agent.pruneChatPersistentStates({
+        chatRef,
+        stableChatId: ' chat_1 ',
+        candidateStateIds: [' state_drop ', 'state_drop', 'state_keep'],
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'prune_agent_chat_persistent_states',
+            args: {
+                dto: {
+                    chatRef,
+                    stableChatId: 'chat_1',
+                    candidateStateIds: ['state_drop', 'state_keep'],
+                },
+            },
+        },
+    ]);
+});
+
+test('api.agent.pruneChatPersistentStates fails fast on invalid candidate state ids', async () => {
+    const { calls, agent } = await installHarness();
+    const input = {
+        chatRef: { kind: 'character', characterId: 'char-1', fileName: 'Char.json' },
+        stableChatId: 'chat_1',
+    };
+
+    await assert.rejects(
+        () => agent.pruneChatPersistentStates(input),
+        /candidateStateIds must be an array/,
+    );
+    await assert.rejects(
+        () => agent.pruneChatPersistentStates({ ...input, candidateStateIds: 'state_drop' }),
+        /candidateStateIds must be an array/,
+    );
+    await assert.rejects(
+        () => agent.pruneChatPersistentStates({ ...input, candidateStateIds: ['state_drop', ''] }),
+        /candidateStateIds contains an empty state id/,
+    );
+    assert.deepEqual(calls, []);
 });
 
 test('agent chat commit bridge detaches on partial success terminal event', async () => {

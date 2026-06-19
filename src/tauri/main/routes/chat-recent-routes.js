@@ -60,7 +60,7 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
             const pinnedCharacterRefs = [];
             const pinnedCharacterRefKeys = new Set();
             await Promise.all(pinnedChats.map(async (chat) => {
-                const avatar = String(chat?.avatar || '').trim();
+                const avatar = String(chat?.avatar ?? '');
                 const fileStem = context.stripJsonl(chat?.file_name || '');
                 if (!avatar || !fileStem.trim() || chat?.group) {
                     return;
@@ -123,7 +123,7 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
 
             const characterEntries = Array.isArray(characterSummaries)
                 ? characterSummaries.map((chat) => {
-                    const characterId = String(chat?.character_name || '').trim();
+                    const characterId = String(chat?.character_name ?? '');
                     const fileStem = context.stripJsonl(chat?.file_name || '');
                     if (!characterId || !fileStem.trim()) {
                         return null;

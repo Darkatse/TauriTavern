@@ -9,7 +9,8 @@ use crate::application::services::agent_identity::{
 };
 use crate::domain::models::agent::AgentChatRef;
 use crate::domain::repositories::agent_workspace_lifecycle_repository::{
-    AgentChatWorkspaceDeletion, AgentPersistentStatePrune, AgentWorkspaceLifecycleRepository,
+    AgentChatWorkspaceDeletion, AgentPersistentStatePrune, AgentPersistentStatePruneRequest,
+    AgentWorkspaceLifecycleRepository,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +21,8 @@ pub struct AgentChatWorkspaceTarget {
 
 #[async_trait]
 pub trait AgentRunActivity: Send + Sync {
+    async fn active_run_ids(&self) -> Result<Vec<String>, ApplicationError>;
+
     async fn active_run_ids_for_workspace(
         &self,
         workspace_id: &str,
@@ -144,12 +147,12 @@ impl AgentWorkspaceLifecycleService {
     pub async fn prune_persistent_states(
         &self,
         target: &AgentChatWorkspaceTarget,
-        retained_state_ids: &[String],
+        request: AgentPersistentStatePruneRequest,
     ) -> Result<AgentPersistentStatePrune, ApplicationError> {
         self.ensure_chat_workspace_inactive(target).await?;
         let workspace_id = self.workspace_id(target)?;
         self.repository
-            .prune_persistent_states(&workspace_id, retained_state_ids)
+            .prune_persistent_states(&workspace_id, request)
             .await
             .map_err(Into::into)
     }
@@ -190,7 +193,7 @@ mod tests {
         async fn prune_persistent_states(
             &self,
             workspace_id: &str,
-            _retained_state_ids: &[String],
+            _request: AgentPersistentStatePruneRequest,
         ) -> Result<AgentPersistentStatePrune, DomainError> {
             Ok(AgentPersistentStatePrune {
                 workspace_id: workspace_id.to_string(),
@@ -205,6 +208,10 @@ mod tests {
 
     #[async_trait]
     impl AgentRunActivity for MockRunActivity {
+        async fn active_run_ids(&self) -> Result<Vec<String>, ApplicationError> {
+            Ok(self.active_run_ids.clone())
+        }
+
         async fn active_run_ids_for_workspace(
             &self,
             _workspace_id: &str,

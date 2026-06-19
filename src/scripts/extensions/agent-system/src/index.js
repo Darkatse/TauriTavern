@@ -8,6 +8,7 @@ import { mountAgentRunTimelinePanel } from './run-timeline-panel.js';
 import { mountSkillManagerSettingsPanel } from './skill-manager/settings-entry.js';
 import { openAgentSystemPanel } from './panel-popup.js';
 import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
+import { startModelTargetLlmConnectionSync, syncSavedModelTargetLlmConnections } from './model-target-connection.js';
 import { subscribeAgentProfilesChanged } from '../../../tauritavern/agent/agent-profile-events.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../tauritavern/agent/agent-system-settings.js';
 
@@ -21,6 +22,7 @@ function createAgentSystemEntryApp() {
                 profiles: [],
                 settings: {
                     agentModeEnabled: false,
+                    chatInputToggleHidden: false,
                     activeProfileId: DEFAULT_AGENT_PROFILE_ID,
                 },
             };
@@ -96,6 +98,16 @@ function createAgentSystemEntryApp() {
                     throw error;
                 }
             },
+            async toggleChatInputToggleVisibility() {
+                try {
+                    this.settings = await patchSettings(this.settings, {
+                        chatInputToggleHidden: !this.settings.chatInputToggleHidden,
+                    });
+                } catch (error) {
+                    this.reportError(error);
+                    throw error;
+                }
+            },
             async setActiveProfile(profileId) {
                 const id = String(profileId || '').trim();
                 const profile = this.profiles.find((item) => item.id === id);
@@ -140,6 +152,10 @@ function createAgentSystemEntryApp() {
                                 <i class="fa-solid" :class="settings.agentModeEnabled ? 'fa-toggle-on' : 'fa-toggle-off'"></i>
                                 <span>{{ settings.agentModeEnabled ? tr('agentModeOn') : tr('agentModeOff') }}</span>
                             </button>
+                            <button type="button" class="menu_button menu_button_icon" :class="{ active: settings.chatInputToggleHidden }" :aria-pressed="String(settings.chatInputToggleHidden)" :disabled="loading" @click="toggleChatInputToggleVisibility">
+                                <i class="fa-solid" :class="settings.chatInputToggleHidden ? 'fa-eye' : 'fa-eye-slash'"></i>
+                                <span>{{ settings.chatInputToggleHidden ? tr('showChatInputToggle') : tr('hideChatInputToggle') }}</span>
+                            </button>
                             <label class="ttas-field ttas-entry-active-profile">
                                 <span>{{ tr('activeProfile') }}</span>
                                 <select :value="activeProfileId" :disabled="loading || activeProfileOptions.length === 0" @change="setActiveProfile($event.target.value)">
@@ -160,6 +176,9 @@ function createAgentSystemEntryApp() {
 
 async function mountAgentSystem() {
     await waitForHostReady();
+    startModelTargetLlmConnectionSync();
+    await syncSavedModelTargetLlmConnections();
+
     const container = document.getElementById('agent_system_container');
     if (!(container instanceof HTMLElement)) {
         throw new Error(tr('mountContainerNotFound'));

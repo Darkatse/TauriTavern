@@ -8,8 +8,11 @@ use crate::domain::errors::DomainError;
 
 pub mod plan;
 pub mod profile;
+pub mod profile_diagnostic;
+pub mod storage;
 
 pub const ROOT_AGENT_INVOCATION_ID: &str = "inv_root";
+pub const AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(
@@ -44,6 +47,15 @@ pub enum AgentRunStatus {
     Cancelling,
     Cancelled,
     Failed,
+}
+
+impl AgentRunStatus {
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::PartialSuccess | Self::Cancelled | Self::Failed
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -101,6 +113,29 @@ pub struct AgentRun {
     pub status: AgentRunStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunSummaryProjection {
+    pub schema_version: u32,
+    pub run_id: String,
+    pub source_run_updated_at: DateTime<Utc>,
+    pub commit_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed_message: Option<AgentRunCommittedMessageProjection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunCommittedMessageProjection {
+    pub commit_id: String,
+    pub message_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_index: Option<usize>,
+    pub committed_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

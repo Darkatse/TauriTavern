@@ -1,4 +1,7 @@
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use ttsync_contract::path::SyncPath;
 
 pub(crate) fn default_transfer_concurrency() -> usize {
     if cfg!(any(target_os = "android", target_os = "ios")) {
@@ -17,4 +20,12 @@ pub(crate) fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64
+}
+
+pub(crate) fn resolve_to_local(sync_root: &Path, sync_path: &SyncPath) -> PathBuf {
+    let mut full_path = PathBuf::from(sync_root);
+    for part in sync_path.as_str().split('/') {
+        full_path.push(part);
+    }
+    full_path
 }

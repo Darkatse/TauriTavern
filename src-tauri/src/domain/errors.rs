@@ -2,6 +2,8 @@ use std::fmt;
 
 use thiserror::Error;
 
+use crate::domain::models::upstream_failure::UpstreamFailure;
+
 pub const GENERATION_CANCELLED_BY_USER_MESSAGE: &str = "Generation cancelled by user";
 
 #[derive(Error, Debug)]
@@ -26,6 +28,9 @@ pub enum DomainError {
 
     #[error("{0}")]
     Transient(String),
+
+    #[error("{0}")]
+    UpstreamFailure(UpstreamFailure),
 
     #[error("Workspace path is a directory: {path}")]
     WorkspacePathIsDirectory { path: String },
@@ -90,6 +95,10 @@ impl DomainError {
 
     pub fn transient(message: impl Into<String>) -> Self {
         Self::Transient(message.into())
+    }
+
+    pub fn upstream_failure(failure: UpstreamFailure) -> Self {
+        Self::UpstreamFailure(failure)
     }
 
     pub fn workspace_path_is_directory(path: impl Into<String>) -> Self {

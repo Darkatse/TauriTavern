@@ -117,6 +117,7 @@ agent_invocation_started
 agent_invocation_completed
 agent_invocation_failed
 agent_invocation_cancelled
+agent_invocation_transferred
 agent_task_registered
 agent_task_queued
 agent_task_started
@@ -124,6 +125,8 @@ agent_task_completed
 agent_task_failed
 agent_task_cancelled
 agent_delegate_started
+agent_handoff_requested
+agent_handoff_accepted
 agent_await_started
 agent_await_completed
 task_return_completed
@@ -161,7 +164,41 @@ drift_recovery_attempted
 run_failed
 ```
 
+多 invocation 事件必须写入 canonical event scope：
+
+```json
+{
+  "eventScope": {
+    "invocationId": "inv_root",
+    "relatedInvocationIds": ["inv_child"]
+  }
+}
+```
+
+`eventScope.invocationId` 是事件主归属 invocation；`eventScope.relatedInvocationIds` 是同一事件关联的其它 invocation。`readEvents({ invocationId })` 先按该 event scope 过滤，再应用 seq 分页。旧 journal 没有 canonical scope 时，后端可以用历史 payload 字段兼容读取，但新事件不应依赖字段名推断作为主契约。
+
 以下小节同时包含当前已落地事件和后续阶段设计事件；实现新事件时必须更新 `docs/CurrentState/AgentFramework.md`。
+
+### Handoff event sequence
+
+当前 `agent.handoff` 的典型事件序列：
+
+```text
+agent_handoff_requested
+agent_invocation_created      # kind = handoff
+agent_task_registered         # continuation = transfer_control
+agent_handoff_accepted
+agent_invocation_transferred  # source invocation
+agent_loop_finished
+agent_task_started            # handoff task starts when target invocation is prepared
+agent_invocation_started      # target invocation
+context_assembled
+skill_scopes_resolved
+...
+agent_task_completed          # incoming handoff task completes when target finishes or hands off again
+```
+
+Handoff 的 task / invocation 结构、prompt brief 与失败边界见 `docs/Agent/Handoff.md`。
 
 ### 4.1 Run Lifecycle
 
@@ -252,6 +289,20 @@ run_failed
 - 恢复失败（模型再次返回 0 tool_calls 且已没有下一轮预算）→ 若没有成功 chat commit，写 `run_failed`（`userRetryable=true`）；若已有成功 chat commit，写 `run_partial_success` 并保留输出
 - 上述 rollback / partial-success 语义与前端入口无关；普通发送、`/trigger`、regenerate 与 overswipe 只要进入 Agent run，都必须遵守同一 journal 与 host commit 契约。
 
+### 4.1.1 User Guidance
+
+```text
+user_guidance_submitted
+user_guidance_applied
+user_guidance_discarded
+```
+
+User guidance 是 active AgentRun 的 run-scoped 用户输入，不是普通聊天消息。提交成功后 runtime 必须先写 `user_guidance_submitted`，再将 guidance 放入当前 run mailbox；下一次 root / handoff 前台 invocation 创建模型请求前，runtime 将 pending guidance 合并为一条 canonical `role=user` message，并写 `user_guidance_applied`。
+
+已经发出的 provider request 不可被热修改。若 guidance 在模型调用、工具调用、host commit 等过程中提交，只能影响后续安全模型请求边界。run cancel、finish、failure / partial success 会关闭 mailbox，并对尚未应用的 guidance 写 `user_guidance_discarded`。
+
+事件 payload 必须包含 `guidanceId` 或 `guidanceIds`、`chars`、`words`、`preview`、`status`，并带 `invocationId` / canonical `eventScope` 以便 Timeline 可以归入前台 Agent 链。`user_guidance_submitted` 在 V1 直接内联受长度限制的完整 `text`，便于 Timeline detail 和审计读取；applied / discarded 事件用 ids、统计和 preview 关联，不重复写全文。guidance 文本不应写入普通 chat history。
+
 ### 4.2 Workspace
 
 ```text
@@ -310,11 +361,20 @@ model_failed
   "hasAssistantText": true,
   "assistantTextChars": 26,
   "assistantTextWords": 5,
+  "narration": {
+    "source": "assistantText",
+    "text": "I will write the artifact.",
+    "totalChars": 26,
+    "totalWords": 5,
+    "truncated": false
+  },
   "hasReasoning": true,
   "reasoningChars": 30,
   "reasoningWords": 6
 }
 ```
+
+`narration` 是可选字段，仅在模型回合包含工具调用且存在可展示 assistant visible text 时写入；它是模型轮次的展示投影，不是新的 run status，也不从 reasoning / thinking / thought 提取。事件中只保存短 preview；完整文本仍通过 `readModelTurn({ runId, round })` 的白名单 DTO 读取。
 
 前端读取详情时使用 Host ABI `readModelTurn({ runId, round })`，不直接解析 `modelResponsePath` 指向的 raw 文件。
 
@@ -391,13 +451,14 @@ Locked plan violation 必须失败或等待用户决策，不能静默忽略。
 artifact_assembly_started
 artifact_assembled
 artifact_assembly_failed
-commit_started
-run_committed
-commit_failed
+chat_commit_started
+chat_commit_requested
+chat_commit_completed
+chat_commit_failed
 committed_message_rollback_completed
 ```
 
-Commit event must include chat ref、message index/id、checkpoint id、artifact set id。
+Commit event 必须包含 chat ref、checkpoint id、artifact path，并在 host bridge 已确认时包含 message id。`chat_commit_completed.messageId` 是 host bridge 在提交当时返回的聊天消息 id；当前 run 还会从数字型 message id 派生零基 `messageIndex`。这是提交时快照，不是对当前聊天消息位置的反向查询。
 
 ## 5. 事件与副作用的顺序
 

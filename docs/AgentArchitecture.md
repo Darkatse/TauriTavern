@@ -50,7 +50,7 @@ MCP / Tool Direct Call
 - 当前 LLM 请求经过 `ChatCompletionService`，该服务负责 provider 解析、iOS policy、endpoint override policy、payload build、prompt caching 和取消注册。见 `src-tauri/src/application/services/chat_completion_service/mod.rs:32`、`src-tauri/src/application/services/chat_completion_service/mod.rs:302`、`src-tauri/src/application/services/chat_completion_service/mod.rs:358`。
 - 当前 LLM API 日志依赖 bootstrap 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、secret 或 policy。Responses WebSocket 建连已复用 `HttpClientPool` 的 ChatCompletion WebSocket profile，不应扩散成第二套 LLM 调用链。见 `src-tauri/src/app/bootstrap.rs:372`。
 - 当前 chat payload 分片读写由 `ChatService` 和 `ChatRepository` 承担，windowed save/patch 是正式契约。见 `src-tauri/src/application/services/chat_service.rs:495`、`src-tauri/src/application/services/chat_service.rs:563`、`src-tauri/src/domain/repositories/chat_repository.rs:145`、`src-tauri/src/domain/repositories/chat_repository.rs:162`。
-- 前端 Public ABI 的统一入口是 `window.__TAURITAVERN__`，应保持小而稳定。见 `docs/FrontendHostContract.md:92`、`src/tauri/main/bootstrap.js:139`。
+- 前端 Public ABI 的统一入口是 `window.__TAURITAVERN__`，应保持小而稳定。见 `docs/FrontendHostContract.md` 第 3.6 节、`src/tauri/main/bootstrap.js:139`。
 - 当前 `Generate()` 支持 dryRun，并在 `GENERATE_AFTER_DATA` 提供生成请求数据。见 `src/script.js:4660`、`src/script.js:5743`。
 - 当前 SillyTavern 工具调用会递归回 `Generate()`，并把工具调用结果保存成 `is_system` chat message。这是 Agent 必须摆脱的旧结构。见 `src/script.js:5826`、`src/script.js:5847`、`src/script.js:5959`、`src/scripts/tool-calling.js:868`、`src/scripts/tool-calling.js:887`。
 

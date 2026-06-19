@@ -62,6 +62,34 @@ pub(super) fn validate_subagent_target(
     Ok(())
 }
 
+pub(super) fn validate_handoff_target(
+    source: &ResolvedAgentProfile,
+    target: &ResolvedAgentProfile,
+) -> Result<(), String> {
+    if !target.delegation.callable {
+        return Err(format!(
+            "agent.target_not_callable: Agent `{}` is not available for handoff",
+            target.id.as_str()
+        ));
+    }
+    if !target.delegation.allow_as_handoff_target {
+        return Err(format!(
+            "agent.target_not_handoff: Agent `{}` is not available as a handoff target",
+            target.id.as_str()
+        ));
+    }
+    if !caller_allowed(source, target) {
+        return Err(format!(
+            "agent.target_caller_denied: you are not allowed to hand off to Agent `{}`",
+            target.id.as_str()
+        ));
+    }
+    if profile_model_requires_configuration(target) {
+        return Err(profile_model_configuration_error(target));
+    }
+    Ok(())
+}
+
 pub(super) fn validate_delegate_budget(
     budget: Option<AgentDelegateBudget>,
     target: &ResolvedAgentProfile,
@@ -104,6 +132,7 @@ pub(super) fn apply_child_invocation_policy(
             && name != "workspace.finish"
             && name != "agent.list"
             && name != "agent.delegate"
+            && name != "agent.handoff"
             && name != "agent.await"
     });
     if let Some(budget) = budget {

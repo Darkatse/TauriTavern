@@ -1,4 +1,12 @@
 {
+    "Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.": "ซ่อนข้อความแชทจากพรอมต์ ใช้ <code>all</code> เพื่อซ่อนทั้งแชท หรือ <code>before</code> เพื่อซ่อนเฉพาะข้อความก่อนหน้าต่างที่โหลดไว้",
+    "Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.": "แสดงข้อความในพรอมต์อีกครั้ง ใช้ <code>all</code> เพื่อแสดงทั้งแชท หรือ <code>before</code> เพื่อแสดงเฉพาะข้อความก่อนหน้าต่างที่โหลดไว้",
+    "message index (starts with 0) or range, or \"all\" / \"before\" (messages before the loaded window), defaults to the last message index if not provided": "ดัชนีข้อความ (เริ่มที่ 0) หรือช่วง หรือ \"all\" / \"before\" (ข้อความก่อนหน้าต่างที่โหลดไว้) หากไม่ระบุจะใช้ดัชนีข้อความสุดท้าย",
+    "every message in the chat, including unloaded ones": "ทุกข้อความในแชท รวมถึงข้อความที่ยังไม่ได้โหลด",
+    "only unloaded messages before the current window": "เฉพาะข้อความที่ยังไม่ได้โหลดก่อนหน้าต่างปัจจุบัน",
+    "All messages are already loaded. Use /hide with a message range instead.": "โหลดข้อความทั้งหมดแล้ว โปรดใช้ /hide พร้อมช่วงข้อความแทน",
+    "There are no unloaded messages before the current window.": "ไม่มีข้อความที่ยังไม่ได้โหลดก่อนหน้าต่างปัจจุบัน",
+    "Failed to update messages before the loaded window. Reload the chat and try again.": "อัปเดตข้อความก่อนหน้าต่างที่โหลดไว้ไม่สำเร็จ โปรดเปิดแชทใหม่แล้วลองอีกครั้ง",
   "Favorite": "รายการโปรด",
   "Tag": "แท็ก",
   "Duplicate": "คัดลอก",

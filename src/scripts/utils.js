@@ -2224,8 +2224,50 @@ export function flashHighlight(element, timespan = 2000) {
  * @returns {boolean} Whether the control has an animation applied
  */
 export function hasAnimation(control) {
-    const animatioName = getComputedStyle(control, null)['animation-name'];
-    return animatioName != 'none';
+    const style = getComputedStyle(control, null);
+    const animationNames = splitCssValueList(style.animationName);
+    const animationDurations = splitCssValueList(style.animationDuration);
+    const animationDurationCount = animationDurations.length;
+
+    return animationNames.some((name, index) => {
+        if (!name || name === 'none') {
+            return false;
+        }
+
+        const duration = animationDurationCount
+            ? animationDurations[index % animationDurationCount]
+            : '0s';
+        return parseCssTimeMilliseconds(duration) > 0;
+    });
+}
+
+/**
+ * @param {string} value
+ * @returns {string[]}
+ */
+function splitCssValueList(value) {
+    return String(value || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+/**
+ * @param {string} value
+ * @returns {number}
+ */
+function parseCssTimeMilliseconds(value) {
+    const match = String(value || '').trim().match(/^(-?(?:\d+|\d*\.\d+))(ms|s)$/i);
+    if (!match) {
+        return 0;
+    }
+
+    const amount = Number(match[1]);
+    if (!Number.isFinite(amount)) {
+        return 0;
+    }
+
+    return match[2].toLowerCase() === 's' ? amount * 1000 : amount;
 }
 
 /**
@@ -2493,7 +2535,7 @@ export function highlightRegex(regexStr) {
  * @param {object} options - Optional parameters
  * @param {boolean} [options.interactive=false] - Whether to show a confirmation dialog when needing to overwrite an existing data object
  * @param {string} [options.actionName='overwrite'] - The action name to display in the confirmation dialog
- * @param {(existingName:string)=>void} [options.deleteAction=null] - Optional action to execute wen deleting an existing data object on overwrite
+ * @param {(existingName:string)=>void|Promise<void>} [options.deleteAction=null] - Optional action to execute wen deleting an existing data object on overwrite
  * @returns {Promise<boolean>} True if the user confirmed the overwrite or there is no overwrite needed, false otherwise
  */
 export async function checkOverwriteExistingData(type, existingNames, name, { interactive = false, actionName = 'Overwrite', deleteAction = null } = {}) {
@@ -2512,7 +2554,7 @@ export async function checkOverwriteExistingData(type, existingNames, name, { in
 
     // If there is an action to delete the existing data, do it, as the name might be slightly different so file name would not be the same
     if (deleteAction) {
-        deleteAction(existing);
+        await deleteAction(existing);
     }
 
     return true;

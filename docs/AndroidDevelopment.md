@@ -151,6 +151,30 @@ https://v2.tauri.app/develop/resources/#android
 - 平台差异被收敛到一个模块，不向业务层扩散；
 - 未来若 iOS 出现类似目录异常，可在同一模块增加 `cfg(target_os = "ios")` 分支，不需要修改各仓储。
 
+### 3.4 公共 Downloads 导出不是应用数据目录问题
+
+角色卡、Preset、WorldInfo 等前端普通导出遵循浏览器下载语义：用户点击导出后，文件应出现在 Android 公共下载目录（通常显示为 `/storage/emulated/0/Download`），而不是 app-scoped 外部目录。
+
+需要特别区分：
+
+- `appDataDir/localDataDir` 问题处理的是应用数据根目录；
+- Tauri Android 的 `downloadDir()` 可能解析到 `/storage/emulated/0/Android/data/<package>/files/Download`，这对应用私有文件是合理位置，但不是用户导出文件的成功目标；
+- Tauri fs capability 只表达 Tauri 插件 allowlist，不等价于 Android scoped storage 的系统级公共目录写入授权。
+
+当前方案：
+
+- 普通 Blob 下载主链仍收口在前端 `download()` / `downloadBlobWithRuntime()`，保持 SillyTavern 上游调用语义；
+- 前端先把 Blob 分块写入 app cache 下的 `tauritavern-export-staging`，native bridge 只接受该 staging 根下的 canonical file；
+- Android 10+ 使用 native `MediaStore.Downloads` 写入公共 Downloads；
+- Android 7-9 无可靠的无权限公共 Downloads 裸路径写入语义，回退到 SAF `ACTION_CREATE_DOCUMENT`，由用户选择保存目标；
+- 不再把 app-scoped `Download` 作为普通导出的 fallback；公共下载写入失败必须向前端暴露错误。
+
+维护原则：
+
+- 不要通过修改 `infrastructure/paths.rs` 或强行拼接 `/storage/emulated/0/Download` 来实现普通导出；
+- 不要给普通导出引入 `MANAGE_EXTERNAL_STORAGE` 或宽泛存储权限；
+- 如需新增 Android 用户可见文件导出，优先复用 native public download bridge，而不是直接使用 Tauri `downloadDir()`。
+
 ---
 
 ## 4. 与上述问题相关的关键架构调整

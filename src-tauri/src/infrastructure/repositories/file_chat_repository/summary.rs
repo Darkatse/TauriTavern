@@ -380,11 +380,10 @@ impl FileChatRepository {
             let Some(file_stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
                 continue;
             };
-            let key = file_stem.trim();
-            if key.is_empty() {
+            if file_stem.is_empty() {
                 continue;
             }
-            keys.insert(key.to_string());
+            keys.insert(file_stem.to_string());
         }
 
         let mut sorted_keys: Vec<String> = keys.into_iter().collect();
@@ -477,7 +476,7 @@ impl FileChatRepository {
         self.ensure_directory_exists().await?;
 
         if let Some(character_name) = character_filter {
-            let dir = self.get_character_dir(character_name);
+            let dir = self.resolve_character_chat_dir(character_name).await?;
             let files = list_files_with_extension(&dir, "jsonl").await?;
             return Ok(files
                 .into_iter()
@@ -494,7 +493,7 @@ impl FileChatRepository {
 
         let mut descriptors = Vec::new();
         for character_name in self.list_character_chat_directory_keys().await? {
-            let path = self.get_character_dir(&character_name);
+            let path = self.resolve_character_chat_dir(&character_name).await?;
             let files = list_files_with_extension(&path, "jsonl").await?;
             descriptors.extend(files.into_iter().filter_map(|file_path| {
                 let file_name = file_path.file_name()?.to_str()?.to_string();
@@ -650,7 +649,9 @@ impl FileChatRepository {
     ) -> Result<ChatSearchResult, DomainError> {
         self.ensure_directory_exists().await?;
 
-        let path = self.get_chat_path(character_name, file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Chat not found: {}/{}",

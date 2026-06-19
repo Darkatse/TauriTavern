@@ -1,20 +1,26 @@
 use serde_json::{Map, Value, json};
 
+use crate::application::errors::ApplicationError;
+
+use super::super::model_capabilities::map_openrouter_reasoning_effort;
 use super::openai;
 use super::shared::insert_if_present;
 
-pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
+pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let source_payload = payload.clone();
     let (_, mut upstream_payload) = openai::build(payload);
 
     if let Some(body) = upstream_payload.as_object_mut() {
-        apply_openrouter_overrides(body, &source_payload);
+        apply_openrouter_overrides(body, &source_payload)?;
     }
 
-    ("/chat/completions".to_string(), upstream_payload)
+    Ok(("/chat/completions".to_string(), upstream_payload))
 }
 
-fn apply_openrouter_overrides(body: &mut Map<String, Value>, source_payload: &Map<String, Value>) {
+fn apply_openrouter_overrides(
+    body: &mut Map<String, Value>,
+    source_payload: &Map<String, Value>,
+) -> Result<(), ApplicationError> {
     for key in ["min_p", "top_a", "repetition_penalty"] {
         insert_if_present(body, source_payload, key);
     }
@@ -53,20 +59,24 @@ fn apply_openrouter_overrides(body: &mut Map<String, Value>, source_payload: &Ma
         body.insert("route".to_string(), Value::String("fallback".to_string()));
     }
 
+    // OpenRouter owns provider-specific reasoning translation behind its router.
+    // Normalize only project aliases here, and never apply OpenAI GPT-version
+    // gates to routed OpenRouter models.
+    body.remove("reasoning_effort");
     if let Some(reasoning_effort) = source_payload
         .get("reasoning_effort")
         .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .map(map_openrouter_reasoning_effort)
+        .transpose()?
+        .flatten()
     {
-        body.remove("reasoning_effort");
         body.insert(
             "reasoning".to_string(),
-            json!({
-                "effort": reasoning_effort,
-            }),
+            json!({ "effort": reasoning_effort }),
         );
     }
+
+    Ok(())
 }
 
 fn map_middleout_transforms(value: Option<&Value>) -> Option<Value> {
@@ -141,7 +151,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (endpoint, upstream) = build(payload);
+        let (endpoint, upstream) = build(payload).expect("payload should build");
         assert_eq!(endpoint, "/chat/completions");
 
         let body = upstream.as_object().expect("payload must be object");
@@ -172,6 +182,122 @@ mod tests {
     }
 
     #[test]
+    fn openrouter_normalizes_max_reasoning_effort_to_high() {
+        // SillyTavern's `max` preset is not in OpenRouter's effort enum; it must be
+        // normalized to `high` rather than forwarded raw (which OpenRouter rejects).
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-5.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "max"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("payload should build");
+        assert_eq!(
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
+            Some("high")
+        );
+        assert!(
+            upstream
+                .as_object()
+                .and_then(|body| body.get("reasoning_effort"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn openrouter_claude_keeps_xhigh_reasoning_effort() {
+        // OpenRouter accepts `xhigh` for Claude; the OpenAI GPT-version gating must
+        // not downgrade it to `high` on the Anthropic route.
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "anthropic/claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("payload should build");
+        assert_eq!(
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
+    fn openrouter_claude_still_normalizes_max_reasoning_effort() {
+        // `max` is never valid in OpenRouter's enum, even for Claude.
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "anthropic/claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "max"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("payload should build");
+        assert_eq!(
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn openrouter_non_claude_preserves_openrouter_xhigh_effort() {
+        // OpenRouter owns provider-specific translation for routed models; local
+        // OpenAI GPT-version gates must not preemptively downgrade this value.
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-5.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("payload should build");
+        assert_eq!(
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
+    fn openrouter_omits_auto_reasoning_effort() {
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-5.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "auto"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("payload should build");
+        let body = upstream.as_object().expect("payload must be object");
+
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
     fn openrouter_middleout_off_maps_to_empty_transforms() {
         let payload = json!({
             "chat_completion_source": "openrouter",
@@ -183,7 +309,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_, upstream) = build(payload);
+        let (_, upstream) = build(payload).expect("payload should build");
         let transforms_len = upstream
             .as_object()
             .and_then(|body| body.get("transforms"))
@@ -206,7 +332,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_, upstream) = build(payload);
+        let (_, upstream) = build(payload).expect("payload should build");
         let quantizations = upstream
             .as_object()
             .and_then(|body| body.get("provider"))

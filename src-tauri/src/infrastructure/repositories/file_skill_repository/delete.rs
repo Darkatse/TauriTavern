@@ -5,6 +5,7 @@ use super::fs_ops::{
     prepare_skill_dir_replacement, rollback_prepared_skill_dir,
     rollback_prepared_skill_dir_replacement,
 };
+use super::index::SkillDirectoryState;
 use super::index::sort_index;
 use super::paths::{normalize_source_string, validate_skill_name, validate_skill_scope};
 use super::source_refs::sort_dedup_source_refs;
@@ -34,17 +35,24 @@ pub(super) async fn delete_skill(
         )));
     };
 
+    let skill = index.skills[position].clone();
     let skill_root = repository.installed_scope_root(&scope)?.join(&name);
-    ensure_installed_skill_dir(&skill_root, &name)?;
+    let directory_present = matches!(
+        repository.skill_directory_state(&skill)?,
+        SkillDirectoryState::Present
+    );
     index.skills.remove(position);
     repository.save_index(&index).await?;
-    cleanup_committed_skill_dirs(
-        "delete_skill",
-        &[SkillDirCleanup {
-            name,
-            path: skill_root,
-        }],
-    )
+    if directory_present {
+        cleanup_committed_skill_dirs(
+            "delete_skill",
+            &[SkillDirCleanup {
+                name,
+                path: skill_root,
+            }],
+        )?;
+    }
+    Ok(())
 }
 
 pub(super) async fn move_skill(
@@ -201,19 +209,35 @@ pub(super) async fn delete_skills_for_source(
         }
 
         changed = true;
-        if skill.source_refs.is_empty() {
-            let skill_root = repository
-                .installed_scope_root(&skill.scope)?
-                .join(&skill.name);
-            ensure_installed_skill_dir(&skill_root, &skill.name)?;
+        let directory_present = matches!(
+            repository.skill_directory_state(&skill)?,
+            SkillDirectoryState::Present
+        );
+        if !directory_present {
+            tracing::warn!(
+                "Pruning stale Skill index entry while deleting source '{}:{}': {}/{}",
+                source_kind,
+                source_id,
+                skill.scope.label(),
+                skill.name
+            );
             deleted.push(format!("{}/{}", skill.scope.label(), skill.name));
-            cleanup_dirs.push(SkillDirCleanup {
-                name: skill.name,
-                path: skill_root,
-            });
-        } else {
-            next_skills.push(skill);
+            continue;
         }
+
+        if !skill.source_refs.is_empty() {
+            next_skills.push(skill);
+            continue;
+        }
+
+        let skill_root = repository
+            .installed_scope_root(&skill.scope)?
+            .join(&skill.name);
+        deleted.push(format!("{}/{}", skill.scope.label(), skill.name));
+        cleanup_dirs.push(SkillDirCleanup {
+            name: skill.name,
+            path: skill_root,
+        });
     }
 
     if changed {

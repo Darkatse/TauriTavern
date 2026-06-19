@@ -45,6 +45,15 @@ export function formatModelTurnDetail(target, turn) {
     }
 
     const blocks = [];
+    if (target.type === 'modelNarration' && typeof turn?.narration?.text === 'string' && turn.narration.text.trim()) {
+        addBlock(blocks, 'timelineNarration', turn.narration.text, DETAIL_TEXT_LIMIT, turn.narration.truncated === true, {
+            kind: 'assistant',
+            meta: textMetricsSummary({
+                chars: turn.narration.totalChars,
+                words: turn.narration.totalWords,
+            }),
+        });
+    }
     if (target.type === 'modelTurn' && typeof turn?.assistant?.text === 'string' && turn.assistant.text.trim()) {
         addBlock(blocks, 'timelineAssistantText', turn.assistant.text, DETAIL_TEXT_LIMIT, turn.assistant.truncated === true, {
             kind: 'assistant',
@@ -54,12 +63,14 @@ export function formatModelTurnDetail(target, turn) {
             }),
         });
     }
-    for (const item of Array.isArray(turn?.reasoning) ? turn.reasoning : []) {
-        addBlock(blocks, 'timelineReasoning', item.text, DETAIL_TEXT_LIMIT, item.truncated === true, {
-            kind: 'reasoning',
-            defaultOpen: false,
-            meta: reasoningMeta(item),
-        });
+    if (target.type !== 'modelNarration') {
+        for (const item of Array.isArray(turn?.reasoning) ? turn.reasoning : []) {
+            addBlock(blocks, 'timelineReasoning', item.text, DETAIL_TEXT_LIMIT, item.truncated === true, {
+                kind: 'reasoning',
+                defaultOpen: false,
+                meta: reasoningMeta(item),
+            });
+        }
     }
     if (target.type === 'modelTurn' && Array.isArray(turn?.toolCalls) && turn.toolCalls.length > 0) {
         addBlock(blocks, 'timelineModelToolCalls', renderModelToolCalls(turn.toolCalls), NESTED_TEXT_LIMIT, false, {
@@ -123,6 +134,82 @@ export function formatSubAgentTaskDetail(target) {
     };
 }
 
+export function formatHandoffDetail(target) {
+    const fields = [];
+
+    if (target.targetProfileId) {
+        fields.push(field(tr('timelineDetailFieldAgent'), target.targetProfileId));
+    }
+    if (target.status) {
+        fields.push(field(tr('timelineDetailFieldStatus'), target.status));
+    }
+    if (target.workspaceKey) {
+        fields.push(field(tr('timelineDetailFieldWorkspace'), target.workspaceKey));
+    }
+    if (target.sourceInvocationId) {
+        fields.push(field(tr('timelineDetailFieldSourceInvocation'), target.sourceInvocationId));
+    }
+    if (target.newInvocationId) {
+        fields.push(field(tr('timelineDetailFieldInvocation'), target.newInvocationId));
+    }
+    if (target.taskId) {
+        fields.push(field(tr('timelineDetailFieldTask'), target.taskId));
+    }
+
+    return {
+        labelKey: target.labelKey,
+        path: '',
+        fields,
+        blocks: [],
+        actions: [],
+    };
+}
+
+export function formatGuidanceDetail(target) {
+    const fields = [];
+    const blocks = [];
+
+    const guidanceIds = joinStringArray(target.guidanceIds);
+    if (guidanceIds) {
+        fields.push(field(tr('timelineDetailFieldGuidance'), guidanceIds));
+    }
+    const clientGuidanceIds = joinStringArray(target.clientGuidanceIds);
+    if (clientGuidanceIds) {
+        fields.push(field(tr('timelineDetailFieldClient'), clientGuidanceIds));
+    }
+    if (target.status) {
+        fields.push(field(tr('timelineDetailFieldStatus'), target.status));
+    }
+    if (target.invocationId) {
+        fields.push(field(tr('timelineDetailFieldInvocation'), target.invocationId));
+    }
+    if (target.round != null) {
+        fields.push(field(tr('timelineDetailFieldRound'), target.round));
+    }
+    if (target.reason) {
+        fields.push(field(tr('timelineDetailFieldReason'), target.reason));
+    }
+    const metrics = textMetricsSummary(target);
+    if (metrics) {
+        fields.push(field(tr('timelineDetailFieldTextMetrics'), metrics));
+    }
+
+    const text = String(target.text || target.preview || '').trim();
+    if (text) {
+        addBlock(blocks, 'timelineContent', text, DETAIL_TEXT_LIMIT, false, {
+            kind: 'user',
+        });
+    }
+
+    return {
+        labelKey: target.labelKey,
+        path: '',
+        fields,
+        blocks,
+        actions: [],
+    };
+}
+
 export function formatPatchDiffDetail(target, file) {
     const parsed = parseJson(String(file?.text || ''));
     if (!parsed.ok || !plainObject(parsed.value)) {
@@ -172,11 +259,12 @@ export function formatPatchDiffDetail(target, file) {
     };
 }
 
-export function formatRunFailureDetail(target) {
+export function formatRunFailureDetail(target, options = {}) {
     if (target?.event?.type === 'run_partial_success') {
         return formatRunPartialSuccessDetail(target);
     }
 
+    const allowRetry = options.allowRetry !== false;
     const presentation = presentAgentRunFailure(target.event);
     const fields = [];
     const blocks = [];
@@ -194,7 +282,7 @@ export function formatRunFailureDetail(target) {
         });
     }
 
-    if (presentation.userRetryable) {
+    if (presentation.userRetryable && allowRetry) {
         actions.push({
             kind: 'retry',
             labelKey: 'timelineActionRetry',
@@ -556,6 +644,13 @@ function describeInlineValue(value) {
 
 function field(label, value) {
     return { label, value: String(value) };
+}
+
+function joinStringArray(value) {
+    if (!Array.isArray(value)) {
+        return '';
+    }
+    return value.map((item) => String(item || '').trim()).filter(Boolean).join(', ');
 }
 
 function formatPrimitive(value) {

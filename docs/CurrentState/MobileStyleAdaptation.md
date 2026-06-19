@@ -109,7 +109,7 @@ Android 说明：
 当前策略：
 
 - **Admission**：仅观察 `document.body` 的直系子节点新增/移除（`subtree: false`），并对带 `script_id` 的 portal root 进一步扫描其子树（JS-Slash-Runner 常见挂载形态）。
-- **生命周期**：对已经进入跟踪集的候选 surface，只监听其自身 `class/style/hidden/open/aria-hidden` 属性变化，用于撤销/恢复 host-admitted contract；属性重算按 animation frame 合并。稳定的 `free-window` 只响应 inline lifecycle style（`display/visibility/position/pointer-events/cursor/touch-action`）变化，几何类 style 写入保持在拖动热路径之外；仍不做全局 subtree/style observer。
+- **生命周期**：对已经进入跟踪集的候选 surface，只监听其自身 `class/style/hidden/open/aria-hidden` 属性变化，用于撤销/恢复 host-admitted contract；属性重算按 animation frame 合并。稳定 surface 只响应 inline lifecycle style（`display/visibility/position/pointer-events/cursor/touch-action`）变化，几何类 style 写入与宿主 contract 变量写入不会重新进入分类；仍不做全局 subtree/style observer。
 - **判定**：对符合条件且当前可见的 `position: fixed` 节点进行 surface 分类（backdrop / viewport-host / fullscreen-window / free-window / edge-window）。
 - **输出**：不再直接写入 `top`；改为输出契约属性：
   - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`

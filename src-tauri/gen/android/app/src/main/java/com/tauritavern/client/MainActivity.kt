@@ -1,5 +1,6 @@
 package com.tauritavern.client
 
+import android.app.Activity
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
@@ -13,6 +14,7 @@ import android.webkit.WebChromeClient
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -49,11 +51,24 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
     registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
       handleExportArchivePickerResult(uri)
     }
+  private val publicDownloadPickerLauncher =
+    registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+      handlePublicDownloadPickerResult(result.resultCode, result.data?.data)
+    }
   private val importArchiveJsBridge: AndroidImportArchiveJsBridge by lazy {
     AndroidImportArchiveJsBridge(
       contentResolver = contentResolver,
       launchImportArchivePicker = { launchImportArchivePicker() },
       launchExportArchivePicker = { suggestedName -> launchExportArchivePicker(suggestedName) },
+    )
+  }
+  private val publicDownloadJsBridge: AndroidPublicDownloadJsBridge by lazy {
+    AndroidPublicDownloadJsBridge(
+      contentResolver = contentResolver,
+      exportStagingRoot = File(cacheDir, AndroidPublicDownloadJsBridge.EXPORT_STAGING_ROOT_NAME),
+      launchCreateDocumentPicker = { suggestedName, mimeType ->
+        launchPublicDownloadDocumentPicker(suggestedName, mimeType)
+      },
     )
   }
 
@@ -121,6 +136,10 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
     webView.addJavascriptInterface(
       importArchiveJsBridge,
       AndroidImportArchiveJsBridge.INTERFACE_NAME,
+    )
+    webView.addJavascriptInterface(
+      publicDownloadJsBridge,
+      AndroidPublicDownloadJsBridge.INTERFACE_NAME,
     )
     insetsBridge.onWebViewAvailable()
     sharePayloadDispatcher.requestDispatch()
@@ -218,6 +237,25 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
     }
   }
 
+  private fun launchPublicDownloadDocumentPicker(
+    suggestedName: String,
+    mimeType: String,
+  ) {
+    mainHandler.post {
+      if (isActivityDestroyed) {
+        return@post
+      }
+
+      val intent =
+        Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+          addCategory(Intent.CATEGORY_OPENABLE)
+          type = mimeType
+          putExtra(Intent.EXTRA_TITLE, suggestedName)
+        }
+      publicDownloadPickerLauncher.launch(intent)
+    }
+  }
+
   private fun handleImportArchivePickerResult(uri: Uri?) {
     if (uri == null) {
       dispatchPickerResult(
@@ -252,6 +290,26 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
     )
   }
 
+  private fun handlePublicDownloadPickerResult(
+    resultCode: Int,
+    uri: Uri?,
+  ) {
+    if (resultCode != Activity.RESULT_OK || uri == null) {
+      dispatchPickerResult(
+        receiverName = PUBLIC_DOWNLOAD_PICKER_RECEIVER,
+        contentUri = "",
+        error = "Export destination selection cancelled",
+      )
+      return
+    }
+
+    dispatchPickerResult(
+      receiverName = PUBLIC_DOWNLOAD_PICKER_RECEIVER,
+      contentUri = uri.toString(),
+      error = "",
+    )
+  }
+
   private fun dispatchPickerResult(
     receiverName: String,
     contentUri: String,
@@ -280,5 +338,6 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
   companion object {
     private const val IMPORT_ARCHIVE_PICKER_RECEIVER = "__TAURITAVERN_IMPORT_ARCHIVE_PICKER__"
     private const val EXPORT_ARCHIVE_PICKER_RECEIVER = "__TAURITAVERN_EXPORT_ARCHIVE_PICKER__"
+    private const val PUBLIC_DOWNLOAD_PICKER_RECEIVER = "__TAURITAVERN_PUBLIC_DOWNLOAD_PICKER__"
   }
 }

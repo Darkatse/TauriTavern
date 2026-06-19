@@ -7,6 +7,10 @@ function isIosNativeShareResult(result) {
     return result?.mode === 'ios-native-share';
 }
 
+function isAndroidDocumentPickerResult(result) {
+    return result?.mode === 'android-document-picker';
+}
+
 function resolveExportDestination(savedPath) {
     const normalizedPath = String(savedPath || '').trim();
     if (!normalizedPath) {
@@ -19,6 +23,10 @@ function resolveExportDestination(savedPath) {
 
 export function getExportSuccessMessage(result) {
     if (isIosNativeShareResult(result)) {
+        return t`Export completed.`;
+    }
+
+    if (isAndroidDocumentPickerResult(result)) {
         return t`Export completed.`;
     }
 

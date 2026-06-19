@@ -11,7 +11,7 @@ function extractQuickReplyName(payload) {
         return '';
     }
 
-    return typeof payload.name === 'string' ? payload.name.trim() : '';
+    return typeof payload.name === 'string' && payload.name.trim() ? payload.name : '';
 }
 
 export function registerQuickReplyRoutes(router, context, { jsonResponse }) {

@@ -1,8 +1,8 @@
 # TauriTavern SubAgent Runtime
 
-本文档记录当前 return-mode SubAgent 的实现基线、核心契约、Agent-friendly 设计原则与代码定位。后续开发多 Agent、handoff、task cancel 与 invocation-scoped prompt assembly 前，应先读本文。
+本文档记录当前 return-mode SubAgent 的实现基线、核心契约、Agent-friendly 设计原则与代码定位。`agent.handoff` 使用同一套 `AgentTaskRecord + AgentInvocation` 地基，但属于 foreground 接力流程；handoff 细节以 `docs/Agent/Handoff.md` 为准。后续开发多 Agent、task cancel 与 invocation-scoped prompt assembly 前，应先读本文和 `Handoff.md`。
 
-当前状态截至 2026-05-29：已实现 `agent.list`、`agent.delegate`、`agent.await`、return-mode child invocation 的 `task.return`，run-scoped `ActiveRunHandle` / `AgentTaskScheduler` 后台 worker 基线，以及 `preset.ref` child invocation 的 invocation-scoped PromptAssemblyBroker handshake。`agent.handoff` 与模型可见 task cancel 工具仍是后续计划，当前没有模型可见 `agent.handoff` / `agent.cancel_task`。
+当前状态截至 2026-06-06：已实现 `agent.list`、`agent.delegate`、`agent.await`、return-mode child invocation 的 `task.return`，run-scoped `ActiveRunHandle` / `AgentTaskScheduler` 后台 worker 基线，`agent.handoff` foreground 接力，以及 child / handoff invocation 的 PromptAssemblyBroker handshake。模型可见 task cancel 工具仍是后续计划，当前没有模型可见 `agent.cancel_task`。
 
 ## 1. 设计目标
 
@@ -52,7 +52,9 @@ root Agent may also call agent.await to wait for selected tasks before continuin
 
 父 Agent 无论是否显式调用 `agent.await`，只要它创建的 child task 已经 terminal，runtime 都会在下一次父 Agent tool turn 之后，把尚未在本轮上下文中出现过的结果作为 synthetic user message 注入下一轮模型请求。这个交付状态不写入 task record；当前只在 parent loop 内用内存集合去避免重复注入。这样避免把“已交付给父 Agent”固化成长期状态，同时保持 provider continuation 顺序清晰。
 
-`workspace.finish` 当前允许在仍有 unfinished child task 时结束 root run。finish 会默认取消当前 parent 拥有的 unfinished tasks；run 收尾也会取消 run 内剩余 unfinished child tasks。这样不会因为缺少模型可见 cancel 工具或某个子任务卡住而拖长生成。
+`agent.handoff` 创建 `continuation = TransferControl` 的 task 与 `kind = Handoff` 的后继 invocation。它不提交给 scheduler，也不返回 summary 给调用方；当前 invocation 记录完 handoff tool result 后转为 `Transferred`，executor 在同一个 `AgentRun` 内继续运行目标 Agent。已经 commit 过的 root / handoff owner 仍允许 handoff，最终 owner 可继续修订、再次 commit 并 `workspace.finish`。
+
+`workspace.finish` 当前允许在仍有 unfinished return-mode child task 时结束 root / handoff owner 的 run stage。finish 会默认取消当前 parent 拥有的 unfinished return-mode tasks；run 收尾也会取消 run 内剩余 unfinished child tasks。这样不会因为缺少模型可见 cancel 工具或某个子任务卡住而拖长生成。handoff task 不在这个默认取消范围内；它代表当前接力链上的后继 invocation。
 
 ## 3. 核心模型
 
@@ -85,7 +87,7 @@ AgentTaskRecord {
 }
 ```
 
-当前只创建 `continuation = ReturnToParent` 的 task。`TransferControl`、`Handoff`、`Transferred` 是为后续 handoff 保留的统一 delegation edge，不代表 handoff 已落地。
+`continuation = ReturnToParent` 的 task 由 scheduler 后台执行，并最终通过 `task.return` 把结果交回调用者。`continuation = TransferControl` 的 task 表示 handoff：它不进入后台 scheduler，而是在当前 foreground invocation 转为 `Transferred` 后，由 executor 串接启动 `Handoff` invocation。
 
 Invocation 与 task 文件由 `AgentInvocationRepository` 管理，当前文件实现位于：
 
@@ -113,6 +115,7 @@ summaries/<workspace-key>-result.md
 | --- | --- | --- | --- |
 | `agent.list` | `agent_list` | 允许 delegation 的 root/active invocation | 列出当前 Agent 可调用的 Agent 目录 |
 | `agent.delegate` | `agent_delegate` | `delegation.canDelegate = true` | 创建 return-mode 子任务并提交后台 worker |
+| `agent.handoff` | `agent_handoff` | `delegation.canHandoff = true` | 创建 TransferControl task，并让目标 Agent 接手同一 run 的下一阶段 |
 | `agent.await` | `agent_await` | `delegation.canDelegate = true` | 查询或等待自己创建的子任务结果 |
 | `task.return` | `task_return` | runtime 只注入 return-mode child invocation | 提交 delegated task 结果并结束 child work |
 
@@ -137,7 +140,7 @@ summaries/<workspace-key>-result.md
 
 `task.title` 是可选展示名；只有 `task.objective` 承载必须完成的任务目标。
 
-没有 `execution`、`continuation` 或 `invocationId` 参数。工具名已经表达了 continuation：`agent.delegate` 永远是 return-to-parent。
+没有 `execution`、`continuation` 或 `invocationId` 参数。工具名已经表达了 continuation：`agent.delegate` 永远是 return-to-parent，`agent.handoff` 永远是 transfer-control。
 
 ## 5. Child Invocation Policy
 
@@ -146,7 +149,7 @@ return-mode child Agent 必须遵守更窄的执行契约：
 - `run.presentation = background`。
 - 前端“可作为子 Agent”会写入 `run.directRunnable = false`；直接启动入口会 fail-fast，return-mode child invocation 仍可通过 `agent.delegate` 运行。
 - 移除 `workspace.commit`、`workspace.finish`。
-- 移除 `agent.list`、`agent.delegate`、`agent.await`。
+- 移除 `agent.list`、`agent.delegate`、`agent.handoff`、`agent.await`。
 - 注入 `task.return`。
 - `exit_policy = TaskReturnRequired`。
 - 可使用 target Agent Profile 的 model binding 与工具预算；delegate call 可进一步收窄 `maxRounds` / `maxToolCalls`。
@@ -248,6 +251,7 @@ SubAgent 主干入口：
 src-tauri/src/application/services/agent_runtime_service/delegation.rs
 src-tauri/src/application/services/agent_runtime_service/delegation/list_tool.rs
 src-tauri/src/application/services/agent_runtime_service/delegation/delegate_tool.rs
+src-tauri/src/application/services/agent_runtime_service/delegation/handoff_tool.rs
 src-tauri/src/application/services/agent_runtime_service/delegation/await_tool.rs
 src-tauri/src/application/services/agent_runtime_service/delegation/task_return_tool.rs
 src-tauri/src/application/services/agent_runtime_service/delegation/child_runtime.rs
@@ -298,8 +302,9 @@ src-tauri/src/infrastructure/repositories/file_agent_repository/tests.rs
 - scheduler 后台运行 child worker，完成后写 terminal task / invocation 状态。
 - `agent.await` 选择 task、等待或查询 scheduler 结果、渲染 result capsule。
 - 父 Agent 下一次 tool turn 后自动收到尚未出现过的 terminal child results。
-- `workspace.finish` 会取消 unfinished child tasks，而不会被其阻塞。
-- child invocation tool surface：无 commit/finish/delegate/await，有 task.return。
+- `workspace.finish` 会取消 unfinished return-mode child tasks，而不会被其阻塞。
+- handoff 创建 TransferControl task，不进入 scheduler；当前 invocation 转为 Transferred 后，同一 run 串接执行目标 handoff invocation。详细流程见 `Handoff.md`。
+- child invocation tool surface：无 commit/finish/delegate/handoff/await，有 task.return。
 - child system prompt 与 tool descriptions 不泄露不必要 runtime 细节。
 - child workspace policy 只调整 root 可见/可写权限，不映射路径。
 - task.return artifact path normalizing 与 result summary 写入。
@@ -308,9 +313,9 @@ src-tauri/src/infrastructure/repositories/file_agent_repository/tests.rs
 
 当前不是最终多 Agent runtime：
 
-- 没有 `agent.handoff`。
 - 没有模型可见 `agent.cancel_task`；当前只有 run cancel 与 finish 默认取消 unfinished child tasks。
 - return-mode child 默认不能 nested delegation，即使 profile schema 已有 `allowNestedDelegation` 字段。
+- return-mode child 不能 handoff；handoff 只属于 root / active foreground owner。handoff 的字段、事件、prompt brief 与扩展边界见 `Handoff.md`。
 - 没有跨 child 的主动通信；多个 child 只能通过同一个 workspace 中的普通文件和 `task.return` 结果协作。
 - 没有独立的 task timeout 取消边界；child worker 使用当前 scheduler / run cancellation path。
 

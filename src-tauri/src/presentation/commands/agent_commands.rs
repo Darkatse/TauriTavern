@@ -7,19 +7,24 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::agent_dto::{
-    AgentCancelRunDto, AgentListProfilesResultDto, AgentListToolSpecsResultDto,
-    AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentPreparePromptAssemblyDto,
+    AgentApplyRunPruneDto, AgentCancelRunDto, AgentListProfilesResultDto, AgentListRunsDto,
+    AgentListRunsResultDto, AgentListToolSpecsResultDto, AgentLoadProfileResultDto,
+    AgentModelTurnDisplayDto, AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto,
     AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto,
     AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
     AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
-    AgentReadWorkspaceFileDto, AgentResolveChatCommitDto,
+    AgentReadWorkspaceFileDto, AgentRepairProfileFileDto, AgentResolveChatCommitDto,
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
-    AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRunHandleDto,
-    AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
+    AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRetargetPresetRefsDto,
+    AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentRunPruneApplyResultDto,
+    AgentRunPrunePlanDto, AgentSaveProfileDto, AgentStartRunDto, AgentSubmitGuidanceDto,
+    AgentSubmitGuidanceResultDto, AgentWorkspaceFileDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
 use crate::domain::models::agent::AgentChatRef;
+use crate::domain::models::agent::profile_diagnostic::AgentProfileHealth;
+use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentPersistentStatePruneRequest;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -78,7 +83,10 @@ pub async fn list_agent_profiles(
         .agent_profile_service
         .list_profiles()
         .await
-        .map(|profiles| AgentListProfilesResultDto { profiles })
+        .map(|list| AgentListProfilesResultDto {
+            profiles: list.profiles,
+            issues: list.issues,
+        })
         .map_err(map_command_error("Failed to list agent profiles"))
 }
 
@@ -126,6 +134,23 @@ pub async fn load_agent_profile(
 }
 
 #[tauri::command]
+pub async fn diagnose_agent_profile(
+    dto: AgentProfileIdDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentProfileHealth, CommandError> {
+    log_command("diagnose_agent_profile");
+
+    app_state
+        .agent_profile_diagnostic_service
+        .diagnose_profile(
+            &dto.profile_id,
+            app_state.agent_runtime_service.tool_specs(),
+        )
+        .await
+        .map_err(map_command_error("Failed to diagnose agent profile"))
+}
+
+#[tauri::command]
 pub async fn save_agent_profile(
     dto: AgentSaveProfileDto,
     app_state: State<'_, Arc<AppState>>,
@@ -155,6 +180,47 @@ pub async fn delete_agent_profile(
 }
 
 #[tauri::command]
+pub async fn repair_agent_profile_file(
+    dto: AgentRepairProfileFileDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("repair_agent_profile_file");
+
+    app_state
+        .agent_profile_service
+        .repair_profile_file(&dto.profile_id, dto.action)
+        .await
+        .map_err(map_command_error("Failed to repair agent profile file"))
+}
+
+#[tauri::command]
+pub async fn retarget_agent_profile_preset_refs(
+    dto: AgentRetargetPresetRefsDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentRetargetPresetRefsResultDto, CommandError> {
+    log_command(format!(
+        "retarget_agent_profile_preset_refs {}/{} -> {}/{}",
+        dto.from.api_id, dto.from.name, dto.to.api_id, dto.to.name
+    ));
+
+    app_state
+        .agent_profile_service
+        .retarget_preset_refs(dto.from, dto.to)
+        .await
+        .map(|result| AgentRetargetPresetRefsResultDto {
+            updated: result.profile_ids.len(),
+            profile_ids: result
+                .profile_ids
+                .iter()
+                .map(|id| id.as_str().to_string())
+                .collect(),
+        })
+        .map_err(map_command_error(
+            "Failed to retarget agent profile preset refs",
+        ))
+}
+
+#[tauri::command]
 pub async fn cancel_agent_run(
     dto: AgentCancelRunDto,
     app_state: State<'_, Arc<AppState>>,
@@ -166,6 +232,62 @@ pub async fn cancel_agent_run(
         .cancel_run(dto)
         .await
         .map_err(map_command_error("Failed to cancel agent run"))
+}
+
+#[tauri::command]
+pub async fn submit_agent_run_guidance(
+    dto: AgentSubmitGuidanceDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentSubmitGuidanceResultDto, CommandError> {
+    log_command("submit_agent_run_guidance");
+
+    app_state
+        .agent_runtime_service
+        .submit_guidance(dto)
+        .await
+        .map_err(map_command_error("Failed to submit agent run guidance"))
+}
+
+#[tauri::command]
+pub async fn list_agent_runs(
+    dto: AgentListRunsDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentListRunsResultDto, CommandError> {
+    log_command("list_agent_runs");
+
+    app_state
+        .agent_run_history_service
+        .list_runs(dto)
+        .await
+        .map_err(map_command_error("Failed to list agent runs"))
+}
+
+#[tauri::command]
+pub async fn plan_agent_run_prune(
+    dto: AgentPlanRunPruneDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentRunPrunePlanDto, CommandError> {
+    log_command("plan_agent_run_prune");
+
+    app_state
+        .agent_run_history_service
+        .plan_run_prune(dto)
+        .await
+        .map_err(map_command_error("Failed to plan agent run prune"))
+}
+
+#[tauri::command]
+pub async fn apply_agent_run_prune(
+    dto: AgentApplyRunPruneDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentRunPruneApplyResultDto, CommandError> {
+    log_command("apply_agent_run_prune");
+
+    app_state
+        .agent_run_history_service
+        .apply_run_prune(dto)
+        .await
+        .map_err(map_command_error("Failed to apply agent run prune"))
 }
 
 #[tauri::command]
@@ -293,6 +415,13 @@ pub async fn prune_agent_chat_persistent_states(
         }
     };
 
+    let candidate_state_ids = dto.candidate_state_ids.ok_or_else(|| {
+        map_command_error("Failed to prune agent persistent states")(
+            ApplicationError::ValidationError(
+                "agent.persistent_state_prune_candidates_required".to_string(),
+            ),
+        )
+    })?;
     let payload = app_state
         .chat_service
         .get_chat_payload(character_id, file_name)
@@ -308,7 +437,13 @@ pub async fn prune_agent_chat_persistent_states(
 
     app_state
         .chat_service
-        .prune_agent_persistent_states(&target, &retained_state_ids)
+        .prune_agent_persistent_states(
+            &target,
+            AgentPersistentStatePruneRequest {
+                retained_state_ids,
+                candidate_state_ids,
+            },
+        )
         .await
         .map(|prune| AgentPruneChatPersistentStatesResultDto {
             workspace_id: prune.workspace_id,

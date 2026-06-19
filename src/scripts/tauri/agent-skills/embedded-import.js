@@ -3,6 +3,7 @@
 import { t, translate } from '../../i18n.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 import { SURFACE, applySurface } from '../../tauritavern/layout-kit.js';
+import { characterStemFromAvatarFileName } from '../../../tauri/main/services/characters/character-identity.js';
 import { buildSkillImportReminderKey, hasSkillImportReminder, setSkillImportReminder } from './reminders.js';
 
 const EMBEDDED_SKILLS_VERSION = 1;
@@ -122,6 +123,7 @@ function normalizeEmbeddedFile(value) {
 function normalizeEmbeddedItem(value, index, fallbackSource) {
     const item = requirePlainObject(value);
     const bundleFormat = requireNonEmptyString(item.bundleFormat, `items[${index}].bundleFormat`);
+    const skillName = String(item.skillName || '').trim();
 
     const source = normalizeEmbeddedSource(item.source, fallbackSource);
     if (bundleFormat === INLINE_FILES_BUNDLE_FORMAT) {
@@ -131,6 +133,7 @@ function normalizeEmbeddedItem(value, index, fallbackSource) {
 
         return {
             index,
+            ...(skillName ? { skillName } : {}),
             input: {
                 kind: 'inlineFiles',
                 files: item.files.map(normalizeEmbeddedFile),
@@ -151,7 +154,11 @@ function normalizeEmbeddedItem(value, index, fallbackSource) {
         if (sha256) {
             input.sha256 = sha256;
         }
-        return { index, input };
+        return {
+            index,
+            ...(skillName ? { skillName } : {}),
+            input,
+        };
     }
 
     throw new Error(`Unsupported embedded Agent Skill bundle format: ${bundleFormat}`);
@@ -222,7 +229,10 @@ function buildPresetSkillSourceId(apiId, name) {
  * @param {unknown} value
  */
 function buildCharacterSkillSourceId(value) {
-    const characterId = requireNonEmptyString(value, 'character id').replace(/\.png$/i, '');
+    const text = String(value ?? '');
+    const characterId = text.endsWith('.png')
+        ? characterStemFromAvatarFileName(text, 'character avatar', { required: true })
+        : requireNonEmptyString(value, 'character id');
     return `character:${characterId}`;
 }
 
@@ -562,12 +572,34 @@ function reportEmbeddedSkillError(error) {
 }
 
 /**
+ * @param {any} item
+ */
+function embeddedSkillItemLabel(item) {
+    const input = item?.input || {};
+    const label = String(item?.skillName || input?.fileName || input?.source?.label || input?.source?.id || '').trim();
+    if (label) {
+        return label;
+    }
+    return t`Item ${Number(item?.index || 0) + 1}`;
+}
+
+/**
+ * @param {'preview' | 'install'} phase
+ * @param {any} item
+ * @param {unknown} error
+ */
+function reportEmbeddedSkillItemError(phase, item, error) {
+    console.error(`Agent Skill embedded ${phase} failed`, { item, error });
+    const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
+    const title = phase === 'preview' ? t`Agent Skill preview failed` : t`Agent Skill install failed`;
+    getToastr().error(`${embeddedSkillItemLabel(item)}: ${message}`, title);
+}
+
+/**
  * @param {string} avatarFileName
  */
 function characterIdFromAvatarName(avatarFileName) {
-    const fileName = String(avatarFileName || '').trim().split(/[\\/]/).pop() || '';
-    const index = fileName.lastIndexOf('.');
-    return index > 0 ? fileName.slice(0, index) : fileName;
+    return characterStemFromAvatarFileName(avatarFileName, 'avatarFileName', { required: true });
 }
 
 /**
@@ -584,21 +616,32 @@ async function previewAndPromptEmbeddedSkills({ items, sourceLabel, storageKey, 
     }
 
     const previews = [];
+    let hadItemError = false;
     for (const item of items) {
-        previews.push({
-            item,
-            preview: await skillApi.previewImport({ input: item.input, targetScope }),
-        });
+        try {
+            const preview = await skillApi.previewImport({ input: item.input, targetScope });
+            previews.push({ item, preview });
+        } catch (error) {
+            hadItemError = true;
+            reportEmbeddedSkillItemError('preview', item, error);
+        }
+    }
+    if (previews.length === 0) {
+        return;
     }
 
     const decisions = await showImportPopup(previews, sourceLabel);
     if (decisions === null) {
-        setSkillImportReminder(storageKey);
+        if (!hadItemError) {
+            setSkillImportReminder(storageKey);
+        }
         return;
     }
 
     if (decisions.length === 0) {
-        setSkillImportReminder(storageKey);
+        if (!hadItemError) {
+            setSkillImportReminder(storageKey);
+        }
         if (hasImportablePreviews(previews)) {
             getToastr().info(t`No Agent Skills imported`);
         }
@@ -614,11 +657,21 @@ async function previewAndPromptEmbeddedSkills({ items, sourceLabel, storageKey, 
         if (decision.conflictStrategy !== undefined) {
             request.conflictStrategy = decision.conflictStrategy;
         }
-        results.push(await skillApi.installImport(request));
+        try {
+            const result = await skillApi.installImport(request);
+            results.push(result);
+        } catch (error) {
+            hadItemError = true;
+            reportEmbeddedSkillItemError('install', decision.item, error);
+        }
     }
 
-    reportInstallResults(results);
-    setSkillImportReminder(storageKey);
+    if (results.length > 0) {
+        reportInstallResults(results);
+    }
+    if (!hadItemError) {
+        setSkillImportReminder(storageKey);
+    }
 }
 
 /**

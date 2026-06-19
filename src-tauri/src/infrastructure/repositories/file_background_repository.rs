@@ -4,6 +4,7 @@ use tokio::fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::background::BackgroundAsset;
+use crate::domain::models::filename::sanitize_filename;
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::thumbnail_cache::{
@@ -27,16 +28,7 @@ impl FileBackgroundRepository {
     }
 
     fn normalize_filename(&self, filename: &str) -> Result<String, DomainError> {
-        let sanitized = filename
-            .chars()
-            .map(|ch| match ch {
-                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-                _ if ch.is_control() => '_',
-                _ => ch,
-            })
-            .collect::<String>();
-        let sanitized = sanitized.trim().trim_end_matches(['.', ' ']).to_string();
-
+        let sanitized = sanitize_filename(filename);
         if sanitized.is_empty() {
             return Err(DomainError::InvalidData(
                 "Invalid background filename".to_string(),
@@ -245,7 +237,7 @@ mod tests {
     use super::FileBackgroundRepository;
 
     #[test]
-    fn normalize_filename_replaces_unsafe_characters() {
+    fn normalize_filename_matches_upstream_sanitize_filename() {
         let repository = FileBackgroundRepository::new(
             PathBuf::from("backgrounds"),
             PathBuf::from("thumbnails/bg"),
@@ -254,7 +246,7 @@ mod tests {
             .normalize_filename("..\\bad:*name?.png")
             .expect("filename should be valid after normalization");
 
-        assert_eq!(normalized, ".._bad__name_.png");
+        assert_eq!(normalized, "..badname.png");
     }
 
     #[test]

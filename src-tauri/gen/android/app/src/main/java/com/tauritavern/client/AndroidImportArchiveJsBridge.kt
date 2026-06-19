@@ -4,9 +4,6 @@ import android.content.ContentResolver
 import android.net.Uri
 import android.webkit.JavascriptInterface
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.nio.channels.FileChannel
 
 class AndroidImportArchiveJsBridge(
   private val contentResolver: ContentResolver,
@@ -32,13 +29,8 @@ class AndroidImportArchiveJsBridge(
   ): String {
     val uri = Uri.parse(requireNotNull(contentUri).trim())
     val targetFile = File(requireNotNull(targetPath).trim())
-    targetFile.parentFile?.mkdirs()
 
-    requireNotNull(contentResolver.openInputStream(uri)).use { input ->
-      targetFile.outputStream().use { output -> input.copyTo(output, COPY_BUFFER_BYTES) }
-    }
-
-    return targetFile.absolutePath
+    return AndroidContentFileTransfer.copyContentUriToFile(contentResolver, uri, targetFile)
   }
 
   @JavascriptInterface
@@ -49,34 +41,15 @@ class AndroidImportArchiveJsBridge(
     val sourceFile = File(requireNotNull(sourcePath).trim())
     val targetUri = Uri.parse(requireNotNull(contentUri).trim())
 
-    FileInputStream(sourceFile).channel.use { source ->
-      requireNotNull(contentResolver.openFileDescriptor(targetUri, "w")).use { descriptor ->
-        FileOutputStream(descriptor.fileDescriptor).channel.use { target ->
-          transferFile(source, target)
-          target.force(true)
-        }
-      }
-    }
-
-    return targetUri.toString()
-  }
-
-  private fun transferFile(
-    source: FileChannel,
-    target: FileChannel,
-  ) {
-    val size = source.size()
-    var position = 0L
-
-    while (position < size) {
-      val transferred = source.transferTo(position, size - position, target)
-      check(transferred > 0L) { "Failed to copy export archive to destination URI" }
-      position += transferred
-    }
+    return AndroidContentFileTransfer.copyFileToContentUri(
+      contentResolver = contentResolver,
+      sourceFile = sourceFile,
+      targetUri = targetUri,
+      failureMessage = "Failed to copy export archive to destination URI",
+    )
   }
 
   companion object {
-    private const val COPY_BUFFER_BYTES = 4 * 1024 * 1024
     private const val DEFAULT_EXPORT_FILE_NAME = "tauritavern-data.zip"
     const val INTERFACE_NAME = "TauriTavernAndroidImportArchiveBridge"
   }

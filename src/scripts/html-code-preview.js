@@ -15,6 +15,7 @@ const HTML_ROOT_PATTERN = /<\s*html[\s>]/i;
 const DOCTYPE_PATTERN = /<!doctype\b/i;
 const SCRIPT_PATTERN = /<\s*script\b/i;
 let htmlCodeRenderEnabled = false;
+let htmlCodeRenderSuppressedByExternalRenderer = false;
 let replaceLastMessageByDefault = false;
 let previewCounter = 0;
 let isPreviewMessageListenerBound = false;
@@ -600,6 +601,15 @@ export function setHtmlCodeRenderEnabled(enabled) {
 }
 
 /**
+ * Suppresses the built-in renderer while a richer third-party renderer owns code blocks.
+ * @param {boolean} suppressed
+ * @returns {void}
+ */
+export function setHtmlCodeRenderSuppressedByExternalRenderer(suppressed) {
+    htmlCodeRenderSuppressedByExternalRenderer = !!suppressed;
+}
+
+/**
  * Configures whether the newest rendered preview should replace the last message by default.
  * @param {boolean} enabled
  * @returns {void}
@@ -614,7 +624,7 @@ export function setHtmlCodeRenderReplaceLastMessageByDefault(enabled) {
  * @returns {void}
  */
 export function renderInteractiveHtmlCodeBlocks(messageElement) {
-    if (!htmlCodeRenderEnabled) {
+    if (!htmlCodeRenderEnabled || htmlCodeRenderSuppressedByExternalRenderer) {
         return;
     }
 

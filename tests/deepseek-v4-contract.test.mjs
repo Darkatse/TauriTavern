@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DEEPSEEK_REASONING_EFFORT_I18N_KEY = 'DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.';
 
 function readProjectFile(relativePath) {
     return readFile(path.join(REPO_ROOT, relativePath), 'utf8');
@@ -22,9 +23,11 @@ test('DeepSeek v4 is the static default and visible model choice', async () => {
 });
 
 test('DeepSeek reasoning controls match the v4 request contract', async () => {
-    const [openaiSource, indexHtml] = await Promise.all([
+    const [openaiSource, indexHtml, zhCn, zhTw] = await Promise.all([
         readProjectFile('src/scripts/openai.js'),
         readProjectFile('src/index.html'),
+        readProjectFile('src/locales/zh-cn.json').then(JSON.parse),
+        readProjectFile('src/locales/zh-tw.json').then(JSON.parse),
     ]);
 
     assert.match(openaiSource, /chat_completion_sources\.DEEPSEEK/);
@@ -33,7 +36,9 @@ test('DeepSeek reasoning controls match the v4 request contract', async () => {
     assert.match(openaiSource, /case reasoning_effort_types\.xhigh:\s*return supportsXHighReasoningEffort\(\)\s*\?\s*reasoning_effort_types\.xhigh\s*:\s*resolveMaximumReasoningEffort\(\);/);
     assert.match(indexHtml, /data-source="[^"]*\bdeepseek\b[^"]*"[\s\S]*?<select id="openai_reasoning_effort">/);
     assert.match(indexHtml, /data-source-mode="except" data-source="deepseek,zai,moonshot"/);
-    assert.match(indexHtml, /DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort\./);
+    assert.match(indexHtml, new RegExp(`data-i18n="${DEEPSEEK_REASONING_EFFORT_I18N_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+    assert.equal(zhCn[DEEPSEEK_REASONING_EFFORT_I18N_KEY], 'DeepSeek 选项：自动不会发送推理强度字段；极低到高都会请求 high 推理强度；极高会请求 max 推理强度。');
+    assert.equal(zhTw[DEEPSEEK_REASONING_EFFORT_I18N_KEY], 'DeepSeek 選項：自動不會傳送推理耗費欄位；最小到高都會請求 high 推理耗費；最大會請求 max 推理耗費。');
 });
 
 test('DeepSeek tool-call reasoning is persisted and replayed only for the same DeepSeek model turn owner', async () => {

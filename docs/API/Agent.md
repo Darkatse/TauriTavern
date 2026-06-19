@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 当前参考。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来设计。
+状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing、Agent run retention facade / dry-run plan preview / manual apply prune / backend auto prune，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval 等未来设计。
 
 `provider_state` 是 Rust 后端内部 continuation contract，不是 Host ABI。前端/扩展不应读写 `_tauritavern_provider_state`；需要诊断时通过 run events、`modelResponsePath` 与 LLM API log 观察。
 模型回合详情必须通过 `readModelTurn()` 读取后端投影 DTO；前端不解析 `model-responses/` raw JSON。
@@ -25,13 +25,33 @@ type TauriTavernAgentApi = {
   startRunWithPromptSnapshot(input: AgentStartRunWithPromptSnapshotInput): Promise<AgentRunHandle>;
   subscribe(runId: string, handler: (event: AgentRunEvent) => void, options?: AgentSubscribeOptions): TauriTavernHostUnsubscribe;
   cancel(runId: string): Promise<AgentRunHandle>;
+  submitGuidance(input: AgentSubmitGuidanceInput): Promise<AgentSubmitGuidanceResult>;
   readEvents(input: AgentReadEventsInput): Promise<AgentReadEventsResult>;
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
   readModelTurn(input: AgentReadModelTurnInput): Promise<AgentModelTurn>;
+  pruneChatPersistentStates(input: AgentPruneChatPersistentStatesInput): Promise<AgentPruneChatPersistentStatesResult>;
+  retention: {
+    readSettings(): Promise<AgentRunRetentionSettings>;
+    updateSettings(input: Partial<AgentRunRetentionSettings>): Promise<AgentRunRetentionSettings>;
+    planPrune(input?: {
+      retention?: AgentRunPruneRetention | AgentRunRetentionSettings;
+      detailLimit?: number;
+    }): Promise<AgentRunPrunePlan>;
+    applyPrune(input?: {
+      retention?: AgentRunPruneRetention | AgentRunRetentionSettings;
+      detailLimit?: number;
+    }): Promise<AgentRunPruneApplyResult>;
+  };
   profiles: {
-    list(): Promise<{ profiles: AgentProfileSummary[] }>;
+    list(): Promise<AgentListProfilesResult>;
     load(input: string | { profileId: string }): Promise<{ profile: AgentProfileDefinition | null }>;
+    diagnose(input: string | { profileId: string }): Promise<AgentProfileHealth>;
     resolveSystemPrompt(input?: string | { profileId?: string | null }): Promise<{ agentSystemPrompt: string }>;
+    repairFile(input: { profileId: string; action: 'delete' | 'normalizeIdentity' }): Promise<void>;
+    retargetPresetRefs(input: {
+      from: { apiId: string; name: string };
+      to: { apiId: string; name: string };
+    }): Promise<{ updated: number; profileIds: string[] }>;
     save(input: AgentProfileDefinition | { profile: AgentProfileDefinition }): Promise<void>;
     delete(input: string | { profileId: string }): Promise<void>;
   };
@@ -44,7 +64,16 @@ type TauriTavernAgentApi = {
   };
 
   approveToolCall(): never;
-  listRuns(): never;
+  listRuns(input?: {
+    chatRef?: AgentChatRef;
+    stableChatId?: string;
+    statuses?: AgentRunStatus[];
+    before?: { createdAt: string; runId: string };
+    limit?: number;
+  }): Promise<{
+    runs: AgentRunSummary[];
+    nextCursor?: { createdAt: string; runId: string };
+  }>;
   readDiff(): never;
   rollback(): never;
 };
@@ -57,7 +86,7 @@ type TauriTavernAgentApi = {
 - `startRunFromLegacyGenerate()`：从当前 Legacy Generate dryRun 兼容桥启动。
 - `startRunWithPromptSnapshot()`：调用方已经持有 prompt snapshot 时启动。
 
-`approveToolCall()`、`listRuns()`、`readDiff()`、`rollback()` 已预留名称，但当前实现会显式 throw，避免静默降级。
+`approveToolCall()`、`readDiff()`、`rollback()` 已预留名称，但当前实现会显式 throw，避免静默降级。
 
 ## 3. startRunFromLegacyGenerate
 
@@ -135,7 +164,36 @@ type AgentRunHandle = {
   stableChatId: string;
   generationType: string;
 };
+
+type AgentRunSummary = {
+  runId: string;
+  workspaceId: string;
+  stableChatId: string;
+  chatRef: AgentChatRef;
+  generationType: string;
+  profileId?: string;
+  skillScopeRefs?: {
+    preset?: { apiId: string; name: string };
+    characterId?: string;
+  };
+  persistBaseStateId?: string;
+  inputMessageCount?: number;
+  presentation: 'foreground' | 'background';
+  status: AgentRunStatus;
+  createdAt: string;
+  updatedAt: string;
+  commitCount: number;
+  committedMessage?: {
+    commitId: string;
+    messageId: string;
+    messageIndex?: number;
+    committedAt: string;
+  };
+  terminalAt?: string;
+};
 ```
+
+`AgentRunSummary.committedMessage.messageIndex` 是 host commit 当时的零基消息索引快照，由 `chat_commit_completed.messageId` 派生；它不承诺当前聊天仍在该位置。旧 run 没有可解析 `messageId` 时该字段为空，前端不应显示楼层定位。summary projection 是可从 journal 重建的缓存，只在已经写入 terminal event 的终态 run 上复用/落盘。
 
 身份语义：
 
@@ -191,6 +249,43 @@ await agent.cancel(runId);
 - Cancel 后不能自动 commit。
 - 返回最新 `AgentRunHandle`。
 
+## 6.1 submitGuidance
+
+```ts
+await agent.submitGuidance({
+  runId,
+  text: "Prefer the quieter ending and keep the character's agency clear.",
+  clientGuidanceId: "optional-client-correlation-id",
+});
+```
+
+```ts
+type AgentSubmitGuidanceInput = {
+  runId: string;
+  text: string;
+  clientGuidanceId?: string;
+};
+
+type AgentSubmitGuidanceResult = {
+  runId: string;
+  guidanceId: string;
+  clientGuidanceId?: string;
+  status: 'queued';
+  preview: string;
+  chars: number;
+  words: number;
+  pendingCount: number;
+};
+```
+
+语义：
+
+- `submitGuidance()` 是 active AgentRun 的 run-scoped 输入通道，不是普通聊天发送，不写入 SillyTavern chat history，也不会启动新的 Generate。
+- Runtime 会先写 `user_guidance_submitted`，再将 guidance 放入当前 active run mailbox；下一次 root / handoff 前台 invocation 创建模型请求前，pending guidance 会合并为一条 canonical `role=user` message，并写 `user_guidance_applied`。
+- 已经发出的 provider request 不会被热修改。若当前模型调用正在进行，guidance 只影响后续模型请求边界。
+- `cancel()`、run finish、run failure / partial success 会关闭 mailbox；尚未应用的 guidance 写 `user_guidance_discarded`。
+- 空文本、过长文本、非 active run、`finishing` / `cancelling` / terminal run、mailbox 已满都会 fail-fast，不做静默丢弃。
+
 ## 7. approveToolCall
 
 当前未实现审批流程；`approveToolCall()` 会显式 throw。
@@ -217,10 +312,44 @@ type AgentReadEventsInput = {
   afterSeq?: number;
   beforeSeq?: number;
   limit?: number;
+  invocationId?: string;
+  includeTimelineProjection?: boolean;
 };
 
 type AgentReadEventsResult = {
   events: AgentRunEvent[];
+  timelineProjection?: AgentRunTimelineProjection;
+};
+
+type AgentRunTimelineProjection = {
+  foregroundInvocationIds: string[];
+  invocations: AgentRunTimelineInvocation[];
+  delegationEdges: AgentRunTimelineDelegationEdge[];
+};
+
+type AgentRunTimelineInvocation = {
+  invocationId: string;
+  parentInvocationId?: string;
+  profileId: string;
+  kind: 'root' | 'subagent' | 'handoff';
+  status: 'created' | 'running' | 'completed' | 'failed' | 'cancelled' | 'transferred';
+  exitPolicy: 'run_finish_allowed' | 'task_return_required';
+  createdAt: string;
+  updatedAt: string;
+};
+
+type AgentRunTimelineDelegationEdge = {
+  taskId: string;
+  sourceInvocationId: string;
+  targetInvocationId: string;
+  targetProfileId: string;
+  workspaceKey: string;
+  continuation: 'return_to_parent' | 'transfer_control';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  resultRef?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 ```
 
@@ -228,6 +357,10 @@ type AgentReadEventsResult = {
 
 - `limit` 必须有上限。
 - 移动端 UI 不应一次读取完整巨大 journal；推荐先用 `beforeSeq` 读取最新页，再在用户向上回看时继续用 `beforeSeq` 补拉更早事件，同时用 `afterSeq` 追新。
+- `invocationId` 可选。传入时，后端先按 invocation 归属过滤事件流，再应用 `afterSeq` / `beforeSeq` / `limit`；因此分页窗口表达的是该 invocation 自己的历史页，不是全局页的二次筛选。该能力用于 SubAgent / handoff 局部 timeline，避免移动端为查看一个子 Agent 搬运完整 run journal。
+- 新事件使用 canonical event scope：`payload.eventScope.invocationId` 表示主归属 invocation，`payload.eventScope.relatedInvocationIds` 表示相关 invocation。`readEvents({ invocationId })` 会返回主归属或相关列表命中的事件；旧 journal 没有 canonical scope 时，后端仅为兼容读取历史字段。
+- `timelineProjection` 仅在 `includeTimelineProjection = true` 时返回。它是面向 Timeline UI 的轻量结构投影，不是 journal event；它来自 run 的 invocation/task repository，用于在分页事件缺少 SubAgent task 或 handoff 起点时仍能识别 run 内 Agent graph。普通 polling / subscribe 不应请求该投影。
+- `timelineProjection` 不受 `invocationId` 过滤影响；调用方可以同时读取局部事件页和全局 Agent graph。
 - 当前暂不返回 `hasMoreBefore/hasMoreAfter`。
 
 ## 9. readWorkspaceFile
@@ -278,6 +411,13 @@ type AgentModelTurn = {
     totalWords: number;
     truncated: boolean;
   };
+  narration?: {
+    source: 'assistantText';
+    text: string;
+    totalChars: number;
+    totalWords: number;
+    truncated: boolean;
+  } | null;
   reasoning: Array<{
     source: string;
     text: string;
@@ -293,16 +433,120 @@ type AgentModelTurn = {
 };
 ```
 
-`assistant.text` 与 `reasoning[].text` 会按 `maxChars` 截断；`totalChars` / `totalWords` 始终表示截断前完整文本的字词统计。
+`narration` 是带工具调用的模型回合中可展示给用户的 assistant visible text 投影，用于表达模型在工具调用前后的简短叙述、意图或转场。它不是 runtime status，不从 reasoning / thinking / thought 提取，也不解析 assistant text 内部的 JSON 字段。无工具调用或空文本时为 `null` 或缺省。
+
+`assistant.text`、`narration.text` 与 `reasoning[].text` 会按 `maxChars` 截断；`totalChars` / `totalWords` 始终表示截断前完整文本的字词统计。
 
 `round` 必须大于 0。`maxChars` 省略时由后端使用默认上限；传入时必须大于 0。
 `invocationId` 省略时读取 root invocation；读取 SubAgent / handoff invocation 的模型回合时必须传入对应 invocation id。
 
-该方法返回面向 UI 的白名单投影：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。它不会暴露完整 raw response、provider-private native continuation、签名或 encrypted reasoning。需要完整诊断时仍使用 run workspace 中的 `modelResponsePath` 与 LLM API log。
+该方法返回面向 UI 的白名单投影：assistant 输出、narration、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。它不会暴露完整 raw response、provider-private native continuation、签名或 encrypted reasoning。需要完整诊断时仍使用 run workspace 中的 `modelResponsePath` 与 LLM API log。
 
-## 11. profiles / promptAssembly / tools
+## 11. pruneChatPersistentStates
 
-`profiles.*` 是当前 Agent Profile 管理入口。`profiles.list()` 的 summary 包含 `directRunnable`，供前端区分可直接启动的 root-run Profile 与只能作为 SubAgent / handoff target 的 Profile。Profile JSON 中的 `preset.mode = "ref"` 与 `model.mode = "connectionRef"` 会影响 prompt assembly 和最终模型连接；`model.mode = "requiresConfiguration"` 表示 Profile 需要本机重新选择模型，可保存但不可运行；`run.directRunnable = false` 表示该 Profile 不能直接启动，只能通过已实现的非直接入口运行（当前为 return-mode SubAgent）。前端“可作为子 Agent”会写入该非直接运行语义。保存时无效 schema 必须 fail-fast。
+```ts
+type AgentPruneChatPersistentStatesInput = {
+  chatRef?: AgentChatRef;
+  stableChatId?: string;
+  candidateStateIds: string[];
+};
+
+type AgentPruneChatPersistentStatesResult = {
+  workspaceId: string;
+  removedStateIds: string[];
+};
+```
+
+`pruneChatPersistentStates()` 是消息/Swipe 删除后的 Host cleanup 入口，不是全量 GC。调用方必须显式传入从被删除消息或被删除 swipe metadata 中收集到的 `candidateStateIds`；缺失、非数组或空字符串 state id 必须 reject。
+
+后端会重新读取当前完整 chat payload，收集仍被当前聊天消息或 swipe 引用的 retained state ids，只删除 `candidateStateIds - retainedStateIds`。未被本次删除动作明确列为 candidate 的孤儿 state 必须保留，避免第三方总结、隐藏楼层、windowed save 或 metadata 损坏把整个 `persistent-states` 目录误清空。
+
+当前只支持 character chat；group chat persistent state prune 会 fail-fast。删除整个 chat / group chat 时，生命周期服务仍删除对应的完整 Agent chat workspace，这不是本方法的职责。
+
+## 12. retention
+
+```ts
+type AgentRunPruneRetention = {
+  keepRecentTerminalRuns: number;
+  keepFullRecentRuns: number;
+};
+
+type AgentRunRetentionSettings = AgentRunPruneRetention & {
+  autoPruneEnabled: boolean;
+};
+
+type AgentRunPruneCandidate = {
+  runId: string;
+  workspaceId: string;
+  stableChatId: string;
+  chatRef: AgentChatRef;
+  status: AgentRunStatus;
+  createdAt: string;
+  updatedAt: string;
+  action: 'slim_heavy_artifacts' | 'delete_run';
+  reason: 'outside_full_retention_window' | 'outside_history_retention_window';
+  fileCount: number;
+  byteCount: number;
+};
+
+type AgentRunPruneBlockedRun = AgentRunPruneCandidate & {
+  blockReason: 'active_run' | 'missing_terminal_event' | 'invalid_journal' | 'invalid_storage';
+  message?: string;
+};
+
+type AgentRunPruneFailedRun = AgentRunPruneCandidate & {
+  message: string;
+};
+
+type AgentRunPrunePlan = {
+  retention: AgentRunPruneRetention;
+  detailLimit: number;
+  terminalRunCount: number;
+  nonTerminalRunCount: number;
+  blockedRunCount: number;
+  fullRetainedRunCount: number;
+  coreRetainedRunCount: number;
+  slimCandidateCount: number;
+  deleteCandidateCount: number;
+  totalSlimFileCount: number;
+  totalSlimByteCount: number;
+  totalDeleteFileCount: number;
+  totalDeleteByteCount: number;
+  totalCandidateFileCount: number;
+  totalCandidateByteCount: number;
+  candidates: AgentRunPruneCandidate[];
+  blockedRuns: AgentRunPruneBlockedRun[];
+  candidateDetailsTruncated: boolean;
+  blockedDetailsTruncated: boolean;
+};
+
+type AgentRunPruneApplyResult = {
+  retention: AgentRunPruneRetention;
+  detailLimit: number;
+  slimmedRunCount: number;
+  deletedRunCount: number;
+  failedRunCount: number;
+  removedFileCount: number;
+  removedByteCount: number;
+  failedDetailsTruncated: boolean;
+  failedRuns: AgentRunPruneFailedRun[];
+  afterPlan: AgentRunPrunePlan;
+};
+```
+
+`retention.readSettings()` 读取 `tauritavern-settings.agent.retention` 并以 Host ABI 的 camelCase 形态返回。`autoPruneEnabled` 默认 `false`，表示 Rust 后端在 TauriTavern 进程运行期间按当前保留策略进行周期性 Agent run 清理。`retention.updateSettings()` 只保存策略并唤醒后端调度器重读配置，不同步执行清理；两个数量必须是 `0..10000` 的整数，且 `keepFullRecentRuns <= keepRecentTerminalRuns`。
+
+`retention.planPrune()` 是前端访问 `plan_agent_run_prune(dto)` 的 facade。它只返回 dry-run plan，可使用当前设置，也可传入一次性 `retention` override；override 中的 `autoPruneEnabled` 不参与规划，真正的候选只由两个保留数量决定；`detailLimit` 只限制返回明细，不影响 totals。`retention.applyPrune()` 访问 `apply_agent_run_prune(dto)`，后端会用同一 retention 重新规划全量候选再执行，不信任前端预览列表；同一服务实例内 apply 会串行执行，避免并发清理同一批 run 造成假失败。单个 run 执行失败会进入 `failedRuns` 并继续处理后续 candidate，结构性规划错误仍 fail-fast。结果包含 caller `detailLimit` 下的 `afterPlan`，供 UI 展示清理后的事实状态。
+
+自动清理由 Rust `AgentRunRetentionAutomationService` 拥有生命周期，不依赖 Agent System 面板打开，也不使用前端 `setInterval`。当前策略是启动/设置变更后延迟一次执行，之后固定周期维护；它复用 `apply_agent_run_prune` 的后端规划与执行路径，不定义第二套删除规则。
+
+## 13. profiles / promptAssembly / tools
+
+`profiles.*` 是当前 Agent Profile 管理入口。`profiles.list()` 的 summary 包含 `directRunnable`，供前端区分可直接启动的 root-run Profile 与只能作为 SubAgent / handoff target 的 Profile。列表扫描会返回可加载 Profile，同时把单个本地 Profile JSON 文件的内容损坏放入 `issues`，避免一个坏文件阻塞整个面板；`invalidJson` 建议用户确认后删除，`invalidFileIdentity` 可通过 `profiles.repairFile({ profileId, action: "normalizeIdentity" })` 尝试规范化文件 header / identity 键（`schemaVersion`、`kind`、`id`），其它 Profile 内容保持原样。若修复后整份 JSON 仍不能按 Agent Profile 契约读取，则拒绝写回并报告错误。`invalidProfile` 表示主体结构损坏，需要手动修复，不会自动替换为默认 Profile。目录读取失败、非法文件名等仓储契约错误仍然 fail-fast。Profile JSON 中的 `preset.mode = "ref"` 与 `model.mode = "connectionRef"` 会影响 prompt assembly 和最终模型连接；`model.mode = "requiresConfiguration"` 表示 Profile 需要本机重新选择模型，可保存但不可运行；`run.directRunnable = false` 表示该 Profile 不能直接启动，只能通过已实现的非直接入口运行（当前为 return-mode SubAgent）。前端“可作为子 Agent”会写入该非直接运行语义。保存时无效 schema 必须 fail-fast。
+
+`profiles.retargetPresetRefs()` 是管理态引用迁移 API，用于 preset rename 生命周期。它只更新 `preset.mode = "ref"` 且精确匹配 `from` 的 Profile；`to` preset 必须已经存在，且不能跨 `apiId` retarget。`from` 可以已经 dangling。该 API 不会让运行态静默降级；运行和 prompt assembly 仍按 Profile 契约 fail-fast。该操作逐个 Profile 写回，失败后可用同一请求重试；preset rename 流程必须在依赖迁移完成后再删除旧 preset。
+
+`profiles.diagnose()` 是管理态健康检查 API。它面向“Profile 可加载但外部资源引用不可用”的情况，返回结构化 diagnostics，而不是让面板从异常字符串推断。该 API 不替代运行态 resolver：`promptAssembly.prepare()`、root run 与 SubAgent 仍按严格 Profile / preset / model contract fail-fast，且不会静默回退当前 UI preset/model。当前第一期覆盖 preset ref 缺失或不支持、`model.requiresConfiguration`、LLM Connection 缺失或无效；腐坏 JSON、文件 identity 错误等 storage health 仍由 `profiles.list().issues` 表达。
 
 ```ts
 type AgentProfileSummary = {
@@ -310,6 +554,49 @@ type AgentProfileSummary = {
   displayName: string;
   description?: string;
   directRunnable: boolean;
+};
+
+type AgentProfileStorageIssue = {
+  profileId: string;
+  fileName: string;
+  kind: 'invalidJson' | 'invalidFileIdentity' | 'invalidProfile';
+  recommendedAction?: 'delete' | 'normalizeIdentity';
+  message: string;
+};
+
+type AgentListProfilesResult = {
+  profiles: AgentProfileSummary[];
+  issues: AgentProfileStorageIssue[];
+};
+
+type AgentProfileHealth = {
+  profileId: string;
+  previewAvailable: boolean;
+  promptAssemblyAvailable: boolean;
+  directRunAvailable: boolean;
+  subAgentAvailable: boolean;
+  diagnostics: AgentProfileDiagnostic[];
+};
+
+type AgentProfileDiagnostic = {
+  code: string;
+  severity: 'error';
+  path: string;
+  message: string;
+  resource?: {
+    kind: 'preset' | 'llmConnection' | 'model';
+    apiId?: string;
+    name?: string;
+    id?: string;
+    modelId?: string;
+  };
+  blocks?: Array<'preview' | 'promptAssembly' | 'directRun' | 'subAgent'>;
+  repairActions?: Array<
+    'selectPreset'
+    | 'selectModel'
+    | 'setModelRequiresConfiguration'
+    | 'openJsonEditor'
+  >;
 };
 ```
 
@@ -332,7 +619,7 @@ type AgentToolSpec = {
 
 `tools.list()` 返回当前后端 Agent Tool Registry 的 canonical specs。Profile 面板可以用它编辑 `tools.toolDescriptions`，但不得把返回值当作可修改的 registry。
 
-## 12. readDiff
+## 14. readDiff
 
 当前未实现 diff；`readDiff()` 会显式 throw。
 
@@ -358,7 +645,7 @@ type AgentDiff = {
 
 第一期可以只支持文本 artifact 的 diff。
 
-## 13. rollback
+## 15. rollback
 
 当前未实现 rollback；`rollback()` 会显式 throw。
 
@@ -375,7 +662,7 @@ type AgentRollbackInput = {
 - `workspace`：只恢复 run workspace，不修改 chat。
 - `committed-message`：重组 artifact 并修改已提交聊天消息，必须走 chat 保存契约。
 
-## 14. commit
+## 16. commit
 
 ```ts
 type AgentCommitInput = {
@@ -400,7 +687,7 @@ Chat commit 不是公开 Host API 方法，而是 Agent tool 与 host bridge 的
 - `append` 在本 run 尚无 commit 时不会报错，会创建本 run 的消息楼层。
 - 前台 run 在 `workspace.finish` 前必须至少成功 commit 一次；后台 run 可无 chat commit 完成。
 
-## 15. Event Envelope
+## 17. Event Envelope
 
 ```ts
 type AgentRunEvent = {
@@ -418,7 +705,7 @@ type AgentRunEvent = {
 
 Agent event 不等同 SillyTavern `eventSource` 事件，不得伪装成 `GENERATION_*` 或 `TOOL_CALLS_*`。
 
-## 16. Errors
+## 18. Errors
 
 错误建议结构：
 
@@ -448,29 +735,33 @@ commit.cursor_integrity
 commit.save_failed
 ```
 
-## 17. Rust Command
+## 19. Rust Command
 
 ```text
 start_agent_run(dto)
 list_agent_tool_specs()
 cancel_agent_run(dto)
+list_agent_runs(dto)
+plan_agent_run_prune(dto)
+apply_agent_run_prune(dto)
 read_agent_run_events(dto)
 read_agent_workspace_file(dto)
 resolve_agent_chat_commit(dto)
 ```
 
-Command 层必须是薄封装。Agent loop 不写在 command 内。
+`plan_agent_run_prune(dto)` 是后端 dry-run command：它按 `tauritavern-settings.agent.retention` 或调用方传入的一次性 retention override 计算 `slim_heavy_artifacts` / `delete_run` 候选和 files/bytes，不执行删除。`slim_heavy_artifacts` 使用后端 Agent run storage class 统计，分类边界与 TT-Sync 的 Agent run dataset 词汇对齐，但不读取同步 profile 或 dataset selection。`dto.detailLimit` 控制返回的 candidate/blocked 明细数量，计数与 bytes totals 不受截断影响；`blockedRuns` 会显式报告 active run、缺失 terminal event、journal/storage 异常等不能安全清理的对象。Command 层必须是薄封装。Agent loop 不写在 command 内。
+
+`apply_agent_run_prune(dto)` 使用同一 planner 的 execution 模式重新生成执行计划，并以完整候选集执行 `slim_heavy_artifacts` / `delete_run`；同一服务实例内 apply 串行化。`slim_heavy_artifacts` 仅删除 run workspace 内非核心 history 的 artifact，保留 `run.json`、`events.jsonl`、run index 与 run summary projection；`delete_run` 删除 run workspace、run index 与 run summary projection。稳定 `persistent-states/` 不属于 run prune 范围。执行结果会返回删除文件/字节统计、失败 run 明细和执行后的 dry-run plan。
 
 后续命令：
 
 ```text
 approve_agent_tool_call(dto)
-list_agent_runs(chat_ref)
 read_agent_diff(dto)
 rollback_agent_run(dto)
 ```
 
-## 18. Compatibility
+## 20. Compatibility
 
 Agent Mode off：
 
@@ -485,7 +776,7 @@ Agent Mode on：
 - dryRun 不返回 payload；Agent adapter 通过事件捕获 payload。
 - Agent tool loop 不递归 `Generate()`。
 
-## 17. 当前工具与手动验证
+## 21. 当前工具与手动验证
 
 当前开放十四个非 delegation 内建工具：
 

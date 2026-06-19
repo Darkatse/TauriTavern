@@ -1,4 +1,5 @@
 // Repository implementations
+pub(crate) mod chat_directory_identity;
 pub mod file_agent_profile_repository;
 pub mod file_agent_repository;
 pub mod file_asset_repository;

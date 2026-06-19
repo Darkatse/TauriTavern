@@ -41,6 +41,7 @@ import {
     textgenerationwebui_presets,
 } from './textgen-settings.js';
 import { sanitizePortableAgentProfilePackage } from './tauritavern/agent/agent-profile-portable.js';
+import { retargetAgentProfilesAfterPresetRename } from './tauritavern/agent/profile-preset-sync.js';
 import { retargetPresetSkillsAfterRename } from './tauritavern/agent/skill-scope-sync.js';
 import { download, ensurePlainObject, equalsIgnoreCaseAndAccents, getSanitizedFilename, parseJsonFile, waitUntilCondition } from './utils.js';
 
@@ -521,6 +522,11 @@ class PresetManager {
         }
         try {
             await this.savePreset(newName);
+            await retargetAgentProfilesAfterPresetRename({
+                apiId: this.apiId,
+                oldName,
+                newName,
+            });
             await retargetPresetSkillsAfterRename({
                 apiId: this.apiId,
                 oldName,

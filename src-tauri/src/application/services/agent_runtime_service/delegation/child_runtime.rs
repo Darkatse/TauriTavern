@@ -1,7 +1,8 @@
 use serde_json::{Map, Value, json};
 
+use super::super::loop_runner::AgentLoopExit;
 use super::policy::apply_child_invocation_policy;
-use super::rendering::render_child_task_prompt;
+use super::rendering::{render_child_task_prompt, render_handoff_task_prompt};
 use super::task_status::task_is_terminal;
 use crate::application::dto::agent_dto::AgentPromptAssemblyScopeDto;
 use crate::application::errors::ApplicationError;
@@ -19,10 +20,19 @@ use crate::application::services::agent_runtime_service::skill_scope::{
 };
 use crate::domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
 use crate::domain::models::agent::{
-    AgentInvocationExitPolicy, AgentInvocationStatus, AgentRunEventLevel, AgentRunSkillScopeRefs,
+    AgentDelegationContinuation, AgentInvocationExitPolicy, AgentInvocationStatus,
+    AgentModelRequest, AgentRunEventLevel, AgentRunSkillScopeRefs, AgentTaskRecord,
     AgentTaskStatus, WorkspacePath,
 };
 use crate::domain::models::skill::{SkillIndexEntry, SkillScope};
+
+pub(in crate::application::services::agent_runtime_service) struct PreparedDelegatedInvocationContext
+{
+    pub(in crate::application::services::agent_runtime_service) profile: ResolvedAgentProfile,
+    pub(in crate::application::services::agent_runtime_service) request: AgentModelRequest,
+    pub(in crate::application::services::agent_runtime_service) effective_skills:
+        Vec<SkillIndexEntry>,
+}
 
 impl AgentRuntimeService {
     pub(in crate::application::services::agent_runtime_service) async fn has_pending_child_tasks(
@@ -37,6 +47,7 @@ impl AgentRuntimeService {
             .into_iter()
             .any(|task| {
                 task.parent_invocation_id == invocation_id
+                    && task.continuation == AgentDelegationContinuation::ReturnToParent
                     && matches!(
                         task.status,
                         AgentTaskStatus::Queued | AgentTaskStatus::Running
@@ -117,16 +128,121 @@ impl AgentRuntimeService {
         }
         self.start_child_invocation(run_id, invocation_id).await?;
 
-        let mut profile = self
-            .profile_service
+        let mut profile = self.resolve_task_profile(&task).await?;
+        ensure_profile_model_configured(&profile)?;
+        apply_child_invocation_policy(&mut profile, task.budget)?;
+        let PreparedDelegatedInvocationContext {
+            profile,
+            request,
+            effective_skills,
+        } = self
+            .prepare_delegated_invocation_context(
+                run_id,
+                invocation_id,
+                &task,
+                profile,
+                AgentInvocationExitPolicy::TaskReturnRequired,
+                "subagent",
+                "taskReturnRequired",
+                render_child_task_prompt(&task),
+                cancel,
+            )
+            .await?;
+        let mut child_commit_ledger = RunCommitLedger::default();
+        let exit = self
+            .run_tool_loop(
+                run_id,
+                invocation_id,
+                AgentInvocationExitPolicy::TaskReturnRequired,
+                request,
+                &profile,
+                &effective_skills,
+                &mut child_commit_ledger,
+                cancel,
+            )
+            .await?
+            .ok_or_else(|| {
+                ApplicationError::ValidationError(format!(
+                    "agent.max_tool_rounds_exceeded: task.return was not called within {} rounds",
+                    profile.tools.max_rounds
+                ))
+            })?;
+        if let AgentLoopExit::Transferred { .. } = exit {
+            return Err(ApplicationError::ValidationError(
+                "agent.child_handoff_denied: delegated tasks cannot hand off".to_string(),
+            ));
+        }
+
+        let task = self
+            .invocation_repository
+            .load_task(run_id, task_id)
+            .await?;
+        if !task_is_terminal(task.status) {
+            return Err(ApplicationError::ValidationError(format!(
+                "agent.child_invocation_missing_return: child invocation `{invocation_id}` ended without terminal task status"
+            )));
+        }
+        self.finish_child_invocation(run_id, invocation_id, AgentInvocationStatus::Completed)
+            .await?;
+        Ok(())
+    }
+
+    pub(in crate::application::services::agent_runtime_service) async fn resolve_task_profile(
+        &self,
+        task: &AgentTaskRecord,
+    ) -> Result<ResolvedAgentProfile, ApplicationError> {
+        self.profile_service
             .resolve_profile(AgentProfileResolveInput {
                 profile_id: Some(task.target_profile_id.as_str()),
                 known_tools: self.tool_registry.specs(),
             })
-            .await?;
-        ensure_profile_model_configured(&profile)?;
-        apply_child_invocation_policy(&mut profile, task.budget)?;
+            .await
+    }
 
+    pub(in crate::application::services::agent_runtime_service) async fn prepare_handoff_invocation(
+        &self,
+        run_id: &str,
+        task_id: &str,
+        invocation_id: &str,
+        cancel: &mut AgentCancelReceiver,
+    ) -> Result<PreparedDelegatedInvocationContext, ApplicationError> {
+        let task = self
+            .transition_child_task(run_id, task_id, AgentTaskStatus::Running, None, None)
+            .await?;
+        if task.status != AgentTaskStatus::Running {
+            return Err(ApplicationError::Cancelled(format!(
+                "Handoff task `{task_id}` was cancelled before it started"
+            )));
+        }
+        self.start_invocation(run_id, invocation_id).await?;
+        let profile = self.resolve_task_profile(&task).await?;
+        ensure_profile_model_configured(&profile)?;
+        self.prepare_delegated_invocation_context(
+            run_id,
+            invocation_id,
+            &task,
+            profile,
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            "handoff",
+            "runFinishAllowed",
+            render_handoff_task_prompt(&task),
+            cancel,
+        )
+        .await
+    }
+
+    pub(in crate::application::services::agent_runtime_service) async fn prepare_delegated_invocation_context(
+        &self,
+        run_id: &str,
+        invocation_id: &str,
+        task: &AgentTaskRecord,
+        profile: ResolvedAgentProfile,
+        exit_policy: AgentInvocationExitPolicy,
+        invocation_kind: &str,
+        exit_policy_label: &str,
+        task_prompt: String,
+        cancel: &mut AgentCancelReceiver,
+    ) -> Result<PreparedDelegatedInvocationContext, ApplicationError> {
         let prompt_snapshot = self
             .workspace_repository
             .read_text(run_id, &WorkspacePath::parse("input/prompt_snapshot.json")?)
@@ -136,13 +252,9 @@ impl AgentRuntimeService {
                 "agent.invalid_prompt_snapshot: input/prompt_snapshot.json is invalid JSON: {error}"
             ))
         })?;
-        let visible_tools = self.visible_tool_specs_for_invocation(
-            &profile,
-            AgentInvocationExitPolicy::TaskReturnRequired,
-        )?;
+        let visible_tools = self.visible_tool_specs_for_invocation(&profile, exit_policy)?;
         let run = self.run_repository.load_run(run_id).await?;
-        let child_task_prompt = render_child_task_prompt(&task);
-        let child_prompt_snapshot = if profile.preset.mode == AgentPresetBindingMode::Ref {
+        let invocation_prompt_snapshot = if profile.preset.mode == AgentPresetBindingMode::Ref {
             self.assemble_invocation_prompt_snapshot(
                 run_id,
                 invocation_id,
@@ -153,20 +265,20 @@ impl AgentRuntimeService {
                 AgentPromptAssemblyScopeDto {
                     run_id: run_id.to_string(),
                     invocation_id: invocation_id.to_string(),
-                    invocation_kind: "subagent".to_string(),
+                    invocation_kind: invocation_kind.to_string(),
                     parent_invocation_id: Some(task.parent_invocation_id.clone()),
                     task_id: Some(task.id.clone()),
-                    exit_policy: Some("taskReturnRequired".to_string()),
+                    exit_policy: Some(exit_policy_label.to_string()),
                 },
-                child_task_prompt.clone(),
+                task_prompt.clone(),
                 cancel,
             )
             .await?
         } else {
             None
         };
-        let mut request = if let Some(child_prompt_snapshot) = child_prompt_snapshot {
-            request_from_prompt_snapshot(&child_prompt_snapshot)?
+        let mut request = if let Some(invocation_prompt_snapshot) = invocation_prompt_snapshot {
+            request_from_prompt_snapshot(&invocation_prompt_snapshot)?
         } else {
             let mut request = request_from_prompt_snapshot(&prompt_snapshot)?;
             let system_prompt = materialize_agent_system_prompt(&visible_tools, &profile);
@@ -179,7 +291,7 @@ impl AgentRuntimeService {
                     },
                     {
                         "role": "user",
-                        "content": child_task_prompt
+                        "content": task_prompt
                     }
                 ]),
             );
@@ -233,37 +345,12 @@ impl AgentRuntimeService {
             }),
         )
         .await?;
-        let mut child_commit_ledger = RunCommitLedger::default();
-        self.run_tool_loop(
-            run_id,
-            invocation_id,
-            AgentInvocationExitPolicy::TaskReturnRequired,
-            request,
-            &profile,
-            &effective_skills,
-            &mut child_commit_ledger,
-            cancel,
-        )
-        .await?
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "agent.max_tool_rounds_exceeded: task.return was not called within {} rounds",
-                profile.tools.max_rounds
-            ))
-        })?;
 
-        let task = self
-            .invocation_repository
-            .load_task(run_id, task_id)
-            .await?;
-        if !task_is_terminal(task.status) {
-            return Err(ApplicationError::ValidationError(format!(
-                "agent.child_invocation_missing_return: child invocation `{invocation_id}` ended without terminal task status"
-            )));
-        }
-        self.finish_child_invocation(run_id, invocation_id, AgentInvocationStatus::Completed)
-            .await?;
-        Ok(())
+        Ok(PreparedDelegatedInvocationContext {
+            profile,
+            request,
+            effective_skills,
+        })
     }
 
     async fn resolve_child_effective_skills(

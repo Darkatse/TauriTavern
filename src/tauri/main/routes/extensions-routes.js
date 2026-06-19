@@ -143,6 +143,7 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
             ? archive.name
             : 'data.archive';
         const fileInfo = await context.materializeUploadFile(archive, {
+            kind: 'data-archive',
             preferredName,
         });
 

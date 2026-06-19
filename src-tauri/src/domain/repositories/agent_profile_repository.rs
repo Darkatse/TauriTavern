@@ -1,14 +1,10 @@
 use async_trait::async_trait;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::agent::profile::{
-    AgentProfileDefinition, AgentProfileId, AgentProfileSummary,
-};
+use crate::domain::models::agent::profile::{AgentProfileDefinition, AgentProfileId};
 
 #[async_trait]
 pub trait AgentProfileRepository: Send + Sync {
-    async fn list_profiles(&self) -> Result<Vec<AgentProfileSummary>, DomainError>;
-
     async fn load_profile(
         &self,
         id: &AgentProfileId,

@@ -67,12 +67,25 @@ pub(super) async fn read_upstream_json_body(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("")
         .to_string();
+    let endpoint = response.url().clone();
 
     let body = response.bytes().await.map_err(|error| {
-        DomainError::transient(format!(
-            "model.upstream_invalid_response: {provider_name} returned status {} with unreadable body ({operation}): {error}",
-            status.as_u16()
-        ))
+        let failure =
+            crate::infrastructure::http_error::reqwest_body_failure(&error, Some(&endpoint));
+        tracing::warn!(
+            provider = provider_name,
+            operation = operation,
+            status = status.as_u16(),
+            code = %failure.code,
+            category = %failure.category,
+            endpoint = failure.endpoint.as_deref().unwrap_or(""),
+            timeout = error.is_timeout(),
+            connect = error.is_connect(),
+            body = error.is_body(),
+            request = error.is_request(),
+            "upstream response body read failed",
+        );
+        DomainError::upstream_failure(failure)
     })?;
 
     parse_upstream_json_body(

@@ -10,8 +10,8 @@ use crate::application::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService, materialize_agent_system_prompt,
 };
 use crate::application::services::agent_tools::{
-    AGENT_AWAIT, AGENT_DELEGATE, AGENT_LIST, AgentToolDispatcher, BuiltinAgentToolRegistry,
-    TASK_RETURN,
+    AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, AgentToolDispatcher,
+    BuiltinAgentToolRegistry, TASK_RETURN,
 };
 use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::prompt_assembly_service::PromptAssemblyService;
@@ -31,6 +31,7 @@ mod commit_ledger;
 mod delegation;
 mod error_payload;
 mod executor;
+mod guidance;
 mod input_context;
 mod invocation;
 mod journal;
@@ -44,6 +45,7 @@ mod prompt_assembly;
 mod prompt_snapshot;
 mod scheduler;
 mod skill_scope;
+mod timeline_projection;
 mod tool_execution;
 
 #[cfg(test)]
@@ -225,6 +227,7 @@ impl AgentRuntimeService {
                         | "workspace.finish"
                         | AGENT_LIST
                         | AGENT_DELEGATE
+                        | AGENT_HANDOFF
                         | AGENT_AWAIT
                 )
             });
@@ -252,7 +255,7 @@ impl AgentRuntimeService {
     ) -> Result<String, ApplicationError> {
         let profile = self
             .profile_service
-            .resolve_profile(AgentProfileResolveInput {
+            .resolve_profile_for_preview(AgentProfileResolveInput {
                 profile_id,
                 known_tools: self.tool_registry.specs(),
             })

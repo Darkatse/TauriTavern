@@ -59,7 +59,6 @@ api.agent.tools.list()
 
 ```ts
 approveToolCall()
-listRuns()
 readDiff()
 rollback()
 ```
@@ -314,7 +313,7 @@ Phase 3 基线已在 Agent tool 层接入 Skill 可见性、deny policy 与 read
 内容：
 
 - Agent run 控制入口与状态摘要。
-- 最小 timeline/event viewer。
+- Run timeline / detail viewer；主面板使用互斥视图状态机，不依赖横向 scroll-snap 或 scroll 事件反写状态。
 - workspace artifact viewer。
 - tool error / recovery 状态展示。
 - commit preview 与手动提交。

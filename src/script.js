@@ -52,6 +52,8 @@ import {
     cancelActiveAgentRun,
     hasActiveAgentRun,
     startAndWaitForAgentRun,
+    submitGuidanceToActiveAgentRun,
+    subscribeAgentRunState,
 } from './scripts/tauritavern/agent/agent-run-controller.js';
 import { agentErrorMessage } from './scripts/tauritavern/agent/agent-error-presenter.js';
 import { normalizeAgentContextPolicy } from './scripts/tauritavern/agent/agent-context-policy.js';
@@ -61,6 +63,11 @@ import {
     normalizeFrozenRunInputSnapshot,
     snapshotExtensionPromptsForFrozenRun,
 } from './scripts/tauritavern/agent/frozen-run-input-snapshot.js';
+import {
+    enqueueImportedCharacterAgentAssetScan,
+    pauseImportedCharacterAgentAssetQueue,
+    resumeImportedCharacterAgentAssetQueue,
+} from './scripts/tauri/agent-import-postprocess.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -92,6 +99,8 @@ import {
     getWorldInfoSettings,
     setWorldInfoSettings,
     world_names,
+    worldInfoCache,
+    flushWorldInfoSaves,
     updateWorldInfoList,
     deleteWorldInfo,
     importEmbeddedWorldInfo,
@@ -243,7 +252,7 @@ import {
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 
-import { activateDeferredThirdPartyExtensions, activateStartupSystemExtensions, applyExtensionSettings, cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, runGenerationInterceptors, startOfflineExtensionsDiscovery } from './scripts/extensions.js';
+import { activateDeferredThirdPartyExtensions, activateStartupSystemExtensions, applyExtensionSettings, cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, isCodeRenderDelegatedToThirdPartyRenderer, runGenerationInterceptors, startOfflineExtensionsDiscovery } from './scripts/extensions.js';
 import { COMMENT_NAME_DEFAULT, CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, initSlashCommandAutoComplete, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
 import { initMacroAutoComplete } from './scripts/autocomplete/MacroAutoComplete.js';
 import {
@@ -310,6 +319,7 @@ import {
     renderInteractiveHtmlCodeBlocks,
     setHtmlCodeRenderEnabled,
     setHtmlCodeRenderReplaceLastMessageByDefault,
+    setHtmlCodeRenderSuppressedByExternalRenderer,
 } from './scripts/html-code-preview.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
 import { evaluateMacros, getLastMessageId, initMacros } from './scripts/macros.js';
@@ -2203,6 +2213,7 @@ export async function sendTextareaMessage() {
         return;
     }
     if (swipeState !== SWIPE_STATE.NONE) return; // don't proceed if mid-swipe.
+    if (await maybeSubmitAgentGuidanceFromComposer()) return;
     if (is_send_press) return;
     if (isExecutingCommandsFromChatInput) return;
 
@@ -2249,6 +2260,56 @@ export async function sendTextareaMessage() {
     } finally {
         showSwipeButtons();
     }
+}
+
+function getAgentGuidanceComposerText() {
+    return String($('#send_textarea').val() ?? '').trim();
+}
+
+function shouldOfferAgentGuidanceFromComposer() {
+    return hasActiveAgentRun()
+        && Boolean(getAgentGuidanceComposerText());
+}
+
+function syncAgentGuidanceComposerState() {
+    if (shouldOfferAgentGuidanceFromComposer()) {
+        document.body.dataset.agentGuidanceReady = 'true';
+        return;
+    }
+
+    delete document.body.dataset.agentGuidanceReady;
+}
+
+async function maybeSubmitAgentGuidanceFromComposer() {
+    if (!shouldOfferAgentGuidanceFromComposer()) {
+        syncAgentGuidanceComposerState();
+        return false;
+    }
+
+    const text = getAgentGuidanceComposerText();
+    const result = await Popup.show.confirm(
+        '是否引导Agent行为？',
+        '<p>这条内容会作为用户指引插入下一次 Agent 模型请求，不会作为普通聊天消息保存。</p>',
+        {
+            okButton: '是',
+            cancelButton: '否',
+        },
+    );
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        syncAgentGuidanceComposerState();
+        return true;
+    }
+
+    try {
+        await submitGuidanceToActiveAgentRun(text);
+    } catch (error) {
+        toastr.error(agentErrorMessage(error), t`Agent Mode`);
+        throw error;
+    }
+
+    $('#send_textarea').val('')[0]?.dispatchEvent(new Event('input', { bubbles: true }));
+    syncAgentGuidanceComposerState();
+    return true;
 }
 
 /**
@@ -2959,8 +3020,10 @@ export function appendMediaToMessage(mes, messageElement, scrollBehavior = SCROL
 }
 
 export function addCopyToCodeBlocks(messageElement) {
-    setHtmlCodeRenderEnabled(extension_settings.code_render?.enabled === true);
+    const shouldRunHtmlCodeRender = extension_settings.code_render?.enabled === true;
+    setHtmlCodeRenderEnabled(shouldRunHtmlCodeRender);
     setHtmlCodeRenderReplaceLastMessageByDefault(extension_settings.code_render?.replace_last_message_by_default === true);
+    setHtmlCodeRenderSuppressedByExternalRenderer(shouldRunHtmlCodeRender && isCodeRenderDelegatedToThirdPartyRenderer());
     renderInteractiveHtmlCodeBlocks(messageElement);
 
     const coordinator = getCodeHighlightCoordinator();
@@ -6452,6 +6515,7 @@ async function pruneAgentPersistentStatesAfterDeletion(deletedStateIds) {
     if (!Array.isArray(deletedStateIds) || deletedStateIds.length === 0) {
         return;
     }
+    const candidateStateIds = Array.from(new Set(deletedStateIds));
     if (selected_group || this_chid === undefined) {
         return;
     }
@@ -6460,7 +6524,7 @@ async function pruneAgentPersistentStatesAfterDeletion(deletedStateIds) {
     if (!agentApi || typeof agentApi.pruneChatPersistentStates !== 'function') {
         return;
     }
-    await agentApi.pruneChatPersistentStates();
+    await agentApi.pruneChatPersistentStates({ candidateStateIds });
 }
 
 function assertAgentPromptSnapshotHasNoExternalTools(payload) {
@@ -7986,6 +8050,7 @@ export function activateSendButtons() {
     hideStopButton();
     showSwipeButtons();
     delete document.body.dataset.generating;
+    delete document.body.dataset.agentGuidanceReady;
 }
 
 /**
@@ -8394,6 +8459,7 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
                     patch,
                     savedMessageCount: nextSavedMessageCount,
                     dirtyFromIndex: nextDirtyFromIndex,
+                    expectedWindowLineCount,
                 } = buildWindowedPayloadPatch(trimmedChat, windowState, 'chat');
 
                 const cursor = await patchCharacterChatPayloadWindowed({
@@ -8403,6 +8469,7 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
                     cursor: windowState.cursor,
                     header: JSON.stringify(chatHeader),
                     patch,
+                    expectedWindowLineCount,
                     force: Boolean(force),
                 });
 
@@ -10985,6 +11052,10 @@ export async function createOrEditCharacter(e) {
                 throw new Error('Fetch result is not ok');
             }
 
+            const createWarnings = String(fetchResult.headers.get('x-tauritavern-warning') || '')
+                .split(',')
+                .map(warning => warning.trim())
+                .filter(Boolean);
             const avatarId = await fetchResult.text();
 
             $('#character_cross').trigger('click'); //closes the advanced character editing popup
@@ -11040,6 +11111,9 @@ export async function createOrEditCharacter(e) {
             }
 
             console.log(`new avatar id: ${avatarId}`);
+            if (createWarnings.includes('avatar-import-failed')) {
+                toastr.warning(t`Character created, but avatar import had a recoverable issue. Check the avatar and re-upload if needed.`);
+            }
             createTagMapFromList('#tagList', avatarId);
             await getCharacters();
 
@@ -11668,22 +11742,27 @@ export async function processDroppedFiles(files, data = new Map()) {
     ];
 
     const avatarFileNames = [];
-    for (const file of files) {
-        const extension = file.name.split('.').pop().toLowerCase();
-        if (allowedMimeTypes.some(x => file.type.startsWith(x)) || allowedExtensions.includes(extension)) {
-            const preservedName = data instanceof Map && data.get(file);
-            const avatarFileName = await importCharacter(file, { preserveFileName: preservedName });
-            if (avatarFileName !== undefined) {
-                avatarFileNames.push(avatarFileName);
+    pauseImportedCharacterAgentAssetQueue();
+    try {
+        for (const file of files) {
+            const extension = file.name.split('.').pop().toLowerCase();
+            if (allowedMimeTypes.some(x => file.type.startsWith(x)) || allowedExtensions.includes(extension)) {
+                const preservedName = data instanceof Map && data.get(file);
+                const avatarFileName = await importCharacter(file, { preserveFileName: preservedName });
+                if (avatarFileName !== undefined) {
+                    avatarFileNames.push(avatarFileName);
+                }
+            } else {
+                toastr.warning(t`Unsupported file type: ` + file.name);
             }
-        } else {
-            toastr.warning(t`Unsupported file type: ` + file.name);
         }
-    }
 
-    if (avatarFileNames.length > 0) {
-        await importCharactersTags(avatarFileNames);
-        selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+        if (avatarFileNames.length > 0) {
+            await importCharactersTags(avatarFileNames);
+            selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+        }
+    } finally {
+        resumeImportedCharacterAgentAssetQueue();
     }
 }
 
@@ -11711,54 +11790,6 @@ function selectImportedChar(charId) {
         oldSelectedChar = characters[this_chid].avatar;
     }
     select_rm_info('char_import_no_toast', charId, oldSelectedChar);
-}
-
-/**
- * @param {{ avatarFileName: string; label: string }} options
- */
-async function maybePromptForImportedCharacterAgentAssets({ avatarFileName, label }) {
-    const hostAbi = window.__TAURITAVERN__;
-    if (!hostAbi) {
-        return;
-    }
-
-    try {
-        if (!hostAbi.api?.agent?.profiles && !hostAbi.api?.skill) {
-            throw new Error('TauriTavern Agent APIs are not available');
-        }
-
-        let importedCharacter = null;
-        const loadCharacter = async () => {
-            if (importedCharacter) {
-                return importedCharacter;
-            }
-            const response = await fetch('/api/characters/get', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({ avatar_url: avatarFileName }),
-                cache: 'no-cache',
-            });
-
-            if (!response.ok) {
-                const details = String(await response.text()).trim();
-                const reason = details || response.statusText || `HTTP ${response.status}`;
-                throw new Error(`Failed to read imported character for Agent embedded asset scan: ${reason}`);
-            }
-
-            importedCharacter = await response.json();
-            return importedCharacter;
-        };
-
-        const { maybePromptForCharacterEmbeddedProfiles } = await import('./scripts/tauri/agent-profiles/embedded-import.js');
-        await maybePromptForCharacterEmbeddedProfiles({ avatarFileName, label, loadCharacter });
-
-        const { maybePromptForCharacterEmbeddedSkills } = await import('./scripts/tauri/agent-skills/embedded-import.js');
-        await maybePromptForCharacterEmbeddedSkills({ avatarFileName, label, loadCharacter });
-    } catch (error) {
-        console.error('Failed to start embedded Agent asset import prompt for character', error);
-        const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
-        toastr.error(message, t`Agent embedded import failed`);
-    }
 }
 
 /**
@@ -11842,9 +11873,11 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
                 await importCharactersTags([avatarFileName]);
                 selectImportedChar(data.file_name);
             }
-            await maybePromptForImportedCharacterAgentAssets({
+            enqueueImportedCharacterAgentAssetScan({
                 avatarFileName,
                 label: String(data.file_name).replace('.png', ''),
+                character: data.character,
+                postImport: data.post_import,
             });
             return avatarFileName;
         }
@@ -11877,6 +11910,119 @@ async function importFromURL(items, files) {
     }
 }
 
+async function readLorebookConflictResponse(response) {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.error) {
+        throw new Error(data?.details || data?.error || response.statusText);
+    }
+
+    return data;
+}
+
+async function resolveCharacterLorebookConflictBeforeNewChat() {
+    if (selected_group || this_chid === undefined) {
+        return true;
+    }
+
+    const character = characters[this_chid];
+    if (!character?.avatar) {
+        return true;
+    }
+
+    try {
+        await flushWorldInfoSaves('new_chat_lorebook_conflict_check');
+        const conflictResponse = await fetch('/api/characters/lorebook-conflict', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ avatar_url: character.avatar }),
+            cache: 'no-cache',
+        });
+        const conflict = await readLorebookConflictResponse(conflictResponse);
+
+        if (!conflict?.conflict) {
+            return true;
+        }
+
+        const worldName = String(conflict.world || character?.data?.extensions?.world || '');
+        const embeddedName = String(conflict.embedded_name || t`Embedded World/Lorebook`);
+        const currentAvailable = Boolean(conflict.current_available);
+        const currentWorldLabel = worldName ? `<code>${escapeHtml(worldName)}</code>` : `<code>${t`missing`}</code>`;
+        const embeddedWorldLabel = `<code>${escapeHtml(embeddedName)}</code>`;
+        const unavailableMessage = currentAvailable
+            ? ''
+            : `<div class="m-t-1">${t`The linked local World/Lorebook file is missing. You can restore it from the embedded copy or cancel.`}</div>`;
+
+        const popupBody = `
+            <div>${t`The embedded World/Lorebook and linked local World/Lorebook are different.`}</div>
+            <div class="m-t-1">${t`Current local World/Lorebook:`} ${currentWorldLabel}</div>
+            <div>${t`Embedded World/Lorebook:`} ${embeddedWorldLabel}</div>
+            ${unavailableMessage}
+            <div class="m-t-1">${t`Choose which version to keep before starting a new chat. The other version will be overwritten.`}</div>
+        `;
+        const customButtons = [];
+
+        if (currentAvailable) {
+            customButtons.push({
+                text: t`Save current World/Lorebook`,
+                result: POPUP_RESULT.CUSTOM1,
+            });
+        }
+
+        customButtons.push(
+            {
+                text: t`Overwrite with embedded World/Lorebook`,
+                result: POPUP_RESULT.CUSTOM2,
+            },
+            {
+                text: translate('Cancel', 'Cancel World/Lorebook conflict'),
+                result: POPUP_RESULT.NEGATIVE,
+            },
+        );
+
+        const result = await Popup.show.confirm(t`World/Lorebook conflict`, popupBody, {
+            okButton: false,
+            cancelButton: false,
+            customButtons,
+            defaultResult: currentAvailable ? POPUP_RESULT.CUSTOM1 : POPUP_RESULT.CUSTOM2,
+        });
+
+        const resolution = result === POPUP_RESULT.CUSTOM1
+            ? 'current'
+            : result === POPUP_RESULT.CUSTOM2
+                ? 'embedded'
+                : '';
+
+        if (!resolution) {
+            return false;
+        }
+
+        const resolveResponse = await fetch('/api/characters/resolve-lorebook-conflict', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                avatar_url: character.avatar,
+                resolution,
+            }),
+            cache: 'no-cache',
+        });
+        const resolved = await readLorebookConflictResponse(resolveResponse);
+
+        if (resolution === 'embedded') {
+            const resolvedWorld = String(resolved?.world || worldName || '');
+            if (resolvedWorld) {
+                worldInfoCache.delete(resolvedWorld);
+            }
+            await updateWorldInfoList();
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Failed to resolve character lorebook conflict before new chat.', error);
+        toastr.error(error?.message || t`Failed to resolve the World/Lorebook conflict.`, t`New chat cancelled`);
+        return false;
+    }
+}
+
 export async function doNewChat({ deleteCurrentChat = false } = {}) {
     //Make a new chat for selected character
     if ((!selected_group && this_chid == undefined) || menu_type == 'create') {
@@ -11885,6 +12031,9 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
 
     //Fix it; New chat doesn't create while open create character menu
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
+    if (!await resolveCharacterLorebookConflictBeforeNewChat()) {
+        return;
+    }
     await clearChat({ clearData: true });
 
     chat_file_for_del = getCurrentChatDetails()?.sessionName;
@@ -12120,8 +12269,8 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
             continue;
         }
 
-        let primaryWorldName = String(character?.data?.extensions?.world || '').trim();
-        if (!primaryWorldName) {
+        let primaryWorldName = String(character?.data?.extensions?.world ?? '');
+        if (primaryWorldName === '') {
             const detailsResponse = await fetch('/api/characters/get', {
                 method: 'POST',
                 headers: getRequestHeaders(),
@@ -12136,7 +12285,7 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
 
             try {
                 const details = await detailsResponse.json();
-                primaryWorldName = String(details?.data?.extensions?.world || details?.extensions?.world || '').trim();
+                primaryWorldName = String(details?.data?.extensions?.world ?? details?.extensions?.world ?? '');
             } catch (error) {
                 console.error('Failed to parse character details response:', error);
                 toastr.error(t`Failed to resolve linked worldbook for character deletion.`, t`Failed to delete character`);
@@ -12161,7 +12310,7 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
             continue;
         }
 
-        if (primaryWorldName) {
+        if (primaryWorldName !== '') {
             worldsToDelete.add(primaryWorldName);
         }
 
@@ -12419,6 +12568,9 @@ jQuery(async function () {
     $(document).on('click', '.api_loading', () => cancelStatusCheck('Canceled because connecting was manually canceled'));
 
     installChatInputFocusKeeper();
+    $('#send_textarea').on('input', syncAgentGuidanceComposerState);
+    subscribeAgentRunState(syncAgentGuidanceComposerState);
+    syncAgentGuidanceComposerState();
 
     $('#swipes-checkbox').on('change', function () {
         swipes = !!$('#swipes-checkbox').prop('checked');
@@ -12449,6 +12601,10 @@ jQuery(async function () {
 
     const userInputGenerateMutex = new SimpleMutex(sendTextareaMessage);
     $('#send_but').on('click', async function () {
+        if (await maybeSubmitAgentGuidanceFromComposer()) {
+            return;
+        }
+
         await userInputGenerateMutex.update();
     });
 
@@ -13316,20 +13472,24 @@ jQuery(async function () {
         }
 
         const avatarFileNames = [];
-        for (const file of e.target.files) {
-            const avatarFileName = await importCharacter(file);
-            if (avatarFileName !== undefined) {
-                avatarFileNames.push(avatarFileName);
+        pauseImportedCharacterAgentAssetQueue();
+        try {
+            for (const file of e.target.files) {
+                const avatarFileName = await importCharacter(file);
+                if (avatarFileName !== undefined) {
+                    avatarFileNames.push(avatarFileName);
+                }
             }
-        }
 
-        if (avatarFileNames.length > 0) {
-            await importCharactersTags(avatarFileNames);
-            selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+            if (avatarFileNames.length > 0) {
+                await importCharactersTags(avatarFileNames);
+                selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+            }
+        } finally {
+            resumeImportedCharacterAgentAssetQueue();
+            // Clear the file input value to allow re-uploading the same file
+            e.target.value = '';
         }
-
-        // Clear the file input value to allow re-uploading the same file
-        e.target.value = '';
     });
 
     $('#export_button').on('click', function () {

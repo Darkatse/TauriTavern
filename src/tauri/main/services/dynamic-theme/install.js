@@ -2,15 +2,13 @@
 
 import { eventSource, event_types } from '../../../../scripts/events.js';
 import { getTauriTavernSettings } from '../../../../tauri-bridge.js';
+import {
+    applySillyTavernGlobalBackground,
+    applySillyTavernTheme,
+    assertSillyTavernGlobalBackgroundAvailable,
+    assertSillyTavernThemeAvailable,
+} from '../../adapters/st/appearance.js';
 import { DYNAMIC_THEME_CHANGED_EVENT } from './constants.js';
-
-function getSillyTavernThemeSelector() {
-    const selector = document.getElementById('themes');
-    if (!(selector instanceof HTMLSelectElement)) {
-        throw new Error('Dynamic theme: SillyTavern theme selector not found');
-    }
-    return selector;
-}
 
 function readSystemThemeFromMedia() {
     const query = globalThis.matchMedia?.('(prefers-color-scheme: dark)');
@@ -40,29 +38,14 @@ function normalizeDynamicThemeSettings(payload) {
 
     const settings = /** @type {any} */ (payload);
 
-    const enabled = Boolean(settings.enabled);
+    const themeEnabled = Boolean(settings.enabled);
     const dayTheme = String(settings.day_theme || '').trim();
     const nightTheme = String(settings.night_theme || '').trim();
+    const wallpaperEnabled = Boolean(settings.wallpaper_enabled);
+    const dayWallpaper = String(settings.day_wallpaper || '');
+    const nightWallpaper = String(settings.night_wallpaper || '');
 
-    return { enabled, dayTheme, nightTheme };
-}
-
-/**
- * @param {string} themeName
- */
-function applySillyTavernTheme(themeName) {
-    const selector = getSillyTavernThemeSelector();
-    if (selector.value === themeName) {
-        return;
-    }
-
-    const exists = Array.from(selector.options).some((option) => option.value === themeName);
-    if (!exists) {
-        throw new Error(`Dynamic theme target not found: ${themeName}`);
-    }
-
-    selector.value = themeName;
-    selector.dispatchEvent(new Event('change', { bubbles: true }));
+    return { themeEnabled, dayTheme, nightTheme, wallpaperEnabled, dayWallpaper, nightWallpaper };
 }
 
 export function installDynamicTheme() {
@@ -70,20 +53,51 @@ export function installDynamicTheme() {
         let dynamicTheme = normalizeDynamicThemeSettings(settings.dynamic_theme);
         const preferredColorSchemeQuery = getPreferredColorSchemeQuery();
         let systemTheme = preferredColorSchemeQuery?.matches ? 'dark' : readSystemThemeFromMedia();
+        let hasPendingVisibilitySync = false;
 
         /** @param {string} reason */
-        const syncNow = (reason) => {
-            if (!dynamicTheme.enabled) {
+        const syncNow = async (reason) => {
+            if (!dynamicTheme.themeEnabled && !dynamicTheme.wallpaperEnabled) {
                 return;
             }
 
-            const targetTheme = systemTheme === 'dark' ? dynamicTheme.nightTheme : dynamicTheme.dayTheme;
-            if (!targetTheme) {
-                throw new Error('Dynamic theme is enabled but the target theme is empty');
+            /** @type {{ theme?: string, wallpaper?: string }} */
+            const applied = {};
+            let targetTheme = '';
+            let targetWallpaper = '';
+
+            if (dynamicTheme.themeEnabled) {
+                targetTheme = systemTheme === 'dark' ? dynamicTheme.nightTheme : dynamicTheme.dayTheme;
+                if (!targetTheme) {
+                    throw new Error('Dynamic theme is enabled but the target theme is empty');
+                }
             }
 
-            applySillyTavernTheme(targetTheme);
-            console.debug('Dynamic theme applied', { reason, systemTheme, targetTheme });
+            if (dynamicTheme.wallpaperEnabled) {
+                targetWallpaper = systemTheme === 'dark' ? dynamicTheme.nightWallpaper : dynamicTheme.dayWallpaper;
+                if (!targetWallpaper) {
+                    throw new Error('Dynamic wallpaper is enabled but the target wallpaper is empty');
+                }
+            }
+
+            if (dynamicTheme.themeEnabled) {
+                assertSillyTavernThemeAvailable(targetTheme);
+            }
+            if (dynamicTheme.wallpaperEnabled) {
+                await assertSillyTavernGlobalBackgroundAvailable(targetWallpaper);
+            }
+
+            if (dynamicTheme.themeEnabled) {
+                applySillyTavernTheme(targetTheme);
+                applied.theme = targetTheme;
+            }
+
+            if (dynamicTheme.wallpaperEnabled) {
+                await applySillyTavernGlobalBackground(targetWallpaper);
+                applied.wallpaper = targetWallpaper;
+            }
+
+            console.debug('Dynamic appearance applied', { reason, systemTheme, ...applied });
         };
 
         /**
@@ -97,13 +111,15 @@ export function installDynamicTheme() {
 
             systemTheme = nextTheme;
             if (document.visibilityState === 'hidden') {
+                hasPendingVisibilitySync = true;
                 return;
             }
 
+            hasPendingVisibilitySync = false;
             void Promise.resolve()
                 .then(() => syncNow(reason))
                 .catch((error) => {
-                    console.error('Dynamic theme sync failed after system theme change', error);
+                    console.error('Dynamic appearance sync failed after system theme change', error);
                 });
         };
 
@@ -113,7 +129,7 @@ export function installDynamicTheme() {
             void Promise.resolve()
                 .then(() => syncNow('config-changed'))
                 .catch((error) => {
-                    console.error('Dynamic theme sync failed after config change', error);
+                    console.error('Dynamic appearance sync failed after config change', error);
                 });
         };
 
@@ -123,11 +139,11 @@ export function installDynamicTheme() {
             void Promise.resolve()
                 .then(() => syncNow('startup'))
                 .catch((error) => {
-                    console.error('Dynamic theme initial sync failed', error);
+                    console.error('Dynamic appearance initial sync failed', error);
                 });
 
             if (!preferredColorSchemeQuery) {
-                throw new Error('Dynamic theme: matchMedia is unavailable');
+                throw new Error('Dynamic appearance: matchMedia is unavailable');
             }
 
             const handlePreferredColorSchemeChange = (/** @type {any} */ event) => {
@@ -140,12 +156,12 @@ export function installDynamicTheme() {
             } else if (typeof preferredColorSchemeQuery.addListener === 'function') {
                 preferredColorSchemeQuery.addListener(handlePreferredColorSchemeChange);
             } else {
-                throw new Error('Dynamic theme: matchMedia change listener is unavailable');
+                throw new Error('Dynamic appearance: matchMedia change listener is unavailable');
             }
 
             const listen = window.__TAURI__?.event?.listen;
             if (typeof listen !== 'function') {
-                throw new Error('Dynamic theme: Tauri theme listener is unavailable');
+                throw new Error('Dynamic appearance: Tauri theme listener is unavailable');
             }
 
             void listen('tauri://theme-changed', (/** @type {any} */ event) => {
@@ -159,6 +175,16 @@ export function installDynamicTheme() {
                 }
 
                 const nextTheme = preferredColorSchemeQuery.matches ? 'dark' : 'light';
+                if (nextTheme === systemTheme && hasPendingVisibilitySync) {
+                    hasPendingVisibilitySync = false;
+                    void Promise.resolve()
+                        .then(() => syncNow('visibilitychange'))
+                        .catch((error) => {
+                            console.error('Dynamic appearance sync failed after visibility change', error);
+                        });
+                    return;
+                }
+
                 updateSystemThemeAndSync(nextTheme, 'visibilitychange');
             });
         });

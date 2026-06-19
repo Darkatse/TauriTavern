@@ -221,6 +221,34 @@ test('/api/chats/rename preserves upstream-significant file name spaces', async 
     }]);
 });
 
+test('/api/chats/rename returns 400 for invalid avatar_url without backend mutation', async () => {
+    const router = createRouteRegistry();
+    const context = {
+        stripJsonl: kernelStripJsonl,
+        resolveCharacterId: async () => {
+            throw new Error('Bad request: invalid avatar_url');
+        },
+        safeInvoke: async () => {
+            throw new Error('safeInvoke should not be called');
+        },
+    };
+
+    registerChatRoutes(router, context, { jsonResponse });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/chats/rename',
+        body: {
+            avatar_url: 'thumbnail?file=alice.png',
+            original_file: 'Old Name.jsonl',
+            renamed_file: 'Clean Name.jsonl',
+        },
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'invalid avatar_url' });
+});
+
 test('/api/chats/rename returns the backend-committed group chat stem', async () => {
     const router = createRouteRegistry();
     const calls = [];

@@ -6,6 +6,10 @@ import {
     sanitizePortableAgentProfile,
     sanitizePortableAgentProfilePackage,
 } from '../../../tauritavern/agent/agent-profile-portable.js';
+import {
+    assertCharacterAvatarFileName,
+    characterStemFromAvatarFileName,
+} from '../../../../tauri/main/services/characters/character-identity.js';
 
 const EMBEDDED_PROFILES_VERSION = 1;
 const EMBEDDED_SKILLS_VERSION = 1;
@@ -94,21 +98,16 @@ function requireCharacterTarget() {
 }
 
 function characterIdFromAvatar(avatar) {
-    const fileName = String(avatar || '').trim().split(/[\\/]/).pop() || '';
-    return fileName.replace(/\.[^.]+$/, '');
+    return characterStemFromAvatarFileName(avatar, 'avatar', { required: true });
 }
 
 function characterAvatarFileName(character) {
-    const fileName = String(character?.avatar || '').trim().split(/[\\/]/).pop() || '';
-    if (!fileName) {
-        throw new Error(tr('characterSelectionRequired'));
-    }
-    return fileName;
+    return assertCharacterAvatarFileName(character?.avatar, 'avatar', { required: true });
 }
 
 function requireCharacterTargetByScope(scope) {
     const context = requireSillyTavernContext();
-    const characterId = String(scope?.characterId || '').trim();
+    const characterId = String(scope?.characterId ?? '');
     if (!characterId) {
         throw new Error(tr('skillScopeNotFound', { id: '' }));
     }

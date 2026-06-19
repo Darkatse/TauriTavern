@@ -48,8 +48,8 @@ src/
 ├── tauri-main.js                # 轻量引导入口
 ├── init.js                      # 启动编排器
 ├── lib.js                       # 库门面（ESM 导出）
-├── dist/lib.core.bundle.js      # webpack 构建的核心依赖包（启动必需）
-├── dist/lib.optional.bundle.js  # webpack 构建的可选依赖包（按需加载）
+├── dist/lib.core.bundle.js      # Rspack 构建的核心依赖包（启动必需）
+├── dist/lib.optional.bundle.js  # Rspack 构建的可选依赖包（按需加载）
 └── tauri/main/
     ├── bootstrap.js             # 组合根（composition root）
     ├── context.js               # 兼容 shim（re-export `context/index`）
@@ -75,7 +75,7 @@ src/
 前置要求：
 
 - Rust stable
-- Node.js 18+
+- Node.js 22.12+
 - pnpm
 - Tauri CLI
 
@@ -91,7 +91,7 @@ pnpm install
 
 ```bash
 pnpm run check             # guardrails + host kernel 类型检查（推荐每次改动后先跑）
-pnpm run web:build         # 构建前端资源包（webpack）
+pnpm run web:build         # 构建前端资源包（Rspack）
 pnpm run dev           # 桌面开发模式（等价 tauri:dev）
 pnpm run tauri:dev     # 桌面开发模式
 pnpm run tauri:build   # 构建桌面发行包

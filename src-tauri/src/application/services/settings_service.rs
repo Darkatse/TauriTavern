@@ -1,23 +1,76 @@
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Duration;
 
+use super::settings_repair::repair_sillytavern_prompt_manager_settings;
 use crate::application::dto::settings_dto::{
     SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
-    UpdateTauriTavernSettingsDto, UserSettingsDto,
+    UpdateAgentSettingsDto, UpdateTauriTavernSettingsDto, UserSettingsDto,
 };
 use crate::application::errors::ApplicationError;
-use crate::domain::models::settings::DevLoggingSettings;
+use crate::domain::models::settings::{
+    AgentRunRetentionSettings, AgentSettings, DevLoggingSettings,
+};
 use crate::domain::repositories::settings_repository::SettingsRepository;
 
 pub struct SettingsService {
     settings_repository: Arc<dyn SettingsRepository>,
+    pending_user_settings_repair_writeback: Arc<AtomicBool>,
 }
 
 impl SettingsService {
     pub fn new(settings_repository: Arc<dyn SettingsRepository>) -> Self {
         Self {
             settings_repository,
+            pending_user_settings_repair_writeback: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    fn schedule_delayed_user_settings_repair_writeback(&self) {
+        const DELAY: Duration = Duration::from_secs(20);
+
+        if self
+            .pending_user_settings_repair_writeback
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+
+        let settings_repository = Arc::clone(&self.settings_repository);
+        let pending = Arc::clone(&self.pending_user_settings_repair_writeback);
+
+        tokio::spawn(async move {
+            tokio::time::sleep(DELAY).await;
+
+            let result = async {
+                let mut settings = settings_repository.load_user_settings().await?;
+                let repair_report = repair_sillytavern_prompt_manager_settings(&mut settings);
+
+                if !repair_report.changed() {
+                    return Ok(());
+                }
+
+                tracing::warn!(
+                    "Persisting delayed SillyTavern PromptManager settings repair: {}",
+                    repair_report
+                );
+                settings_repository.save_user_settings(&settings).await
+            }
+            .await;
+
+            if let Err(error) = result {
+                tracing::error!(
+                    "Failed delayed SillyTavern PromptManager settings repair: {}",
+                    error
+                );
+            }
+
+            pending.store(false, Ordering::Release);
+        });
     }
 
     pub async fn get_tauritavern_settings(
@@ -110,6 +163,18 @@ impl SettingsService {
                 settings.dynamic_theme.night_theme = night_theme;
             }
 
+            if let Some(wallpaper_enabled) = dynamic_theme.wallpaper_enabled {
+                settings.dynamic_theme.wallpaper_enabled = wallpaper_enabled;
+            }
+
+            if let Some(day_wallpaper) = dynamic_theme.day_wallpaper {
+                settings.dynamic_theme.day_wallpaper = day_wallpaper;
+            }
+
+            if let Some(night_wallpaper) = dynamic_theme.night_wallpaper {
+                settings.dynamic_theme.night_wallpaper = night_wallpaper;
+            }
+
             if settings.dynamic_theme.enabled {
                 if settings.dynamic_theme.day_theme.trim().is_empty() {
                     return Err(ApplicationError::ValidationError(
@@ -123,6 +188,20 @@ impl SettingsService {
                     ));
                 }
             }
+
+            if settings.dynamic_theme.wallpaper_enabled {
+                if settings.dynamic_theme.day_wallpaper.trim().is_empty() {
+                    return Err(ApplicationError::ValidationError(
+                        "Dynamic wallpaper day wallpaper is required".to_string(),
+                    ));
+                }
+
+                if settings.dynamic_theme.night_wallpaper.trim().is_empty() {
+                    return Err(ApplicationError::ValidationError(
+                        "Dynamic wallpaper night wallpaper is required".to_string(),
+                    ));
+                }
+            }
         }
 
         if let Some(models) = dto.models {
@@ -133,11 +212,41 @@ impl SettingsService {
             }
         }
 
+        if let Some(agent) = dto.agent {
+            Self::apply_agent_settings_update(&mut settings.agent, agent)?;
+        }
+
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;
 
         Ok(TauriTavernSettingsDto::from(settings))
+    }
+
+    fn apply_agent_settings_update(
+        settings: &mut AgentSettings,
+        dto: UpdateAgentSettingsDto,
+    ) -> Result<(), ApplicationError> {
+        if let Some(retention) = dto.retention {
+            let mut next = settings.retention.clone();
+
+            if let Some(auto_prune_enabled) = retention.auto_prune_enabled {
+                next.auto_prune_enabled = auto_prune_enabled;
+            }
+
+            if let Some(keep_recent_terminal_runs) = retention.keep_recent_terminal_runs {
+                next.keep_recent_terminal_runs = keep_recent_terminal_runs;
+            }
+
+            if let Some(keep_full_recent_runs) = retention.keep_full_recent_runs {
+                next.keep_full_recent_runs = keep_full_recent_runs;
+            }
+
+            validate_agent_retention_settings(&next)?;
+            settings.retention = next;
+        }
+
+        Ok(())
     }
 
     pub async fn save_user_settings(
@@ -146,7 +255,15 @@ impl SettingsService {
     ) -> Result<(), ApplicationError> {
         tracing::info!("Saving user settings");
 
-        let user_settings = settings.into();
+        let mut user_settings = settings.into();
+        let repair_report = repair_sillytavern_prompt_manager_settings(&mut user_settings);
+        if repair_report.changed() {
+            tracing::warn!(
+                "Repaired SillyTavern PromptManager settings before save: {}",
+                repair_report
+            );
+        }
+
         self.settings_repository
             .save_user_settings(&user_settings)
             .await?;
@@ -159,7 +276,16 @@ impl SettingsService {
     ) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
         tracing::info!("Getting SillyTavern settings");
 
-        let user_settings = self.settings_repository.load_user_settings().await?;
+        let mut user_settings = self.settings_repository.load_user_settings().await?;
+        let repair_report = repair_sillytavern_prompt_manager_settings(&mut user_settings);
+        if repair_report.changed() {
+            tracing::warn!(
+                "Repaired SillyTavern PromptManager settings while loading: {}",
+                repair_report
+            );
+            self.schedule_delayed_user_settings_repair_writeback();
+        }
+
         let settings_json = serde_json::to_string(&user_settings.data).map_err(|e| {
             ApplicationError::InternalError(format!("Failed to serialize settings: {}", e))
         })?;
@@ -265,5 +391,102 @@ impl SettingsService {
         self.settings_repository.restore_snapshot(name).await?;
 
         Ok(())
+    }
+}
+
+fn validate_agent_retention_settings(
+    settings: &AgentRunRetentionSettings,
+) -> Result<(), ApplicationError> {
+    settings
+        .validate()
+        .map_err(|error| ApplicationError::ValidationError(error.message()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::dto::settings_dto::UpdateAgentRunRetentionSettingsDto;
+
+    #[test]
+    fn agent_retention_update_applies_partial_settings() {
+        let mut settings = AgentSettings::default();
+
+        SettingsService::apply_agent_settings_update(
+            &mut settings,
+            UpdateAgentSettingsDto {
+                retention: Some(UpdateAgentRunRetentionSettingsDto {
+                    auto_prune_enabled: None,
+                    keep_recent_terminal_runs: Some(50),
+                    keep_full_recent_runs: Some(10),
+                }),
+            },
+        )
+        .expect("apply agent settings");
+
+        assert_eq!(settings.retention.keep_recent_terminal_runs, 50);
+        assert_eq!(settings.retention.keep_full_recent_runs, 10);
+        assert!(!settings.retention.auto_prune_enabled);
+    }
+
+    #[test]
+    fn agent_retention_update_applies_auto_prune_flag() {
+        let mut settings = AgentSettings::default();
+
+        SettingsService::apply_agent_settings_update(
+            &mut settings,
+            UpdateAgentSettingsDto {
+                retention: Some(UpdateAgentRunRetentionSettingsDto {
+                    auto_prune_enabled: Some(true),
+                    keep_recent_terminal_runs: None,
+                    keep_full_recent_runs: None,
+                }),
+            },
+        )
+        .expect("apply agent settings");
+
+        assert!(settings.retention.auto_prune_enabled);
+    }
+
+    #[test]
+    fn agent_retention_update_allows_zero_terminal_history() {
+        let mut settings = AgentSettings::default();
+
+        SettingsService::apply_agent_settings_update(
+            &mut settings,
+            UpdateAgentSettingsDto {
+                retention: Some(UpdateAgentRunRetentionSettingsDto {
+                    auto_prune_enabled: None,
+                    keep_recent_terminal_runs: Some(0),
+                    keep_full_recent_runs: Some(0),
+                }),
+            },
+        )
+        .expect("apply zero retention");
+
+        assert_eq!(settings.retention.keep_recent_terminal_runs, 0);
+        assert_eq!(settings.retention.keep_full_recent_runs, 0);
+    }
+
+    #[test]
+    fn agent_retention_update_rejects_full_retention_outside_history_window() {
+        let mut settings = AgentSettings::default();
+
+        let error = SettingsService::apply_agent_settings_update(
+            &mut settings,
+            UpdateAgentSettingsDto {
+                retention: Some(UpdateAgentRunRetentionSettingsDto {
+                    auto_prune_enabled: None,
+                    keep_recent_terminal_runs: Some(10),
+                    keep_full_recent_runs: Some(11),
+                }),
+            },
+        )
+        .expect_err("reject invalid retention");
+
+        assert!(matches!(
+            error,
+            ApplicationError::ValidationError(message)
+                if message.contains("agent.retention_keep_full_recent_runs_invalid")
+        ));
     }
 }

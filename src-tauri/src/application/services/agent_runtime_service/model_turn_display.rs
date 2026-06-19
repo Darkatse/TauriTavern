@@ -3,14 +3,18 @@ use serde_json::{Value, json};
 
 use super::AgentRuntimeService;
 use crate::application::dto::agent_dto::{
-    AgentModelTurnDisplayDto, AgentModelTurnProviderDto, AgentModelTurnReasoningDto,
-    AgentModelTurnTextDto, AgentModelTurnToolCallDto, AgentReadModelTurnDto,
+    AgentModelTurnDisplayDto, AgentModelTurnNarrationDto, AgentModelTurnProviderDto,
+    AgentModelTurnReasoningDto, AgentModelTurnTextDto, AgentModelTurnToolCallDto,
+    AgentReadModelTurnDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::{
     AgentModelContentPart, AgentModelResponse, ROOT_AGENT_INVOCATION_ID, WorkspacePath,
 };
 use crate::domain::text_metrics::TextMetrics;
+
+const MODEL_TURN_NARRATION_EVENT_MAX_CHARS: usize = 280;
+const NARRATION_SOURCE_ASSISTANT_TEXT: &str = "assistantText";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,14 +119,23 @@ pub(super) fn model_turn_event_summary(response: &AgentModelResponse) -> Value {
             }
         });
 
-    json!({
+    let mut payload = json!({
         "hasAssistantText": !response.text.trim().is_empty(),
         "assistantTextChars": assistant_metrics.chars,
         "assistantTextWords": assistant_metrics.words,
         "hasReasoning": reasoning_metrics.chars > 0,
         "reasoningChars": reasoning_metrics.chars,
         "reasoningWords": reasoning_metrics.words,
-    })
+    });
+
+    if let Some(narration) = model_turn_narration(response, MODEL_TURN_NARRATION_EVENT_MAX_CHARS) {
+        payload
+            .as_object_mut()
+            .expect("model turn event summary must be a JSON object")
+            .insert("narration".to_string(), json!(narration));
+    }
+
+    payload
 }
 
 fn project_model_turn(
@@ -138,6 +151,7 @@ fn project_model_turn(
         model_response_path: model_response_path.to_string(),
         provider: project_provider(response),
         assistant: text_dto(&response.text, max_chars),
+        narration: model_turn_narration(response, max_chars),
         reasoning: response
             .message
             .parts
@@ -158,6 +172,29 @@ fn project_model_turn(
             })
             .collect(),
     }
+}
+
+fn model_turn_narration(
+    response: &AgentModelResponse,
+    max_chars: usize,
+) -> Option<AgentModelTurnNarrationDto> {
+    if response.tool_calls.is_empty() {
+        return None;
+    }
+
+    let text = response.text.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    let display = text_dto(text, max_chars);
+    Some(AgentModelTurnNarrationDto {
+        source: NARRATION_SOURCE_ASSISTANT_TEXT.to_string(),
+        text: display.text,
+        total_chars: display.total_chars,
+        total_words: display.total_words,
+        truncated: display.truncated,
+    })
 }
 
 fn project_provider(response: &AgentModelResponse) -> AgentModelTurnProviderDto {
@@ -237,4 +274,86 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::models::agent::{AgentModelMessage, AgentModelRole, AgentToolCall};
+
+    #[test]
+    fn narration_uses_assistant_text_for_tool_turns() {
+        let response = response_with_text(" I will write the artifact. ", vec![tool_call()]);
+
+        let narration = model_turn_narration(&response, 40).expect("narration");
+        assert_eq!(narration.source, "assistantText");
+        assert_eq!(narration.text, "I will write the artifact.");
+        assert_eq!(narration.total_chars, 26);
+        assert_eq!(narration.total_words, 5);
+        assert!(!narration.truncated);
+
+        let summary = model_turn_event_summary(&response);
+        assert_eq!(summary["narration"]["source"], "assistantText");
+        assert_eq!(summary["narration"]["text"], "I will write the artifact.");
+        assert_eq!(summary["narration"]["totalChars"], json!(26));
+    }
+
+    #[test]
+    fn narration_treats_json_assistant_text_as_plain_text() {
+        let raw_text = r#"{"context":"draft is ready","ignored":"raw"}"#;
+        let response = response_with_text(raw_text, vec![tool_call()]);
+
+        let narration = model_turn_narration(&response, 80).expect("narration");
+        assert_eq!(narration.source, "assistantText");
+        assert_eq!(narration.text, raw_text);
+        assert!(!narration.truncated);
+
+        let summary = model_turn_event_summary(&response);
+        assert_eq!(summary["narration"]["source"], "assistantText");
+        assert_eq!(summary["narration"]["text"], raw_text);
+    }
+
+    #[test]
+    fn narration_is_absent_without_tool_turn_or_text() {
+        let plain_response = response_with_text("Final answer.", Vec::new());
+        assert!(model_turn_narration(&plain_response, 40).is_none());
+        assert!(
+            model_turn_event_summary(&plain_response)
+                .get("narration")
+                .is_none()
+        );
+
+        let empty_response = response_with_text("   ", vec![tool_call()]);
+        assert!(model_turn_narration(&empty_response, 40).is_none());
+        assert!(
+            model_turn_event_summary(&empty_response)
+                .get("narration")
+                .is_none()
+        );
+    }
+
+    fn response_with_text(text: &str, tool_calls: Vec<AgentToolCall>) -> AgentModelResponse {
+        AgentModelResponse {
+            message: AgentModelMessage {
+                role: AgentModelRole::Assistant,
+                parts: vec![AgentModelContentPart::Text {
+                    text: text.to_string(),
+                }],
+                provider_metadata: Value::Null,
+            },
+            tool_calls,
+            text: text.to_string(),
+            provider_metadata: Value::Null,
+            raw_response: Value::Null,
+        }
+    }
+
+    fn tool_call() -> AgentToolCall {
+        AgentToolCall {
+            id: "call_1".to_string(),
+            name: "workspace.write_file".to_string(),
+            arguments: json!({}),
+            provider_metadata: Value::Null,
+        }
+    }
 }

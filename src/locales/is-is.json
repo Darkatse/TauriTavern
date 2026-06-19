@@ -1,4 +1,12 @@
 {
+    "Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.": "Felur skilaboð úr spjallinu í promptinu. Notaðu <code>all</code> til að fela allt spjallið, eða <code>before</code> til að fela aðeins skilaboðin sem eru geymd á undan hlaðna glugganum.",
+    "Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.": "Birtir skilaboð aftur í promptinu. Notaðu <code>all</code> til að birta allt spjallið, eða <code>before</code> til að birta aðeins skilaboðin sem eru geymd á undan hlaðna glugganum.",
+    "message index (starts with 0) or range, or \"all\" / \"before\" (messages before the loaded window), defaults to the last message index if not provided": "vísitala skilaboða (byrjar á 0) eða bil, eða \"all\" / \"before\" (skilaboð á undan hlaðna glugganum); sjálfgefið er vísitala síðustu skilaboða",
+    "every message in the chat, including unloaded ones": "öll skilaboð í spjallinu, þar með talin óhlaðin",
+    "only unloaded messages before the current window": "aðeins óhlaðin skilaboð á undan núverandi glugga",
+    "All messages are already loaded. Use /hide with a message range instead.": "Öll skilaboð eru þegar hlaðin. Notaðu /hide með skilaboðabili í staðinn.",
+    "There are no unloaded messages before the current window.": "Engin óhlaðin skilaboð eru á undan núverandi glugga.",
+    "Failed to update messages before the loaded window. Reload the chat and try again.": "Mistókst að uppfæra skilaboð á undan hlaðna glugganum. Endurhladdu spjallið og reyndu aftur.",
     "Favorite": "Uppáhalds",
     "Tag": "Merkja",
     "Duplicate": "Afrit",

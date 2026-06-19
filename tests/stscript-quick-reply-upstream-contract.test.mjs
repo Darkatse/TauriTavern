@@ -17,11 +17,23 @@ function extractCommandNames(source) {
     return [...new Set(names)].sort();
 }
 
+function extractCommandBlock(source, name) {
+    const marker = `name: '${name}'`;
+    const markerIndex = source.indexOf(marker);
+    assert.notEqual(markerIndex, -1, `missing slash command block: ${name}`);
+
+    const start = source.lastIndexOf('SlashCommandParser.addCommandObject', markerIndex);
+    assert.notEqual(start, -1, `missing slash command registration: ${name}`);
+
+    const next = source.indexOf('SlashCommandParser.addCommandObject', markerIndex + marker.length);
+    return source.slice(start, next === -1 ? source.length : next);
+}
+
 test('root slash commands include SillyTavern 1.18 P8 command surface and local commands', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/slash-commands.js'), 'utf8');
     const names = extractCommandNames(source);
 
-    for (const name of ['regenerate', 'swipe', 'pm-render', 'array-wrap', 'array-unwrap', 'llmlog', 'custom-api-format']) {
+    for (const name of ['regenerate', 'swipe', 'pm-render', 'array-wrap', 'array-unwrap', 'llmlog', 'frontendlog', 'backendlog', 'syncpanel', 'custom-api-format']) {
         assert.ok(names.includes(name), `missing slash command: ${name}`);
     }
 
@@ -45,6 +57,35 @@ test('local root slash command surface is not missing 1.18 root commands', async
     const missing = upstreamNames.filter(name => !localNames.includes(name));
 
     assert.deepEqual(missing, []);
+});
+
+test('TauriTavern panel slash commands stay wrapper-based', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/slash-commands.js'), 'utf8');
+
+    const llmLog = extractCommandBlock(source, 'llmlog');
+    assert.match(llmLog, /aliases:\s*\[\s*['"]apilog['"]\s*\]/);
+    assert.match(llmLog, /import\(['"]\.\/tauri\/setting\/dev-logs\.js['"]\)/);
+    assert.match(llmLog, /\bopenLlmApiLogsPanel\(\)/);
+
+    const frontendLog = extractCommandBlock(source, 'frontendlog');
+    assert.match(frontendLog, /aliases:\s*\[\s*['"]consolelog['"]\s*\]/);
+    assert.match(frontendLog, /import\(['"]\.\/tauri\/setting\/dev-logs\.js['"]\)/);
+    assert.match(frontendLog, /\bopenFrontendLogsPanel\(\)/);
+
+    const backendLog = extractCommandBlock(source, 'backendlog');
+    assert.match(backendLog, /import\(['"]\.\/tauri\/setting\/dev-logs\.js['"]\)/);
+    assert.match(backendLog, /\bopenBackendLogsPanel\(\)/);
+
+    const syncPanel = extractCommandBlock(source, 'syncpanel');
+    assert.match(syncPanel, /aliases:\s*\[\s*['"]lansync['"]\s*\]/);
+    assert.match(syncPanel, /window\.__TAURI__\?\.core\?\.invoke/);
+    assert.match(syncPanel, /getActiveIosPolicyCapabilities\(\)\?\.sync\?\.lan\s*===\s*false/);
+    assert.match(syncPanel, /import\(['"]\.\/tauri\/setting\/setting-panel\/sync-popup\.js['"]\)/);
+    assert.match(syncPanel, /\bopenSyncPopup\(\)/);
+
+    for (const block of [llmLog, frontendLog, backendLog, syncPanel]) {
+        assert.doesNotMatch(block, /devlog_|lan_sync_|tt_sync_|dist\/|mountTauriTavern/);
+    }
 });
 
 test('regenerate and swipe commands preserve generation gate semantics', async () => {

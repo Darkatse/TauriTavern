@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 
+use super::super::model_capabilities::RequestedReasoningEffort;
+
 const OPENAI_REASONING_EFFORT_MODELS: &[&str] = &[
     "o1",
     "o3-mini",
@@ -46,28 +48,27 @@ pub(super) fn normalize_openai_reasoning_effort<'a>(
     value: &'a str,
     model: &str,
 ) -> Option<Cow<'a, str>> {
+    normalize_reasoning_effort(value, supports_openai_xhigh_reasoning_effort(model))
+}
+
+/// Maps project reasoning-effort aliases onto OpenAI's provider enum. `auto` is
+/// dropped, `min`/`minimum`/`minimal` become `minimal`, `max`/`maximum` become
+/// `high`, and `xhigh` is preserved only when `allow_xhigh` is set.
+pub(super) fn normalize_reasoning_effort(value: &str, allow_xhigh: bool) -> Option<Cow<'_, str>> {
     let value = value.trim();
-    if value.is_empty() || value.eq_ignore_ascii_case("auto") {
-        return None;
+    match RequestedReasoningEffort::parse(value) {
+        Some(RequestedReasoningEffort::Auto) => None,
+        Some(RequestedReasoningEffort::None) => Some(Cow::Borrowed("none")),
+        Some(RequestedReasoningEffort::Minimal) => Some(Cow::Borrowed("minimal")),
+        Some(RequestedReasoningEffort::Low) => Some(Cow::Borrowed("low")),
+        Some(RequestedReasoningEffort::Medium) => Some(Cow::Borrowed("medium")),
+        Some(RequestedReasoningEffort::High) => Some(Cow::Borrowed("high")),
+        Some(RequestedReasoningEffort::Max) => Some(Cow::Borrowed("high")),
+        Some(RequestedReasoningEffort::XHigh) => {
+            Some(Cow::Borrowed(if allow_xhigh { "xhigh" } else { "high" }))
+        }
+        None => Some(Cow::Borrowed(value)),
     }
-
-    if value.eq_ignore_ascii_case("min") {
-        return Some(Cow::Borrowed("minimal"));
-    }
-    if value.eq_ignore_ascii_case("max") || value.eq_ignore_ascii_case("maximum") {
-        return Some(Cow::Borrowed("high"));
-    }
-    if value.eq_ignore_ascii_case("xhigh") {
-        return Some(Cow::Borrowed(
-            if supports_openai_xhigh_reasoning_effort(model) {
-                "xhigh"
-            } else {
-                "high"
-            },
-        ));
-    }
-
-    Some(Cow::Borrowed(value))
 }
 
 fn supports_openai_xhigh_reasoning_effort(model: &str) -> bool {
@@ -137,6 +138,10 @@ mod tests {
         assert_eq!(
             normalize_openai_reasoning_effort("max", "gpt-5.1").as_deref(),
             Some("high")
+        );
+        assert_eq!(
+            normalize_openai_reasoning_effort("minimum", "gpt-5.1").as_deref(),
+            Some("minimal")
         );
         assert_eq!(
             normalize_openai_reasoning_effort("xhigh", "gpt-5.1").as_deref(),

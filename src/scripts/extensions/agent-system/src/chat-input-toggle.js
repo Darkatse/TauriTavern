@@ -59,7 +59,7 @@ export async function mountChatInputAgentToggle() {
     };
 
     const syncVisibility = () => {
-        button.classList.toggle('displayNone', sendButton.classList.contains('displayNone'));
+        button.classList.toggle('displayNone', sendButton.classList.contains('displayNone') || Boolean(settings?.chatInputToggleHidden));
     };
     const sendButtonObserver = new MutationObserver(syncVisibility);
     sendButtonObserver.observe(sendButton, { attributes: true, attributeFilter: ['class'] });
@@ -132,6 +132,7 @@ export async function mountChatInputAgentToggle() {
 
     subscribeSettings((next) => {
         settings = next;
+        syncVisibility();
         render();
     });
 

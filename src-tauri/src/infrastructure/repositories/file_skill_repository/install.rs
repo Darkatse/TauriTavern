@@ -3,7 +3,7 @@ use super::fs_ops::{
     cleanup_dir, copy_skill_dir_to_empty_target, prepare_skill_dir_replacement,
     rollback_prepared_skill_dir, rollback_prepared_skill_dir_replacement,
 };
-use super::index::sort_index;
+use super::index::{SkillIndexFile, sort_index};
 use super::materialize::PreparedImport;
 use super::package::{ValidatedSkill, validate_skill_root};
 use super::source_refs::merge_source_refs;
@@ -22,26 +22,10 @@ impl FileSkillRepository {
         let mut validated = validate_skill_root(&prepared.package_root, prepared.source.clone())?;
         validated.entry.scope = target_scope;
         validated.preview.skill = validated.entry.clone();
-        let index = self.load_index().await?;
-        let installed = index.skills.iter().find(|skill| {
-            skill.scope == validated.entry.scope && skill.name == validated.entry.name
-        });
-        validated.preview.conflict = match installed {
-            None => SkillImportConflict {
-                kind: SkillImportConflictKind::New,
-                installed_hash: None,
-            },
-            Some(entry) if entry.installed_hash == validated.entry.installed_hash => {
-                SkillImportConflict {
-                    kind: SkillImportConflictKind::Same,
-                    installed_hash: Some(entry.installed_hash.clone()),
-                }
-            }
-            Some(entry) => SkillImportConflict {
-                kind: SkillImportConflictKind::Different,
-                installed_hash: Some(entry.installed_hash.clone()),
-            },
-        };
+        let index = self
+            .load_index_import_view(&validated.entry.scope, &validated.entry.name)
+            .await?;
+        validated.preview.conflict = import_conflict(&validated.entry, &index);
         Ok(validated)
     }
 
@@ -51,7 +35,10 @@ impl FileSkillRepository {
         validated: ValidatedSkill,
         strategy: Option<SkillInstallConflictStrategy>,
     ) -> Result<SkillInstallResult, DomainError> {
-        let mut index = match self.load_index().await {
+        let mut index = match self
+            .repair_index_for_import_target(&validated.entry.scope, &validated.entry.name)
+            .await
+        {
             Ok(index) => index,
             Err(error) => {
                 cleanup_dir(&prepared.cleanup_root);
@@ -61,8 +48,9 @@ impl FileSkillRepository {
         let existing_position = index.skills.iter().position(|skill| {
             skill.scope == validated.entry.scope && skill.name == validated.entry.name
         });
+        let conflict = import_conflict(&validated.entry, &index);
 
-        match validated.preview.conflict.kind {
+        match conflict.kind {
             SkillImportConflictKind::Same => {
                 let skill = match existing_position {
                     Some(position) => {
@@ -183,6 +171,32 @@ impl FileSkillRepository {
             },
             skill: Some(validated.entry),
         })
+    }
+}
+
+fn import_conflict(
+    entry: &crate::domain::models::skill::SkillIndexEntry,
+    index: &SkillIndexFile,
+) -> SkillImportConflict {
+    let installed = index
+        .skills
+        .iter()
+        .find(|skill| skill.scope == entry.scope && skill.name == entry.name);
+    match installed {
+        None => SkillImportConflict {
+            kind: SkillImportConflictKind::New,
+            installed_hash: None,
+        },
+        Some(installed) if installed.installed_hash == entry.installed_hash => {
+            SkillImportConflict {
+                kind: SkillImportConflictKind::Same,
+                installed_hash: Some(installed.installed_hash.clone()),
+            }
+        }
+        Some(installed) => SkillImportConflict {
+            kind: SkillImportConflictKind::Different,
+            installed_hash: Some(installed.installed_hash.clone()),
+        },
     }
 }
 

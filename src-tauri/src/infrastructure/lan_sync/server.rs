@@ -55,7 +55,7 @@ pub async fn spawn_lan_sync_server(
             "/v1/sync/plan",
             post(handle_sync_plan).layer(sync_plan_body_limit()),
         )
-        .route("/v1/sync/file/*path", get(handle_sync_file))
+        .route("/v1/sync/file/{*path}", get(handle_sync_file))
         .with_state(runtime);
 
     let task = tokio::spawn(async move {
@@ -80,7 +80,14 @@ pub async fn spawn_lan_sync_server(
 }
 
 async fn handle_status() -> impl IntoResponse {
-    (StatusCode::OK, Json(json!({ "ok": true })))
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "protocol": "lan-v1",
+            "deprecated": true,
+        })),
+    )
 }
 
 fn sync_plan_body_limit() -> DefaultBodyLimit {
@@ -182,8 +189,6 @@ async fn handle_sync_file_inner(
     headers: HeaderMap,
     path: String,
 ) -> Result<(HeaderMap, Body), (StatusCode, String)> {
-    validate_relative_path(&path).map_err(map_domain_error)?;
-
     let (device_id, signature) = require_auth_headers(&headers)?;
 
     let paired_device =
@@ -417,6 +422,9 @@ fn map_domain_error(error: DomainError) -> (StatusCode, String) {
         DomainError::InternalError(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
         DomainError::RateLimited { message } => (StatusCode::TOO_MANY_REQUESTS, message),
         DomainError::Transient(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
+        DomainError::UpstreamFailure(failure) => {
+            (StatusCode::SERVICE_UNAVAILABLE, failure.to_string())
+        }
         DomainError::WorkspacePathIsDirectory { path } => (
             StatusCode::CONFLICT,
             format!("Workspace path is a directory: {path}"),
@@ -443,6 +451,8 @@ mod tests {
 
     use axum::http::Request;
     use tower::ServiceExt;
+
+    use crate::domain::models::lan_sync::LanSyncManifest;
 
     async fn accept_manifest(Json(_): Json<LanSyncManifest>) -> StatusCode {
         StatusCode::OK

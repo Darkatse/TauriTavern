@@ -172,6 +172,7 @@ pub struct SaveChatWindowedDto {
     pub cursor: ChatPayloadCursor,
     pub header: String,
     pub lines: Vec<String>,
+    pub expected_window_line_count: usize,
     pub force: Option<bool>,
 }
 
@@ -184,7 +185,30 @@ pub struct PatchChatWindowedDto {
     pub cursor: ChatPayloadCursor,
     pub header: String,
     pub patch: ChatPayloadPatchOp,
+    pub expected_window_line_count: usize,
     pub force: Option<bool>,
+}
+
+/// DTO for toggling the hidden flag on messages before the window cursor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HideChatBeforeCursorDto {
+    #[serde(rename = "ch_name")]
+    pub character_name: String,
+    pub file_name: String,
+    pub cursor: ChatPayloadCursor,
+    pub hide: bool,
+    pub name_filter: Option<String>,
+    pub expected_window_line_count: usize,
+}
+
+/// DTO for toggling the hidden flag on group chat messages before the window cursor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HideGroupChatBeforeCursorDto {
+    pub id: String,
+    pub cursor: ChatPayloadCursor,
+    pub hide: bool,
+    pub name_filter: Option<String>,
+    pub expected_window_line_count: usize,
 }
 
 /// DTO for saving a group chat payload from an existing JSONL file path.
@@ -202,6 +226,7 @@ pub struct SaveGroupChatWindowedDto {
     pub cursor: ChatPayloadCursor,
     pub header: String,
     pub lines: Vec<String>,
+    pub expected_window_line_count: usize,
     pub force: Option<bool>,
 }
 
@@ -212,6 +237,7 @@ pub struct PatchGroupChatWindowedDto {
     pub cursor: ChatPayloadCursor,
     pub header: String,
     pub patch: ChatPayloadPatchOp,
+    pub expected_window_line_count: usize,
     pub force: Option<bool>,
 }
 

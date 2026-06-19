@@ -10,16 +10,26 @@ use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::errors::ApplicationError;
-use crate::application::services::agent_tools::{AGENT_AWAIT, AgentToolEffect, AgentToolSession};
+use crate::application::services::agent_tools::{
+    AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect, AgentToolSession,
+};
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 
 use crate::domain::models::agent::{
-    AgentInvocationExitPolicy, AgentModelContentPart, AgentModelMessage, AgentModelRequest,
-    AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunStatus, AgentToolResult,
-    WorkspacePath,
+    AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
+    AgentModelRequest, AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunStatus,
+    AgentToolResult, WorkspacePath,
 };
 use crate::domain::models::skill::SkillIndexEntry;
 use crate::domain::text_metrics::TextMetrics;
+
+pub(super) enum AgentLoopExit {
+    Finished,
+    Transferred {
+        task_id: String,
+        new_invocation_id: String,
+    },
+}
 
 impl AgentRuntimeService {
     pub(super) async fn run_tool_loop(
@@ -32,16 +42,20 @@ impl AgentRuntimeService {
         effective_skills: &[SkillIndexEntry],
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<Option<usize>, ApplicationError> {
+    ) -> Result<Option<AgentLoopExit>, ApplicationError> {
         let mut tool_session = AgentToolSession::new(effective_skills.to_vec());
         let mut seen_child_result_task_ids = HashSet::new();
-        let mut commit_count = 0_usize;
+        let mut commit_count = commit_ledger.len();
         // Counts soft drift recovery nudges for model-facing text and
         // journal events. It is intentionally not a separate budget: the
         // existing maxRounds loop remains the only retry boundary.
         let mut drift_recovery_attempts: usize = 0;
         for round in 1..=profile.tools.max_rounds {
             let updates_run_status = exit_policy == AgentInvocationExitPolicy::RunFinishAllowed;
+            if updates_run_status {
+                self.apply_pending_guidance_to_request(run_id, invocation_id, round, &mut request)
+                    .await?;
+            }
             if updates_run_status {
                 self.transition_status(run_id, AgentRunStatus::CallingModel)
                     .await?;
@@ -134,6 +148,7 @@ impl AgentRuntimeService {
                         drift_recovery_attempts,
                         direct_output_path.as_ref(),
                         exit_policy,
+                        profile,
                     );
                     request.messages.push(response.message.clone());
                     request.messages.push(AgentModelMessage {
@@ -161,20 +176,22 @@ impl AgentRuntimeService {
                     continue;
                 }
                 return Err(ApplicationError::ValidationError(format!(
-                    "model.tool_call_required: model must use Agent tools and finish through {}",
-                    completion_tool_name(exit_policy)
+                    "model.tool_call_required: model must use Agent tools and complete through {}",
+                    completion_tool_name(exit_policy, profile)
                 )));
             }
 
             let assistant_message = assistant_message_for_next_turn(&response)?;
             let mut tool_results = Vec::with_capacity(tool_calls.len());
             let mut finished = false;
+            let mut handoff = None;
+            let mut completion_tool = completion_tool_name(exit_policy, profile);
 
             for call in tool_calls {
                 if finished {
                     return Err(ApplicationError::ValidationError(format!(
                         "agent.tool_after_finish: model requested additional tools after {}",
-                        completion_tool_name(exit_policy)
+                        completion_tool
                     )));
                 }
 
@@ -285,6 +302,21 @@ impl AgentRuntimeService {
                         .await?;
                         finished = true;
                     }
+                    AgentToolEffect::HandoffAccepted {
+                        task_id,
+                        new_invocation_id,
+                        ..
+                    } => {
+                        handoff = Some((task_id.clone(), new_invocation_id.clone()));
+                        self.finish_invocation(
+                            run_id,
+                            invocation_id,
+                            AgentInvocationStatus::Transferred,
+                        )
+                        .await?;
+                        completion_tool = "agent_handoff";
+                        finished = true;
+                    }
                     AgentToolEffect::None => {}
                 }
 
@@ -304,7 +336,14 @@ impl AgentRuntimeService {
                     }),
                 )
                 .await?;
-                return Ok(Some(commit_count));
+                return Ok(Some(if let Some((task_id, new_invocation_id)) = handoff {
+                    AgentLoopExit::Transferred {
+                        task_id,
+                        new_invocation_id,
+                    }
+                } else {
+                    AgentLoopExit::Finished
+                }));
             }
 
             remember_seen_child_results_from_await(&tool_results, &mut seen_child_result_task_ids);
@@ -404,11 +443,27 @@ fn remember_seen_child_results_from_await(
     }
 }
 
-fn completion_tool_name(exit_policy: AgentInvocationExitPolicy) -> &'static str {
+fn completion_tool_name(
+    exit_policy: AgentInvocationExitPolicy,
+    profile: &ResolvedAgentProfile,
+) -> &'static str {
     match exit_policy {
-        AgentInvocationExitPolicy::RunFinishAllowed => "workspace_finish",
+        AgentInvocationExitPolicy::RunFinishAllowed => {
+            if profile_tool_visible(profile, "workspace.finish") {
+                "workspace_finish"
+            } else if profile_tool_visible(profile, AGENT_HANDOFF) {
+                "agent_handoff"
+            } else {
+                "an available Agent control tool"
+            }
+        }
         AgentInvocationExitPolicy::TaskReturnRequired => "task_return",
     }
+}
+
+fn profile_tool_visible(profile: &ResolvedAgentProfile, tool_name: &str) -> bool {
+    profile.tools.allow.iter().any(|name| name == tool_name)
+        && !profile.tools.deny.iter().any(|name| name == tool_name)
 }
 
 fn drift_recovery_attempt_limit(max_rounds: usize) -> usize {
@@ -419,13 +474,12 @@ fn drift_recovery_attempt_limit(max_rounds: usize) -> usize {
 /// turn with zero tool calls. The phrasing covers the common drift modes:
 ///
 /// * **Post-commit drift** (committed_count > 0): model committed a chat
-///   message but then replied with plain text instead of calling
-///   `workspace_finish`. We tell it that clean completion still requires
-///   `workspace_finish`, and that workspace edits only affect the chat after
-///   another `workspace_commit`.
+///   message but then replied with plain text instead of using the current
+///   stage completion tool. We tell it to complete with `workspace_finish`
+///   when available, or continue with `agent_handoff` for handoff-only stages.
 /// * **No-commit drift** (committed_count == 0): model bypassed the tool
 ///   workflow entirely. We tell it that every turn must use a tool until
-///   `workspace_finish`.
+///   the stage is finished or transferred.
 /// * **Child drift** (TaskReturnRequired): return-mode subagents cannot
 ///   commit or finish the run, so we direct them back to `task_return`.
 ///
@@ -434,36 +488,71 @@ fn build_drift_recovery_nudge(
     attempt: usize,
     direct_output_path: Option<&WorkspacePath>,
     exit_policy: AgentInvocationExitPolicy,
+    profile: &ResolvedAgentProfile,
 ) -> String {
     match exit_policy {
         AgentInvocationExitPolicy::RunFinishAllowed => {
-            let direct_output_hint = direct_output_path
-                .map(|path| {
-                    format!(
-                        " I saved your direct text to {}. If that text is the intended reply, call workspace_commit with path \"{}\" before workspace_finish.",
-                        path.as_str(),
-                        path.as_str()
-                    )
-                })
-                .unwrap_or_default();
+            if profile_tool_visible(profile, "workspace.finish") {
+                let direct_output_hint = direct_output_path
+                    .map(|path| {
+                        format!(
+                            " I saved your direct text to {}. If that text is the intended reply, call workspace_commit with path \"{}\" before workspace_finish.",
+                            path.as_str(),
+                            path.as_str()
+                        )
+                    })
+                    .unwrap_or_default();
 
-            if committed_count > 0 {
+                if committed_count > 0 {
+                    format!(
+                        "[system reminder, direct output recovery attempt {attempt}] You replied with \
+                         plain text but the run is still open. You have committed {committed_count} \
+                         message(s) to the chat via workspace_commit; complete cleanly by calling \
+                         workspace_finish. If you need to revise the committed content, update the workspace file with \
+                         workspace_apply_patch or workspace_write_file, then call workspace_commit again \
+                         before workspace_finish.{direct_output_hint} Do NOT repeat the content in plain text; \
+                         continue through Agent tools."
+                    )
+                } else {
+                    format!(
+                        "[system reminder, direct output recovery attempt {attempt}] You replied with \
+                         plain text, but this run must continue through Agent tools until workspace_finish. \
+                         Inspect the workspace if needed, produce the answer through workspace_write_file \
+                         and workspace_commit, then call workspace_finish.{direct_output_hint} \
+                         Do NOT answer directly in plain text."
+                    )
+                }
+            } else if profile_tool_visible(profile, AGENT_HANDOFF) {
+                let direct_output_hint = direct_output_path
+                    .map(|path| {
+                        format!(
+                            " I saved your direct text to {}. If it is useful, mention that path in the handoff brief.",
+                            path.as_str()
+                        )
+                    })
+                    .unwrap_or_default();
+
                 format!(
                     "[system reminder, direct output recovery attempt {attempt}] You replied with \
-                     plain text but the run is still open. You have committed {committed_count} \
-                     message(s) to the chat via workspace_commit; complete cleanly by calling \
-                     workspace_finish. If you need to revise the committed content, update the workspace file with \
-                     workspace_apply_patch or workspace_write_file, then call workspace_commit again \
-                     before workspace_finish.{direct_output_hint} Do NOT repeat the content in plain text; \
-                     continue through Agent tools."
+                     plain text, but this Agent stage cannot finish the run directly. Continue by \
+                     calling agent_handoff with a clear objective, context summary, workspace references, \
+                     and preservation constraints for the next Agent.{direct_output_hint} Do NOT answer \
+                     directly in plain text."
                 )
             } else {
+                let direct_output_hint = direct_output_path
+                    .map(|path| {
+                        format!(
+                            " I saved your direct text to {}. If it is useful, reference that path when continuing.",
+                            path.as_str()
+                        )
+                    })
+                    .unwrap_or_default();
                 format!(
                     "[system reminder, direct output recovery attempt {attempt}] You replied with \
-                     plain text, but this run must continue through Agent tools until workspace_finish. \
-                     Inspect the workspace if needed, produce the answer through workspace_write_file \
-                     and workspace_commit, then call workspace_finish.{direct_output_hint} \
-                     Do NOT answer directly in plain text."
+                     plain text, but this run must continue through Agent tools. Use an available \
+                     Agent control tool to continue or complete the stage.{direct_output_hint} Do NOT \
+                     answer directly in plain text."
                 )
             }
         }

@@ -1,6 +1,10 @@
 import { DEFAULT_PROFILE_ID } from '../constants.js';
 import { translateAgentSystem as tr } from '../i18n.js';
 import { skillScopeKey, skillScopeLabel } from '../skill-scope.js';
+import {
+    characterStemFromAvatarFileName,
+    hasCharacterAvatarIdentity,
+} from '../../../../../tauri/main/services/characters/character-identity.js';
 
 export { skillScopeKey, skillScopeLabel };
 
@@ -76,9 +80,9 @@ function profileScope(profileId, profiles) {
 function characterScope(context) {
     const characterId = context.characterId;
     const character = context.characters?.[characterId];
-    const avatar = String(character?.avatar || '').trim();
-    const resolvedId = avatar
-        ? avatar.split(/[\\/]/).pop().replace(/\.[^.]+$/, '')
+    const avatar = character?.avatar;
+    const resolvedId = hasCharacterAvatarIdentity(avatar)
+        ? characterStemFromAvatarFileName(avatar, 'avatar', { required: true })
         : '';
     if (!character || !resolvedId) {
         return {

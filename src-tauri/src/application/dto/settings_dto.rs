@@ -1,7 +1,8 @@
 use crate::domain::models::settings::{
-    ChatHistoryMode, ClaudeModelSettings, DevLoggingSettings, DynamicThemeSettings, ModelSettings,
-    PromptCacheTtl, RequestProxySettings, SettingsSnapshot, StartupUpdatePopupSettings,
-    TauriTavernSettings, TauriTavernUpdateSettings, UserSettings,
+    AgentRunRetentionSettings, AgentSettings, ChatHistoryMode, ClaudeModelSettings,
+    DevLoggingSettings, DynamicThemeSettings, ModelSettings, PromptCacheTtl, RequestProxySettings,
+    SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings,
+    UserSettings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,6 +22,7 @@ pub struct TauriTavernSettingsDto {
     pub dev: DevLoggingSettingsDto,
     pub dynamic_theme: DynamicThemeSettingsDto,
     pub models: ModelSettingsDto,
+    pub agent: AgentSettingsDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +50,31 @@ pub struct UpdateTauriTavernSettingsDto {
     pub dev: Option<UpdateDevLoggingSettingsDto>,
     pub dynamic_theme: Option<UpdateDynamicThemeSettingsDto>,
     pub models: Option<UpdateModelSettingsDto>,
+    pub agent: Option<UpdateAgentSettingsDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSettingsDto {
+    pub retention: AgentRunRetentionSettingsDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateAgentSettingsDto {
+    pub retention: Option<UpdateAgentRunRetentionSettingsDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunRetentionSettingsDto {
+    pub auto_prune_enabled: bool,
+    pub keep_recent_terminal_runs: u32,
+    pub keep_full_recent_runs: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateAgentRunRetentionSettingsDto {
+    pub auto_prune_enabled: Option<bool>,
+    pub keep_recent_terminal_runs: Option<u32>,
+    pub keep_full_recent_runs: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +94,9 @@ pub struct DynamicThemeSettingsDto {
     pub enabled: bool,
     pub day_theme: String,
     pub night_theme: String,
+    pub wallpaper_enabled: bool,
+    pub day_wallpaper: String,
+    pub night_wallpaper: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +104,9 @@ pub struct UpdateDynamicThemeSettingsDto {
     pub enabled: Option<bool>,
     pub day_theme: Option<String>,
     pub night_theme: Option<String>,
+    pub wallpaper_enabled: Option<bool>,
+    pub day_wallpaper: Option<String>,
+    pub night_wallpaper: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,6 +215,25 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             dev: DevLoggingSettingsDto::from(settings.dev),
             dynamic_theme: DynamicThemeSettingsDto::from(settings.dynamic_theme),
             models: ModelSettingsDto::from(settings.models),
+            agent: AgentSettingsDto::from(settings.agent),
+        }
+    }
+}
+
+impl From<AgentSettings> for AgentSettingsDto {
+    fn from(settings: AgentSettings) -> Self {
+        Self {
+            retention: AgentRunRetentionSettingsDto::from(settings.retention),
+        }
+    }
+}
+
+impl From<AgentRunRetentionSettings> for AgentRunRetentionSettingsDto {
+    fn from(settings: AgentRunRetentionSettings) -> Self {
+        Self {
+            auto_prune_enabled: settings.auto_prune_enabled,
+            keep_recent_terminal_runs: settings.keep_recent_terminal_runs,
+            keep_full_recent_runs: settings.keep_full_recent_runs,
         }
     }
 }
@@ -221,6 +273,9 @@ impl From<DynamicThemeSettings> for DynamicThemeSettingsDto {
             enabled: settings.enabled,
             day_theme: settings.day_theme,
             night_theme: settings.night_theme,
+            wallpaper_enabled: settings.wallpaper_enabled,
+            day_wallpaper: settings.day_wallpaper,
+            night_wallpaper: settings.night_wallpaper,
         }
     }
 }

@@ -12,11 +12,11 @@ use ttsync_contract::sync::SyncMode;
 use crate::app::AppState;
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncDirection, TtSyncErrorEvent, TtSyncPairedServer};
-use crate::infrastructure::tt_sync::identity::device_pubkey_b64url;
+use crate::infrastructure::sync_v2::{SyncV2OperationOptions, resolve_sync_v2_options};
 use crate::infrastructure::tt_sync::pull::pull_from_server;
 use crate::infrastructure::tt_sync::push::push_to_server;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
-use crate::infrastructure::tt_sync::v2_api::TtSyncV2Api;
+use crate::infrastructure::tt_sync::v2_api::{TtSyncV2Api, sync_error_to_domain};
 
 pub struct TtSyncService {
     runtime: Arc<TtSyncRuntime>,
@@ -52,7 +52,8 @@ impl TtSyncService {
         }
 
         let identity = self.runtime.store.load_or_create_identity().await?;
-        let device_pubkey = device_pubkey_b64url(&identity.ed25519_seed)?;
+        let device_pubkey = ttsync_core::crypto::device_pubkey_b64url(&identity.ed25519_seed)
+            .map_err(sync_error_to_domain)?;
 
         let request = PairCompleteRequest {
             device_id: identity.device_id,
@@ -87,9 +88,15 @@ impl TtSyncService {
         self.runtime.remove_paired_server(&server_device_id).await
     }
 
-    pub async fn pull(&self, server_device_id: &str, mode: SyncMode) -> Result<(), DomainError> {
+    pub async fn pull(
+        &self,
+        server_device_id: &str,
+        mode: SyncMode,
+        options: Option<SyncV2OperationOptions>,
+    ) -> Result<(), DomainError> {
         let server_device_id = DeviceId::new(server_device_id.to_string())
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
+        let options = resolve_sync_v2_options(options)?;
 
         let permit = match self.runtime.try_acquire_sync_permit() {
             Ok(permit) => permit,
@@ -102,7 +109,7 @@ impl TtSyncService {
             }
         };
 
-        let result = pull_from_server(self.runtime.clone(), &server_device_id, mode).await;
+        let result = pull_from_server(self.runtime.clone(), &server_device_id, mode, options).await;
 
         match result {
             Ok(completed) => {
@@ -143,9 +150,15 @@ impl TtSyncService {
         Ok(())
     }
 
-    pub async fn push(&self, server_device_id: &str, mode: SyncMode) -> Result<(), DomainError> {
+    pub async fn push(
+        &self,
+        server_device_id: &str,
+        mode: SyncMode,
+        options: Option<SyncV2OperationOptions>,
+    ) -> Result<(), DomainError> {
         let server_device_id = DeviceId::new(server_device_id.to_string())
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
+        let options = resolve_sync_v2_options(options)?;
 
         let permit = match self.runtime.try_acquire_sync_permit() {
             Ok(permit) => permit,
@@ -158,7 +171,7 @@ impl TtSyncService {
             }
         };
 
-        let result = push_to_server(self.runtime.clone(), &server_device_id, mode).await;
+        let result = push_to_server(self.runtime.clone(), &server_device_id, mode, options).await;
 
         match result {
             Ok(completed) => {
@@ -175,6 +188,23 @@ impl TtSyncService {
         }
 
         Ok(())
+    }
+
+    pub async fn push_for_automation(
+        &self,
+        server_device_id: &str,
+        mode: SyncMode,
+        options: Option<SyncV2OperationOptions>,
+    ) -> Result<crate::domain::models::tt_sync::TtSyncCompletedEvent, DomainError> {
+        let server_device_id = DeviceId::new(server_device_id.to_string())
+            .map_err(|error| DomainError::InvalidData(error.to_string()))?;
+        let options = resolve_sync_v2_options(options)?;
+
+        let permit = self.runtime.try_acquire_sync_permit()?;
+        let _origin = self.runtime.auto_event_guard();
+        let result = push_to_server(self.runtime.clone(), &server_device_id, mode, options).await;
+        drop(permit);
+        result
     }
 }
 

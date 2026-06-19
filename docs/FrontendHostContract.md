@@ -89,7 +89,17 @@
   - `push()`：注入分享 payload（url 或 png）。
   - `subscribe()`：订阅消费；若早到则进入 backlog，首次订阅会 drain backlog。
 
-### 3.5 平台 ABI（Public，新）
+### 3.5 上游库兼容全局（Public）
+
+由 `src/lib.js:initLibraryShims()` 安装：
+
+- `window._ : lodash`
+  - SillyTavern 生态中的 third-party 扩展可能把 lodash external 为 `_`，并在 ESM 模块求值阶段直接访问。
+  - 该符号必须在 third-party 扩展模块加载前可用；不得依赖 webpack/Rspack 等打包器偶然泄漏全局。
+
+该 ABI 属于 SillyTavern 兼容层，不放入 `window.__TAURITAVERN__.api`。新 TauriTavern 代码仍应从 `src/lib.js` 显式 import `lodash`。
+
+### 3.6 平台 ABI（Public，新）
 
 为避免未来继续扩散 `window.__TAURITAVERN_*` 零散符号，宿主层额外提供一个**统一出口**：
 
@@ -171,6 +181,7 @@
   - 当前已落地 Host ABI：`list()`、`load()`、`save()`、`delete()`。
   - Profile 只保存 `model.mode = "connectionRef"`、`connectionRef` 与 `modelId`，或保存分享/导入用的 `model.mode = "requiresConfiguration"`；不直接保存 Connection Manager 的 Model Target id。
   - Connection Manager Model Target 可以作为 UI 输入来源，但转换成 LLM Connection 时必须保真；无法表达的字段必须显式报错，不得静默丢弃。
+  - Agent System 负责在启动、Model Target 创建/更新、Profile 保存和 Agent run 启动前同步 `model-target-*` LLM Connection；启动 reconcile 或更新无法保真物化时会删除对应派生 connection；删除 Model Target 不隐式删除已物化 LLM Connection。
   - Rust command 名与 repository/file layout 属于 Internal 实现细节，不是第三方 Public Contract。
 
 - `api.skill`：TauriTavern Agent Skill 管理 API。用于列出、预览导入、安装、读取和导出本地 Skill。

@@ -113,7 +113,7 @@ impl SkillRepository for FileSkillRepository {
         scope_filter: SkillScopeFilter,
     ) -> Result<Vec<SkillIndexEntry>, DomainError> {
         paths::validate_skill_scope_filter(&scope_filter)?;
-        let index = self.load_index().await?;
+        let index = self.load_index_view_filtered_missing_dirs().await?;
         Ok(index
             .skills
             .into_iter()

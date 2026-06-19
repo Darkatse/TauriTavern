@@ -1,13 +1,16 @@
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::fs as tokio_fs;
 
 use super::fs_ops::{
     SkillDirCleanup, cleanup_committed_skill_dirs, copy_skill_dir_to_empty_target,
     ensure_installed_skill_dir, rollback_prepared_skill_dirs,
 };
+use super::package::validate_skill_root;
 use super::paths::{validate_skill_name, validate_skill_scope};
 use super::{FileSkillRepository, INDEX_VERSION};
 use crate::domain::errors::DomainError;
@@ -21,6 +24,11 @@ use crate::infrastructure::persistence::file_system::{
 pub(super) struct SkillIndexFile {
     pub(super) version: u32,
     pub(super) skills: Vec<SkillIndexEntry>,
+}
+
+pub(super) enum SkillDirectoryState {
+    Present,
+    Missing,
 }
 
 impl FileSkillRepository {
@@ -71,6 +79,36 @@ impl FileSkillRepository {
         Ok(index)
     }
 
+    pub(super) async fn load_index_view_filtered_missing_dirs(
+        &self,
+    ) -> Result<SkillIndexFile, DomainError> {
+        let mut index = self.load_index().await?;
+        self.filter_missing_skill_dirs(&mut index, None)?;
+        Ok(index)
+    }
+
+    pub(super) async fn load_index_import_view(
+        &self,
+        scope: &SkillScope,
+        name: &str,
+    ) -> Result<SkillIndexFile, DomainError> {
+        let mut index = self.load_index().await?;
+        self.reconcile_import_target(&mut index, scope, name)?;
+        Ok(index)
+    }
+
+    pub(super) async fn repair_index_for_import_target(
+        &self,
+        scope: &SkillScope,
+        name: &str,
+    ) -> Result<SkillIndexFile, DomainError> {
+        let mut index = self.load_index().await?;
+        if self.reconcile_import_target(&mut index, scope, name)? {
+            self.save_index(&index).await?;
+        }
+        Ok(index)
+    }
+
     pub(super) async fn save_index(&self, index: &SkillIndexFile) -> Result<(), DomainError> {
         self.ensure_layout().await?;
         validate_index(index)?;
@@ -115,6 +153,154 @@ impl FileSkillRepository {
             }
         }
         Ok(false)
+    }
+
+    pub(super) fn skill_directory_state(
+        &self,
+        skill: &SkillIndexEntry,
+    ) -> Result<SkillDirectoryState, DomainError> {
+        let root = self.installed_scope_root(&skill.scope)?.join(&skill.name);
+        let metadata = match fs::symlink_metadata(&root) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(SkillDirectoryState::Missing);
+            }
+            Err(error) => {
+                return Err(DomainError::InternalError(format!(
+                    "Failed to read Skill directory metadata '{}': {}",
+                    root.display(),
+                    error
+                )));
+            }
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(DomainError::InvalidData(format!(
+                "Skill directory cannot be a symlink: {}/{}",
+                skill.scope.label(),
+                skill.name
+            )));
+        }
+        if !metadata.is_dir() {
+            return Err(DomainError::InvalidData(format!(
+                "Skill installed path is not a directory: {}/{}",
+                skill.scope.label(),
+                skill.name
+            )));
+        }
+        Ok(SkillDirectoryState::Present)
+    }
+
+    fn filter_missing_skill_dirs(
+        &self,
+        index: &mut SkillIndexFile,
+        target: Option<(&SkillScope, &str)>,
+    ) -> Result<bool, DomainError> {
+        let mut changed = false;
+        let mut retained = Vec::with_capacity(index.skills.len());
+
+        for skill in std::mem::take(&mut index.skills) {
+            let should_check = match target {
+                Some((scope, name)) => skill.scope == *scope && skill.name == name,
+                None => true,
+            };
+            if !should_check {
+                retained.push(skill);
+                continue;
+            }
+
+            match self.skill_directory_state(&skill)? {
+                SkillDirectoryState::Present => retained.push(skill),
+                SkillDirectoryState::Missing => {
+                    changed = true;
+                    tracing::warn!(
+                        "Pruning stale Skill index entry for missing directory: {}/{}",
+                        skill.scope.label(),
+                        skill.name
+                    );
+                }
+            }
+        }
+
+        index.skills = retained;
+        if changed {
+            sort_index(index);
+        }
+        Ok(changed)
+    }
+
+    fn reconcile_import_target(
+        &self,
+        index: &mut SkillIndexFile,
+        scope: &SkillScope,
+        name: &str,
+    ) -> Result<bool, DomainError> {
+        let mut changed = self.filter_missing_skill_dirs(index, Some((scope, name)))?;
+        let has_entry = index
+            .skills
+            .iter()
+            .any(|skill| skill.scope == *scope && skill.name == name);
+        if has_entry {
+            return Ok(changed);
+        }
+
+        let Some(entry) = self.validated_orphan_import_target(scope, name)? else {
+            return Ok(changed);
+        };
+        index.skills.push(entry);
+        sort_index(index);
+        changed = true;
+        Ok(changed)
+    }
+
+    fn validated_orphan_import_target(
+        &self,
+        scope: &SkillScope,
+        name: &str,
+    ) -> Result<Option<SkillIndexEntry>, DomainError> {
+        let name = validate_skill_name(name)?;
+        validate_skill_scope(scope)?;
+        let root = self.installed_scope_root(scope)?.join(&name);
+        let metadata = match fs::symlink_metadata(&root) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(DomainError::InternalError(format!(
+                    "Failed to read Skill directory metadata '{}': {}",
+                    root.display(),
+                    error
+                )));
+            }
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(DomainError::InvalidData(format!(
+                "Skill directory cannot be a symlink: {}/{}",
+                scope.label(),
+                name
+            )));
+        }
+        if !metadata.is_dir() {
+            return Err(DomainError::InvalidData(format!(
+                "Skill installed path is not a directory: {}/{}",
+                scope.label(),
+                name
+            )));
+        }
+
+        let mut entry = validate_skill_root(&root, Value::Null)?.entry;
+        if entry.name != name {
+            return Err(DomainError::InvalidData(format!(
+                "Skill directory name '{}' does not match SKILL.md name '{}'",
+                name, entry.name
+            )));
+        }
+        entry.scope = scope.clone();
+        entry.source_refs.clear();
+        tracing::warn!(
+            "Restoring missing Skill index entry from installed directory: {}/{}",
+            entry.scope.label(),
+            entry.name
+        );
+        Ok(Some(entry))
     }
 
     async fn migrate_v1_index(
