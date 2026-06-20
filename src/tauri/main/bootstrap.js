@@ -42,6 +42,7 @@ import { registerRoutes } from './routes/index.js';
 import { isEmbeddedRuntimeTakeoverDisabled } from './services/embedded-runtime/embedded-runtime-profile-state.js';
 import { installFrontendLogCapture, setFrontendLogBackendForwardingEnabled } from './services/dev-logging/frontend-log-capture.js';
 import { preinstallPanelRuntime } from './services/panel-runtime/preinstall.js';
+import { installOledReader } from './services/oled-reader/install.js';
 let bootstrapped = false;
 const HOST_ABI_VERSION = 1;
 
@@ -266,6 +267,10 @@ export function bootstrapTauriMain() {
         safePerfMark('tt:tauri:bootstrap:start');
     }
     const isMobile = isMobileUserAgent(); if (isMobile) installTauriMobileCompat();
+
+    // Apply the OLED red-black reader before first paint so a previously enabled
+    // mode does not flash the default theme on startup.
+    installOledReader();
 
     installFrontendLogCapture();
     installDialogPolyfillCoverage();
