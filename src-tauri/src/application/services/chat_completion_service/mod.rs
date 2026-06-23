@@ -369,6 +369,7 @@ impl ChatCompletionService {
         .await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
+        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         self.apply_tauritavern_prompt_caching(
             source,
             &endpoint_path,
@@ -378,7 +379,6 @@ impl ChatCompletionService {
             prompt_caching_hints,
         )
         .await?;
-        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
 
         let response = self
@@ -481,6 +481,7 @@ impl ChatCompletionService {
         .await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
+        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         self.apply_tauritavern_prompt_caching(
             source,
             &endpoint_path,
@@ -490,7 +491,6 @@ impl ChatCompletionService {
             prompt_caching_hints,
         )
         .await?;
-        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
 
         self.chat_completion_repository
