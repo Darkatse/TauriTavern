@@ -64,23 +64,23 @@ impl FileAgentRepository {
             ))
         })?;
 
-        let base_state_dir = match run.persist_base_state_id.as_deref() {
+        let base_state = match run.persist_base_state_id.as_deref() {
             Some(state_id) => {
                 let state_dir = self.persistent_state_dir(&run.workspace_id, state_id)?;
-                let manifest = self.read_persistent_state_manifest(&state_dir).await?;
-                if manifest.state_id != state_id {
+                let state_manifest = self.read_persistent_state_manifest(&state_dir).await?;
+                if state_manifest.state_id != state_id {
                     return Err(DomainError::InvalidData(format!(
                         "agent.persistent_state_manifest_mismatch: manifest state `{}` does not match requested state `{state_id}`",
-                        manifest.state_id
+                        state_manifest.state_id
                     )));
                 }
-                if manifest.workspace_id != run.workspace_id {
+                if state_manifest.workspace_id != run.workspace_id {
                     return Err(DomainError::InvalidData(format!(
                         "agent.persistent_state_workspace_mismatch: state `{state_id}` belongs to workspace `{}`",
-                        manifest.workspace_id
+                        state_manifest.workspace_id
                     )));
                 }
-                Some(state_dir)
+                Some((state_dir, state_manifest))
             }
             None => None,
         };
@@ -95,12 +95,12 @@ impl FileAgentRepository {
                     error
                 ))
             })?;
-            if let Some(base_state_dir) = base_state_dir.as_ref() {
+            if let Some((base_state_dir, base_state_manifest)) = base_state.as_ref() {
                 let base_root = base_state_dir.join(&root);
                 let metadata = match fs::symlink_metadata(&base_root).await {
                     Ok(metadata) => metadata,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        if !persistent_manifest_has_files_for_root(&manifest, &root) {
+                        if !persistent_manifest_has_files_for_root(base_state_manifest, &root) {
                             continue;
                         }
                         return Err(DomainError::InvalidData(format!(
