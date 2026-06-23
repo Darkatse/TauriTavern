@@ -1092,6 +1092,70 @@ async fn delete_missing_chat_workspace_is_idempotent() {
 }
 
 #[tokio::test]
+async fn empty_persistent_state_restores_when_empty_root_directory_is_missing() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_empty_persist_base");
+    let manifest = sample_manifest(&run);
+    let profile = sample_resolved_profile(&manifest);
+
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .initialize_run(
+            &run,
+            &manifest,
+            &serde_json::json!({"messages": []}),
+            &profile,
+        )
+        .await
+        .expect("initialize workspace");
+
+    let changes = repository
+        .commit_persistent_changes(&run.id)
+        .await
+        .expect("commit empty persist state");
+    assert!(changes.changes.is_empty());
+
+    let missing_empty_root = root
+        .join("chats")
+        .join(&run.workspace_id)
+        .join("persistent-states")
+        .join(&run.id)
+        .join("persist");
+    assert!(missing_empty_root.exists());
+    fs::remove_dir_all(&missing_empty_root)
+        .await
+        .expect("simulate sync dropping empty persist root");
+
+    let mut next_run = sample_run_with_id("run_empty_persist_child");
+    next_run.persist_base_state_id = Some(run.id.clone());
+    repository
+        .create_run(&next_run)
+        .await
+        .expect("create child run");
+    repository
+        .initialize_run(
+            &next_run,
+            &sample_manifest(&next_run),
+            &serde_json::json!({"messages": []}),
+            &profile,
+        )
+        .await
+        .expect("missing empty persist root should restore as empty");
+
+    assert!(
+        root.join("chats")
+            .join(&next_run.workspace_id)
+            .join("runs")
+            .join(&next_run.id)
+            .join("persist")
+            .exists()
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn persistent_workspace_projects_run_changes_only_after_commit() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
