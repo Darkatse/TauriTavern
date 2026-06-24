@@ -78,6 +78,34 @@ pub struct AgentPreparePromptAssemblyDto {
     pub json_schema: Option<Value>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentBuildCurrentModelConnectionSnapshotDto {
+    pub settings: Value,
+    pub model: String,
+    #[serde(default)]
+    pub secret_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentBuildCurrentModelConnectionSnapshotResultDto {
+    pub current_model_connection: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentApplyCurrentModelConnectionSnapshotDto {
+    pub settings: Value,
+    pub current_model_connection: Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentApplyCurrentModelConnectionSnapshotResultDto {
+    pub settings: Value,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPreparePromptAssemblyResultDto {

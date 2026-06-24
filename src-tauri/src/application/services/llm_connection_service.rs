@@ -12,7 +12,7 @@ use crate::domain::models::secret::SecretKeys;
 use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
 use crate::domain::repositories::llm_connection_repository::LlmConnectionRepository;
 
-const CONNECTION_PAYLOAD_KEYS: &[&str] = &[
+pub(crate) const CONNECTION_PAYLOAD_KEYS: &[&str] = &[
     "chat_completion_source",
     "custom_api_format",
     "model",
@@ -118,6 +118,14 @@ const SOURCE_SPECIFIC_FIELD_SPECS: &[SourceSpecificFieldSpec] = &[
         kind: SourceSpecificValueKind::NonEmptyString,
     },
 ];
+
+pub(crate) fn connection_payload_keys() -> impl Iterator<Item = &'static str> {
+    CONNECTION_PAYLOAD_KEYS.iter().copied()
+}
+
+pub(crate) fn source_specific_payload_keys() -> impl Iterator<Item = &'static str> {
+    SOURCE_SPECIFIC_FIELD_SPECS.iter().map(|spec| spec.key)
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

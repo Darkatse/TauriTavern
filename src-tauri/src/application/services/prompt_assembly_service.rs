@@ -14,7 +14,7 @@ use crate::application::services::agent_profile_service::{
     materialize_agent_system_prompt,
 };
 use crate::application::services::llm_connection_service::{
-    LlmConnectionService, ResolvedLlmModelBinding,
+    self, LlmConnectionService, ResolvedLlmModelBinding,
 };
 use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::models::agent::profile::{
@@ -27,9 +27,9 @@ const PROMPT_ASSEMBLY_REQUEST_KIND: &str = "tauritavern.agentPromptAssemblyReque
 const PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION: u32 = 1;
 const FROZEN_RUN_INPUT_SNAPSHOT_KIND: &str = "tauritavern.agentFrozenRunInputSnapshot";
 const FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
-const CONNECTION_PROMPT_SETTING_KEYS: &[&str] = &[
-    "chat_completion_source",
-    "model",
+const CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND: &str = "tauritavern.currentModelConnectionSnapshot";
+const CURRENT_MODEL_CONNECTION_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+const MODEL_PROMPT_SETTING_KEYS: &[&str] = &[
     "openai_model",
     "claude_model",
     "google_model",
@@ -43,6 +43,7 @@ const CONNECTION_PROMPT_SETTING_KEYS: &[&str] = &[
     "groq_model",
     "siliconflow_model",
     "minimax_model",
+    "aws_bedrock_model",
     "electronhub_model",
     "chutes_model",
     "nanogpt_model",
@@ -56,27 +57,18 @@ const CONNECTION_PROMPT_SETTING_KEYS: &[&str] = &[
     "azure_openai_model",
     "zai_model",
     "workers_ai_model",
-    "custom_api_format",
-    "custom_url",
-    "secret_id",
-    "reverse_proxy",
-    "proxy_password",
-    "custom_prompt_post_processing",
-    "custom_include_headers",
-    "custom_include_body",
-    "custom_exclude_body",
+];
+const PROMPT_CONNECTION_EXTRA_SETTING_KEYS: &[&str] = &[
+    "additional_parameters_by_source",
+    "custom_claude_prompt_caching",
     "azure_base_url",
     "azure_deployment_name",
     "azure_api_version",
-    "vertexai_auth_mode",
-    "vertexai_region",
-    "vertexai_express_project_id",
-    "zai_endpoint",
-    "siliconflow_endpoint",
-    "minimax_endpoint",
-    "workers_ai_account_id",
-    "nanogpt_provider",
-    "nanogpt_payg_override",
+    "openrouter_use_fallback",
+    "openrouter_providers",
+    "openrouter_quantizations",
+    "openrouter_allow_fallbacks",
+    "openrouter_middleout",
 ];
 
 pub struct PromptAssemblyService {
@@ -145,6 +137,28 @@ impl PromptAssemblyService {
         .await
     }
 
+    pub fn build_current_model_connection_snapshot(
+        &self,
+        settings: &Value,
+        model: &str,
+        secret_id: Option<&str>,
+    ) -> Result<Value, ApplicationError> {
+        build_current_model_connection_snapshot(settings, model, secret_id)
+    }
+
+    pub fn apply_current_model_connection_snapshot(
+        &self,
+        settings: Value,
+        current_model_connection: &Value,
+    ) -> Result<Value, ApplicationError> {
+        let mut settings = settings;
+        apply_current_model_connection_snapshot_to_prompt_settings(
+            &mut settings,
+            current_model_connection,
+        )?;
+        Ok(settings)
+    }
+
     async fn prepare_frontend_prompt_assembly_with_context(
         &self,
         dto: AgentPreparePromptAssemblyDto,
@@ -174,7 +188,11 @@ impl PromptAssemblyService {
                 })?;
                 let preset_settings = self.load_openai_preset_settings(&preset_ref).await?;
                 let (settings, model_id) = self
-                    .resolve_prompt_assembly_settings(&profile, preset_settings.clone())
+                    .resolve_prompt_assembly_settings(
+                        &profile,
+                        preset_settings.clone(),
+                        &frozen_run_input_snapshot,
+                    )
                     .await?;
                 let fingerprint = AgentPromptAssemblyFingerprintDto {
                     preset_sha256: sha256_value(&preset_settings)?,
@@ -293,9 +311,16 @@ impl PromptAssemblyService {
         &self,
         profile: &ResolvedAgentProfile,
         mut settings: Value,
+        frozen_run_input_snapshot: &Value,
     ) -> Result<(Value, Option<String>), ApplicationError> {
         match profile.model.mode {
-            AgentModelBindingMode::CurrentPromptSnapshot => Ok((settings, None)),
+            AgentModelBindingMode::CurrentPromptSnapshot => {
+                apply_current_model_connection_to_prompt_settings(
+                    &mut settings,
+                    frozen_run_input_snapshot,
+                )?;
+                Ok((settings, None))
+            }
             AgentModelBindingMode::RequiresConfiguration => {
                 ensure_profile_model_configured(profile).map(|_| (settings, None))
             }
@@ -455,7 +480,175 @@ fn normalize_frozen_run_input_snapshot(
         "agent.frozen_run_input_macro_context_invalid: macroContext must be an object",
     )?;
     normalized.insert("macroContext".to_string(), macro_context.clone());
+    if let Some(current_model_connection) = object
+        .get("currentModelConnection")
+        .or_else(|| object.get("current_model_connection"))
+    {
+        normalized.insert(
+            "currentModelConnection".to_string(),
+            normalize_current_model_connection_snapshot(current_model_connection)?,
+        );
+    }
     Ok(Value::Object(normalized))
+}
+
+fn normalize_current_model_connection_snapshot(value: &Value) -> Result<Value, ApplicationError> {
+    let object = value.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.current_model_connection_snapshot_required: currentModelConnection must be an object"
+                .to_string(),
+        )
+    })?;
+    let schema_version = object
+        .get("schemaVersion")
+        .or_else(|| object.get("schema_version"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.current_model_connection_snapshot_schema_required: schemaVersion is required"
+                    .to_string(),
+            )
+        })?;
+    if schema_version != u64::from(CURRENT_MODEL_CONNECTION_SNAPSHOT_SCHEMA_VERSION) {
+        return Err(ApplicationError::ValidationError(format!(
+            "agent.current_model_connection_snapshot_schema_unsupported: schemaVersion {schema_version} is unsupported"
+        )));
+    }
+    let kind = string_field(object, "kind")?;
+    if kind != CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND {
+        return Err(ApplicationError::ValidationError(format!(
+            "agent.current_model_connection_snapshot_kind_invalid: kind must be {CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND}"
+        )));
+    }
+    let settings = object.get("settings").ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.current_model_connection_settings_required: settings is required".to_string(),
+        )
+    })?;
+    let settings_object = settings.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.current_model_connection_settings_invalid: settings must be an object"
+                .to_string(),
+        )
+    })?;
+    let source = settings_object
+        .get("chat_completion_source")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.current_model_connection_source_required: chat_completion_source cannot be empty"
+                    .to_string(),
+            )
+        })?;
+    let model = settings_object
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.current_model_connection_model_required: model cannot be empty".to_string(),
+            )
+        })?;
+
+    let mut normalized_settings = Map::new();
+    for key in connection_prompt_setting_keys() {
+        if let Some(value) = settings_object.get(key) {
+            normalized_settings.insert(key.to_string(), value.clone());
+        }
+    }
+    normalized_settings.insert(
+        "chat_completion_source".to_string(),
+        Value::String(source.to_string()),
+    );
+    normalized_settings.insert("model".to_string(), Value::String(model.to_string()));
+    if let Some(secret_id) = normalized_settings
+        .get("secret_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    {
+        normalized_settings.insert("secret_id".to_string(), Value::String(secret_id));
+    } else {
+        normalized_settings.remove("secret_id");
+    }
+
+    let mut normalized = Map::new();
+    normalized.insert(
+        "schemaVersion".to_string(),
+        json!(CURRENT_MODEL_CONNECTION_SNAPSHOT_SCHEMA_VERSION),
+    );
+    normalized.insert(
+        "kind".to_string(),
+        Value::String(CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND.to_string()),
+    );
+    normalized.insert("settings".to_string(), Value::Object(normalized_settings));
+    Ok(Value::Object(normalized))
+}
+
+fn build_current_model_connection_snapshot(
+    settings: &Value,
+    model: &str,
+    secret_id: Option<&str>,
+) -> Result<Value, ApplicationError> {
+    let settings_object = settings.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.current_model_connection_settings_invalid: settings must be an object"
+                .to_string(),
+        )
+    })?;
+    let source = settings_object
+        .get("chat_completion_source")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.current_model_connection_source_required: chat_completion_source cannot be empty"
+                    .to_string(),
+            )
+        })?;
+    let model = model.trim();
+    if model.is_empty() {
+        return Err(ApplicationError::ValidationError(
+            "agent.current_model_connection_model_required: model cannot be empty".to_string(),
+        ));
+    }
+    let model_setting_key = prompt_model_setting_key(source)?;
+
+    let mut snapshot_settings = Map::new();
+    for key in connection_prompt_setting_keys() {
+        if let Some(value) = settings_object.get(key) {
+            snapshot_settings.insert(key.to_string(), value.clone());
+        }
+    }
+    snapshot_settings.insert(
+        "chat_completion_source".to_string(),
+        Value::String(source.to_string()),
+    );
+    snapshot_settings.insert("model".to_string(), Value::String(model.to_string()));
+    snapshot_settings.insert(
+        model_setting_key.to_string(),
+        Value::String(model.to_string()),
+    );
+    if let Some(secret_id) = secret_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    {
+        snapshot_settings.insert("secret_id".to_string(), Value::String(secret_id));
+    } else {
+        snapshot_settings.remove("secret_id");
+    }
+
+    normalize_current_model_connection_snapshot(&json!({
+        "schemaVersion": CURRENT_MODEL_CONNECTION_SNAPSHOT_SCHEMA_VERSION,
+        "kind": CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND,
+        "settings": snapshot_settings,
+    }))
 }
 
 fn normalize_generation_type(value: &str) -> Result<String, ApplicationError> {
@@ -478,8 +671,8 @@ fn apply_model_binding_to_prompt_settings(
         )
     })?;
 
-    for key in CONNECTION_PROMPT_SETTING_KEYS {
-        object.remove(*key);
+    for key in connection_prompt_setting_keys() {
+        object.remove(key);
     }
 
     object.insert(
@@ -506,6 +699,64 @@ fn apply_model_binding_to_prompt_settings(
     Ok(())
 }
 
+fn apply_current_model_connection_to_prompt_settings(
+    settings: &mut Value,
+    frozen_run_input_snapshot: &Value,
+) -> Result<(), ApplicationError> {
+    let current_model_connection = frozen_run_input_snapshot
+        .get("currentModelConnection")
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "prompt_assembly.current_model_connection_required: model.mode=currentPromptSnapshot with preset.ref requires FrozenRunInputSnapshot.currentModelConnection"
+                    .to_string(),
+            )
+        })?;
+    apply_current_model_connection_snapshot_to_prompt_settings(settings, current_model_connection)
+}
+
+fn apply_current_model_connection_snapshot_to_prompt_settings(
+    settings: &mut Value,
+    current_model_connection: &Value,
+) -> Result<(), ApplicationError> {
+    let object = settings.as_object_mut().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "prompt_assembly.preset_data_invalid: preset data must be an object".to_string(),
+        )
+    })?;
+    let normalized_snapshot =
+        normalize_current_model_connection_snapshot(current_model_connection)?;
+    let connection_settings = normalized_snapshot
+        .get("settings")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            ApplicationError::InternalError(
+                "prompt_assembly.current_model_connection_normalized_invalid: normalized currentModelConnection settings missing"
+                    .to_string(),
+            )
+        })?;
+
+    for key in connection_prompt_setting_keys() {
+        object.remove(key);
+    }
+
+    for key in connection_prompt_setting_keys() {
+        if let Some(value) = connection_settings.get(key) {
+            object.insert(key.to_string(), value.clone());
+        }
+    }
+
+    Ok(())
+}
+
+fn connection_prompt_setting_keys() -> impl Iterator<Item = &'static str> {
+    MODEL_PROMPT_SETTING_KEYS
+        .iter()
+        .copied()
+        .chain(llm_connection_service::connection_payload_keys())
+        .chain(llm_connection_service::source_specific_payload_keys())
+        .chain(PROMPT_CONNECTION_EXTRA_SETTING_KEYS.iter().copied())
+}
+
 fn prompt_model_setting_key(source: &str) -> Result<&'static str, ApplicationError> {
     match source {
         "openai" => Ok("openai_model"),
@@ -514,16 +765,27 @@ fn prompt_model_setting_key(source: &str) -> Result<&'static str, ApplicationErr
         "claude" => Ok("claude_model"),
         "makersuite" => Ok("google_model"),
         "vertexai" => Ok("vertexai_model"),
+        "ai21" => Ok("ai21_model"),
+        "mistralai" => Ok("mistralai_model"),
         "deepseek" => Ok("deepseek_model"),
         "cohere" => Ok("cohere_model"),
+        "perplexity" => Ok("perplexity_model"),
         "groq" => Ok("groq_model"),
         "moonshot" => Ok("moonshot_model"),
+        "electronhub" => Ok("electronhub_model"),
         "nanogpt" => Ok("nanogpt_model"),
         "chutes" => Ok("chutes_model"),
         "siliconflow" => Ok("siliconflow_model"),
         "workers_ai" => Ok("workers_ai_model"),
         "zai" => Ok("zai_model"),
         "minimax" => Ok("minimax_model"),
+        "aimlapi" => Ok("aimlapi_model"),
+        "xai" => Ok("xai_model"),
+        "pollinations" => Ok("pollinations_model"),
+        "cometapi" => Ok("cometapi_model"),
+        "fireworks" => Ok("fireworks_model"),
+        "azure_openai" => Ok("azure_openai_model"),
+        "aws_bedrock" => Ok("aws_bedrock_model"),
         other => Err(ApplicationError::InternalError(format!(
             "prompt_assembly.model_source_unmapped: no prompt settings model key for source `{other}`"
         ))),
@@ -609,6 +871,18 @@ mod tests {
                 "promptInputs": { "type": "swipe", "messages": [] },
                 "worldInfoActivation": { "entries": [] },
                 "macroContext": { "names": { "user": "User", "char": "Char" } },
+                "currentModelConnection": {
+                    "schemaVersion": 1,
+                    "kind": CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND,
+                    "settings": {
+                        "chat_completion_source": "custom",
+                        "model": "opencode-model",
+                        "custom_model": "opencode-model",
+                        "custom_url": "https://opencode.example.test/v1",
+                        "custom_api_format": "openai_compat",
+                        "secret_id": "opencode-secret"
+                    }
+                },
             }),
             "swipe",
         )
@@ -617,6 +891,133 @@ mod tests {
         assert_eq!(snapshot["generationType"], "swipe");
         assert_eq!(snapshot["worldInfoActivation"]["entries"], json!([]));
         assert_eq!(snapshot["macroContext"]["names"]["char"], "Char");
+        assert_eq!(
+            snapshot["currentModelConnection"]["settings"]["custom_url"],
+            "https://opencode.example.test/v1"
+        );
+        assert_eq!(
+            snapshot["currentModelConnection"]["settings"]["secret_id"],
+            "opencode-secret"
+        );
+    }
+
+    #[test]
+    fn builds_current_model_connection_snapshot_with_backend_owned_fields() {
+        let snapshot = build_current_model_connection_snapshot(
+            &json!({
+                "chat_completion_source": "aws_bedrock",
+                "aws_bedrock_model": "amazon.titan-text-premier-v1:0",
+                "aws_bedrock_region": "eu-central-1",
+                "aws_bedrock_use_custom_template": true,
+                "aws_bedrock_custom_template": "{\"inputText\":{{messages}}}",
+                "aws_bedrock_custom_response_path": "results.0.outputText",
+                "aws_bedrock_custom_stream_path": "delta.text",
+                "additional_parameters_by_source": {
+                    "aws_bedrock": {
+                        "include_body": "",
+                        "exclude_body": "",
+                        "include_headers": "X-Trace: frozen"
+                    }
+                },
+                "custom_claude_prompt_caching": true,
+                "custom_models_by_source": { "aws_bedrock": ["catalog-only"] },
+                "openrouter_group_models": true,
+                "openrouter_sort_models": "context",
+                "show_external_models": true,
+                "additional_parameters_migration_version": 1,
+                "bypass_status_check": true
+            }),
+            "amazon.titan-text-premier-v1:0",
+            Some("bedrock-secret"),
+        )
+        .unwrap();
+        let settings = snapshot["settings"].as_object().unwrap();
+
+        assert_eq!(settings["chat_completion_source"], "aws_bedrock");
+        assert_eq!(settings["model"], "amazon.titan-text-premier-v1:0");
+        assert_eq!(
+            settings["aws_bedrock_model"],
+            "amazon.titan-text-premier-v1:0"
+        );
+        assert_eq!(settings["aws_bedrock_region"], "eu-central-1");
+        assert_eq!(settings["aws_bedrock_use_custom_template"], true);
+        assert_eq!(
+            settings["aws_bedrock_custom_response_path"],
+            "results.0.outputText"
+        );
+        assert_eq!(
+            settings["additional_parameters_by_source"]["aws_bedrock"]["include_headers"],
+            "X-Trace: frozen"
+        );
+        assert_eq!(settings["custom_claude_prompt_caching"], true);
+        assert_eq!(settings["secret_id"], "bedrock-secret");
+        assert!(settings.get("custom_models_by_source").is_none());
+        assert!(settings.get("openrouter_group_models").is_none());
+        assert!(settings.get("openrouter_sort_models").is_none());
+        assert!(settings.get("show_external_models").is_none());
+        assert!(settings.get("bypass_status_check").is_none());
+        assert!(
+            settings
+                .get("additional_parameters_migration_version")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn builds_current_model_connection_snapshot_with_openrouter_routing_fields() {
+        let snapshot = build_current_model_connection_snapshot(
+            &json!({
+                "chat_completion_source": "openrouter",
+                "openrouter_model": "anthropic/claude-sonnet-4",
+                "openrouter_use_fallback": true,
+                "openrouter_providers": ["anthropic", "openai"],
+                "openrouter_quantizations": ["bf16"],
+                "openrouter_allow_fallbacks": false,
+                "openrouter_middleout": "off",
+                "openrouter_group_models": true,
+                "openrouter_sort_models": "context",
+                "custom_models_by_source": { "openrouter": ["catalog-only"] }
+            }),
+            "anthropic/claude-sonnet-4",
+            Some("openrouter-secret"),
+        )
+        .unwrap();
+        let settings = snapshot["settings"].as_object().unwrap();
+
+        assert_eq!(settings["chat_completion_source"], "openrouter");
+        assert_eq!(settings["model"], "anthropic/claude-sonnet-4");
+        assert_eq!(settings["openrouter_model"], "anthropic/claude-sonnet-4");
+        assert_eq!(settings["openrouter_use_fallback"], true);
+        assert_eq!(
+            settings["openrouter_providers"],
+            json!(["anthropic", "openai"])
+        );
+        assert_eq!(settings["openrouter_quantizations"], json!(["bf16"]));
+        assert_eq!(settings["openrouter_allow_fallbacks"], false);
+        assert_eq!(settings["openrouter_middleout"], "off");
+        assert_eq!(settings["secret_id"], "openrouter-secret");
+        assert!(settings.get("openrouter_group_models").is_none());
+        assert!(settings.get("openrouter_sort_models").is_none());
+        assert!(settings.get("custom_models_by_source").is_none());
+    }
+
+    #[test]
+    fn current_model_connection_snapshot_rejects_unmapped_source() {
+        let error = build_current_model_connection_snapshot(
+            &json!({
+                "chat_completion_source": "unsupported",
+                "custom_url": "https://example.test/v1"
+            }),
+            "local-model",
+            None,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("prompt_assembly.model_source_unmapped")
+        );
     }
 
     #[test]
@@ -690,5 +1091,158 @@ mod tests {
         assert_eq!(settings["custom_model"], "local-model");
         assert_eq!(settings["custom_api_format"], "gemini_interactions");
         assert!(settings.get("deepseek_model").is_none());
+    }
+
+    #[test]
+    fn current_prompt_snapshot_overlays_connection_settings_from_frozen_snapshot() {
+        let mut settings = json!({
+            "name": "Prompt Only",
+            "temp_openai": 0.7,
+            "chat_completion_source": "custom",
+            "custom_model": "old-opencode-model",
+            "custom_url": "https://opencode.example.test/v1",
+            "secret_id": "old-secret",
+            "openrouter_providers": ["stale-provider"],
+            "openrouter_quantizations": ["stale-quantization"],
+            "openrouter_allow_fallbacks": false,
+            "openrouter_middleout": "off",
+            "additional_parameters_by_source": {
+                "custom": {
+                    "include_body": "",
+                    "exclude_body": "",
+                    "include_headers": "X-Preset: stale"
+                }
+            },
+            "custom_claude_prompt_caching": false
+        });
+        let frozen_run_input_snapshot = normalize_frozen_run_input_snapshot(
+            &json!({
+                "schemaVersion": 1,
+                "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
+                "generationType": "normal",
+                "promptInputs": {},
+                "worldInfoActivation": {},
+                "macroContext": {},
+                "currentModelConnection": {
+                    "schemaVersion": 1,
+                    "kind": CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND,
+                    "settings": {
+                        "chat_completion_source": "custom",
+                        "model": "deepseek-chat-through-custom",
+                        "custom_model": "deepseek-chat-through-custom",
+                        "custom_url": "https://api.deepseek.example/v1",
+                        "custom_api_format": "openai_compat",
+                        "secret_id": "deepseek-secret",
+                        "additional_parameters_by_source": {
+                            "custom": {
+                                "include_body": "",
+                                "exclude_body": "",
+                                "include_headers": "X-Run: current"
+                            }
+                        },
+                        "custom_claude_prompt_caching": true
+                    }
+                }
+            }),
+            "normal",
+        )
+        .unwrap();
+
+        apply_current_model_connection_to_prompt_settings(
+            &mut settings,
+            &frozen_run_input_snapshot,
+        )
+        .unwrap();
+
+        assert_eq!(settings["chat_completion_source"], "custom");
+        assert_eq!(settings["custom_model"], "deepseek-chat-through-custom");
+        assert_eq!(settings["custom_url"], "https://api.deepseek.example/v1");
+        assert_eq!(settings["custom_api_format"], "openai_compat");
+        assert_eq!(settings["secret_id"], "deepseek-secret");
+        assert_eq!(
+            settings["additional_parameters_by_source"]["custom"]["include_headers"],
+            "X-Run: current"
+        );
+        assert_eq!(settings["custom_claude_prompt_caching"], true);
+        assert!(settings.get("openrouter_providers").is_none());
+        assert!(settings.get("openrouter_quantizations").is_none());
+        assert!(settings.get("openrouter_allow_fallbacks").is_none());
+        assert!(settings.get("openrouter_middleout").is_none());
+        assert_eq!(settings["temp_openai"], 0.7);
+    }
+
+    #[test]
+    fn current_prompt_snapshot_removes_stale_secret_when_current_connection_is_keyless() {
+        let mut settings = json!({
+            "chat_completion_source": "custom",
+            "custom_model": "old-model",
+            "custom_url": "https://old.example.test/v1",
+            "secret_id": "old-secret"
+        });
+        let frozen_run_input_snapshot = normalize_frozen_run_input_snapshot(
+            &json!({
+                "schemaVersion": 1,
+                "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
+                "generationType": "normal",
+                "promptInputs": {},
+                "worldInfoActivation": {},
+                "macroContext": {},
+                "currentModelConnection": {
+                    "schemaVersion": 1,
+                    "kind": CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND,
+                    "settings": {
+                        "chat_completion_source": "custom",
+                        "model": "local-model",
+                        "custom_model": "local-model",
+                        "custom_url": "http://127.0.0.1:8000/v1",
+                        "custom_api_format": "openai_compat"
+                    }
+                }
+            }),
+            "normal",
+        )
+        .unwrap();
+
+        apply_current_model_connection_to_prompt_settings(
+            &mut settings,
+            &frozen_run_input_snapshot,
+        )
+        .unwrap();
+
+        assert_eq!(settings["custom_model"], "local-model");
+        assert_eq!(settings["custom_url"], "http://127.0.0.1:8000/v1");
+        assert!(settings.get("secret_id").is_none());
+    }
+
+    #[test]
+    fn current_prompt_snapshot_requires_frozen_current_model_connection() {
+        let mut settings = json!({
+            "chat_completion_source": "custom",
+            "custom_model": "old-model"
+        });
+        let frozen_run_input_snapshot = normalize_frozen_run_input_snapshot(
+            &json!({
+                "schemaVersion": 1,
+                "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
+                "generationType": "normal",
+                "promptInputs": {},
+                "worldInfoActivation": {},
+                "macroContext": {}
+            }),
+            "normal",
+        )
+        .unwrap();
+
+        let error = apply_current_model_connection_to_prompt_settings(
+            &mut settings,
+            &frozen_run_input_snapshot,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("prompt_assembly.current_model_connection_required")
+        );
     }
 }

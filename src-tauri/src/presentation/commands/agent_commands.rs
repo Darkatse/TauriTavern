@@ -7,13 +7,16 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::agent_dto::{
-    AgentApplyRunPruneDto, AgentCancelRunDto, AgentListProfilesResultDto, AgentListRunsDto,
-    AgentListRunsResultDto, AgentListToolSpecsResultDto, AgentLoadProfileResultDto,
-    AgentModelTurnDisplayDto, AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto,
-    AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto,
-    AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
-    AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
-    AgentReadWorkspaceFileDto, AgentRepairProfileFileDto, AgentResolveChatCommitDto,
+    AgentApplyCurrentModelConnectionSnapshotDto, AgentApplyCurrentModelConnectionSnapshotResultDto,
+    AgentApplyRunPruneDto, AgentBuildCurrentModelConnectionSnapshotDto,
+    AgentBuildCurrentModelConnectionSnapshotResultDto, AgentCancelRunDto,
+    AgentListProfilesResultDto, AgentListRunsDto, AgentListRunsResultDto,
+    AgentListToolSpecsResultDto, AgentLoadProfileResultDto, AgentModelTurnDisplayDto,
+    AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto,
+    AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto, AgentPruneChatPersistentStatesDto,
+    AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto, AgentReadEventsResultDto,
+    AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto, AgentReadWorkspaceFileDto,
+    AgentRepairProfileFileDto, AgentResolveChatCommitDto,
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
     AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRetargetPresetRefsDto,
     AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentRunPruneApplyResultDto,
@@ -71,6 +74,46 @@ pub async fn prepare_agent_prompt_assembly(
         .prepare_frontend_prompt_assembly(dto, profile, &visible_tools)
         .await
         .map_err(map_command_error("Failed to prepare agent prompt assembly"))
+}
+
+#[tauri::command]
+pub async fn build_agent_current_model_connection_snapshot(
+    dto: AgentBuildCurrentModelConnectionSnapshotDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentBuildCurrentModelConnectionSnapshotResultDto, CommandError> {
+    log_command("build_agent_current_model_connection_snapshot");
+
+    app_state
+        .prompt_assembly_service
+        .build_current_model_connection_snapshot(
+            &dto.settings,
+            &dto.model,
+            dto.secret_id.as_deref(),
+        )
+        .map(
+            |current_model_connection| AgentBuildCurrentModelConnectionSnapshotResultDto {
+                current_model_connection,
+            },
+        )
+        .map_err(map_command_error(
+            "Failed to build current model connection snapshot",
+        ))
+}
+
+#[tauri::command]
+pub async fn apply_agent_current_model_connection_snapshot(
+    dto: AgentApplyCurrentModelConnectionSnapshotDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentApplyCurrentModelConnectionSnapshotResultDto, CommandError> {
+    log_command("apply_agent_current_model_connection_snapshot");
+
+    app_state
+        .prompt_assembly_service
+        .apply_current_model_connection_snapshot(dto.settings, &dto.current_model_connection)
+        .map(|settings| AgentApplyCurrentModelConnectionSnapshotResultDto { settings })
+        .map_err(map_command_error(
+            "Failed to apply current model connection snapshot",
+        ))
 }
 
 #[tauri::command]

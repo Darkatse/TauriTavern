@@ -12,9 +12,29 @@ export function createPromptAssemblyApi({ safeInvoke }) {
         return safeInvoke('prepare_agent_prompt_assembly', { dto });
     }
 
+    async function buildCurrentModelConnectionSnapshot(input = {}) {
+        const dto = normalizeBuildCurrentModelConnectionSnapshotInput(input);
+        const result = await safeInvoke('build_agent_current_model_connection_snapshot', { dto });
+        return requirePlainObject(
+            result?.currentModelConnection ?? result?.current_model_connection,
+            'agent.current_model_connection_snapshot_invalid: backend did not return currentModelConnection',
+        );
+    }
+
+    async function applyCurrentModelConnectionSnapshot(input = {}) {
+        const dto = normalizeApplyCurrentModelConnectionSnapshotInput(input);
+        const result = await safeInvoke('apply_agent_current_model_connection_snapshot', { dto });
+        return requirePlainObject(
+            result?.settings,
+            'agent.current_model_connection_settings_invalid: backend did not return settings',
+        );
+    }
+
     return {
         prepare,
         buildSnapshot: buildPromptAssemblySnapshot,
+        buildCurrentModelConnectionSnapshot,
+        applyCurrentModelConnectionSnapshot,
     };
 }
 
@@ -75,6 +95,34 @@ function normalizePreparePromptAssemblyInput(input) {
     };
 }
 
+function normalizeBuildCurrentModelConnectionSnapshotInput(input) {
+    if (!isPlainObject(input)) {
+        throw new Error('agent.current_model_connection_input_invalid: input must be an object');
+    }
+    const settings = requirePlainObject(input.settings, 'settings');
+    const model = requireNonEmptyString(input.model, 'model');
+    const secretId = normalizeOptionalString(input.secretId ?? input.secret_id);
+
+    return {
+        settings,
+        model,
+        ...(secretId ? { secretId } : {}),
+    };
+}
+
+function normalizeApplyCurrentModelConnectionSnapshotInput(input) {
+    if (!isPlainObject(input)) {
+        throw new Error('agent.current_model_connection_apply_input_invalid: input must be an object');
+    }
+    return {
+        settings: requirePlainObject(input.settings, 'settings'),
+        currentModelConnection: requirePlainObject(
+            input.currentModelConnection ?? input.current_model_connection,
+            'currentModelConnection',
+        ),
+    };
+}
+
 function normalizeGenerationType(value) {
     return String(value || 'normal').trim() || 'normal';
 }
@@ -85,6 +133,21 @@ function normalizeOptionalString(value) {
     }
     const text = String(value).trim();
     return text || undefined;
+}
+
+function requireNonEmptyString(value, label) {
+    const text = normalizeOptionalString(value);
+    if (!text) {
+        throw new Error(`${label} is required`);
+    }
+    return text;
+}
+
+function requirePlainObject(value, label) {
+    if (!isPlainObject(value)) {
+        throw new Error(`${label} must be an object`);
+    }
+    return value;
 }
 
 function isPlainObject(value) {

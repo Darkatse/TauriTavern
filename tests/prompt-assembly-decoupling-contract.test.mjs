@@ -19,6 +19,21 @@ test('connectionRef prompt assembly overlays model binding instead of validating
     assert.doesNotMatch(source, /model_source_mismatch/);
 });
 
+test('currentPromptSnapshot prompt assembly overlays frozen current model connection', async () => {
+    const source = await readProjectFile('src-tauri/src/application/services/prompt_assembly_service.rs');
+    const frontendSource = await readProjectFile('src/scripts/tauritavern/agent/frozen-run-input-snapshot.js');
+    const agentApiSource = await readProjectFile('src/tauri/main/api/agent-prompt-assembly-run.js');
+
+    assert.match(source, /apply_current_model_connection_to_prompt_settings/);
+    assert.match(source, /prompt_assembly\.current_model_connection_required/);
+    assert.match(source, /connection_prompt_setting_keys/);
+    assert.match(frontendSource, /tauritavern\.currentModelConnectionSnapshot/);
+    assert.match(frontendSource, /buildSettingsWithCurrentModelConnectionSnapshot/);
+    assert.doesNotMatch(frontendSource, /CONNECTION_PROMPT_SETTING_KEYS/);
+    assert.match(agentApiSource, /build_agent_current_model_connection_snapshot/);
+    assert.match(agentApiSource, /apply_agent_current_model_connection_snapshot/);
+});
+
 test('requiresConfiguration prompt assembly fails fast before frontend broker handoff', async () => {
     const source = await readProjectFile('src-tauri/src/application/services/prompt_assembly_service.rs');
     const guardIndex = source.indexOf('ensure_profile_model_configured(&profile)?;');

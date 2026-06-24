@@ -60,6 +60,8 @@ import { normalizeAgentContextPolicy } from './scripts/tauritavern/agent/agent-c
 import { normalizeAgentSystemPrompt } from './scripts/tauritavern/agent/agent-system-prompt.js';
 import {
     buildFrozenRunInputSnapshot,
+    buildCurrentModelConnectionSnapshot,
+    buildSettingsWithCurrentModelConnectionSnapshot,
     normalizeFrozenRunInputSnapshot,
     snapshotExtensionPromptsForFrozenRun,
 } from './scripts/tauritavern/agent/frozen-run-input-snapshot.js';
@@ -278,7 +280,7 @@ import {
     tag_import_setting,
     applyCharacterTagsToMessageDivs,
 } from './scripts/tags.js';
-import { checkOpenRouterAuth, initSecrets, primeSecretStateSnapshot, readSecretState } from './scripts/secrets.js';
+import { checkOpenRouterAuth, initSecrets, primeSecretStateSnapshot, readSecretState, resolveSecretKey, secret_state } from './scripts/secrets.js';
 import { markdownExclusionExt } from './scripts/showdown-exclusion.js';
 import { markdownUnderscoreExt } from './scripts/showdown-underscore.js';
 import { NOTE_MODULE_NAME, initAuthorsNote, metadata_keys, setFloatingPrompt, shouldWIAddPrompt } from './scripts/authors-note.js';
@@ -6079,11 +6081,18 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             }, dryRun);
             generate_data = { prompt: prompt };
             if (agentMode) {
+                const currentModelConnection = await buildCurrentModelConnectionSnapshot({
+                    settings: oai_settings,
+                    model: getChatCompletionModel(oai_settings),
+                    secretKey: resolveSecretKey(),
+                    secretState: secret_state,
+                });
                 generate_data.frozenRunInputSnapshot = buildFrozenRunInputSnapshot({
                     generationType: type,
                     promptInputs,
                     worldInfoActivation,
                     macroContext: buildAgentPromptMacroContext(promptInputs),
+                    currentModelConnection,
                 });
             }
 
@@ -6420,13 +6429,17 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
     let runFrozenRunInputSnapshot = frozenRunInputSnapshot;
 
     if (promptAssembly?.mode === 'currentPromptSnapshot') {
-        const model = getChatCompletionModel(oai_settings);
+        const settings = await buildSettingsWithCurrentModelConnectionSnapshot(
+            oai_settings,
+            frozenRunInputSnapshot.currentModelConnection,
+        );
+        const model = getChatCompletionModel(settings);
         if (!model) {
             throw new Error('agent.model_required: current chat-completion source did not resolve a model');
         }
 
         const { generate_data: chatCompletionPayload } = await createGenerationParameters(
-            oai_settings,
+            settings,
             model,
             type,
             structuredClone(messages),

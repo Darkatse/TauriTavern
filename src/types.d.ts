@@ -498,6 +498,15 @@ type TauriTavernAgentPromptAssemblyApi = {
         generationIntent: any;
         assembly: any;
     }>;
+    buildCurrentModelConnectionSnapshot: (input: {
+        settings: Record<string, any>;
+        model: string;
+        secretId?: string | null;
+    }) => Promise<Record<string, any>>;
+    applyCurrentModelConnectionSnapshot: (input: {
+        settings: Record<string, any>;
+        currentModelConnection: Record<string, any>;
+    }) => Promise<Record<string, any>>;
 };
 
 type TauriTavernAgentRetentionApi = {

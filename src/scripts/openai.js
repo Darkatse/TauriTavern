@@ -4181,6 +4181,10 @@ export async function createGenerationParameters(settings, model, type, messages
         'verbosity': getVerbosity(settings),
     };
 
+    if (typeof settings.secret_id === 'string' && settings.secret_id.trim()) {
+        generate_data.secret_id = settings.secret_id.trim();
+    }
+
     if (settings.chat_completion_source === chat_completion_sources.AZURE_OPENAI) {
         generate_data.azure_base_url = settings.azure_base_url;
         generate_data.azure_deployment_name = settings.azure_deployment_name;

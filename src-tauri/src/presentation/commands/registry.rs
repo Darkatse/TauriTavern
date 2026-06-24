@@ -288,6 +288,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // Agent runtime commands
         super::agent_commands::start_agent_run,
         super::agent_commands::prepare_agent_prompt_assembly,
+        super::agent_commands::build_agent_current_model_connection_snapshot,
+        super::agent_commands::apply_agent_current_model_connection_snapshot,
         super::agent_commands::list_agent_profiles,
         super::agent_commands::list_agent_tool_specs,
         super::agent_commands::resolve_agent_system_prompt,

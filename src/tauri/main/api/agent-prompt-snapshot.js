@@ -8,7 +8,10 @@ import {
     loadResolvedAgentSystemPrompt,
     normalizeAgentSystemPrompt,
 } from '../../../scripts/tauritavern/agent/agent-system-prompt.js';
-import { normalizeFrozenRunInputSnapshot } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
+import {
+    buildSettingsWithCurrentModelConnectionSnapshot,
+    normalizeFrozenRunInputSnapshot,
+} from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
 
 const LEGACY_DRY_RUN_SOURCE = 'legacy-generate-dry-run';
 
@@ -75,14 +78,19 @@ export async function materializeCurrentPromptSnapshot(input) {
     const messages = seed.messages;
     assertMessagesReady(messages);
     assertNoExternalToolTurns(messages);
+    const frozenRunInputSnapshot = normalizeFrozenRunInputSnapshot(input.frozenRunInputSnapshot);
     const openai = await import('../../../scripts/openai.js');
-    const model = openai.getChatCompletionModel(openai.oai_settings);
+    const settings = await buildSettingsWithCurrentModelConnectionSnapshot(
+        openai.oai_settings,
+        frozenRunInputSnapshot.currentModelConnection,
+    );
+    const model = openai.getChatCompletionModel(settings);
     if (!model) {
         throw new Error('agent.model_required: current chat-completion source did not resolve a model');
     }
 
     const { generate_data: payload } = await openai.createGenerationParameters(
-        openai.oai_settings,
+        settings,
         model,
         generationType,
         structuredClone(messages),
@@ -101,7 +109,7 @@ export async function materializeCurrentPromptSnapshot(input) {
             chatCompletionPayload: payload,
             ...(seed.worldInfoActivation ? { worldInfoActivation: seed.worldInfoActivation } : {}),
         },
-        frozenRunInputSnapshot: input.frozenRunInputSnapshot,
+        frozenRunInputSnapshot,
         generationIntent: {
             source: LEGACY_DRY_RUN_SOURCE,
             generationType,

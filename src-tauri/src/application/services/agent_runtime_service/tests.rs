@@ -2376,7 +2376,17 @@ async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
             "messages": []
         },
         "worldInfoActivation": { "entries": [] },
-        "macroContext": {}
+        "macroContext": {},
+        "currentModelConnection": {
+            "schemaVersion": 1,
+            "kind": "tauritavern.currentModelConnectionSnapshot",
+            "settings": {
+                "chat_completion_source": "openai",
+                "model": "parent-model",
+                "openai_model": "parent-model",
+                "secret_id": "parent-secret"
+            }
+        }
     });
     let root_prompt_snapshot = json!({
         "contextPolicy": child_profile.context.clone(),
@@ -2466,7 +2476,8 @@ async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
         .await
         .expect("read prompt assembly request");
     assert_eq!(request.preset_ref.name, "Child Preset");
-    assert_eq!(request.settings["openai_model"], "preset-model");
+    assert_eq!(request.settings["openai_model"], "parent-model");
+    assert_eq!(request.settings["secret_id"], "parent-secret");
     assert_eq!(
         request.required_agent_prompt_components,
         vec!["agentSystemPrompt".to_string(), "agentTask".to_string()]

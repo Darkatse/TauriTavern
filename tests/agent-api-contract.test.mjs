@@ -173,6 +173,80 @@ test('api.agent.promptAssembly prepares backend broker requests', async () => {
     ]);
 });
 
+test('api.agent.promptAssembly normalizes current model connection through backend commands', async () => {
+    const calls = [];
+    const settings = {
+        chat_completion_source: 'custom',
+        custom_model: 'opencode-model',
+        custom_url: 'https://opencode.example.test/v1',
+        additional_parameters_by_source: {
+            custom: { include_body: '', exclude_body: '', include_headers: 'X-Test: true' },
+        },
+    };
+    const currentModelConnection = {
+        schemaVersion: 1,
+        kind: 'tauritavern.currentModelConnectionSnapshot',
+        settings: {
+            chat_completion_source: 'custom',
+            model: 'opencode-model',
+            custom_model: 'opencode-model',
+            custom_url: 'https://opencode.example.test/v1',
+            secret_id: 'secret-current',
+        },
+    };
+    const appliedSettings = {
+        temp_openai: 0.7,
+        ...currentModelConnection.settings,
+    };
+    const { agent } = await installHarness({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            if (command === 'build_agent_current_model_connection_snapshot') {
+                return { currentModelConnection };
+            }
+            if (command === 'apply_agent_current_model_connection_snapshot') {
+                return { settings: appliedSettings };
+            }
+            return {};
+        },
+    });
+
+    assert.ok(agent.promptAssembly);
+    const built = await agent.promptAssembly.buildCurrentModelConnectionSnapshot({
+        settings,
+        model: 'opencode-model',
+        secretId: 'secret-current',
+    });
+    const applied = await agent.promptAssembly.applyCurrentModelConnectionSnapshot({
+        settings: { temp_openai: 0.7 },
+        currentModelConnection,
+    });
+
+    assert.deepEqual(built, currentModelConnection);
+    assert.deepEqual(applied, appliedSettings);
+    assert.deepEqual(calls, [
+        {
+            command: 'build_agent_current_model_connection_snapshot',
+            args: {
+                dto: {
+                    settings,
+                    model: 'opencode-model',
+                    secretId: 'secret-current',
+                },
+            },
+        },
+        {
+            command: 'apply_agent_current_model_connection_snapshot',
+            args: {
+                dto: {
+                    settings: { temp_openai: 0.7 },
+                    currentModelConnection,
+                },
+            },
+        },
+    ]);
+});
+
 test('api.agent.startRunWithPromptSnapshot refreshes Model Target LLM connection before starting run', async () => {
     const sequence = [];
     const savedConnections = [];
