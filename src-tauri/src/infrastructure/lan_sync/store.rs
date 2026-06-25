@@ -1,13 +1,10 @@
 use std::path::PathBuf;
 
 use rand::Rng;
-use uuid::Uuid;
+use ttsync_contract::sync::SyncMode;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::lan_sync::{
-    LanSyncConfig, LanSyncDeviceIdentity, LanSyncPairedDevice, LanSyncSyncMode,
-    default_lan_sync_v2_port,
-};
+use crate::domain::models::lan_sync::LanSyncConfig;
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
 
 pub struct LanSyncStore {
@@ -25,14 +22,6 @@ impl LanSyncStore {
         self.lan_sync_dir.join("config.json")
     }
 
-    fn identity_path(&self) -> PathBuf {
-        self.lan_sync_dir.join("identity.json")
-    }
-
-    fn paired_devices_path(&self) -> PathBuf {
-        self.lan_sync_dir.join("paired-devices.json")
-    }
-
     pub async fn load_or_create_config(&self) -> Result<LanSyncConfig, DomainError> {
         let path = self.config_path();
         if path.is_file() {
@@ -41,11 +30,10 @@ impl LanSyncStore {
             return Ok(config);
         }
 
-        let port = rand::rng().random_range(49152..=65534);
+        let port = rand::rng().random_range(49152..=65535);
         let config = LanSyncConfig {
             port,
-            v2_port: default_lan_sync_v2_port(port),
-            sync_mode: LanSyncSyncMode::Incremental,
+            sync_mode: SyncMode::Incremental,
         };
         validate_config(&config)?;
         write_json_file(&path, &config).await?;
@@ -57,81 +45,12 @@ impl LanSyncStore {
         let path = self.config_path();
         write_json_file(&path, config).await
     }
-
-    pub async fn load_or_create_identity(&self) -> Result<LanSyncDeviceIdentity, DomainError> {
-        let path = self.identity_path();
-        if path.is_file() {
-            return read_json_file(&path).await;
-        }
-
-        let identity = LanSyncDeviceIdentity {
-            device_id: Uuid::new_v4().to_string(),
-            device_name: "TauriTavern".to_string(),
-        };
-        write_json_file(&path, &identity).await?;
-        Ok(identity)
-    }
-
-    pub async fn load_paired_devices(&self) -> Result<Vec<LanSyncPairedDevice>, DomainError> {
-        let path = self.paired_devices_path();
-        if !path.is_file() {
-            return Ok(Vec::new());
-        }
-
-        read_json_file(&path).await
-    }
-
-    pub async fn save_paired_devices(
-        &self,
-        devices: &[LanSyncPairedDevice],
-    ) -> Result<(), DomainError> {
-        let path = self.paired_devices_path();
-        write_json_file(&path, devices).await
-    }
-
-    pub async fn upsert_paired_device(
-        &self,
-        device: LanSyncPairedDevice,
-    ) -> Result<(), DomainError> {
-        let mut devices = self.load_paired_devices().await?;
-
-        if let Some(existing) = devices
-            .iter_mut()
-            .find(|item| item.device_id == device.device_id)
-        {
-            *existing = device;
-        } else {
-            devices.push(device);
-        }
-
-        self.save_paired_devices(&devices).await
-    }
-
-    pub async fn remove_paired_device(&self, device_id: &str) -> Result<(), DomainError> {
-        let devices = self.load_paired_devices().await?;
-        let filtered = devices
-            .into_iter()
-            .filter(|device| device.device_id != device_id)
-            .collect::<Vec<_>>();
-
-        self.save_paired_devices(&filtered).await
-    }
 }
 
 fn validate_config(config: &LanSyncConfig) -> Result<(), DomainError> {
     if config.port == 0 {
         return Err(DomainError::InvalidData(
             "LAN sync port must not be 0".to_string(),
-        ));
-    }
-    if config.v2_port == 0 {
-        return Err(DomainError::InvalidData(
-            "LAN Sync v2 port must not be 0".to_string(),
-        ));
-    }
-    if config.port == config.v2_port {
-        return Err(DomainError::InvalidData(
-            "LAN sync v1 and v2 ports must be different".to_string(),
         ));
     }
 
@@ -147,21 +66,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn config_creation_sets_stable_v2_port() {
+    async fn config_creation_round_trips_without_port_drift() {
         let default_user_dir = temp_default_user_dir();
         let store = LanSyncStore::new(default_user_dir.clone());
 
         let config = store.load_or_create_config().await.expect("create config");
+        let reloaded = store.load_or_create_config().await.expect("reload config");
 
         assert_ne!(config.port, 0);
-        assert_ne!(config.v2_port, 0);
-        assert_ne!(config.port, config.v2_port);
+        assert_eq!(reloaded.port, config.port);
 
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     #[tokio::test]
-    async fn legacy_config_loads_with_derived_v2_port() {
+    async fn saved_config_round_trips_without_port_drift() {
+        let default_user_dir = temp_default_user_dir();
+        let store = LanSyncStore::new(default_user_dir.clone());
+        let mut config = store.load_or_create_config().await.expect("create config");
+        config.sync_mode = ttsync_contract::sync::SyncMode::Mirror;
+
+        store.save_config(&config).await.expect("save config");
+        let reloaded = store.load_or_create_config().await.expect("reload config");
+
+        assert_eq!(reloaded.port, config.port);
+        assert_eq!(reloaded.sync_mode, ttsync_contract::sync::SyncMode::Mirror);
+
+        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
+    }
+
+    #[tokio::test]
+    async fn old_config_without_https_port_uses_existing_port() {
         let default_user_dir = temp_default_user_dir();
         let config_dir = default_user_dir.join("user").join("lan-sync");
         tokio::fs::create_dir_all(&config_dir)
@@ -172,34 +107,45 @@ mod tests {
             br#"{"port":55000,"sync_mode":"Incremental"}"#,
         )
         .await
-        .expect("write legacy config");
+        .expect("write old config");
 
         let store = LanSyncStore::new(default_user_dir.clone());
         let config = store.load_or_create_config().await.expect("load config");
 
         assert_eq!(config.port, 55000);
-        assert_eq!(config.v2_port, 55001);
 
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     #[tokio::test]
-    async fn save_config_rejects_invalid_v2_port() {
+    async fn old_config_with_explicit_https_port_keeps_that_port() {
         let default_user_dir = temp_default_user_dir();
+        let config_dir = default_user_dir.join("user").join("lan-sync");
+        tokio::fs::create_dir_all(&config_dir)
+            .await
+            .expect("create config dir");
+        tokio::fs::write(
+            config_dir.join("config.json"),
+            br#"{"port":55000,"v2_port":56000,"sync_mode":"Mirror"}"#,
+        )
+        .await
+        .expect("write old config");
+
         let store = LanSyncStore::new(default_user_dir.clone());
+        let config = store.load_or_create_config().await.expect("load config");
 
-        let result = store
-            .save_config(&crate::domain::models::lan_sync::LanSyncConfig {
-                port: 55000,
-                v2_port: 55000,
-                sync_mode: crate::domain::models::lan_sync::LanSyncSyncMode::Incremental,
-            })
-            .await;
+        assert_eq!(config.port, 56000);
+        assert_eq!(config.sync_mode, ttsync_contract::sync::SyncMode::Mirror);
 
-        assert!(matches!(
-            result,
-            Err(crate::domain::errors::DomainError::InvalidData(_))
-        ));
+        store
+            .save_config(&config)
+            .await
+            .expect("save migrated config");
+        let reloaded = store
+            .load_or_create_config()
+            .await
+            .expect("reload migrated config");
+        assert_eq!(reloaded.port, 56000);
 
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }

@@ -22,7 +22,7 @@ use ttsync_http::server::{ServerState, build_transfer_router, default_status_res
 use ttsync_http::tls::{SelfManagedTls, TlsProvider};
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::lan_sync::{LanSyncV2Identity, LanSyncV2PairedDevice};
+use crate::domain::models::lan_sync::{LanSyncIdentity, LanSyncPairedDevice};
 use crate::infrastructure::lan_sync::v2::pairing::{
     LanSyncV2PairCompleteRequest, LanSyncV2PairCompleteResponse, LanSyncV2PairingCoordinator,
     decode_device_pubkey_b64url, default_lan_v2_permissions, host_for_pairing_prompt,
@@ -304,7 +304,7 @@ impl PeerStore for LanSyncV2PeerStore {
 }
 
 struct LanSyncV2LanState {
-    identity: LanSyncV2Identity,
+    identity: LanSyncIdentity,
     store: LanSyncV2Store,
     pairing: Arc<dyn LanSyncV2PairingCoordinator>,
     pull_requests: Arc<dyn LanSyncV2PullRequestHandler>,
@@ -364,7 +364,7 @@ async fn handle_lan_pair_complete(
     let paired_at_ms = now_ms();
     state
         .store
-        .upsert_paired_device(LanSyncV2PairedDevice {
+        .upsert_paired_device(LanSyncPairedDevice {
             grant: PeerGrant {
                 device_id: request.device_id,
                 device_name: request.device_name,
@@ -723,7 +723,7 @@ mod tests {
             .decode(ttsync_core::crypto::device_pubkey_b64url(&peer_seed).unwrap())
             .unwrap();
         store
-            .upsert_paired_device(LanSyncV2PairedDevice {
+            .upsert_paired_device(LanSyncPairedDevice {
                 grant: PeerGrant {
                     device_id: peer_device_id.clone(),
                     device_name: "Peer".to_string(),

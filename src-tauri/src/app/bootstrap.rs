@@ -361,13 +361,11 @@ pub(super) async fn build_services(
     let user_directory_service = Arc::new(UserDirectoryService::new(
         repositories.user_directory_repository,
     ));
-    let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
     let sync_permit = Arc::new(Semaphore::new(1));
     let lan_sync_service = Arc::new(LanSyncService::new(
         app_handle.clone(),
         data_directory.root().to_path_buf(),
         data_directory.default_user().to_path_buf(),
-        http_client_pool,
         sync_permit.clone(),
     ));
     let tt_sync_service = Arc::new(TtSyncService::new(

@@ -183,7 +183,7 @@ export function createTauriTavernSyncApp(options) {
                 return `${this.tr('Enabled')} (${this.tr('Expires')}: ${formatTimestampValue(this.status?.pairingExpiresAtMs, this.tr)})`;
             },
             pairUri() {
-                return this.pairingInfo?.v2PairUri || '';
+                return this.pairingInfo?.pairUri || '';
             },
             pairExpiryText() {
                 return this.pairingInfo?.expiresAtMs
@@ -191,7 +191,7 @@ export function createTauriTavernSyncApp(options) {
                     : this.tr('N/A');
             },
             qrImageSrc() {
-                const svg = this.pairingInfo?.v2QrSvg || '';
+                const svg = this.pairingInfo?.qrSvg || '';
                 if (!svg) {
                     return '';
                 }
@@ -246,13 +246,12 @@ export function createTauriTavernSyncApp(options) {
             automationTargets() {
                 return this.targets.map((target) => {
                     const isLan = target.type === 'lan';
-                    const isLanV2 = !isLan || target.protocolVersion === 2;
                     const canWrite = isLan || Boolean(target.permissions?.write);
                     const canMirror = isLan || Boolean(target.permissions?.mirror_delete);
                     const disabled = isLan
-                        ? (!isLanV2 || !target.lastKnownAddress)
+                        ? !target.lastKnownAddress
                         : (!canWrite || (this.modeDanger && !canMirror));
-                    const protocol = isLan ? (isLanV2 ? 'LAN v2' : 'LAN v1') : 'TT-Sync';
+                    const protocol = isLan ? 'LAN' : 'TT-Sync';
 
                     return {
                         value: automationTargetValue(target),
@@ -745,10 +744,10 @@ export function createTauriTavernSyncApp(options) {
                     </div>
                 </SyncSection>
 
-                <SyncSection :title="tr('Pair via LAN v2 QR')">
+                <SyncSection :title="tr('Pair via LAN QR')">
                     <div class="tt-sync-pair-grid">
                         <div class="tt-sync-qr-wrap">
-                            <img v-if="qrImageSrc" :src="qrImageSrc" alt="LAN Sync v2 Pair QR" width="200" height="200" />
+                            <img v-if="qrImageSrc" :src="qrImageSrc" alt="LAN Sync Pair QR" width="200" height="200" />
                             <span v-else>{{ tr('No QR') }}</span>
                         </div>
                         <div class="tt-sync-pair-fields">
@@ -758,7 +757,7 @@ export function createTauriTavernSyncApp(options) {
                                 :value="pairUri"
                                 rows="4"
                                 readonly
-                                :placeholder="tr('LAN Sync v2 Pair URI')"
+                                :placeholder="tr('LAN Sync Pair URI')"
                             ></textarea>
                             <div class="tt-sync-actions">
                                 <SyncButton

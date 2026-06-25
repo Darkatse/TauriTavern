@@ -5,7 +5,7 @@ use ttsync_core::crypto::random_base64url;
 use uuid::Uuid;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::lan_sync::{LanSyncV2Identity, LanSyncV2PairedDevice};
+use crate::domain::models::lan_sync::{LanSyncIdentity, LanSyncPairedDevice};
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
 
 #[derive(Debug, Clone)]
@@ -32,13 +32,13 @@ impl LanSyncV2Store {
         self.v2_dir.join("peers.json")
     }
 
-    pub async fn load_or_create_identity(&self) -> Result<LanSyncV2Identity, DomainError> {
+    pub async fn load_or_create_identity(&self) -> Result<LanSyncIdentity, DomainError> {
         let path = self.identity_path();
         if path.is_file() {
             return read_json_file(&path).await;
         }
 
-        let identity = LanSyncV2Identity {
+        let identity = LanSyncIdentity {
             device_id: DeviceId::new(Uuid::new_v4().to_string())
                 .expect("generated uuid must be valid"),
             device_name: "TauriTavern".to_string(),
@@ -48,7 +48,7 @@ impl LanSyncV2Store {
         Ok(identity)
     }
 
-    pub async fn load_paired_devices(&self) -> Result<Vec<LanSyncV2PairedDevice>, DomainError> {
+    pub async fn load_paired_devices(&self) -> Result<Vec<LanSyncPairedDevice>, DomainError> {
         let path = self.paired_devices_path();
         if !path.is_file() {
             return Ok(Vec::new());
@@ -59,7 +59,7 @@ impl LanSyncV2Store {
 
     pub async fn upsert_paired_device(
         &self,
-        device: LanSyncV2PairedDevice,
+        device: LanSyncPairedDevice,
     ) -> Result<(), DomainError> {
         let mut devices = self.load_paired_devices().await?;
         if let Some(existing) = devices
@@ -87,7 +87,7 @@ impl LanSyncV2Store {
     pub async fn get_paired_device(
         &self,
         device_id: &DeviceId,
-    ) -> Result<LanSyncV2PairedDevice, DomainError> {
+    ) -> Result<LanSyncPairedDevice, DomainError> {
         self.load_paired_devices()
             .await?
             .into_iter()
@@ -111,7 +111,7 @@ impl LanSyncV2Store {
 
     async fn save_paired_devices(
         &self,
-        devices: &[LanSyncV2PairedDevice],
+        devices: &[LanSyncPairedDevice],
     ) -> Result<(), DomainError> {
         write_json_file(&self.paired_devices_path(), devices).await
     }
@@ -131,8 +131,8 @@ mod tests {
         DeviceId::new("550e8400-e29b-41d4-a716-446655440000".to_string()).unwrap()
     }
 
-    fn test_paired_device(device_id: DeviceId) -> LanSyncV2PairedDevice {
-        LanSyncV2PairedDevice {
+    fn test_paired_device(device_id: DeviceId) -> LanSyncPairedDevice {
+        LanSyncPairedDevice {
             grant: PeerGrant {
                 device_id,
                 device_name: "Peer".to_string(),

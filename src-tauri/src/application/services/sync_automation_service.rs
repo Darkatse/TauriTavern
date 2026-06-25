@@ -11,7 +11,6 @@ use ttsync_contract::sync::SyncMode;
 use crate::application::services::lan_sync_service::LanSyncService;
 use crate::application::services::tt_sync_service::TtSyncService;
 use crate::domain::errors::DomainError;
-use crate::domain::models::lan_sync::LanSyncSyncMode;
 use crate::domain::models::sync_automation::{
     SYNC_AUTOMATION_COLD_START_DELAY_SECS, SyncAutomationConfig, SyncAutomationStatus,
     SyncAutomationTarget, SyncAutomationToastEvent, SyncAutomationToastLevel,
@@ -262,7 +261,7 @@ impl SyncAutomationService {
                 }
 
                 let status = self.lan_sync_service.get_status().await?;
-                if !status.running || !status.v2_running {
+                if !status.running {
                     return Err(DomainError::InvalidData(
                         "LAN Sync server is not running. Start the sync port before using LAN auto upload.".to_string(),
                     ));
@@ -274,7 +273,7 @@ impl SyncAutomationService {
                 Ok("Auto sync upload has started as scheduled.".to_string())
             }
             SyncAutomationTarget::Tt { server_device_id } => {
-                let mode = lan_mode_to_v2(self.lan_sync_service.effective_sync_mode().await?);
+                let mode = self.lan_sync_service.effective_sync_mode().await?;
                 self.tt_sync_service
                     .push_for_automation(server_device_id, mode, options)
                     .await?;
@@ -318,9 +317,10 @@ impl SyncAutomationService {
                     .ok_or_else(|| {
                         DomainError::NotFound(format!("LAN Sync device not found: {device_id}"))
                     })?;
-                if device.protocol_version != 2 || device.last_known_address.is_none() {
+                if device.last_known_address.is_none() {
                     return Err(DomainError::InvalidData(
-                        "LAN auto upload requires a paired LAN Sync v2 device".to_string(),
+                        "LAN auto upload requires a paired LAN Sync device with an address"
+                            .to_string(),
                     ));
                 }
             }
@@ -340,7 +340,7 @@ impl SyncAutomationService {
                     ));
                 }
                 let mode = self.lan_sync_service.effective_sync_mode().await?;
-                if mode == LanSyncSyncMode::Mirror && !server.permissions.mirror_delete {
+                if mode == SyncMode::Mirror && !server.permissions.mirror_delete {
                     return Err(DomainError::AuthenticationError(
                         "TT-Sync server does not grant mirror_delete permission".to_string(),
                     ));
@@ -416,13 +416,6 @@ impl SyncAutomationService {
         if let Err(error) = self.app_handle.emit("sync_auto:toast", payload) {
             tracing::warn!("Failed to emit sync automation toast: {}", error);
         }
-    }
-}
-
-fn lan_mode_to_v2(mode: LanSyncSyncMode) -> SyncMode {
-    match mode {
-        LanSyncSyncMode::Incremental => SyncMode::Incremental,
-        LanSyncSyncMode::Mirror => SyncMode::Mirror,
     }
 }
 

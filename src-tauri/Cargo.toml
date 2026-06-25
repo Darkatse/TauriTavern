@@ -41,7 +41,6 @@ bytes = "1"
 async-compression = { version = "0.4", features = ["tokio", "zstd"] }
 base64 = "0.22"
 sha2 = "0.10"
-hmac = "0.12"
 rand = "0.9"
 yup-oauth2 = { version = "12.1.2", default-features = false, features = ["hyper-rustls", "aws-lc-rs", "service-account"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }

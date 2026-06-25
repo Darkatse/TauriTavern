@@ -119,7 +119,7 @@ export function setSyncV2DatasetSelection(selection, catalog) {
     return normalized;
 }
 
-export function parseLanSyncV2PairUri(pairUri, tr = (key) => key) {
+export function parseLanSyncPairUri(pairUri, tr = (key) => key) {
     const parsed = new URL(String(pairUri || '').trim());
     if (parsed.protocol.toLowerCase() !== 'tauritavern:') {
         throw new Error(tr('Pair URI must start with tauritavern://'));

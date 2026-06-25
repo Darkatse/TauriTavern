@@ -9,19 +9,16 @@ use tauri::Manager;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
 use ttsync_contract::peer::{DeviceId, PeerGrant};
+use ttsync_contract::sync::SyncMode;
 use url::Url;
 
 use crate::app::AppState;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
-    LanSyncPairRequest, LanSyncPairResponse, LanSyncPairedDevice, LanSyncPairedDeviceSummary,
-    LanSyncStatus, LanSyncSyncCompletedEvent, LanSyncSyncErrorEvent, LanSyncSyncMode,
-    LanSyncV2PairedDevice,
+    LanSyncPairedDevice, LanSyncPairedDeviceSummary, LanSyncStatus, LanSyncSyncCompletedEvent,
+    LanSyncSyncErrorEvent,
 };
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
-use crate::infrastructure::lan_sync::crypto::{derive_pair_secret, random_base64url, sign_request};
 use crate::infrastructure::lan_sync::runtime::{LanSyncPairingSession, LanSyncRuntime};
-use crate::infrastructure::lan_sync::server::{LanSyncServerHandle, spawn_lan_sync_server};
 use crate::infrastructure::lan_sync::v2::client::complete_pairing as complete_v2_pairing;
 use crate::infrastructure::lan_sync::v2::notify::{
     LanSyncV2NotifyPullHandler, request_peer_pull as request_v2_peer_pull,
@@ -40,9 +37,7 @@ use crate::infrastructure::tt_sync::v2_api::sync_error_to_domain;
 pub struct LanSyncService {
     runtime: Arc<LanSyncRuntime>,
     v2_store: LanSyncV2Store,
-    http_clients: Arc<HttpClientPool>,
-    server: Mutex<Option<LanSyncServerHandle>>,
-    v2_server: Mutex<Option<LanSyncV2ServerHandle>>,
+    server: Mutex<Option<LanSyncV2ServerHandle>>,
 }
 
 impl LanSyncService {
@@ -50,7 +45,6 @@ impl LanSyncService {
         app_handle: AppHandle,
         sync_root: PathBuf,
         store_root: PathBuf,
-        http_clients: Arc<HttpClientPool>,
         sync_permit: Arc<Semaphore>,
     ) -> Self {
         let v2_store = LanSyncV2Store::new(store_root.clone());
@@ -62,9 +56,7 @@ impl LanSyncService {
                 sync_permit,
             )),
             v2_store,
-            http_clients,
             server: Mutex::new(None),
-            v2_server: Mutex::new(None),
         }
     }
 
@@ -83,15 +75,11 @@ impl LanSyncService {
             .is_some_and(|session| session.expires_at_ms > now_ms);
         let pairing_expires_at_ms = pairing.as_ref().map(|session| session.expires_at_ms);
 
-        let running_port = {
-            let server = self.server.lock().await;
-            server.as_ref().map(|handle| handle.addr.port())
-        };
-        let (running, port) = match running_port {
-            Some(port) => (true, port),
+        let running_info = self.running_server_info().await;
+        let (running, port) = match running_info.as_ref() {
+            Some(info) => (true, info.port),
             None => (false, config.port),
         };
-        let v2_info = self.running_v2_server_info().await;
 
         let available_addresses = list_available_addresses(port)?;
         let address = default_advertise_address(port, &available_addresses);
@@ -100,9 +88,6 @@ impl LanSyncService {
             address,
             available_addresses,
             port,
-            v2_running: v2_info.is_some(),
-            v2_port: v2_info.as_ref().map(|info| info.port),
-            v2_spki_sha256: v2_info.map(|info| info.spki_sha256),
             pairing_enabled,
             pairing_expires_at_ms,
             sync_mode,
@@ -125,71 +110,33 @@ impl LanSyncService {
             .is_some_and(|session| session.expires_at_ms > now_ms);
         let pairing_expires_at_ms = pairing.as_ref().map(|session| session.expires_at_ms);
 
-        let running_port = {
-            let server = self.server.lock().await;
-            server.as_ref().map(|handle| handle.addr.port())
-        };
-        if let Some(port) = running_port {
-            self.ensure_v2_server_started().await?;
-            let v2_info = self.running_v2_server_info().await;
-            let available_addresses = list_available_addresses(port)?;
-            let address = default_advertise_address(port, &available_addresses);
-            return Ok(LanSyncStatus {
-                running: true,
-                address,
-                available_addresses,
-                port,
-                v2_running: v2_info.is_some(),
-                v2_port: v2_info.as_ref().map(|info| info.port),
-                v2_spki_sha256: v2_info.map(|info| info.spki_sha256),
-                pairing_enabled,
-                pairing_expires_at_ms,
-                sync_mode,
-                sync_mode_persistent,
-                sync_mode_overridden,
-            });
-        }
-
-        let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, config.port));
-        let handle = spawn_lan_sync_server(addr, self.runtime.clone())
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-        let v2_handle = match self.spawn_v2_server().await {
-            Ok(handle) => handle,
-            Err(error) => {
-                handle.shutdown();
-                return Err(error);
+        let port = {
+            let mut server = self.server.lock().await;
+            match server.as_ref() {
+                Some(handle) => handle.addr.port(),
+                None => {
+                    let handle = self.spawn_server().await?;
+                    let port = handle.addr.port();
+                    *server = Some(handle);
+                    port
+                }
             }
         };
 
-        let port = handle.addr.port();
         let available_addresses = list_available_addresses(port)?;
         let address = default_advertise_address(port, &available_addresses);
-        let v2_info = LanSyncV2ServerInfo {
-            port: v2_handle.addr.port(),
-            spki_sha256: v2_handle.spki_sha256.clone(),
-        };
 
-        let status = LanSyncStatus {
+        Ok(LanSyncStatus {
             running: true,
             address,
             available_addresses,
             port,
-            v2_running: true,
-            v2_port: Some(v2_info.port),
-            v2_spki_sha256: Some(v2_info.spki_sha256),
             pairing_enabled,
             pairing_expires_at_ms,
             sync_mode,
             sync_mode_persistent,
             sync_mode_overridden,
-        };
-
-        let mut server = self.server.lock().await;
-        *server = Some(handle);
-        let mut v2_server = self.v2_server.lock().await;
-        *v2_server = Some(v2_handle);
-        Ok(status)
+        })
     }
 
     pub async fn stop_server(&self) -> Result<(), DomainError> {
@@ -197,14 +144,6 @@ impl LanSyncService {
             let mut server = self.server.lock().await;
             server.take()
         };
-        let v2_handle = {
-            let mut server = self.v2_server.lock().await;
-            server.take()
-        };
-        if let Some(handle) = v2_handle {
-            handle.shutdown();
-        }
-
         let Some(handle) = handle else {
             return Ok(());
         };
@@ -214,11 +153,7 @@ impl LanSyncService {
         Ok(())
     }
 
-    pub async fn set_sync_mode(
-        &self,
-        mode: LanSyncSyncMode,
-        persist: bool,
-    ) -> Result<(), DomainError> {
+    pub async fn set_sync_mode(&self, mode: SyncMode, persist: bool) -> Result<(), DomainError> {
         if persist {
             let mut config = self.runtime.store.load_or_create_config().await?;
             config.sync_mode = mode;
@@ -235,7 +170,7 @@ impl LanSyncService {
         self.runtime.set_sync_mode_override(None).await;
     }
 
-    pub async fn effective_sync_mode(&self) -> Result<LanSyncSyncMode, DomainError> {
+    pub async fn effective_sync_mode(&self) -> Result<SyncMode, DomainError> {
         let config = self.runtime.store.load_or_create_config().await?;
         Ok(self
             .runtime
@@ -244,33 +179,27 @@ impl LanSyncService {
             .unwrap_or(config.sync_mode))
     }
 
-    async fn running_v2_server_info(&self) -> Option<LanSyncV2ServerInfo> {
-        let server = self.v2_server.lock().await;
-        server.as_ref().map(|handle| LanSyncV2ServerInfo {
+    async fn running_server_info(&self) -> Option<LanSyncServerInfo> {
+        let server = self.server.lock().await;
+        server.as_ref().map(|handle| LanSyncServerInfo {
             port: handle.addr.port(),
             spki_sha256: handle.spki_sha256.clone(),
         })
     }
 
-    async fn ensure_v2_server_started(&self) -> Result<(), DomainError> {
-        if self.running_v2_server_info().await.is_some() {
-            return Ok(());
-        }
-
-        let handle = self.spawn_v2_server().await?;
-        let mut server = self.v2_server.lock().await;
-        if server.is_some() {
-            handle.shutdown();
-        } else {
-            *server = Some(handle);
+    async fn ensure_server_running(&self) -> Result<(), DomainError> {
+        if self.server.lock().await.is_none() {
+            return Err(DomainError::InvalidData(
+                "LAN Sync server is not running".to_string(),
+            ));
         }
 
         Ok(())
     }
 
-    async fn spawn_v2_server(&self) -> Result<LanSyncV2ServerHandle, DomainError> {
+    async fn spawn_server(&self) -> Result<LanSyncV2ServerHandle, DomainError> {
         let config = self.runtime.store.load_or_create_config().await?;
-        let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, config.v2_port));
+        let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, config.port));
         let notify_pull = Arc::new(LanSyncV2NotifyPullHandler::new(
             self.runtime.clone(),
             self.v2_store.clone(),
@@ -289,51 +218,41 @@ impl LanSyncService {
         &self,
         advertise_address: Option<String>,
     ) -> Result<LanSyncPairingInfo, DomainError> {
-        let port = {
-            let server = self.server.lock().await;
-            server.as_ref().map(|handle| handle.addr.port())
-        }
-        .ok_or_else(|| DomainError::InvalidData("LAN sync server is not running".to_string()))?;
+        let server_info = self.running_server_info().await.ok_or_else(|| {
+            DomainError::InvalidData("LAN sync server is not running".to_string())
+        })?;
 
         let address = match advertise_address {
-            Some(value) => value,
+            Some(value) => {
+                validate_https_base_url(&value)?;
+                value
+            }
             None => {
-                let available_addresses = list_available_addresses(port)?;
-                default_advertise_address(port, &available_addresses).ok_or_else(|| {
-                    DomainError::InvalidData("No available LAN sync addresses".to_string())
-                })?
+                let available_addresses = list_available_addresses(server_info.port)?;
+                default_advertise_address(server_info.port, &available_addresses).ok_or_else(
+                    || DomainError::InvalidData("No available LAN sync addresses".to_string()),
+                )?
             }
         };
 
         let expires_at_ms = now_ms() + 5 * 60 * 1000;
-        let pair_code = random_base64url(16);
-        self.ensure_v2_server_started().await?;
-        let v2_info = self.running_v2_server_info().await.ok_or_else(|| {
-            DomainError::InternalError("LAN Sync v2 server did not start".to_string())
-        })?;
+        let token = ttsync_core::crypto::random_base64url(16);
 
         self.runtime
             .set_pairing_session(LanSyncPairingSession {
-                pair_code: pair_code.clone(),
+                token: token.clone(),
                 expires_at_ms,
             })
             .await;
 
-        let pair_uri = build_pair_uri(&address, &pair_code, expires_at_ms)?;
+        let pair_uri = build_pair_uri(&address, &token, expires_at_ms, &server_info.spki_sha256)?;
         let qr_svg = generate_qr_svg(&pair_uri)?;
-        let v2_address = build_v2_advertise_address(&address, v2_info.port)?;
-        let v2_pair_uri =
-            build_v2_pair_uri(&v2_address, &pair_code, expires_at_ms, &v2_info.spki_sha256)?;
-        let v2_qr_svg = generate_qr_svg(&v2_pair_uri)?;
 
         Ok(LanSyncPairingInfo {
             address,
             pair_uri,
             qr_svg,
             expires_at_ms,
-            v2_address: Some(v2_address),
-            v2_pair_uri: Some(v2_pair_uri),
-            v2_qr_svg: Some(v2_qr_svg),
         })
     }
 
@@ -341,15 +260,10 @@ impl LanSyncService {
         &self,
         advertise_address: &str,
     ) -> Result<LanSyncPairingInfo, DomainError> {
-        let server_running = {
-            let server = self.server.lock().await;
-            server.is_some()
-        };
-        if !server_running {
-            return Err(DomainError::InvalidData(
-                "LAN sync server is not running".to_string(),
-            ));
-        }
+        let server_info = self.running_server_info().await.ok_or_else(|| {
+            DomainError::InvalidData("LAN sync server is not running".to_string())
+        })?;
+        validate_https_base_url(advertise_address)?;
 
         let session = self.runtime.get_pairing_session().await.ok_or_else(|| {
             DomainError::InvalidData("LAN sync pairing is not enabled".to_string())
@@ -361,31 +275,19 @@ impl LanSyncService {
             ));
         }
 
-        self.ensure_v2_server_started().await?;
-        let v2_info = self.running_v2_server_info().await.ok_or_else(|| {
-            DomainError::InternalError("LAN Sync v2 server did not start".to_string())
-        })?;
-
-        let pair_uri =
-            build_pair_uri(advertise_address, &session.pair_code, session.expires_at_ms)?;
-        let qr_svg = generate_qr_svg(&pair_uri)?;
-        let v2_address = build_v2_advertise_address(advertise_address, v2_info.port)?;
-        let v2_pair_uri = build_v2_pair_uri(
-            &v2_address,
-            &session.pair_code,
+        let pair_uri = build_pair_uri(
+            advertise_address,
+            &session.token,
             session.expires_at_ms,
-            &v2_info.spki_sha256,
+            &server_info.spki_sha256,
         )?;
-        let v2_qr_svg = generate_qr_svg(&v2_pair_uri)?;
+        let qr_svg = generate_qr_svg(&pair_uri)?;
 
         Ok(LanSyncPairingInfo {
             address: advertise_address.to_string(),
             pair_uri,
             qr_svg,
             expires_at_ms: session.expires_at_ms,
-            v2_address: Some(v2_address),
-            v2_pair_uri: Some(v2_pair_uri),
-            v2_qr_svg: Some(v2_qr_svg),
         })
     }
 
@@ -393,94 +295,25 @@ impl LanSyncService {
         &self,
         pair_uri: &str,
     ) -> Result<LanSyncPairedDeviceSummary, DomainError> {
-        match parse_pair_uri(pair_uri)? {
-            ParsedPairUri::V1(parsed) => self.request_pairing_v1(parsed).await,
-            ParsedPairUri::V2(parsed) => self.request_pairing_v2(parsed).await,
-        }
-    }
-
-    async fn request_pairing_v1(
-        &self,
-        parsed: ParsedV1PairUri,
-    ) -> Result<LanSyncPairedDeviceSummary, DomainError> {
-        let identity = self.runtime.store.load_or_create_identity().await?;
-        let config = self.runtime.store.load_or_create_config().await?;
-
-        let payload = LanSyncPairRequest {
-            target_device_id: identity.device_id.clone(),
-            target_device_name: identity.device_name.clone(),
-            target_port: config.port,
-        };
-        let body = serde_json::to_vec(&payload)
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-        let signature = sign_request(parsed.pair_code.as_bytes(), "POST", "/v1/pair", &body);
-
-        let url = format!("{}/v1/pair", parsed.address.trim_end_matches('/'));
-        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
-        let response = http_client
-            .post(url)
-            .header("X-TT-Signature", signature)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(body)
-            .send()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                .map_err(|error| DomainError::InternalError(error.to_string()))?;
-            return Err(DomainError::AuthenticationError(format!(
-                "Pairing failed ({}): {}",
-                status, body
-            )));
-        }
-
-        let pair_response = response
-            .json::<LanSyncPairResponse>()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let pair_secret = derive_pair_secret(
-            &parsed.pair_code,
-            &pair_response.source_device_id,
-            &identity.device_id,
-        );
-
-        let paired_device = LanSyncPairedDevice {
-            device_id: pair_response.source_device_id,
-            device_name: pair_response.source_device_name,
-            pair_secret,
-            last_known_address: Some(parsed.address),
-            paired_at_ms: now_ms(),
-            last_sync_ms: None,
-        };
-
-        self.runtime
-            .upsert_paired_device(paired_device.clone())
-            .await?;
-
-        Ok(paired_device.into())
+        let parsed = parse_pair_uri(pair_uri)?;
+        self.request_pairing_v2(parsed).await
     }
 
     async fn request_pairing_v2(
         &self,
-        parsed: ParsedV2PairUri,
+        parsed: ParsedPairUri,
     ) -> Result<LanSyncPairedDeviceSummary, DomainError> {
         if now_ms() > parsed.expires_at_ms {
             return Err(DomainError::InvalidData(
-                "LAN Sync v2 pairing expired".to_string(),
+                "LAN Sync pairing expired".to_string(),
             ));
         }
 
-        let v2_info = self.running_v2_server_info().await.ok_or_else(|| {
-            DomainError::InvalidData(
-                "LAN sync server must be running before LAN Sync v2 pairing".to_string(),
-            )
+        let server_info = self.running_server_info().await.ok_or_else(|| {
+            DomainError::InvalidData("LAN sync server must be running before pairing".to_string())
         })?;
-        let local_base_url = routed_v2_advertise_address(&parsed.base_url, v2_info.port).await?;
+        let local_base_url =
+            routed_v2_advertise_address(&parsed.base_url, server_info.port).await?;
 
         let identity = self.v2_store.load_or_create_identity().await?;
         let device_pubkey = ttsync_core::crypto::device_pubkey_b64url(&identity.ed25519_seed)
@@ -490,7 +323,7 @@ impl LanSyncService {
             device_name: identity.device_name.clone(),
             device_pubkey,
             client_base_url: local_base_url,
-            client_spki_sha256: v2_info.spki_sha256,
+            client_spki_sha256: server_info.spki_sha256,
         };
 
         let response = complete_v2_pairing(
@@ -503,12 +336,12 @@ impl LanSyncService {
 
         if response.server_device_id == identity.device_id {
             return Err(DomainError::InvalidData(
-                "Cannot pair LAN Sync v2 device with itself".to_string(),
+                "Cannot pair LAN Sync device with itself".to_string(),
             ));
         }
 
         let public_key = decode_device_pubkey_b64url(&response.server_device_pubkey)?;
-        let paired_device = LanSyncV2PairedDevice {
+        let paired_device = LanSyncPairedDevice {
             grant: PeerGrant {
                 device_id: response.server_device_id,
                 device_name: response.server_device_name,
@@ -535,30 +368,18 @@ impl LanSyncService {
     pub async fn list_paired_devices(
         &self,
     ) -> Result<Vec<LanSyncPairedDeviceSummary>, DomainError> {
-        let mut devices = self
-            .runtime
+        Ok(self
+            .v2_store
             .load_paired_devices()
             .await?
             .into_iter()
             .map(LanSyncPairedDeviceSummary::from)
-            .collect::<Vec<_>>();
-
-        devices.extend(
-            self.v2_store
-                .load_paired_devices()
-                .await?
-                .into_iter()
-                .map(LanSyncPairedDeviceSummary::from),
-        );
-
-        Ok(devices)
+            .collect())
     }
 
     pub async fn remove_paired_device(&self, device_id: &str) -> Result<(), DomainError> {
-        self.runtime.remove_paired_device(device_id).await?;
-        if let Ok(v2_device_id) = DeviceId::new(device_id.to_string()) {
-            self.v2_store.remove_paired_device(&v2_device_id).await?;
-        }
+        let device_id = parse_device_id(device_id)?;
+        self.v2_store.remove_paired_device(&device_id).await?;
         Ok(())
     }
 
@@ -617,28 +438,13 @@ impl LanSyncService {
         device_id: &str,
         options: Option<SyncV2OperationOptions>,
     ) -> Result<LanSyncSyncCompletedEvent, DomainError> {
-        if let Some(v2_device_id) = self.resolve_v2_peer_device_id(device_id).await? {
-            let options = resolve_sync_v2_options(options)?;
-            return pull_from_v2_device(
-                self.runtime.clone(),
-                self.v2_store.clone(),
-                &v2_device_id,
-                options,
-            )
-            .await;
-        }
-
-        if options.is_some() {
-            return Err(DomainError::InvalidData(
-                "LAN Sync v2 pairing is required for scoped sync".to_string(),
-            ));
-        }
-
-        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
-        crate::infrastructure::lan_sync::client::merge_sync_from_device(
+        let device_id = parse_device_id(device_id)?;
+        let options = resolve_sync_v2_options(options)?;
+        pull_from_v2_device(
             self.runtime.clone(),
-            &http_client,
-            device_id,
+            self.v2_store.clone(),
+            &device_id,
+            options,
         )
         .await
     }
@@ -648,60 +454,10 @@ impl LanSyncService {
         device_id: &str,
         options: Option<SyncV2OperationOptions>,
     ) -> Result<(), DomainError> {
-        if let Some(v2_device_id) = self.resolve_v2_peer_device_id(device_id).await? {
-            let options = resolve_sync_v2_options(options)?;
-            return request_v2_peer_pull(self.v2_store.clone(), &v2_device_id, options).await;
-        }
-
-        if options.is_some() {
-            return Err(DomainError::InvalidData(
-                "LAN Sync v2 pairing is required for scoped sync".to_string(),
-            ));
-        }
-
-        let peer = self.runtime.get_paired_device(device_id).await?;
-        let address = peer.last_known_address.clone().ok_or_else(|| {
-            DomainError::InvalidData(format!("Paired device address is missing: {}", device_id))
-        })?;
-
-        let identity = self.runtime.store.load_or_create_identity().await?;
-
-        let mut url =
-            Url::parse(&address).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-        {
-            let mut segments = url
-                .path_segments_mut()
-                .map_err(|_| DomainError::InvalidData("Invalid source address".to_string()))?;
-            segments.clear();
-            segments.push("v1");
-            segments.push("sync");
-            segments.push("pull");
-        }
-
-        let signature = sign_request(peer.pair_secret.as_bytes(), "POST", "/v1/sync/pull", &[]);
-
-        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
-        let response = http_client
-            .post(url)
-            .header("X-TT-Device-Id", identity.device_id)
-            .header("X-TT-Signature", signature)
-            .send()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                .map_err(|error| DomainError::InternalError(error.to_string()))?;
-            return Err(DomainError::AuthenticationError(format!(
-                "Push request failed ({}): {}",
-                status, body
-            )));
-        }
-
-        Ok(())
+        self.ensure_server_running().await?;
+        let device_id = parse_device_id(device_id)?;
+        let options = resolve_sync_v2_options(options)?;
+        request_v2_peer_pull(self.v2_store.clone(), &device_id, options).await
     }
 
     pub async fn push_to_device_for_automation(
@@ -709,42 +465,10 @@ impl LanSyncService {
         device_id: &str,
         options: Option<SyncV2OperationOptions>,
     ) -> Result<(), DomainError> {
-        let server_running = {
-            let server = self.server.lock().await;
-            server.is_some()
-        };
-        let v2_server_running = {
-            let server = self.v2_server.lock().await;
-            server.is_some()
-        };
-        if !server_running || !v2_server_running {
-            return Err(DomainError::InvalidData(
-                "LAN Sync server is not running".to_string(),
-            ));
-        }
-
-        let Some(v2_device_id) = self.resolve_v2_peer_device_id(device_id).await? else {
-            return Err(DomainError::InvalidData(
-                "LAN auto upload requires a paired LAN Sync v2 device".to_string(),
-            ));
-        };
+        self.ensure_server_running().await?;
+        let device_id = parse_device_id(device_id)?;
         let options = resolve_sync_v2_options(options)?;
-        request_v2_peer_pull(self.v2_store.clone(), &v2_device_id, options).await
-    }
-
-    async fn resolve_v2_peer_device_id(
-        &self,
-        device_id: &str,
-    ) -> Result<Option<DeviceId>, DomainError> {
-        let Ok(device_id) = DeviceId::new(device_id.to_string()) else {
-            return Ok(None);
-        };
-
-        match self.v2_store.get_paired_device(&device_id).await {
-            Ok(_) => Ok(Some(device_id)),
-            Err(DomainError::NotFound(_)) => Ok(None),
-            Err(error) => Err(error),
-        }
+        request_v2_peer_pull(self.v2_store.clone(), &device_id, options).await
     }
 }
 
@@ -753,12 +477,9 @@ pub struct LanSyncPairingInfo {
     pub pair_uri: String,
     pub qr_svg: String,
     pub expires_at_ms: u64,
-    pub v2_address: Option<String>,
-    pub v2_pair_uri: Option<String>,
-    pub v2_qr_svg: Option<String>,
 }
 
-struct LanSyncV2ServerInfo {
+struct LanSyncServerInfo {
     port: u16,
     spki_sha256: String,
 }
@@ -774,7 +495,7 @@ fn list_available_addresses(port: u16) -> Result<Vec<String>, DomainError> {
                 if ip.is_loopback() || ip.is_unspecified() {
                     None
                 } else {
-                    Some(format!("http://{}:{}", ip, port))
+                    Some(format!("https://{}:{}", ip, port))
                 }
             }
             std::net::IpAddr::V6(_) => None,
@@ -788,7 +509,7 @@ fn list_available_addresses(port: u16) -> Result<Vec<String>, DomainError> {
 
 fn default_advertise_address(port: u16, available_addresses: &[String]) -> Option<String> {
     let route_ip = local_ip().ok().and_then(|ip| match ip {
-        std::net::IpAddr::V4(v4) => Some(format!("http://{}:{}", v4, port)),
+        std::net::IpAddr::V4(v4) => Some(format!("https://{}:{}", v4, port)),
         std::net::IpAddr::V6(_) => None,
     });
 
@@ -798,23 +519,6 @@ fn default_advertise_address(port: u16, available_addresses: &[String]) -> Optio
 }
 
 fn build_pair_uri(
-    address: &str,
-    pair_code: &str,
-    expires_at_ms: u64,
-) -> Result<String, DomainError> {
-    let mut uri = Url::parse("tauritavern://lan-sync/pair")
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-    uri.query_pairs_mut()
-        .append_pair("v", "1")
-        .append_pair("addr", address)
-        .append_pair("pair_code", pair_code)
-        .append_pair("exp", &expires_at_ms.to_string());
-
-    Ok(uri.to_string())
-}
-
-fn build_v2_pair_uri(
     base_url: &str,
     token: &str,
     expires_at_ms: u64,
@@ -833,26 +537,6 @@ fn build_v2_pair_uri(
         .append_pair("spki", spki_sha256);
 
     Ok(uri.to_string())
-}
-
-fn build_v2_advertise_address(v1_address: &str, v2_port: u16) -> Result<String, DomainError> {
-    let mut url =
-        Url::parse(v1_address).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-    if url.host_str().is_none() {
-        return Err(DomainError::InvalidData(
-            "LAN sync advertise address is missing host".to_string(),
-        ));
-    }
-
-    url.set_scheme("https")
-        .map_err(|_| DomainError::InvalidData("Invalid LAN Sync v2 scheme".to_string()))?;
-    url.set_port(Some(v2_port))
-        .map_err(|_| DomainError::InvalidData("Invalid LAN Sync v2 port".to_string()))?;
-    url.set_path("");
-    url.set_query(None);
-    url.set_fragment(None);
-
-    Ok(url.to_string().trim_end_matches('/').to_string())
 }
 
 async fn routed_v2_advertise_address(
@@ -898,17 +582,7 @@ async fn routed_v2_advertise_address(
     }
 }
 
-enum ParsedPairUri {
-    V1(ParsedV1PairUri),
-    V2(ParsedV2PairUri),
-}
-
-struct ParsedV1PairUri {
-    address: String,
-    pair_code: String,
-}
-
-struct ParsedV2PairUri {
+struct ParsedPairUri {
     base_url: String,
     token: String,
     expires_at_ms: u64,
@@ -927,32 +601,16 @@ fn parse_pair_uri(pair_uri: &str) -> Result<ParsedPairUri, DomainError> {
     let version = uri
         .query_pairs()
         .find_map(|(key, value)| (key == "v").then(|| value.to_string()));
-    if version.as_deref() == Some("2") {
-        return parse_v2_pair_uri(&uri).map(ParsedPairUri::V2);
+    if version.as_deref() != Some("2") {
+        return Err(DomainError::InvalidData(
+            "LAN Sync Pair URI must be v=2".to_string(),
+        ));
     }
 
-    parse_v1_pair_uri(&uri).map(ParsedPairUri::V1)
+    parse_v2_pair_uri(&uri)
 }
 
-fn parse_v1_pair_uri(uri: &Url) -> Result<ParsedV1PairUri, DomainError> {
-    let mut address = None;
-    let mut pair_code = None;
-    for (key, value) in uri.query_pairs() {
-        match key.as_ref() {
-            "addr" => address = Some(value.to_string()),
-            "pair_code" => pair_code = Some(value.to_string()),
-            _ => {}
-        }
-    }
-
-    Ok(ParsedV1PairUri {
-        address: address.ok_or_else(|| DomainError::InvalidData("Missing addr".to_string()))?,
-        pair_code: pair_code
-            .ok_or_else(|| DomainError::InvalidData("Missing pair_code".to_string()))?,
-    })
-}
-
-fn parse_v2_pair_uri(uri: &Url) -> Result<ParsedV2PairUri, DomainError> {
+fn parse_v2_pair_uri(uri: &Url) -> Result<ParsedPairUri, DomainError> {
     let mut base_url = None;
     let mut token = None;
     let mut expires_at_ms = None;
@@ -976,7 +634,7 @@ fn parse_v2_pair_uri(uri: &Url) -> Result<ParsedV2PairUri, DomainError> {
     let base_url = base_url.ok_or_else(|| DomainError::InvalidData("Missing url".to_string()))?;
     validate_https_base_url(&base_url)?;
 
-    Ok(ParsedV2PairUri {
+    Ok(ParsedPairUri {
         base_url,
         token: token
             .filter(|value| !value.trim().is_empty())
@@ -987,6 +645,11 @@ fn parse_v2_pair_uri(uri: &Url) -> Result<ParsedV2PairUri, DomainError> {
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| DomainError::InvalidData("Missing spki".to_string()))?,
     })
+}
+
+fn parse_device_id(device_id: &str) -> Result<DeviceId, DomainError> {
+    DeviceId::new(device_id.to_string())
+        .map_err(|error| DomainError::InvalidData(error.to_string()))
 }
 
 fn generate_qr_svg(text: &str) -> Result<String, DomainError> {
@@ -1010,13 +673,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v2_pair_uri_round_trips_required_fields() {
-        let uri = build_v2_pair_uri("https://127.0.0.1:50000", "token", 1234, "spki")
-            .expect("build v2 pair uri");
+    fn pair_uri_round_trips_required_fields() {
+        let uri = build_pair_uri("https://127.0.0.1:50000", "token", 1234, "spki")
+            .expect("build pair uri");
 
-        let ParsedPairUri::V2(parsed) = parse_pair_uri(&uri).expect("parse v2 pair uri") else {
-            panic!("expected v2 pair uri");
-        };
+        let parsed = parse_pair_uri(&uri).expect("parse pair uri");
 
         assert_eq!(parsed.base_url, "https://127.0.0.1:50000");
         assert_eq!(parsed.token, "token");
@@ -1025,19 +686,21 @@ mod tests {
     }
 
     #[test]
-    fn v2_pair_uri_rejects_http_base_url() {
+    fn pair_uri_rejects_http_base_url() {
         assert!(matches!(
-            build_v2_pair_uri("http://127.0.0.1:50000", "token", 1234, "spki"),
+            build_pair_uri("http://127.0.0.1:50000", "token", 1234, "spki"),
             Err(DomainError::InvalidData(_))
         ));
     }
 
     #[test]
-    fn v2_advertise_address_uses_selected_host_and_v2_port() {
-        let address =
-            build_v2_advertise_address("http://192.168.1.20:55000", 56000).expect("v2 address");
-
-        assert_eq!(address, "https://192.168.1.20:56000");
+    fn pair_uri_rejects_legacy_version() {
+        assert!(matches!(
+            parse_pair_uri(
+                "tauritavern://lan-sync/pair?v=1&addr=http%3A%2F%2F127.0.0.1%3A50000&pair_code=x"
+            ),
+            Err(DomainError::InvalidData(_))
+        ));
     }
 
     #[tokio::test]

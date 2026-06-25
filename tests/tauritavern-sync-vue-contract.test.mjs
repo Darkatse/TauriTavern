@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, readdir } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,6 +8,15 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 async function readRepoFile(relativePath) {
     return readFile(path.join(REPO_ROOT, relativePath), 'utf8');
+}
+
+async function repoFileExists(relativePath) {
+    try {
+        await access(path.join(REPO_ROOT, relativePath));
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 async function listJsFiles(relativeDir) {
@@ -43,7 +52,7 @@ test('TauriTavern Sync popup wrapper owns host-only capabilities', async () => {
     assert.match(source, /mountTauriTavernSyncApp/);
     assert.match(source, /mountTauriTavernSyncScopeApp/);
     assert.match(source, /parseTtSyncPairUri/);
-    assert.match(source, /parseLanSyncV2PairUri/);
+    assert.match(source, /parseLanSyncPairUri/);
     assert.match(source, /sync_v2_get_dataset_catalog/);
     assert.doesNotMatch(source, /from\s+['"]vue(?:\/|['"])/);
 });
@@ -131,6 +140,17 @@ test('Rspack exposes a dedicated TauriTavern Sync Vue entry', async () => {
     assert.match(source, /src\/scripts\/tauri\/setting\/dist/);
 });
 
+test('TauriTavern Sync bundled UI does not contain legacy LAN v1 affordances', async () => {
+    if (!await repoFileExists('src/scripts/tauri/setting/dist/sync.bundle.js')) {
+        return;
+    }
+
+    const source = await readRepoFile('src/scripts/tauri/setting/dist/sync.bundle.js');
+
+    assert.doesNotMatch(source, /v2PairUri|v2QrSvg|protocolVersion|LAN v1|LAN v2/);
+    assert.doesNotMatch(source, /Pair via LAN v2 QR|LAN Sync v2 Pair URI/);
+});
+
 test('TauriTavern Sync Vue app stays presentation-only', async () => {
     const files = await listJsFiles('src/scripts/tauri/setting/sync-app');
     assert.ok(files.includes('src/scripts/tauri/setting/sync-app/index.js'));
@@ -165,7 +185,7 @@ test('TauriTavern Sync pure state helpers keep pair URI validation explicit', as
     const source = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-state.js');
 
     assert.match(source, /export\s+function\s+parseTtSyncPairUri/);
-    assert.match(source, /export\s+function\s+parseLanSyncV2PairUri/);
+    assert.match(source, /export\s+function\s+parseLanSyncPairUri/);
     assert.match(source, /Pair URI must start with tauritavern:\/\//);
     assert.match(source, /Pair URI is not a TT-Sync pairing link/);
     assert.match(source, /Pair URI is not a LAN Sync pairing link/);

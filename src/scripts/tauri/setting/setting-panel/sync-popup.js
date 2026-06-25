@@ -17,7 +17,7 @@ import {
     getSyncV2DatasetSelection,
     getSyncTargetAlias,
     getSyncTargetDisplayName,
-    parseLanSyncV2PairUri,
+    parseLanSyncPairUri,
     parseTtSyncPairUri,
     selectLanSyncAdvertiseAddress,
     setLanSyncAdvertiseAddress,
@@ -92,9 +92,6 @@ function normalizeStatus(status) {
         availableAddresses: Array.isArray(status?.available_addresses)
             ? status.available_addresses
             : [],
-        v2Running: Boolean(status?.v2_running),
-        v2Port: status?.v2_port ?? null,
-        v2SpkiSha256: String(status?.v2_spki_sha256 || ''),
         pairingEnabled: Boolean(status?.pairing_enabled),
         pairingExpiresAtMs: status?.pairing_expires_at_ms ?? null,
         syncMode: status?.sync_mode ?? 'Incremental',
@@ -112,9 +109,6 @@ function normalizePairingInfo(pairingInfo) {
         pairUri: String(pairingInfo.pair_uri || ''),
         qrSvg: String(pairingInfo.qr_svg || ''),
         expiresAtMs: pairingInfo.expires_at_ms ?? null,
-        v2Address: String(pairingInfo.v2_address || ''),
-        v2PairUri: String(pairingInfo.v2_pair_uri || ''),
-        v2QrSvg: String(pairingInfo.v2_qr_svg || ''),
     };
 }
 
@@ -147,7 +141,6 @@ function normalizeLanDevice(device) {
         type: 'lan',
         id,
         name,
-        protocolVersion: Number(device.protocol_version || 1),
         displayName: getSyncTargetDisplayName('lan', id, name),
         lastKnownAddress: device.last_known_address || '',
         pairedAtMs: device.paired_at_ms ?? null,
@@ -520,7 +513,7 @@ function createSyncActions(client) {
                 return true;
             }
 
-            parseLanSyncV2PairUri(trimmed, translate);
+            parseLanSyncPairUri(trimmed, translate);
             await client.requestLanPairing(trimmed);
             return true;
         },

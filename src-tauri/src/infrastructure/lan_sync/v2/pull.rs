@@ -14,7 +14,7 @@ use ttsync_core::dataset::ResolvedDatasetPolicy;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
-    LanSyncSyncCompletedEvent, LanSyncSyncMode, LanSyncSyncPhase, LanSyncSyncProgressEvent,
+    LanSyncSyncCompletedEvent, LanSyncSyncPhase, LanSyncSyncProgressEvent,
 };
 use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
 use crate::infrastructure::lan_sync::v2::client::LanSyncV2Api;
@@ -116,18 +116,10 @@ pub async fn pull_from_device(
 
 async fn effective_sync_mode(runtime: &LanSyncRuntime) -> Result<SyncMode, DomainError> {
     let config = runtime.store.load_or_create_config().await?;
-    let mode = runtime
+    Ok(runtime
         .get_sync_mode_override()
         .await
-        .unwrap_or(config.sync_mode);
-    Ok(lan_sync_mode_to_v2(mode))
-}
-
-pub fn lan_sync_mode_to_v2(mode: LanSyncSyncMode) -> SyncMode {
-    match mode {
-        LanSyncSyncMode::Incremental => SyncMode::Incremental,
-        LanSyncSyncMode::Mirror => SyncMode::Mirror,
-    }
+        .unwrap_or(config.sync_mode))
 }
 
 async fn apply_pull_plan(
@@ -336,23 +328,4 @@ async fn download_one(
         path: entry.path.to_string(),
         size_bytes: entry.size_bytes,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::lan_sync_mode_to_v2;
-
-    use crate::domain::models::lan_sync::LanSyncSyncMode;
-
-    #[test]
-    fn lan_sync_mode_maps_to_v2_sync_mode() {
-        assert_eq!(
-            lan_sync_mode_to_v2(LanSyncSyncMode::Incremental),
-            ttsync_contract::sync::SyncMode::Incremental
-        );
-        assert_eq!(
-            lan_sync_mode_to_v2(LanSyncSyncMode::Mirror),
-            ttsync_contract::sync::SyncMode::Mirror
-        );
-    }
 }

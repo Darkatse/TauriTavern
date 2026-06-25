@@ -52,7 +52,7 @@ impl LanSyncV2PairingCoordinator for LanSyncRuntime {
         self.get_pairing_session()
             .await
             .map(|session| LanSyncV2PairingSession {
-                token: session.pair_code,
+                token: session.token,
                 expires_at_ms: session.expires_at_ms,
             })
     }
