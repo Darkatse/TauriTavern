@@ -300,7 +300,7 @@ src/
 4. 在 `src/tauri/main/routes/` 对应业务域中新增路由：路由层禁止直接引用 `window`，需要浏览器能力时下沉到 `adapters/` 或 `services/`。
 5. 路由内只做参数校验、DTO 组装、`context.safeInvoke` 调用；错误直接暴露（避免 silent fallback）。
 6. 保持返回结构稳定（状态码 + JSON 结构），避免破坏上游前端调用假设。
-7. 跑 `pnpm run check`（guardrails + types），确保依赖边界与行数预算未回归。
+7. 跑 `pnpm run check`，确保前端宿主边界、类型契约与 Rust dev check 未回归。
 
 ## 10. 调试与验证
 
@@ -338,7 +338,7 @@ src/
 
 目标：把宿主层（`src/tauri/main/*`）限制在**可长期维护**的规模与依赖形态，避免再次回到单文件膨胀与隐式耦合。
 
-- 一键检查：`pnpm run check`（= `check:frontend` + `check:types`）。
+- 一键检查：`pnpm run check`（= `check:frontend` + `check:types` + `check:contracts` + `check:rust:dev`）。
 - Guardrails（`scripts/check-frontend-guardrails.mjs`）：
   - 行数预算：默认单文件 `<= 500` 行；关键聚合文件受 `scripts/guardrails/frontend-lines-baseline.json` 的基线约束。
   - 依赖边界：`kernel/ports` 不得 import `services/routes/adapters`；`services` 不得 import `routes`。

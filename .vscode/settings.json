@@ -1,4 +1,7 @@
 {
+  "rust-analyzer.cargo.allTargets": false,
   "rust-analyzer.cargo.noDefaultFeatures": true,
+  "rust-analyzer.cargo.targetDir": true,
+  "rust-analyzer.check.allTargets": false,
   "rust-analyzer.check.noDefaultFeatures": true
 }

@@ -4,10 +4,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    let needs_embedded_resources = needs_embedded_resources();
+
     // These are the frontend/resource directories that feed generated Rust artifacts.
     println!("cargo:rerun-if-changed=../default/content");
-    println!("cargo:rerun-if-changed=../src/scripts/templates");
-    println!("cargo:rerun-if-changed=../src/scripts/extensions");
+    if needs_embedded_resources {
+        println!("cargo:rerun-if-changed=../src/scripts/templates");
+        println!("cargo:rerun-if-changed=../src/scripts/extensions");
+    }
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/refs");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
@@ -17,11 +21,16 @@ fn main() {
     emit_git_build_metadata();
     emit_ios_policy_build_profile();
 
-    if let Err(error) = generate_resource_artifacts() {
+    if let Err(error) = generate_resource_artifacts(needs_embedded_resources) {
         panic!("Failed to generate resource artifacts: {}", error);
     }
 
     tauri_build::build()
+}
+
+fn needs_embedded_resources() -> bool {
+    std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android")
+        || std::env::var_os("CARGO_FEATURE_PORTABLE").is_some()
 }
 
 fn emit_git_build_metadata() {
@@ -109,10 +118,8 @@ struct ResourceEntry {
     source_path: PathBuf,
 }
 
-fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
+fn generate_resource_artifacts(needs_embedded_resources: bool) -> Result<(), Box<dyn Error>> {
     let content_root = PathBuf::from("../default/content");
-    let template_root = PathBuf::from("../src/scripts/templates");
-    let extension_root = PathBuf::from("../src/scripts/extensions");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
 
     let mut content_files = collect_relative_files(&content_root, &content_root)?;
@@ -124,6 +131,12 @@ fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
         content_manifest.as_bytes(),
     )?;
 
+    if !needs_embedded_resources {
+        return Ok(());
+    }
+
+    let template_root = PathBuf::from("../src/scripts/templates");
+    let extension_root = PathBuf::from("../src/scripts/extensions");
     let mut embedded_resources = Vec::new();
     embedded_resources.extend(
         content_files

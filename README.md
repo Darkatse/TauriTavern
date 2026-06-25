@@ -90,8 +90,8 @@ pnpm install
 常用命令：
 
 ```bash
-pnpm run check             # guardrails + host kernel 类型检查（推荐每次改动后先跑）
-pnpm run web:build         # 构建前端资源包（Rspack）
+pnpm run check         # 前端 guardrails/types/contracts + Rust dev check
+pnpm run web:build     # 构建前端资源包（Rspack）
 pnpm run dev           # 桌面开发模式（等价 tauri:dev）
 pnpm run tauri:dev     # 桌面开发模式
 pnpm run tauri:build   # 构建桌面发行包
