@@ -2926,7 +2926,7 @@
     "Camera permission is required to scan QR codes": "掃描 QR 碼需要相機權限",
     "Scanned Pair URI is empty": "掃描到的配對 URI 為空",
     "Pair URI is empty": "配對 URI 為空",
-    "TT-Sync pairing confirmation (v2 client)": "TT-Sync 配對確認（v2 客戶端）",
+    "TT-Sync pairing confirmation": "TT-Sync 配對確認",
     "Trust & Pair": "信任並配對",
     "Deny": "拒絕",
     "Phase: ${0}": "階段：${0}",

@@ -5,8 +5,8 @@ use tauri::State;
 use ttsync_contract::sync::SyncMode;
 
 use crate::app::AppState;
+use crate::domain::models::sync::SyncOperationOptions;
 use crate::domain::models::tt_sync::TtSyncPairedServer;
-use crate::infrastructure::sync_v2::SyncV2OperationOptions;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -99,7 +99,7 @@ pub async fn tt_sync_pull(
     app_state: State<'_, Arc<AppState>>,
     server_device_id: String,
     mode: SyncMode,
-    options: Option<SyncV2OperationOptions>,
+    options: Option<SyncOperationOptions>,
 ) -> Result<(), CommandError> {
     log_command("tt_sync_pull");
 
@@ -115,7 +115,7 @@ pub async fn tt_sync_push(
     app_state: State<'_, Arc<AppState>>,
     server_device_id: String,
     mode: SyncMode,
-    options: Option<SyncV2OperationOptions>,
+    options: Option<SyncOperationOptions>,
 ) -> Result<(), CommandError> {
     log_command("tt_sync_push");
 

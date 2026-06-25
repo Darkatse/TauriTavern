@@ -14,24 +14,25 @@ use ttsync_contract::sync::{SyncMode, SyncPhase};
 use ttsync_core::dataset::ResolvedDatasetPolicy;
 
 use crate::domain::errors::DomainError;
+use crate::domain::models::sync::SyncOperationOptions;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
+use crate::infrastructure::sync::bundle_transport_for_status;
+use crate::infrastructure::sync::http_client::{SyncHttpClient, ensure_dataset_scope_v1};
 use crate::infrastructure::sync_bundle::{BUNDLE_STREAM_BUFFER_SIZE, copy_exact, write_u32_be};
-use crate::infrastructure::sync_v2::{SyncV2OperationOptions, bundle_transport_for_status};
 use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 use crate::infrastructure::tt_sync::transfer;
-use crate::infrastructure::tt_sync::v2_api::{TtSyncV2Api, ensure_dataset_scope_v1};
 
 pub async fn push_to_server(
     runtime: Arc<TtSyncRuntime>,
     server_device_id: &DeviceId,
     mode: SyncMode,
-    options: SyncV2OperationOptions,
+    options: SyncOperationOptions,
 ) -> Result<TtSyncCompletedEvent, DomainError> {
     let mut server = runtime.get_paired_server(server_device_id).await?;
     let identity = runtime.store.load_or_create_identity().await?;
 
-    let api = TtSyncV2Api::new(server.base_url.clone(), server.spki_sha256.clone())?;
+    let api = SyncHttpClient::new(server.base_url.clone(), server.spki_sha256.clone())?;
     let status = api.status().await?;
     ensure_dataset_scope_v1(&status, "TT-Sync server")?;
     let transport =
@@ -119,7 +120,7 @@ pub async fn push_to_server(
 
 async fn apply_push_plan(
     runtime: &TtSyncRuntime,
-    api: TtSyncV2Api,
+    api: SyncHttpClient,
     session_token: &SessionToken,
     plan: SyncPlan,
     mode: SyncMode,
@@ -358,7 +359,7 @@ struct UploadResult {
 
 fn spawn_upload_task(
     join_set: &mut JoinSet<Result<UploadResult, DomainError>>,
-    api: TtSyncV2Api,
+    api: SyncHttpClient,
     sync_root: std::path::PathBuf,
     session_token: SessionToken,
     plan_id: PlanId,
@@ -369,7 +370,7 @@ fn spawn_upload_task(
 }
 
 async fn upload_one(
-    api: &TtSyncV2Api,
+    api: &SyncHttpClient,
     sync_root: &std::path::Path,
     session_token: &SessionToken,
     plan_id: &PlanId,

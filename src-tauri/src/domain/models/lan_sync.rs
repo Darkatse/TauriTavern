@@ -2,32 +2,14 @@ use serde::{Deserialize, Serialize};
 use ttsync_contract::peer::{DeviceId, PeerGrant};
 use ttsync_contract::sync::SyncMode;
 
-#[derive(Debug, Clone, Serialize)]
-pub struct LanSyncConfig {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanServerSettings {
     pub port: u16,
-    pub sync_mode: SyncMode,
 }
 
-impl<'de> Deserialize<'de> for LanSyncConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct LanSyncConfigCompat {
-            port: u16,
-            #[serde(default)]
-            sync_mode: SyncMode,
-            #[serde(default)]
-            v2_port: Option<u16>,
-        }
-
-        let compat = LanSyncConfigCompat::deserialize(deserializer)?;
-        Ok(Self {
-            port: compat.v2_port.unwrap_or(compat.port),
-            sync_mode: compat.sync_mode,
-        })
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncPreferences {
+    pub manual_default_mode: SyncMode,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,7 +57,7 @@ pub struct LanSyncStatus {
     pub pairing_enabled: bool,
     pub pairing_expires_at_ms: Option<u64>,
     pub sync_mode: SyncMode,
-    pub sync_mode_persistent: SyncMode,
+    pub manual_default_mode: SyncMode,
     pub sync_mode_overridden: bool,
 }
 
@@ -115,28 +97,4 @@ pub struct LanSyncSyncCompletedEvent {
 #[derive(Debug, Clone, Serialize)]
 pub struct LanSyncSyncErrorEvent {
     pub message: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::LanSyncConfig;
-    use ttsync_contract::sync::SyncMode;
-
-    #[test]
-    fn config_deserializes_current_file_without_port_drift() {
-        let config: LanSyncConfig =
-            serde_json::from_str(r#"{"port":55000,"sync_mode":"Mirror"}"#).unwrap();
-
-        assert_eq!(config.port, 55000);
-        assert_eq!(config.sync_mode, SyncMode::Mirror);
-    }
-
-    #[test]
-    fn config_prefers_existing_https_port() {
-        let config: LanSyncConfig =
-            serde_json::from_str(r#"{"port":55000,"v2_port":56000}"#).unwrap();
-
-        assert_eq!(config.port, 56000);
-        assert_eq!(config.sync_mode, SyncMode::Incremental);
-    }
 }

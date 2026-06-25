@@ -37,7 +37,7 @@ pub mod settings_commands;
 pub mod skill_commands;
 pub mod stable_diffusion_commands;
 pub mod sync_automation_commands;
-pub mod sync_v2_commands;
+pub mod sync_commands;
 pub mod theme_commands;
 pub mod tokenizer_commands;
 pub mod translate_commands;

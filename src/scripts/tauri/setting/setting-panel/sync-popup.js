@@ -14,14 +14,14 @@ import { callTauriTavernPanelPopup } from '../panel-popup.js';
 import {
     clearSyncTargetAlias,
     getLanSyncAdvertiseAddress,
-    getSyncV2DatasetSelection,
+    getSyncDatasetSelection,
     getSyncTargetAlias,
     getSyncTargetDisplayName,
     parseLanSyncPairUri,
     parseTtSyncPairUri,
     selectLanSyncAdvertiseAddress,
     setLanSyncAdvertiseAddress,
-    setSyncV2DatasetSelection,
+    setSyncDatasetSelection,
     setSyncTargetAlias,
 } from './sync-state.js';
 
@@ -115,11 +115,11 @@ function normalizePairingInfo(pairingInfo) {
 function normalizeDatasetCatalog(catalog) {
     const supportedDatasetIds = ensureArray(
         catalog?.supported_dataset_ids,
-        'sync_v2_get_dataset_catalog.supported_dataset_ids',
+        'sync_get_dataset_catalog.supported_dataset_ids',
     ).map(String);
     const defaultDatasetIds = ensureArray(
         catalog?.default_dataset_ids,
-        'sync_v2_get_dataset_catalog.default_dataset_ids',
+        'sync_get_dataset_catalog.default_dataset_ids',
     ).map(String);
 
     return {
@@ -127,7 +127,7 @@ function normalizeDatasetCatalog(catalog) {
         supportedDatasetIds,
         supportedProfileIds: ensureArray(
             catalog?.supported_profile_ids,
-            'sync_v2_get_dataset_catalog.supported_profile_ids',
+            'sync_get_dataset_catalog.supported_profile_ids',
         ).map(String),
         defaultDatasetIds,
     };
@@ -256,7 +256,7 @@ function createSyncClient() {
                 invoke('lan_sync_get_status'),
                 invoke('lan_sync_list_devices'),
                 invoke('tt_sync_list_servers'),
-                invoke('sync_v2_get_dataset_catalog'),
+                invoke('sync_get_dataset_catalog'),
                 invoke('sync_automation_get_config'),
                 invoke('sync_automation_get_status'),
             ]);
@@ -264,7 +264,7 @@ function createSyncClient() {
             const selectedAddress = selectLanSyncAdvertiseAddress(status, getLanSyncAdvertiseAddress());
             setLanSyncAdvertiseAddress(selectedAddress);
             const datasetCatalog = normalizeDatasetCatalog(rawCatalog);
-            const syncSelection = getSyncV2DatasetSelection(datasetCatalog);
+            const syncSelection = getSyncDatasetSelection(datasetCatalog);
 
             return {
                 status,
@@ -309,7 +309,7 @@ async function confirmTtSyncPairing(pairUri) {
     const content = createPopupColumn();
 
     const title = document.createElement('b');
-    title.textContent = translate('TT-Sync pairing confirmation (v2 client)');
+    title.textContent = translate('TT-Sync pairing confirmation');
     content.appendChild(title);
 
     const meta = createPopupColumn();
@@ -457,7 +457,7 @@ async function editSyncScope(catalog, selection) {
             return null;
         }
 
-        return setSyncV2DatasetSelection(appHandle.getSelection(), catalog);
+        return setSyncDatasetSelection(appHandle.getSelection(), catalog);
     } finally {
         appHandle.unmount();
     }

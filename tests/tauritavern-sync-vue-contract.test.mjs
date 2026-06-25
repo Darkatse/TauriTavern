@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -42,6 +42,37 @@ async function listJsFiles(relativeDir) {
     return results.sort();
 }
 
+function installLocalStorage(initial = {}) {
+    const store = new Map(Object.entries(initial));
+    globalThis.localStorage = {
+        getItem: (key) => store.has(key) ? store.get(key) : null,
+        setItem: (key, value) => {
+            store.set(key, String(value));
+        },
+        removeItem: (key) => {
+            store.delete(key);
+        },
+    };
+    return globalThis.localStorage;
+}
+
+async function importSyncState() {
+    return import(pathToFileURL(path.join(
+        REPO_ROOT,
+        'src/scripts/tauri/setting/setting-panel/sync-state.js',
+    )).href);
+}
+
+async function withMutedWarnings(task) {
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+        return await task();
+    } finally {
+        console.warn = warn;
+    }
+}
+
 test('TauriTavern Sync popup wrapper owns host-only capabilities', async () => {
     const source = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-popup.js');
 
@@ -53,7 +84,8 @@ test('TauriTavern Sync popup wrapper owns host-only capabilities', async () => {
     assert.match(source, /mountTauriTavernSyncScopeApp/);
     assert.match(source, /parseTtSyncPairUri/);
     assert.match(source, /parseLanSyncPairUri/);
-    assert.match(source, /sync_v2_get_dataset_catalog/);
+    assert.match(source, /sync_get_dataset_catalog/);
+    assert.doesNotMatch(source, /sync_v2_get_dataset_catalog|getSyncV2DatasetSelection|setSyncV2DatasetSelection|v2 client/);
     assert.doesNotMatch(source, /from\s+['"]vue(?:\/|['"])/);
 });
 
@@ -151,6 +183,79 @@ test('TauriTavern Sync bundled UI does not contain legacy LAN v1 affordances', a
     assert.doesNotMatch(source, /Pair via LAN v2 QR|LAN Sync v2 Pair URI/);
 });
 
+test('TauriTavern Sync dataset selection migrates legacy localStorage key once', async () => {
+    const { getSyncDatasetSelection } = await importSyncState();
+    const catalog = {
+        policyVersion: 1,
+        supportedDatasetIds: ['characters', 'chats'],
+        defaultDatasetIds: ['characters'],
+    };
+    const legacy = JSON.stringify({ policy_version: 1, dataset_ids: ['chats'] });
+    const storage = installLocalStorage({
+        'tauritavern:sync_v2_dataset_selection': legacy,
+    });
+
+    assert.deepEqual(await withMutedWarnings(() => getSyncDatasetSelection(catalog)), {
+        policy_version: 1,
+        dataset_ids: ['chats'],
+    });
+    assert.equal(storage.getItem('tauritavern:sync_v2_dataset_selection'), null);
+    assert.equal(
+        storage.getItem('tauritavern:sync_dataset_selection'),
+        JSON.stringify({ policy_version: 1, dataset_ids: ['chats'] }),
+    );
+
+    assert.deepEqual(await withMutedWarnings(() => getSyncDatasetSelection(catalog)), {
+        policy_version: 1,
+        dataset_ids: ['chats'],
+    });
+});
+
+test('TauriTavern Sync dataset selection falls back to valid legacy key', async () => {
+    const { getSyncDatasetSelection } = await importSyncState();
+    const catalog = {
+        policyVersion: 1,
+        supportedDatasetIds: ['characters', 'chats'],
+        defaultDatasetIds: ['characters'],
+    };
+    const storage = installLocalStorage({
+        'tauritavern:sync_dataset_selection': '{bad',
+        'tauritavern:sync_v2_dataset_selection': JSON.stringify({
+            policy_version: 1,
+            dataset_ids: ['chats'],
+        }),
+    });
+
+    assert.deepEqual(await withMutedWarnings(() => getSyncDatasetSelection(catalog)), {
+        policy_version: 1,
+        dataset_ids: ['chats'],
+    });
+    assert.equal(storage.getItem('tauritavern:sync_v2_dataset_selection'), null);
+    assert.equal(
+        storage.getItem('tauritavern:sync_dataset_selection'),
+        JSON.stringify({ policy_version: 1, dataset_ids: ['chats'] }),
+    );
+});
+
+test('TauriTavern Sync dataset selection drops invalid legacy key', async () => {
+    const { getSyncDatasetSelection } = await importSyncState();
+    const catalog = {
+        policyVersion: 1,
+        supportedDatasetIds: ['characters', 'chats'],
+        defaultDatasetIds: ['characters'],
+    };
+    const storage = installLocalStorage({
+        'tauritavern:sync_v2_dataset_selection': '{bad',
+    });
+
+    assert.deepEqual(await withMutedWarnings(() => getSyncDatasetSelection(catalog)), {
+        policy_version: 1,
+        dataset_ids: ['characters'],
+    });
+    assert.equal(storage.getItem('tauritavern:sync_v2_dataset_selection'), null);
+    assert.equal(storage.getItem('tauritavern:sync_dataset_selection'), null);
+});
+
 test('TauriTavern Sync Vue app stays presentation-only', async () => {
     const files = await listJsFiles('src/scripts/tauri/setting/sync-app');
     assert.ok(files.includes('src/scripts/tauri/setting/sync-app/index.js'));
@@ -186,6 +291,10 @@ test('TauriTavern Sync pure state helpers keep pair URI validation explicit', as
 
     assert.match(source, /export\s+function\s+parseTtSyncPairUri/);
     assert.match(source, /export\s+function\s+parseLanSyncPairUri/);
+    assert.match(source, /export\s+function\s+getSyncDatasetSelection/);
+    assert.match(source, /tauritavern:sync_dataset_selection/);
+    assert.match(source, /tauritavern:sync_v2_dataset_selection/);
+    assert.doesNotMatch(source, /getSyncV2DatasetSelection|setSyncV2DatasetSelection/);
     assert.match(source, /Pair URI must start with tauritavern:\/\//);
     assert.match(source, /Pair URI is not a TT-Sync pairing link/);
     assert.match(source, /Pair URI is not a LAN Sync pairing link/);

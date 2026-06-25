@@ -7,7 +7,7 @@ use ttsync_core::dataset::{
 use crate::presentation::commands::helpers::log_command;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct SyncV2DatasetCatalogDto {
+pub struct SyncDatasetCatalogDto {
     pub policy_version: u32,
     pub supported_dataset_ids: Vec<String>,
     pub supported_profile_ids: Vec<String>,
@@ -15,9 +15,9 @@ pub struct SyncV2DatasetCatalogDto {
 }
 
 #[tauri::command]
-pub async fn sync_v2_get_dataset_catalog() -> SyncV2DatasetCatalogDto {
-    log_command("sync_v2_get_dataset_catalog");
-    SyncV2DatasetCatalogDto {
+pub async fn sync_get_dataset_catalog() -> SyncDatasetCatalogDto {
+    log_command("sync_get_dataset_catalog");
+    SyncDatasetCatalogDto {
         policy_version: DATASET_POLICY_VERSION,
         supported_dataset_ids: supported_dataset_ids(),
         supported_profile_ids: supported_profile_ids(),

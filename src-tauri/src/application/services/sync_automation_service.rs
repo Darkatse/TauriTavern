@@ -11,12 +11,12 @@ use ttsync_contract::sync::SyncMode;
 use crate::application::services::lan_sync_service::LanSyncService;
 use crate::application::services::tt_sync_service::TtSyncService;
 use crate::domain::errors::DomainError;
+use crate::domain::models::sync::SyncOperationOptions;
 use crate::domain::models::sync_automation::{
     SYNC_AUTOMATION_COLD_START_DELAY_SECS, SyncAutomationConfig, SyncAutomationStatus,
     SyncAutomationTarget, SyncAutomationToastEvent, SyncAutomationToastLevel,
 };
 use crate::infrastructure::sync_automation_store::SyncAutomationStore;
-use crate::infrastructure::sync_v2::SyncV2OperationOptions;
 
 pub struct SyncAutomationService {
     app_handle: AppHandle,
@@ -247,7 +247,7 @@ impl SyncAutomationService {
             .target
             .as_ref()
             .ok_or_else(|| DomainError::InvalidData("Auto sync target is required".to_string()))?;
-        let options = Some(SyncV2OperationOptions {
+        let options = Some(SyncOperationOptions {
             selection: config.selection.clone(),
             require_bundle_zstd: true,
         });

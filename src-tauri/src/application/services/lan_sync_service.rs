@@ -18,26 +18,24 @@ use crate::domain::models::lan_sync::{
     LanSyncPairedDevice, LanSyncPairedDeviceSummary, LanSyncStatus, LanSyncSyncCompletedEvent,
     LanSyncSyncErrorEvent,
 };
+use crate::domain::models::sync::{SyncOperationOptions, resolve_sync_options};
 use crate::infrastructure::lan_sync::runtime::{LanSyncPairingSession, LanSyncRuntime};
-use crate::infrastructure::lan_sync::v2::client::complete_pairing as complete_v2_pairing;
-use crate::infrastructure::lan_sync::v2::notify::{
-    LanSyncV2NotifyPullHandler, request_peer_pull as request_v2_peer_pull,
+use crate::infrastructure::sync::http_client::sync_error_to_domain;
+use crate::infrastructure::sync::lan::client::complete_pairing as complete_lan_pairing;
+use crate::infrastructure::sync::lan::notify::{
+    LanSyncNotifyPullHandler, request_peer_pull as request_lan_peer_pull,
 };
-use crate::infrastructure::lan_sync::v2::pairing::{
-    LanSyncV2PairCompleteRequest, decode_device_pubkey_b64url, validate_https_base_url,
+use crate::infrastructure::sync::lan::pairing::{
+    LanPairCompleteRequest, decode_device_pubkey_b64url, validate_https_base_url,
 };
-use crate::infrastructure::lan_sync::v2::pull::pull_from_device as pull_from_v2_device;
-use crate::infrastructure::lan_sync::v2::server::{
-    LanSyncV2ServerHandle, spawn_lan_sync_v2_server,
-};
-use crate::infrastructure::lan_sync::v2::store::LanSyncV2Store;
-use crate::infrastructure::sync_v2::{SyncV2OperationOptions, resolve_sync_v2_options};
-use crate::infrastructure::tt_sync::v2_api::sync_error_to_domain;
+use crate::infrastructure::sync::lan::pull::pull_from_device as pull_from_lan_device;
+use crate::infrastructure::sync::lan::server::{LanSyncServerHandle, spawn_lan_sync_server};
+use crate::infrastructure::sync::lan::store::LanPeerStore;
 
 pub struct LanSyncService {
     runtime: Arc<LanSyncRuntime>,
-    v2_store: LanSyncV2Store,
-    server: Mutex<Option<LanSyncV2ServerHandle>>,
+    peer_store: LanPeerStore,
+    server: Mutex<Option<LanSyncServerHandle>>,
 }
 
 impl LanSyncService {
@@ -47,7 +45,7 @@ impl LanSyncService {
         store_root: PathBuf,
         sync_permit: Arc<Semaphore>,
     ) -> Self {
-        let v2_store = LanSyncV2Store::new(store_root.clone());
+        let peer_store = LanPeerStore::new(store_root.clone());
         Self {
             runtime: Arc::new(LanSyncRuntime::new(
                 app_handle,
@@ -55,17 +53,14 @@ impl LanSyncService {
                 store_root,
                 sync_permit,
             )),
-            v2_store,
+            peer_store,
             server: Mutex::new(None),
         }
     }
 
     pub async fn get_status(&self) -> Result<LanSyncStatus, DomainError> {
-        let config = self.runtime.store.load_or_create_config().await?;
-        let sync_mode_override = self.runtime.get_sync_mode_override().await;
-        let sync_mode_persistent = config.sync_mode;
-        let sync_mode_overridden = sync_mode_override.is_some();
-        let sync_mode = sync_mode_override.unwrap_or(sync_mode_persistent);
+        let settings = self.runtime.store.load_or_create_server_settings().await?;
+        let (sync_mode, manual_default_mode, sync_mode_overridden) = self.sync_mode_state().await?;
 
         let pairing = self.runtime.get_pairing_session().await;
         let now_ms = now_ms();
@@ -78,7 +73,7 @@ impl LanSyncService {
         let running_info = self.running_server_info().await;
         let (running, port) = match running_info.as_ref() {
             Some(info) => (true, info.port),
-            None => (false, config.port),
+            None => (false, settings.port),
         };
 
         let available_addresses = list_available_addresses(port)?;
@@ -91,17 +86,13 @@ impl LanSyncService {
             pairing_enabled,
             pairing_expires_at_ms,
             sync_mode,
-            sync_mode_persistent,
+            manual_default_mode,
             sync_mode_overridden,
         })
     }
 
     pub async fn start_server(&self) -> Result<LanSyncStatus, DomainError> {
-        let config = self.runtime.store.load_or_create_config().await?;
-        let sync_mode_override = self.runtime.get_sync_mode_override().await;
-        let sync_mode_persistent = config.sync_mode;
-        let sync_mode_overridden = sync_mode_override.is_some();
-        let sync_mode = sync_mode_override.unwrap_or(sync_mode_persistent);
+        let (sync_mode, manual_default_mode, sync_mode_overridden) = self.sync_mode_state().await?;
 
         let pairing = self.runtime.get_pairing_session().await;
         let now_ms = now_ms();
@@ -134,7 +125,7 @@ impl LanSyncService {
             pairing_enabled,
             pairing_expires_at_ms,
             sync_mode,
-            sync_mode_persistent,
+            manual_default_mode,
             sync_mode_overridden,
         })
     }
@@ -155,9 +146,12 @@ impl LanSyncService {
 
     pub async fn set_sync_mode(&self, mode: SyncMode, persist: bool) -> Result<(), DomainError> {
         if persist {
-            let mut config = self.runtime.store.load_or_create_config().await?;
-            config.sync_mode = mode;
-            self.runtime.store.save_config(&config).await?;
+            let mut preferences = self.runtime.store.load_or_create_sync_preferences().await?;
+            preferences.manual_default_mode = mode;
+            self.runtime
+                .store
+                .save_sync_preferences(&preferences)
+                .await?;
             self.runtime.set_sync_mode_override(None).await;
             return Ok(());
         }
@@ -171,12 +165,24 @@ impl LanSyncService {
     }
 
     pub async fn effective_sync_mode(&self) -> Result<SyncMode, DomainError> {
-        let config = self.runtime.store.load_or_create_config().await?;
+        let preferences = self.runtime.store.load_or_create_sync_preferences().await?;
         Ok(self
             .runtime
             .get_sync_mode_override()
             .await
-            .unwrap_or(config.sync_mode))
+            .unwrap_or(preferences.manual_default_mode))
+    }
+
+    async fn sync_mode_state(&self) -> Result<(SyncMode, SyncMode, bool), DomainError> {
+        let preferences = self.runtime.store.load_or_create_sync_preferences().await?;
+        let sync_mode_override = self.runtime.get_sync_mode_override().await;
+        let manual_default_mode = preferences.manual_default_mode;
+        let sync_mode_overridden = sync_mode_override.is_some();
+        Ok((
+            sync_mode_override.unwrap_or(manual_default_mode),
+            manual_default_mode,
+            sync_mode_overridden,
+        ))
     }
 
     async fn running_server_info(&self) -> Option<LanSyncServerInfo> {
@@ -197,17 +203,17 @@ impl LanSyncService {
         Ok(())
     }
 
-    async fn spawn_server(&self) -> Result<LanSyncV2ServerHandle, DomainError> {
-        let config = self.runtime.store.load_or_create_config().await?;
-        let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, config.port));
-        let notify_pull = Arc::new(LanSyncV2NotifyPullHandler::new(
+    async fn spawn_server(&self) -> Result<LanSyncServerHandle, DomainError> {
+        let settings = self.runtime.store.load_or_create_server_settings().await?;
+        let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, settings.port));
+        let notify_pull = Arc::new(LanSyncNotifyPullHandler::new(
             self.runtime.clone(),
-            self.v2_store.clone(),
+            self.peer_store.clone(),
         ));
-        spawn_lan_sync_v2_server(
+        spawn_lan_sync_server(
             addr,
             self.runtime.sync_root.clone(),
-            self.v2_store.clone(),
+            self.peer_store.clone(),
             self.runtime.clone(),
             notify_pull,
         )
@@ -296,10 +302,10 @@ impl LanSyncService {
         pair_uri: &str,
     ) -> Result<LanSyncPairedDeviceSummary, DomainError> {
         let parsed = parse_pair_uri(pair_uri)?;
-        self.request_pairing_v2(parsed).await
+        self.request_pairing_with_peer(parsed).await
     }
 
-    async fn request_pairing_v2(
+    async fn request_pairing_with_peer(
         &self,
         parsed: ParsedPairUri,
     ) -> Result<LanSyncPairedDeviceSummary, DomainError> {
@@ -313,12 +319,12 @@ impl LanSyncService {
             DomainError::InvalidData("LAN sync server must be running before pairing".to_string())
         })?;
         let local_base_url =
-            routed_v2_advertise_address(&parsed.base_url, server_info.port).await?;
+            routed_lan_advertise_address(&parsed.base_url, server_info.port).await?;
 
-        let identity = self.v2_store.load_or_create_identity().await?;
+        let identity = self.peer_store.load_or_create_identity().await?;
         let device_pubkey = ttsync_core::crypto::device_pubkey_b64url(&identity.ed25519_seed)
             .map_err(sync_error_to_domain)?;
-        let request = LanSyncV2PairCompleteRequest {
+        let request = LanPairCompleteRequest {
             device_id: identity.device_id.clone(),
             device_name: identity.device_name.clone(),
             device_pubkey,
@@ -326,7 +332,7 @@ impl LanSyncService {
             client_spki_sha256: server_info.spki_sha256,
         };
 
-        let response = complete_v2_pairing(
+        let response = complete_lan_pairing(
             &parsed.base_url,
             &parsed.spki_sha256,
             &parsed.token,
@@ -354,7 +360,7 @@ impl LanSyncService {
             spki_sha256: parsed.spki_sha256,
         };
 
-        self.v2_store
+        self.peer_store
             .upsert_paired_device(paired_device.clone())
             .await?;
 
@@ -369,7 +375,7 @@ impl LanSyncService {
         &self,
     ) -> Result<Vec<LanSyncPairedDeviceSummary>, DomainError> {
         Ok(self
-            .v2_store
+            .peer_store
             .load_paired_devices()
             .await?
             .into_iter()
@@ -379,14 +385,14 @@ impl LanSyncService {
 
     pub async fn remove_paired_device(&self, device_id: &str) -> Result<(), DomainError> {
         let device_id = parse_device_id(device_id)?;
-        self.v2_store.remove_paired_device(&device_id).await?;
+        self.peer_store.remove_paired_device(&device_id).await?;
         Ok(())
     }
 
     pub async fn sync_from_device(
         &self,
         device_id: &str,
-        options: Option<SyncV2OperationOptions>,
+        options: Option<SyncOperationOptions>,
     ) -> Result<(), DomainError> {
         let permit = match self.runtime.try_acquire_sync_permit() {
             Ok(permit) => permit,
@@ -436,13 +442,13 @@ impl LanSyncService {
     async fn sync_from_device_inner(
         &self,
         device_id: &str,
-        options: Option<SyncV2OperationOptions>,
+        options: Option<SyncOperationOptions>,
     ) -> Result<LanSyncSyncCompletedEvent, DomainError> {
         let device_id = parse_device_id(device_id)?;
-        let options = resolve_sync_v2_options(options)?;
-        pull_from_v2_device(
+        let options = resolve_sync_options(options)?;
+        pull_from_lan_device(
             self.runtime.clone(),
-            self.v2_store.clone(),
+            self.peer_store.clone(),
             &device_id,
             options,
         )
@@ -452,23 +458,23 @@ impl LanSyncService {
     pub async fn push_to_device(
         &self,
         device_id: &str,
-        options: Option<SyncV2OperationOptions>,
+        options: Option<SyncOperationOptions>,
     ) -> Result<(), DomainError> {
         self.ensure_server_running().await?;
         let device_id = parse_device_id(device_id)?;
-        let options = resolve_sync_v2_options(options)?;
-        request_v2_peer_pull(self.v2_store.clone(), &device_id, options).await
+        let options = resolve_sync_options(options)?;
+        request_lan_peer_pull(self.peer_store.clone(), &device_id, options).await
     }
 
     pub async fn push_to_device_for_automation(
         &self,
         device_id: &str,
-        options: Option<SyncV2OperationOptions>,
+        options: Option<SyncOperationOptions>,
     ) -> Result<(), DomainError> {
         self.ensure_server_running().await?;
         let device_id = parse_device_id(device_id)?;
-        let options = resolve_sync_v2_options(options)?;
-        request_v2_peer_pull(self.v2_store.clone(), &device_id, options).await
+        let options = resolve_sync_options(options)?;
+        request_lan_peer_pull(self.peer_store.clone(), &device_id, options).await
     }
 }
 
@@ -539,26 +545,26 @@ fn build_pair_uri(
     Ok(uri.to_string())
 }
 
-async fn routed_v2_advertise_address(
+async fn routed_lan_advertise_address(
     peer_base_url: &str,
     local_port: u16,
 ) -> Result<String, DomainError> {
     validate_https_base_url(peer_base_url)?;
     let peer_url =
         Url::parse(peer_base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-    let peer_host = peer_url.host_str().ok_or_else(|| {
-        DomainError::InvalidData("LAN Sync v2 peer URL is missing host".to_string())
-    })?;
-    let peer_port = peer_url.port_or_known_default().ok_or_else(|| {
-        DomainError::InvalidData("LAN Sync v2 peer URL is missing port".to_string())
-    })?;
+    let peer_host = peer_url
+        .host_str()
+        .ok_or_else(|| DomainError::InvalidData("LAN Sync peer URL is missing host".to_string()))?;
+    let peer_port = peer_url
+        .port_or_known_default()
+        .ok_or_else(|| DomainError::InvalidData("LAN Sync peer URL is missing port".to_string()))?;
 
     let remote_addr = tokio::net::lookup_host((peer_host, peer_port))
         .await
         .map_err(|error| DomainError::InternalError(error.to_string()))?
         .find(|addr| addr.is_ipv4())
         .ok_or_else(|| {
-            DomainError::InvalidData("No IPv4 LAN Sync v2 peer address resolved".to_string())
+            DomainError::InvalidData("No IPv4 LAN Sync peer address resolved".to_string())
         })?;
 
     let socket = tokio::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 0))
@@ -577,7 +583,7 @@ async fn routed_v2_advertise_address(
             Ok(format!("https://{}:{}", ip, local_port))
         }
         _ => Err(DomainError::InvalidData(
-            "No routable IPv4 LAN Sync v2 address".to_string(),
+            "No routable IPv4 LAN Sync address".to_string(),
         )),
     }
 }
@@ -607,10 +613,10 @@ fn parse_pair_uri(pair_uri: &str) -> Result<ParsedPairUri, DomainError> {
         ));
     }
 
-    parse_v2_pair_uri(&uri)
+    parse_lan_pair_uri_payload(&uri)
 }
 
-fn parse_v2_pair_uri(uri: &Url) -> Result<ParsedPairUri, DomainError> {
+fn parse_lan_pair_uri_payload(uri: &Url) -> Result<ParsedPairUri, DomainError> {
     let mut base_url = None;
     let mut token = None;
     let mut expires_at_ms = None;
@@ -704,8 +710,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn routed_v2_advertise_address_uses_peer_route() {
-        let address = routed_v2_advertise_address("https://127.0.0.1:50000", 56000)
+    async fn routed_lan_advertise_address_uses_peer_route() {
+        let address = routed_lan_advertise_address("https://127.0.0.1:50000", 56000)
             .await
             .expect("routed address");
 

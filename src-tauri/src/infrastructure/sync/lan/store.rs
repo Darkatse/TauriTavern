@@ -9,27 +9,27 @@ use crate::domain::models::lan_sync::{LanSyncIdentity, LanSyncPairedDevice};
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
 
 #[derive(Debug, Clone)]
-pub struct LanSyncV2Store {
-    v2_dir: PathBuf,
+pub struct LanPeerStore {
+    state_dir: PathBuf,
 }
 
-impl LanSyncV2Store {
+impl LanPeerStore {
     pub fn new(default_user_dir: PathBuf) -> Self {
         Self {
-            v2_dir: default_user_dir.join("user").join("lan-sync").join("v2"),
+            state_dir: default_user_dir.join("user").join("lan-sync").join("v2"),
         }
     }
 
     pub fn state_dir(&self) -> PathBuf {
-        self.v2_dir.clone()
+        self.state_dir.clone()
     }
 
     fn identity_path(&self) -> PathBuf {
-        self.v2_dir.join("identity.json")
+        self.state_dir.join("identity.json")
     }
 
     fn paired_devices_path(&self) -> PathBuf {
-        self.v2_dir.join("peers.json")
+        self.state_dir.join("peers.json")
     }
 
     pub async fn load_or_create_identity(&self) -> Result<LanSyncIdentity, DomainError> {
@@ -92,9 +92,7 @@ impl LanSyncV2Store {
             .await?
             .into_iter()
             .find(|device| &device.grant.device_id == device_id)
-            .ok_or_else(|| {
-                DomainError::NotFound(format!("LAN Sync v2 peer not found: {}", device_id))
-            })
+            .ok_or_else(|| DomainError::NotFound(format!("LAN Sync peer not found: {}", device_id)))
     }
 
     pub async fn get_peer_grant(&self, device_id: &DeviceId) -> Result<PeerGrant, DomainError> {
@@ -124,7 +122,7 @@ mod tests {
     use ttsync_contract::peer::Permissions;
 
     fn temp_default_user_dir() -> PathBuf {
-        std::env::temp_dir().join(format!("tauritavern-lan-v2-store-{}", Uuid::new_v4()))
+        std::env::temp_dir().join(format!("tauritavern-lan-peer-store-{}", Uuid::new_v4()))
     }
 
     fn test_device_id() -> DeviceId {
@@ -153,7 +151,7 @@ mod tests {
     #[tokio::test]
     async fn store_round_trips_identity() {
         let default_user_dir = temp_default_user_dir();
-        let store = LanSyncV2Store::new(default_user_dir.clone());
+        let store = LanPeerStore::new(default_user_dir.clone());
 
         let first_identity = store
             .load_or_create_identity()
@@ -172,7 +170,7 @@ mod tests {
     #[tokio::test]
     async fn store_round_trips_and_removes_peer() {
         let default_user_dir = temp_default_user_dir();
-        let store = LanSyncV2Store::new(default_user_dir.clone());
+        let store = LanPeerStore::new(default_user_dir.clone());
         let device_id = test_device_id();
 
         store

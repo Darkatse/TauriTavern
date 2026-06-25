@@ -21,11 +21,11 @@ use crate::domain::errors::DomainError;
 use crate::infrastructure::http_client::APP_USER_AGENT;
 
 #[derive(Clone)]
-pub struct TtSyncV2Api {
+pub struct SyncHttpClient {
     inner: SyncClient,
 }
 
-impl TtSyncV2Api {
+impl SyncHttpClient {
     pub fn new(base_url: String, spki_sha256: String) -> Result<Self, DomainError> {
         let inner = SyncClient::with_options(
             base_url,

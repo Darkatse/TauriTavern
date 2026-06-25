@@ -218,9 +218,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::sync_automation_commands::sync_automation_get_config,
         super::sync_automation_commands::sync_automation_update_config,
         super::sync_automation_commands::sync_automation_get_status,
-        // Shared sync v2 commands
-        super::sync_v2_commands::sync_v2_get_dataset_catalog,
-        // TT-Sync v2 commands
+        // Shared sync commands
+        super::sync_commands::sync_get_dataset_catalog,
+        // TT-Sync commands
         super::tt_sync_commands::tt_sync_pair,
         super::tt_sync_commands::tt_sync_list_servers,
         super::tt_sync_commands::tt_sync_remove_server,

@@ -9,29 +9,27 @@ use ttsync_contract::status::StatusResponse;
 use ttsync_contract::sync::SyncMode;
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::lan_sync::v2::pairing::{
-    LanSyncV2PairCompleteRequest, LanSyncV2PairCompleteResponse,
-};
-use crate::infrastructure::sync_v2::SyncV2OperationOptions;
-use crate::infrastructure::tt_sync::v2_api::{TtSyncV2Api, bearer_auth_value, ensure_success};
+use crate::domain::models::sync::SyncOperationOptions;
+use crate::infrastructure::sync::http_client::{SyncHttpClient, bearer_auth_value, ensure_success};
+use crate::infrastructure::sync::lan::pairing::{LanPairCompleteRequest, LanPairCompleteResponse};
 
 #[derive(Clone)]
-pub struct LanSyncV2Api {
-    inner: TtSyncV2Api,
+pub struct LanSyncClient {
+    inner: SyncHttpClient,
 }
 
-impl LanSyncV2Api {
+impl LanSyncClient {
     pub fn new(base_url: String, spki_sha256: String) -> Result<Self, DomainError> {
         Ok(Self {
-            inner: TtSyncV2Api::new(base_url, spki_sha256)?,
+            inner: SyncHttpClient::new(base_url, spki_sha256)?,
         })
     }
 
     pub async fn pair_complete(
         &self,
         token: &str,
-        request: &LanSyncV2PairCompleteRequest,
-    ) -> Result<LanSyncV2PairCompleteResponse, DomainError> {
+        request: &LanPairCompleteRequest,
+    ) -> Result<LanPairCompleteResponse, DomainError> {
         let mut url = self.inner.endpoint_url("/v2/lan/pair/complete")?;
         url.query_pairs_mut().append_pair("token", token);
 
@@ -44,9 +42,9 @@ impl LanSyncV2Api {
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
-        let response = ensure_success(response, "LAN Sync v2 pairing failed").await?;
+        let response = ensure_success(response, "LAN Sync pairing failed").await?;
         response
-            .json::<LanSyncV2PairCompleteResponse>()
+            .json::<LanPairCompleteResponse>()
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))
     }
@@ -100,7 +98,7 @@ impl LanSyncV2Api {
     pub async fn notify_pull_request(
         &self,
         session_token: &SessionToken,
-        options: &SyncV2OperationOptions,
+        options: &SyncOperationOptions,
     ) -> Result<(), DomainError> {
         let url = self.inner.endpoint_url("/v2/lan/pull-request")?;
 
@@ -117,7 +115,7 @@ impl LanSyncV2Api {
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
-        let response = ensure_success(response, "LAN Sync v2 pull request failed").await?;
+        let response = ensure_success(response, "LAN Sync pull request failed").await?;
         response
             .bytes()
             .await
@@ -130,9 +128,9 @@ pub async fn complete_pairing(
     base_url: &str,
     spki_sha256: &str,
     token: &str,
-    request: &LanSyncV2PairCompleteRequest,
-) -> Result<LanSyncV2PairCompleteResponse, DomainError> {
-    LanSyncV2Api::new(base_url.to_string(), spki_sha256.to_string())?
+    request: &LanPairCompleteRequest,
+) -> Result<LanPairCompleteResponse, DomainError> {
+    LanSyncClient::new(base_url.to_string(), spki_sha256.to_string())?
         .pair_complete(token, request)
         .await
 }

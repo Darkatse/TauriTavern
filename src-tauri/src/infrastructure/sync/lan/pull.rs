@@ -16,33 +16,34 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
     LanSyncSyncCompletedEvent, LanSyncSyncPhase, LanSyncSyncProgressEvent,
 };
+use crate::domain::models::sync::SyncOperationOptions;
 use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
-use crate::infrastructure::lan_sync::v2::client::LanSyncV2Api;
-use crate::infrastructure::lan_sync::v2::store::LanSyncV2Store;
+use crate::infrastructure::sync::bundle_transport_for_status;
+use crate::infrastructure::sync::http_client::ensure_dataset_scope_v1;
+use crate::infrastructure::sync::lan::client::LanSyncClient;
+use crate::infrastructure::sync::lan::store::LanPeerStore;
 use crate::infrastructure::sync_bundle::{
     BUNDLE_ZSTD_DECODE_BUFFER_SIZE, write_bundle_to_local_files,
 };
 use crate::infrastructure::sync_fs;
 use crate::infrastructure::sync_transfer;
-use crate::infrastructure::sync_v2::{SyncV2OperationOptions, bundle_transport_for_status};
 use crate::infrastructure::tt_sync::fs::{scan_manifest_with_policy, validate_plan_scope};
-use crate::infrastructure::tt_sync::v2_api::ensure_dataset_scope_v1;
 
 pub async fn pull_from_device(
     runtime: Arc<LanSyncRuntime>,
-    store: LanSyncV2Store,
+    store: LanPeerStore,
     device_id: &DeviceId,
-    options: SyncV2OperationOptions,
+    options: SyncOperationOptions,
 ) -> Result<LanSyncSyncCompletedEvent, DomainError> {
+    let mode = effective_sync_mode(&runtime).await?;
     let mut peer = store.get_paired_device(device_id).await?;
     let identity = store.load_or_create_identity().await?;
-    let mode = effective_sync_mode(&runtime).await?;
 
-    let api = LanSyncV2Api::new(peer.base_url.clone(), peer.spki_sha256.clone())?;
+    let api = LanSyncClient::new(peer.base_url.clone(), peer.spki_sha256.clone())?;
     let status = api.status().await?;
-    ensure_dataset_scope_v1(&status, "LAN Sync v2 peer")?;
+    ensure_dataset_scope_v1(&status, "LAN Sync peer")?;
     let transport =
-        bundle_transport_for_status(&status, "LAN Sync v2 peer", options.require_bundle_zstd)?;
+        bundle_transport_for_status(&status, "LAN Sync peer", options.require_bundle_zstd)?;
 
     let session = api
         .open_session(&identity.device_id, &identity.ed25519_seed)
@@ -52,12 +53,12 @@ pub async fn pull_from_device(
 
     if !peer.grant.permissions.read {
         return Err(DomainError::AuthenticationError(
-            "LAN Sync v2 peer does not grant read permission".to_string(),
+            "LAN Sync peer does not grant read permission".to_string(),
         ));
     }
     if mode == SyncMode::Mirror && !peer.grant.permissions.mirror_delete {
         return Err(DomainError::AuthenticationError(
-            "LAN Sync v2 peer does not grant mirror_delete permission".to_string(),
+            "LAN Sync peer does not grant mirror_delete permission".to_string(),
         ));
     }
 
@@ -115,16 +116,16 @@ pub async fn pull_from_device(
 }
 
 async fn effective_sync_mode(runtime: &LanSyncRuntime) -> Result<SyncMode, DomainError> {
-    let config = runtime.store.load_or_create_config().await?;
+    let preferences = runtime.store.load_or_create_sync_preferences().await?;
     Ok(runtime
         .get_sync_mode_override()
         .await
-        .unwrap_or(config.sync_mode))
+        .unwrap_or(preferences.manual_default_mode))
 }
 
 async fn apply_pull_plan(
     runtime: &LanSyncRuntime,
-    api: LanSyncV2Api,
+    api: LanSyncClient,
     session_token: &SessionToken,
     plan: SyncPlan,
     mode: SyncMode,
@@ -297,7 +298,7 @@ struct DownloadResult {
 
 fn spawn_download_task(
     join_set: &mut JoinSet<Result<DownloadResult, DomainError>>,
-    api: LanSyncV2Api,
+    api: LanSyncClient,
     sync_root: std::path::PathBuf,
     session_token: SessionToken,
     plan_id: PlanId,
@@ -309,7 +310,7 @@ fn spawn_download_task(
 }
 
 async fn download_one(
-    api: &LanSyncV2Api,
+    api: &LanSyncClient,
     sync_root: &std::path::Path,
     session_token: &SessionToken,
     plan_id: &PlanId,

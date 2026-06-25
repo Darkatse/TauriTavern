@@ -253,34 +253,37 @@ mod tests {
     }
 
     #[test]
-    fn scan_manifest_respects_v2_scope_and_excludes_lan_sync_state() {
+    fn scan_manifest_excludes_all_sync_state_files() {
         let root = unique_temp_root();
         let _ = std::fs::remove_dir_all(&root);
+        let lan_sync_dir = root.join("default-user").join("user").join("lan-sync");
 
         std::fs::create_dir_all(root.join("default-user").join("chats"))
             .expect("create chats directory");
-        std::fs::create_dir_all(
-            root.join("default-user")
-                .join("user")
-                .join("lan-sync")
-                .join("tt-sync-v2"),
-        )
-        .expect("create tt sync state directory");
+        std::fs::create_dir_all(lan_sync_dir.join("v2")).expect("create lan sync state directory");
+        std::fs::create_dir_all(lan_sync_dir.join("tt-sync-v2"))
+            .expect("create tt sync state directory");
 
         std::fs::write(
             root.join("default-user").join("chats").join("chat.jsonl"),
             b"chat",
         )
         .expect("write included file");
+        std::fs::write(lan_sync_dir.join("server-settings.json"), b"{}")
+            .expect("write excluded server settings");
+        std::fs::write(lan_sync_dir.join("sync-preferences.json"), b"{}")
+            .expect("write excluded sync preferences");
+        std::fs::write(lan_sync_dir.join("v2").join("identity.json"), b"{}")
+            .expect("write excluded lan identity");
+        std::fs::write(lan_sync_dir.join("v2").join("peers.json"), b"[]")
+            .expect("write excluded lan peers");
+        std::fs::write(lan_sync_dir.join("tt-sync-v2").join("identity.json"), b"{}")
+            .expect("write excluded tt sync identity");
         std::fs::write(
-            root.join("default-user")
-                .join("user")
-                .join("lan-sync")
-                .join("tt-sync-v2")
-                .join("identity.json"),
-            b"{}",
+            lan_sync_dir.join("tt-sync-v2").join("paired-servers.json"),
+            b"[]",
         )
-        .expect("write excluded state file");
+        .expect("write excluded paired servers");
 
         std::fs::create_dir_all(
             root.join("_tauritavern")
@@ -470,10 +473,19 @@ mod tests {
             paths.contains(&"default-user/chats/chat.jsonl".to_string()),
             "included file must appear in manifest"
         );
-        assert!(
-            !paths.contains(&"default-user/user/lan-sync/tt-sync-v2/identity.json".to_string()),
-            "lan sync state must never be part of the manifest"
-        );
+        for state_path in [
+            "default-user/user/lan-sync/server-settings.json",
+            "default-user/user/lan-sync/sync-preferences.json",
+            "default-user/user/lan-sync/v2/identity.json",
+            "default-user/user/lan-sync/v2/peers.json",
+            "default-user/user/lan-sync/tt-sync-v2/identity.json",
+            "default-user/user/lan-sync/tt-sync-v2/paired-servers.json",
+        ] {
+            assert!(
+                !paths.contains(&state_path.to_string()),
+                "{state_path} must never be part of the manifest"
+            );
+        }
         assert!(
             paths.contains(&"_tauritavern/agent-profiles/profiles/writer.json".to_string()),
             "agent profiles are part of the TauriTavern default dataset"

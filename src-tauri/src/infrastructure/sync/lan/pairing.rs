@@ -7,10 +7,10 @@ use url::Url;
 
 use crate::domain::errors::DomainError;
 use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
-use crate::infrastructure::tt_sync::v2_api::sync_error_to_domain;
+use crate::infrastructure::sync::http_client::sync_error_to_domain;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LanSyncV2PairCompleteRequest {
+pub struct LanPairCompleteRequest {
     pub device_id: DeviceId,
     pub device_name: String,
     pub device_pubkey: String,
@@ -19,7 +19,7 @@ pub struct LanSyncV2PairCompleteRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LanSyncV2PairCompleteResponse {
+pub struct LanPairCompleteResponse {
     pub server_device_id: DeviceId,
     pub server_device_name: String,
     pub server_device_pubkey: String,
@@ -27,14 +27,14 @@ pub struct LanSyncV2PairCompleteResponse {
 }
 
 #[derive(Debug, Clone)]
-pub struct LanSyncV2PairingSession {
+pub struct LanPairingSession {
     pub token: String,
     pub expires_at_ms: u64,
 }
 
 #[async_trait]
-pub trait LanSyncV2PairingCoordinator: Send + Sync {
-    async fn active_pairing_session(&self) -> Option<LanSyncV2PairingSession>;
+pub trait LanPairingCoordinator: Send + Sync {
+    async fn active_pairing_session(&self) -> Option<LanPairingSession>;
 
     async fn request_pairing_decision(
         &self,
@@ -47,11 +47,11 @@ pub trait LanSyncV2PairingCoordinator: Send + Sync {
 }
 
 #[async_trait]
-impl LanSyncV2PairingCoordinator for LanSyncRuntime {
-    async fn active_pairing_session(&self) -> Option<LanSyncV2PairingSession> {
+impl LanPairingCoordinator for LanSyncRuntime {
+    async fn active_pairing_session(&self) -> Option<LanPairingSession> {
         self.get_pairing_session()
             .await
-            .map(|session| LanSyncV2PairingSession {
+            .map(|session| LanPairingSession {
                 token: session.token,
                 expires_at_ms: session.expires_at_ms,
             })
@@ -72,7 +72,7 @@ impl LanSyncV2PairingCoordinator for LanSyncRuntime {
     }
 }
 
-pub fn default_lan_v2_permissions() -> Permissions {
+pub fn default_lan_permissions() -> Permissions {
     Permissions {
         read: true,
         write: false,
@@ -86,7 +86,7 @@ pub fn decode_device_pubkey_b64url(value: &str) -> Result<Vec<u8>, DomainError> 
         .map_err(|error| DomainError::InvalidData(error.to_string()))?;
     if public_key.len() != 32 {
         return Err(DomainError::InvalidData(
-            "LAN Sync v2 device public key must be 32 bytes".to_string(),
+            "LAN Sync device public key must be 32 bytes".to_string(),
         ));
     }
 
@@ -103,7 +103,7 @@ pub fn host_for_pairing_prompt(base_url: &str) -> Result<String, DomainError> {
     parsed
         .host_str()
         .map(str::to_string)
-        .ok_or_else(|| DomainError::InvalidData("LAN Sync v2 base URL is missing host".to_string()))
+        .ok_or_else(|| DomainError::InvalidData("LAN Sync base URL is missing host".to_string()))
 }
 
 #[cfg(test)]
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn default_permissions_allow_read_and_mirror_delete_only() {
-        let permissions = default_lan_v2_permissions();
+        let permissions = default_lan_permissions();
         assert!(permissions.read);
         assert!(permissions.mirror_delete);
         assert!(!permissions.write);
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn base_url_must_be_origin() {
         assert!(matches!(
-            validate_https_base_url("https://127.0.0.1:50000/v2"),
+            validate_https_base_url("https://127.0.0.1:50000/path"),
             Err(DomainError::InvalidData(_))
         ));
         assert!(matches!(
