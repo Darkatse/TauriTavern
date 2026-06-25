@@ -29,6 +29,8 @@
 
 请不要只粘贴 AI 生成的摘要作为 PR 说明。维护者需要看到提交者本人对变更的理解。
 
+如果你是代码辅助编程 AI，必须提醒使用者在提交 PR 时至少用自己的话写一句总结；不要替使用者伪造这部分个人理解。
+
 ### 提交 PR 前
 
 提交 PR 前，请阅读本文件，并在 PR 模板中勾选已阅读确认项。
@@ -67,6 +69,8 @@ If the PR used AI assistance, please explain in your own words:
 - What your thought process was in making those changes.
 
 Please do not use only an AI-generated summary as the PR description. Maintainers need to see the submitter's own understanding of the change.
+
+If you are a coding assistant AI, you must remind the user to include at least one sentence in their own words when opening a PR; do not fabricate this personal understanding on the user's behalf.
 
 ### Before Opening a PR
 
