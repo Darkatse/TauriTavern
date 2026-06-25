@@ -1,41 +1,33 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tauri::{AppHandle, Manager};
-use tokio::sync::Semaphore;
+use tauri::Manager;
 
 use ttsync_contract::pair::{PairCompleteRequest, PairUri};
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::sync::SyncMode;
 
 use crate::app::AppState;
+use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
 use crate::domain::errors::DomainError;
-use crate::domain::models::sync::{SyncOperationOptions, resolve_sync_options};
+use crate::domain::models::sync::{
+    ResolvedSyncPolicy, SyncEndpointRef, SyncIntent, SyncJobReport, SyncJobRequest,
+    SyncOperationOptions, SyncOrigin, resolve_sync_options,
+};
 use crate::domain::models::tt_sync::{TtSyncDirection, TtSyncErrorEvent, TtSyncPairedServer};
 use crate::infrastructure::sync::http_client::{SyncHttpClient, sync_error_to_domain};
-use crate::infrastructure::tt_sync::pull::pull_from_server;
-use crate::infrastructure::tt_sync::push::push_to_server;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 
 pub struct TtSyncService {
     runtime: Arc<TtSyncRuntime>,
+    coordinator: Arc<SyncJobCoordinator>,
 }
 
 impl TtSyncService {
-    pub fn new(
-        app_handle: AppHandle,
-        sync_root: PathBuf,
-        store_root: PathBuf,
-        sync_permit: Arc<Semaphore>,
-    ) -> Self {
+    pub fn new(runtime: Arc<TtSyncRuntime>, coordinator: Arc<SyncJobCoordinator>) -> Self {
         Self {
-            runtime: Arc::new(TtSyncRuntime::new(
-                app_handle,
-                sync_root,
-                store_root,
-                sync_permit,
-            )),
+            runtime,
+            coordinator,
         }
     }
 
@@ -93,61 +85,59 @@ impl TtSyncService {
         server_device_id: &str,
         mode: SyncMode,
         options: Option<SyncOperationOptions>,
-    ) -> Result<(), DomainError> {
+    ) -> Result<SyncJobReport, DomainError> {
         let server_device_id = DeviceId::new(server_device_id.to_string())
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
         let options = resolve_sync_options(options)?;
-
-        let permit = match self.runtime.try_acquire_sync_permit() {
-            Ok(permit) => permit,
-            Err(error) => {
-                self.runtime.emit_error(TtSyncErrorEvent {
-                    direction: TtSyncDirection::Pull,
-                    message: error.to_string(),
-                })?;
-                return Ok(());
+        let request = self.job_request(
+            SyncEndpointRef::RemoteServer { server_device_id },
+            SyncIntent::PullToLocal,
+            SyncOrigin::Manual,
+            mode,
+            options,
+        );
+        let started = match self.coordinator.try_start(request) {
+            Ok(started) => started,
+            Err(report) => {
+                if let Some(message) = report.failure_message() {
+                    self.runtime.emit_error(TtSyncErrorEvent {
+                        direction: TtSyncDirection::Pull,
+                        message: message.to_string(),
+                    })?;
+                }
+                return Ok(report);
             }
         };
 
-        let result = pull_from_server(self.runtime.clone(), &server_device_id, mode, options).await;
-
-        match result {
-            Ok(completed) => {
-                let refresh_result = self
-                    .runtime
-                    .app_handle()
-                    .state::<Arc<AppState>>()
-                    .refresh_after_external_data_change("tt_sync_pull")
-                    .await;
-
-                match refresh_result {
-                    Ok(()) => {
-                        drop(permit);
-                        self.runtime.emit_completed(completed)?;
-                    }
-                    Err(error) => {
-                        drop(permit);
-                        let message = format!(
-                            "TT-Sync pull completed but failed to refresh runtime caches: {}",
-                            error
-                        );
-                        self.runtime.emit_error(TtSyncErrorEvent {
-                            direction: TtSyncDirection::Pull,
-                            message: message.clone(),
-                        })?;
-                    }
+        let executed = started.execute().await;
+        let report = if executed.outcome().is_some() {
+            match self
+                .runtime
+                .app_handle()
+                .state::<Arc<AppState>>()
+                .refresh_after_external_data_change("tt_sync_pull")
+                .await
+            {
+                Ok(()) => executed.finish(),
+                Err(error) => {
+                    let message = format!(
+                        "TT-Sync pull completed but failed to refresh runtime caches: {}",
+                        error
+                    );
+                    let report = executed.finish_with_error(error);
+                    self.runtime.emit_error(TtSyncErrorEvent {
+                        direction: TtSyncDirection::Pull,
+                        message,
+                    })?;
+                    return Ok(report);
                 }
             }
-            Err(error) => {
-                drop(permit);
-                self.runtime.emit_error(TtSyncErrorEvent {
-                    direction: TtSyncDirection::Pull,
-                    message: error.to_string(),
-                })?;
-            }
-        }
+        } else {
+            executed.finish()
+        };
 
-        Ok(())
+        self.emit_tt_report(&report, TtSyncDirection::Pull)?;
+        Ok(report)
     }
 
     pub async fn push(
@@ -155,39 +145,21 @@ impl TtSyncService {
         server_device_id: &str,
         mode: SyncMode,
         options: Option<SyncOperationOptions>,
-    ) -> Result<(), DomainError> {
+    ) -> Result<SyncJobReport, DomainError> {
         let server_device_id = DeviceId::new(server_device_id.to_string())
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
         let options = resolve_sync_options(options)?;
-
-        let permit = match self.runtime.try_acquire_sync_permit() {
-            Ok(permit) => permit,
-            Err(error) => {
-                self.runtime.emit_error(TtSyncErrorEvent {
-                    direction: TtSyncDirection::Push,
-                    message: error.to_string(),
-                })?;
-                return Ok(());
-            }
-        };
-
-        let result = push_to_server(self.runtime.clone(), &server_device_id, mode, options).await;
-
-        match result {
-            Ok(completed) => {
-                drop(permit);
-                self.runtime.emit_completed(completed)?;
-            }
-            Err(error) => {
-                drop(permit);
-                self.runtime.emit_error(TtSyncErrorEvent {
-                    direction: TtSyncDirection::Push,
-                    message: error.to_string(),
-                })?;
-            }
-        }
-
-        Ok(())
+        let report = self
+            .run_remote_job(
+                server_device_id,
+                SyncIntent::ReplicateLocalToRemote,
+                SyncOrigin::Manual,
+                mode,
+                options,
+            )
+            .await;
+        self.emit_tt_report(&report, TtSyncDirection::Push)?;
+        Ok(report)
     }
 
     pub async fn push_for_automation(
@@ -199,13 +171,110 @@ impl TtSyncService {
         let server_device_id = DeviceId::new(server_device_id.to_string())
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
         let options = resolve_sync_options(options)?;
-
-        let permit = self.runtime.try_acquire_sync_permit()?;
-        let _origin = self.runtime.auto_event_guard();
-        let result = push_to_server(self.runtime.clone(), &server_device_id, mode, options).await;
-        drop(permit);
-        result
+        let report = self
+            .run_remote_job_or_error(
+                server_device_id,
+                SyncIntent::ReplicateLocalToRemote,
+                SyncOrigin::Scheduled,
+                mode,
+                options,
+            )
+            .await?;
+        let summary = report
+            .completed_summary()
+            .ok_or_else(|| DomainError::InvalidData(report_failure_message(&report)))?;
+        Ok(crate::domain::models::tt_sync::TtSyncCompletedEvent {
+            direction: TtSyncDirection::Push,
+            files_total: summary.files_total,
+            bytes_total: summary.bytes_total,
+            files_deleted: summary.files_deleted,
+        })
     }
+
+    async fn run_remote_job(
+        &self,
+        server_device_id: DeviceId,
+        intent: SyncIntent,
+        origin: SyncOrigin,
+        mode: SyncMode,
+        options: SyncOperationOptions,
+    ) -> SyncJobReport {
+        self.coordinator
+            .run(self.job_request(
+                SyncEndpointRef::RemoteServer { server_device_id },
+                intent,
+                origin,
+                mode,
+                options,
+            ))
+            .await
+    }
+
+    async fn run_remote_job_or_error(
+        &self,
+        server_device_id: DeviceId,
+        intent: SyncIntent,
+        origin: SyncOrigin,
+        mode: SyncMode,
+        options: SyncOperationOptions,
+    ) -> Result<SyncJobReport, DomainError> {
+        let request = self.job_request(
+            SyncEndpointRef::RemoteServer { server_device_id },
+            intent,
+            origin,
+            mode,
+            options,
+        );
+        match self.coordinator.try_start(request) {
+            Ok(started) => started.execute().await.finish_or_error(),
+            Err(report) => Err(DomainError::InvalidData(report_failure_message(&report))),
+        }
+    }
+
+    fn job_request(
+        &self,
+        endpoint: SyncEndpointRef,
+        intent: SyncIntent,
+        origin: SyncOrigin,
+        mode: SyncMode,
+        options: SyncOperationOptions,
+    ) -> SyncJobRequest {
+        SyncJobRequest {
+            endpoint,
+            intent,
+            origin,
+            policy: ResolvedSyncPolicy::Transfer { mode, options },
+        }
+    }
+
+    fn emit_tt_report(
+        &self,
+        report: &SyncJobReport,
+        direction: TtSyncDirection,
+    ) -> Result<(), DomainError> {
+        if let Some(summary) = report.completed_summary() {
+            self.runtime
+                .emit_completed(crate::domain::models::tt_sync::TtSyncCompletedEvent {
+                    direction,
+                    files_total: summary.files_total,
+                    bytes_total: summary.bytes_total,
+                    files_deleted: summary.files_deleted,
+                })?;
+        } else if let Some(message) = report.failure_message() {
+            self.runtime.emit_error(TtSyncErrorEvent {
+                direction,
+                message: message.to_string(),
+            })?;
+        }
+        Ok(())
+    }
+}
+
+fn report_failure_message(report: &SyncJobReport) -> String {
+    report
+        .failure_message()
+        .unwrap_or("TT-Sync job did not complete")
+        .to_string()
 }
 
 fn now_ms() -> u64 {

@@ -2,7 +2,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
-use tokio::sync::Semaphore;
 
 use crate::application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
 use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
@@ -37,6 +36,7 @@ use crate::application::services::settings_service::SettingsService;
 use crate::application::services::skill_service::SkillService;
 use crate::application::services::stable_diffusion_service::StableDiffusionService;
 use crate::application::services::sync_automation_service::SyncAutomationService;
+use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::translate_service::TranslateService;
@@ -91,6 +91,7 @@ use crate::infrastructure::apis::http_translate_repository::HttpTranslateReposit
 use crate::infrastructure::apis::http_tts_repository::HttpTtsRepository;
 use crate::infrastructure::apis::miktik_tokenizer_repository::MiktikTokenizerRepository;
 use crate::infrastructure::http_client_pool::HttpClientPool;
+use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
@@ -119,6 +120,9 @@ use crate::infrastructure::repositories::file_theme_repository::FileThemeReposit
 use crate::infrastructure::repositories::file_user_directory_repository::FileUserDirectoryRepository;
 use crate::infrastructure::repositories::file_user_repository::FileUserRepository;
 use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
+use crate::infrastructure::sync::job_executor::InfrastructureSyncJobExecutor;
+use crate::infrastructure::sync::lan::store::LanPeerStore;
+use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 
 pub(super) struct AppServices {
     pub character_service: Arc<CharacterService>,
@@ -361,19 +365,29 @@ pub(super) async fn build_services(
     let user_directory_service = Arc::new(UserDirectoryService::new(
         repositories.user_directory_repository,
     ));
-    let sync_permit = Arc::new(Semaphore::new(1));
+    let lan_runtime = Arc::new(LanSyncRuntime::new(
+        app_handle.clone(),
+        data_directory.root().to_path_buf(),
+        data_directory.default_user().to_path_buf(),
+    ));
+    let lan_peer_store = LanPeerStore::new(data_directory.default_user().to_path_buf());
+    let tt_runtime = Arc::new(TtSyncRuntime::new(
+        app_handle.clone(),
+        data_directory.root().to_path_buf(),
+        data_directory.default_user().to_path_buf(),
+    ));
+    let sync_job_executor = Arc::new(InfrastructureSyncJobExecutor::new(
+        lan_runtime.clone(),
+        lan_peer_store.clone(),
+        tt_runtime.clone(),
+    ));
+    let sync_job_coordinator = Arc::new(SyncJobCoordinator::new(sync_job_executor));
     let lan_sync_service = Arc::new(LanSyncService::new(
-        app_handle.clone(),
-        data_directory.root().to_path_buf(),
-        data_directory.default_user().to_path_buf(),
-        sync_permit.clone(),
+        lan_runtime,
+        lan_peer_store,
+        sync_job_coordinator.clone(),
     ));
-    let tt_sync_service = Arc::new(TtSyncService::new(
-        app_handle.clone(),
-        data_directory.root().to_path_buf(),
-        data_directory.default_user().to_path_buf(),
-        sync_permit,
-    ));
+    let tt_sync_service = Arc::new(TtSyncService::new(tt_runtime, sync_job_coordinator));
     let sync_automation_service = Arc::new(SyncAutomationService::new(
         app_handle.clone(),
         data_directory.default_user().to_path_buf(),

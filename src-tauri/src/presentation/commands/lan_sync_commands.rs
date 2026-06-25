@@ -6,7 +6,7 @@ use ttsync_contract::sync::SyncMode;
 
 use crate::app::AppState;
 use crate::domain::models::lan_sync::{LanSyncPairedDeviceSummary, LanSyncStatus};
-use crate::domain::models::sync::SyncOperationOptions;
+use crate::domain::models::sync::{SyncJobReport, SyncOperationOptions};
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
@@ -203,7 +203,7 @@ pub async fn lan_sync_sync_from_device(
     app_state: State<'_, Arc<AppState>>,
     device_id: String,
     options: Option<SyncOperationOptions>,
-) -> Result<(), CommandError> {
+) -> Result<SyncJobReport, CommandError> {
     log_command("lan_sync_sync_from_device");
     ensure_lan_sync_allowed(&app_state)?;
 
@@ -219,7 +219,7 @@ pub async fn lan_sync_push_to_device(
     app_state: State<'_, Arc<AppState>>,
     device_id: String,
     options: Option<SyncOperationOptions>,
-) -> Result<(), CommandError> {
+) -> Result<SyncJobReport, CommandError> {
     log_command("lan_sync_push_to_device");
     ensure_lan_sync_allowed(&app_state)?;
 

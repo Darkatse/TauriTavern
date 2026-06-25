@@ -1,59 +1,52 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use local_ip_address::{list_afinet_netifas, local_ip};
 use qrcode::QrCode;
-use tauri::AppHandle;
 use tauri::Manager;
 use tokio::sync::Mutex;
-use tokio::sync::Semaphore;
 use ttsync_contract::peer::{DeviceId, PeerGrant};
 use ttsync_contract::sync::SyncMode;
 use url::Url;
 
 use crate::app::AppState;
+use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
     LanSyncPairedDevice, LanSyncPairedDeviceSummary, LanSyncStatus, LanSyncSyncCompletedEvent,
     LanSyncSyncErrorEvent,
 };
-use crate::domain::models::sync::{SyncOperationOptions, resolve_sync_options};
+use crate::domain::models::sync::{
+    ResolvedSyncPolicy, SyncEndpointRef, SyncIntent, SyncJobReport, SyncJobRequest,
+    SyncOperationOptions, SyncOrigin, resolve_sync_options,
+};
 use crate::infrastructure::lan_sync::runtime::{LanSyncPairingSession, LanSyncRuntime};
 use crate::infrastructure::sync::http_client::sync_error_to_domain;
 use crate::infrastructure::sync::lan::client::complete_pairing as complete_lan_pairing;
-use crate::infrastructure::sync::lan::notify::{
-    LanSyncNotifyPullHandler, request_peer_pull as request_lan_peer_pull,
-};
+use crate::infrastructure::sync::lan::notify::LanSyncNotifyPullHandler;
 use crate::infrastructure::sync::lan::pairing::{
     LanPairCompleteRequest, decode_device_pubkey_b64url, validate_https_base_url,
 };
-use crate::infrastructure::sync::lan::pull::pull_from_device as pull_from_lan_device;
 use crate::infrastructure::sync::lan::server::{LanSyncServerHandle, spawn_lan_sync_server};
 use crate::infrastructure::sync::lan::store::LanPeerStore;
 
 pub struct LanSyncService {
     runtime: Arc<LanSyncRuntime>,
     peer_store: LanPeerStore,
+    coordinator: Arc<SyncJobCoordinator>,
     server: Mutex<Option<LanSyncServerHandle>>,
 }
 
 impl LanSyncService {
     pub fn new(
-        app_handle: AppHandle,
-        sync_root: PathBuf,
-        store_root: PathBuf,
-        sync_permit: Arc<Semaphore>,
+        runtime: Arc<LanSyncRuntime>,
+        peer_store: LanPeerStore,
+        coordinator: Arc<SyncJobCoordinator>,
     ) -> Self {
-        let peer_store = LanPeerStore::new(store_root.clone());
         Self {
-            runtime: Arc::new(LanSyncRuntime::new(
-                app_handle,
-                sync_root,
-                store_root,
-                sync_permit,
-            )),
             peer_store,
+            runtime,
+            coordinator,
             server: Mutex::new(None),
         }
     }
@@ -165,12 +158,7 @@ impl LanSyncService {
     }
 
     pub async fn effective_sync_mode(&self) -> Result<SyncMode, DomainError> {
-        let preferences = self.runtime.store.load_or_create_sync_preferences().await?;
-        Ok(self
-            .runtime
-            .get_sync_mode_override()
-            .await
-            .unwrap_or(preferences.manual_default_mode))
+        self.runtime.effective_sync_mode().await
     }
 
     async fn sync_mode_state(&self) -> Result<(SyncMode, SyncMode, bool), DomainError> {
@@ -208,7 +196,7 @@ impl LanSyncService {
         let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, settings.port));
         let notify_pull = Arc::new(LanSyncNotifyPullHandler::new(
             self.runtime.clone(),
-            self.peer_store.clone(),
+            self.coordinator.clone(),
         ));
         spawn_lan_sync_server(
             addr,
@@ -393,88 +381,131 @@ impl LanSyncService {
         &self,
         device_id: &str,
         options: Option<SyncOperationOptions>,
-    ) -> Result<(), DomainError> {
-        let permit = match self.runtime.try_acquire_sync_permit() {
-            Ok(permit) => permit,
-            Err(error) => {
-                self.runtime.emit_sync_error(LanSyncSyncErrorEvent {
-                    message: error.to_string(),
-                })?;
-                return Ok(());
+    ) -> Result<SyncJobReport, DomainError> {
+        let device_id = parse_device_id(device_id)?;
+        let options = resolve_sync_options(options)?;
+        let mode = self.effective_sync_mode().await?;
+        let request = self.job_request(
+            SyncEndpointRef::LanPeer { device_id },
+            SyncIntent::PullToLocal,
+            SyncOrigin::Manual,
+            mode,
+            options,
+        );
+        let started = match self.coordinator.try_start(request) {
+            Ok(started) => started,
+            Err(report) => {
+                if let Some(message) = report.failure_message() {
+                    self.runtime.emit_sync_error(LanSyncSyncErrorEvent {
+                        message: message.to_string(),
+                    })?;
+                }
+                return Ok(report);
             }
         };
 
-        match self.sync_from_device_inner(device_id, options).await {
-            Ok(completed) => {
-                let refresh_result = self
-                    .runtime
-                    .app_handle()
-                    .state::<Arc<AppState>>()
-                    .refresh_after_external_data_change("lan_sync")
-                    .await;
-                match refresh_result {
-                    Ok(()) => {
-                        drop(permit);
-                        self.runtime.emit_sync_completed(completed)?;
-                    }
-                    Err(error) => {
-                        drop(permit);
-                        self.runtime.emit_sync_error(LanSyncSyncErrorEvent {
-                            message: format!(
-                                "LAN sync completed but failed to refresh runtime caches: {}",
-                                error
-                            ),
-                        })?;
-                    }
+        let executed = started.execute().await;
+        let report = if executed.outcome().is_some() {
+            match self
+                .runtime
+                .app_handle()
+                .state::<Arc<AppState>>()
+                .refresh_after_external_data_change("lan_sync")
+                .await
+            {
+                Ok(()) => executed.finish(),
+                Err(error) => {
+                    let message = format!(
+                        "LAN sync completed but failed to refresh runtime caches: {}",
+                        error
+                    );
+                    let report = executed.finish_with_error(error);
+                    self.runtime
+                        .emit_sync_error(LanSyncSyncErrorEvent { message })?;
+                    return Ok(report);
                 }
             }
-            Err(error) => {
-                drop(permit);
-                self.runtime.emit_sync_error(LanSyncSyncErrorEvent {
-                    message: error.to_string(),
+        } else {
+            executed.finish()
+        };
+
+        if let Some(summary) = report.completed_summary() {
+            self.runtime
+                .emit_sync_completed(LanSyncSyncCompletedEvent {
+                    files_total: summary.files_total,
+                    bytes_total: summary.bytes_total,
+                    files_deleted: summary.files_deleted,
                 })?;
-            }
+        } else if let Some(message) = report.failure_message() {
+            self.runtime.emit_sync_error(LanSyncSyncErrorEvent {
+                message: message.to_string(),
+            })?;
         }
 
-        Ok(())
-    }
-
-    async fn sync_from_device_inner(
-        &self,
-        device_id: &str,
-        options: Option<SyncOperationOptions>,
-    ) -> Result<LanSyncSyncCompletedEvent, DomainError> {
-        let device_id = parse_device_id(device_id)?;
-        let options = resolve_sync_options(options)?;
-        pull_from_lan_device(
-            self.runtime.clone(),
-            self.peer_store.clone(),
-            &device_id,
-            options,
-        )
-        .await
+        Ok(report)
     }
 
     pub async fn push_to_device(
         &self,
         device_id: &str,
         options: Option<SyncOperationOptions>,
-    ) -> Result<(), DomainError> {
+    ) -> Result<SyncJobReport, DomainError> {
         self.ensure_server_running().await?;
         let device_id = parse_device_id(device_id)?;
         let options = resolve_sync_options(options)?;
-        request_lan_peer_pull(self.peer_store.clone(), &device_id, options).await
+        self.run_request_remote_pull(device_id, SyncOrigin::Manual, options)
+            .await
     }
 
     pub async fn push_to_device_for_automation(
         &self,
         device_id: &str,
         options: Option<SyncOperationOptions>,
-    ) -> Result<(), DomainError> {
+    ) -> Result<SyncJobReport, DomainError> {
         self.ensure_server_running().await?;
         let device_id = parse_device_id(device_id)?;
         let options = resolve_sync_options(options)?;
-        request_lan_peer_pull(self.peer_store.clone(), &device_id, options).await
+        self.run_request_remote_pull(device_id, SyncOrigin::Scheduled, options)
+            .await
+    }
+
+    async fn run_request_remote_pull(
+        &self,
+        device_id: DeviceId,
+        origin: SyncOrigin,
+        options: SyncOperationOptions,
+    ) -> Result<SyncJobReport, DomainError> {
+        let request = SyncJobRequest {
+            endpoint: SyncEndpointRef::LanPeer { device_id },
+            intent: SyncIntent::ReplicateLocalToRemote,
+            origin,
+            policy: ResolvedSyncPolicy::RemotePullRequest { options },
+        };
+        match self.coordinator.try_start(request) {
+            Ok(started) => started.execute().await.finish_or_error(),
+            Err(report) => Err(DomainError::InvalidData(
+                report
+                    .failure_message()
+                    .unwrap_or("Sync job already running")
+                    .to_string(),
+            )),
+        }
+    }
+
+    fn job_request(
+        &self,
+        endpoint: SyncEndpointRef,
+        intent: SyncIntent,
+        origin: SyncOrigin,
+        mode: SyncMode,
+        options: SyncOperationOptions,
+    ) -> SyncJobRequest {
+        SyncJobRequest {
+            endpoint,
+            intent,
+            origin,
+            policy: ResolvedSyncPolicy::Transfer { mode, options },
+        }
     }
 }
 

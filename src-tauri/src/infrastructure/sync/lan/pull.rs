@@ -33,9 +33,9 @@ pub async fn pull_from_device(
     runtime: Arc<LanSyncRuntime>,
     store: LanPeerStore,
     device_id: &DeviceId,
+    mode: SyncMode,
     options: SyncOperationOptions,
 ) -> Result<LanSyncSyncCompletedEvent, DomainError> {
-    let mode = effective_sync_mode(&runtime).await?;
     let mut peer = store.get_paired_device(device_id).await?;
     let identity = store.load_or_create_identity().await?;
 
@@ -113,14 +113,6 @@ pub async fn pull_from_device(
         bytes_total,
         files_deleted,
     })
-}
-
-async fn effective_sync_mode(runtime: &LanSyncRuntime) -> Result<SyncMode, DomainError> {
-    let preferences = runtime.store.load_or_create_sync_preferences().await?;
-    Ok(runtime
-        .get_sync_mode_override()
-        .await
-        .unwrap_or(preferences.manual_default_mode))
 }
 
 async fn apply_pull_plan(

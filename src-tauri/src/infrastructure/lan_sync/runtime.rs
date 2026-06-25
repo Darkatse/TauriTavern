@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter};
-use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, oneshot};
+use tokio::sync::{Mutex, oneshot};
 use ttsync_contract::sync::SyncMode;
 use uuid::Uuid;
 
@@ -24,24 +23,17 @@ pub struct LanSyncRuntime {
     app_handle: AppHandle,
     pub sync_root: PathBuf,
     pub store: LanSyncStore,
-    sync_permit: Arc<Semaphore>,
     pairing_session: Mutex<Option<LanSyncPairingSession>>,
     sync_mode_override: Mutex<Option<SyncMode>>,
     pending_pairings: Mutex<HashMap<String, oneshot::Sender<bool>>>,
 }
 
 impl LanSyncRuntime {
-    pub fn new(
-        app_handle: AppHandle,
-        sync_root: PathBuf,
-        store_root: PathBuf,
-        sync_permit: Arc<Semaphore>,
-    ) -> Self {
+    pub fn new(app_handle: AppHandle, sync_root: PathBuf, store_root: PathBuf) -> Self {
         Self {
             app_handle,
             sync_root,
             store: LanSyncStore::new(store_root),
-            sync_permit,
             pairing_session: Mutex::new(None),
             sync_mode_override: Mutex::new(None),
             pending_pairings: Mutex::new(HashMap::new()),
@@ -50,13 +42,6 @@ impl LanSyncRuntime {
 
     pub fn app_handle(&self) -> &AppHandle {
         &self.app_handle
-    }
-
-    pub fn try_acquire_sync_permit(&self) -> Result<OwnedSemaphorePermit, DomainError> {
-        self.sync_permit
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| DomainError::InvalidData("LAN sync already running".to_string()))
     }
 
     pub async fn set_pairing_session(&self, session: LanSyncPairingSession) {
@@ -80,6 +65,14 @@ impl LanSyncRuntime {
     pub async fn set_sync_mode_override(&self, mode: Option<SyncMode>) {
         let mut sync_mode_override = self.sync_mode_override.lock().await;
         *sync_mode_override = mode;
+    }
+
+    pub async fn effective_sync_mode(&self) -> Result<SyncMode, DomainError> {
+        let preferences = self.store.load_or_create_sync_preferences().await?;
+        Ok(self
+            .get_sync_mode_override()
+            .await
+            .unwrap_or(preferences.manual_default_mode))
     }
 
     pub async fn request_pairing_decision(

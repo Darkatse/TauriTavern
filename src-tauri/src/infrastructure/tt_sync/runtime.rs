@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Mutex;
 
 use ttsync_contract::peer::DeviceId;
 
@@ -19,23 +19,16 @@ pub struct TtSyncRuntime {
     app_handle: AppHandle,
     pub sync_root: PathBuf,
     pub store: TtSyncStore,
-    sync_permit: Arc<Semaphore>,
     auto_event_depth: Arc<AtomicUsize>,
     paired_servers_cache: Mutex<Option<HashMap<String, TtSyncPairedServer>>>,
 }
 
 impl TtSyncRuntime {
-    pub fn new(
-        app_handle: AppHandle,
-        sync_root: PathBuf,
-        store_root: PathBuf,
-        sync_permit: Arc<Semaphore>,
-    ) -> Self {
+    pub fn new(app_handle: AppHandle, sync_root: PathBuf, store_root: PathBuf) -> Self {
         Self {
             app_handle,
             sync_root,
             store: TtSyncStore::new(store_root),
-            sync_permit,
             auto_event_depth: Arc::new(AtomicUsize::new(0)),
             paired_servers_cache: Mutex::new(None),
         }
@@ -45,16 +38,9 @@ impl TtSyncRuntime {
         &self.app_handle
     }
 
-    pub fn try_acquire_sync_permit(&self) -> Result<OwnedSemaphorePermit, DomainError> {
-        self.sync_permit
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| DomainError::InvalidData("TT-Sync already running".to_string()))
-    }
-
     #[must_use]
     pub fn auto_event_guard(&self) -> TtSyncAutoEventGuard {
-        // TT-Sync jobs are serialized by the shared sync permit, so this depth
+        // TT-Sync jobs are serialized by the sync coordinator, so this depth
         // marker is scoped to the single active transfer.
         self.auto_event_depth.fetch_add(1, Ordering::AcqRel);
         TtSyncAutoEventGuard {
