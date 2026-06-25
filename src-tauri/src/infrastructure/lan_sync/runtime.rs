@@ -40,10 +40,6 @@ impl LanSyncRuntime {
         }
     }
 
-    pub fn app_handle(&self) -> &AppHandle {
-        &self.app_handle
-    }
-
     pub async fn set_pairing_session(&self, session: LanSyncPairingSession) {
         let mut pairing_session = self.pairing_session.lock().await;
         *pairing_session = Some(session);
@@ -89,17 +85,19 @@ impl LanSyncRuntime {
             pending.insert(request_id.clone(), tx);
         }
 
-        self.app_handle
-            .emit(
-                "lan_sync:pair_request",
-                LanSyncPairRequestEvent {
-                    request_id: request_id.clone(),
-                    peer_device_id,
-                    peer_device_name,
-                    peer_ip,
-                },
-            )
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        if let Err(error) = self.app_handle.emit(
+            "lan_sync:pair_request",
+            LanSyncPairRequestEvent {
+                request_id: request_id.clone(),
+                peer_device_id,
+                peer_device_name,
+                peer_ip,
+            },
+        ) {
+            let mut pending = self.pending_pairings.lock().await;
+            pending.remove(&request_id);
+            return Err(DomainError::InternalError(error.to_string()));
+        }
 
         rx.await
             .map_err(|_| DomainError::InternalError("Pairing decision dropped".to_string()))
@@ -118,24 +116,21 @@ impl LanSyncRuntime {
         })
     }
 
-    pub fn emit_sync_progress(&self, payload: LanSyncSyncProgressEvent) -> Result<(), DomainError> {
-        self.app_handle
-            .emit("lan_sync:progress", payload)
-            .map_err(|error| DomainError::InternalError(error.to_string()))
+    pub fn emit_sync_progress(&self, payload: LanSyncSyncProgressEvent) {
+        if let Err(error) = self.app_handle.emit("lan_sync:progress", payload) {
+            tracing::warn!("Failed to emit LAN Sync progress: {}", error);
+        }
     }
 
-    pub fn emit_sync_completed(
-        &self,
-        payload: LanSyncSyncCompletedEvent,
-    ) -> Result<(), DomainError> {
-        self.app_handle
-            .emit("lan_sync:completed", payload)
-            .map_err(|error| DomainError::InternalError(error.to_string()))
+    pub fn emit_sync_completed(&self, payload: LanSyncSyncCompletedEvent) {
+        if let Err(error) = self.app_handle.emit("lan_sync:completed", payload) {
+            tracing::warn!("Failed to emit LAN Sync completion: {}", error);
+        }
     }
 
-    pub fn emit_sync_error(&self, payload: LanSyncSyncErrorEvent) -> Result<(), DomainError> {
-        self.app_handle
-            .emit("lan_sync:error", payload)
-            .map_err(|error| DomainError::InternalError(error.to_string()))
+    pub fn emit_sync_error(&self, payload: LanSyncSyncErrorEvent) {
+        if let Err(error) = self.app_handle.emit("lan_sync:error", payload) {
+            tracing::warn!("Failed to emit LAN Sync error: {}", error);
+        }
     }
 }

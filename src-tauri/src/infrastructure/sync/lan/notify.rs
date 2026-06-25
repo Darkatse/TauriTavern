@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tauri::Manager;
 use ttsync_contract::peer::DeviceId;
 
-use crate::app::AppState;
 use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{LanSyncSyncCompletedEvent, LanSyncSyncErrorEvent};
@@ -62,37 +60,14 @@ impl LanPullRequestHandler for LanSyncNotifyPullHandler {
         let runtime = self.runtime.clone();
 
         tokio::spawn(async move {
-            let executed = started.execute().await;
-            let report = if executed.outcome().is_some() {
-                match runtime
-                    .app_handle()
-                    .state::<Arc<AppState>>()
-                    .refresh_after_external_data_change("lan_sync")
-                    .await
-                {
-                    Ok(()) => executed.finish(),
-                    Err(error) => {
-                        let message = format!(
-                            "LAN Sync completed but failed to refresh runtime caches: {}",
-                            error
-                        );
-                        let _report = executed.finish_with_error(error);
-                        emit_error(&runtime, message);
-                        return;
-                    }
-                }
-            } else {
-                executed.finish()
-            };
+            let report = started.execute().await.finish();
 
             if let Some(summary) = report.completed_summary() {
-                if let Err(error) = runtime.emit_sync_completed(LanSyncSyncCompletedEvent {
+                runtime.emit_sync_completed(LanSyncSyncCompletedEvent {
                     files_total: summary.files_total,
                     bytes_total: summary.bytes_total,
                     files_deleted: summary.files_deleted,
-                }) {
-                    tracing::error!("Failed to emit LAN Sync completion: {}", error);
-                }
+                });
             } else if let Some(message) = report.failure_message() {
                 emit_error(&runtime, message.to_string());
             }
@@ -134,9 +109,7 @@ pub async fn request_peer_pull(
 }
 
 fn emit_error(runtime: &LanSyncRuntime, message: String) {
-    if let Err(error) = runtime.emit_sync_error(LanSyncSyncErrorEvent { message }) {
-        tracing::error!("Failed to emit LAN Sync error: {}", error);
-    }
+    runtime.emit_sync_error(LanSyncSyncErrorEvent { message });
 }
 
 fn report_failure_message(report: &SyncJobReport) -> String {

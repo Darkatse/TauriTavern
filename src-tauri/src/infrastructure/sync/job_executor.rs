@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use crate::application::services::sync_job_coordinator::SyncJobExecutor;
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::{
-    ResolvedSyncPolicy, SyncEndpointRef, SyncExecutionKind, SyncJob, SyncJobOutcome,
-    SyncJobSummary, SyncOrigin,
+    ResolvedSyncPolicy, SyncEndpointRef, SyncExecutionFailure, SyncExecutionKind,
+    SyncExecutionReport, SyncJob,
 };
 use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
 use crate::infrastructure::sync::lan::notify::request_peer_pull as request_lan_peer_pull;
@@ -38,7 +38,7 @@ impl InfrastructureSyncJobExecutor {
 
 #[async_trait]
 impl SyncJobExecutor for InfrastructureSyncJobExecutor {
-    async fn execute(&self, job: SyncJob) -> Result<SyncJobOutcome, DomainError> {
+    async fn execute(&self, job: SyncJob) -> Result<SyncExecutionReport, SyncExecutionFailure> {
         let SyncJob {
             endpoint,
             execution,
@@ -53,21 +53,14 @@ impl SyncJobExecutor for InfrastructureSyncJobExecutor {
                 SyncExecutionKind::Pull,
                 ResolvedSyncPolicy::Transfer { mode, options },
             ) => {
-                let completed = pull_from_lan_device(
+                pull_from_lan_device(
                     self.lan_runtime.clone(),
                     self.lan_peer_store.clone(),
                     &device_id,
                     mode,
                     options,
                 )
-                .await?;
-                Ok(SyncJobOutcome::Completed {
-                    summary: SyncJobSummary::new(
-                        completed.files_total,
-                        completed.bytes_total,
-                        completed.files_deleted,
-                    ),
-                })
+                .await
             }
             (
                 SyncEndpointRef::LanPeer { device_id },
@@ -75,44 +68,40 @@ impl SyncJobExecutor for InfrastructureSyncJobExecutor {
                 ResolvedSyncPolicy::RemotePullRequest { options },
             ) => {
                 request_lan_peer_pull(self.lan_peer_store.clone(), &device_id, options).await?;
-                Ok(SyncJobOutcome::RemoteRequestAccepted)
+                Ok(SyncExecutionReport::remote_request_accepted())
             }
             (
                 SyncEndpointRef::RemoteServer { server_device_id },
                 SyncExecutionKind::Pull,
                 ResolvedSyncPolicy::Transfer { mode, options },
             ) => {
-                let completed =
-                    pull_from_server(self.tt_runtime.clone(), &server_device_id, mode, options)
-                        .await?;
-                Ok(SyncJobOutcome::Completed {
-                    summary: SyncJobSummary::new(
-                        completed.files_total,
-                        completed.bytes_total,
-                        completed.files_deleted,
-                    ),
-                })
+                pull_from_server(
+                    self.tt_runtime.clone(),
+                    &server_device_id,
+                    mode,
+                    options,
+                    origin,
+                )
+                .await
             }
             (
                 SyncEndpointRef::RemoteServer { server_device_id },
                 SyncExecutionKind::DirectPush,
                 ResolvedSyncPolicy::Transfer { mode, options },
             ) => {
-                let _origin_guard = matches!(origin, SyncOrigin::Scheduled)
-                    .then(|| self.tt_runtime.auto_event_guard());
-                let completed =
-                    push_to_server(self.tt_runtime.clone(), &server_device_id, mode, options)
-                        .await?;
-                Ok(SyncJobOutcome::Completed {
-                    summary: SyncJobSummary::new(
-                        completed.files_total,
-                        completed.bytes_total,
-                        completed.files_deleted,
-                    ),
-                })
+                push_to_server(
+                    self.tt_runtime.clone(),
+                    &server_device_id,
+                    mode,
+                    options,
+                    origin,
+                )
+                .await
             }
-            _ => Err(DomainError::InvalidData(
-                "Sync job endpoint does not support the requested execution".to_string(),
+            _ => Err(SyncExecutionFailure::without_local_mutation(
+                DomainError::InvalidData(
+                    "Sync job endpoint does not support the requested execution".to_string(),
+                ),
             )),
         }
     }

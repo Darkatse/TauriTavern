@@ -14,8 +14,11 @@ use ttsync_contract::sync::{SyncMode, SyncPhase};
 use ttsync_core::dataset::ResolvedDatasetPolicy;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::sync::SyncOperationOptions;
-use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
+use crate::domain::models::sync::{
+    LocalAppliedChangeSummary, SyncExecutionFailure, SyncExecutionReport, SyncJobSummary,
+    SyncOperationOptions, SyncOrigin,
+};
+use crate::domain::models::tt_sync::{TtSyncDirection, TtSyncProgressEvent};
 use crate::infrastructure::sync::bundle_transport_for_status;
 use crate::infrastructure::sync::http_client::{SyncHttpClient, ensure_dataset_scope_v1};
 use crate::infrastructure::sync_bundle::{BUNDLE_STREAM_BUFFER_SIZE, copy_exact, write_u32_be};
@@ -28,7 +31,8 @@ pub async fn push_to_server(
     server_device_id: &DeviceId,
     mode: SyncMode,
     options: SyncOperationOptions,
-) -> Result<TtSyncCompletedEvent, DomainError> {
+    origin: SyncOrigin,
+) -> Result<SyncExecutionReport, SyncExecutionFailure> {
     let mut server = runtime.get_paired_server(server_device_id).await?;
     let identity = runtime.store.load_or_create_identity().await?;
 
@@ -48,23 +52,28 @@ pub async fn push_to_server(
     if !server.permissions.write {
         return Err(DomainError::AuthenticationError(
             "TT-Sync server does not grant write permission".to_string(),
-        ));
+        )
+        .into());
     }
     if mode == SyncMode::Mirror && !server.permissions.mirror_delete {
         return Err(DomainError::AuthenticationError(
             "TT-Sync server does not grant mirror_delete permission".to_string(),
-        ));
+        )
+        .into());
     }
 
-    runtime.emit_progress(TtSyncProgressEvent {
-        direction: TtSyncDirection::Push,
-        phase: SyncPhase::Scanning,
-        files_done: 0,
-        files_total: 0,
-        bytes_done: 0,
-        bytes_total: 0,
-        current_path: None,
-    })?;
+    runtime.emit_progress(
+        TtSyncProgressEvent {
+            direction: TtSyncDirection::Push,
+            phase: SyncPhase::Scanning,
+            files_done: 0,
+            files_total: 0,
+            bytes_done: 0,
+            bytes_total: 0,
+            current_path: None,
+        },
+        &origin,
+    );
 
     let selection = options.selection;
     let policy = ResolvedDatasetPolicy::from_selection(&selection)
@@ -72,15 +81,18 @@ pub async fn push_to_server(
     let source_manifest =
         scan_manifest_with_policy(runtime.sync_root.clone(), policy.clone()).await?;
 
-    runtime.emit_progress(TtSyncProgressEvent {
-        direction: TtSyncDirection::Push,
-        phase: SyncPhase::Diffing,
-        files_done: 0,
-        files_total: 0,
-        bytes_done: 0,
-        bytes_total: 0,
-        current_path: None,
-    })?;
+    runtime.emit_progress(
+        TtSyncProgressEvent {
+            direction: TtSyncDirection::Push,
+            phase: SyncPhase::Diffing,
+            files_done: 0,
+            files_total: 0,
+            bytes_done: 0,
+            bytes_total: 0,
+            current_path: None,
+        },
+        &origin,
+    );
 
     let plan = api
         .push_plan(&session.session_token, mode, selection, source_manifest)
@@ -103,6 +115,7 @@ pub async fn push_to_server(
         mode,
         transport.prefer_bundle,
         transport.use_zstd,
+        &origin,
     )
     .await?;
 
@@ -110,12 +123,10 @@ pub async fn push_to_server(
     updated.last_sync_ms = Some(transfer::now_ms());
     runtime.upsert_paired_server(updated).await?;
 
-    Ok(TtSyncCompletedEvent {
-        direction: TtSyncDirection::Push,
-        files_total: plan_files_total,
-        bytes_total: plan_bytes_total,
-        files_deleted,
-    })
+    Ok(SyncExecutionReport::completed(
+        SyncJobSummary::new(plan_files_total, plan_bytes_total, files_deleted),
+        LocalAppliedChangeSummary::default(),
+    ))
 }
 
 async fn apply_push_plan(
@@ -126,6 +137,7 @@ async fn apply_push_plan(
     mode: SyncMode,
     prefer_bundle: bool,
     allow_zstd: bool,
+    origin: &SyncOrigin,
 ) -> Result<(), DomainError> {
     let plan_id = plan.plan_id;
     let transfer_entries = plan.transfer;
@@ -135,15 +147,18 @@ async fn apply_push_plan(
     let files_total = transfer_entries.len();
     let bytes_total = transfer_entries.iter().map(|e| e.size_bytes).sum::<u64>();
 
-    runtime.emit_progress(TtSyncProgressEvent {
-        direction: TtSyncDirection::Push,
-        phase: SyncPhase::Uploading,
-        files_done,
-        files_total,
-        bytes_done,
-        bytes_total,
-        current_path: None,
-    })?;
+    runtime.emit_progress(
+        TtSyncProgressEvent {
+            direction: TtSyncDirection::Push,
+            phase: SyncPhase::Uploading,
+            files_done,
+            files_total,
+            bytes_done,
+            bytes_total,
+            current_path: None,
+        },
+        origin,
+    );
 
     if prefer_bundle && !transfer_entries.is_empty() {
         let (progress_tx, mut progress_rx) =
@@ -178,15 +193,18 @@ async fn apply_push_plan(
                     bytes_done += progress.size_bytes;
 
                     if transfer::should_emit_progress(files_done, files_total) {
-                        runtime.emit_progress(TtSyncProgressEvent {
-                            direction: TtSyncDirection::Push,
-                            phase: SyncPhase::Uploading,
-                            files_done,
-                            files_total,
-                            bytes_done,
-                            bytes_total,
-                            current_path: Some(progress.path),
-                        })?;
+                        runtime.emit_progress(
+                            TtSyncProgressEvent {
+                                direction: TtSyncDirection::Push,
+                                phase: SyncPhase::Uploading,
+                                files_done,
+                                files_total,
+                                bytes_done,
+                                bytes_total,
+                                current_path: Some(progress.path),
+                            },
+                            origin,
+                        );
                     }
                 }
             }
@@ -201,15 +219,18 @@ async fn apply_push_plan(
             bytes_done += progress.size_bytes;
 
             if transfer::should_emit_progress(files_done, files_total) {
-                runtime.emit_progress(TtSyncProgressEvent {
-                    direction: TtSyncDirection::Push,
-                    phase: SyncPhase::Uploading,
-                    files_done,
-                    files_total,
-                    bytes_done,
-                    bytes_total,
-                    current_path: Some(progress.path),
-                })?;
+                runtime.emit_progress(
+                    TtSyncProgressEvent {
+                        direction: TtSyncDirection::Push,
+                        phase: SyncPhase::Uploading,
+                        files_done,
+                        files_total,
+                        bytes_done,
+                        bytes_total,
+                        current_path: Some(progress.path),
+                    },
+                    origin,
+                );
             }
         }
 
@@ -251,15 +272,18 @@ async fn apply_push_plan(
             bytes_done += joined.size_bytes;
 
             if transfer::should_emit_progress(files_done, files_total) {
-                runtime.emit_progress(TtSyncProgressEvent {
-                    direction: TtSyncDirection::Push,
-                    phase: SyncPhase::Uploading,
-                    files_done,
-                    files_total,
-                    bytes_done,
-                    bytes_total,
-                    current_path: Some(joined.path),
-                })?;
+                runtime.emit_progress(
+                    TtSyncProgressEvent {
+                        direction: TtSyncDirection::Push,
+                        phase: SyncPhase::Uploading,
+                        files_done,
+                        files_total,
+                        bytes_done,
+                        bytes_total,
+                        current_path: Some(joined.path),
+                    },
+                    origin,
+                );
             }
 
             if let Some(entry) = upload_iter.next() {
@@ -278,15 +302,18 @@ async fn apply_push_plan(
 
     if mode == SyncMode::Mirror && !delete.is_empty() {
         let delete_total = delete.len();
-        runtime.emit_progress(TtSyncProgressEvent {
-            direction: TtSyncDirection::Push,
-            phase: SyncPhase::Deleting,
-            files_done: 0,
-            files_total: delete_total,
-            bytes_done: 0,
-            bytes_total: 0,
-            current_path: None,
-        })?;
+        runtime.emit_progress(
+            TtSyncProgressEvent {
+                direction: TtSyncDirection::Push,
+                phase: SyncPhase::Deleting,
+                files_done: 0,
+                files_total: delete_total,
+                bytes_done: 0,
+                bytes_total: 0,
+                current_path: None,
+            },
+            origin,
+        );
     }
 
     let commit = api.commit(session_token, &plan_id).await?;
@@ -298,15 +325,18 @@ async fn apply_push_plan(
 
     if mode == SyncMode::Mirror && !delete.is_empty() {
         let delete_total = delete.len();
-        runtime.emit_progress(TtSyncProgressEvent {
-            direction: TtSyncDirection::Push,
-            phase: SyncPhase::Deleting,
-            files_done: delete_total,
-            files_total: delete_total,
-            bytes_done: 0,
-            bytes_total: 0,
-            current_path: None,
-        })?;
+        runtime.emit_progress(
+            TtSyncProgressEvent {
+                direction: TtSyncDirection::Push,
+                phase: SyncPhase::Deleting,
+                files_done: delete_total,
+                files_total: delete_total,
+                bytes_done: 0,
+                bytes_total: 0,
+                current_path: None,
+            },
+            origin,
+        );
     }
 
     Ok(())

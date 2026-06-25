@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -10,16 +8,14 @@ use tokio::sync::Mutex;
 use ttsync_contract::peer::DeviceId;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::tt_sync::{
-    TtSyncCompletedEvent, TtSyncErrorEvent, TtSyncPairedServer, TtSyncProgressEvent,
-};
+use crate::domain::models::sync::SyncOrigin;
+use crate::domain::models::tt_sync::{TtSyncPairedServer, TtSyncProgressEvent};
 use crate::infrastructure::tt_sync::store::TtSyncStore;
 
 pub struct TtSyncRuntime {
     app_handle: AppHandle,
     pub sync_root: PathBuf,
     pub store: TtSyncStore,
-    auto_event_depth: Arc<AtomicUsize>,
     paired_servers_cache: Mutex<Option<HashMap<String, TtSyncPairedServer>>>,
 }
 
@@ -29,22 +25,7 @@ impl TtSyncRuntime {
             app_handle,
             sync_root,
             store: TtSyncStore::new(store_root),
-            auto_event_depth: Arc::new(AtomicUsize::new(0)),
             paired_servers_cache: Mutex::new(None),
-        }
-    }
-
-    pub fn app_handle(&self) -> &AppHandle {
-        &self.app_handle
-    }
-
-    #[must_use]
-    pub fn auto_event_guard(&self) -> TtSyncAutoEventGuard {
-        // TT-Sync jobs are serialized by the sync coordinator, so this depth
-        // marker is scoped to the single active transfer.
-        self.auto_event_depth.fetch_add(1, Ordering::AcqRel);
-        TtSyncAutoEventGuard {
-            auto_event_depth: self.auto_event_depth.clone(),
         }
     }
 
@@ -140,48 +121,34 @@ impl TtSyncRuntime {
         Ok(())
     }
 
-    pub fn emit_progress(&self, payload: TtSyncProgressEvent) -> Result<(), DomainError> {
-        self.emit_with_origin("tt_sync:progress", payload)
+    pub fn emit_progress(&self, payload: TtSyncProgressEvent, origin: &SyncOrigin) {
+        self.emit_with_origin("tt_sync:progress", payload, origin)
     }
 
-    pub fn emit_completed(&self, payload: TtSyncCompletedEvent) -> Result<(), DomainError> {
-        self.emit_with_origin("tt_sync:completed", payload)
-    }
-
-    pub fn emit_error(&self, payload: TtSyncErrorEvent) -> Result<(), DomainError> {
-        self.emit_with_origin("tt_sync:error", payload)
-    }
-
-    fn emit_with_origin<T: Serialize>(&self, event: &str, payload: T) -> Result<(), DomainError> {
-        let mut payload = serde_json::to_value(payload)
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    fn emit_with_origin<T: Serialize>(&self, event: &str, payload: T, origin: &SyncOrigin) {
+        let mut payload = match serde_json::to_value(payload) {
+            Ok(payload) => payload,
+            Err(error) => {
+                tracing::warn!("Failed to serialize TT-Sync event payload: {}", error);
+                return;
+            }
+        };
         if let serde_json::Value::Object(map) = &mut payload {
             map.insert(
                 "origin".to_string(),
-                serde_json::Value::String(self.current_event_origin().to_string()),
+                serde_json::Value::String(event_origin(origin).to_string()),
             );
         }
 
-        self.app_handle
-            .emit(event, payload)
-            .map_err(|error| DomainError::InternalError(error.to_string()))
-    }
-
-    fn current_event_origin(&self) -> &'static str {
-        if self.auto_event_depth.load(Ordering::Acquire) > 0 {
-            "auto"
-        } else {
-            "manual"
+        if let Err(error) = self.app_handle.emit(event, payload) {
+            tracing::warn!("Failed to emit TT-Sync event '{event}': {}", error);
         }
     }
 }
 
-pub struct TtSyncAutoEventGuard {
-    auto_event_depth: Arc<AtomicUsize>,
-}
-
-impl Drop for TtSyncAutoEventGuard {
-    fn drop(&mut self) {
-        self.auto_event_depth.fetch_sub(1, Ordering::AcqRel);
+fn event_origin(origin: &SyncOrigin) -> &'static str {
+    match origin {
+        SyncOrigin::Scheduled => "auto",
+        SyncOrigin::Manual | SyncOrigin::RemoteRequest { .. } => "manual",
     }
 }

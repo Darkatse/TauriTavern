@@ -4,15 +4,51 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 use crate::domain::errors::DomainError;
 
+#[derive(Debug)]
+pub(crate) struct AtomicWriteError {
+    error: DomainError,
+    target_changed: bool,
+}
+
+impl AtomicWriteError {
+    fn unchanged(error: DomainError) -> Self {
+        Self {
+            error,
+            target_changed: false,
+        }
+    }
+
+    fn changed(error: DomainError) -> Self {
+        Self {
+            error,
+            target_changed: true,
+        }
+    }
+
+    pub(crate) fn target_changed(&self) -> bool {
+        self.target_changed
+    }
+
+    pub(crate) fn into_error(self) -> DomainError {
+        self.error
+    }
+}
+
+impl From<AtomicWriteError> for DomainError {
+    fn from(error: AtomicWriteError) -> Self {
+        error.error
+    }
+}
+
 pub(crate) async fn write_file_atomic(
     path: &Path,
     data: &mut (dyn AsyncRead + Send + Unpin),
     modified_ms: u64,
-) -> Result<(), DomainError> {
+) -> Result<(), AtomicWriteError> {
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|error| {
+            AtomicWriteError::unchanged(DomainError::InternalError(error.to_string()))
+        })?;
     }
 
     let tmp_path = download_tmp_path(path);
@@ -22,17 +58,21 @@ pub(crate) async fn write_file_atomic(
         .truncate(true)
         .open(&tmp_path)
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(|error| {
+            AtomicWriteError::unchanged(DomainError::InternalError(error.to_string()))
+        })?;
 
-    copy_to_file(data, &mut file).await?;
-
-    file.flush()
+    copy_to_file(data, &mut file)
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(AtomicWriteError::unchanged)?;
+
+    file.flush().await.map_err(|error| {
+        AtomicWriteError::unchanged(DomainError::InternalError(error.to_string()))
+    })?;
     drop(file);
 
+    set_file_modified_ms(&tmp_path, modified_ms).map_err(AtomicWriteError::unchanged)?;
     rename_with_retry(&tmp_path, path).await?;
-    set_file_modified_ms(path, modified_ms)?;
 
     Ok(())
 }
@@ -67,21 +107,27 @@ fn download_tmp_path(path: &Path) -> PathBuf {
     }
 }
 
-async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), DomainError> {
+async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), AtomicWriteError> {
     match tokio::fs::rename(from, to).await {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             match tokio::fs::remove_file(to).await {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(DomainError::InternalError(error.to_string())),
+                Err(error) => {
+                    return Err(AtomicWriteError::unchanged(DomainError::InternalError(
+                        error.to_string(),
+                    )));
+                }
             }
 
-            tokio::fs::rename(from, to)
-                .await
-                .map_err(|error| DomainError::InternalError(error.to_string()))
+            tokio::fs::rename(from, to).await.map_err(|error| {
+                AtomicWriteError::changed(DomainError::InternalError(error.to_string()))
+            })
         }
-        Err(error) => Err(DomainError::InternalError(error.to_string())),
+        Err(error) => Err(AtomicWriteError::unchanged(DomainError::InternalError(
+            error.to_string(),
+        ))),
     }
 }
 

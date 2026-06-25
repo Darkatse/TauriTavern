@@ -14,6 +14,7 @@ use crate::application::services::character_service::CharacterService;
 use crate::application::services::chat_completion_service::ChatCompletionService;
 use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
+use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::extension_store_service::ExtensionStoreService;
 use crate::application::services::group_chat_service::GroupChatService;
@@ -83,6 +84,7 @@ pub struct AppState {
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
     pub sync_automation_service: Arc<SyncAutomationService>,
+    data_change_reconciler: Arc<dyn DataChangeReconciler>,
     pub update_service: Arc<UpdateService>,
     pub native_regex_service: Arc<NativeRegexService>,
     pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
@@ -142,6 +144,7 @@ impl AppState {
             lan_sync_service: services.lan_sync_service,
             tt_sync_service: services.tt_sync_service,
             sync_automation_service: services.sync_automation_service,
+            data_change_reconciler: services.data_change_reconciler,
             update_service: services.update_service,
             native_regex_service: services.native_regex_service,
             ios_policy: services.ios_policy,
@@ -152,18 +155,7 @@ impl AppState {
         &self,
         reason: &str,
     ) -> Result<(), DomainError> {
-        tracing::info!(
-            reason = reason,
-            "Refreshing runtime caches after external data change"
-        );
-
-        self.character_service.clear_cache().await?;
-        self.chat_service.clear_cache().await?;
-        self.group_chat_service.clear_cache().await?;
-        self.group_service.clear_cache().await?;
-        self.secret_service.clear_cache().await?;
-
-        Ok(())
+        self.data_change_reconciler.reconcile(reason).await
     }
 }
 

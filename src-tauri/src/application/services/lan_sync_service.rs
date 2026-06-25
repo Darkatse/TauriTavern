@@ -3,18 +3,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use local_ip_address::{list_afinet_netifas, local_ip};
 use qrcode::QrCode;
-use tauri::Manager;
 use tokio::sync::Mutex;
 use ttsync_contract::peer::{DeviceId, PeerGrant};
 use ttsync_contract::sync::SyncMode;
 use url::Url;
 
-use crate::app::AppState;
 use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
-    LanSyncPairedDevice, LanSyncPairedDeviceSummary, LanSyncStatus, LanSyncSyncCompletedEvent,
-    LanSyncSyncErrorEvent,
+    LanSyncPairedDevice, LanSyncPairedDeviceSummary, LanSyncStatus,
 };
 use crate::domain::models::sync::{
     ResolvedSyncPolicy, SyncEndpointRef, SyncIntent, SyncJobReport, SyncJobRequest,
@@ -392,57 +389,7 @@ impl LanSyncService {
             mode,
             options,
         );
-        let started = match self.coordinator.try_start(request) {
-            Ok(started) => started,
-            Err(report) => {
-                if let Some(message) = report.failure_message() {
-                    self.runtime.emit_sync_error(LanSyncSyncErrorEvent {
-                        message: message.to_string(),
-                    })?;
-                }
-                return Ok(report);
-            }
-        };
-
-        let executed = started.execute().await;
-        let report = if executed.outcome().is_some() {
-            match self
-                .runtime
-                .app_handle()
-                .state::<Arc<AppState>>()
-                .refresh_after_external_data_change("lan_sync")
-                .await
-            {
-                Ok(()) => executed.finish(),
-                Err(error) => {
-                    let message = format!(
-                        "LAN sync completed but failed to refresh runtime caches: {}",
-                        error
-                    );
-                    let report = executed.finish_with_error(error);
-                    self.runtime
-                        .emit_sync_error(LanSyncSyncErrorEvent { message })?;
-                    return Ok(report);
-                }
-            }
-        } else {
-            executed.finish()
-        };
-
-        if let Some(summary) = report.completed_summary() {
-            self.runtime
-                .emit_sync_completed(LanSyncSyncCompletedEvent {
-                    files_total: summary.files_total,
-                    bytes_total: summary.bytes_total,
-                    files_deleted: summary.files_deleted,
-                })?;
-        } else if let Some(message) = report.failure_message() {
-            self.runtime.emit_sync_error(LanSyncSyncErrorEvent {
-                message: message.to_string(),
-            })?;
-        }
-
-        Ok(report)
+        Ok(self.coordinator.run(request).await)
     }
 
     pub async fn push_to_device(

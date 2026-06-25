@@ -212,7 +212,7 @@ impl ManifestStore for LanManifestStore {
             let full_path = sync_transfer::resolve_to_local(&sync_root, &path);
             sync_fs::write_file_atomic(&full_path, data, modified_ms)
                 .await
-                .map_err(domain_error_to_sync)
+                .map_err(|error| domain_error_to_sync(error.into_error()))
         }
     }
 

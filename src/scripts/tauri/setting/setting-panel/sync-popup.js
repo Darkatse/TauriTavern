@@ -11,6 +11,7 @@ import {
 import { formatTimestamp } from './formatters.js';
 import { showErrorPopup } from './popup-utils.js';
 import { callTauriTavernPanelPopup } from '../panel-popup.js';
+import { showSyncReportResult } from './sync-listeners.js';
 import {
     clearSyncTargetAlias,
     getLanSyncAdvertiseAddress,
@@ -520,6 +521,7 @@ function createSyncActions(client) {
         notifyLanPushRequested: () => {
             toastr.success(translate('Upload request sent.'));
         },
+        showSyncReportResult,
     };
 }
 

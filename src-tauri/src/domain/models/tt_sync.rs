@@ -37,17 +37,3 @@ pub struct TtSyncProgressEvent {
     pub bytes_total: u64,
     pub current_path: Option<String>,
 }
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TtSyncCompletedEvent {
-    pub direction: TtSyncDirection,
-    pub files_total: usize,
-    pub bytes_total: u64,
-    pub files_deleted: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TtSyncErrorEvent {
-    pub direction: TtSyncDirection,
-    pub message: String,
-}

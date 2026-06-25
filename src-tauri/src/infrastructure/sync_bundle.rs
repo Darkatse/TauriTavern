@@ -22,6 +22,42 @@ pub(crate) struct BundleFileProgress {
     pub size_bytes: u64,
 }
 
+#[derive(Debug)]
+pub(crate) struct BundleWriteError {
+    error: DomainError,
+    target_changed: bool,
+}
+
+impl BundleWriteError {
+    fn unchanged(error: DomainError) -> Self {
+        Self {
+            error,
+            target_changed: false,
+        }
+    }
+
+    fn from_atomic(error: sync_fs::AtomicWriteError) -> Self {
+        Self {
+            target_changed: error.target_changed(),
+            error: error.into_error(),
+        }
+    }
+
+    pub(crate) fn target_changed(&self) -> bool {
+        self.target_changed
+    }
+
+    pub(crate) fn into_error(self) -> DomainError {
+        self.error
+    }
+}
+
+impl From<BundleWriteError> for DomainError {
+    fn from(error: BundleWriteError) -> Self {
+        error.error
+    }
+}
+
 pub(crate) async fn read_u32_be<R>(reader: &mut R) -> Result<u32, DomainError>
 where
     R: AsyncRead + Unpin,
@@ -79,7 +115,7 @@ pub(crate) async fn write_bundle_to_local_files<R, F>(
     transfer_entries: Vec<ManifestEntryV2>,
     reader: &mut R,
     mut on_file_written: F,
-) -> Result<(), DomainError>
+) -> Result<(), BundleWriteError>
 where
     R: AsyncRead + Send + Unpin,
     F: FnMut(BundleFileProgress) -> Result<(), DomainError>,
@@ -92,47 +128,57 @@ where
         .collect::<HashMap<SyncPath, ManifestEntryV2>>();
 
     loop {
-        let path_len = read_u32_be(reader).await?;
+        let path_len = read_u32_be(reader)
+            .await
+            .map_err(BundleWriteError::unchanged)?;
         if path_len == 0 {
             break;
         }
         if path_len > MAX_BUNDLE_PATH_LEN {
-            return Err(DomainError::InvalidData(format!(
-                "Bundle path too long: {} bytes",
-                path_len
+            return Err(BundleWriteError::unchanged(DomainError::InvalidData(
+                format!("Bundle path too long: {} bytes", path_len),
             )));
         }
 
         let mut path_bytes = vec![0u8; path_len as usize];
-        reader
-            .read_exact(&mut path_bytes)
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-
-        let path_text = String::from_utf8(path_bytes)
-            .map_err(|_| DomainError::InvalidData("Bundle path is not UTF-8".to_string()))?;
-        let sync_path = SyncPath::new(path_text)
-            .map_err(|error| DomainError::InvalidData(error.to_string()))?;
-
-        let entry = remaining.remove(&sync_path).ok_or_else(|| {
-            DomainError::NotFound(format!("Bundle file not in plan: {}", sync_path))
+        reader.read_exact(&mut path_bytes).await.map_err(|error| {
+            BundleWriteError::unchanged(DomainError::InternalError(error.to_string()))
         })?;
+
+        let path_text = String::from_utf8(path_bytes).map_err(|_| {
+            BundleWriteError::unchanged(DomainError::InvalidData(
+                "Bundle path is not UTF-8".to_string(),
+            ))
+        })?;
+        let sync_path = SyncPath::new(path_text).map_err(|error| {
+            BundleWriteError::unchanged(DomainError::InvalidData(error.to_string()))
+        })?;
+
+        let entry = remaining
+            .remove(&sync_path)
+            .ok_or_else(|| DomainError::NotFound(format!("Bundle file not in plan: {}", sync_path)))
+            .map_err(BundleWriteError::unchanged)?;
 
         let full_path = sync_transfer::resolve_to_local(sync_root, &entry.path);
         let mut exact = ExactSizeReader::new(&mut *reader, entry.size_bytes);
-        sync_fs::write_file_atomic(&full_path, &mut exact, entry.modified_ms).await?;
+        sync_fs::write_file_atomic(&full_path, &mut exact, entry.modified_ms)
+            .await
+            .map_err(BundleWriteError::from_atomic)?;
 
         files_written += 1;
         on_file_written(BundleFileProgress {
             path: entry.path.to_string(),
             size_bytes: entry.size_bytes,
-        })?;
+        })
+        .map_err(BundleWriteError::unchanged)?;
     }
 
     if !remaining.is_empty() {
-        return Err(DomainError::InvalidData(format!(
-            "Bundle ended early: {}/{} files received",
-            files_written, files_total
+        return Err(BundleWriteError::unchanged(DomainError::InvalidData(
+            format!(
+                "Bundle ended early: {}/{} files received",
+                files_written, files_total
+            ),
         )));
     }
 
@@ -328,7 +374,7 @@ mod tests {
         .expect_err("missing entry must error");
 
         assert!(matches!(
-            error,
+            error.into_error(),
             crate::domain::errors::DomainError::InvalidData(_)
         ));
 

@@ -1,7 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Manager};
+use async_trait::async_trait;
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
 use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
@@ -19,6 +20,7 @@ use crate::application::services::character_service::CharacterService;
 use crate::application::services::chat_completion_service::ChatCompletionService;
 use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
+use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::extension_store_service::ExtensionStoreService;
 use crate::application::services::group_chat_service::GroupChatService;
@@ -35,7 +37,9 @@ use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
 use crate::application::services::skill_service::SkillService;
 use crate::application::services::stable_diffusion_service::StableDiffusionService;
-use crate::application::services::sync_automation_service::SyncAutomationService;
+use crate::application::services::sync_automation_service::{
+    SyncAutomationEventPublisher, SyncAutomationService,
+};
 use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
@@ -47,6 +51,7 @@ use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
+use crate::domain::models::sync_automation::{SyncAutomationStatus, SyncAutomationToastEvent};
 use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
 use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
 use crate::domain::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
@@ -161,6 +166,7 @@ pub(super) struct AppServices {
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
     pub sync_automation_service: Arc<SyncAutomationService>,
+    pub data_change_reconciler: Arc<dyn DataChangeReconciler>,
     pub update_service: Arc<UpdateService>,
     pub native_regex_service: Arc<NativeRegexService>,
     pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
@@ -203,6 +209,50 @@ struct AppRepositories {
     tts_repository: Arc<dyn TtsRepository>,
     world_info_repository: Arc<dyn WorldInfoRepository>,
     update_repository: Arc<dyn UpdateRepository>,
+}
+
+struct ServiceCacheReconciler {
+    character_service: Arc<CharacterService>,
+    chat_service: Arc<ChatService>,
+    group_chat_service: Arc<GroupChatService>,
+    group_service: Arc<GroupService>,
+    secret_service: Arc<SecretService>,
+}
+
+#[async_trait]
+impl DataChangeReconciler for ServiceCacheReconciler {
+    async fn reconcile(&self, reason: &str) -> Result<(), DomainError> {
+        tracing::info!(
+            reason = reason,
+            "Refreshing runtime caches after external data change"
+        );
+
+        self.character_service.clear_cache().await?;
+        self.chat_service.clear_cache().await?;
+        self.group_chat_service.clear_cache().await?;
+        self.group_service.clear_cache().await?;
+        self.secret_service.clear_cache().await?;
+
+        Ok(())
+    }
+}
+
+struct TauriSyncAutomationEventPublisher {
+    app_handle: AppHandle,
+}
+
+impl SyncAutomationEventPublisher for TauriSyncAutomationEventPublisher {
+    fn publish_status(&self, status: SyncAutomationStatus) {
+        if let Err(error) = self.app_handle.emit("sync_auto:status", status) {
+            tracing::warn!("Failed to emit sync automation status: {}", error);
+        }
+    }
+
+    fn publish_toast(&self, event: SyncAutomationToastEvent) {
+        if let Err(error) = self.app_handle.emit("sync_auto:toast", event) {
+            tracing::warn!("Failed to emit sync automation toast: {}", error);
+        }
+    }
 }
 
 pub(super) async fn initialize_data_directory(
@@ -360,11 +410,22 @@ pub(super) async fn build_services(
         repositories.group_chat_repository,
         agent_workspace_lifecycle_service,
     ));
+    let secret_service = Arc::new(SecretService::new(
+        repositories.secret_repository.clone(),
+        tauritavern_settings.allow_keys_exposure,
+    ));
     let user_service = Arc::new(UserService::new(repositories.user_repository));
     let settings_service = Arc::new(SettingsService::new(repositories.settings_repository));
     let user_directory_service = Arc::new(UserDirectoryService::new(
         repositories.user_directory_repository,
     ));
+    let data_change_reconciler: Arc<dyn DataChangeReconciler> = Arc::new(ServiceCacheReconciler {
+        character_service: character_service.clone(),
+        chat_service: chat_service.clone(),
+        group_chat_service: group_chat_service.clone(),
+        group_service: group_service.clone(),
+        secret_service: secret_service.clone(),
+    });
     let lan_runtime = Arc::new(LanSyncRuntime::new(
         app_handle.clone(),
         data_directory.root().to_path_buf(),
@@ -381,24 +442,25 @@ pub(super) async fn build_services(
         lan_peer_store.clone(),
         tt_runtime.clone(),
     ));
-    let sync_job_coordinator = Arc::new(SyncJobCoordinator::new(sync_job_executor));
+    let sync_job_coordinator = Arc::new(SyncJobCoordinator::new(
+        sync_job_executor,
+        data_change_reconciler.clone(),
+    ));
     let lan_sync_service = Arc::new(LanSyncService::new(
         lan_runtime,
         lan_peer_store,
         sync_job_coordinator.clone(),
     ));
     let tt_sync_service = Arc::new(TtSyncService::new(tt_runtime, sync_job_coordinator));
+    let sync_automation_events = Arc::new(TauriSyncAutomationEventPublisher {
+        app_handle: app_handle.clone(),
+    });
     let sync_automation_service = Arc::new(SyncAutomationService::new(
-        app_handle.clone(),
+        sync_automation_events,
         data_directory.default_user().to_path_buf(),
         lan_sync_service.clone(),
         tt_sync_service.clone(),
         ios_policy.capabilities.sync.lan,
-    ));
-
-    let secret_service = Arc::new(SecretService::new(
-        repositories.secret_repository,
-        tauritavern_settings.allow_keys_exposure,
     ));
 
     Ok(AppServices {
@@ -438,6 +500,7 @@ pub(super) async fn build_services(
         lan_sync_service,
         tt_sync_service,
         sync_automation_service,
+        data_change_reconciler,
         update_service,
         native_regex_service,
         ios_policy,

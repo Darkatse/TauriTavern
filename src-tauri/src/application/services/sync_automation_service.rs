@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, Notify};
 use tokio::time::{Duration, sleep};
 use ttsync_contract::sync::SyncMode;
@@ -18,8 +17,13 @@ use crate::domain::models::sync_automation::{
 };
 use crate::infrastructure::sync_automation_store::SyncAutomationStore;
 
+pub trait SyncAutomationEventPublisher: Send + Sync {
+    fn publish_status(&self, status: SyncAutomationStatus);
+    fn publish_toast(&self, event: SyncAutomationToastEvent);
+}
+
 pub struct SyncAutomationService {
-    app_handle: AppHandle,
+    events: Arc<dyn SyncAutomationEventPublisher>,
     store: SyncAutomationStore,
     lan_sync_service: Arc<LanSyncService>,
     tt_sync_service: Arc<TtSyncService>,
@@ -31,14 +35,14 @@ pub struct SyncAutomationService {
 
 impl SyncAutomationService {
     pub fn new(
-        app_handle: AppHandle,
+        events: Arc<dyn SyncAutomationEventPublisher>,
         default_user_dir: PathBuf,
         lan_sync_service: Arc<LanSyncService>,
         tt_sync_service: Arc<TtSyncService>,
         lan_sync_allowed: bool,
     ) -> Self {
         Self {
-            app_handle,
+            events,
             store: SyncAutomationStore::new(default_user_dir),
             lan_sync_service,
             tt_sync_service,
@@ -55,7 +59,7 @@ impl SyncAutomationService {
         }
 
         let service = self.clone();
-        tauri::async_runtime::spawn(async move {
+        tokio::spawn(async move {
             service.start_lan_server_if_enabled().await;
             service.scheduler_loop().await;
         });
@@ -372,9 +376,7 @@ impl SyncAutomationService {
             update(&mut status);
             status.clone()
         };
-        if let Err(error) = self.app_handle.emit("sync_auto:status", snapshot) {
-            tracing::warn!("Failed to emit sync automation status: {}", error);
-        }
+        self.events.publish_status(snapshot);
     }
 
     async fn emit_toast(&self, level: SyncAutomationToastLevel, message: impl Into<String>) {
@@ -413,9 +415,7 @@ impl SyncAutomationService {
             detail,
             next_run_at_ms,
         };
-        if let Err(error) = self.app_handle.emit("sync_auto:toast", payload) {
-            tracing::warn!("Failed to emit sync automation toast: {}", error);
-        }
+        self.events.publish_toast(payload);
     }
 }
 

@@ -32,6 +32,7 @@ const REQUIRED_ACTIONS = [
     'connectPairUri',
     'notifyLanPushRequested',
     'reportError',
+    'showSyncReportResult',
 ];
 
 function requireMethods(source, names, label) {
@@ -341,6 +342,11 @@ export function createTauriTavernSyncApp(options) {
                     }
                 }
             },
+            async runSyncCommand(command) {
+                const report = await command();
+                await actions.showSyncReportResult(report);
+                return report;
+            },
             automationIntervalLabel(minutes) {
                 return formatAutomationInterval(minutes, this.tr);
             },
@@ -542,25 +548,33 @@ export function createTauriTavernSyncApp(options) {
                 await this.withBusy(`pull:${target.type}:${target.id}`, async () => {
                     const options = this.syncOperationOptions();
                     if (target.type === 'lan') {
-                        await client.pullLanDevice(target.id, options);
+                        await this.runSyncCommand(() => client.pullLanDevice(target.id, options));
                         return;
                     }
 
                     const mode = this.status?.syncMode ?? 'Incremental';
-                    await client.pullTtSyncServer(target.id, mode, options);
+                    await this.runSyncCommand(() => client.pullTtSyncServer(
+                        target.id,
+                        mode,
+                        options,
+                    ));
                 });
             },
             async pushTarget(target) {
                 await this.withBusy(`push:${target.type}:${target.id}`, async () => {
                     const options = this.syncOperationOptions();
                     if (target.type === 'lan') {
-                        await client.pushLanDevice(target.id, options);
+                        await this.runSyncCommand(() => client.pushLanDevice(target.id, options));
                         actions.notifyLanPushRequested();
                         return;
                     }
 
                     const mode = this.status?.syncMode ?? 'Incremental';
-                    await client.pushTtSyncServer(target.id, mode, options);
+                    await this.runSyncCommand(() => client.pushTtSyncServer(
+                        target.id,
+                        mode,
+                        options,
+                    ));
                 });
             },
             async removeTarget(target) {

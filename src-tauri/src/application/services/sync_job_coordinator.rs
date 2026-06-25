@@ -4,28 +4,34 @@ use async_trait::async_trait;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use uuid::Uuid;
 
+use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::{
-    SyncEndpointRef, SyncExecutionKind, SyncIntent, SyncJob, SyncJobOutcome, SyncJobReport,
-    SyncJobRequest,
+    SyncEndpointRef, SyncExecutionFailure, SyncExecutionKind, SyncExecutionReport, SyncIntent,
+    SyncJob, SyncJobOutcome, SyncJobReport, SyncJobRequest,
 };
 
 #[async_trait]
 pub trait SyncJobExecutor: Send + Sync {
-    async fn execute(&self, job: SyncJob) -> Result<SyncJobOutcome, DomainError>;
+    async fn execute(&self, job: SyncJob) -> Result<SyncExecutionReport, SyncExecutionFailure>;
 }
 
 pub struct SyncJobCoordinator {
     gate: Arc<Semaphore>,
     executor: Arc<dyn SyncJobExecutor>,
+    reconciler: Arc<dyn DataChangeReconciler>,
     active: Arc<Mutex<Option<ActiveSyncJob>>>,
 }
 
 impl SyncJobCoordinator {
-    pub fn new(executor: Arc<dyn SyncJobExecutor>) -> Self {
+    pub fn new(
+        executor: Arc<dyn SyncJobExecutor>,
+        reconciler: Arc<dyn DataChangeReconciler>,
+    ) -> Self {
         Self {
             gate: Arc::new(Semaphore::new(1)),
             executor,
+            reconciler,
             active: Arc::new(Mutex::new(None)),
         }
     }
@@ -37,7 +43,12 @@ impl SyncJobCoordinator {
         } else {
             let permit = match self.gate.clone().try_acquire_owned() {
                 Ok(permit) => permit,
-                Err(_) => return Err(SyncJobReport::failed(job, "Sync job already running")),
+                Err(_) => {
+                    return Err(SyncJobReport::failed_without_local_mutation(
+                        job,
+                        "Sync job already running",
+                    ));
+                }
             };
 
             {
@@ -57,6 +68,7 @@ impl SyncJobCoordinator {
         Ok(StartedSyncJob {
             job,
             executor: self.executor.clone(),
+            reconciler: self.reconciler.clone(),
             _permit: permit,
             _active_guard: active_guard,
         })
@@ -73,6 +85,7 @@ impl SyncJobCoordinator {
 pub struct StartedSyncJob {
     job: SyncJob,
     executor: Arc<dyn SyncJobExecutor>,
+    reconciler: Arc<dyn DataChangeReconciler>,
     _permit: Option<OwnedSemaphorePermit>,
     _active_guard: Option<ActiveJobGuard>,
 }
@@ -82,12 +95,13 @@ impl StartedSyncJob {
         let Self {
             job,
             executor,
+            reconciler,
             _permit,
             _active_guard,
         } = self;
-        let result = executor.execute(job.clone()).await;
+        let result =
+            finalize_execution(&job, executor.execute(job.clone()).await, &*reconciler).await;
         ExecutedSyncJob {
-            job,
             result,
             _permit,
             _active_guard,
@@ -96,34 +110,27 @@ impl StartedSyncJob {
 }
 
 pub struct ExecutedSyncJob {
-    job: SyncJob,
-    result: Result<SyncJobOutcome, DomainError>,
+    result: SyncJobReportResultWithError,
     _permit: Option<OwnedSemaphorePermit>,
     _active_guard: Option<ActiveJobGuard>,
 }
 
 impl ExecutedSyncJob {
-    pub fn outcome(&self) -> Option<&SyncJobOutcome> {
-        self.result.as_ref().ok()
-    }
-
     pub fn finish(self) -> SyncJobReport {
-        match self.result {
-            Ok(outcome) => SyncJobReport::from_outcome(self.job, outcome),
-            Err(error) => SyncJobReport::failed(self.job, error.to_string()),
-        }
+        self.result.report
     }
 
     pub fn finish_or_error(self) -> Result<SyncJobReport, DomainError> {
-        match self.result {
-            Ok(outcome) => Ok(SyncJobReport::from_outcome(self.job, outcome)),
-            Err(error) => Err(error),
+        match self.result.error {
+            Some(error) => Err(error),
+            None => Ok(self.result.report),
         }
     }
+}
 
-    pub fn finish_with_error(self, error: DomainError) -> SyncJobReport {
-        SyncJobReport::failed(self.job, error.to_string())
-    }
+struct SyncJobReportResultWithError {
+    report: SyncJobReport,
+    error: Option<DomainError>,
 }
 
 struct ActiveSyncJob {
@@ -169,12 +176,109 @@ fn resolve_execution(endpoint: &SyncEndpointRef, intent: SyncIntent) -> SyncExec
     }
 }
 
+async fn finalize_execution(
+    job: &SyncJob,
+    execution: Result<SyncExecutionReport, SyncExecutionFailure>,
+    reconciler: &dyn DataChangeReconciler,
+) -> SyncJobReportResultWithError {
+    match execution {
+        Ok(report) => finalize_success(job, report, reconciler).await,
+        Err(failure) => finalize_failure(job, failure, reconciler).await,
+    }
+}
+
+async fn finalize_success(
+    job: &SyncJob,
+    report: SyncExecutionReport,
+    reconciler: &dyn DataChangeReconciler,
+) -> SyncJobReportResultWithError {
+    if report.local_applied.changed() {
+        if let Err(error) = reconciler.reconcile(reconcile_reason(job)).await {
+            tracing::warn!(
+                job_id = job.id,
+                error = %error,
+                "Sync completed but data reconciliation failed"
+            );
+            let message = match report.outcome {
+                SyncJobOutcome::Completed { .. } => {
+                    format!("Sync completed but failed to refresh runtime caches: {error}")
+                }
+                SyncJobOutcome::RemoteRequestAccepted => error.to_string(),
+            };
+            return SyncJobReportResultWithError {
+                report: SyncJobReport::failed_after_partial_local_mutation(
+                    job.clone(),
+                    message,
+                    report.local_applied,
+                    Some(error.to_string()),
+                ),
+                error: Some(error),
+            };
+        }
+    }
+
+    SyncJobReportResultWithError {
+        report: SyncJobReport::from_outcome(job.clone(), report.outcome),
+        error: None,
+    }
+}
+
+async fn finalize_failure(
+    job: &SyncJob,
+    failure: SyncExecutionFailure,
+    reconciler: &dyn DataChangeReconciler,
+) -> SyncJobReportResultWithError {
+    let SyncExecutionFailure {
+        error,
+        local_applied,
+    } = failure;
+    let message = error.to_string();
+
+    let report = if local_applied.changed() {
+        let reconcile_error =
+            reconciler
+                .reconcile(reconcile_reason(job))
+                .await
+                .err()
+                .map(|error| {
+                    tracing::warn!(
+                        job_id = job.id,
+                        error = %error,
+                        "Sync failed after local data changed and reconciliation also failed"
+                    );
+                    error.to_string()
+                });
+
+        SyncJobReport::failed_after_partial_local_mutation(
+            job.clone(),
+            message,
+            local_applied,
+            reconcile_error,
+        )
+    } else {
+        SyncJobReport::failed_without_local_mutation(job.clone(), message)
+    };
+
+    SyncJobReportResultWithError {
+        report,
+        error: Some(error),
+    }
+}
+
+fn reconcile_reason(job: &SyncJob) -> &'static str {
+    match &job.endpoint {
+        SyncEndpointRef::LanPeer { .. } => "lan_sync",
+        SyncEndpointRef::RemoteServer { .. } => "tt_sync_pull",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::domain::models::sync::{
-        ResolvedSyncPolicy, SyncJobReportResult, SyncJobSummary, SyncOperationOptions, SyncOrigin,
+        LocalAppliedChangeSummary, ResolvedSyncPolicy, SyncJobReportResult, SyncJobSummary,
+        SyncOperationOptions, SyncOrigin,
     };
     use ttsync_contract::peer::DeviceId;
     use ttsync_contract::sync::SyncMode;
@@ -183,14 +287,24 @@ mod tests {
 
     #[async_trait]
     impl SyncJobExecutor for NoopExecutor {
-        async fn execute(&self, job: SyncJob) -> Result<SyncJobOutcome, DomainError> {
+        async fn execute(&self, job: SyncJob) -> Result<SyncExecutionReport, SyncExecutionFailure> {
             if job.execution == SyncExecutionKind::RequestRemotePull {
-                return Ok(SyncJobOutcome::RemoteRequestAccepted);
+                return Ok(SyncExecutionReport::remote_request_accepted());
             }
 
-            Ok(SyncJobOutcome::Completed {
-                summary: SyncJobSummary::new(0, 0, 0),
-            })
+            Ok(SyncExecutionReport::completed(
+                SyncJobSummary::new(0, 0, 0),
+                LocalAppliedChangeSummary::default(),
+            ))
+        }
+    }
+
+    struct NoopReconciler;
+
+    #[async_trait]
+    impl DataChangeReconciler for NoopReconciler {
+        async fn reconcile(&self, _reason: &str) -> Result<(), DomainError> {
+            Ok(())
         }
     }
 
@@ -220,7 +334,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolves_lan_replicate_as_remote_pull_request() {
-        let coordinator = SyncJobCoordinator::new(Arc::new(NoopExecutor));
+        let coordinator = SyncJobCoordinator::new(Arc::new(NoopExecutor), Arc::new(NoopReconciler));
         let report = coordinator.run(remote_pull_request()).await;
 
         assert_eq!(report.job.execution, SyncExecutionKind::RequestRemotePull);
@@ -232,7 +346,7 @@ mod tests {
 
     #[test]
     fn busy_report_mentions_running_job() {
-        let coordinator = SyncJobCoordinator::new(Arc::new(NoopExecutor));
+        let coordinator = SyncJobCoordinator::new(Arc::new(NoopExecutor), Arc::new(NoopReconciler));
         let _started = coordinator
             .try_start(request(SyncIntent::PullToLocal))
             .expect("first job should start");
@@ -252,7 +366,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_pull_request_does_not_wait_for_transfer_gate() {
-        let coordinator = SyncJobCoordinator::new(Arc::new(NoopExecutor));
+        let coordinator = SyncJobCoordinator::new(Arc::new(NoopExecutor), Arc::new(NoopReconciler));
         let _started = coordinator
             .try_start(request(SyncIntent::PullToLocal))
             .expect("transfer job should start");
@@ -285,5 +399,107 @@ mod tests {
         drop(guard);
 
         assert_eq!(active.lock().unwrap().as_ref().unwrap().id, "new");
+    }
+
+    struct PartialFailureExecutor;
+
+    #[async_trait]
+    impl SyncJobExecutor for PartialFailureExecutor {
+        async fn execute(
+            &self,
+            _job: SyncJob,
+        ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
+            let local_applied = LocalAppliedChangeSummary {
+                files_written: 1,
+                bytes_written: 7,
+                files_deleted: 0,
+            };
+            Err(SyncExecutionFailure::new(
+                DomainError::InternalError("download failed".to_string()),
+                local_applied,
+            ))
+        }
+    }
+
+    struct FailingReconciler;
+
+    #[async_trait]
+    impl DataChangeReconciler for FailingReconciler {
+        async fn reconcile(&self, _reason: &str) -> Result<(), DomainError> {
+            Err(DomainError::InternalError("cache stale".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn partial_failure_reports_reconcile_error() {
+        let coordinator = SyncJobCoordinator::new(
+            Arc::new(PartialFailureExecutor),
+            Arc::new(FailingReconciler),
+        );
+
+        let report = coordinator.run(request(SyncIntent::PullToLocal)).await;
+
+        match report.result {
+            SyncJobReportResult::Failed {
+                local_applied,
+                reconcile_error,
+                ..
+            } => {
+                assert_eq!(local_applied.files_written, 1);
+                assert_eq!(local_applied.bytes_written, 7);
+                assert_eq!(
+                    reconcile_error.as_deref(),
+                    Some("Internal error: cache stale")
+                );
+            }
+            other => panic!("unexpected report: {other:?}"),
+        }
+    }
+
+    struct CompletedWithMutationExecutor;
+
+    #[async_trait]
+    impl SyncJobExecutor for CompletedWithMutationExecutor {
+        async fn execute(
+            &self,
+            _job: SyncJob,
+        ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
+            let local_applied = LocalAppliedChangeSummary {
+                files_written: 0,
+                bytes_written: 0,
+                files_deleted: 1,
+            };
+            Ok(SyncExecutionReport::completed(
+                SyncJobSummary::new(0, 0, 1),
+                local_applied,
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn completed_with_reconcile_failure_is_failed() {
+        let coordinator = SyncJobCoordinator::new(
+            Arc::new(CompletedWithMutationExecutor),
+            Arc::new(FailingReconciler),
+        );
+
+        let report = coordinator.run(request(SyncIntent::PullToLocal)).await;
+
+        assert!(report.failure_message().is_some());
+        assert!(report.completed_summary().is_none());
+        match report.result {
+            SyncJobReportResult::Failed {
+                local_applied,
+                reconcile_error,
+                ..
+            } => {
+                assert_eq!(local_applied.files_deleted, 1);
+                assert_eq!(
+                    reconcile_error.as_deref(),
+                    Some("Internal error: cache stale")
+                );
+            }
+            other => panic!("unexpected report: {other:?}"),
+        }
     }
 }
