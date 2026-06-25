@@ -4,6 +4,11 @@
   "version": "2.1.1",
   "identifier": "com.tauritavern.client",
   "build": {
+    "beforeDevCommand": {
+      "script": "node scripts/tauri-dev-server.mjs",
+      "cwd": ".."
+    },
+    "devUrl": "http://localhost:1430",
     "frontendDist": "../src",
     "removeUnusedCommands": true
   },

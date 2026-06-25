@@ -49,6 +49,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\export-sillytavern-migration.
   面向 Windows PowerShell 的 SillyTavern 迁移导出脚本。
 - `build-portable.mjs`
   构建 Tauri portable 二进制，并将产物复制到指定输出目录。对应 `pnpm run tauri:build:portable`。
+- `tauri-dev-server.mjs`
+  为 `tauri dev` 提供轻量静态前端服务器和页面刷新通道，避免普通前端文件变化污染 Rust 编译指纹。
 - `check-frontend-guardrails.mjs`
   校验前端宿主层文件规模和依赖边界，避免 Host Kernel 持续膨胀。对应 `pnpm run check:frontend`。
 - `tauri-ios-xcode-script.sh`

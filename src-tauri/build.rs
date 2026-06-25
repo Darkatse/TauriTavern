@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
-    // Ensure embedded frontend assets are regenerated whenever anything under frontendDist changes.
-    println!("cargo:rerun-if-changed=../src");
+    // These are the frontend/resource directories that feed generated Rust artifacts.
     println!("cargo:rerun-if-changed=../default/content");
     println!("cargo:rerun-if-changed=../src/scripts/templates");
     println!("cargo:rerun-if-changed=../src/scripts/extensions");
@@ -119,9 +118,10 @@ fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
     let mut content_files = collect_relative_files(&content_root, &content_root)?;
     content_files.sort();
 
-    fs::write(
-        out_dir.join("default_content_manifest.json"),
-        serde_json::to_string(&content_files)?,
+    let content_manifest = serde_json::to_string(&content_files)?;
+    write_if_changed(
+        &out_dir.join("default_content_manifest.json"),
+        content_manifest.as_bytes(),
     )?;
 
     let mut embedded_resources = Vec::new();
@@ -151,11 +151,24 @@ fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
 
     embedded_resources.sort_by(|a, b| a.virtual_path.cmp(&b.virtual_path));
 
-    fs::write(
-        out_dir.join("embedded_resources.rs"),
-        build_embedded_resources_source(&embedded_resources)?,
+    let embedded_resources_source = build_embedded_resources_source(&embedded_resources)?;
+    write_if_changed(
+        &out_dir.join("embedded_resources.rs"),
+        embedded_resources_source.as_bytes(),
     )?;
 
+    Ok(())
+}
+
+fn write_if_changed(path: &Path, contents: &[u8]) -> Result<(), Box<dyn Error>> {
+    if fs::read(path)
+        .map(|existing| existing == contents)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    fs::write(path, contents)?;
     Ok(())
 }
 
