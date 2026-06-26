@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::application::services::lan_sync_service::{
+use crate::application::services::lan_sync_service::ports::{
     LanInboundRequestHandler, LanServerControl, LanServerInfo,
 };
 use crate::domain::errors::DomainError;

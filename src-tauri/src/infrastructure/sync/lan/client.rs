@@ -5,7 +5,7 @@ use ttsync_contract::peer::DeviceId;
 use ttsync_contract::session::{SessionOpenResponse, SessionToken};
 use ttsync_contract::status::StatusResponse;
 
-use crate::application::services::lan_sync_service::LanPairingClient;
+use crate::application::services::lan_sync_service::ports::LanPairingClient;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{LanPairCompleteRequest, LanPairCompleteResponse};
 use crate::domain::models::sync::SyncOperationOptions;

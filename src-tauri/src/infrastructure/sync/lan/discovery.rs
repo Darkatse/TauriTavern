@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use local_ip_address::{list_afinet_netifas, local_ip};
 use url::Url;
 
-use crate::application::services::lan_sync_service::LanAddressDiscovery;
+use crate::application::services::lan_sync_service::ports::LanAddressDiscovery;
 use crate::domain::errors::DomainError;
 
 pub struct LocalLanAddressDiscovery;

@@ -4,7 +4,7 @@ use ttsync_contract::peer::{DeviceId, PeerGrant};
 use ttsync_core::crypto::random_base64url;
 use uuid::Uuid;
 
-use crate::application::services::lan_sync_service::LanPeerRepository;
+use crate::application::services::lan_sync_service::ports::LanPeerRepository;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{LanSyncIdentity, LanSyncPairedDevice};
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};

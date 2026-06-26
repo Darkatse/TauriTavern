@@ -8,7 +8,7 @@ use ttsync_client::{
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::sync::SyncMode;
 
-use crate::application::services::lan_sync_service::LanSyncEventPublisher;
+use crate::application::services::lan_sync_service::ports::LanSyncEventPublisher;
 use crate::application::services::sync_job_coordinator::SyncJobExecutor;
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::{

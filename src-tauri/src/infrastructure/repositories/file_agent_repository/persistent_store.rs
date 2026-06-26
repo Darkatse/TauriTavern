@@ -355,5 +355,8 @@ pub(super) fn persistent_roots(manifest: &WorkspaceManifest) -> Result<Vec<Strin
 
 fn persistent_manifest_has_files_for_root(manifest: &PersistentStateManifest, root: &str) -> bool {
     let prefix = format!("{root}/");
-    manifest.files.iter().any(|file| file.path.starts_with(&prefix))
+    manifest
+        .files
+        .iter()
+        .any(|file| file.path.starts_with(&prefix))
 }

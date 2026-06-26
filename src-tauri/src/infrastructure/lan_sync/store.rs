@@ -5,7 +5,7 @@ use rand::Rng;
 use serde::Deserialize;
 use ttsync_contract::sync::SyncMode;
 
-use crate::application::services::lan_sync_service::LanSyncSettingsRepository;
+use crate::application::services::lan_sync_service::ports::LanSyncSettingsRepository;
 use crate::application::services::sync_automation_service::{
     LoadedLanServerSettings, SyncAutomationLanSettingsRepository,
 };

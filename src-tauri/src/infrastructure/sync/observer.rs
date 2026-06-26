@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ttsync_client::{SyncDirection as ClientSyncDirection, SyncObserver, SyncProgress};
 use ttsync_contract::sync::SyncPhase;
 
-use crate::application::services::lan_sync_service::LanSyncEventPublisher;
+use crate::application::services::lan_sync_service::ports::LanSyncEventPublisher;
 use crate::domain::models::lan_sync::{LanSyncSyncPhase, LanSyncSyncProgressEvent};
 use crate::domain::models::sync::SyncOrigin;
 use crate::domain::models::tt_sync::{TtSyncDirection, TtSyncProgressEvent};

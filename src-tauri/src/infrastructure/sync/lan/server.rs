@@ -20,8 +20,9 @@ use ttsync_core::session::{SessionManager, SessionManagerConfig};
 use ttsync_http::server::{ServerState, build_transfer_router, default_status_response};
 use ttsync_http::tls::{SelfManagedTls, TlsProvider};
 
-use crate::application::services::lan_sync_service::{
-    LanInboundRequestHandler, LanServerInfo, PAIRING_REJECTED_MESSAGE,
+use crate::application::services::lan_sync_service::PAIRING_REJECTED_MESSAGE;
+use crate::application::services::lan_sync_service::ports::{
+    LanInboundRequestHandler, LanServerInfo,
 };
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{LanPairCompleteRequest, LanPairCompleteResponse};
