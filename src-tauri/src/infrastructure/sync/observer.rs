@@ -3,19 +3,19 @@ use std::sync::Arc;
 use ttsync_client::{SyncDirection as ClientSyncDirection, SyncObserver, SyncProgress};
 use ttsync_contract::sync::SyncPhase;
 
+use crate::application::services::lan_sync_service::LanSyncEventPublisher;
 use crate::domain::models::lan_sync::{LanSyncSyncPhase, LanSyncSyncProgressEvent};
 use crate::domain::models::sync::SyncOrigin;
 use crate::domain::models::tt_sync::{TtSyncDirection, TtSyncProgressEvent};
-use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 
 pub struct LanSyncProgressObserver {
-    runtime: Arc<LanSyncRuntime>,
+    events: Arc<dyn LanSyncEventPublisher>,
 }
 
 impl LanSyncProgressObserver {
-    pub fn new(runtime: Arc<LanSyncRuntime>) -> Self {
-        Self { runtime }
+    pub fn new(events: Arc<dyn LanSyncEventPublisher>) -> Self {
+        Self { events }
     }
 }
 
@@ -29,7 +29,7 @@ impl SyncObserver for LanSyncProgressObserver {
             return;
         };
 
-        self.runtime.emit_sync_progress(LanSyncSyncProgressEvent {
+        self.events.publish_progress(LanSyncSyncProgressEvent {
             phase,
             files_done: progress.files_done,
             files_total: progress.files_total,

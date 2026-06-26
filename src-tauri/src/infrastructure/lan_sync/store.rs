@@ -5,6 +5,7 @@ use rand::Rng;
 use serde::Deserialize;
 use ttsync_contract::sync::SyncMode;
 
+use crate::application::services::lan_sync_service::LanSyncSettingsRepository;
 use crate::application::services::sync_automation_service::{
     LoadedLanServerSettings, SyncAutomationLanSettingsRepository,
 };
@@ -141,6 +142,24 @@ impl SyncAutomationLanSettingsRepository for LanSyncStore {
         Ok(LanSyncStore::load_or_create_sync_preferences(self)
             .await?
             .manual_default_mode)
+    }
+}
+
+#[async_trait]
+impl LanSyncSettingsRepository for LanSyncStore {
+    async fn load_or_create_server_settings(&self) -> Result<LanServerSettings, DomainError> {
+        LanSyncStore::load_or_create_server_settings(self).await
+    }
+
+    async fn load_or_create_sync_preferences(&self) -> Result<SyncPreferences, DomainError> {
+        LanSyncStore::load_or_create_sync_preferences(self).await
+    }
+
+    async fn save_sync_preferences(
+        &self,
+        preferences: &SyncPreferences,
+    ) -> Result<(), DomainError> {
+        LanSyncStore::save_sync_preferences(self, preferences).await
     }
 }
 

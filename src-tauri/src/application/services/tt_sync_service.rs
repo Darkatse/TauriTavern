@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ttsync_contract::pair::{PairCompleteRequest, PairUri};
+use async_trait::async_trait;
+use ttsync_contract::pair::{PairCompleteRequest, PairCompleteResponse, PairUri};
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::sync::SyncMode;
 
@@ -11,19 +12,40 @@ use crate::domain::models::sync::{
     ResolvedSyncPolicy, SyncEndpointRef, SyncIntent, SyncJobReport, SyncJobRequest,
     SyncOperationOptions, SyncOrigin, resolve_sync_options,
 };
-use crate::domain::models::tt_sync::TtSyncPairedServer;
-use crate::infrastructure::sync::http_client::{SyncHttpClient, sync_error_to_domain};
-use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
+use crate::domain::models::tt_sync::{TtSyncIdentity, TtSyncPairedServer};
+
+#[async_trait]
+pub trait TtSyncRepository: Send + Sync {
+    async fn load_or_create_identity(&self) -> Result<TtSyncIdentity, DomainError>;
+    async fn load_paired_servers(&self) -> Result<Vec<TtSyncPairedServer>, DomainError>;
+    async fn upsert_paired_server(&self, server: TtSyncPairedServer) -> Result<(), DomainError>;
+    async fn remove_paired_server(&self, server_device_id: &DeviceId) -> Result<(), DomainError>;
+}
+
+#[async_trait]
+pub trait TtPairingClient: Send + Sync {
+    async fn complete_pairing(
+        &self,
+        pair: &PairUri,
+        request: &PairCompleteRequest,
+    ) -> Result<PairCompleteResponse, DomainError>;
+}
 
 pub struct TtSyncService {
-    runtime: Arc<TtSyncRuntime>,
+    repository: Arc<dyn TtSyncRepository>,
+    pairing_client: Arc<dyn TtPairingClient>,
     coordinator: Arc<SyncJobCoordinator>,
 }
 
 impl TtSyncService {
-    pub fn new(runtime: Arc<TtSyncRuntime>, coordinator: Arc<SyncJobCoordinator>) -> Self {
+    pub fn new(
+        repository: Arc<dyn TtSyncRepository>,
+        pairing_client: Arc<dyn TtPairingClient>,
+        coordinator: Arc<SyncJobCoordinator>,
+    ) -> Self {
         Self {
-            runtime,
+            repository,
+            pairing_client,
             coordinator,
         }
     }
@@ -40,9 +62,9 @@ impl TtSyncService {
             )));
         }
 
-        let identity = self.runtime.store.load_or_create_identity().await?;
+        let identity = self.repository.load_or_create_identity().await?;
         let device_pubkey = ttsync_core::crypto::device_pubkey_b64url(&identity.ed25519_seed)
-            .map_err(sync_error_to_domain)?;
+            .map_err(|error| DomainError::InvalidData(error.to_string()))?;
 
         let request = PairCompleteRequest {
             device_id: identity.device_id,
@@ -50,8 +72,10 @@ impl TtSyncService {
             device_pubkey,
         };
 
-        let api = SyncHttpClient::new(pair.url.clone(), pair.spki_sha256.clone())?;
-        let response = api.pair_complete(&pair.token, &request).await?;
+        let response = self
+            .pairing_client
+            .complete_pairing(&pair, &request)
+            .await?;
 
         let server = TtSyncPairedServer {
             server_device_id: response.server_device_id,
@@ -63,18 +87,20 @@ impl TtSyncService {
             last_sync_ms: None,
         };
 
-        self.runtime.upsert_paired_server(server.clone()).await?;
+        self.repository.upsert_paired_server(server.clone()).await?;
         Ok(server)
     }
 
     pub async fn list_servers(&self) -> Result<Vec<TtSyncPairedServer>, DomainError> {
-        self.runtime.load_paired_servers().await
+        self.repository.load_paired_servers().await
     }
 
     pub async fn remove_server(&self, server_device_id: &str) -> Result<(), DomainError> {
         let server_device_id = DeviceId::new(server_device_id.to_string())
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
-        self.runtime.remove_paired_server(&server_device_id).await
+        self.repository
+            .remove_paired_server(&server_device_id)
+            .await
     }
 
     pub async fn pull(

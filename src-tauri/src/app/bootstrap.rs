@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::{Mutex, oneshot};
 
 use crate::application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
 use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
@@ -26,7 +29,11 @@ use crate::application::services::extension_store_service::ExtensionStoreService
 use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::image_metadata_service::ImageMetadataService;
-use crate::application::services::lan_sync_service::LanSyncService;
+use crate::application::services::lan_sync_service::{
+    LanInboundService, LanPairingApprovalRequest, LanPeerRepository, LanServerControl,
+    LanSyncEventPublisher, LanSyncRuntimeState, LanSyncService, LanSyncSettingsRepository,
+    PairingApproval,
+};
 use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::native_regex_service::NativeRegexService;
 use crate::application::services::preset_service::PresetService;
@@ -52,6 +59,10 @@ use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
+use crate::domain::models::lan_sync::{
+    LanSyncPairRequestEvent, LanSyncSyncCompletedEvent, LanSyncSyncErrorEvent,
+    LanSyncSyncProgressEvent,
+};
 use crate::domain::models::sync_automation::{
     SyncAutomationStatus, SyncAutomationTarget, SyncAutomationToastEvent,
 };
@@ -99,7 +110,7 @@ use crate::infrastructure::apis::http_translate_repository::HttpTranslateReposit
 use crate::infrastructure::apis::http_tts_repository::HttpTtsRepository;
 use crate::infrastructure::apis::miktik_tokenizer_repository::MiktikTokenizerRepository;
 use crate::infrastructure::http_client_pool::HttpClientPool;
-use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
+use crate::infrastructure::lan_sync::store::LanSyncStore;
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
@@ -128,7 +139,11 @@ use crate::infrastructure::repositories::file_theme_repository::FileThemeReposit
 use crate::infrastructure::repositories::file_user_directory_repository::FileUserDirectoryRepository;
 use crate::infrastructure::repositories::file_user_repository::FileUserRepository;
 use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
+use crate::infrastructure::sync::http_client::HttpTtPairingClient;
 use crate::infrastructure::sync::job_executor::InfrastructureSyncJobExecutor;
+use crate::infrastructure::sync::lan::client::HttpLanPairingClient;
+use crate::infrastructure::sync::lan::control::AxumLanServerControl;
+use crate::infrastructure::sync::lan::discovery::LocalLanAddressDiscovery;
 use crate::infrastructure::sync::lan::store::LanPeerStore;
 use crate::infrastructure::sync_automation_store::SyncAutomationStore;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
@@ -260,6 +275,99 @@ impl SyncAutomationEventPublisher for TauriSyncAutomationEventPublisher {
     }
 }
 
+struct TauriLanSyncEventPublisher {
+    app_handle: AppHandle,
+}
+
+impl LanSyncEventPublisher for TauriLanSyncEventPublisher {
+    fn publish_progress(&self, payload: LanSyncSyncProgressEvent) {
+        if let Err(error) = self.app_handle.emit("lan_sync:progress", payload) {
+            tracing::warn!("Failed to emit LAN Sync progress: {}", error);
+        }
+    }
+
+    fn publish_completed(&self, payload: LanSyncSyncCompletedEvent) {
+        if let Err(error) = self.app_handle.emit("lan_sync:completed", payload) {
+            tracing::warn!("Failed to emit LAN Sync completion: {}", error);
+        }
+    }
+
+    fn publish_error(&self, payload: LanSyncSyncErrorEvent) {
+        if let Err(error) = self.app_handle.emit("lan_sync:error", payload) {
+            tracing::warn!("Failed to emit LAN Sync error: {}", error);
+        }
+    }
+}
+
+struct TauriPairingApproval {
+    app_handle: AppHandle,
+    pending: Mutex<HashMap<String, oneshot::Sender<bool>>>,
+}
+
+impl TauriPairingApproval {
+    fn new(app_handle: AppHandle) -> Self {
+        Self {
+            app_handle,
+            pending: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl PairingApproval for TauriPairingApproval {
+    async fn request(&self, request: LanPairingApprovalRequest) -> Result<bool, DomainError> {
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = self.pending.lock().await;
+            pending.insert(request.request_id.clone(), tx);
+        }
+
+        if let Err(error) = self.app_handle.emit(
+            "lan_sync:pair_request",
+            LanSyncPairRequestEvent {
+                request_id: request.request_id.clone(),
+                peer_device_id: request.peer_device_id,
+                peer_device_name: request.peer_device_name,
+                peer_ip: request.peer_ip,
+            },
+        ) {
+            self.pending.lock().await.remove(&request.request_id);
+            return Err(DomainError::InternalError(error.to_string()));
+        }
+
+        let timeout = Duration::from_millis(request.expires_at_ms.saturating_sub(now_ms()));
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(accepted)) => Ok(accepted),
+            Ok(Err(_)) => Err(DomainError::cancelled("Pairing request cancelled")),
+            Err(_) => {
+                self.pending.lock().await.remove(&request.request_id);
+                Err(DomainError::AuthenticationError(
+                    "Pairing expired".to_string(),
+                ))
+            }
+        }
+    }
+
+    async fn confirm(&self, request_id: &str, accept: bool) -> Result<(), DomainError> {
+        let tx = self
+            .pending
+            .lock()
+            .await
+            .remove(request_id)
+            .ok_or_else(|| {
+                DomainError::NotFound(format!("Pair request not found: {}", request_id))
+            })?;
+
+        tx.send(accept).map_err(|_| {
+            DomainError::InternalError("Pairing decision receiver dropped".to_string())
+        })
+    }
+
+    async fn cancel_all(&self) {
+        self.pending.lock().await.clear();
+    }
+}
+
 struct ServiceSyncAutomationLanServerControl {
     lan_sync_service: Arc<LanSyncService>,
     lan_sync_allowed: bool,
@@ -352,6 +460,13 @@ impl SyncAutomationEndpointCatalog for ServiceSyncAutomationEndpointCatalog {
         }
         Ok(())
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }
 
 pub(super) async fn initialize_data_directory(
@@ -525,19 +640,26 @@ pub(super) async fn build_services(
         group_service: group_service.clone(),
         secret_service: secret_service.clone(),
     });
-    let lan_runtime = Arc::new(LanSyncRuntime::new(
-        app_handle.clone(),
-        data_directory.root().to_path_buf(),
+    let lan_runtime_state = Arc::new(LanSyncRuntimeState::new());
+    let lan_settings_store = Arc::new(LanSyncStore::new(
         data_directory.default_user().to_path_buf(),
     ));
     let lan_peer_store = LanPeerStore::new(data_directory.default_user().to_path_buf());
+    let lan_settings_repository: Arc<dyn LanSyncSettingsRepository> = lan_settings_store.clone();
+    let lan_peer_repository: Arc<dyn LanPeerRepository> = Arc::new(lan_peer_store.clone());
+    let lan_sync_events: Arc<dyn LanSyncEventPublisher> = Arc::new(TauriLanSyncEventPublisher {
+        app_handle: app_handle.clone(),
+    });
+    let pairing_approval: Arc<dyn PairingApproval> =
+        Arc::new(TauriPairingApproval::new(app_handle.clone()));
     let tt_runtime = Arc::new(TtSyncRuntime::new(
         app_handle.clone(),
         data_directory.root().to_path_buf(),
         data_directory.default_user().to_path_buf(),
     ));
     let sync_job_executor = Arc::new(InfrastructureSyncJobExecutor::new(
-        lan_runtime.clone(),
+        data_directory.root().to_path_buf(),
+        lan_sync_events.clone(),
         lan_peer_store.clone(),
         tt_runtime.clone(),
     ));
@@ -545,22 +667,41 @@ pub(super) async fn build_services(
         sync_job_executor,
         data_change_reconciler.clone(),
     ));
+    let lan_inbound_service = Arc::new(LanInboundService::new(
+        lan_runtime_state.clone(),
+        lan_settings_repository.clone(),
+        lan_peer_repository.clone(),
+        sync_job_coordinator.clone(),
+        lan_sync_events.clone(),
+        pairing_approval.clone(),
+    ));
+    let lan_server_control: Arc<dyn LanServerControl> = Arc::new(AxumLanServerControl::new(
+        data_directory.root().to_path_buf(),
+        lan_peer_store.clone(),
+        lan_inbound_service.clone(),
+    ));
     let lan_sync_service = Arc::new(LanSyncService::new(
-        lan_runtime,
-        lan_peer_store,
+        lan_runtime_state,
+        lan_settings_repository,
+        lan_peer_repository,
+        lan_server_control,
+        Arc::new(LocalLanAddressDiscovery),
+        Arc::new(HttpLanPairingClient),
+        pairing_approval,
         sync_job_coordinator.clone(),
     ));
-    let tt_sync_service = Arc::new(TtSyncService::new(tt_runtime, sync_job_coordinator.clone()));
+    let tt_sync_service = Arc::new(TtSyncService::new(
+        tt_runtime.clone(),
+        Arc::new(HttpTtPairingClient),
+        sync_job_coordinator.clone(),
+    ));
     let sync_automation_events = Arc::new(TauriSyncAutomationEventPublisher {
         app_handle: app_handle.clone(),
     });
     let sync_automation_rules = Arc::new(SyncAutomationStore::new(
         data_directory.default_user().to_path_buf(),
     ));
-    let sync_automation_lan_settings =
-        Arc::new(crate::infrastructure::lan_sync::store::LanSyncStore::new(
-            data_directory.default_user().to_path_buf(),
-        ));
+    let sync_automation_lan_settings = lan_settings_store.clone();
     let sync_automation_endpoint_catalog = Arc::new(ServiceSyncAutomationEndpointCatalog {
         lan_sync_service: lan_sync_service.clone(),
         tt_sync_service: tt_sync_service.clone(),

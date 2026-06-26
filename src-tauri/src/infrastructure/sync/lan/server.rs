@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -21,15 +20,13 @@ use ttsync_core::session::{SessionManager, SessionManagerConfig};
 use ttsync_http::server::{ServerState, build_transfer_router, default_status_response};
 use ttsync_http::tls::{SelfManagedTls, TlsProvider};
 
+use crate::application::services::lan_sync_service::{
+    LanInboundRequestHandler, LanServerInfo, PAIRING_REJECTED_MESSAGE,
+};
 use crate::domain::errors::DomainError;
-use crate::domain::models::lan_sync::{LanSyncIdentity, LanSyncPairedDevice};
+use crate::domain::models::lan_sync::{LanPairCompleteRequest, LanPairCompleteResponse};
 use crate::domain::models::sync::SyncOperationOptions;
 use crate::infrastructure::sync::http_client::{domain_error_to_sync, sync_error_to_domain};
-use crate::infrastructure::sync::lan::pairing::{
-    LanPairCompleteRequest, LanPairCompleteResponse, LanPairingCoordinator,
-    decode_device_pubkey_b64url, default_lan_permissions, host_for_pairing_prompt,
-    validate_https_base_url,
-};
 use crate::infrastructure::sync::lan::store::LanPeerStore;
 use crate::infrastructure::sync_fs;
 use crate::infrastructure::sync_transfer;
@@ -38,15 +35,6 @@ use crate::infrastructure::tt_sync::fs::scan_manifest_with_policy;
 const LAN_HTTPS_FEATURE_V1: &str = "lan_https_v1";
 const LAN_SESSION_FEATURE_V1: &str = "lan_session_v1";
 pub(crate) const LAN_PULL_REQUEST_SELECTION_FEATURE_V1: &str = "lan_pull_request_selection_v1";
-
-#[async_trait]
-pub trait LanPullRequestHandler: Send + Sync {
-    async fn accept_pull_request(
-        &self,
-        peer_device_id: DeviceId,
-        options: SyncOperationOptions,
-    ) -> Result<(), DomainError>;
-}
 
 pub struct LanSyncServerHandle {
     pub addr: SocketAddr,
@@ -59,6 +47,13 @@ impl LanSyncServerHandle {
     pub fn shutdown(self) {
         self.handle.graceful_shutdown(Some(Duration::from_secs(5)));
     }
+
+    pub fn info(&self) -> LanServerInfo {
+        LanServerInfo {
+            port: self.addr.port(),
+            spki_sha256: self.spki_sha256.clone(),
+        }
+    }
 }
 
 type SharedLanServerState = ServerState<LanManifestStore, LanServerPeerStore>;
@@ -67,8 +62,7 @@ pub async fn spawn_lan_sync_server(
     addr: SocketAddr,
     sync_root: PathBuf,
     store: LanPeerStore,
-    pairing: Arc<dyn LanPairingCoordinator>,
-    pull_requests: Arc<dyn LanPullRequestHandler>,
+    inbound: Arc<dyn LanInboundRequestHandler>,
 ) -> Result<LanSyncServerHandle, DomainError> {
     let identity = store.load_or_create_identity().await?;
     let tls = SelfManagedTls::load_or_create(&store.state_dir()).map_err(sync_error_to_domain)?;
@@ -99,10 +93,7 @@ pub async fn spawn_lan_sync_server(
         .with_status(status),
     );
     let lan_state = Arc::new(LanServerState {
-        identity,
-        store,
-        pairing,
-        pull_requests,
+        inbound,
         shared: shared_state.clone(),
     });
 
@@ -304,10 +295,7 @@ impl PeerStore for LanServerPeerStore {
 }
 
 struct LanServerState {
-    identity: LanSyncIdentity,
-    store: LanPeerStore,
-    pairing: Arc<dyn LanPairingCoordinator>,
-    pull_requests: Arc<dyn LanPullRequestHandler>,
+    inbound: Arc<dyn LanInboundRequestHandler>,
     shared: Arc<SharedLanServerState>,
 }
 
@@ -321,75 +309,12 @@ async fn handle_lan_pair_complete(
     Query(query): Query<PairQuery>,
     Json(request): Json<LanPairCompleteRequest>,
 ) -> Result<Json<LanPairCompleteResponse>, ApiError> {
-    let session = state
-        .pairing
-        .active_pairing_session()
-        .await
-        .ok_or_else(|| ApiError::unauthorized("Pairing not enabled"))?;
-
-    if query.token != session.token {
-        return Err(ApiError::unauthorized("Invalid pairing token"));
-    }
-    if now_ms() > session.expires_at_ms {
-        return Err(ApiError::unauthorized("Pairing expired"));
-    }
-    if request.device_id == state.identity.device_id {
-        return Err(ApiError::invalid_data(
-            "Cannot pair LAN Sync device with itself",
-        ));
-    }
-
-    validate_https_base_url(&request.client_base_url).map_err(ApiError::from)?;
-    if request.client_spki_sha256.trim().is_empty() {
-        return Err(ApiError::invalid_data("Missing LAN Sync client SPKI"));
-    }
-    let public_key = decode_device_pubkey_b64url(&request.device_pubkey).map_err(ApiError::from)?;
-
-    let peer_ip = host_for_pairing_prompt(&request.client_base_url).map_err(ApiError::from)?;
-    let accepted = state
-        .pairing
-        .request_pairing_decision(
-            request.device_id.to_string(),
-            request.device_name.clone(),
-            peer_ip,
-        )
+    let response = state
+        .inbound
+        .complete_pairing(query.token, request)
         .await
         .map_err(ApiError::from)?;
-
-    if !accepted {
-        return Err(ApiError::forbidden("Pairing rejected"));
-    }
-
-    let permissions = default_lan_permissions();
-    let paired_at_ms = now_ms();
-    state
-        .store
-        .upsert_paired_device(LanSyncPairedDevice {
-            grant: PeerGrant {
-                device_id: request.device_id,
-                device_name: request.device_name,
-                public_key,
-                permissions,
-                paired_at_ms,
-                last_sync_ms: None,
-            },
-            base_url: request.client_base_url,
-            spki_sha256: request.client_spki_sha256,
-        })
-        .await
-        .map_err(ApiError::from)?;
-
-    state.pairing.clear_pairing_session().await;
-
-    let server_device_pubkey =
-        ttsync_core::crypto::device_pubkey_b64url(&state.identity.ed25519_seed)
-            .map_err(ApiError::from)?;
-    Ok(Json(LanPairCompleteResponse {
-        server_device_id: state.identity.device_id.clone(),
-        server_device_name: state.identity.device_name.clone(),
-        server_device_pubkey,
-        granted_permissions: permissions,
-    }))
+    Ok(Json(response))
 }
 
 async fn handle_pull_request(
@@ -407,7 +332,7 @@ async fn handle_pull_request(
         .unwrap_or_default()
         .validate()?;
     state
-        .pull_requests
+        .inbound
         .accept_pull_request(peer.device_id, options)
         .await
         .map_err(ApiError::from)?;
@@ -422,33 +347,12 @@ async fn handle_pull_request(
 
 #[derive(Debug)]
 struct ApiError {
-    status_override: Option<StatusCode>,
     error: DomainError,
-}
-
-impl ApiError {
-    fn invalid_data(message: impl Into<String>) -> Self {
-        Self::from(DomainError::InvalidData(message.into()))
-    }
-
-    fn unauthorized(message: impl Into<String>) -> Self {
-        Self::from(DomainError::AuthenticationError(message.into()))
-    }
-
-    fn forbidden(message: impl Into<String>) -> Self {
-        Self {
-            status_override: Some(StatusCode::FORBIDDEN),
-            error: DomainError::AuthenticationError(message.into()),
-        }
-    }
 }
 
 impl From<DomainError> for ApiError {
     fn from(error: DomainError) -> Self {
-        Self {
-            status_override: None,
-            error,
-        }
+        Self { error }
     }
 }
 
@@ -458,6 +362,7 @@ impl From<SyncError> for ApiError {
     }
 }
 
+#[cfg(test)]
 fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -472,8 +377,11 @@ impl IntoResponse for ApiError {
         let (status, message) = match self.error {
             DomainError::NotFound(message) => (StatusCode::NOT_FOUND, message),
             DomainError::InvalidData(message) => (StatusCode::BAD_REQUEST, message),
+            DomainError::AuthenticationError(message) if message == PAIRING_REJECTED_MESSAGE => {
+                (StatusCode::FORBIDDEN, message)
+            }
             DomainError::AuthenticationError(message) => (StatusCode::UNAUTHORIZED, message),
-            DomainError::Cancelled(message) => (StatusCode::from_u16(499).unwrap(), message),
+            DomainError::Cancelled(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
             DomainError::InternalError(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
             DomainError::RateLimited { message } => (StatusCode::TOO_MANY_REQUESTS, message),
             DomainError::Transient(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
@@ -489,8 +397,6 @@ impl IntoResponse for ApiError {
                 format!("Workspace write conflict: {kind}"),
             ),
         };
-        let status = self.status_override.unwrap_or(status);
-
         (
             status,
             Json(json!({
@@ -526,24 +432,29 @@ mod tests {
     use ttsync_core::dataset::tauri_tavern_default_selection;
     use uuid::Uuid;
 
+    use crate::domain::models::lan_sync::LanSyncPairedDevice;
     use crate::infrastructure::sync::http_client::new_sync_client;
     use crate::infrastructure::sync::lan::client::{LanSyncClient, complete_pairing};
-    use crate::infrastructure::sync::lan::pairing::{LanPairingCoordinator, LanPairingSession};
     use crate::infrastructure::sync::workspace::TauriTavernSyncWorkspace;
 
     fn temp_default_user_dir() -> PathBuf {
         std::env::temp_dir().join(format!("tauritavern-lan-server-{}", Uuid::new_v4()))
     }
 
-    struct TestPairingCoordinator {
-        session: Option<LanPairingSession>,
-        accept: bool,
-    }
-
-    struct NoopPullRequestHandler;
+    struct NoopInboundHandler;
 
     #[async_trait]
-    impl LanPullRequestHandler for NoopPullRequestHandler {
+    impl LanInboundRequestHandler for NoopInboundHandler {
+        async fn complete_pairing(
+            &self,
+            _token: String,
+            _request: LanPairCompleteRequest,
+        ) -> Result<LanPairCompleteResponse, DomainError> {
+            Err(DomainError::AuthenticationError(
+                "Pairing not enabled".to_string(),
+            ))
+        }
+
         async fn accept_pull_request(
             &self,
             _peer_device_id: DeviceId,
@@ -553,43 +464,70 @@ mod tests {
         }
     }
 
+    struct RecordingPairingInboundHandler {
+        token: String,
+        requests: std::sync::Mutex<Vec<(String, LanPairCompleteRequest)>>,
+    }
+
     #[async_trait]
-    impl LanPairingCoordinator for TestPairingCoordinator {
-        async fn active_pairing_session(&self) -> Option<LanPairingSession> {
-            self.session.clone()
-        }
-
-        async fn request_pairing_decision(
+    impl LanInboundRequestHandler for RecordingPairingInboundHandler {
+        async fn complete_pairing(
             &self,
-            _peer_device_id: String,
-            _peer_device_name: String,
-            _peer_ip: String,
-        ) -> Result<bool, DomainError> {
-            Ok(self.accept)
+            token: String,
+            request: LanPairCompleteRequest,
+        ) -> Result<LanPairCompleteResponse, DomainError> {
+            if token != self.token {
+                return Err(DomainError::AuthenticationError(
+                    "Invalid pairing token".to_string(),
+                ));
+            }
+            self.requests
+                .lock()
+                .expect("pairing request lock")
+                .push((token, request));
+
+            Ok(LanPairCompleteResponse {
+                server_device_id: DeviceId::new("11111111-1111-4111-8111-111111111111".to_string())
+                    .unwrap(),
+                server_device_name: "Server".to_string(),
+                server_device_pubkey: URL_SAFE_NO_PAD.encode([8u8; 32]),
+                granted_permissions: Permissions {
+                    read: true,
+                    write: false,
+                    mirror_delete: true,
+                },
+            })
         }
 
-        async fn clear_pairing_session(&self) {}
+        async fn accept_pull_request(
+            &self,
+            _peer_device_id: DeviceId,
+            _options: SyncOperationOptions,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
     }
 
-    fn inactive_pairing() -> Arc<dyn LanPairingCoordinator> {
-        Arc::new(TestPairingCoordinator {
-            session: None,
-            accept: false,
-        })
+    fn noop_inbound() -> Arc<dyn LanInboundRequestHandler> {
+        Arc::new(NoopInboundHandler)
     }
 
-    fn accepting_pairing(token: &str) -> Arc<dyn LanPairingCoordinator> {
-        Arc::new(TestPairingCoordinator {
-            session: Some(LanPairingSession {
-                token: token.to_string(),
-                expires_at_ms: now_ms() + 60_000,
-            }),
-            accept: true,
-        })
+    #[test]
+    fn pairing_rejection_maps_to_forbidden() {
+        let response = ApiError::from(DomainError::AuthenticationError(
+            PAIRING_REJECTED_MESSAGE.to_string(),
+        ))
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
-    fn noop_pull_requests() -> Arc<dyn LanPullRequestHandler> {
-        Arc::new(NoopPullRequestHandler)
+    #[test]
+    fn cancelled_pairing_maps_to_service_unavailable() {
+        let response =
+            ApiError::from(DomainError::cancelled("Pairing request cancelled")).into_response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -600,8 +538,7 @@ mod tests {
             "127.0.0.1:0".parse().unwrap(),
             default_user_dir.clone(),
             store,
-            inactive_pairing(),
-            noop_pull_requests(),
+            noop_inbound(),
         )
         .await
         .expect("spawn LAN Sync server");
@@ -648,16 +585,19 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn pair_complete_stores_peer_grant() {
+    async fn pair_complete_delegates_to_inbound_handler() {
         let default_user_dir = temp_default_user_dir();
         let store = LanPeerStore::new(default_user_dir.clone());
         let token = "pair-token";
+        let inbound = Arc::new(RecordingPairingInboundHandler {
+            token: token.to_string(),
+            requests: std::sync::Mutex::new(Vec::new()),
+        });
         let handle = spawn_lan_sync_server(
             "127.0.0.1:0".parse().unwrap(),
             default_user_dir.clone(),
             store.clone(),
-            accepting_pairing(token),
-            noop_pull_requests(),
+            inbound.clone(),
         )
         .await
         .expect("spawn LAN Sync server");
@@ -682,15 +622,14 @@ mod tests {
         assert!(response.granted_permissions.read);
         assert!(response.granted_permissions.mirror_delete);
         assert!(!response.granted_permissions.write);
-        assert!(!response.server_device_pubkey.is_empty());
+        assert_eq!(response.server_device_name, "Server");
 
-        let peer = store
-            .get_paired_device(&peer_device_id)
-            .await
-            .expect("stored peer");
-        assert_eq!(peer.base_url, "https://127.0.0.1:60000");
-        assert_eq!(peer.spki_sha256, "client-spki");
-        assert_eq!(peer.grant.public_key, vec![9u8; 32]);
+        let requests = inbound.requests.lock().expect("pairing request lock");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, token);
+        assert_eq!(requests[0].1.device_id, peer_device_id);
+        assert_eq!(requests[0].1.client_base_url, "https://127.0.0.1:60000");
+        assert_eq!(requests[0].1.client_spki_sha256, "client-spki");
 
         handle.shutdown();
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;
@@ -740,8 +679,7 @@ mod tests {
             "127.0.0.1:0".parse().unwrap(),
             sync_root.clone(),
             store,
-            inactive_pairing(),
-            noop_pull_requests(),
+            noop_inbound(),
         )
         .await
         .expect("spawn LAN Sync server");

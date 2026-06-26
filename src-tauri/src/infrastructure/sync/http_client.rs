@@ -1,6 +1,6 @@
 use reqwest::{Client, Response};
 use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1};
-use ttsync_contract::pair::{PairCompleteRequest, PairCompleteResponse};
+use ttsync_contract::pair::{PairCompleteRequest, PairCompleteResponse, PairUri};
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::session::{SessionOpenResponse, SessionToken};
 use ttsync_contract::status::StatusResponse;
@@ -11,6 +11,7 @@ use ttsync_http::client::{
 };
 use url::Url;
 
+use crate::application::services::tt_sync_service::TtPairingClient;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::http_client::APP_USER_AGENT;
 
@@ -184,6 +185,21 @@ pub(crate) fn domain_error_to_sync(error: DomainError) -> SyncError {
         DomainError::WorkspaceWriteConflict { kind, .. } => {
             SyncError::InvalidData(format!("Workspace write conflict: {kind}"))
         }
+    }
+}
+
+pub struct HttpTtPairingClient;
+
+#[async_trait::async_trait]
+impl TtPairingClient for HttpTtPairingClient {
+    async fn complete_pairing(
+        &self,
+        pair: &PairUri,
+        request: &PairCompleteRequest,
+    ) -> Result<PairCompleteResponse, DomainError> {
+        SyncHttpClient::new(pair.url.clone(), pair.spki_sha256.clone())?
+            .pair_complete(&pair.token, request)
+            .await
     }
 }
 

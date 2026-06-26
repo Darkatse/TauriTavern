@@ -7,9 +7,10 @@ use tokio::sync::Mutex;
 
 use ttsync_contract::peer::DeviceId;
 
+use crate::application::services::tt_sync_service::TtSyncRepository;
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::SyncOrigin;
-use crate::domain::models::tt_sync::{TtSyncPairedServer, TtSyncProgressEvent};
+use crate::domain::models::tt_sync::{TtSyncIdentity, TtSyncPairedServer, TtSyncProgressEvent};
 use crate::infrastructure::tt_sync::store::TtSyncStore;
 
 pub struct TtSyncRuntime {
@@ -17,6 +18,25 @@ pub struct TtSyncRuntime {
     pub sync_root: PathBuf,
     pub store: TtSyncStore,
     paired_servers_cache: Mutex<Option<HashMap<String, TtSyncPairedServer>>>,
+}
+
+#[async_trait::async_trait]
+impl TtSyncRepository for TtSyncRuntime {
+    async fn load_or_create_identity(&self) -> Result<TtSyncIdentity, DomainError> {
+        self.store.load_or_create_identity().await
+    }
+
+    async fn load_paired_servers(&self) -> Result<Vec<TtSyncPairedServer>, DomainError> {
+        TtSyncRuntime::load_paired_servers(self).await
+    }
+
+    async fn upsert_paired_server(&self, server: TtSyncPairedServer) -> Result<(), DomainError> {
+        TtSyncRuntime::upsert_paired_server(self, server).await
+    }
+
+    async fn remove_paired_server(&self, server_device_id: &DeviceId) -> Result<(), DomainError> {
+        TtSyncRuntime::remove_paired_server(self, server_device_id).await
+    }
 }
 
 impl TtSyncRuntime {

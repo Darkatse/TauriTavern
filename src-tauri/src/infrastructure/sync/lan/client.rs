@@ -1,13 +1,19 @@
+use async_trait::async_trait;
 #[cfg(test)]
 use reqwest::Response;
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::session::{SessionOpenResponse, SessionToken};
 use ttsync_contract::status::StatusResponse;
 
+use crate::application::services::lan_sync_service::LanPairingClient;
 use crate::domain::errors::DomainError;
+use crate::domain::models::lan_sync::{LanPairCompleteRequest, LanPairCompleteResponse};
 use crate::domain::models::sync::SyncOperationOptions;
-use crate::infrastructure::sync::http_client::{SyncHttpClient, bearer_auth_value, ensure_success};
-use crate::infrastructure::sync::lan::pairing::{LanPairCompleteRequest, LanPairCompleteResponse};
+use crate::infrastructure::sync::http_client::{
+    SyncHttpClient, bearer_auth_value, ensure_dataset_scope_v1, ensure_success,
+};
+use crate::infrastructure::sync::lan::server::LAN_PULL_REQUEST_SELECTION_FEATURE_V1;
+use crate::infrastructure::sync::lan::store::LanPeerStore;
 
 #[derive(Clone)]
 pub struct LanSyncClient {
@@ -131,5 +137,51 @@ pub async fn complete_pairing(
 ) -> Result<LanPairCompleteResponse, DomainError> {
     LanSyncClient::new(base_url.to_string(), spki_sha256.to_string())?
         .pair_complete(token, request)
+        .await
+}
+
+pub struct HttpLanPairingClient;
+
+#[async_trait]
+impl LanPairingClient for HttpLanPairingClient {
+    async fn complete_pairing(
+        &self,
+        base_url: &str,
+        spki_sha256: &str,
+        token: &str,
+        request: &LanPairCompleteRequest,
+    ) -> Result<LanPairCompleteResponse, DomainError> {
+        complete_pairing(base_url, spki_sha256, token, request).await
+    }
+}
+
+pub async fn request_peer_pull(
+    store: LanPeerStore,
+    device_id: &DeviceId,
+    options: SyncOperationOptions,
+) -> Result<(), DomainError> {
+    let mut peer = store.get_paired_device(device_id).await?;
+    let identity = store.load_or_create_identity().await?;
+
+    let api = LanSyncClient::new(peer.base_url.clone(), peer.spki_sha256.clone())?;
+    let status = api.status().await?;
+    ensure_dataset_scope_v1(&status, "LAN Sync peer")?;
+    if options.require_bundle_zstd
+        && !status
+            .features
+            .iter()
+            .any(|feature| feature == LAN_PULL_REQUEST_SELECTION_FEATURE_V1)
+    {
+        return Err(DomainError::InvalidData(
+            "LAN Sync peer does not support scoped pull requests".to_string(),
+        ));
+    }
+    let session = api
+        .open_session(&identity.device_id, &identity.ed25519_seed)
+        .await?;
+    peer.grant.permissions = session.granted_permissions;
+    store.upsert_paired_device(peer).await?;
+
+    api.notify_pull_request(&session.session_token, &options)
         .await
 }

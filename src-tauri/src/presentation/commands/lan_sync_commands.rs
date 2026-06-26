@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use qrcode::QrCode;
 use serde::Serialize;
 use tauri::State;
 use ttsync_contract::sync::SyncMode;
@@ -80,11 +81,14 @@ pub async fn lan_sync_enable_pairing(
         .lan_sync_service
         .enable_pairing(address)
         .await
-        .map(|info| LanSyncPairingInfoDto {
-            address: info.address,
-            pair_uri: info.pair_uri,
-            qr_svg: info.qr_svg,
-            expires_at_ms: info.expires_at_ms,
+        .and_then(|info| {
+            let qr_svg = generate_qr_svg(&info.pair_uri)?;
+            Ok(LanSyncPairingInfoDto {
+                address: info.address,
+                pair_uri: info.pair_uri,
+                qr_svg,
+                expires_at_ms: info.expires_at_ms,
+            })
         })
         .map_err(map_command_error("Failed to enable LAN sync pairing"))
 }
@@ -101,11 +105,14 @@ pub async fn lan_sync_get_pairing_info(
         .lan_sync_service
         .get_pairing_info(&address)
         .await
-        .map(|info| LanSyncPairingInfoDto {
-            address: info.address,
-            pair_uri: info.pair_uri,
-            qr_svg: info.qr_svg,
-            expires_at_ms: info.expires_at_ms,
+        .and_then(|info| {
+            let qr_svg = generate_qr_svg(&info.pair_uri)?;
+            Ok(LanSyncPairingInfoDto {
+                address: info.address,
+                pair_uri: info.pair_uri,
+                qr_svg,
+                expires_at_ms: info.expires_at_ms,
+            })
         })
         .map_err(map_command_error("Failed to get LAN sync pairing info"))
 }
@@ -255,4 +262,13 @@ pub async fn lan_sync_clear_sync_mode_override(
 
     app_state.lan_sync_service.clear_sync_mode_override().await;
     Ok(())
+}
+
+fn generate_qr_svg(text: &str) -> Result<String, crate::domain::errors::DomainError> {
+    let code = QrCode::new(text.as_bytes())
+        .map_err(|error| crate::domain::errors::DomainError::InternalError(error.to_string()))?;
+    Ok(code
+        .render::<qrcode::render::svg::Color>()
+        .min_dimensions(200, 200)
+        .build())
 }

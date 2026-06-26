@@ -65,7 +65,9 @@ Agent run retention 复用同一套 run storage class 词汇来描述 `run_journ
   - 进度：`lan_sync:progress`
   - 后台 inbound pull-request 完成/错误：`lan_sync:completed` / `lan_sync:error`
   - 手动作业完成/错误：命令返回 `SyncJobReport`
-  - runtime：`src-tauri/src/infrastructure/lan_sync/runtime.rs`
+  - 应用边界：`src-tauri/src/application/services/lan_sync_service.rs`
+  - Tauri event / pairing approval adapter：`src-tauri/src/app/bootstrap.rs`
+  - Axum server lifecycle adapter：`src-tauri/src/infrastructure/sync/lan/control.rs`
 - TT-Sync：
   - 进度：`tt_sync:progress`
   - 完成/错误：手动命令通过 `SyncJobReport` 返回；不额外发 `tt_sync:completed` / `tt_sync:error`

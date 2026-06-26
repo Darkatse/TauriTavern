@@ -227,6 +227,12 @@ pub fn run() {
             ) && let Some(state) = app_handle.try_state::<std::sync::Arc<app::AppState>>()
             {
                 state.sync_automation_cancel.cancel();
+                let lan_sync_service = state.lan_sync_service.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = lan_sync_service.shutdown().await {
+                        tracing::warn!("Failed to shut down LAN Sync cleanly: {}", error);
+                    }
+                });
             }
         });
 }

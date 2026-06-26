@@ -4,6 +4,7 @@ use ttsync_contract::peer::{DeviceId, PeerGrant};
 use ttsync_core::crypto::random_base64url;
 use uuid::Uuid;
 
+use crate::application::services::lan_sync_service::LanPeerRepository;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{LanSyncIdentity, LanSyncPairedDevice};
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
@@ -11,6 +12,25 @@ use crate::infrastructure::persistence::file_system::{read_json_file, write_json
 #[derive(Debug, Clone)]
 pub struct LanPeerStore {
     state_dir: PathBuf,
+}
+
+#[async_trait::async_trait]
+impl LanPeerRepository for LanPeerStore {
+    async fn load_or_create_identity(&self) -> Result<LanSyncIdentity, DomainError> {
+        LanPeerStore::load_or_create_identity(self).await
+    }
+
+    async fn load_paired_devices(&self) -> Result<Vec<LanSyncPairedDevice>, DomainError> {
+        LanPeerStore::load_paired_devices(self).await
+    }
+
+    async fn upsert_paired_device(&self, device: LanSyncPairedDevice) -> Result<(), DomainError> {
+        LanPeerStore::upsert_paired_device(self, device).await
+    }
+
+    async fn remove_paired_device(&self, device_id: &DeviceId) -> Result<(), DomainError> {
+        LanPeerStore::remove_paired_device(self, device_id).await
+    }
 }
 
 impl LanPeerStore {

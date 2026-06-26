@@ -8,6 +8,7 @@ use ttsync_client::{
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::sync::SyncMode;
 
+use crate::application::services::lan_sync_service::LanSyncEventPublisher;
 use crate::application::services::sync_job_coordinator::SyncJobExecutor;
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::{
@@ -15,9 +16,8 @@ use crate::domain::models::sync::{
     SyncExecutionKind, SyncExecutionReport, SyncJob, SyncJobSummary, SyncOperationOptions,
     SyncOrigin,
 };
-use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
 use crate::infrastructure::sync::http_client::{new_sync_client, sync_error_to_domain};
-use crate::infrastructure::sync::lan::notify::request_peer_pull as request_lan_peer_pull;
+use crate::infrastructure::sync::lan::client::request_peer_pull as request_lan_peer_pull;
 use crate::infrastructure::sync::lan::store::LanPeerStore;
 use crate::infrastructure::sync::observer::{LanSyncProgressObserver, TtSyncProgressObserver};
 use crate::infrastructure::sync::workspace::TauriTavernSyncWorkspace;
@@ -25,19 +25,22 @@ use crate::infrastructure::sync_transfer;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 
 pub struct InfrastructureSyncJobExecutor {
-    lan_runtime: Arc<LanSyncRuntime>,
+    lan_sync_root: std::path::PathBuf,
+    lan_events: Arc<dyn LanSyncEventPublisher>,
     lan_peer_store: LanPeerStore,
     tt_runtime: Arc<TtSyncRuntime>,
 }
 
 impl InfrastructureSyncJobExecutor {
     pub fn new(
-        lan_runtime: Arc<LanSyncRuntime>,
+        lan_sync_root: std::path::PathBuf,
+        lan_events: Arc<dyn LanSyncEventPublisher>,
         lan_peer_store: LanPeerStore,
         tt_runtime: Arc<TtSyncRuntime>,
     ) -> Self {
         Self {
-            lan_runtime,
+            lan_sync_root,
+            lan_events,
             lan_peer_store,
             tt_runtime,
         }
@@ -52,9 +55,7 @@ impl InfrastructureSyncJobExecutor {
         let mut peer = self.lan_peer_store.get_paired_device(&device_id).await?;
         let identity = self.lan_peer_store.load_or_create_identity().await?;
         let client = new_sync_client(peer.base_url.clone(), peer.spki_sha256.clone())?;
-        let workspace = Arc::new(TauriTavernSyncWorkspace::new(
-            self.lan_runtime.sync_root.clone(),
-        ));
+        let workspace = Arc::new(TauriTavernSyncWorkspace::new(self.lan_sync_root.clone()));
         let engine = ClientSyncEngine::new(
             client,
             workspace,
@@ -64,7 +65,7 @@ impl InfrastructureSyncJobExecutor {
             },
             "LAN Sync peer",
         );
-        let observer = LanSyncProgressObserver::new(self.lan_runtime.clone());
+        let observer = LanSyncProgressObserver::new(self.lan_events.clone());
         let result = engine
             .pull(
                 client_options(mode, options, sync_transfer::default_transfer_concurrency()),

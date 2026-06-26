@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use ttsync_contract::peer::{DeviceId, PeerGrant};
+use ttsync_contract::peer::{DeviceId, PeerGrant, Permissions};
 use ttsync_contract::sync::SyncMode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +36,23 @@ pub struct LanSyncPairedDevice {
     pub grant: PeerGrant,
     pub base_url: String,
     pub spki_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanPairCompleteRequest {
+    pub device_id: DeviceId,
+    pub device_name: String,
+    pub device_pubkey: String,
+    pub client_base_url: String,
+    pub client_spki_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanPairCompleteResponse {
+    pub server_device_id: DeviceId,
+    pub server_device_name: String,
+    pub server_device_pubkey: String,
+    pub granted_permissions: Permissions,
 }
 
 impl From<LanSyncPairedDevice> for LanSyncPairedDeviceSummary {
