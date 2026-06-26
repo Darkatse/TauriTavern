@@ -1890,23 +1890,22 @@ async fn agent_handoff_continues_after_prior_commit() {
     profile.delegation.can_handoff = true;
     profile.tools.allow.push("agent.handoff".to_string());
 
-    let resolver = tokio::spawn(resolve_chat_commits_and_persistent_state_update(
-        service.clone(),
-        repository.clone(),
-        run.id.clone(),
-        vec!["message_draft", "message_final"],
-    ));
-    service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
-        .await
-        .expect("agent loop");
-    resolver.await.expect("resolver task");
+    execute_agent_loop_with_host_resolver(
+        &service,
+        &run.id,
+        prompt_snapshot,
+        request,
+        profile,
+        &mut cancel_receiver,
+        resolve_chat_commits_and_persistent_state_update(
+            service.clone(),
+            repository.clone(),
+            run.id.clone(),
+            vec!["message_draft", "message_final"],
+        ),
+    )
+    .await
+    .expect("agent loop");
 
     let saved = repository.load_run(&run.id).await.expect("load run");
     assert_eq!(saved.status, AgentRunStatus::Completed);
@@ -4509,23 +4508,22 @@ async fn foreground_run_commits_chat_message_before_finish() {
     let mut profile = test_resolved_profile(&root).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
 
-    let resolver = tokio::spawn(resolve_next_chat_commit_and_persistent_state_update(
-        service.clone(),
-        repository.clone(),
-        run.id.clone(),
-        "message_1",
-    ));
-    service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
-        .await
-        .expect("agent loop");
-    resolver.await.expect("resolver task");
+    execute_agent_loop_with_host_resolver(
+        &service,
+        &run.id,
+        prompt_snapshot,
+        request,
+        profile,
+        &mut cancel_receiver,
+        resolve_next_chat_commit_and_persistent_state_update(
+            service.clone(),
+            repository.clone(),
+            run.id.clone(),
+            "message_1",
+        ),
+    )
+    .await
+    .expect("agent loop");
 
     let saved = repository.load_run(&run.id).await.expect("load run");
     assert_eq!(saved.status, AgentRunStatus::Completed);
@@ -4713,22 +4711,21 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
     profile.run.presentation = AgentRunPresentation::Foreground;
     profile.tools.max_rounds = 5;
 
-    let resolver = tokio::spawn(resolve_next_chat_commit(
-        service.clone(),
-        repository.clone(),
-        run.id.clone(),
-        "message_42",
-    ));
-    let outcome = service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
-        .await;
-    resolver.await.expect("resolver task");
+    let outcome = execute_agent_loop_with_host_resolver(
+        &service,
+        &run.id,
+        prompt_snapshot,
+        request,
+        profile,
+        &mut cancel_receiver,
+        resolve_next_chat_commit(
+            service.clone(),
+            repository.clone(),
+            run.id.clone(),
+            "message_42",
+        ),
+    )
+    .await;
 
     assert!(
         outcome.is_err(),
@@ -4962,23 +4959,22 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
     profile.run.presentation = AgentRunPresentation::Foreground;
     let max_rounds = profile.tools.max_rounds;
 
-    let resolver = tokio::spawn(resolve_next_chat_commit_and_persistent_state_update(
-        service.clone(),
-        repository.clone(),
-        run.id.clone(),
-        "message_recovery_42",
-    ));
-    service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
-        .await
-        .expect("recovery should let the run complete");
-    resolver.await.expect("resolver task");
+    execute_agent_loop_with_host_resolver(
+        &service,
+        &run.id,
+        prompt_snapshot,
+        request,
+        profile,
+        &mut cancel_receiver,
+        resolve_next_chat_commit_and_persistent_state_update(
+            service.clone(),
+            repository.clone(),
+            run.id.clone(),
+            "message_recovery_42",
+        ),
+    )
+    .await
+    .expect("recovery should let the run complete");
 
     let saved = repository.load_run(&run.id).await.expect("load run");
     assert_eq!(saved.status, AgentRunStatus::Completed);
@@ -5187,23 +5183,22 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
     profile.run.presentation = AgentRunPresentation::Foreground;
     let max_rounds = profile.tools.max_rounds;
 
-    let resolver = tokio::spawn(resolve_next_chat_commit_and_persistent_state_update(
-        service.clone(),
-        repository.clone(),
-        run.id.clone(),
-        "message_nocommit_42",
-    ));
-    service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
-        .await
-        .expect("recovery should let the run complete");
-    resolver.await.expect("resolver task");
+    execute_agent_loop_with_host_resolver(
+        &service,
+        &run.id,
+        prompt_snapshot,
+        request,
+        profile,
+        &mut cancel_receiver,
+        resolve_next_chat_commit_and_persistent_state_update(
+            service.clone(),
+            repository.clone(),
+            run.id.clone(),
+            "message_nocommit_42",
+        ),
+    )
+    .await
+    .expect("recovery should let the run complete");
 
     let saved = repository.load_run(&run.id).await.expect("load run");
     assert_eq!(saved.status, AgentRunStatus::Completed);
@@ -5501,22 +5496,21 @@ async fn foreground_run_with_commit_becomes_partial_success_when_persistent_comm
     let mut profile = test_resolved_profile(&root).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
 
-    let resolver = tokio::spawn(resolve_next_chat_commit(
-        service.clone(),
-        repository.clone(),
-        run.id.clone(),
-        "message_persistent_failure",
-    ));
-    let outcome = service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
-        .await;
-    resolver.await.expect("resolver task");
+    let outcome = execute_agent_loop_with_host_resolver(
+        &service,
+        &run.id,
+        prompt_snapshot,
+        request,
+        profile,
+        &mut cancel_receiver,
+        resolve_next_chat_commit(
+            service.clone(),
+            repository.clone(),
+            run.id.clone(),
+            "message_persistent_failure",
+        ),
+    )
+    .await;
     assert!(
         outcome.is_err(),
         "persistent commit failure must still expose the underlying error"
@@ -5685,23 +5679,22 @@ async fn foreground_finish_before_commit_returns_recoverable_error() {
     let mut profile = test_resolved_profile(&root).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
 
-    let resolver = tokio::spawn(resolve_next_chat_commit_and_persistent_state_update(
-        service.clone(),
-        repository.clone(),
-        run.id.clone(),
-        "message_1",
-    ));
-    service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
-        .await
-        .expect("agent loop");
-    resolver.await.expect("resolver task");
+    execute_agent_loop_with_host_resolver(
+        &service,
+        &run.id,
+        prompt_snapshot,
+        request,
+        profile,
+        &mut cancel_receiver,
+        resolve_next_chat_commit_and_persistent_state_update(
+            service.clone(),
+            repository.clone(),
+            run.id.clone(),
+            "message_1",
+        ),
+    )
+    .await
+    .expect("agent loop");
 
     let saved = repository.load_run(&run.id).await.expect("load run");
     assert_eq!(saved.status, AgentRunStatus::Completed);
@@ -8244,39 +8237,45 @@ async fn test_resolved_profile(root: &Path) -> ResolvedAgentProfile {
     profile
 }
 
+const AGENT_TEST_ASYNC_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn execute_agent_loop_with_host_resolver<R>(
+    service: &AgentRuntimeService,
+    run_id: &str,
+    prompt_snapshot: Value,
+    request: ChatCompletionGenerateRequestDto,
+    profile: ResolvedAgentProfile,
+    cancel_receiver: &mut watch::Receiver<bool>,
+    resolver: R,
+) -> Result<(), ApplicationError>
+where
+    R: std::future::Future<Output = Result<(), ApplicationError>>,
+{
+    let (loop_result, resolver_result) = tokio::time::timeout(AGENT_TEST_ASYNC_TIMEOUT, async {
+        tokio::join!(
+            service.execute_agent_loop_run_inner(
+                run_id,
+                prompt_snapshot,
+                request,
+                profile,
+                cancel_receiver,
+            ),
+            resolver,
+        )
+    })
+    .await
+    .expect("agent loop and host resolver timed out");
+    resolver_result.expect("host resolver");
+    loop_result
+}
+
 async fn resolve_next_chat_commit(
     service: Arc<AgentRuntimeService>,
     repository: Arc<FileAgentRepository>,
     run_id: String,
     message_id: &'static str,
-) {
-    let commit_id = tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            let events = repository
-                .read_events(
-                    &run_id,
-                    AgentRunEventReadQuery {
-                        after_seq: Some(0),
-                        before_seq: None,
-                        limit: 100,
-                        invocation_id: None,
-                    },
-                )
-                .await
-                .expect("read events");
-            if let Some(commit_id) = events
-                .iter()
-                .find(|event| event.event_type == "chat_commit_requested")
-                .and_then(|event| event.payload["commitId"].as_str())
-            {
-                return commit_id.to_string();
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .expect("chat commit request");
-
+) -> Result<(), ApplicationError> {
+    let commit_id = wait_for_chat_commit_request(&repository, &run_id, &[], 100).await?;
     service
         .resolve_chat_commit(AgentResolveChatCommitDto {
             run_id,
@@ -8285,7 +8284,6 @@ async fn resolve_next_chat_commit(
             error: None,
         })
         .await
-        .expect("resolve chat commit");
 }
 
 async fn resolve_chat_commits_and_persistent_state_update(
@@ -8293,40 +8291,11 @@ async fn resolve_chat_commits_and_persistent_state_update(
     repository: Arc<FileAgentRepository>,
     run_id: String,
     message_ids: Vec<&'static str>,
-) {
+) -> Result<(), ApplicationError> {
     let mut resolved_commit_ids = Vec::<String>::new();
     for message_id in message_ids {
-        let commit_id = tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                let events = repository
-                    .read_events(
-                        &run_id,
-                        AgentRunEventReadQuery {
-                            after_seq: Some(0),
-                            before_seq: None,
-                            limit: 300,
-                            invocation_id: None,
-                        },
-                    )
-                    .await
-                    .expect("read events");
-                if let Some(commit_id) = events
-                    .iter()
-                    .filter(|event| event.event_type == "chat_commit_requested")
-                    .filter_map(|event| event.payload["commitId"].as_str())
-                    .find(|commit_id| {
-                        !resolved_commit_ids
-                            .iter()
-                            .any(|resolved| resolved == *commit_id)
-                    })
-                {
-                    return commit_id.to_string();
-                }
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .expect("chat commit request");
+        let commit_id =
+            wait_for_chat_commit_request(&repository, &run_id, &resolved_commit_ids, 300).await?;
         service
             .resolve_chat_commit(AgentResolveChatCommitDto {
                 run_id: run_id.clone(),
@@ -8334,38 +8303,11 @@ async fn resolve_chat_commits_and_persistent_state_update(
                 message_id: Some(message_id.to_string()),
                 error: None,
             })
-            .await
-            .expect("resolve chat commit");
+            .await?;
         resolved_commit_ids.push(commit_id);
     }
 
-    let update_id = tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            let events = repository
-                .read_events(
-                    &run_id,
-                    AgentRunEventReadQuery {
-                        after_seq: Some(0),
-                        before_seq: None,
-                        limit: 300,
-                        invocation_id: None,
-                    },
-                )
-                .await
-                .expect("read events");
-            if let Some(update_id) = events
-                .iter()
-                .find(|event| event.event_type == "persistent_state_metadata_update_requested")
-                .and_then(|event| event.payload["updateId"].as_str())
-            {
-                return update_id.to_string();
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .expect("persistent state metadata update request");
-
+    let update_id = wait_for_persistent_state_metadata_update(&repository, &run_id, 300).await?;
     service
         .resolve_persistent_state_metadata_update(AgentResolvePersistentStateMetadataUpdateDto {
             run_id,
@@ -8373,7 +8315,6 @@ async fn resolve_chat_commits_and_persistent_state_update(
             error: None,
         })
         .await
-        .expect("resolve persistent state metadata update");
 }
 
 async fn wait_for_event_payload(
@@ -8381,7 +8322,7 @@ async fn wait_for_event_payload(
     run_id: String,
     event_type: &'static str,
 ) -> Value {
-    tokio::time::timeout(Duration::from_secs(1), async {
+    tokio::time::timeout(AGENT_TEST_ASYNC_TIMEOUT, async {
         loop {
             let events = repository
                 .read_events(
@@ -8414,42 +8355,16 @@ async fn resolve_next_chat_commit_and_persistent_state_update(
     repository: Arc<FileAgentRepository>,
     run_id: String,
     message_id: &'static str,
-) {
+) -> Result<(), ApplicationError> {
     resolve_next_chat_commit(
         service.clone(),
         repository.clone(),
         run_id.clone(),
         message_id,
     )
-    .await;
+    .await?;
 
-    let update_id = tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            let events = repository
-                .read_events(
-                    &run_id,
-                    AgentRunEventReadQuery {
-                        after_seq: Some(0),
-                        before_seq: None,
-                        limit: 200,
-                        invocation_id: None,
-                    },
-                )
-                .await
-                .expect("read events");
-            if let Some(update_id) = events
-                .iter()
-                .find(|event| event.event_type == "persistent_state_metadata_update_requested")
-                .and_then(|event| event.payload["updateId"].as_str())
-            {
-                return update_id.to_string();
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .expect("persistent state metadata update request");
-
+    let update_id = wait_for_persistent_state_metadata_update(&repository, &run_id, 200).await?;
     service
         .resolve_persistent_state_metadata_update(AgentResolvePersistentStateMetadataUpdateDto {
             run_id,
@@ -8457,7 +8372,86 @@ async fn resolve_next_chat_commit_and_persistent_state_update(
             error: None,
         })
         .await
-        .expect("resolve persistent state metadata update");
+}
+
+async fn wait_for_chat_commit_request(
+    repository: &FileAgentRepository,
+    run_id: &str,
+    resolved_commit_ids: &[String],
+    limit: usize,
+) -> Result<String, ApplicationError> {
+    let commit_id = tokio::time::timeout(AGENT_TEST_ASYNC_TIMEOUT, async {
+        loop {
+            let events = repository
+                .read_events(
+                    run_id,
+                    AgentRunEventReadQuery {
+                        after_seq: Some(0),
+                        before_seq: None,
+                        limit,
+                        invocation_id: None,
+                    },
+                )
+                .await
+                .map_err(ApplicationError::from)?;
+            if let Some(commit_id) = events
+                .iter()
+                .filter(|event| event.event_type == "chat_commit_requested")
+                .filter_map(|event| event.payload["commitId"].as_str())
+                .find(|commit_id| {
+                    !resolved_commit_ids
+                        .iter()
+                        .any(|resolved| resolved == *commit_id)
+                })
+            {
+                return Ok::<String, ApplicationError>(commit_id.to_string());
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        ApplicationError::InternalError("agent.test_chat_commit_request_timeout".to_string())
+    })??;
+    Ok(commit_id)
+}
+
+async fn wait_for_persistent_state_metadata_update(
+    repository: &FileAgentRepository,
+    run_id: &str,
+    limit: usize,
+) -> Result<String, ApplicationError> {
+    let update_id = tokio::time::timeout(AGENT_TEST_ASYNC_TIMEOUT, async {
+        loop {
+            let events = repository
+                .read_events(
+                    run_id,
+                    AgentRunEventReadQuery {
+                        after_seq: Some(0),
+                        before_seq: None,
+                        limit,
+                        invocation_id: None,
+                    },
+                )
+                .await
+                .map_err(ApplicationError::from)?;
+            if let Some(update_id) = events
+                .iter()
+                .find(|event| event.event_type == "persistent_state_metadata_update_requested")
+                .and_then(|event| event.payload["updateId"].as_str())
+            {
+                return Ok::<String, ApplicationError>(update_id.to_string());
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        ApplicationError::InternalError(
+            "agent.test_persistent_state_metadata_update_timeout".to_string(),
+        )
+    })??;
+    Ok(update_id)
 }
 
 async fn save_character_payload(
