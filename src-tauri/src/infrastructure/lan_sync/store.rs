@@ -1,9 +1,13 @@
 use std::path::PathBuf;
 
+use async_trait::async_trait;
 use rand::Rng;
 use serde::Deserialize;
 use ttsync_contract::sync::SyncMode;
 
+use crate::application::services::sync_automation_service::{
+    LoadedLanServerSettings, SyncAutomationLanSettingsRepository,
+};
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{LanServerSettings, SyncPreferences};
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
@@ -43,10 +47,19 @@ impl LanSyncStore {
 
         let settings = LanServerSettings {
             port: rand::rng().random_range(49152..=65535),
+            auto_start: false,
         };
         validate_server_settings(&settings)?;
         write_json_file(&path, &settings).await?;
         Ok(settings)
+    }
+
+    pub async fn save_server_settings(
+        &self,
+        settings: &LanServerSettings,
+    ) -> Result<(), DomainError> {
+        validate_server_settings(settings)?;
+        write_json_file(&self.server_settings_path(), settings).await
     }
 
     pub async fn load_or_create_sync_preferences(&self) -> Result<SyncPreferences, DomainError> {
@@ -74,11 +87,11 @@ impl LanSyncStore {
     async fn migrate_legacy_config(&self) -> Result<(), DomainError> {
         let server_settings_path = self.server_settings_path();
         let sync_preferences_path = self.sync_preferences_path();
+        let legacy_path = self.legacy_config_path();
         if server_settings_path.is_file() && sync_preferences_path.is_file() {
-            return Ok(());
+            return remove_legacy_config(&legacy_path).await;
         }
 
-        let legacy_path = self.legacy_config_path();
         if !legacy_path.is_file() {
             return Ok(());
         }
@@ -86,6 +99,7 @@ impl LanSyncStore {
         let legacy: LegacyLanSyncConfig = read_json_file(&legacy_path).await?;
         let settings = LanServerSettings {
             port: legacy.v2_port.unwrap_or(legacy.port),
+            auto_start: false,
         };
         let preferences = SyncPreferences {
             manual_default_mode: legacy.sync_mode,
@@ -99,11 +113,34 @@ impl LanSyncStore {
             write_json_file(&sync_preferences_path, &preferences).await?;
         }
 
-        match tokio::fs::remove_file(&legacy_path).await {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(DomainError::InternalError(error.to_string())),
-        }
+        remove_legacy_config(&legacy_path).await
+    }
+}
+
+async fn remove_legacy_config(path: &std::path::Path) -> Result<(), DomainError> {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(DomainError::InternalError(error.to_string())),
+    }
+}
+
+#[async_trait]
+impl SyncAutomationLanSettingsRepository for LanSyncStore {
+    async fn load_or_create_server_settings(&self) -> Result<LoadedLanServerSettings, DomainError> {
+        let created = !self.server_settings_path().is_file();
+        let settings = LanSyncStore::load_or_create_server_settings(self).await?;
+        Ok(LoadedLanServerSettings { settings, created })
+    }
+
+    async fn save_server_settings(&self, settings: &LanServerSettings) -> Result<(), DomainError> {
+        LanSyncStore::save_server_settings(self, settings).await
+    }
+
+    async fn load_manual_default_sync_mode(&self) -> Result<SyncMode, DomainError> {
+        Ok(LanSyncStore::load_or_create_sync_preferences(self)
+            .await?
+            .manual_default_mode)
     }
 }
 
@@ -290,6 +327,45 @@ mod tests {
                 .join("identity.json")
                 .exists()
         );
+
+        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
+    }
+
+    #[tokio::test]
+    async fn old_config_is_removed_when_new_files_already_exist() {
+        let default_user_dir = temp_default_user_dir();
+        let config_dir = default_user_dir.join("user").join("lan-sync");
+        tokio::fs::create_dir_all(&config_dir)
+            .await
+            .expect("create config dir");
+        tokio::fs::write(
+            config_dir.join("server-settings.json"),
+            br#"{"port":56000,"auto_start":true}"#,
+        )
+        .await
+        .expect("write settings");
+        tokio::fs::write(
+            config_dir.join("sync-preferences.json"),
+            br#"{"manual_default_mode":"Mirror"}"#,
+        )
+        .await
+        .expect("write preferences");
+        tokio::fs::write(
+            config_dir.join("config.json"),
+            br#"{"port":55000,"sync_mode":"Incremental"}"#,
+        )
+        .await
+        .expect("write old config");
+
+        let store = LanSyncStore::new(default_user_dir.clone());
+        let settings = store
+            .load_or_create_server_settings()
+            .await
+            .expect("load settings");
+
+        assert_eq!(settings.port, 56000);
+        assert!(settings.auto_start);
+        assert!(!config_dir.join("config.json").exists());
 
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }

@@ -38,7 +38,8 @@ use crate::application::services::settings_service::SettingsService;
 use crate::application::services::skill_service::SkillService;
 use crate::application::services::stable_diffusion_service::StableDiffusionService;
 use crate::application::services::sync_automation_service::{
-    SyncAutomationEventPublisher, SyncAutomationService,
+    SyncAutomationEndpointCatalog, SyncAutomationEventPublisher, SyncAutomationLanServerControl,
+    SyncAutomationService,
 };
 use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
 use crate::application::services::theme_service::ThemeService;
@@ -51,7 +52,9 @@ use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
-use crate::domain::models::sync_automation::{SyncAutomationStatus, SyncAutomationToastEvent};
+use crate::domain::models::sync_automation::{
+    SyncAutomationStatus, SyncAutomationTarget, SyncAutomationToastEvent,
+};
 use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
 use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
 use crate::domain::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
@@ -127,7 +130,9 @@ use crate::infrastructure::repositories::file_user_repository::FileUserRepositor
 use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
 use crate::infrastructure::sync::job_executor::InfrastructureSyncJobExecutor;
 use crate::infrastructure::sync::lan::store::LanPeerStore;
+use crate::infrastructure::sync_automation_store::SyncAutomationStore;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
+use ttsync_contract::sync::SyncMode;
 
 pub(super) struct AppServices {
     pub character_service: Arc<CharacterService>,
@@ -252,6 +257,100 @@ impl SyncAutomationEventPublisher for TauriSyncAutomationEventPublisher {
         if let Err(error) = self.app_handle.emit("sync_auto:toast", event) {
             tracing::warn!("Failed to emit sync automation toast: {}", error);
         }
+    }
+}
+
+struct ServiceSyncAutomationLanServerControl {
+    lan_sync_service: Arc<LanSyncService>,
+    lan_sync_allowed: bool,
+}
+
+#[async_trait]
+impl SyncAutomationLanServerControl for ServiceSyncAutomationLanServerControl {
+    fn validate_allowed(&self) -> Result<(), DomainError> {
+        if !self.lan_sync_allowed {
+            return Err(DomainError::InvalidData(
+                "LAN Sync is not allowed by the current platform policy".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn start(&self) -> Result<(), DomainError> {
+        self.validate_allowed()?;
+        self.lan_sync_service.start_server().await.map(|_| ())
+    }
+
+    async fn ensure_running(&self) -> Result<(), DomainError> {
+        self.validate_allowed()?;
+        if !self.lan_sync_service.get_status().await?.running {
+            return Err(DomainError::InvalidData(
+                "LAN Sync server is not running. Start the sync port before using LAN auto upload."
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+struct ServiceSyncAutomationEndpointCatalog {
+    lan_sync_service: Arc<LanSyncService>,
+    tt_sync_service: Arc<TtSyncService>,
+    lan_sync_allowed: bool,
+}
+
+#[async_trait]
+impl SyncAutomationEndpointCatalog for ServiceSyncAutomationEndpointCatalog {
+    async fn validate_target(
+        &self,
+        target: &SyncAutomationTarget,
+        mode: SyncMode,
+    ) -> Result<(), DomainError> {
+        match target {
+            SyncAutomationTarget::Lan { device_id } => {
+                if !self.lan_sync_allowed {
+                    return Err(DomainError::InvalidData(
+                        "LAN Sync is not allowed by the current platform policy".to_string(),
+                    ));
+                }
+
+                let devices = self.lan_sync_service.list_paired_devices().await?;
+                let device = devices
+                    .iter()
+                    .find(|device| device.device_id == *device_id)
+                    .ok_or_else(|| {
+                        DomainError::NotFound(format!("LAN Sync device not found: {device_id}"))
+                    })?;
+                if device.last_known_address.is_none() {
+                    return Err(DomainError::InvalidData(
+                        "LAN auto upload requires a paired LAN Sync device with an address"
+                            .to_string(),
+                    ));
+                }
+            }
+            SyncAutomationTarget::Tt { server_device_id } => {
+                let servers = self.tt_sync_service.list_servers().await?;
+                let server = servers
+                    .iter()
+                    .find(|server| server.server_device_id.as_str() == server_device_id.as_str())
+                    .ok_or_else(|| {
+                        DomainError::NotFound(format!(
+                            "TT-Sync server not found: {server_device_id}"
+                        ))
+                    })?;
+                if !server.permissions.write {
+                    return Err(DomainError::AuthenticationError(
+                        "TT-Sync server does not grant write permission".to_string(),
+                    ));
+                }
+                if mode == SyncMode::Mirror && !server.permissions.mirror_delete {
+                    return Err(DomainError::AuthenticationError(
+                        "TT-Sync server does not grant mirror_delete permission".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -451,16 +550,33 @@ pub(super) async fn build_services(
         lan_peer_store,
         sync_job_coordinator.clone(),
     ));
-    let tt_sync_service = Arc::new(TtSyncService::new(tt_runtime, sync_job_coordinator));
+    let tt_sync_service = Arc::new(TtSyncService::new(tt_runtime, sync_job_coordinator.clone()));
     let sync_automation_events = Arc::new(TauriSyncAutomationEventPublisher {
         app_handle: app_handle.clone(),
     });
+    let sync_automation_rules = Arc::new(SyncAutomationStore::new(
+        data_directory.default_user().to_path_buf(),
+    ));
+    let sync_automation_lan_settings =
+        Arc::new(crate::infrastructure::lan_sync::store::LanSyncStore::new(
+            data_directory.default_user().to_path_buf(),
+        ));
+    let sync_automation_endpoint_catalog = Arc::new(ServiceSyncAutomationEndpointCatalog {
+        lan_sync_service: lan_sync_service.clone(),
+        tt_sync_service: tt_sync_service.clone(),
+        lan_sync_allowed: ios_policy.capabilities.sync.lan,
+    });
+    let sync_automation_lan_server = Arc::new(ServiceSyncAutomationLanServerControl {
+        lan_sync_service: lan_sync_service.clone(),
+        lan_sync_allowed: ios_policy.capabilities.sync.lan,
+    });
     let sync_automation_service = Arc::new(SyncAutomationService::new(
         sync_automation_events,
-        data_directory.default_user().to_path_buf(),
-        lan_sync_service.clone(),
-        tt_sync_service.clone(),
-        ios_policy.capabilities.sync.lan,
+        sync_automation_rules,
+        sync_automation_lan_settings,
+        sync_automation_endpoint_catalog,
+        sync_automation_lan_server,
+        sync_job_coordinator.clone(),
     ));
 
     Ok(AppServices {

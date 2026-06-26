@@ -210,11 +210,11 @@ function formatSyncAutomationToastMessage(payload) {
     const nextRunAtMs = payload?.next_run_at_ms ?? payload?.nextRunAtMs ?? null;
     if (nextRunAtMs) {
         const nextRun = formatTimestamp(nextRunAtMs);
-        if (payload?.message === 'Auto sync upload has started as scheduled.') {
-            return t`Auto sync upload has started as scheduled. Next sync time: ${nextRun}`;
-        }
         if (payload?.message === 'Auto sync upload has completed as scheduled.') {
             return t`Auto sync upload has completed as scheduled. Next sync time: ${nextRun}`;
+        }
+        if (payload?.message === 'Auto sync upload request has been accepted as scheduled.') {
+            return t`Auto sync upload request has been accepted as scheduled. Next sync time: ${nextRun}`;
         }
     }
 

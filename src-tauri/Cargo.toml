@@ -33,7 +33,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["a
 tracing-appender = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
-tokio-util = { version = "0.7", default-features = false, features = ["io"] }
+tokio-util = { version = "0.7", default-features = false, features = ["io", "rt"] }
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 reqwest = { version = "0.13", default-features = false, features = ["http2", "json", "multipart", "query", "rustls", "socks", "stream"] }

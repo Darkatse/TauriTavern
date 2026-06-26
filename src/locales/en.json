@@ -28,5 +28,8 @@
     "No backgrounds available": "No backgrounds available",
     "Dynamic Theme & Wallpaper hint": "Automatically switch TauriTavern themes and global wallpapers with the system light/dark mode.",
     "Dynamic Theme help: mapping": "Day = system light mode. Night = system dark mode.",
-    "Dynamic Theme help: behavior": "Theme switching behaves like changing the theme dropdown. Wallpaper switching updates the global SillyTavern background and respects chat-locked backgrounds."
+    "Dynamic Theme help: behavior": "Theme switching behaves like changing the theme dropdown. Wallpaper switching updates the global SillyTavern background and respects chat-locked backgrounds.",
+    "Last request accepted": "Last request accepted",
+    "Auto sync upload request has been accepted as scheduled.": "Auto sync upload request has been accepted as scheduled.",
+    "Auto sync upload request has been accepted as scheduled. Next sync time: ${0}": "Auto sync upload request has been accepted as scheduled. Next sync time: ${0}"
 }

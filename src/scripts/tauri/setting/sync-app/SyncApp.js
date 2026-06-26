@@ -123,6 +123,7 @@ export function createTauriTavernSyncApp(options) {
                     autoSyncEnabled: false,
                     intervalMinutes: 30,
                     target: null,
+                    syncMode: 'Incremental',
                     selection: null,
                 },
                 automationStatus: {
@@ -130,6 +131,8 @@ export function createTauriTavernSyncApp(options) {
                     nextRunAtMs: null,
                     lastAttemptAtMs: null,
                     lastSuccessAtMs: null,
+                    lastRequestAcceptedAtMs: null,
+                    lastErrorAtMs: null,
                     lastError: '',
                 },
                 automationExpanded: false,
@@ -249,9 +252,10 @@ export function createTauriTavernSyncApp(options) {
                     const isLan = target.type === 'lan';
                     const canWrite = isLan || Boolean(target.permissions?.write);
                     const canMirror = isLan || Boolean(target.permissions?.mirror_delete);
+                    const automationMirror = this.automationConfig?.syncMode === 'Mirror';
                     const disabled = isLan
                         ? !target.lastKnownAddress
-                        : (!canWrite || (this.modeDanger && !canMirror));
+                        : (!canWrite || (automationMirror && !canMirror));
                     const protocol = isLan ? 'LAN' : 'TT-Sync';
 
                     return {
@@ -278,6 +282,7 @@ export function createTauriTavernSyncApp(options) {
                 return [
                     this.tr('On'),
                     formatAutomationInterval(this.automationConfig.intervalMinutes, this.tr),
+                    this.tr(this.automationConfig.syncMode === 'Mirror' ? 'Mirror Mode' : 'Incremental Mode'),
                     this.automationTargetLabel,
                 ].join(' · ');
             },
@@ -289,14 +294,19 @@ export function createTauriTavernSyncApp(options) {
                 if (status.running) {
                     return this.tr('Uploading...');
                 }
+                if (status.lastError) {
+                    return `${this.tr('Last error')}: ${status.lastError}`;
+                }
                 if (status.nextRunAtMs) {
                     return `${this.tr('Next run')}: ${formatTimestampValue(status.nextRunAtMs, this.tr)}`;
                 }
-                if (status.lastSuccessAtMs) {
-                    return `${this.tr('Last success')}: ${formatTimestampValue(status.lastSuccessAtMs, this.tr)}`;
+                const lastSuccessAtMs = Number(status.lastSuccessAtMs || 0);
+                const lastRequestAcceptedAtMs = Number(status.lastRequestAcceptedAtMs || 0);
+                if (lastSuccessAtMs >= lastRequestAcceptedAtMs && lastSuccessAtMs > 0) {
+                    return `${this.tr('Last success')}: ${formatTimestampValue(lastSuccessAtMs, this.tr)}`;
                 }
-                if (status.lastError) {
-                    return `${this.tr('Last error')}: ${status.lastError}`;
+                if (lastRequestAcceptedAtMs > 0) {
+                    return `${this.tr('Last request accepted')}: ${formatTimestampValue(lastRequestAcceptedAtMs, this.tr)}`;
                 }
                 return this.tr('Idle');
             },
@@ -352,6 +362,10 @@ export function createTauriTavernSyncApp(options) {
             },
             setAutomationInterval(value) {
                 this.automationConfig.intervalMinutes = Number(value);
+                this.automationDraftDirty = true;
+            },
+            setAutomationMode(value) {
+                this.automationConfig.syncMode = value === 'Mirror' ? 'Mirror' : 'Incremental';
                 this.automationDraftDirty = true;
             },
             applySnapshot(snapshot) {
@@ -702,6 +716,18 @@ export function createTauriTavernSyncApp(options) {
                                         <option v-for="minutes in automationIntervals" :key="minutes" :value="minutes">
                                             {{ automationIntervalLabel(minutes) }}
                                         </option>
+                                    </select>
+                                </label>
+                                <label class="tt-sync-field-row">
+                                    <span>{{ tr('Sync mode') }}</span>
+                                    <select
+                                        :value="automationConfig.syncMode"
+                                        class="text_pole"
+                                        :disabled="isBusy || !automationConfig"
+                                        @change="setAutomationMode($event.target.value)"
+                                    >
+                                        <option value="Incremental">{{ tr('Incremental Mode') }}</option>
+                                        <option value="Mirror">{{ tr('Mirror Mode') }}</option>
                                     </select>
                                 </label>
                                 <label class="tt-sync-field-row tt-sync-field-row-wide">

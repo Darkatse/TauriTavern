@@ -210,6 +210,7 @@ function normalizeAutomationConfig(config, syncSelection) {
         autoSyncEnabled: Boolean(config?.auto_sync_enabled),
         intervalMinutes: Number(config?.interval_minutes || 30),
         target: normalizeAutomationTarget(config?.target),
+        syncMode: config?.sync_mode || 'Incremental',
         selection: syncSelection,
     };
 }
@@ -220,6 +221,7 @@ function serializeAutomationConfig(config, syncSelection) {
         auto_sync_enabled: Boolean(config?.autoSyncEnabled),
         interval_minutes: Number(config?.intervalMinutes || 30),
         target: serializeAutomationTarget(config?.target),
+        sync_mode: config?.syncMode || 'Incremental',
         selection: syncSelection,
     };
 }
@@ -230,6 +232,8 @@ function normalizeAutomationStatus(status) {
         nextRunAtMs: status?.next_run_at_ms ?? null,
         lastAttemptAtMs: status?.last_attempt_at_ms ?? null,
         lastSuccessAtMs: status?.last_success_at_ms ?? null,
+        lastRequestAcceptedAtMs: status?.last_request_accepted_at_ms ?? null,
+        lastErrorAtMs: status?.last_error_at_ms ?? null,
         lastError: status?.last_error || '',
     };
 }

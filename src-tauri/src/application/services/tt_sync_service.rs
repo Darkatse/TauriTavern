@@ -118,30 +118,6 @@ impl TtSyncService {
         Ok(report)
     }
 
-    pub async fn push_for_automation(
-        &self,
-        server_device_id: &str,
-        mode: SyncMode,
-        options: Option<SyncOperationOptions>,
-    ) -> Result<(), DomainError> {
-        let server_device_id = DeviceId::new(server_device_id.to_string())
-            .map_err(|error| DomainError::InvalidData(error.to_string()))?;
-        let options = resolve_sync_options(options)?;
-        let report = self
-            .run_remote_job_or_error(
-                server_device_id,
-                SyncIntent::ReplicateLocalToRemote,
-                SyncOrigin::Scheduled,
-                mode,
-                options,
-            )
-            .await?;
-        report
-            .completed_summary()
-            .ok_or_else(|| DomainError::InvalidData(report_failure_message(&report)))?;
-        Ok(())
-    }
-
     async fn run_remote_job(
         &self,
         server_device_id: DeviceId,
@@ -161,27 +137,6 @@ impl TtSyncService {
             .await
     }
 
-    async fn run_remote_job_or_error(
-        &self,
-        server_device_id: DeviceId,
-        intent: SyncIntent,
-        origin: SyncOrigin,
-        mode: SyncMode,
-        options: SyncOperationOptions,
-    ) -> Result<SyncJobReport, DomainError> {
-        let request = self.job_request(
-            SyncEndpointRef::RemoteServer { server_device_id },
-            intent,
-            origin,
-            mode,
-            options,
-        );
-        match self.coordinator.try_start(request) {
-            Ok(started) => started.execute().await.finish_or_error(),
-            Err(report) => Err(DomainError::InvalidData(report_failure_message(&report))),
-        }
-    }
-
     fn job_request(
         &self,
         endpoint: SyncEndpointRef,
@@ -197,13 +152,6 @@ impl TtSyncService {
             policy: ResolvedSyncPolicy::Transfer { mode, options },
         }
     }
-}
-
-fn report_failure_message(report: &SyncJobReport) -> String {
-    report
-        .failure_message()
-        .unwrap_or("TT-Sync job did not complete")
-        .to_string()
 }
 
 fn now_ms() -> u64 {

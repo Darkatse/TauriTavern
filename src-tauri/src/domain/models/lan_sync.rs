@@ -5,6 +5,8 @@ use ttsync_contract::sync::SyncMode;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanServerSettings {
     pub port: u16,
+    #[serde(default)]
+    pub auto_start: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

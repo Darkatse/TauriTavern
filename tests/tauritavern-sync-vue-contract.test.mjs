@@ -63,6 +63,13 @@ async function importSyncState() {
     )).href);
 }
 
+async function importSyncApp() {
+    return import(pathToFileURL(path.join(
+        REPO_ROOT,
+        'src/scripts/tauri/setting/sync-app/SyncApp.js',
+    )).href);
+}
+
 async function withMutedWarnings(task) {
     const warn = console.warn;
     console.warn = () => {};
@@ -137,20 +144,20 @@ test('TauriTavern Sync automation success toasts include next run time', async (
 
     assert.match(model, /pub next_run_at_ms:\s*Option<u64>/);
     assert.match(service, /emit_toast_with_next_run/);
-    assert.match(service, /Auto sync upload has started as scheduled\./);
     assert.match(service, /Auto sync upload has completed as scheduled\./);
+    assert.match(service, /Auto sync upload request has been accepted as scheduled\./);
     assert.match(listeners, /formatTimestamp/);
     assert.match(listeners, /payload\?\.next_run_at_ms/);
-    assert.match(listeners, /Auto sync upload has started as scheduled\. Next sync time: \$\{nextRun\}/);
     assert.match(listeners, /Auto sync upload has completed as scheduled\. Next sync time: \$\{nextRun\}/);
-    assert.match(zhCn, /自动同步上传已经按计划开始。/);
+    assert.match(listeners, /Auto sync upload request has been accepted as scheduled\. Next sync time: \$\{nextRun\}/);
     assert.match(zhCn, /自动同步上传已经按计划完成。/);
-    assert.match(zhCn, /自动同步上传已经按计划开始，下次同步时间是\$\{0\}/);
+    assert.match(zhCn, /自动同步上传请求已按计划被接受。/);
     assert.match(zhCn, /自动同步上传已经按计划完成，下次同步时间是\$\{0\}/);
-    assert.match(zhTw, /自動同步上傳已按計畫開始。/);
+    assert.match(zhCn, /自动同步上传请求已按计划被接受，下次同步时间是\$\{0\}/);
     assert.match(zhTw, /自動同步上傳已按計畫完成。/);
-    assert.match(zhTw, /自動同步上傳已按計畫開始，下次同步時間是\$\{0\}/);
+    assert.match(zhTw, /自動同步上傳請求已按計畫被接受。/);
     assert.match(zhTw, /自動同步上傳已按計畫完成，下次同步時間是\$\{0\}/);
+    assert.match(zhTw, /自動同步上傳請求已按計畫被接受，下次同步時間是\$\{0\}/);
 });
 
 test('TauriTavern Sync automation draft survives background refreshes', async () => {
@@ -163,6 +170,35 @@ test('TauriTavern Sync automation draft survives background refreshes', async ()
     assert.match(source, /async refreshAutomationStatus\(\)\s*\{[\s\S]*client\.getAutomationStatus\(\)/);
     assert.match(source, /this\.automationDraftDirty\s*=\s*false/);
     assert.match(source, /@change="setAutomationInterval\(\$event\.target\.value\)"/);
+});
+
+test('TauriTavern Sync automation status shows the newest success-like timestamp', async () => {
+    const { createTauriTavernSyncApp } = await importSyncApp();
+    const noopFunctions = new Proxy({}, { get: () => () => {} });
+    const component = createTauriTavernSyncApp({
+        client: noopFunctions,
+        actions: noopFunctions,
+        tr: (key) => key,
+    });
+    const context = {
+        ...component.data(),
+        tr: (key) => key,
+        automationStatus: {
+            running: false,
+            nextRunAtMs: null,
+            lastAttemptAtMs: null,
+            lastSuccessAtMs: 2000,
+            lastRequestAcceptedAtMs: 1000,
+            lastErrorAtMs: null,
+            lastError: '',
+        },
+    };
+
+    assert.match(component.computed.automationStatusText.call(context), /^Last success:/);
+
+    context.automationStatus.lastSuccessAtMs = 1000;
+    context.automationStatus.lastRequestAcceptedAtMs = 2000;
+    assert.match(component.computed.automationStatusText.call(context), /^Last request accepted:/);
 });
 
 test('Rspack exposes a dedicated TauriTavern Sync Vue entry', async () => {

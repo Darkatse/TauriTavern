@@ -218,8 +218,17 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(invoke_handler())
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) && let Some(state) = app_handle.try_state::<std::sync::Arc<app::AppState>>()
+            {
+                state.sync_automation_cancel.cancel();
+            }
+        });
 }
 
 /// Builds the main webview window and attaches host-owned browser/runtime policy.

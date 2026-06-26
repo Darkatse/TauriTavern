@@ -404,18 +404,6 @@ impl LanSyncService {
             .await
     }
 
-    pub async fn push_to_device_for_automation(
-        &self,
-        device_id: &str,
-        options: Option<SyncOperationOptions>,
-    ) -> Result<SyncJobReport, DomainError> {
-        self.ensure_server_running().await?;
-        let device_id = parse_device_id(device_id)?;
-        let options = resolve_sync_options(options)?;
-        self.run_request_remote_pull(device_id, SyncOrigin::Scheduled, options)
-            .await
-    }
-
     async fn run_request_remote_pull(
         &self,
         device_id: DeviceId,

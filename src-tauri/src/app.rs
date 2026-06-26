@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager};
+use tokio_util::sync::CancellationToken;
 
 use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
 use crate::application::services::agent_profile_service::AgentProfileService;
@@ -84,6 +85,7 @@ pub struct AppState {
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
     pub sync_automation_service: Arc<SyncAutomationService>,
+    pub sync_automation_cancel: CancellationToken,
     data_change_reconciler: Arc<dyn DataChangeReconciler>,
     pub update_service: Arc<UpdateService>,
     pub native_regex_service: Arc<NativeRegexService>,
@@ -106,6 +108,7 @@ impl AppState {
         let services = bootstrap::build_services(&app_handle, &data_directory).await?;
 
         tracing::info!("Application initialized successfully");
+        let sync_automation_cancel = CancellationToken::new();
 
         Ok(Self {
             character_service: services.character_service,
@@ -144,6 +147,7 @@ impl AppState {
             lan_sync_service: services.lan_sync_service,
             tt_sync_service: services.tt_sync_service,
             sync_automation_service: services.sync_automation_service,
+            sync_automation_cancel,
             data_change_reconciler: services.data_change_reconciler,
             update_service: services.update_service,
             native_regex_service: services.native_regex_service,
@@ -178,7 +182,13 @@ pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) 
                     .state::<Arc<AppState>>()
                     .sync_automation_service
                     .clone();
-                sync_automation_service.start();
+                let sync_automation_cancel = app_handle
+                    .state::<Arc<AppState>>()
+                    .sync_automation_cancel
+                    .clone();
+                tauri::async_runtime::spawn(async move {
+                    sync_automation_service.run(sync_automation_cancel).await;
+                });
 
                 let agent_run_retention_automation_service = app_handle
                     .state::<Arc<AppState>>()
