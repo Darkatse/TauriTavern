@@ -308,6 +308,16 @@ pub fn show_system_notification(
         ));
     }
 
+    #[cfg(target_os = "windows")]
+    crate::presentation::windows_notifications::show_system_notification(&app, title, body)
+        .map_err(|error| {
+            CommandError::InternalServerError(format!(
+                "Failed to show system notification: {}",
+                error
+            ))
+        })?;
+
+    #[cfg(not(target_os = "windows"))]
     app.notification()
         .builder()
         .title(title)

@@ -5,6 +5,8 @@ use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
 
+use crate::presentation::main_window_presenter::present_main_window;
+
 const TRAY_ID: &str = "tauritavern-tray";
 const MENU_SHOW_ID: &str = "tauritavern-tray:show";
 const MENU_EXIT_ID: &str = "tauritavern-tray:exit";
@@ -70,10 +72,9 @@ pub fn install_windows_tray(
         .menu(&menu)
         .on_menu_event(move |_app, event| match event.id().as_ref() {
             MENU_SHOW_ID => {
-                main_window_for_menu
-                    .show()
-                    .and_then(|_| main_window_for_menu.set_focus())
-                    .expect("Failed to show main window from tray menu");
+                if let Err(error) = present_main_window(&main_window_for_menu) {
+                    tracing::warn!("Failed to show main window from tray menu: {}", error);
+                }
             }
             MENU_EXIT_ID => {
                 state_for_menu.set_quitting();
@@ -83,10 +84,9 @@ pub fn install_windows_tray(
         })
         .on_tray_icon_event(move |_tray, event| match event {
             TrayIconEvent::DoubleClick { button, .. } if button == MouseButton::Left => {
-                main_window_for_tray
-                    .show()
-                    .and_then(|_| main_window_for_tray.set_focus())
-                    .expect("Failed to show main window from tray icon");
+                if let Err(error) = present_main_window(&main_window_for_tray) {
+                    tracing::warn!("Failed to show main window from tray icon: {}", error);
+                }
             }
             _ => {}
         })
