@@ -209,7 +209,7 @@ pub async fn lan_sync_remove_device(
 pub async fn lan_sync_sync_from_device(
     app_state: State<'_, Arc<AppState>>,
     device_id: String,
-    options: Option<SyncOperationOptions>,
+    options: SyncOperationOptions,
 ) -> Result<SyncJobReport, CommandError> {
     log_command("lan_sync_sync_from_device");
     ensure_lan_sync_allowed(&app_state)?;
@@ -225,7 +225,7 @@ pub async fn lan_sync_sync_from_device(
 pub async fn lan_sync_push_to_device(
     app_state: State<'_, Arc<AppState>>,
     device_id: String,
-    options: Option<SyncOperationOptions>,
+    options: SyncOperationOptions,
 ) -> Result<SyncJobReport, CommandError> {
     log_command("lan_sync_push_to_device");
     ensure_lan_sync_allowed(&app_state)?;

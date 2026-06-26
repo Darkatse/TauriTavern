@@ -11,7 +11,7 @@ use crate::domain::models::lan_sync::{
 };
 use crate::domain::models::sync::{
     ResolvedSyncPolicy, SyncEndpointRef, SyncIntent, SyncJobReport, SyncJobRequest,
-    SyncOperationOptions, SyncOrigin, resolve_sync_options,
+    SyncOperationOptions, SyncOrigin,
 };
 
 mod inbound;
@@ -350,10 +350,10 @@ impl LanSyncService {
     pub async fn sync_from_device(
         &self,
         device_id: &str,
-        options: Option<SyncOperationOptions>,
+        options: SyncOperationOptions,
     ) -> Result<SyncJobReport, DomainError> {
         let device_id = parse_device_id(device_id)?;
-        let options = resolve_sync_options(options)?;
+        let options = options.validate()?;
         let mode = self.effective_sync_mode().await?;
         let request = self.job_request(
             SyncEndpointRef::LanPeer { device_id },
@@ -368,11 +368,11 @@ impl LanSyncService {
     pub async fn push_to_device(
         &self,
         device_id: &str,
-        options: Option<SyncOperationOptions>,
+        options: SyncOperationOptions,
     ) -> Result<SyncJobReport, DomainError> {
         self.ensure_server_running().await?;
         let device_id = parse_device_id(device_id)?;
-        let options = resolve_sync_options(options)?;
+        let options = options.validate()?;
         self.run_request_remote_pull(device_id, SyncOrigin::Manual, options)
             .await
     }

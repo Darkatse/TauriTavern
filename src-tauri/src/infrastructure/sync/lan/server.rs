@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::{Query, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
@@ -321,17 +321,19 @@ async fn handle_lan_pair_complete(
 async fn handle_pull_request(
     State(state): State<Arc<LanServerState>>,
     headers: HeaderMap,
-    request: Option<Json<SyncOperationOptions>>,
+    request: Result<Json<SyncOperationOptions>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
     let peer = state
         .shared
         .authenticate_headers(&headers)
         .await
         .map_err(ApiError::from)?;
-    let options = request
-        .map(|Json(value)| value)
-        .unwrap_or_default()
-        .validate()?;
+    let Json(options) = request.map_err(|error| {
+        ApiError::from(DomainError::InvalidData(format!(
+            "Invalid LAN Sync pull request: {error}"
+        )))
+    })?;
+    let options = options.validate()?;
     state
         .inbound
         .accept_pull_request(peer.device_id, options)
@@ -434,7 +436,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::domain::models::lan_sync::LanSyncPairedDevice;
-    use crate::infrastructure::sync::http_client::new_sync_client;
+    use crate::infrastructure::sync::http_client::{bearer_auth_value, new_sync_client};
     use crate::infrastructure::sync::lan::client::{LanSyncClient, complete_pairing};
     use crate::infrastructure::sync::workspace::TauriTavernSyncWorkspace;
 
@@ -697,6 +699,35 @@ mod tests {
             .open_session(&peer_device_id, &peer_seed)
             .await
             .expect("open session");
+        let client = new_sync_client(
+            format!("https://127.0.0.1:{}", handle.addr.port()),
+            handle.spki_sha256.clone(),
+        )
+        .expect("shared client");
+        let pull_request_url = client
+            .endpoint_url("/v2/lan/pull-request")
+            .expect("pull request url");
+        let auth = bearer_auth_value(&session.session_token);
+        let missing_body_status = client
+            .http()
+            .post(pull_request_url.clone())
+            .header(reqwest::header::AUTHORIZATION, auth.clone())
+            .send()
+            .await
+            .expect("send missing body")
+            .status();
+        assert_eq!(missing_body_status, StatusCode::BAD_REQUEST);
+        let missing_selection_status = client
+            .http()
+            .post(pull_request_url)
+            .header(reqwest::header::AUTHORIZATION, auth)
+            .json(&json!({"require_bundle_zstd": true}))
+            .send()
+            .await
+            .expect("send missing selection")
+            .status();
+        assert_eq!(missing_selection_status, StatusCode::BAD_REQUEST);
+
         let plan = api
             .pull_plan(
                 &session.session_token,
@@ -740,11 +771,6 @@ mod tests {
         tokio::fs::create_dir_all(&target_root)
             .await
             .expect("create target root");
-        let client = new_sync_client(
-            format!("https://127.0.0.1:{}", handle.addr.port()),
-            handle.spki_sha256.clone(),
-        )
-        .expect("shared client");
         let workspace = Arc::new(TauriTavernSyncWorkspace::new(target_root.clone()));
         let mut options =
             ClientSyncOptions::new(SyncMode::Incremental, tauri_tavern_default_selection());

@@ -99,7 +99,7 @@ pub async fn tt_sync_pull(
     app_state: State<'_, Arc<AppState>>,
     server_device_id: String,
     mode: SyncMode,
-    options: Option<SyncOperationOptions>,
+    options: SyncOperationOptions,
 ) -> Result<SyncJobReport, CommandError> {
     log_command("tt_sync_pull");
 
@@ -115,7 +115,7 @@ pub async fn tt_sync_push(
     app_state: State<'_, Arc<AppState>>,
     server_device_id: String,
     mode: SyncMode,
-    options: Option<SyncOperationOptions>,
+    options: SyncOperationOptions,
 ) -> Result<SyncJobReport, CommandError> {
     log_command("tt_sync_push");
 

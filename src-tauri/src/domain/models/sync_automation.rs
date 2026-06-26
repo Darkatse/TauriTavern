@@ -28,7 +28,6 @@ pub struct SyncAutomationConfig {
     pub target: Option<SyncAutomationTarget>,
     #[serde(default)]
     pub sync_mode: SyncMode,
-    #[serde(default = "tauri_tavern_default_selection")]
     pub selection: DatasetSelection,
 }
 
@@ -55,7 +54,6 @@ pub struct ScheduledSyncRule {
     pub target: Option<SyncAutomationTarget>,
     #[serde(default)]
     pub sync_mode: SyncMode,
-    #[serde(default = "tauri_tavern_default_selection")]
     pub selection: DatasetSelection,
     #[serde(default = "default_require_bundle_zstd")]
     pub require_bundle_zstd: bool,

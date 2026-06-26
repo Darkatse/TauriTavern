@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
+use ttsync_core::dataset::tauri_tavern_default_selection;
 
 use crate::application::services::sync_automation_service::{
     LoadedScheduledSyncRule, SyncAutomationRuleRepository,
@@ -69,7 +70,7 @@ struct LegacySyncAutomationConfig {
     target: Option<crate::domain::models::sync_automation::SyncAutomationTarget>,
     #[serde(default, alias = "syncMode")]
     sync_mode: ttsync_contract::sync::SyncMode,
-    #[serde(default = "ttsync_core::dataset::tauri_tavern_default_selection")]
+    #[serde(default = "tauri_tavern_default_selection")]
     selection: ttsync_contract::dataset::DatasetSelection,
 }
 
@@ -192,7 +193,7 @@ mod tests {
             .expect("create dir");
         tokio::fs::write(
             &path,
-            br#"{"lan_server_auto_start":true,"auto_sync_enabled":false,"interval_minutes":15}"#,
+            br#"{"lan_server_auto_start":true,"auto_sync_enabled":false,"interval_minutes":15,"selection":{"policy_version":1,"dataset_ids":["chat.character.history"]}}"#,
         )
         .await
         .expect("write old config");
@@ -220,7 +221,7 @@ mod tests {
             .expect("create dir");
         tokio::fs::write(
             &path,
-            br#"{"lanServerAutoStart":true,"autoSyncEnabled":false,"intervalMinutes":15}"#,
+            br#"{"lanServerAutoStart":true,"autoSyncEnabled":false,"intervalMinutes":15,"selection":{"policy_version":1,"dataset_ids":["chat.character.history"]}}"#,
         )
         .await
         .expect("write old config");
@@ -229,6 +230,36 @@ mod tests {
 
         assert_eq!(loaded.legacy_lan_server_auto_start, Some(true));
         assert_eq!(loaded.rule.interval_minutes, 15);
+        assert!(loaded.rewrite_canonical);
+
+        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
+    }
+
+    #[tokio::test]
+    async fn old_config_without_selection_is_migrated() {
+        let default_user_dir = temp_default_user_dir();
+        let store = SyncAutomationStore::new(default_user_dir.clone());
+        let path = default_user_dir
+            .join("user")
+            .join("lan-sync")
+            .join("automation.json");
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .expect("create dir");
+        tokio::fs::write(
+            &path,
+            br#"{"lan_server_auto_start":true,"auto_sync_enabled":false,"interval_minutes":15}"#,
+        )
+        .await
+        .expect("write old config");
+
+        let loaded = store.load_or_create_rule().await.expect("load old config");
+
+        assert_eq!(loaded.rule.interval_minutes, 15);
+        assert_eq!(
+            loaded.rule.selection,
+            ttsync_core::dataset::tauri_tavern_default_selection()
+        );
         assert!(loaded.rewrite_canonical);
 
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;

@@ -166,11 +166,10 @@ pub async fn request_peer_pull(
     let api = LanSyncClient::new(peer.base_url.clone(), peer.spki_sha256.clone())?;
     let status = api.status().await?;
     ensure_dataset_scope_v1(&status, "LAN Sync peer")?;
-    if options.require_bundle_zstd
-        && !status
-            .features
-            .iter()
-            .any(|feature| feature == LAN_PULL_REQUEST_SELECTION_FEATURE_V1)
+    if !status
+        .features
+        .iter()
+        .any(|feature| feature == LAN_PULL_REQUEST_SELECTION_FEATURE_V1)
     {
         return Err(DomainError::InvalidData(
             "LAN Sync peer does not support scoped pull requests".to_string(),

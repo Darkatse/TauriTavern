@@ -10,7 +10,7 @@ use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::{
     ResolvedSyncPolicy, SyncEndpointRef, SyncIntent, SyncJobReport, SyncJobRequest,
-    SyncOperationOptions, SyncOrigin, resolve_sync_options,
+    SyncOperationOptions, SyncOrigin,
 };
 use crate::domain::models::tt_sync::{TtSyncIdentity, TtSyncPairedServer};
 
@@ -107,11 +107,11 @@ impl TtSyncService {
         &self,
         server_device_id: &str,
         mode: SyncMode,
-        options: Option<SyncOperationOptions>,
+        options: SyncOperationOptions,
     ) -> Result<SyncJobReport, DomainError> {
         let server_device_id = DeviceId::new(server_device_id.to_string())
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
-        let options = resolve_sync_options(options)?;
+        let options = options.validate()?;
         Ok(self
             .run_remote_job(
                 server_device_id,
@@ -127,11 +127,11 @@ impl TtSyncService {
         &self,
         server_device_id: &str,
         mode: SyncMode,
-        options: Option<SyncOperationOptions>,
+        options: SyncOperationOptions,
     ) -> Result<SyncJobReport, DomainError> {
         let server_device_id = DeviceId::new(server_device_id.to_string())
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
-        let options = resolve_sync_options(options)?;
+        let options = options.validate()?;
         let report = self
             .run_remote_job(
                 server_device_id,

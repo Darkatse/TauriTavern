@@ -100,22 +100,19 @@ function normalizeSyncDatasetSelection(selection, catalog) {
 }
 
 export function getSyncDatasetSelection(catalog) {
-    const stored = [
-        { key: SYNC_DATASET_SELECTION_STORAGE_KEY, legacy: false },
-        { key: LEGACY_SYNC_DATASET_SELECTION_STORAGE_KEY, legacy: true },
-    ]
-        .map((entry) => ({ ...entry, raw: localStorage.getItem(entry.key) }))
-        .filter((entry) => entry.raw);
+    for (const key of [SYNC_DATASET_SELECTION_STORAGE_KEY, LEGACY_SYNC_DATASET_SELECTION_STORAGE_KEY]) {
+        const raw = localStorage.getItem(key);
+        if (!raw) {
+            continue;
+        }
 
-    for (const entry of stored) {
         try {
-            const normalized = normalizeSyncDatasetSelection(JSON.parse(entry.raw), catalog);
+            const normalized = normalizeSyncDatasetSelection(JSON.parse(raw), catalog);
             localStorage.setItem(SYNC_DATASET_SELECTION_STORAGE_KEY, JSON.stringify(normalized));
             localStorage.removeItem(LEGACY_SYNC_DATASET_SELECTION_STORAGE_KEY);
             return normalized;
         } catch (error) {
-            localStorage.removeItem(entry.key);
-            console.warn('Stored sync content selection was reset:', error);
+            throw new Error(`Stored sync content selection is invalid: ${error.message}`);
         }
     }
 

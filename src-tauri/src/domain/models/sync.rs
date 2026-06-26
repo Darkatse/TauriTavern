@@ -8,7 +8,6 @@ use crate::domain::errors::DomainError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncOperationOptions {
-    #[serde(default = "tauri_tavern_default_selection")]
     pub selection: DatasetSelection,
     #[serde(default)]
     pub require_bundle_zstd: bool,
@@ -29,12 +28,6 @@ impl SyncOperationOptions {
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
         Ok(self)
     }
-}
-
-pub fn resolve_sync_options(
-    options: Option<SyncOperationOptions>,
-) -> Result<SyncOperationOptions, DomainError> {
-    options.unwrap_or_default().validate()
 }
 
 #[derive(Debug, Clone, Serialize)]

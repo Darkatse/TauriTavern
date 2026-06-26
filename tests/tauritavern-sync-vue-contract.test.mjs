@@ -248,7 +248,7 @@ test('TauriTavern Sync dataset selection migrates legacy localStorage key once',
     });
 });
 
-test('TauriTavern Sync dataset selection falls back to valid legacy key', async () => {
+test('TauriTavern Sync dataset selection rejects invalid current key before legacy fallback', async () => {
     const { getSyncDatasetSelection } = await importSyncState();
     const catalog = {
         policyVersion: 1,
@@ -263,18 +263,15 @@ test('TauriTavern Sync dataset selection falls back to valid legacy key', async 
         }),
     });
 
-    assert.deepEqual(await withMutedWarnings(() => getSyncDatasetSelection(catalog)), {
-        policy_version: 1,
-        dataset_ids: ['chats'],
-    });
-    assert.equal(storage.getItem('tauritavern:sync_v2_dataset_selection'), null);
-    assert.equal(
-        storage.getItem('tauritavern:sync_dataset_selection'),
-        JSON.stringify({ policy_version: 1, dataset_ids: ['chats'] }),
+    assert.throws(
+        () => getSyncDatasetSelection(catalog),
+        /Stored sync content selection is invalid/,
     );
+    assert.equal(storage.getItem('tauritavern:sync_dataset_selection'), '{bad');
+    assert.notEqual(storage.getItem('tauritavern:sync_v2_dataset_selection'), null);
 });
 
-test('TauriTavern Sync dataset selection drops invalid legacy key', async () => {
+test('TauriTavern Sync dataset selection rejects invalid legacy key', async () => {
     const { getSyncDatasetSelection } = await importSyncState();
     const catalog = {
         policyVersion: 1,
@@ -285,11 +282,11 @@ test('TauriTavern Sync dataset selection drops invalid legacy key', async () => 
         'tauritavern:sync_v2_dataset_selection': '{bad',
     });
 
-    assert.deepEqual(await withMutedWarnings(() => getSyncDatasetSelection(catalog)), {
-        policy_version: 1,
-        dataset_ids: ['characters'],
-    });
-    assert.equal(storage.getItem('tauritavern:sync_v2_dataset_selection'), null);
+    assert.throws(
+        () => getSyncDatasetSelection(catalog),
+        /Stored sync content selection is invalid/,
+    );
+    assert.equal(storage.getItem('tauritavern:sync_v2_dataset_selection'), '{bad');
     assert.equal(storage.getItem('tauritavern:sync_dataset_selection'), null);
 });
 

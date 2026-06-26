@@ -145,7 +145,7 @@ LAN Sync 与 TT-Sync v2 共享 `/v2/*` 协议族：
 1. **全局 permit**：尝试获取同步许可；失败则直接返回失败 `SyncJobReport`。
 2. Status：读取 `GET /v2/status`，必须支持 `dataset_scope_v1` 且 `dataset_policy_version` 匹配；旧 server 会 fail-fast，避免静默漏同步 Agent 数据。
 3. `POST /v2/session/open`：用 Ed25519 对 canonical request 签名，获得 `session_token` 与 `granted_permissions`。
-4. Scanning：按调用方传入的 `DatasetSelection` 扫描本地 manifest；未显式传入时使用 TauriTavern default selection（`src-tauri/src/infrastructure/tt_sync/fs.rs`）。
+4. Scanning：按调用方显式传入的 `DatasetSelection` 扫描本地 manifest；缺失 selection 会 fail-fast，不再回退到旧固定范围或隐式默认范围。
 5. Diffing：携带同一份 `DatasetSelection` 请求 plan：
    - pull：`POST /v2/sync/pull-plan`
    - push：`POST /v2/sync/push-plan`
