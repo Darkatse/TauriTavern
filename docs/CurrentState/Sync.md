@@ -58,24 +58,30 @@ Agent run retention 复用同一套 run storage class 词汇来描述 `run_journ
 
 ## 3. 事件语义（前端可观测契约）
 
-两类产品入口都对前端暴露“阶段（phase）+ 进度（files/bytes）”事件；完成/错误按作业入口区分：
+两类产品入口都通过统一作业事件暴露“阶段（phase）+ 进度（files/bytes）”与最终结果；手动命令仍返回 `SyncJobReport`，前端用命令返回负责手动完成/错误弹窗，避免同一作业双重提示。
+
+- 统一作业事件：
+  - 作业流：`sync:job`
+  - `job` 是轻量作业上下文：`id` / `endpoint` / `intent` / `execution` / `origin`；不暴露内部 `policy` / selection。
+  - progress payload：`status: "progress"`，携带 `job` 与 `progress`
+  - final payload：`status: "completed" | "remote_request_accepted" | "failed"`，携带 `job` 与 `result`
+  - `job.origin.type: "remote_request"` 表示“这是远端请求触发的本地作业”；`result.status: "remote_request_accepted"` 表示“本地请求对端稍后 pull 已被接受”，二者不是同一概念。
 
 - LAN Sync：
   - pairing 请求事件：`lan_sync:pair_request`
-  - 进度：`lan_sync:progress`
-  - 后台 inbound pull-request 完成/错误：`lan_sync:completed` / `lan_sync:error`
-  - 手动作业完成/错误：命令返回 `SyncJobReport`
+  - 进度/完成/错误：`sync:job`
+  - 手动作业完成/错误：命令返回 `SyncJobReport`；后台 inbound pull-request 由 `sync:job` final event 驱动提示和 reload。
   - 应用边界：`src-tauri/src/application/services/lan_sync_service.rs`
   - Tauri event / pairing approval adapter：`src-tauri/src/app/bootstrap.rs`
   - Axum server lifecycle adapter：`src-tauri/src/infrastructure/sync/lan/control.rs`
 - TT-Sync：
-  - 进度：`tt_sync:progress`
-  - 完成/错误：手动命令通过 `SyncJobReport` 返回；不额外发 `tt_sync:completed` / `tt_sync:error`
+  - 进度/完成/错误：`sync:job`
+  - 完成/错误：手动命令通过 `SyncJobReport` 返回；不额外发 TT 专属 completed/error 事件。
   - runtime：`src-tauri/src/infrastructure/tt_sync/runtime.rs`
 - 自动同步：
   - 状态/提示：`sync_auto:status` / `sync_auto:toast`
   - `last_success_at_ms` 只表示一次同步作业已经实际完成；LAN pull-request 只会更新 `last_request_accepted_at_ms`，不再记为成功完成。
-  - 自动 TT-Sync push 的 `tt_sync:*` payload 会额外带 `origin: "auto"`；前端监听器据此不打开手动进度弹窗，也不触发手动 pull 完成后的 reload。
+  - 自动同步作业的 `sync:job` payload 会携带 `job.origin.type: "scheduled"`；前端监听器据此不打开手动进度弹窗、不触发 reload。最终面板数据刷新由 `sync_auto:toast` 复用 `SYNC_AUTOMATION_CHANGED_EVENT` 触发。
 
 **不要破坏事件时序**：允许提升并发与吞吐，但不应改动“哪个阶段会发什么事件、作业完成/错误如何回到调用方”的外部语义。
 

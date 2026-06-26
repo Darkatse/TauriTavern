@@ -29,8 +29,7 @@ use pairing_link::{
 };
 pub use ports::{
     LanAddressDiscovery, LanInboundRequestHandler, LanPairingApprovalRequest, LanPairingClient,
-    LanPeerRepository, LanServerControl, LanServerInfo, LanSyncEventPublisher,
-    LanSyncSettingsRepository, PairingApproval,
+    LanPeerRepository, LanServerControl, LanServerInfo, LanSyncSettingsRepository, PairingApproval,
 };
 pub use runtime_state::{LanPairingSession, LanSyncRuntimeState};
 

@@ -87,33 +87,3 @@ pub struct LanSyncPairRequestEvent {
     pub peer_device_name: String,
     pub peer_ip: String,
 }
-
-#[derive(Debug, Clone, Serialize)]
-pub enum LanSyncSyncPhase {
-    Scanning,
-    Diffing,
-    Downloading,
-    Deleting,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LanSyncSyncProgressEvent {
-    pub phase: LanSyncSyncPhase,
-    pub files_done: usize,
-    pub files_total: usize,
-    pub bytes_done: u64,
-    pub bytes_total: u64,
-    pub current_path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LanSyncSyncCompletedEvent {
-    pub files_total: usize,
-    pub bytes_total: u64,
-    pub files_deleted: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LanSyncSyncErrorEvent {
-    pub message: String,
-}

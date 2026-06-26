@@ -10,7 +10,7 @@ use super::pairing_link::{
     host_for_pairing_prompt,
 };
 use super::ports::{
-    LanInboundRequestHandler, LanPairingApprovalRequest, LanPeerRepository, LanSyncEventPublisher,
+    LanInboundRequestHandler, LanPairingApprovalRequest, LanPeerRepository,
     LanSyncSettingsRepository, PairingApproval,
 };
 use super::runtime_state::LanSyncRuntimeState;
@@ -19,7 +19,6 @@ use crate::application::services::sync_job_coordinator::{StartedSyncJob, SyncJob
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
     LanPairCompleteRequest, LanPairCompleteResponse, LanSyncPairedDevice,
-    LanSyncSyncCompletedEvent, LanSyncSyncErrorEvent,
 };
 use crate::domain::models::sync::{
     ResolvedSyncPolicy, SyncEndpointRef, SyncIntent, SyncJobReport, SyncJobRequest,
@@ -31,7 +30,6 @@ pub struct LanInboundService {
     settings_repository: Arc<dyn LanSyncSettingsRepository>,
     peer_repository: Arc<dyn LanPeerRepository>,
     coordinator: Arc<SyncJobCoordinator>,
-    events: Arc<dyn LanSyncEventPublisher>,
     approval: Arc<dyn PairingApproval>,
 }
 
@@ -41,7 +39,6 @@ impl LanInboundService {
         settings_repository: Arc<dyn LanSyncSettingsRepository>,
         peer_repository: Arc<dyn LanPeerRepository>,
         coordinator: Arc<SyncJobCoordinator>,
-        events: Arc<dyn LanSyncEventPublisher>,
         approval: Arc<dyn PairingApproval>,
     ) -> Self {
         Self {
@@ -49,7 +46,6 @@ impl LanInboundService {
             settings_repository,
             peer_repository,
             coordinator,
-            events,
             approval,
         }
     }
@@ -143,6 +139,7 @@ impl LanInboundRequestHandler for LanInboundService {
         peer_device_id: DeviceId,
         options: SyncOperationOptions,
     ) -> Result<(), DomainError> {
+        let options = options.validate()?;
         let mode = self.effective_sync_mode().await?;
         let request = SyncJobRequest {
             endpoint: SyncEndpointRef::LanPeer {
@@ -160,30 +157,15 @@ impl LanInboundRequestHandler for LanInboundService {
             .try_start(request)
             .map_err(|report| DomainError::InvalidData(report_failure_message(&report)))?;
 
-        spawn_inbound_job(started, self.events.clone());
+        spawn_inbound_job(started);
         Ok(())
     }
 }
 
-fn spawn_inbound_job(started: StartedSyncJob, events: Arc<dyn LanSyncEventPublisher>) {
+fn spawn_inbound_job(started: StartedSyncJob) {
     tokio::spawn(async move {
-        let report = started.execute().await.finish();
-        publish_inbound_report(&*events, &report);
+        let _ = started.execute().await.finish();
     });
-}
-
-fn publish_inbound_report(events: &dyn LanSyncEventPublisher, report: &SyncJobReport) {
-    if let Some(summary) = report.completed_summary() {
-        events.publish_completed(LanSyncSyncCompletedEvent {
-            files_total: summary.files_total,
-            bytes_total: summary.bytes_total,
-            files_deleted: summary.files_deleted,
-        });
-    } else if let Some(message) = report.failure_message() {
-        events.publish_error(LanSyncSyncErrorEvent {
-            message: message.to_string(),
-        });
-    }
 }
 
 fn report_failure_message(report: &SyncJobReport) -> String {

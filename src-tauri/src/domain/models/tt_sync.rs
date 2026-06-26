@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use ttsync_contract::peer::{DeviceId, Permissions};
-use ttsync_contract::sync::SyncPhase;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TtSyncIdentity {
@@ -19,21 +18,4 @@ pub struct TtSyncPairedServer {
     pub permissions: Permissions,
     pub paired_at_ms: u64,
     pub last_sync_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TtSyncDirection {
-    Pull,
-    Push,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TtSyncProgressEvent {
-    pub direction: TtSyncDirection,
-    pub phase: SyncPhase,
-    pub files_done: usize,
-    pub files_total: usize,
-    pub bytes_done: u64,
-    pub bytes_total: u64,
-    pub current_path: Option<String>,
 }

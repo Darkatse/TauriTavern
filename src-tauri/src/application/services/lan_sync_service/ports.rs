@@ -4,8 +4,7 @@ use ttsync_contract::peer::DeviceId;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
     LanPairCompleteRequest, LanPairCompleteResponse, LanServerSettings, LanSyncIdentity,
-    LanSyncPairedDevice, LanSyncSyncCompletedEvent, LanSyncSyncErrorEvent,
-    LanSyncSyncProgressEvent, SyncPreferences,
+    LanSyncPairedDevice, SyncPreferences,
 };
 use crate::domain::models::sync::SyncOperationOptions;
 
@@ -78,12 +77,6 @@ pub trait PairingApproval: Send + Sync {
     async fn request(&self, request: LanPairingApprovalRequest) -> Result<bool, DomainError>;
     async fn confirm(&self, request_id: &str, accept: bool) -> Result<(), DomainError>;
     async fn cancel_all(&self);
-}
-
-pub trait LanSyncEventPublisher: Send + Sync {
-    fn publish_progress(&self, payload: LanSyncSyncProgressEvent);
-    fn publish_completed(&self, payload: LanSyncSyncCompletedEvent);
-    fn publish_error(&self, payload: LanSyncSyncErrorEvent);
 }
 
 #[async_trait]

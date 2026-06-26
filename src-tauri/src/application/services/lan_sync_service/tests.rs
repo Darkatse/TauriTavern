@@ -8,15 +8,15 @@ use ttsync_contract::sync::SyncMode;
 use super::pairing_link::{default_lan_permissions, device_pubkey_b64url};
 use super::*;
 use crate::application::services::data_change_reconciler::DataChangeReconciler;
-use crate::application::services::sync_job_coordinator::SyncJobExecutor;
+use crate::application::services::sync_job_coordinator::{SyncJobEventPublisher, SyncJobExecutor};
 use crate::domain::models::lan_sync::{
     LanPairCompleteRequest, LanPairCompleteResponse, LanServerSettings, LanSyncIdentity,
-    LanSyncPairedDevice, LanSyncSyncCompletedEvent, LanSyncSyncErrorEvent,
-    LanSyncSyncProgressEvent, SyncPreferences,
+    LanSyncPairedDevice, SyncPreferences,
 };
 use crate::domain::models::sync::{
     LocalAppliedChangeSummary, ResolvedSyncPolicy, SyncEndpointRef, SyncExecutionFailure,
-    SyncExecutionKind, SyncExecutionReport, SyncIntent, SyncJob, SyncJobSummary,
+    SyncExecutionKind, SyncExecutionReport, SyncIntent, SyncJob, SyncJobEvent, SyncJobReportResult,
+    SyncJobSummary,
 };
 
 struct MemorySettingsRepository {
@@ -98,24 +98,18 @@ impl PairingApproval for StaticApproval {
 
 struct NoopEvents;
 
-impl LanSyncEventPublisher for NoopEvents {
-    fn publish_progress(&self, _payload: LanSyncSyncProgressEvent) {}
-    fn publish_completed(&self, _payload: LanSyncSyncCompletedEvent) {}
-    fn publish_error(&self, _payload: LanSyncSyncErrorEvent) {}
+impl SyncJobEventPublisher for NoopEvents {
+    fn publish_sync_job(&self, _event: SyncJobEvent) {}
 }
 
 struct RecordingEvents {
-    completed: mpsc::UnboundedSender<LanSyncSyncCompletedEvent>,
+    events: mpsc::UnboundedSender<SyncJobEvent>,
 }
 
-impl LanSyncEventPublisher for RecordingEvents {
-    fn publish_progress(&self, _payload: LanSyncSyncProgressEvent) {}
-
-    fn publish_completed(&self, payload: LanSyncSyncCompletedEvent) {
-        self.completed.send(payload).expect("record completion");
+impl SyncJobEventPublisher for RecordingEvents {
+    fn publish_sync_job(&self, event: SyncJobEvent) {
+        self.events.send(event).expect("record sync job event");
     }
-
-    fn publish_error(&self, _payload: LanSyncSyncErrorEvent) {}
 }
 
 struct RecordingExecutor {
@@ -282,6 +276,7 @@ fn inbound_service(
     let coordinator = Arc::new(SyncJobCoordinator::new(
         Arc::new(RecordingExecutor { jobs }),
         Arc::new(NoopReconciler),
+        Arc::new(NoopEvents),
     ));
 
     LanInboundService::new(
@@ -289,7 +284,6 @@ fn inbound_service(
         settings_repository,
         peer_repository,
         coordinator,
-        Arc::new(NoopEvents),
         approval,
     )
 }
@@ -435,8 +429,8 @@ async fn accepted_stale_pairing_request_does_not_clear_new_session() {
         Arc::new(SyncJobCoordinator::new(
             Arc::new(RecordingExecutor { jobs }),
             Arc::new(NoopReconciler),
+            Arc::new(NoopEvents),
         )),
-        Arc::new(NoopEvents),
         Arc::new(ReplacingApproval {
             state: state.clone(),
         }),
@@ -541,15 +535,15 @@ async fn stop_server_does_not_abort_accepted_inbound_job() {
             release: Mutex::new(Some(release_rx)),
         }),
         Arc::new(NoopReconciler),
+        Arc::new(RecordingEvents {
+            events: completed_tx,
+        }),
     ));
     let inbound = LanInboundService::new(
         state.clone(),
         settings_repository.clone(),
         peer_repository.clone(),
         coordinator.clone(),
-        Arc::new(RecordingEvents {
-            completed: completed_tx,
-        }),
         approval.clone(),
     );
     let service = LanSyncService::new(
@@ -582,7 +576,12 @@ async fn stop_server_does_not_abort_accepted_inbound_job() {
         .await
         .expect("job should complete after stop")
         .expect("completion event");
-    assert_eq!(completed.files_total, 1);
-    assert_eq!(completed.bytes_total, 2);
-    assert_eq!(completed.files_deleted, 3);
+    match completed.result.expect("event result") {
+        SyncJobReportResult::Completed { summary } => {
+            assert_eq!(summary.files_total, 1);
+            assert_eq!(summary.bytes_total, 2);
+            assert_eq!(summary.files_deleted, 3);
+        }
+        other => panic!("unexpected event result: {other:?}"),
+    }
 }

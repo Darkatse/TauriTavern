@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use ttsync_contract::dataset::DatasetSelection;
 use ttsync_contract::peer::DeviceId;
-use ttsync_contract::sync::SyncMode;
+use ttsync_contract::sync::{SyncMode, SyncPhase};
 use ttsync_core::dataset::{ResolvedDatasetPolicy, tauri_tavern_default_selection};
 
 use crate::domain::errors::DomainError;
@@ -88,6 +88,27 @@ pub struct SyncJob {
     pub execution: SyncExecutionKind,
     pub origin: SyncOrigin,
     pub policy: ResolvedSyncPolicy,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncJobContext {
+    pub id: String,
+    pub endpoint: SyncEndpointRef,
+    pub intent: SyncIntent,
+    pub execution: SyncExecutionKind,
+    pub origin: SyncOrigin,
+}
+
+impl SyncJob {
+    pub fn context(&self) -> SyncJobContext {
+        SyncJobContext {
+            id: self.id.clone(),
+            endpoint: self.endpoint.clone(),
+            intent: self.intent,
+            execution: self.execution,
+            origin: self.origin.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -215,6 +236,42 @@ pub struct SyncJobReport {
     pub result: SyncJobReportResult,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum SyncJobProgressDirection {
+    Pull,
+    Push,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncJobProgress {
+    pub direction: SyncJobProgressDirection,
+    pub phase: SyncPhase,
+    pub files_done: usize,
+    pub files_total: usize,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+    pub current_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncJobEventStatus {
+    Progress,
+    Completed,
+    RemoteRequestAccepted,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncJobEvent {
+    pub status: SyncJobEventStatus,
+    pub job: SyncJobContext,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<SyncJobProgress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<SyncJobReportResult>,
+}
+
 impl SyncJobReport {
     pub fn from_outcome(job: SyncJob, outcome: SyncJobOutcome) -> Self {
         let result = match outcome {
@@ -259,11 +316,30 @@ impl SyncJobReport {
             _ => None,
         }
     }
+}
 
-    pub fn completed_summary(&self) -> Option<&SyncJobSummary> {
-        match &self.result {
-            SyncJobReportResult::Completed { summary } => Some(summary),
-            _ => None,
+impl SyncJobEvent {
+    pub fn progress(job: SyncJobContext, progress: SyncJobProgress) -> Self {
+        Self {
+            status: SyncJobEventStatus::Progress,
+            job,
+            progress: Some(progress),
+            result: None,
+        }
+    }
+
+    pub fn from_report(report: SyncJobReport) -> Self {
+        let status = match &report.result {
+            SyncJobReportResult::Completed { .. } => SyncJobEventStatus::Completed,
+            SyncJobReportResult::RemoteRequestAccepted => SyncJobEventStatus::RemoteRequestAccepted,
+            SyncJobReportResult::Failed { .. } => SyncJobEventStatus::Failed,
+        };
+
+        Self {
+            status,
+            job: report.job.context(),
+            progress: None,
+            result: Some(report.result),
         }
     }
 }
@@ -321,5 +397,71 @@ mod tests {
         assert_eq!(value["result"]["status"], "failed");
         assert_eq!(value["result"]["failure_kind"], "without_local_mutation");
         assert!(value["result"].get("local_applied").is_none());
+    }
+
+    #[test]
+    fn sync_job_event_exposes_top_level_status() {
+        let report = SyncJobReport::failed_without_local_mutation(job(), "busy");
+        let event = SyncJobEvent::from_report(report);
+        let value = serde_json::to_value(event).unwrap();
+
+        assert_eq!(value["status"], "failed");
+        assert_eq!(value["result"]["status"], "failed");
+        assert_eq!(value["job"]["id"], "job-1");
+        assert!(value["job"].get("policy").is_none());
+    }
+
+    #[test]
+    fn sync_job_progress_event_serializes_contract_shape() {
+        let mut job = job();
+        job.endpoint = SyncEndpointRef::RemoteServer {
+            server_device_id: DeviceId::new("22222222-2222-4222-8222-222222222222".to_string())
+                .unwrap(),
+        };
+        job.intent = SyncIntent::ReplicateLocalToRemote;
+        job.execution = SyncExecutionKind::DirectPush;
+        job.origin = SyncOrigin::Scheduled;
+        let event = SyncJobEvent::progress(
+            job.context(),
+            SyncJobProgress {
+                direction: SyncJobProgressDirection::Push,
+                phase: SyncPhase::Uploading,
+                files_done: 1,
+                files_total: 2,
+                bytes_done: 3,
+                bytes_total: 4,
+                current_path: Some("characters/a.png".to_string()),
+            },
+        );
+        let value = serde_json::to_value(event).unwrap();
+
+        assert_eq!(value["status"], "progress");
+        assert_eq!(value["job"]["origin"]["type"], "scheduled");
+        assert_eq!(value["job"]["endpoint"]["type"], "remote_server");
+        assert_eq!(value["progress"]["direction"], "Push");
+        assert_eq!(value["progress"]["phase"], "Uploading");
+        assert!(value.get("result").is_none());
+    }
+
+    #[test]
+    fn sync_job_remote_request_final_serializes_origin_type() {
+        let mut job = job();
+        let peer_id = DeviceId::new("22222222-2222-4222-8222-222222222222".to_string()).unwrap();
+        job.origin = SyncOrigin::RemoteRequest { peer_id };
+        let report = SyncJobReport::from_outcome(
+            job,
+            SyncJobOutcome::Completed {
+                summary: SyncJobSummary::new(1, 2, 0),
+            },
+        );
+        let value = serde_json::to_value(SyncJobEvent::from_report(report)).unwrap();
+
+        assert_eq!(value["status"], "completed");
+        assert_eq!(value["job"]["origin"]["type"], "remote_request");
+        assert_eq!(
+            value["job"]["origin"]["peer_id"],
+            "22222222-2222-4222-8222-222222222222"
+        );
+        assert_eq!(value["result"]["status"], "completed");
     }
 }

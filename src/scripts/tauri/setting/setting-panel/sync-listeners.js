@@ -6,6 +6,7 @@ import {
     TT_SYNC_SERVERS_CHANGED_EVENT,
 } from './constants.js';
 import { formatBytes, formatTimestamp } from './formatters.js';
+import { resolveSyncJobEventAction, syncFailureRequiresReload } from './sync-job-events.js';
 
 const SYNC_STYLE_ID = 'tauritavern-sync-style';
 
@@ -48,37 +49,8 @@ export function installSyncListeners() {
     const listen = getListen();
 
     void (async () => {
-        await listen('lan_sync:progress', (event) => {
-            if (isAutoSyncPayload(event.payload)) {
-                return;
-            }
-            updateSyncProgress('LAN Sync progress', event.payload);
-        });
-
-        await listen('lan_sync:completed', async (event) => {
-            const payload = event.payload;
-            if (isAutoSyncPayload(payload)) {
-                window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
-                return;
-            }
-
-            await showLanSyncCompleted(payload);
-        });
-
-        await listen('lan_sync:error', async (event) => {
-            if (isAutoSyncPayload(event.payload)) {
-                window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
-                return;
-            }
-            await closeSyncProgressPopup();
-            await showSyncError(event.payload);
-        });
-
-        await listen('tt_sync:progress', (event) => {
-            if (isAutoSyncPayload(event.payload)) {
-                return;
-            }
-            updateSyncProgress('TT-Sync progress', event.payload);
+        await listen('sync:job', async (event) => {
+            await handleSyncJobEvent(event.payload);
         });
 
         await listen('sync_auto:status', () => {
@@ -87,9 +59,23 @@ export function installSyncListeners() {
 
         await listen('sync_auto:toast', (event) => {
             showSyncAutomationToast(event.payload);
-            window.dispatchEvent(new Event(SYNC_AUTOMATION_STATUS_CHANGED_EVENT));
+            window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
         });
     })();
+}
+
+async function handleSyncJobEvent(payload) {
+    const action = resolveSyncJobEventAction(payload);
+
+    if (action.type === 'progress') {
+        updateSyncProgress(action.title, action.payload);
+        return;
+    }
+
+    if (action.type === 'report') {
+        await showSyncReportResult(action.report);
+        return;
+    }
 }
 
 export async function showSyncReportResult(report) {
@@ -99,11 +85,15 @@ export async function showSyncReportResult(report) {
     }
 
     if (result.status === 'failed') {
+        const shouldReload = syncFailureRequiresReload(result);
         if (report?.job?.endpoint?.type === 'remote_server') {
             window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
         }
         await closeSyncProgressPopup();
         await showSyncError({ message: result.message || 'Sync failed.' });
+        if (shouldReload) {
+            window.location.reload();
+        }
         return;
     }
 
@@ -127,10 +117,6 @@ export async function showSyncReportResult(report) {
             ...summary,
         });
     }
-}
-
-function isAutoSyncPayload(payload) {
-    return payload?.origin === 'auto';
 }
 
 async function showLanSyncCompleted(payload) {

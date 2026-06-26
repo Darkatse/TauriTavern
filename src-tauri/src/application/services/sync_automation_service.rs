@@ -533,10 +533,12 @@ mod tests {
     use std::sync::Mutex as StdMutex;
 
     use crate::application::services::data_change_reconciler::DataChangeReconciler;
-    use crate::application::services::sync_job_coordinator::SyncJobExecutor;
+    use crate::application::services::sync_job_coordinator::{
+        SyncJobEventPublisher, SyncJobExecutor,
+    };
     use crate::domain::models::sync::{
         LocalAppliedChangeSummary, SyncExecutionFailure, SyncExecutionKind, SyncExecutionReport,
-        SyncJob, SyncJobSummary,
+        SyncJob, SyncJobEvent, SyncJobSummary,
     };
 
     #[derive(Default)]
@@ -553,6 +555,12 @@ mod tests {
         fn publish_toast(&self, event: SyncAutomationToastEvent) {
             self.toasts.lock().unwrap().push(event);
         }
+    }
+
+    struct NoopJobEvents;
+
+    impl SyncJobEventPublisher for NoopJobEvents {
+        fn publish_sync_job(&self, _event: SyncJobEvent) {}
     }
 
     struct NoopRuleRepository;
@@ -737,6 +745,7 @@ mod tests {
             Arc::new(SyncJobCoordinator::new(
                 Arc::new(OutcomeExecutor),
                 Arc::new(NoopReconciler),
+                Arc::new(NoopJobEvents),
             )),
         )
     }

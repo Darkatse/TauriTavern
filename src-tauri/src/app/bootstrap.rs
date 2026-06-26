@@ -31,8 +31,7 @@ use crate::application::services::group_service::GroupService;
 use crate::application::services::image_metadata_service::ImageMetadataService;
 use crate::application::services::lan_sync_service::{
     LanInboundService, LanPairingApprovalRequest, LanPeerRepository, LanServerControl,
-    LanSyncEventPublisher, LanSyncRuntimeState, LanSyncService, LanSyncSettingsRepository,
-    PairingApproval,
+    LanSyncRuntimeState, LanSyncService, LanSyncSettingsRepository, PairingApproval,
 };
 use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::native_regex_service::NativeRegexService;
@@ -48,7 +47,9 @@ use crate::application::services::sync_automation_service::{
     SyncAutomationEndpointCatalog, SyncAutomationEventPublisher, SyncAutomationLanServerControl,
     SyncAutomationService,
 };
-use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
+use crate::application::services::sync_job_coordinator::{
+    SyncJobCoordinator, SyncJobEventPublisher,
+};
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::translate_service::TranslateService;
@@ -59,10 +60,8 @@ use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
-use crate::domain::models::lan_sync::{
-    LanSyncPairRequestEvent, LanSyncSyncCompletedEvent, LanSyncSyncErrorEvent,
-    LanSyncSyncProgressEvent,
-};
+use crate::domain::models::lan_sync::LanSyncPairRequestEvent;
+use crate::domain::models::sync::SyncJobEvent;
 use crate::domain::models::sync_automation::{
     SyncAutomationStatus, SyncAutomationTarget, SyncAutomationToastEvent,
 };
@@ -275,26 +274,14 @@ impl SyncAutomationEventPublisher for TauriSyncAutomationEventPublisher {
     }
 }
 
-struct TauriLanSyncEventPublisher {
+struct TauriSyncJobEventPublisher {
     app_handle: AppHandle,
 }
 
-impl LanSyncEventPublisher for TauriLanSyncEventPublisher {
-    fn publish_progress(&self, payload: LanSyncSyncProgressEvent) {
-        if let Err(error) = self.app_handle.emit("lan_sync:progress", payload) {
-            tracing::warn!("Failed to emit LAN Sync progress: {}", error);
-        }
-    }
-
-    fn publish_completed(&self, payload: LanSyncSyncCompletedEvent) {
-        if let Err(error) = self.app_handle.emit("lan_sync:completed", payload) {
-            tracing::warn!("Failed to emit LAN Sync completion: {}", error);
-        }
-    }
-
-    fn publish_error(&self, payload: LanSyncSyncErrorEvent) {
-        if let Err(error) = self.app_handle.emit("lan_sync:error", payload) {
-            tracing::warn!("Failed to emit LAN Sync error: {}", error);
+impl SyncJobEventPublisher for TauriSyncJobEventPublisher {
+    fn publish_sync_job(&self, event: SyncJobEvent) {
+        if let Err(error) = self.app_handle.emit("sync:job", event) {
+            tracing::warn!("Failed to emit Sync job event: {}", error);
         }
     }
 }
@@ -647,32 +634,31 @@ pub(super) async fn build_services(
     let lan_peer_store = LanPeerStore::new(data_directory.default_user().to_path_buf());
     let lan_settings_repository: Arc<dyn LanSyncSettingsRepository> = lan_settings_store.clone();
     let lan_peer_repository: Arc<dyn LanPeerRepository> = Arc::new(lan_peer_store.clone());
-    let lan_sync_events: Arc<dyn LanSyncEventPublisher> = Arc::new(TauriLanSyncEventPublisher {
+    let sync_job_events: Arc<dyn SyncJobEventPublisher> = Arc::new(TauriSyncJobEventPublisher {
         app_handle: app_handle.clone(),
     });
     let pairing_approval: Arc<dyn PairingApproval> =
         Arc::new(TauriPairingApproval::new(app_handle.clone()));
     let tt_runtime = Arc::new(TtSyncRuntime::new(
-        app_handle.clone(),
         data_directory.root().to_path_buf(),
         data_directory.default_user().to_path_buf(),
     ));
     let sync_job_executor = Arc::new(InfrastructureSyncJobExecutor::new(
         data_directory.root().to_path_buf(),
-        lan_sync_events.clone(),
+        sync_job_events.clone(),
         lan_peer_store.clone(),
         tt_runtime.clone(),
     ));
     let sync_job_coordinator = Arc::new(SyncJobCoordinator::new(
         sync_job_executor,
         data_change_reconciler.clone(),
+        sync_job_events,
     ));
     let lan_inbound_service = Arc::new(LanInboundService::new(
         lan_runtime_state.clone(),
         lan_settings_repository.clone(),
         lan_peer_repository.clone(),
         sync_job_coordinator.clone(),
-        lan_sync_events.clone(),
         pairing_approval.clone(),
     ));
     let lan_server_control: Arc<dyn LanServerControl> = Arc::new(AxumLanServerControl::new(

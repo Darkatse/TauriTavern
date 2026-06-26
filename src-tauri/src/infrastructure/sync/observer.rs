@@ -1,71 +1,29 @@
 use std::sync::Arc;
 
 use ttsync_client::{SyncDirection as ClientSyncDirection, SyncObserver, SyncProgress};
-use ttsync_contract::sync::SyncPhase;
 
-use crate::application::services::lan_sync_service::ports::LanSyncEventPublisher;
-use crate::domain::models::lan_sync::{LanSyncSyncPhase, LanSyncSyncProgressEvent};
-use crate::domain::models::sync::SyncOrigin;
-use crate::domain::models::tt_sync::{TtSyncDirection, TtSyncProgressEvent};
-use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
+use crate::application::services::sync_job_coordinator::SyncJobEventPublisher;
+use crate::domain::models::sync::{
+    SyncJobContext, SyncJobEvent, SyncJobProgress, SyncJobProgressDirection,
+};
 
-pub struct LanSyncProgressObserver {
-    events: Arc<dyn LanSyncEventPublisher>,
+pub struct SyncJobProgressObserver {
+    events: Arc<dyn SyncJobEventPublisher>,
+    job: SyncJobContext,
 }
 
-impl LanSyncProgressObserver {
-    pub fn new(events: Arc<dyn LanSyncEventPublisher>) -> Self {
-        Self { events }
+impl SyncJobProgressObserver {
+    pub fn new(events: Arc<dyn SyncJobEventPublisher>, job: SyncJobContext) -> Self {
+        Self { events, job }
     }
 }
 
-impl SyncObserver for LanSyncProgressObserver {
+impl SyncObserver for SyncJobProgressObserver {
     fn on_progress(&self, progress: SyncProgress) {
-        let Some(phase) = lan_phase(progress.phase) else {
-            tracing::warn!(
-                "LAN Sync received unsupported progress phase: {:?}",
-                progress.phase
-            );
-            return;
-        };
-
-        self.events.publish_progress(LanSyncSyncProgressEvent {
-            phase,
-            files_done: progress.files_done,
-            files_total: progress.files_total,
-            bytes_done: progress.bytes_done,
-            bytes_total: progress.bytes_total,
-            current_path: progress.current_path,
-        });
-    }
-}
-
-fn lan_phase(phase: SyncPhase) -> Option<LanSyncSyncPhase> {
-    match phase {
-        SyncPhase::Scanning => Some(LanSyncSyncPhase::Scanning),
-        SyncPhase::Diffing => Some(LanSyncSyncPhase::Diffing),
-        SyncPhase::Downloading => Some(LanSyncSyncPhase::Downloading),
-        SyncPhase::Deleting => Some(LanSyncSyncPhase::Deleting),
-        SyncPhase::Uploading => None,
-    }
-}
-
-pub struct TtSyncProgressObserver {
-    runtime: Arc<TtSyncRuntime>,
-    origin: SyncOrigin,
-}
-
-impl TtSyncProgressObserver {
-    pub fn new(runtime: Arc<TtSyncRuntime>, origin: SyncOrigin) -> Self {
-        Self { runtime, origin }
-    }
-}
-
-impl SyncObserver for TtSyncProgressObserver {
-    fn on_progress(&self, progress: SyncProgress) {
-        self.runtime.emit_progress(
-            TtSyncProgressEvent {
-                direction: tt_direction(progress.direction),
+        self.events.publish_sync_job(SyncJobEvent::progress(
+            self.job.clone(),
+            SyncJobProgress {
+                direction: progress_direction(progress.direction),
                 phase: progress.phase,
                 files_done: progress.files_done,
                 files_total: progress.files_total,
@@ -73,14 +31,13 @@ impl SyncObserver for TtSyncProgressObserver {
                 bytes_total: progress.bytes_total,
                 current_path: progress.current_path,
             },
-            &self.origin,
-        );
+        ));
     }
 }
 
-fn tt_direction(direction: ClientSyncDirection) -> TtSyncDirection {
+fn progress_direction(direction: ClientSyncDirection) -> SyncJobProgressDirection {
     match direction {
-        ClientSyncDirection::Pull => TtSyncDirection::Pull,
-        ClientSyncDirection::Push => TtSyncDirection::Push,
+        ClientSyncDirection::Pull => SyncJobProgressDirection::Pull,
+        ClientSyncDirection::Push => SyncJobProgressDirection::Push,
     }
 }

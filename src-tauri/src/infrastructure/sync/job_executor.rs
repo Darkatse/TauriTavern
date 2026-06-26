@@ -8,25 +8,23 @@ use ttsync_client::{
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::sync::SyncMode;
 
-use crate::application::services::lan_sync_service::ports::LanSyncEventPublisher;
-use crate::application::services::sync_job_coordinator::SyncJobExecutor;
+use crate::application::services::sync_job_coordinator::{SyncJobEventPublisher, SyncJobExecutor};
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::{
     LocalAppliedChangeSummary, ResolvedSyncPolicy, SyncEndpointRef, SyncExecutionFailure,
     SyncExecutionKind, SyncExecutionReport, SyncJob, SyncJobSummary, SyncOperationOptions,
-    SyncOrigin,
 };
 use crate::infrastructure::sync::http_client::{new_sync_client, sync_error_to_domain};
 use crate::infrastructure::sync::lan::client::request_peer_pull as request_lan_peer_pull;
 use crate::infrastructure::sync::lan::store::LanPeerStore;
-use crate::infrastructure::sync::observer::{LanSyncProgressObserver, TtSyncProgressObserver};
+use crate::infrastructure::sync::observer::SyncJobProgressObserver;
 use crate::infrastructure::sync::workspace::TauriTavernSyncWorkspace;
 use crate::infrastructure::sync_transfer;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 
 pub struct InfrastructureSyncJobExecutor {
     lan_sync_root: std::path::PathBuf,
-    lan_events: Arc<dyn LanSyncEventPublisher>,
+    events: Arc<dyn SyncJobEventPublisher>,
     lan_peer_store: LanPeerStore,
     tt_runtime: Arc<TtSyncRuntime>,
 }
@@ -34,13 +32,13 @@ pub struct InfrastructureSyncJobExecutor {
 impl InfrastructureSyncJobExecutor {
     pub fn new(
         lan_sync_root: std::path::PathBuf,
-        lan_events: Arc<dyn LanSyncEventPublisher>,
+        events: Arc<dyn SyncJobEventPublisher>,
         lan_peer_store: LanPeerStore,
         tt_runtime: Arc<TtSyncRuntime>,
     ) -> Self {
         Self {
             lan_sync_root,
-            lan_events,
+            events,
             lan_peer_store,
             tt_runtime,
         }
@@ -48,11 +46,12 @@ impl InfrastructureSyncJobExecutor {
 
     async fn execute_lan_pull(
         &self,
+        job: SyncJob,
         device_id: DeviceId,
         mode: SyncMode,
         options: SyncOperationOptions,
     ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
-        let mut peer = self.lan_peer_store.get_paired_device(&device_id).await?;
+        let peer = self.lan_peer_store.get_paired_device(&device_id).await?;
         let identity = self.lan_peer_store.load_or_create_identity().await?;
         let client = new_sync_client(peer.base_url.clone(), peer.spki_sha256.clone())?;
         let workspace = Arc::new(TauriTavernSyncWorkspace::new(self.lan_sync_root.clone()));
@@ -65,7 +64,7 @@ impl InfrastructureSyncJobExecutor {
             },
             "LAN Sync peer",
         );
-        let observer = LanSyncProgressObserver::new(self.lan_events.clone());
+        let observer = SyncJobProgressObserver::new(self.events.clone(), job.context());
         let result = engine
             .pull(
                 client_options(mode, options, sync_transfer::default_transfer_concurrency()),
@@ -76,10 +75,13 @@ impl InfrastructureSyncJobExecutor {
         match result {
             Ok(report) => {
                 let local_applied = execution_local_applied(&report);
-                peer.grant.permissions = report.granted_permissions;
-                peer.grant.last_sync_ms = Some(sync_transfer::now_ms());
+                let permissions = report.granted_permissions;
+                let last_sync_ms = sync_transfer::now_ms();
                 self.lan_peer_store
-                    .upsert_paired_device(peer)
+                    .update_paired_device(&device_id, |peer| {
+                        peer.grant.permissions = permissions;
+                        peer.grant.last_sync_ms = Some(last_sync_ms);
+                    })
                     .await
                     .map_err(|error| SyncExecutionFailure::new(error, local_applied))?;
                 Ok(execution_report(report))
@@ -87,9 +89,10 @@ impl InfrastructureSyncJobExecutor {
             Err(failure) => {
                 let local_applied = failure_local_applied(&failure);
                 if let Some(permissions) = failure.granted_permissions {
-                    peer.grant.permissions = permissions;
                     self.lan_peer_store
-                        .upsert_paired_device(peer)
+                        .update_paired_device(&device_id, |peer| {
+                            peer.grant.permissions = permissions;
+                        })
                         .await
                         .map_err(|error| SyncExecutionFailure::new(error, local_applied))?;
                 }
@@ -100,10 +103,10 @@ impl InfrastructureSyncJobExecutor {
 
     async fn execute_tt_pull(
         &self,
+        job: SyncJob,
         server_device_id: DeviceId,
         mode: SyncMode,
         options: SyncOperationOptions,
-        origin: SyncOrigin,
     ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
         let mut server = self.tt_runtime.get_paired_server(&server_device_id).await?;
         let identity = self.tt_runtime.store.load_or_create_identity().await?;
@@ -120,7 +123,7 @@ impl InfrastructureSyncJobExecutor {
             },
             "TT-Sync server",
         );
-        let observer = TtSyncProgressObserver::new(self.tt_runtime.clone(), origin);
+        let observer = SyncJobProgressObserver::new(self.events.clone(), job.context());
         let result = engine
             .pull(
                 client_options(mode, options, tt_sync_transfer_concurrency()),
@@ -155,10 +158,10 @@ impl InfrastructureSyncJobExecutor {
 
     async fn execute_tt_push(
         &self,
+        job: SyncJob,
         server_device_id: DeviceId,
         mode: SyncMode,
         options: SyncOperationOptions,
-        origin: SyncOrigin,
     ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
         let mut server = self.tt_runtime.get_paired_server(&server_device_id).await?;
         let identity = self.tt_runtime.store.load_or_create_identity().await?;
@@ -175,7 +178,7 @@ impl InfrastructureSyncJobExecutor {
             },
             "TT-Sync server",
         );
-        let observer = TtSyncProgressObserver::new(self.tt_runtime.clone(), origin);
+        let observer = SyncJobProgressObserver::new(self.events.clone(), job.context());
         let result = engine
             .direct_push(
                 client_options(mode, options, tt_sync_transfer_concurrency()),
@@ -212,26 +215,22 @@ impl InfrastructureSyncJobExecutor {
 #[async_trait]
 impl SyncJobExecutor for InfrastructureSyncJobExecutor {
     async fn execute(&self, job: SyncJob) -> Result<SyncExecutionReport, SyncExecutionFailure> {
-        let SyncJob {
-            endpoint,
-            execution,
-            origin,
-            policy,
-            ..
-        } = job;
-
-        match (endpoint, execution, policy) {
+        match (&job.endpoint, job.execution, &job.policy) {
             (
                 SyncEndpointRef::LanPeer { device_id },
                 SyncExecutionKind::Pull,
                 ResolvedSyncPolicy::Transfer { mode, options },
-            ) => self.execute_lan_pull(device_id, mode, options).await,
+            ) => {
+                self.execute_lan_pull(job.clone(), device_id.clone(), *mode, options.clone())
+                    .await
+            }
             (
                 SyncEndpointRef::LanPeer { device_id },
                 SyncExecutionKind::RequestRemotePull,
                 ResolvedSyncPolicy::RemotePullRequest { options },
             ) => {
-                request_lan_peer_pull(self.lan_peer_store.clone(), &device_id, options).await?;
+                request_lan_peer_pull(self.lan_peer_store.clone(), device_id, options.clone())
+                    .await?;
                 Ok(SyncExecutionReport::remote_request_accepted())
             }
             (
@@ -239,16 +238,26 @@ impl SyncJobExecutor for InfrastructureSyncJobExecutor {
                 SyncExecutionKind::Pull,
                 ResolvedSyncPolicy::Transfer { mode, options },
             ) => {
-                self.execute_tt_pull(server_device_id, mode, options, origin)
-                    .await
+                self.execute_tt_pull(
+                    job.clone(),
+                    server_device_id.clone(),
+                    *mode,
+                    options.clone(),
+                )
+                .await
             }
             (
                 SyncEndpointRef::RemoteServer { server_device_id },
                 SyncExecutionKind::DirectPush,
                 ResolvedSyncPolicy::Transfer { mode, options },
             ) => {
-                self.execute_tt_push(server_device_id, mode, options, origin)
-                    .await
+                self.execute_tt_push(
+                    job.clone(),
+                    server_device_id.clone(),
+                    *mode,
+                    options.clone(),
+                )
+                .await
             }
             _ => Err(SyncExecutionFailure::without_local_mutation(
                 DomainError::InvalidData(

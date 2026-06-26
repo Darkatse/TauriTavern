@@ -1,20 +1,16 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use serde::Serialize;
-use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
 use ttsync_contract::peer::DeviceId;
 
 use crate::application::services::tt_sync_service::TtSyncRepository;
 use crate::domain::errors::DomainError;
-use crate::domain::models::sync::SyncOrigin;
-use crate::domain::models::tt_sync::{TtSyncIdentity, TtSyncPairedServer, TtSyncProgressEvent};
+use crate::domain::models::tt_sync::{TtSyncIdentity, TtSyncPairedServer};
 use crate::infrastructure::tt_sync::store::TtSyncStore;
 
 pub struct TtSyncRuntime {
-    app_handle: AppHandle,
     pub sync_root: PathBuf,
     pub store: TtSyncStore,
     paired_servers_cache: Mutex<Option<HashMap<String, TtSyncPairedServer>>>,
@@ -40,9 +36,8 @@ impl TtSyncRepository for TtSyncRuntime {
 }
 
 impl TtSyncRuntime {
-    pub fn new(app_handle: AppHandle, sync_root: PathBuf, store_root: PathBuf) -> Self {
+    pub fn new(sync_root: PathBuf, store_root: PathBuf) -> Self {
         Self {
-            app_handle,
             sync_root,
             store: TtSyncStore::new(store_root),
             paired_servers_cache: Mutex::new(None),
@@ -139,36 +134,5 @@ impl TtSyncRuntime {
         }
 
         Ok(())
-    }
-
-    pub fn emit_progress(&self, payload: TtSyncProgressEvent, origin: &SyncOrigin) {
-        self.emit_with_origin("tt_sync:progress", payload, origin)
-    }
-
-    fn emit_with_origin<T: Serialize>(&self, event: &str, payload: T, origin: &SyncOrigin) {
-        let mut payload = match serde_json::to_value(payload) {
-            Ok(payload) => payload,
-            Err(error) => {
-                tracing::warn!("Failed to serialize TT-Sync event payload: {}", error);
-                return;
-            }
-        };
-        if let serde_json::Value::Object(map) = &mut payload {
-            map.insert(
-                "origin".to_string(),
-                serde_json::Value::String(event_origin(origin).to_string()),
-            );
-        }
-
-        if let Err(error) = self.app_handle.emit(event, payload) {
-            tracing::warn!("Failed to emit TT-Sync event '{event}': {}", error);
-        }
-    }
-}
-
-fn event_origin(origin: &SyncOrigin) -> &'static str {
-    match origin {
-        SyncOrigin::Scheduled => "auto",
-        SyncOrigin::Manual | SyncOrigin::RemoteRequest { .. } => "manual",
     }
 }

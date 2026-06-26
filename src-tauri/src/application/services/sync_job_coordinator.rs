@@ -8,7 +8,7 @@ use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::{
     SyncEndpointRef, SyncExecutionFailure, SyncExecutionKind, SyncExecutionReport, SyncIntent,
-    SyncJob, SyncJobOutcome, SyncJobReport, SyncJobRequest,
+    SyncJob, SyncJobEvent, SyncJobOutcome, SyncJobReport, SyncJobRequest,
 };
 
 #[async_trait]
@@ -16,10 +16,15 @@ pub trait SyncJobExecutor: Send + Sync {
     async fn execute(&self, job: SyncJob) -> Result<SyncExecutionReport, SyncExecutionFailure>;
 }
 
+pub trait SyncJobEventPublisher: Send + Sync {
+    fn publish_sync_job(&self, event: SyncJobEvent);
+}
+
 pub struct SyncJobCoordinator {
     gate: Arc<Semaphore>,
     executor: Arc<dyn SyncJobExecutor>,
     reconciler: Arc<dyn DataChangeReconciler>,
+    events: Arc<dyn SyncJobEventPublisher>,
     active: Arc<Mutex<Option<ActiveSyncJob>>>,
 }
 
@@ -27,11 +32,13 @@ impl SyncJobCoordinator {
     pub fn new(
         executor: Arc<dyn SyncJobExecutor>,
         reconciler: Arc<dyn DataChangeReconciler>,
+        events: Arc<dyn SyncJobEventPublisher>,
     ) -> Self {
         Self {
             gate: Arc::new(Semaphore::new(1)),
             executor,
             reconciler,
+            events,
             active: Arc::new(Mutex::new(None)),
         }
     }
@@ -69,6 +76,7 @@ impl SyncJobCoordinator {
             job,
             executor: self.executor.clone(),
             reconciler: self.reconciler.clone(),
+            events: self.events.clone(),
             _permit: permit,
             _active_guard: active_guard,
         })
@@ -77,7 +85,11 @@ impl SyncJobCoordinator {
     pub async fn run(&self, request: SyncJobRequest) -> SyncJobReport {
         match self.try_start(request) {
             Ok(started) => started.execute().await.finish(),
-            Err(report) => report,
+            Err(report) => {
+                self.events
+                    .publish_sync_job(SyncJobEvent::from_report(report.clone()));
+                report
+            }
         }
     }
 }
@@ -86,6 +98,7 @@ pub struct StartedSyncJob {
     job: SyncJob,
     executor: Arc<dyn SyncJobExecutor>,
     reconciler: Arc<dyn DataChangeReconciler>,
+    events: Arc<dyn SyncJobEventPublisher>,
     _permit: Option<OwnedSemaphorePermit>,
     _active_guard: Option<ActiveJobGuard>,
 }
@@ -96,6 +109,7 @@ impl StartedSyncJob {
             job,
             executor,
             reconciler,
+            events,
             _permit,
             _active_guard,
         } = self;
@@ -103,28 +117,45 @@ impl StartedSyncJob {
             finalize_execution(&job, executor.execute(job.clone()).await, &*reconciler).await;
         ExecutedSyncJob {
             result,
+            events,
             _permit,
             _active_guard,
         }
     }
 }
 
+#[must_use]
 pub struct ExecutedSyncJob {
     result: SyncJobReportResultWithError,
+    events: Arc<dyn SyncJobEventPublisher>,
     _permit: Option<OwnedSemaphorePermit>,
     _active_guard: Option<ActiveJobGuard>,
 }
 
 impl ExecutedSyncJob {
     pub fn finish(self) -> SyncJobReport {
-        self.result.report
+        self.finish_result().report
     }
 
     pub fn finish_or_error(self) -> Result<SyncJobReport, DomainError> {
-        match self.result.error {
+        let result = self.finish_result();
+        match result.error {
             Some(error) => Err(error),
-            None => Ok(self.result.report),
+            None => Ok(result.report),
         }
+    }
+
+    fn finish_result(self) -> SyncJobReportResultWithError {
+        let Self {
+            result,
+            events,
+            _permit,
+            _active_guard,
+        } = self;
+        drop(_active_guard);
+        drop(_permit);
+        events.publish_sync_job(SyncJobEvent::from_report(result.report.clone()));
+        result
     }
 }
 
@@ -276,6 +307,8 @@ fn reconcile_reason(job: &SyncJob) -> &'static str {
 mod tests {
     use super::*;
 
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use crate::domain::models::sync::{
         LocalAppliedChangeSummary, ResolvedSyncPolicy, SyncJobReportResult, SyncJobSummary,
         SyncOperationOptions, SyncOrigin,
@@ -308,6 +341,34 @@ mod tests {
         }
     }
 
+    struct NoopJobEvents;
+
+    impl SyncJobEventPublisher for NoopJobEvents {
+        fn publish_sync_job(&self, _event: SyncJobEvent) {}
+    }
+
+    struct ReleaseCheckingJobEvents {
+        gate: Arc<Semaphore>,
+        active: Arc<Mutex<Option<ActiveSyncJob>>>,
+        released_before_publish: Arc<AtomicBool>,
+    }
+
+    impl SyncJobEventPublisher for ReleaseCheckingJobEvents {
+        fn publish_sync_job(&self, _event: SyncJobEvent) {
+            let permit_released = self.gate.clone().try_acquire_owned().is_ok();
+            let active_released = self.active.lock().unwrap().is_none();
+            self.released_before_publish
+                .store(permit_released && active_released, Ordering::SeqCst);
+        }
+    }
+
+    fn coordinator(
+        executor: Arc<dyn SyncJobExecutor>,
+        reconciler: Arc<dyn DataChangeReconciler>,
+    ) -> SyncJobCoordinator {
+        SyncJobCoordinator::new(executor, reconciler, Arc::new(NoopJobEvents))
+    }
+
     fn request(intent: SyncIntent) -> SyncJobRequest {
         SyncJobRequest {
             endpoint: SyncEndpointRef::LanPeer {
@@ -334,7 +395,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolves_lan_replicate_as_remote_pull_request() {
-        let coordinator = SyncJobCoordinator::new(Arc::new(NoopExecutor), Arc::new(NoopReconciler));
+        let coordinator = coordinator(Arc::new(NoopExecutor), Arc::new(NoopReconciler));
         let report = coordinator.run(remote_pull_request()).await;
 
         assert_eq!(report.job.execution, SyncExecutionKind::RequestRemotePull);
@@ -346,7 +407,7 @@ mod tests {
 
     #[test]
     fn busy_report_mentions_running_job() {
-        let coordinator = SyncJobCoordinator::new(Arc::new(NoopExecutor), Arc::new(NoopReconciler));
+        let coordinator = coordinator(Arc::new(NoopExecutor), Arc::new(NoopReconciler));
         let _started = coordinator
             .try_start(request(SyncIntent::PullToLocal))
             .expect("first job should start");
@@ -366,7 +427,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_pull_request_does_not_wait_for_transfer_gate() {
-        let coordinator = SyncJobCoordinator::new(Arc::new(NoopExecutor), Arc::new(NoopReconciler));
+        let coordinator = coordinator(Arc::new(NoopExecutor), Arc::new(NoopReconciler));
         let _started = coordinator
             .try_start(request(SyncIntent::PullToLocal))
             .expect("transfer job should start");
@@ -401,6 +462,36 @@ mod tests {
         assert_eq!(active.lock().unwrap().as_ref().unwrap().id, "new");
     }
 
+    #[test]
+    fn terminal_event_publishes_after_job_guard_releases() {
+        let job = build_job(request(SyncIntent::PullToLocal));
+        let gate = Arc::new(Semaphore::new(1));
+        let active = Arc::new(Mutex::new(Some(ActiveSyncJob { id: job.id.clone() })));
+        let released_before_publish = Arc::new(AtomicBool::new(false));
+        let executed = ExecutedSyncJob {
+            result: SyncJobReportResultWithError {
+                report: SyncJobReport::from_outcome(
+                    job.clone(),
+                    SyncJobOutcome::Completed {
+                        summary: SyncJobSummary::new(0, 0, 0),
+                    },
+                ),
+                error: None,
+            },
+            events: Arc::new(ReleaseCheckingJobEvents {
+                gate: gate.clone(),
+                active: active.clone(),
+                released_before_publish: released_before_publish.clone(),
+            }),
+            _permit: Some(gate.try_acquire_owned().expect("test permit")),
+            _active_guard: Some(ActiveJobGuard { id: job.id, active }),
+        };
+
+        let _report = executed.finish();
+
+        assert!(released_before_publish.load(Ordering::SeqCst));
+    }
+
     struct PartialFailureExecutor;
 
     #[async_trait]
@@ -433,7 +524,7 @@ mod tests {
 
     #[tokio::test]
     async fn partial_failure_reports_reconcile_error() {
-        let coordinator = SyncJobCoordinator::new(
+        let coordinator = coordinator(
             Arc::new(PartialFailureExecutor),
             Arc::new(FailingReconciler),
         );
@@ -480,7 +571,7 @@ mod tests {
 
     #[tokio::test]
     async fn completed_with_reconcile_failure_is_failed() {
-        let coordinator = SyncJobCoordinator::new(
+        let coordinator = coordinator(
             Arc::new(CompletedWithMutationExecutor),
             Arc::new(FailingReconciler),
         );
@@ -488,7 +579,6 @@ mod tests {
         let report = coordinator.run(request(SyncIntent::PullToLocal)).await;
 
         assert!(report.failure_message().is_some());
-        assert!(report.completed_summary().is_none());
         match report.result {
             SyncJobReportResult::Failed {
                 local_applied,

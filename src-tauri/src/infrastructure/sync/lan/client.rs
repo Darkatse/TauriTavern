@@ -160,7 +160,7 @@ pub async fn request_peer_pull(
     device_id: &DeviceId,
     options: SyncOperationOptions,
 ) -> Result<(), DomainError> {
-    let mut peer = store.get_paired_device(device_id).await?;
+    let peer = store.get_paired_device(device_id).await?;
     let identity = store.load_or_create_identity().await?;
 
     let api = LanSyncClient::new(peer.base_url.clone(), peer.spki_sha256.clone())?;
@@ -178,8 +178,11 @@ pub async fn request_peer_pull(
     let session = api
         .open_session(&identity.device_id, &identity.ed25519_seed)
         .await?;
-    peer.grant.permissions = session.granted_permissions;
-    store.upsert_paired_device(peer).await?;
+    store
+        .update_paired_device(device_id, |peer| {
+            peer.grant.permissions = session.granted_permissions;
+        })
+        .await?;
 
     api.notify_pull_request(&session.session_token, &options)
         .await

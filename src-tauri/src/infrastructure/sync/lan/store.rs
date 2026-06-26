@@ -1,5 +1,7 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use tokio::sync::Mutex;
 use ttsync_contract::peer::{DeviceId, PeerGrant};
 use ttsync_core::crypto::random_base64url;
 use uuid::Uuid;
@@ -12,6 +14,7 @@ use crate::infrastructure::persistence::file_system::{read_json_file, write_json
 #[derive(Debug, Clone)]
 pub struct LanPeerStore {
     state_dir: PathBuf,
+    paired_devices_lock: Arc<Mutex<()>>,
 }
 
 #[async_trait::async_trait]
@@ -37,6 +40,7 @@ impl LanPeerStore {
     pub fn new(default_user_dir: PathBuf) -> Self {
         Self {
             state_dir: default_user_dir.join("user").join("lan-sync").join("v2"),
+            paired_devices_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -69,6 +73,11 @@ impl LanPeerStore {
     }
 
     pub async fn load_paired_devices(&self) -> Result<Vec<LanSyncPairedDevice>, DomainError> {
+        let _guard = self.paired_devices_lock.lock().await;
+        self.load_paired_devices_unlocked().await
+    }
+
+    async fn load_paired_devices_unlocked(&self) -> Result<Vec<LanSyncPairedDevice>, DomainError> {
         let path = self.paired_devices_path();
         if !path.is_file() {
             return Ok(Vec::new());
@@ -81,7 +90,8 @@ impl LanPeerStore {
         &self,
         device: LanSyncPairedDevice,
     ) -> Result<(), DomainError> {
-        let mut devices = self.load_paired_devices().await?;
+        let _guard = self.paired_devices_lock.lock().await;
+        let mut devices = self.load_paired_devices_unlocked().await?;
         if let Some(existing) = devices
             .iter_mut()
             .find(|item| item.grant.device_id == device.grant.device_id)
@@ -91,17 +101,35 @@ impl LanPeerStore {
             devices.push(device);
         }
 
-        self.save_paired_devices(&devices).await
+        self.save_paired_devices_unlocked(&devices).await
     }
 
     pub async fn remove_paired_device(&self, device_id: &DeviceId) -> Result<(), DomainError> {
-        let devices = self.load_paired_devices().await?;
+        let _guard = self.paired_devices_lock.lock().await;
+        let devices = self.load_paired_devices_unlocked().await?;
         let filtered = devices
             .into_iter()
             .filter(|device| &device.grant.device_id != device_id)
             .collect::<Vec<_>>();
 
-        self.save_paired_devices(&filtered).await
+        self.save_paired_devices_unlocked(&filtered).await
+    }
+
+    pub async fn update_paired_device(
+        &self,
+        device_id: &DeviceId,
+        update: impl FnOnce(&mut LanSyncPairedDevice),
+    ) -> Result<(), DomainError> {
+        let _guard = self.paired_devices_lock.lock().await;
+        let mut devices = self.load_paired_devices_unlocked().await?;
+        let device = devices
+            .iter_mut()
+            .find(|device| &device.grant.device_id == device_id)
+            .ok_or_else(|| {
+                DomainError::NotFound(format!("LAN Sync peer not found: {}", device_id))
+            })?;
+        update(device);
+        self.save_paired_devices_unlocked(&devices).await
     }
 
     pub async fn get_paired_device(
@@ -122,12 +150,14 @@ impl LanPeerStore {
     }
 
     pub async fn save_peer_grant(&self, grant: PeerGrant) -> Result<(), DomainError> {
-        let mut device = self.get_paired_device(&grant.device_id).await?;
-        device.grant = grant;
-        self.upsert_paired_device(device).await
+        let device_id = grant.device_id.clone();
+        self.update_paired_device(&device_id, |device| {
+            device.grant = grant;
+        })
+        .await
     }
 
-    async fn save_paired_devices(
+    async fn save_paired_devices_unlocked(
         &self,
         devices: &[LanSyncPairedDevice],
     ) -> Result<(), DomainError> {
@@ -213,6 +243,44 @@ mod tests {
             store.get_paired_device(&device_id).await,
             Err(DomainError::NotFound(_))
         ));
+
+        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
+    }
+
+    #[tokio::test]
+    async fn update_paired_device_keeps_other_fields() {
+        let default_user_dir = temp_default_user_dir();
+        let store = LanPeerStore::new(default_user_dir.clone());
+        let device_id = test_device_id();
+
+        store
+            .upsert_paired_device(test_paired_device(device_id.clone()))
+            .await
+            .expect("upsert peer");
+        store
+            .update_paired_device(&device_id, |peer| {
+                peer.grant.last_sync_ms = Some(42);
+            })
+            .await
+            .expect("update last sync");
+        store
+            .update_paired_device(&device_id, |peer| {
+                peer.grant.permissions = Permissions {
+                    read: true,
+                    write: true,
+                    mirror_delete: false,
+                };
+            })
+            .await
+            .expect("update permissions");
+
+        let peer = store
+            .get_paired_device(&device_id)
+            .await
+            .expect("load peer");
+        assert_eq!(peer.grant.last_sync_ms, Some(42));
+        assert!(peer.grant.permissions.write);
+        assert!(!peer.grant.permissions.mirror_delete);
 
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }

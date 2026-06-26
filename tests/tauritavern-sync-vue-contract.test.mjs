@@ -70,6 +70,13 @@ async function importSyncApp() {
     )).href);
 }
 
+async function importSyncJobEvents() {
+    return import(pathToFileURL(path.join(
+        REPO_ROOT,
+        'src/scripts/tauri/setting/setting-panel/sync-job-events.js',
+    )).href);
+}
+
 async function withMutedWarnings(task) {
     const warn = console.warn;
     console.warn = () => {};
@@ -99,25 +106,135 @@ test('TauriTavern Sync popup wrapper owns host-only capabilities', async () => {
 test('TauriTavern Sync listeners keep event contract while delegating progress UI', async () => {
     const source = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-listeners.js');
 
-    assert.match(source, /lan_sync:progress/);
-    assert.match(source, /lan_sync:completed/);
-    assert.match(source, /lan_sync:error/);
-    assert.match(source, /tt_sync:progress/);
+    assert.match(source, /sync:job/);
+    assert.doesNotMatch(source, /lan_sync:progress/);
+    assert.doesNotMatch(source, /lan_sync:completed/);
+    assert.doesNotMatch(source, /lan_sync:error/);
+    assert.doesNotMatch(source, /tt_sync:progress/);
     assert.doesNotMatch(source, /tt_sync:completed/);
     assert.doesNotMatch(source, /tt_sync:error/);
     assert.match(source, /result\.status === 'failed'[\s\S]*remote_server[\s\S]*TT_SYNC_SERVERS_CHANGED_EVENT[\s\S]*showSyncError/);
+    assert.match(source, /syncFailureRequiresReload/);
+    assert.match(source, /const shouldReload = syncFailureRequiresReload\(result\)[\s\S]*showSyncError[\s\S]*if \(shouldReload\)[\s\S]*window\.location\.reload\(\)/);
+    assert.match(source, /resolveSyncJobEventAction/);
     assert.match(source, /mountTauriTavernSyncProgressApp/);
     assert.match(source, /window\.location\.reload\(\)/);
     assert.doesNotMatch(source, /from\s+['"]vue(?:\/|['"])/);
 });
 
-test('TauriTavern Sync automation status events refresh status only', async () => {
+test('TauriTavern Sync job event routing handles origin and status payloads', async () => {
+    const { resolveSyncJobEventAction, syncFailureRequiresReload } = await importSyncJobEvents();
+    const progress = {
+        direction: 'Push',
+        phase: 'Uploading',
+        files_done: 1,
+        files_total: 2,
+        bytes_done: 3,
+        bytes_total: 4,
+        current_path: 'characters/a.png',
+    };
+
+    assert.deepEqual(resolveSyncJobEventAction({
+        status: 'progress',
+        job: {
+            endpoint: { type: 'remote_server', server_device_id: 'server-1' },
+            origin: { type: 'manual' },
+        },
+        progress,
+    }), {
+        type: 'progress',
+        title: 'TT-Sync progress',
+        payload: progress,
+    });
+
+    assert.deepEqual(resolveSyncJobEventAction({
+        status: 'progress',
+        job: {
+            endpoint: { type: 'lan_peer', device_id: 'peer-1' },
+            origin: { type: 'scheduled' },
+        },
+        progress,
+    }), { type: 'ignore' });
+
+    assert.deepEqual(resolveSyncJobEventAction({
+        status: 'failed',
+        job: {
+            endpoint: { type: 'remote_server', server_device_id: 'server-1' },
+            origin: { type: 'manual' },
+        },
+        result: { status: 'failed', message: 'boom' },
+    }), { type: 'ignore' });
+
+    const remoteRequestCompleted = {
+        status: 'completed',
+        job: {
+            endpoint: { type: 'lan_peer', device_id: 'peer-1' },
+            intent: 'pull_to_local',
+            origin: { type: 'remote_request', peer_id: 'peer-1' },
+        },
+        result: {
+            status: 'completed',
+            summary: { files_total: 1, bytes_total: 2, files_deleted: 0 },
+        },
+    };
+    assert.deepEqual(resolveSyncJobEventAction(remoteRequestCompleted), {
+        type: 'report',
+        report: {
+            job: remoteRequestCompleted.job,
+            result: remoteRequestCompleted.result,
+        },
+    });
+
+    assert.deepEqual(resolveSyncJobEventAction({
+        status: 'completed',
+        job: {
+            endpoint: { type: 'remote_server', server_device_id: 'server-1' },
+            origin: { type: 'scheduled' },
+        },
+        result: { status: 'completed', summary: { files_total: 1, bytes_total: 2, files_deleted: 0 } },
+    }), { type: 'ignore' });
+
+    assert.deepEqual(resolveSyncJobEventAction({
+        status: 'completed',
+        job: {
+            endpoint: { type: 'lan_peer', device_id: 'peer-1' },
+            origin: 'remote_request',
+        },
+        result: { status: 'completed', summary: { files_total: 1, bytes_total: 2, files_deleted: 0 } },
+    }), { type: 'ignore' });
+
+    assert.deepEqual(resolveSyncJobEventAction({
+        status: 'remote_request_accepted',
+        job: {
+            endpoint: { type: 'lan_peer', device_id: 'peer-1' },
+            origin: { type: 'remote_request', peer_id: 'peer-1' },
+        },
+        result: { status: 'remote_request_accepted' },
+    }), { type: 'ignore' });
+
+    assert.equal(syncFailureRequiresReload({
+        status: 'failed',
+        failure_kind: 'after_partial_local_mutation',
+    }), true);
+    assert.equal(syncFailureRequiresReload({
+        status: 'failed',
+        failure_kind: 'without_local_mutation',
+        reconcile_error: 'cache refresh failed',
+    }), true);
+    assert.equal(syncFailureRequiresReload({
+        status: 'failed',
+        failure_kind: 'without_local_mutation',
+    }), false);
+});
+
+test('TauriTavern Sync automation status events refresh status only while toasts refresh panel data', async () => {
     const constants = await readRepoFile('src/scripts/tauri/setting/setting-panel/constants.js');
     const listeners = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-listeners.js');
     const popup = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-popup.js');
     const entry = await readRepoFile('src/scripts/tauri/setting/sync-app/index.js');
 
     assert.match(constants, /SYNC_AUTOMATION_STATUS_CHANGED_EVENT/);
+    assert.match(constants, /SYNC_AUTOMATION_CHANGED_EVENT/);
 
     const statusBlock = listeners.slice(
         listeners.indexOf("listen('sync_auto:status'"),
@@ -127,7 +244,8 @@ test('TauriTavern Sync automation status events refresh status only', async () =
     assert.doesNotMatch(statusBlock, /SYNC_AUTOMATION_CHANGED_EVENT/);
 
     const toastBlock = listeners.slice(listeners.indexOf("listen('sync_auto:toast'"));
-    assert.match(toastBlock, /SYNC_AUTOMATION_STATUS_CHANGED_EVENT/);
+    assert.match(toastBlock, /SYNC_AUTOMATION_CHANGED_EVENT/);
+    assert.doesNotMatch(toastBlock, /SYNC_AUTOMATION_STATUS_CHANGED_EVENT/);
 
     assert.match(popup, /const refreshAutomationStatus = \(\) => \{[\s\S]*appHandle\.refreshAutomationStatus\(\)/);
     assert.match(popup, /addEventListener\(SYNC_AUTOMATION_STATUS_CHANGED_EVENT,\s*refreshAutomationStatus\)/);
