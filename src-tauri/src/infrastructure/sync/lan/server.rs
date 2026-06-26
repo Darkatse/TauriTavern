@@ -514,26 +514,22 @@ mod tests {
 
     use std::path::PathBuf;
 
-    use async_compression::tokio::bufread::ZstdDecoder;
     use async_trait::async_trait;
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use futures_util::TryStreamExt;
-    use tokio::io::BufReader;
-    use tokio_util::io::StreamReader;
+    use ttsync_client::{ClientSyncEngine, ClientSyncOptions, ClientSyncTarget, NoopSyncObserver};
     use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1};
     use ttsync_contract::manifest::ManifestV2;
     use ttsync_contract::peer::Permissions;
     use ttsync_contract::sync::SyncMode;
+    use ttsync_core::bundle::{FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1};
     use ttsync_core::dataset::tauri_tavern_default_selection;
     use uuid::Uuid;
 
+    use crate::infrastructure::sync::http_client::new_sync_client;
     use crate::infrastructure::sync::lan::client::{LanSyncClient, complete_pairing};
     use crate::infrastructure::sync::lan::pairing::{LanPairingCoordinator, LanPairingSession};
-    use crate::infrastructure::sync_bundle::{
-        BUNDLE_ZSTD_DECODE_BUFFER_SIZE, FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1,
-        write_bundle_to_local_files,
-    };
+    use crate::infrastructure::sync::workspace::TauriTavernSyncWorkspace;
 
     fn temp_default_user_dir() -> PathBuf {
         std::env::temp_dir().join(format!("tauritavern-lan-server-{}", Uuid::new_v4()))
@@ -802,29 +798,32 @@ mod tests {
         assert_eq!(content_encoding, "zstd");
 
         let target_root = temp_default_user_dir();
-        let stream = bundle_response
-            .bytes_stream()
-            .map_err(std::io::Error::other);
-        let reader = StreamReader::new(stream);
-        let mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(ZstdDecoder::new(
-            BufReader::with_capacity(BUNDLE_ZSTD_DECODE_BUFFER_SIZE, reader),
-        ));
-        let mut progress_paths = Vec::new();
-        write_bundle_to_local_files(
-            &target_root,
-            plan.transfer.clone(),
-            &mut reader,
-            |progress| {
-                progress_paths.push(progress.path);
-                Ok(())
-            },
+        tokio::fs::create_dir_all(&target_root)
+            .await
+            .expect("create target root");
+        let client = new_sync_client(
+            format!("https://127.0.0.1:{}", handle.addr.port()),
+            handle.spki_sha256.clone(),
         )
+        .expect("shared client");
+        let workspace = Arc::new(TauriTavernSyncWorkspace::new(target_root.clone()));
+        let mut options =
+            ClientSyncOptions::new(SyncMode::Incremental, tauri_tavern_default_selection());
+        options.require_bundle_zstd = true;
+        let report = ClientSyncEngine::new(
+            client,
+            workspace,
+            ClientSyncTarget {
+                device_id: peer_device_id,
+                ed25519_seed_b64url: peer_seed,
+            },
+            "LAN Sync peer",
+        )
+        .pull(options, &NoopSyncObserver)
         .await
-        .expect("write bundle files");
-        assert_eq!(
-            progress_paths,
-            vec!["default-user/chats/hello.json".to_string()]
-        );
+        .expect("shared client pull");
+        assert_eq!(report.summary.files_total, 1);
+        assert_eq!(report.local_applied.files_written, 1);
         let bundle_bytes = tokio::fs::read(target_root.join("default-user/chats/hello.json"))
             .await
             .expect("read bundle file");

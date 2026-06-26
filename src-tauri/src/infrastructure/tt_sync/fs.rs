@@ -3,7 +3,6 @@ use std::time::UNIX_EPOCH;
 
 use ttsync_contract::manifest::{ManifestEntryV2, ManifestV2};
 use ttsync_contract::path::SyncPath;
-use ttsync_contract::plan::SyncPlan;
 use ttsync_core::dataset::ResolvedDatasetPolicy;
 
 use crate::domain::errors::DomainError;
@@ -15,37 +14,6 @@ pub async fn scan_manifest_with_policy(
     tokio::task::spawn_blocking(move || scan_manifest_sync(&sync_root, &policy))
         .await
         .map_err(|error| DomainError::InternalError(error.to_string()))?
-}
-
-pub fn validate_plan_scope(
-    plan: &SyncPlan,
-    policy: &ResolvedDatasetPolicy,
-) -> Result<(), DomainError> {
-    if plan.selection.as_ref() != Some(policy.selection()) {
-        return Err(DomainError::InvalidData(
-            "TT-Sync plan dataset selection does not match the requested policy".to_string(),
-        ));
-    }
-
-    for entry in &plan.transfer {
-        if !policy.contains_path(entry.path.as_str()) {
-            return Err(DomainError::InvalidData(format!(
-                "TT-Sync plan contains transfer outside selected dataset scope: {}",
-                entry.path
-            )));
-        }
-    }
-
-    for path in &plan.delete {
-        if !policy.allows_delete(path.as_str()) {
-            return Err(DomainError::InvalidData(format!(
-                "TT-Sync plan contains delete outside selected dataset scope: {}",
-                path
-            )));
-        }
-    }
-
-    Ok(())
 }
 
 fn scan_manifest_sync(
@@ -240,13 +208,9 @@ mod tests {
     use std::path::PathBuf;
 
     use rand::random;
-    use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DatasetSelection};
-    use ttsync_contract::manifest::ManifestEntryV2;
-    use ttsync_contract::path::SyncPath;
-    use ttsync_contract::plan::{PlanId, SyncPlan};
     use ttsync_core::dataset::ResolvedDatasetPolicy;
 
-    use super::{scan_manifest_sync, validate_plan_scope};
+    use super::scan_manifest_sync;
 
     fn unique_temp_root() -> PathBuf {
         std::env::temp_dir().join(format!("tauritavern-tt-sync-{}", random::<u64>()))
@@ -535,42 +499,5 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).expect("remove temp root");
-    }
-
-    #[test]
-    fn validate_plan_scope_requires_matching_dataset_selection() {
-        let policy = ResolvedDatasetPolicy::tauri_tavern_default();
-        let entry = ManifestEntryV2 {
-            path: SyncPath::new("default-user/chats/chat.jsonl").unwrap(),
-            size_bytes: 1,
-            modified_ms: 1,
-            content_hash: None,
-        };
-        let valid_plan = SyncPlan {
-            plan_id: PlanId("plan".to_string()),
-            selection: Some(policy.selection().clone()),
-            transfer: vec![entry.clone()],
-            delete: Vec::new(),
-            files_total: 1,
-            bytes_total: 1,
-        };
-
-        validate_plan_scope(&valid_plan, &policy).expect("matching selection should validate");
-
-        let missing_selection = SyncPlan {
-            selection: None,
-            ..valid_plan.clone()
-        };
-        assert!(validate_plan_scope(&missing_selection, &policy).is_err());
-
-        let other_selection = DatasetSelection::new(
-            DATASET_POLICY_VERSION,
-            vec!["chat.character.history".to_string()],
-        );
-        let mismatched_selection = SyncPlan {
-            selection: Some(other_selection),
-            ..valid_plan
-        };
-        assert!(validate_plan_scope(&mismatched_selection, &policy).is_err());
     }
 }

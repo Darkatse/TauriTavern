@@ -96,8 +96,9 @@ test('TauriTavern Sync listeners keep event contract while delegating progress U
     assert.match(source, /lan_sync:completed/);
     assert.match(source, /lan_sync:error/);
     assert.match(source, /tt_sync:progress/);
-    assert.match(source, /tt_sync:completed/);
-    assert.match(source, /tt_sync:error/);
+    assert.doesNotMatch(source, /tt_sync:completed/);
+    assert.doesNotMatch(source, /tt_sync:error/);
+    assert.match(source, /result\.status === 'failed'[\s\S]*remote_server[\s\S]*TT_SYNC_SERVERS_CHANGED_EVENT[\s\S]*showSyncError/);
     assert.match(source, /mountTauriTavernSyncProgressApp/);
     assert.match(source, /window\.location\.reload\(\)/);
     assert.doesNotMatch(source, /from\s+['"]vue(?:\/|['"])/);

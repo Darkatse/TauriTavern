@@ -119,16 +119,22 @@ pub struct LocalAppliedChangeSummary {
     pub files_written: usize,
     pub bytes_written: u64,
     pub files_deleted: usize,
+    #[serde(skip_serializing_if = "is_false")]
+    pub target_changed: bool,
 }
 
 impl LocalAppliedChangeSummary {
     pub fn changed(&self) -> bool {
-        self.files_written > 0 || self.files_deleted > 0
+        self.files_written > 0 || self.files_deleted > 0 || self.target_changed
     }
 
     pub fn unchanged(&self) -> bool {
         !self.changed()
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -300,6 +306,7 @@ mod tests {
                 files_written: 1,
                 bytes_written: 7,
                 files_deleted: 0,
+                target_changed: false,
             },
             None,
         );

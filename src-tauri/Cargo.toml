@@ -73,6 +73,7 @@ dunce = "1"
 ttsync-contract = "2"
 ttsync-core = "2"
 ttsync-http = "2"
+ttsync-client = "2"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-dialog = "2.7.0"

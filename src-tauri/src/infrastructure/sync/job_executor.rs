@@ -1,19 +1,27 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use ttsync_client::{
+    ClientSyncEngine, ClientSyncFailure, ClientSyncOptions, ClientSyncReport, ClientSyncTarget,
+    LocalChangeSummary,
+};
+use ttsync_contract::peer::DeviceId;
+use ttsync_contract::sync::SyncMode;
 
 use crate::application::services::sync_job_coordinator::SyncJobExecutor;
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::{
-    ResolvedSyncPolicy, SyncEndpointRef, SyncExecutionFailure, SyncExecutionKind,
-    SyncExecutionReport, SyncJob,
+    LocalAppliedChangeSummary, ResolvedSyncPolicy, SyncEndpointRef, SyncExecutionFailure,
+    SyncExecutionKind, SyncExecutionReport, SyncJob, SyncJobSummary, SyncOperationOptions,
+    SyncOrigin,
 };
 use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
+use crate::infrastructure::sync::http_client::{new_sync_client, sync_error_to_domain};
 use crate::infrastructure::sync::lan::notify::request_peer_pull as request_lan_peer_pull;
-use crate::infrastructure::sync::lan::pull::pull_from_device as pull_from_lan_device;
 use crate::infrastructure::sync::lan::store::LanPeerStore;
-use crate::infrastructure::tt_sync::pull::pull_from_server;
-use crate::infrastructure::tt_sync::push::push_to_server;
+use crate::infrastructure::sync::observer::{LanSyncProgressObserver, TtSyncProgressObserver};
+use crate::infrastructure::sync::workspace::TauriTavernSyncWorkspace;
+use crate::infrastructure::sync_transfer;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 
 pub struct InfrastructureSyncJobExecutor {
@@ -34,6 +42,170 @@ impl InfrastructureSyncJobExecutor {
             tt_runtime,
         }
     }
+
+    async fn execute_lan_pull(
+        &self,
+        device_id: DeviceId,
+        mode: SyncMode,
+        options: SyncOperationOptions,
+    ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
+        let mut peer = self.lan_peer_store.get_paired_device(&device_id).await?;
+        let identity = self.lan_peer_store.load_or_create_identity().await?;
+        let client = new_sync_client(peer.base_url.clone(), peer.spki_sha256.clone())?;
+        let workspace = Arc::new(TauriTavernSyncWorkspace::new(
+            self.lan_runtime.sync_root.clone(),
+        ));
+        let engine = ClientSyncEngine::new(
+            client,
+            workspace,
+            ClientSyncTarget {
+                device_id: identity.device_id,
+                ed25519_seed_b64url: identity.ed25519_seed,
+            },
+            "LAN Sync peer",
+        );
+        let observer = LanSyncProgressObserver::new(self.lan_runtime.clone());
+        let result = engine
+            .pull(
+                client_options(mode, options, sync_transfer::default_transfer_concurrency()),
+                &observer,
+            )
+            .await;
+
+        match result {
+            Ok(report) => {
+                let local_applied = execution_local_applied(&report);
+                peer.grant.permissions = report.granted_permissions;
+                peer.grant.last_sync_ms = Some(sync_transfer::now_ms());
+                self.lan_peer_store
+                    .upsert_paired_device(peer)
+                    .await
+                    .map_err(|error| SyncExecutionFailure::new(error, local_applied))?;
+                Ok(execution_report(report))
+            }
+            Err(failure) => {
+                let local_applied = failure_local_applied(&failure);
+                if let Some(permissions) = failure.granted_permissions {
+                    peer.grant.permissions = permissions;
+                    self.lan_peer_store
+                        .upsert_paired_device(peer)
+                        .await
+                        .map_err(|error| SyncExecutionFailure::new(error, local_applied))?;
+                }
+                Err(execution_failure(failure))
+            }
+        }
+    }
+
+    async fn execute_tt_pull(
+        &self,
+        server_device_id: DeviceId,
+        mode: SyncMode,
+        options: SyncOperationOptions,
+        origin: SyncOrigin,
+    ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
+        let mut server = self.tt_runtime.get_paired_server(&server_device_id).await?;
+        let identity = self.tt_runtime.store.load_or_create_identity().await?;
+        let client = new_sync_client(server.base_url.clone(), server.spki_sha256.clone())?;
+        let workspace = Arc::new(TauriTavernSyncWorkspace::new(
+            self.tt_runtime.sync_root.clone(),
+        ));
+        let engine = ClientSyncEngine::new(
+            client,
+            workspace,
+            ClientSyncTarget {
+                device_id: identity.device_id,
+                ed25519_seed_b64url: identity.ed25519_seed,
+            },
+            "TT-Sync server",
+        );
+        let observer = TtSyncProgressObserver::new(self.tt_runtime.clone(), origin);
+        let result = engine
+            .pull(
+                client_options(mode, options, tt_sync_transfer_concurrency()),
+                &observer,
+            )
+            .await;
+
+        match result {
+            Ok(report) => {
+                let local_applied = execution_local_applied(&report);
+                server.permissions = report.granted_permissions;
+                server.last_sync_ms = Some(sync_transfer::now_ms());
+                self.tt_runtime
+                    .upsert_paired_server(server)
+                    .await
+                    .map_err(|error| SyncExecutionFailure::new(error, local_applied))?;
+                Ok(execution_report(report))
+            }
+            Err(failure) => {
+                let local_applied = failure_local_applied(&failure);
+                if let Some(permissions) = failure.granted_permissions {
+                    server.permissions = permissions;
+                    self.tt_runtime
+                        .upsert_paired_server(server)
+                        .await
+                        .map_err(|error| SyncExecutionFailure::new(error, local_applied))?;
+                }
+                Err(execution_failure(failure))
+            }
+        }
+    }
+
+    async fn execute_tt_push(
+        &self,
+        server_device_id: DeviceId,
+        mode: SyncMode,
+        options: SyncOperationOptions,
+        origin: SyncOrigin,
+    ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
+        let mut server = self.tt_runtime.get_paired_server(&server_device_id).await?;
+        let identity = self.tt_runtime.store.load_or_create_identity().await?;
+        let client = new_sync_client(server.base_url.clone(), server.spki_sha256.clone())?;
+        let workspace = Arc::new(TauriTavernSyncWorkspace::new(
+            self.tt_runtime.sync_root.clone(),
+        ));
+        let engine = ClientSyncEngine::new(
+            client,
+            workspace,
+            ClientSyncTarget {
+                device_id: identity.device_id,
+                ed25519_seed_b64url: identity.ed25519_seed,
+            },
+            "TT-Sync server",
+        );
+        let observer = TtSyncProgressObserver::new(self.tt_runtime.clone(), origin);
+        let result = engine
+            .direct_push(
+                client_options(mode, options, tt_sync_transfer_concurrency()),
+                &observer,
+            )
+            .await;
+
+        match result {
+            Ok(report) => {
+                let local_applied = execution_local_applied(&report);
+                server.permissions = report.granted_permissions;
+                server.last_sync_ms = Some(sync_transfer::now_ms());
+                self.tt_runtime
+                    .upsert_paired_server(server)
+                    .await
+                    .map_err(|error| SyncExecutionFailure::new(error, local_applied))?;
+                Ok(execution_report(report))
+            }
+            Err(failure) => {
+                let local_applied = failure_local_applied(&failure);
+                if let Some(permissions) = failure.granted_permissions {
+                    server.permissions = permissions;
+                    self.tt_runtime
+                        .upsert_paired_server(server)
+                        .await
+                        .map_err(|error| SyncExecutionFailure::new(error, local_applied))?;
+                }
+                Err(execution_failure(failure))
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -52,16 +224,7 @@ impl SyncJobExecutor for InfrastructureSyncJobExecutor {
                 SyncEndpointRef::LanPeer { device_id },
                 SyncExecutionKind::Pull,
                 ResolvedSyncPolicy::Transfer { mode, options },
-            ) => {
-                pull_from_lan_device(
-                    self.lan_runtime.clone(),
-                    self.lan_peer_store.clone(),
-                    &device_id,
-                    mode,
-                    options,
-                )
-                .await
-            }
+            ) => self.execute_lan_pull(device_id, mode, options).await,
             (
                 SyncEndpointRef::LanPeer { device_id },
                 SyncExecutionKind::RequestRemotePull,
@@ -75,28 +238,16 @@ impl SyncJobExecutor for InfrastructureSyncJobExecutor {
                 SyncExecutionKind::Pull,
                 ResolvedSyncPolicy::Transfer { mode, options },
             ) => {
-                pull_from_server(
-                    self.tt_runtime.clone(),
-                    &server_device_id,
-                    mode,
-                    options,
-                    origin,
-                )
-                .await
+                self.execute_tt_pull(server_device_id, mode, options, origin)
+                    .await
             }
             (
                 SyncEndpointRef::RemoteServer { server_device_id },
                 SyncExecutionKind::DirectPush,
                 ResolvedSyncPolicy::Transfer { mode, options },
             ) => {
-                push_to_server(
-                    self.tt_runtime.clone(),
-                    &server_device_id,
-                    mode,
-                    options,
-                    origin,
-                )
-                .await
+                self.execute_tt_push(server_device_id, mode, options, origin)
+                    .await
             }
             _ => Err(SyncExecutionFailure::without_local_mutation(
                 DomainError::InvalidData(
@@ -104,5 +255,103 @@ impl SyncJobExecutor for InfrastructureSyncJobExecutor {
                 ),
             )),
         }
+    }
+}
+
+fn client_options(
+    mode: SyncMode,
+    options: SyncOperationOptions,
+    file_concurrency: usize,
+) -> ClientSyncOptions {
+    let mut client_options = ClientSyncOptions::new(mode, options.selection);
+    client_options.require_bundle_zstd = options.require_bundle_zstd;
+    client_options.file_concurrency = file_concurrency;
+    client_options
+}
+
+fn tt_sync_transfer_concurrency() -> usize {
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        8
+    } else {
+        16
+    }
+}
+
+fn execution_report(report: ClientSyncReport) -> SyncExecutionReport {
+    SyncExecutionReport::completed(
+        SyncJobSummary::new(
+            report.summary.files_total,
+            report.summary.bytes_total,
+            report.summary.files_deleted,
+        ),
+        local_applied(report.local_applied, false),
+    )
+}
+
+fn execution_failure(failure: ClientSyncFailure) -> SyncExecutionFailure {
+    let local_applied = failure_local_applied(&failure);
+    SyncExecutionFailure::new(sync_error_to_domain(failure.error), local_applied)
+}
+
+fn execution_local_applied(report: &ClientSyncReport) -> LocalAppliedChangeSummary {
+    local_applied(report.local_applied, false)
+}
+
+fn failure_local_applied(failure: &ClientSyncFailure) -> LocalAppliedChangeSummary {
+    local_applied(failure.local_applied, failure.local_target_changed)
+}
+
+fn local_applied(summary: LocalChangeSummary, target_changed: bool) -> LocalAppliedChangeSummary {
+    LocalAppliedChangeSummary {
+        files_written: summary.files_written,
+        bytes_written: summary.bytes_written,
+        files_deleted: summary.files_deleted,
+        target_changed,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use ttsync_core::error::SyncError;
+
+    #[test]
+    fn failure_summary_preserves_target_changed_with_counted_changes() {
+        let failure = ClientSyncFailure {
+            error: SyncError::Io("rename failed".to_string()),
+            local_applied: LocalChangeSummary {
+                files_written: 1,
+                bytes_written: 7,
+                files_deleted: 0,
+            },
+            local_target_changed: true,
+            remote_maybe_changed: false,
+            granted_permissions: None,
+        };
+
+        let summary = failure_local_applied(&failure);
+
+        assert_eq!(summary.files_written, 1);
+        assert_eq!(summary.bytes_written, 7);
+        assert!(summary.target_changed);
+        assert!(summary.changed());
+    }
+
+    #[test]
+    fn failure_summary_ignores_remote_only_changes() {
+        let failure = ClientSyncFailure {
+            error: SyncError::Io("upload failed".to_string()),
+            local_applied: LocalChangeSummary::default(),
+            local_target_changed: false,
+            remote_maybe_changed: true,
+            granted_permissions: None,
+        };
+
+        let summary = failure_local_applied(&failure);
+
+        assert_eq!(summary.files_written, 0);
+        assert!(!summary.target_changed);
+        assert!(!summary.changed());
     }
 }

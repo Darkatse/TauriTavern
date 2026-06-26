@@ -1,15 +1,9 @@
-use reqwest::{Body, Client, Response};
-use ttsync_contract::dataset::{
-    DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1, DatasetSelection,
-};
-use ttsync_contract::manifest::ManifestV2;
+use reqwest::{Client, Response};
+use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1};
 use ttsync_contract::pair::{PairCompleteRequest, PairCompleteResponse};
-use ttsync_contract::path::SyncPath;
 use ttsync_contract::peer::DeviceId;
-use ttsync_contract::plan::{CommitResponse, PlanId, SyncPlan};
 use ttsync_contract::session::{SessionOpenResponse, SessionToken};
 use ttsync_contract::status::StatusResponse;
-use ttsync_contract::sync::SyncMode;
 use ttsync_core::error::SyncError;
 use ttsync_http::client::{
     SyncClient, SyncClientHttpVersion, SyncClientOptions,
@@ -27,15 +21,7 @@ pub struct SyncHttpClient {
 
 impl SyncHttpClient {
     pub fn new(base_url: String, spki_sha256: String) -> Result<Self, DomainError> {
-        let inner = SyncClient::with_options(
-            base_url,
-            SyncClientOptions {
-                spki_sha256: Some(spki_sha256),
-                user_agent: Some(APP_USER_AGENT.to_string()),
-                http_version: SyncClientHttpVersion::Http1Only,
-            },
-        )
-        .map_err(sync_error_to_domain)?;
+        let inner = new_sync_client(base_url, spki_sha256)?;
         Ok(Self { inner })
     }
 
@@ -73,37 +59,26 @@ impl SyncHttpClient {
             .map_err(sync_error_to_domain)
     }
 
+    #[cfg(test)]
     pub async fn pull_plan(
         &self,
         session_token: &SessionToken,
-        mode: SyncMode,
-        selection: DatasetSelection,
-        target_manifest: ManifestV2,
-    ) -> Result<SyncPlan, DomainError> {
+        mode: ttsync_contract::sync::SyncMode,
+        selection: ttsync_contract::dataset::DatasetSelection,
+        target_manifest: ttsync_contract::manifest::ManifestV2,
+    ) -> Result<ttsync_contract::plan::SyncPlan, DomainError> {
         self.inner
             .pull_plan(session_token, mode, selection, target_manifest)
             .await
             .map_err(sync_error_to_domain)
     }
 
-    pub async fn push_plan(
-        &self,
-        session_token: &SessionToken,
-        mode: SyncMode,
-        selection: DatasetSelection,
-        source_manifest: ManifestV2,
-    ) -> Result<SyncPlan, DomainError> {
-        self.inner
-            .push_plan(session_token, mode, selection, source_manifest)
-            .await
-            .map_err(sync_error_to_domain)
-    }
-
+    #[cfg(test)]
     pub async fn download_file(
         &self,
         session_token: &SessionToken,
-        plan_id: &PlanId,
-        path: &SyncPath,
+        plan_id: &ttsync_contract::plan::PlanId,
+        path: &ttsync_contract::path::SyncPath,
     ) -> Result<Response, DomainError> {
         self.inner
             .download_file(session_token, plan_id, path)
@@ -111,10 +86,11 @@ impl SyncHttpClient {
             .map_err(sync_error_to_domain)
     }
 
+    #[cfg(test)]
     pub async fn download_bundle(
         &self,
         session_token: &SessionToken,
-        plan_id: &PlanId,
+        plan_id: &ttsync_contract::plan::PlanId,
         accept_zstd: bool,
     ) -> Result<Response, DomainError> {
         self.inner
@@ -122,43 +98,21 @@ impl SyncHttpClient {
             .await
             .map_err(sync_error_to_domain)
     }
+}
 
-    pub async fn upload_file(
-        &self,
-        session_token: &SessionToken,
-        plan_id: &PlanId,
-        path: &SyncPath,
-        body: Body,
-    ) -> Result<(), DomainError> {
-        self.inner
-            .upload_file(session_token, plan_id, path, body)
-            .await
-            .map_err(sync_error_to_domain)
-    }
-
-    pub async fn upload_bundle(
-        &self,
-        session_token: &SessionToken,
-        plan_id: &PlanId,
-        body: Body,
-        content_encoding_zstd: bool,
-    ) -> Result<(), DomainError> {
-        self.inner
-            .upload_bundle(session_token, plan_id, body, content_encoding_zstd)
-            .await
-            .map_err(sync_error_to_domain)
-    }
-
-    pub async fn commit(
-        &self,
-        session_token: &SessionToken,
-        plan_id: &PlanId,
-    ) -> Result<CommitResponse, DomainError> {
-        self.inner
-            .commit(session_token, plan_id)
-            .await
-            .map_err(sync_error_to_domain)
-    }
+pub(crate) fn new_sync_client(
+    base_url: String,
+    spki_sha256: String,
+) -> Result<SyncClient, DomainError> {
+    SyncClient::with_options(
+        base_url,
+        SyncClientOptions {
+            spki_sha256: Some(spki_sha256),
+            user_agent: Some(APP_USER_AGENT.to_string()),
+            http_version: SyncClientHttpVersion::Http1Only,
+        },
+    )
+    .map_err(sync_error_to_domain)
 }
 
 pub(crate) fn bearer_auth_value(session_token: &SessionToken) -> String {

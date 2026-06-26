@@ -99,6 +99,9 @@ export async function showSyncReportResult(report) {
     }
 
     if (result.status === 'failed') {
+        if (report?.job?.endpoint?.type === 'remote_server') {
+            window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
+        }
         await closeSyncProgressPopup();
         await showSyncError({ message: result.message || 'Sync failed.' });
         return;

@@ -30,7 +30,6 @@ pub mod request_path;
 pub mod sillytavern_sorting;
 pub mod sync;
 pub mod sync_automation_store;
-pub mod sync_bundle;
 pub mod sync_fs;
 pub mod sync_transfer;
 pub mod third_party_assets;

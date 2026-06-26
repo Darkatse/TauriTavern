@@ -413,6 +413,7 @@ mod tests {
                 files_written: 1,
                 bytes_written: 7,
                 files_deleted: 0,
+                target_changed: false,
             };
             Err(SyncExecutionFailure::new(
                 DomainError::InternalError("download failed".to_string()),
@@ -468,6 +469,7 @@ mod tests {
                 files_written: 0,
                 bytes_written: 0,
                 files_deleted: 1,
+                target_changed: false,
             };
             Ok(SyncExecutionReport::completed(
                 SyncJobSummary::new(0, 0, 1),

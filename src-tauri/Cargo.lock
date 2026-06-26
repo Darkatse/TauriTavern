@@ -5511,6 +5511,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "ttsync-client",
  "ttsync-contract",
  "ttsync-core",
  "ttsync-http",
@@ -5996,10 +5997,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "ttsync-contract"
-version = "2.0.3"
+name = "ttsync-client"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa805c8c74317544b9f24a5b61aa671eebb4fdb5bde3a5b20bd09b7429ba1385"
+checksum = "1983b96e8557d955224031783fb49738f7f887cc400564d5bc858e56d3d8e71b"
+dependencies = [
+ "async-compression",
+ "futures-util",
+ "reqwest",
+ "tokio",
+ "tokio-util",
+ "ttsync-contract",
+ "ttsync-core",
+ "ttsync-http",
+]
+
+[[package]]
+name = "ttsync-contract"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27ce827c0e20cd2a230308507a652a878a545ee0a4751a6059b4dfa37e6a1d0f"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -6009,9 +6026,9 @@ dependencies = [
 
 [[package]]
 name = "ttsync-core"
-version = "2.0.3"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc1522f0bb05d97d155c2015328201246a849adea8e07cd2c0aba4a04d370902"
+checksum = "e281c5fcded49e5eb02576ee23e9e4f8faab833cc6523be46c77eda61f379f22"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -6028,9 +6045,9 @@ dependencies = [
 
 [[package]]
 name = "ttsync-http"
-version = "2.0.3"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0249128c8d22fed7c9535845f21810b35a3a3eaf378c8e6e4c4aa90d8a9c2e30"
+checksum = "3f826cca1447f22a57de24f7c5242e33f8ebf64bd9df06e9f9d82ae31c5d252c"
 dependencies = [
  "async-compression",
  "axum",

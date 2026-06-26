@@ -1,12 +1,8 @@
+#[cfg(test)]
 use reqwest::Response;
-use ttsync_contract::dataset::DatasetSelection;
-use ttsync_contract::manifest::ManifestV2;
-use ttsync_contract::path::SyncPath;
 use ttsync_contract::peer::DeviceId;
-use ttsync_contract::plan::{PlanId, SyncPlan};
 use ttsync_contract::session::{SessionOpenResponse, SessionToken};
 use ttsync_contract::status::StatusResponse;
-use ttsync_contract::sync::SyncMode;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::SyncOperationOptions;
@@ -63,31 +59,34 @@ impl LanSyncClient {
             .await
     }
 
+    #[cfg(test)]
     pub async fn pull_plan(
         &self,
         session_token: &SessionToken,
-        mode: SyncMode,
-        selection: DatasetSelection,
-        target_manifest: ManifestV2,
-    ) -> Result<SyncPlan, DomainError> {
+        mode: ttsync_contract::sync::SyncMode,
+        selection: ttsync_contract::dataset::DatasetSelection,
+        target_manifest: ttsync_contract::manifest::ManifestV2,
+    ) -> Result<ttsync_contract::plan::SyncPlan, DomainError> {
         self.inner
             .pull_plan(session_token, mode, selection, target_manifest)
             .await
     }
 
+    #[cfg(test)]
     pub async fn download_file(
         &self,
         session_token: &SessionToken,
-        plan_id: &PlanId,
-        path: &SyncPath,
+        plan_id: &ttsync_contract::plan::PlanId,
+        path: &ttsync_contract::path::SyncPath,
     ) -> Result<Response, DomainError> {
         self.inner.download_file(session_token, plan_id, path).await
     }
 
+    #[cfg(test)]
     pub async fn download_bundle(
         &self,
         session_token: &SessionToken,
-        plan_id: &PlanId,
+        plan_id: &ttsync_contract::plan::PlanId,
         accept_zstd: bool,
     ) -> Result<Response, DomainError> {
         self.inner
