@@ -2,21 +2,18 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 
+use crate::app::AppState;
+use crate::application::host_contract::IOS_EXPORT_STAGING_ROOT_NAME;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::ios_document_picker::{
     PickDocumentResult, copy_picked_url_to_path, pick_data_archive, pick_skill_import_archive,
 };
 use crate::infrastructure::ios_share_sheet::share_file;
-use crate::infrastructure::paths::{IOS_EXPORT_STAGING_ROOT_NAME, resolve_runtime_paths};
-use crate::infrastructure::persistence::data_archive_jobs::{
-    cleanup_export_data_archive as cleanup_export_data_archive_impl,
-    get_data_archive_job_status as get_data_archive_job_status_impl,
-    start_import_data_archive_job as start_import_data_archive_job_impl,
-};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -52,7 +49,7 @@ pub struct IosShareFileResponse {
 
 #[tauri::command]
 pub async fn ios_import_data_archive_from_picker(
-    app: AppHandle,
+    app_state: State<'_, Arc<AppState>>,
     window: WebviewWindow,
 ) -> Result<IosImportArchiveResponse, CommandError> {
     log_command("ios_import_data_archive_from_picker");
@@ -71,16 +68,16 @@ pub async fn ios_import_data_archive_from_picker(
         PickDocumentResult::Picked(picked) => picked,
     };
 
-    let app_handle = app.clone();
+    let data_archive_service = app_state.data_archive_service.clone();
     let picked_url = picked.url.clone();
     let picked_file_name = picked.file_name.clone();
 
     let job_id = tauri::async_runtime::spawn_blocking(move || -> Result<String, DomainError> {
-        let target_path = prepare_incoming_import_archive_path(&app_handle)?;
+        let target_path = data_archive_service.prepare_incoming_import_archive_path()?;
         let _cleanup_target = CleanupTempFile::new(target_path.clone());
 
         copy_picked_url_to_path(&picked_url, &target_path)?;
-        start_import_data_archive_job_impl(&app_handle, &target_path, true)
+        data_archive_service.start_import(&target_path, true)
     })
     .await
     .map_err(|error| {
@@ -120,26 +117,6 @@ impl Drop for CleanupTempFile {
             }
         }
     }
-}
-
-fn prepare_incoming_import_archive_path(app: &AppHandle) -> Result<PathBuf, DomainError> {
-    let runtime_paths = resolve_runtime_paths(app).map_err(|error| {
-        DomainError::InternalError(format!("Failed to resolve runtime paths: {}", error))
-    })?;
-
-    let incoming_dir = runtime_paths.archive_imports_root.join("incoming");
-    fs::create_dir_all(&incoming_dir).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to create import staging directory {}: {}",
-            incoming_dir.display(),
-            error
-        ))
-    })?;
-
-    Ok(incoming_dir.join(format!(
-        "tauritavern-import-{}.archive",
-        uuid::Uuid::new_v4().simple()
-    )))
 }
 
 fn prepare_skill_import_archive_path(app: &AppHandle) -> Result<PathBuf, DomainError> {
@@ -332,34 +309,8 @@ pub async fn ios_share_file(
 }
 
 #[tauri::command]
-fn resolve_completed_export_archive_path(job_id: &str) -> Result<PathBuf, DomainError> {
-    let status = get_data_archive_job_status_impl(job_id)?;
-    if status.kind != "export" {
-        return Err(DomainError::InvalidData("Invalid export job".to_string()));
-    }
-
-    if status.state != "completed" {
-        return Err(DomainError::InvalidData(format!(
-            "Export job is not completed yet: {}",
-            job_id
-        )));
-    }
-
-    let archive_path = status
-        .result
-        .and_then(|result| result.archive_path)
-        .ok_or_else(|| {
-            DomainError::InvalidData(format!(
-                "Export archive path is missing for job: {}",
-                job_id
-            ))
-        })?;
-
-    Ok(PathBuf::from(archive_path))
-}
-
-#[tauri::command]
 pub async fn ios_share_export_data_archive(
+    app_state: State<'_, Arc<AppState>>,
     window: WebviewWindow,
     job_id: String,
 ) -> Result<IosShareExportArchiveResponse, CommandError> {
@@ -370,12 +321,16 @@ pub async fn ios_share_export_data_archive(
         return Err(CommandError::BadRequest("Missing job_id".to_string()));
     }
 
-    let archive_path = resolve_completed_export_archive_path(&job_id)
+    let archive_path = app_state
+        .data_archive_service
+        .completed_export_archive_path(&job_id)
         .map_err(map_command_error("Failed to resolve export archive path"))?;
 
     let share_result = present_ios_share_sheet_for_path(&window, &archive_path).await?;
 
-    let cleanup_error = cleanup_export_data_archive_impl(&job_id)
+    let cleanup_error = app_state
+        .data_archive_service
+        .cleanup_export(&job_id)
         .err()
         .map(|error| error.to_string());
 

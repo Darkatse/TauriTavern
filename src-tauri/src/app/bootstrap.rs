@@ -23,6 +23,7 @@ use crate::application::services::character_service::CharacterService;
 use crate::application::services::chat_completion_service::ChatCompletionService;
 use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
+use crate::application::services::data_archive_service::DataArchiveService;
 use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::extension_store_service::ExtensionStoreService;
@@ -113,6 +114,7 @@ use crate::infrastructure::lan_sync::store::LanSyncStore;
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
+use crate::infrastructure::persistence::data_archive_jobs::TauriDataArchiveJobBackend;
 use crate::infrastructure::persistence::file_system::DataDirectory;
 use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
@@ -185,7 +187,7 @@ pub(super) struct AppServices {
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
     pub sync_automation_service: Arc<SyncAutomationService>,
-    pub data_change_reconciler: Arc<dyn DataChangeReconciler>,
+    pub data_archive_service: Arc<DataArchiveService>,
     pub update_service: Arc<UpdateService>,
     pub native_regex_service: Arc<NativeRegexService>,
     pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
@@ -627,6 +629,9 @@ pub(super) async fn build_services(
         group_service: group_service.clone(),
         secret_service: secret_service.clone(),
     });
+    let data_archive_service = Arc::new(DataArchiveService::new(Arc::new(
+        TauriDataArchiveJobBackend::new(app_handle.clone(), data_change_reconciler.clone()),
+    )));
     let lan_runtime_state = Arc::new(LanSyncRuntimeState::new());
     let lan_settings_store = Arc::new(LanSyncStore::new(
         data_directory.default_user().to_path_buf(),
@@ -743,7 +748,7 @@ pub(super) async fn build_services(
         lan_sync_service,
         tt_sync_service,
         sync_automation_service,
-        data_change_reconciler,
+        data_archive_service,
         update_service,
         native_regex_service,
         ios_policy,

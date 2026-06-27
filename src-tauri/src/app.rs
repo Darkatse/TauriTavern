@@ -15,7 +15,7 @@ use crate::application::services::character_service::CharacterService;
 use crate::application::services::chat_completion_service::ChatCompletionService;
 use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
-use crate::application::services::data_change_reconciler::DataChangeReconciler;
+use crate::application::services::data_archive_service::DataArchiveService;
 use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::extension_store_service::ExtensionStoreService;
 use crate::application::services::group_chat_service::GroupChatService;
@@ -86,7 +86,7 @@ pub struct AppState {
     pub tt_sync_service: Arc<TtSyncService>,
     pub sync_automation_service: Arc<SyncAutomationService>,
     pub sync_automation_cancel: CancellationToken,
-    data_change_reconciler: Arc<dyn DataChangeReconciler>,
+    pub data_archive_service: Arc<DataArchiveService>,
     pub update_service: Arc<UpdateService>,
     pub native_regex_service: Arc<NativeRegexService>,
     pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
@@ -148,18 +148,11 @@ impl AppState {
             tt_sync_service: services.tt_sync_service,
             sync_automation_service: services.sync_automation_service,
             sync_automation_cancel,
-            data_change_reconciler: services.data_change_reconciler,
+            data_archive_service: services.data_archive_service,
             update_service: services.update_service,
             native_regex_service: services.native_regex_service,
             ios_policy: services.ios_policy,
         })
-    }
-
-    pub async fn refresh_after_external_data_change(
-        &self,
-        reason: &str,
-    ) -> Result<(), DomainError> {
-        self.data_change_reconciler.reconcile(reason).await
     }
 }
 

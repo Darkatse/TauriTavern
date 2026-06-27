@@ -1,5 +1,4 @@
 use chrono::Utc;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -10,10 +9,17 @@ use tauri::AppHandle;
 use tauri::Manager;
 use uuid::Uuid;
 
-use crate::app::AppState;
-use crate::domain::errors::DomainError;
+use crate::application::dto::data_archive_dto::{
+    DATA_ARCHIVE_KIND_EXPORT, DATA_ARCHIVE_KIND_IMPORT, DATA_ARCHIVE_STATE_CANCELLED,
+    DATA_ARCHIVE_STATE_COMPLETED, DATA_ARCHIVE_STATE_FAILED, DATA_ARCHIVE_STATE_PENDING,
+    DATA_ARCHIVE_STATE_RUNNING, DataArchiveJobResult, DataArchiveJobStatus,
+    UserBackupArchiveResult,
+};
 #[cfg(target_os = "ios")]
-use crate::infrastructure::paths::IOS_EXPORT_STAGING_ROOT_NAME;
+use crate::application::host_contract::IOS_EXPORT_STAGING_ROOT_NAME;
+use crate::application::services::data_archive_service::DataArchiveJobBackend;
+use crate::application::services::data_change_reconciler::DataChangeReconciler;
+use crate::domain::errors::DomainError;
 use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::persistence::file_system::DataDirectory;
 
@@ -22,43 +28,87 @@ use super::data_archive::{
     run_export_data_archive, run_export_user_backup_archive, run_import_data_archive,
 };
 
-const STATE_PENDING: &str = "pending";
-const STATE_RUNNING: &str = "running";
-const STATE_COMPLETED: &str = "completed";
-const STATE_FAILED: &str = "failed";
-const STATE_CANCELLED: &str = "cancelled";
-
-const KIND_IMPORT: &str = "import";
-const KIND_EXPORT: &str = "export";
-
 const EXPORT_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 
-#[derive(Debug, Clone, Serialize)]
-pub struct DataArchiveJobResult {
-    pub source_users: Vec<String>,
-    pub target_user: Option<String>,
-    pub file_name: Option<String>,
-    pub archive_path: Option<String>,
+pub(crate) struct TauriDataArchiveJobBackend {
+    app_handle: AppHandle,
+    reconciler: Arc<dyn DataChangeReconciler>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct DataArchiveJobStatus {
-    pub job_id: String,
-    pub kind: String,
-    pub state: String,
-    pub stage: String,
-    pub progress_percent: f32,
-    pub message: String,
-    pub result: Option<DataArchiveJobResult>,
-    pub error: Option<String>,
-    pub started_at: String,
-    pub finished_at: Option<String>,
+impl TauriDataArchiveJobBackend {
+    pub(crate) fn new(app_handle: AppHandle, reconciler: Arc<dyn DataChangeReconciler>) -> Self {
+        Self {
+            app_handle,
+            reconciler,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct UserBackupArchiveResult {
-    pub file_name: String,
-    pub archive_path: String,
+impl DataArchiveJobBackend for TauriDataArchiveJobBackend {
+    fn start_import(
+        &self,
+        archive_path: &Path,
+        archive_is_temporary: bool,
+    ) -> Result<String, DomainError> {
+        start_import_data_archive_job(
+            &self.app_handle,
+            self.reconciler.clone(),
+            archive_path,
+            archive_is_temporary,
+        )
+    }
+
+    fn start_export(&self) -> Result<String, DomainError> {
+        start_export_data_archive_job(&self.app_handle)
+    }
+
+    fn imports_root(&self) -> PathBuf {
+        self.app_handle
+            .state::<RuntimePaths>()
+            .archive_imports_root
+            .clone()
+    }
+
+    #[cfg(target_os = "ios")]
+    fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError> {
+        prepare_incoming_import_archive_path(&self.app_handle)
+    }
+
+    fn get_status(&self, job_id: &str) -> Result<DataArchiveJobStatus, DomainError> {
+        get_data_archive_job_status(job_id)
+    }
+
+    fn cancel(&self, job_id: &str) -> Result<(), DomainError> {
+        cancel_data_archive_job(job_id)
+    }
+
+    fn cleanup_export(&self, job_id: &str) -> Result<(), DomainError> {
+        cleanup_export_data_archive(job_id)
+    }
+
+    fn save_export(&self, job_id: &str) -> Result<PathBuf, DomainError> {
+        save_export_data_archive(&self.app_handle, job_id)
+    }
+
+    fn export_user_backup(
+        &self,
+        handle: &str,
+        include_secrets: bool,
+    ) -> Result<UserBackupArchiveResult, DomainError> {
+        export_user_backup_archive_file(&self.app_handle, handle, include_secrets)
+    }
+
+    fn save_user_backup(
+        &self,
+        archive_path: &str,
+        file_name: &str,
+    ) -> Result<PathBuf, DomainError> {
+        save_user_backup_archive(&self.app_handle, archive_path, file_name)
+    }
+
+    fn cleanup_user_backup(&self, archive_path: &str) -> Result<(), DomainError> {
+        cleanup_user_backup_archive(&self.app_handle, archive_path)
+    }
 }
 
 struct DataArchiveJob {
@@ -72,7 +122,7 @@ impl DataArchiveJob {
             status: Mutex::new(DataArchiveJobStatus {
                 job_id: job_id.to_string(),
                 kind: kind.to_string(),
-                state: STATE_PENDING.to_string(),
+                state: DATA_ARCHIVE_STATE_PENDING.to_string(),
                 stage: "queued".to_string(),
                 progress_percent: 0.0,
                 message: "Job queued".to_string(),
@@ -95,7 +145,7 @@ impl DataArchiveJob {
 
     fn mark_running(&self, stage: &str, message: &str) -> Result<(), DomainError> {
         self.update_status(|status| {
-            status.state = STATE_RUNNING.to_string();
+            status.state = DATA_ARCHIVE_STATE_RUNNING.to_string();
             status.stage = stage.to_string();
             status.message = message.to_string();
             status.progress_percent = status.progress_percent.clamp(0.0, 100.0);
@@ -110,10 +160,10 @@ impl DataArchiveJob {
         message: &str,
     ) -> Result<(), DomainError> {
         self.update_status(|status| {
-            if status.state == STATE_PENDING {
-                status.state = STATE_RUNNING.to_string();
+            if status.state == DATA_ARCHIVE_STATE_PENDING {
+                status.state = DATA_ARCHIVE_STATE_RUNNING.to_string();
             }
-            if status.state != STATE_RUNNING {
+            if status.state != DATA_ARCHIVE_STATE_RUNNING {
                 return;
             }
             status.stage = stage.to_string();
@@ -124,7 +174,7 @@ impl DataArchiveJob {
 
     fn mark_completed_import(&self, result: DataArchiveImportResult) -> Result<(), DomainError> {
         self.update_status(|status| {
-            status.state = STATE_COMPLETED.to_string();
+            status.state = DATA_ARCHIVE_STATE_COMPLETED.to_string();
             status.stage = "completed".to_string();
             status.progress_percent = 100.0;
             status.message = "Import completed".to_string();
@@ -141,7 +191,7 @@ impl DataArchiveJob {
 
     fn mark_completed_export(&self, result: DataArchiveExportResult) -> Result<(), DomainError> {
         self.update_status(|status| {
-            status.state = STATE_COMPLETED.to_string();
+            status.state = DATA_ARCHIVE_STATE_COMPLETED.to_string();
             status.stage = "completed".to_string();
             status.progress_percent = 100.0;
             status.message = "Export completed".to_string();
@@ -158,7 +208,7 @@ impl DataArchiveJob {
 
     fn mark_failed(&self, error_message: &str) -> Result<(), DomainError> {
         self.update_status(|status| {
-            status.state = STATE_FAILED.to_string();
+            status.state = DATA_ARCHIVE_STATE_FAILED.to_string();
             status.stage = "failed".to_string();
             status.message = "Job failed".to_string();
             status.error = Some(error_message.to_string());
@@ -168,7 +218,7 @@ impl DataArchiveJob {
 
     fn mark_cancelled(&self) -> Result<(), DomainError> {
         self.update_status(|status| {
-            status.state = STATE_CANCELLED.to_string();
+            status.state = DATA_ARCHIVE_STATE_CANCELLED.to_string();
             status.stage = "cancelled".to_string();
             status.message = "Job cancelled".to_string();
             status.finished_at = Some(Utc::now().to_rfc3339());
@@ -178,7 +228,9 @@ impl DataArchiveJob {
     fn request_cancel(&self) {
         self.cancel_requested.store(true, Ordering::Relaxed);
         let _ = self.update_status(|status| {
-            if status.state == STATE_PENDING || status.state == STATE_RUNNING {
+            if status.state == DATA_ARCHIVE_STATE_PENDING
+                || status.state == DATA_ARCHIVE_STATE_RUNNING
+            {
                 status.message = "Cancellation requested".to_string();
             }
         });
@@ -226,8 +278,9 @@ fn register_job(job_id: &str, job: Arc<DataArchiveJob>) -> Result<(), DomainErro
     Ok(())
 }
 
-pub fn start_import_data_archive_job(
+fn start_import_data_archive_job(
     app_handle: &AppHandle,
+    reconciler: Arc<dyn DataChangeReconciler>,
     archive_path: &Path,
     archive_is_temporary: bool,
 ) -> Result<String, DomainError> {
@@ -241,7 +294,6 @@ pub fn start_import_data_archive_job(
     let runtime_paths = app_handle.state::<RuntimePaths>();
     let imports_root = runtime_paths.archive_imports_root.clone();
     let data_root = runtime_paths.data_root.clone();
-    let app_handle = app_handle.clone();
     fs::create_dir_all(&imports_root).map_err(|error| {
         DomainError::InternalError(format!("Failed to create job root: {}", error))
     })?;
@@ -255,7 +307,7 @@ pub fn start_import_data_archive_job(
     let prepared_archive_path =
         prepare_import_archive_path(archive_path, &job_root, archive_is_temporary)?;
 
-    let job = Arc::new(DataArchiveJob::new(&job_id, KIND_IMPORT));
+    let job = Arc::new(DataArchiveJob::new(&job_id, DATA_ARCHIVE_KIND_IMPORT));
     register_job(&job_id, job.clone())?;
 
     tauri::async_runtime::spawn(async move {
@@ -297,10 +349,7 @@ pub fn start_import_data_archive_job(
                     return;
                 }
 
-                let refresh_result = app_handle
-                    .state::<Arc<AppState>>()
-                    .refresh_after_external_data_change("import")
-                    .await;
+                let refresh_result = reconciler.reconcile("import").await;
                 if let Err(error) = refresh_result {
                     let _ = job.mark_failed(&format!(
                         "Import completed but failed to refresh runtime caches: {}",
@@ -330,7 +379,7 @@ pub fn start_import_data_archive_job(
     Ok(job_id)
 }
 
-pub fn start_export_data_archive_job(app_handle: &AppHandle) -> Result<String, DomainError> {
+fn start_export_data_archive_job(app_handle: &AppHandle) -> Result<String, DomainError> {
     let runtime_paths = app_handle.state::<RuntimePaths>();
     let data_root = runtime_paths.data_root.clone();
     let export_root = runtime_paths.archive_exports_root.clone();
@@ -340,7 +389,7 @@ pub fn start_export_data_archive_job(app_handle: &AppHandle) -> Result<String, D
     cleanup_stale_exports(&export_root);
 
     let job_id = Uuid::new_v4().simple().to_string();
-    let job = Arc::new(DataArchiveJob::new(&job_id, KIND_EXPORT));
+    let job = Arc::new(DataArchiveJob::new(&job_id, DATA_ARCHIVE_KIND_EXPORT));
     register_job(&job_id, job.clone())?;
 
     let output_path = export_root.join(default_export_file_name());
@@ -393,7 +442,7 @@ pub fn start_export_data_archive_job(app_handle: &AppHandle) -> Result<String, D
     Ok(job_id)
 }
 
-pub fn export_user_backup_archive_file(
+fn export_user_backup_archive_file(
     app_handle: &AppHandle,
     handle: &str,
     include_secrets: bool,
@@ -433,19 +482,19 @@ pub fn export_user_backup_archive_file(
     })
 }
 
-pub fn get_data_archive_job_status(job_id: &str) -> Result<DataArchiveJobStatus, DomainError> {
+fn get_data_archive_job_status(job_id: &str) -> Result<DataArchiveJobStatus, DomainError> {
     get_job(job_id)?.snapshot()
 }
 
-pub fn cancel_data_archive_job(job_id: &str) -> Result<(), DomainError> {
+fn cancel_data_archive_job(job_id: &str) -> Result<(), DomainError> {
     let job = get_job(job_id)?;
     job.request_cancel();
     Ok(())
 }
 
-pub fn cleanup_export_data_archive(job_id: &str) -> Result<(), DomainError> {
+fn cleanup_export_data_archive(job_id: &str) -> Result<(), DomainError> {
     let status = get_job(job_id)?.snapshot()?;
-    if status.kind != KIND_EXPORT || status.state != STATE_COMPLETED {
+    if status.kind != DATA_ARCHIVE_KIND_EXPORT || status.state != DATA_ARCHIVE_STATE_COMPLETED {
         return Err(DomainError::InvalidData(format!(
             "Export job is not completed: {}",
             job_id
@@ -466,12 +515,9 @@ pub fn cleanup_export_data_archive(job_id: &str) -> Result<(), DomainError> {
     Ok(())
 }
 
-pub fn save_export_data_archive(
-    app_handle: &AppHandle,
-    job_id: &str,
-) -> Result<PathBuf, DomainError> {
+fn save_export_data_archive(app_handle: &AppHandle, job_id: &str) -> Result<PathBuf, DomainError> {
     let status = get_job(job_id)?.snapshot()?;
-    if status.kind != KIND_EXPORT || status.state != STATE_COMPLETED {
+    if status.kind != DATA_ARCHIVE_KIND_EXPORT || status.state != DATA_ARCHIVE_STATE_COMPLETED {
         return Err(DomainError::InvalidData(format!(
             "Export job is not completed: {}",
             job_id
@@ -491,7 +537,7 @@ pub fn save_export_data_archive(
     save_staged_archive_to_downloads(app_handle, Path::new(&archive_path), &file_name)
 }
 
-pub fn save_user_backup_archive(
+fn save_user_backup_archive(
     app_handle: &AppHandle,
     archive_path: &str,
     file_name: &str,
@@ -501,7 +547,7 @@ pub fn save_user_backup_archive(
     save_staged_archive_to_downloads(app_handle, &source_path, &file_name)
 }
 
-pub fn cleanup_user_backup_archive(
+fn cleanup_user_backup_archive(
     app_handle: &AppHandle,
     archive_path: &str,
 ) -> Result<(), DomainError> {
@@ -754,6 +800,27 @@ fn resolve_user_backup_root(
 
 fn default_user_backup_file_name(handle: &str) -> String {
     format!("{}-{}.zip", handle, Utc::now().format("%Y%m%d-%H%M%S"))
+}
+
+#[cfg(target_os = "ios")]
+fn prepare_incoming_import_archive_path(app_handle: &AppHandle) -> Result<PathBuf, DomainError> {
+    let imports_root = app_handle
+        .state::<RuntimePaths>()
+        .archive_imports_root
+        .clone();
+    let incoming_dir = imports_root.join("incoming");
+    fs::create_dir_all(&incoming_dir).map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to create import staging directory {}: {}",
+            incoming_dir.display(),
+            error
+        ))
+    })?;
+
+    Ok(incoming_dir.join(format!(
+        "tauritavern-import-{}.archive",
+        Uuid::new_v4().simple()
+    )))
 }
 
 fn prepare_import_archive_path(

@@ -5,6 +5,7 @@ pub mod bootstrap_dto;
 pub mod character_dto;
 pub mod chat_completion_dto;
 pub mod chat_dto;
+pub mod data_archive_dto;
 pub mod group_dto;
 pub mod image_metadata_dto;
 pub mod llm_connection_dto;
