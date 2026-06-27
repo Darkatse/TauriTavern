@@ -23,7 +23,9 @@ use crate::application::services::character_service::CharacterService;
 use crate::application::services::chat_completion_service::ChatCompletionService;
 use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
-use crate::application::services::data_archive_service::DataArchiveService;
+use crate::application::services::data_archive_service::{
+    DataArchiveJobRegistry, DataArchiveService,
+};
 use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::extension_store_service::ExtensionStoreService;
@@ -629,9 +631,15 @@ pub(super) async fn build_services(
         group_service: group_service.clone(),
         secret_service: secret_service.clone(),
     });
-    let data_archive_service = Arc::new(DataArchiveService::new(Arc::new(
-        TauriDataArchiveJobBackend::new(app_handle.clone(), data_change_reconciler.clone()),
-    )));
+    let data_archive_jobs = Arc::new(DataArchiveJobRegistry::new());
+    let data_archive_service = Arc::new(DataArchiveService::new(
+        data_archive_jobs.clone(),
+        Arc::new(TauriDataArchiveJobBackend::new(
+            app_handle.clone(),
+            data_change_reconciler.clone(),
+            data_archive_jobs,
+        )),
+    ));
     let lan_runtime_state = Arc::new(LanSyncRuntimeState::new());
     let lan_settings_store = Arc::new(LanSyncStore::new(
         data_directory.default_user().to_path_buf(),
