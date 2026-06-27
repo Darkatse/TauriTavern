@@ -371,6 +371,22 @@ async function pollUntilTerminal(jobId) {
     }
 }
 
+function importStatusRequiresReload(status) {
+    return Boolean(status?.local_applied) || Boolean(status?.reconcile_error);
+}
+
+function importTerminalMessage(status, fallback) {
+    const message = String(status?.error || fallback || '').trim();
+    const reconcileError = String(status?.reconcile_error || '').trim();
+    return [message, reconcileError].filter(Boolean).join(' | ');
+}
+
+function reloadSoon() {
+    setTimeout(() => {
+        location.reload();
+    }, 800);
+}
+
 async function requestCancelActiveJob() {
     if (!hasRunningJob() || jobState.cancelRequested) {
         return;
@@ -477,9 +493,7 @@ async function runMigrationJob(kind, startJob) {
                 );
                 setStatusText(t`Import completed`);
 
-                setTimeout(() => {
-                    location.reload();
-                }, 800);
+                reloadSoon();
             } else {
                 const saveResult = await saveExportArchive(jobId);
                 if (saveResult.mode === 'ios-native-share') {
@@ -519,8 +533,24 @@ async function runMigrationJob(kind, startJob) {
         }
 
         if (finalState === 'cancelled') {
+            if (kind === 'import' && importStatusRequiresReload(finalStatus)) {
+                const message = importTerminalMessage(finalStatus, t`Import cancelled after updating local data`);
+                toastr.warning(`${message}. ${t`Reloading...`}`, t`Data import cancelled`, { timeOut: 6000 });
+                setStatusText(message);
+                reloadSoon();
+                return;
+            }
+
             toastr.info(t`Migration job cancelled`);
             setStatusText(t`Job cancelled`);
+            return;
+        }
+
+        if (kind === 'import' && importStatusRequiresReload(finalStatus)) {
+            const message = importTerminalMessage(finalStatus, t`Data import failed after updating local data`);
+            toastr.error(`${message}. ${t`Reloading...`}`, failureTitle, { timeOut: 8000 });
+            setStatusText(message);
+            reloadSoon();
             return;
         }
 

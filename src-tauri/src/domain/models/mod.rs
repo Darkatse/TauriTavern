@@ -6,6 +6,7 @@ pub mod background;
 pub mod bedrock_model;
 pub mod character;
 pub mod chat;
+pub mod data_archive;
 pub mod extension;
 pub mod filename;
 pub mod group;

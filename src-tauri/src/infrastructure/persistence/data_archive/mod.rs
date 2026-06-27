@@ -4,6 +4,8 @@ mod shared;
 
 use std::path::PathBuf;
 
+use crate::domain::models::data_archive::DataArchiveLocalMutationSummary;
+
 pub use export::{
     default_export_file_name, run_export_data_archive, run_export_user_backup_archive,
 };
@@ -13,6 +15,7 @@ pub use import::run_import_data_archive;
 pub struct DataArchiveImportResult {
     pub source_users: Vec<String>,
     pub target_user: String,
+    pub local_applied: DataArchiveLocalMutationSummary,
 }
 
 #[derive(Debug, Clone)]

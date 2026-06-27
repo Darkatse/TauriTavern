@@ -14,6 +14,9 @@ use crate::application::dto::data_archive_dto::{
 };
 use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::domain::errors::DomainError;
+use crate::domain::models::data_archive::{
+    DataArchiveImportFailure, DataArchiveLocalMutationSummary,
+};
 
 #[derive(Default)]
 pub(crate) struct DataArchiveJobRegistry {
@@ -76,6 +79,8 @@ impl DataArchiveJobHandle {
                 message: "Job queued".to_string(),
                 result: None,
                 error: None,
+                local_applied: None,
+                reconcile_error: None,
                 started_at: Utc::now().to_rfc3339(),
                 finished_at: None,
             }),
@@ -137,6 +142,8 @@ impl DataArchiveJobHandle {
                 archive_path: None,
             });
             status.error = None;
+            status.local_applied = None;
+            status.reconcile_error = None;
             status.finished_at = Some(Utc::now().to_rfc3339());
         })
     }
@@ -158,6 +165,8 @@ impl DataArchiveJobHandle {
                 archive_path: Some(archive_path.to_string_lossy().to_string()),
             });
             status.error = None;
+            status.local_applied = None;
+            status.reconcile_error = None;
             status.finished_at = Some(Utc::now().to_rfc3339());
         })
     }
@@ -168,6 +177,25 @@ impl DataArchiveJobHandle {
             status.stage = "failed".to_string();
             status.message = "Job failed".to_string();
             status.error = Some(error_message.to_string());
+            status.local_applied = None;
+            status.reconcile_error = None;
+            status.finished_at = Some(Utc::now().to_rfc3339());
+        })
+    }
+
+    pub(crate) fn mark_failed_after_local_mutation(
+        &self,
+        error_message: &str,
+        local_applied: DataArchiveLocalMutationSummary,
+        reconcile_error: Option<String>,
+    ) -> Result<(), DomainError> {
+        self.update_status(|status| {
+            status.state = DATA_ARCHIVE_STATE_FAILED.to_string();
+            status.stage = "failed".to_string();
+            status.message = "Job failed".to_string();
+            status.error = Some(error_message.to_string());
+            status.local_applied = Some(local_applied.into());
+            status.reconcile_error = reconcile_error;
             status.finished_at = Some(Utc::now().to_rfc3339());
         })
     }
@@ -177,6 +205,23 @@ impl DataArchiveJobHandle {
             status.state = DATA_ARCHIVE_STATE_CANCELLED.to_string();
             status.stage = "cancelled".to_string();
             status.message = "Job cancelled".to_string();
+            status.local_applied = None;
+            status.reconcile_error = None;
+            status.finished_at = Some(Utc::now().to_rfc3339());
+        })
+    }
+
+    pub(crate) fn mark_cancelled_after_local_mutation(
+        &self,
+        local_applied: DataArchiveLocalMutationSummary,
+        reconcile_error: Option<String>,
+    ) -> Result<(), DomainError> {
+        self.update_status(|status| {
+            status.state = DATA_ARCHIVE_STATE_CANCELLED.to_string();
+            status.stage = "cancelled".to_string();
+            status.message = "Job cancelled".to_string();
+            status.local_applied = Some(local_applied.into());
+            status.reconcile_error = reconcile_error;
             status.finished_at = Some(Utc::now().to_rfc3339());
         })
     }
@@ -234,6 +279,7 @@ pub(crate) struct UserBackupArchiveTarget {
 pub(crate) struct ArchiveImportExecutionReport {
     pub source_users: Vec<String>,
     pub target_user: String,
+    pub local_applied: DataArchiveLocalMutationSummary,
 }
 
 pub(crate) struct ArchiveExportExecutionReport {
@@ -247,7 +293,7 @@ pub(crate) trait DataArchiveExecutor: Send + Sync {
         request: ImportArchiveExecutionRequest,
         report_progress: &mut dyn FnMut(&str, f32, &str),
         is_cancelled: &dyn Fn() -> bool,
-    ) -> Result<ArchiveImportExecutionReport, DomainError>;
+    ) -> Result<ArchiveImportExecutionReport, DataArchiveImportFailure>;
 
     fn export_full_data(
         &self,
@@ -360,26 +406,51 @@ impl DataArchiveService {
 
             match blocking_result {
                 Ok(Ok(result)) => {
-                    if let Err(error) = data_root_initializer.initialize_data_root(&data_root).await
-                    {
-                        let _ = job.mark_failed(&format!(
-                            "Import completed but failed to initialize data directory: {}",
-                            error
-                        ));
-                    } else if let Err(error) = reconciler.reconcile("import").await {
-                        let _ = job.mark_failed(&format!(
-                            "Import completed but failed to refresh runtime caches: {}",
-                            error
-                        ));
-                    } else {
-                        let _ = job.mark_completed_import(result.source_users, result.target_user);
+                    if result.local_applied.changed() {
+                        if let Err(error) = reconcile_import_data_change(
+                            &data_root_initializer,
+                            &reconciler,
+                            &data_root,
+                        )
+                        .await
+                        {
+                            let _ = job.mark_failed_after_local_mutation(
+                                &format!("Import completed but {}", error),
+                                result.local_applied,
+                                Some(error),
+                            );
+                            return;
+                        }
                     }
+                    let _ = job.mark_completed_import(result.source_users, result.target_user);
                 }
-                Ok(Err(error)) => {
-                    if job.is_cancel_requested() || is_cancelled_error(&error) {
+                Ok(Err(failure)) => {
+                    let cancelled = job.is_cancel_requested() || is_cancelled_error(&failure.error);
+                    if failure.local_applied.changed() {
+                        let reconcile_error = reconcile_import_data_change(
+                            &data_root_initializer,
+                            &reconciler,
+                            &data_root,
+                        )
+                        .await
+                        .err();
+
+                        if cancelled {
+                            let _ = job.mark_cancelled_after_local_mutation(
+                                failure.local_applied,
+                                reconcile_error,
+                            );
+                        } else {
+                            let _ = job.mark_failed_after_local_mutation(
+                                &failure.error.to_string(),
+                                failure.local_applied,
+                                reconcile_error,
+                            );
+                        }
+                    } else if cancelled {
                         let _ = job.mark_cancelled();
                     } else {
-                        let _ = job.mark_failed(&error.to_string());
+                        let _ = job.mark_failed(&failure.error.to_string());
                     }
                 }
                 Err(error) => {
@@ -571,6 +642,22 @@ fn is_cancelled_error(error: &DomainError) -> bool {
     matches!(error, DomainError::Cancelled(_))
 }
 
+async fn reconcile_import_data_change(
+    data_root_initializer: &Arc<dyn DataRootInitializer>,
+    reconciler: &Arc<dyn DataChangeReconciler>,
+    data_root: &Path,
+) -> Result<(), String> {
+    data_root_initializer
+        .initialize_data_root(data_root)
+        .await
+        .map_err(|error| format!("failed to initialize data directory: {}", error))?;
+    reconciler
+        .reconcile("import")
+        .await
+        .map_err(|error| format!("failed to refresh runtime caches: {}", error))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -585,7 +672,7 @@ mod tests {
             _request: ImportArchiveExecutionRequest,
             _report_progress: &mut dyn FnMut(&str, f32, &str),
             _is_cancelled: &dyn Fn() -> bool,
-        ) -> Result<ArchiveImportExecutionReport, DomainError> {
+        ) -> Result<ArchiveImportExecutionReport, DataArchiveImportFailure> {
             unreachable!()
         }
 
@@ -690,17 +777,43 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingExecutor {
-        import_result: Mutex<Option<ArchiveImportExecutionReport>>,
+        import_result:
+            Mutex<Option<Result<ArchiveImportExecutionReport, DataArchiveImportFailure>>>,
         export_result: Mutex<Option<Result<String, DomainError>>>,
     }
 
     impl RecordingExecutor {
         fn import_ok(source_users: Vec<String>, target_user: &str) -> Self {
             Self {
-                import_result: Mutex::new(Some(ArchiveImportExecutionReport {
+                import_result: Mutex::new(Some(Ok(ArchiveImportExecutionReport {
                     source_users,
                     target_user: target_user.to_string(),
-                })),
+                    local_applied: import_local_applied(),
+                }))),
+                ..Self::default()
+            }
+        }
+
+        fn import_ok_without_local_mutation(source_users: Vec<String>, target_user: &str) -> Self {
+            Self {
+                import_result: Mutex::new(Some(Ok(ArchiveImportExecutionReport {
+                    source_users,
+                    target_user: target_user.to_string(),
+                    local_applied: DataArchiveLocalMutationSummary::default(),
+                }))),
+                ..Self::default()
+            }
+        }
+
+        fn import_error(
+            error: DomainError,
+            local_applied: DataArchiveLocalMutationSummary,
+        ) -> Self {
+            Self {
+                import_result: Mutex::new(Some(Err(DataArchiveImportFailure::new(
+                    error,
+                    local_applied,
+                )))),
                 ..Self::default()
             }
         }
@@ -726,12 +839,17 @@ mod tests {
             _request: ImportArchiveExecutionRequest,
             _report_progress: &mut dyn FnMut(&str, f32, &str),
             _is_cancelled: &dyn Fn() -> bool,
-        ) -> Result<ArchiveImportExecutionReport, DomainError> {
+        ) -> Result<ArchiveImportExecutionReport, DataArchiveImportFailure> {
             self.import_result
                 .lock()
                 .expect("lock import result")
                 .take()
-                .ok_or_else(|| DomainError::InternalError("missing import result".to_string()))
+                .unwrap_or_else(|| {
+                    Err(DataArchiveImportFailure::new(
+                        DomainError::InternalError("missing import result".to_string()),
+                        DataArchiveLocalMutationSummary::default(),
+                    ))
+                })
         }
 
         fn export_full_data(
@@ -896,6 +1014,23 @@ mod tests {
         }
     }
 
+    struct FailingReconciler;
+
+    #[async_trait]
+    impl DataChangeReconciler for FailingReconciler {
+        async fn reconcile(&self, _reason: &str) -> Result<(), DomainError> {
+            Err(DomainError::InternalError("cache stale".to_string()))
+        }
+    }
+
+    fn import_local_applied() -> DataArchiveLocalMutationSummary {
+        DataArchiveLocalMutationSummary {
+            files_written: 1,
+            bytes_written: 7,
+            target_changed: true,
+        }
+    }
+
     async fn wait_for_job_state(
         service: &DataArchiveService,
         job_id: &str,
@@ -1026,6 +1161,171 @@ mod tests {
         assert_eq!(
             *reconciler.reasons.lock().expect("lock reconcile reasons"),
             vec!["import".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn start_import_with_no_local_mutation_skips_initializer_and_reconciler() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let data_root = PathBuf::from("/tmp/tauritavern-noop-data-root");
+        let workspace_root = PathBuf::from("/tmp/tauritavern-noop-import-workspace");
+        let files = Arc::new(RecordingFiles::with_import(ImportArchiveExecutionRequest {
+            data_root,
+            archive_path: PathBuf::from("/tmp/import.archive"),
+            workspace_root,
+        }));
+        let initializer = Arc::new(RecordingInitializer::default());
+        let reconciler = Arc::new(RecordingReconciler::default());
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(RecordingExecutor::import_ok_without_local_mutation(
+                vec!["alice".to_string()],
+                "alice",
+            )),
+            files,
+            initializer.clone(),
+            reconciler.clone(),
+        );
+
+        let job_id = service
+            .start_import(Path::new("/tmp/source.archive"), true)
+            .expect("start import");
+
+        let status = wait_for_job_state(&service, &job_id, DATA_ARCHIVE_STATE_COMPLETED).await;
+        assert_eq!(status.local_applied, None);
+        assert!(
+            initializer
+                .data_roots
+                .lock()
+                .expect("lock initialized data roots")
+                .is_empty()
+        );
+        assert!(
+            reconciler
+                .reasons
+                .lock()
+                .expect("lock reconcile reasons")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn partial_import_failure_initializes_reconciles_and_reports_local_mutation() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let data_root = PathBuf::from("/tmp/tauritavern-partial-data-root");
+        let workspace_root = PathBuf::from("/tmp/tauritavern-partial-import-workspace");
+        let files = Arc::new(RecordingFiles::with_import(ImportArchiveExecutionRequest {
+            data_root: data_root.clone(),
+            archive_path: PathBuf::from("/tmp/import.archive"),
+            workspace_root,
+        }));
+        let initializer = Arc::new(RecordingInitializer::default());
+        let reconciler = Arc::new(RecordingReconciler::default());
+        let local_applied = import_local_applied();
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(RecordingExecutor::import_error(
+                DomainError::InternalError("boom".to_string()),
+                local_applied,
+            )),
+            files,
+            initializer.clone(),
+            reconciler.clone(),
+        );
+
+        let job_id = service
+            .start_import(Path::new("/tmp/source.archive"), true)
+            .expect("start import");
+
+        let status = wait_for_job_state(&service, &job_id, DATA_ARCHIVE_STATE_FAILED).await;
+        assert_eq!(status.error.as_deref(), Some("Internal error: boom"));
+        assert_eq!(status.local_applied, Some(local_applied.into()));
+        assert_eq!(status.reconcile_error, None);
+        assert_eq!(
+            *initializer
+                .data_roots
+                .lock()
+                .expect("lock initialized data roots"),
+            vec![data_root]
+        );
+        assert_eq!(
+            *reconciler.reasons.lock().expect("lock reconcile reasons"),
+            vec!["import".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn partial_import_cancel_initializes_reconciles_and_reports_local_mutation() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let data_root = PathBuf::from("/tmp/tauritavern-partial-cancel-data-root");
+        let files = Arc::new(RecordingFiles::with_import(ImportArchiveExecutionRequest {
+            data_root: data_root.clone(),
+            archive_path: PathBuf::from("/tmp/import.archive"),
+            workspace_root: PathBuf::from("/tmp/tauritavern-partial-cancel-workspace"),
+        }));
+        let initializer = Arc::new(RecordingInitializer::default());
+        let reconciler = Arc::new(RecordingReconciler::default());
+        let local_applied = import_local_applied();
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(RecordingExecutor::import_error(
+                DomainError::Cancelled("cancelled".to_string()),
+                local_applied,
+            )),
+            files,
+            initializer.clone(),
+            reconciler.clone(),
+        );
+
+        let job_id = service
+            .start_import(Path::new("/tmp/source.archive"), true)
+            .expect("start import");
+
+        let status = wait_for_job_state(&service, &job_id, DATA_ARCHIVE_STATE_CANCELLED).await;
+        assert_eq!(status.local_applied, Some(local_applied.into()));
+        assert_eq!(
+            *initializer
+                .data_roots
+                .lock()
+                .expect("lock initialized data roots"),
+            vec![data_root]
+        );
+        assert_eq!(
+            *reconciler.reasons.lock().expect("lock reconcile reasons"),
+            vec!["import".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn partial_import_failure_reports_reconcile_error() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let data_root = PathBuf::from("/tmp/tauritavern-partial-reconcile-data-root");
+        let files = Arc::new(RecordingFiles::with_import(ImportArchiveExecutionRequest {
+            data_root,
+            archive_path: PathBuf::from("/tmp/import.archive"),
+            workspace_root: PathBuf::from("/tmp/tauritavern-partial-reconcile-workspace"),
+        }));
+        let local_applied = import_local_applied();
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(RecordingExecutor::import_error(
+                DomainError::InternalError("boom".to_string()),
+                local_applied,
+            )),
+            files,
+            Arc::new(RecordingInitializer::default()),
+            Arc::new(FailingReconciler),
+        );
+
+        let job_id = service
+            .start_import(Path::new("/tmp/source.archive"), true)
+            .expect("start import");
+
+        let status = wait_for_job_state(&service, &job_id, DATA_ARCHIVE_STATE_FAILED).await;
+        assert_eq!(status.local_applied, Some(local_applied.into()));
+        assert_eq!(
+            status.reconcile_error.as_deref(),
+            Some("failed to refresh runtime caches: Internal error: cache stale")
         );
     }
 

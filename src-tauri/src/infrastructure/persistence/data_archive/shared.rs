@@ -182,7 +182,8 @@ pub fn copy_stream_with_cancel<R: Read + ?Sized, W: Write + ?Sized>(
     is_cancelled: &dyn Fn() -> bool,
     read_error_context: &str,
     write_error_context: &str,
-) -> Result<(), DomainError> {
+) -> Result<u64, DomainError> {
+    let mut bytes_written = 0u64;
     loop {
         ensure_not_cancelled(is_cancelled)?;
 
@@ -196,9 +197,10 @@ pub fn copy_stream_with_cancel<R: Read + ?Sized, W: Write + ?Sized>(
         writer
             .write_all(&copy_buffer[..bytes_read])
             .map_err(|error| internal_error(write_error_context, error))?;
+        bytes_written = bytes_written.saturating_add(bytes_read as u64);
     }
 
-    Ok(())
+    Ok(bytes_written)
 }
 
 pub fn ensure_output_directory(path: &Path) -> Result<(), DomainError> {

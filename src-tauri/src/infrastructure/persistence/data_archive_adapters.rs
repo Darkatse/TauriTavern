@@ -15,6 +15,7 @@ use crate::application::services::data_archive_service::{
     ImportArchiveExecutionRequest, UserBackupArchiveExecutionRequest, UserBackupArchiveTarget,
 };
 use crate::domain::errors::DomainError;
+use crate::domain::models::data_archive::DataArchiveImportFailure;
 use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::persistence::data_archive::{
     default_export_file_name, run_export_data_archive, run_export_user_backup_archive,
@@ -32,7 +33,7 @@ impl DataArchiveExecutor for FileDataArchiveExecutor {
         request: ImportArchiveExecutionRequest,
         report_progress: &mut dyn FnMut(&str, f32, &str),
         is_cancelled: &dyn Fn() -> bool,
-    ) -> Result<ArchiveImportExecutionReport, DomainError> {
+    ) -> Result<ArchiveImportExecutionReport, DataArchiveImportFailure> {
         let result = run_import_data_archive(
             &request.data_root,
             &request.archive_path,
@@ -44,6 +45,7 @@ impl DataArchiveExecutor for FileDataArchiveExecutor {
         Ok(ArchiveImportExecutionReport {
             source_users: result.source_users,
             target_user: result.target_user,
+            local_applied: result.local_applied,
         })
     }
 

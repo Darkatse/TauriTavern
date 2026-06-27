@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::domain::errors::DomainError;
+use crate::domain::models::data_archive::DataArchiveImportFailure;
 
 use super::DataArchiveImportResult;
 use super::shared::{
@@ -19,7 +20,7 @@ pub fn run_import_data_archive(
     workspace_root: &Path,
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
-) -> Result<DataArchiveImportResult, DomainError> {
+) -> Result<DataArchiveImportResult, DataArchiveImportFailure> {
     report_progress("preparing", 0.0, "Preparing import");
     ensure_not_cancelled(is_cancelled)?;
 
@@ -27,7 +28,8 @@ pub fn run_import_data_archive(
         return Err(DomainError::InvalidData(format!(
             "Archive file does not exist: {}",
             archive_path.display()
-        )));
+        ))
+        .into());
     }
 
     let normalized_root = workspace_root.join("normalized");
@@ -51,13 +53,15 @@ pub fn run_import_data_archive(
 
     report_progress("applying", 92.0, "Merging data directory");
     ensure_not_cancelled(is_cancelled)?;
-    apply::apply_overlay(&normalized_root, data_root, report_progress, is_cancelled)?;
+    let local_applied =
+        apply::apply_overlay(&normalized_root, data_root, report_progress, is_cancelled)?;
 
     report_progress("completed", 100.0, "Import completed");
 
     Ok(DataArchiveImportResult {
         source_users: layout.source_users_for_result(),
         target_user: DEFAULT_USER_HANDLE.to_string(),
+        local_applied,
     })
 }
 
@@ -574,7 +578,7 @@ mod tests {
             &is_cancelled,
         )
         .expect_err("path escape should be rejected");
-        assert!(matches!(error, DomainError::InvalidData(_)));
+        assert!(matches!(error.error, DomainError::InvalidData(_)));
 
         cleanup_directory_sync(&root);
     }
@@ -605,9 +609,9 @@ mod tests {
         )
         .expect_err("malformed archive should be rejected");
         assert!(
-            matches!(error, DomainError::InvalidData(_)),
+            matches!(error.error, DomainError::InvalidData(_)),
             "malformed archive should be invalid data, got: {}",
-            error
+            error.error
         );
 
         cleanup_directory_sync(&root);
@@ -671,7 +675,7 @@ mod tests {
             &is_cancelled,
         )
         .expect_err("symlink should be rejected");
-        assert!(matches!(error, DomainError::InvalidData(_)));
+        assert!(matches!(error.error, DomainError::InvalidData(_)));
 
         cleanup_directory_sync(&root);
     }
