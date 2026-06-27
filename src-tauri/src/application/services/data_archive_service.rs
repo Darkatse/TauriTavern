@@ -1,15 +1,18 @@
+use async_trait::async_trait;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
-use crate::application::dto::data_archive_dto::DATA_ARCHIVE_KIND_EXPORT;
 use crate::application::dto::data_archive_dto::{
-    DATA_ARCHIVE_STATE_CANCELLED, DATA_ARCHIVE_STATE_COMPLETED, DATA_ARCHIVE_STATE_FAILED,
-    DATA_ARCHIVE_STATE_PENDING, DATA_ARCHIVE_STATE_RUNNING, DataArchiveJobResult,
-    DataArchiveJobStatus, UserBackupArchiveResult,
+    DATA_ARCHIVE_KIND_EXPORT, DATA_ARCHIVE_KIND_IMPORT, DATA_ARCHIVE_STATE_CANCELLED,
+    DATA_ARCHIVE_STATE_COMPLETED, DATA_ARCHIVE_STATE_FAILED, DATA_ARCHIVE_STATE_PENDING,
+    DATA_ARCHIVE_STATE_RUNNING, DataArchiveJobResult, DataArchiveJobStatus,
+    UserBackupArchiveResult,
 };
+use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::domain::errors::DomainError;
 
 #[derive(Default)]
@@ -206,39 +209,113 @@ impl DataArchiveJobHandle {
     }
 }
 
-pub(crate) trait DataArchiveJobBackend: Send + Sync {
-    fn start_import(
+pub(crate) struct ImportArchiveExecutionRequest {
+    pub data_root: PathBuf,
+    pub archive_path: PathBuf,
+    pub workspace_root: PathBuf,
+}
+
+pub(crate) struct ExportArchiveExecutionRequest {
+    pub data_root: PathBuf,
+    pub output_path: PathBuf,
+}
+
+pub(crate) struct UserBackupArchiveExecutionRequest {
+    pub user_root: PathBuf,
+    pub output_path: PathBuf,
+    pub include_secrets: bool,
+}
+
+pub(crate) struct UserBackupArchiveTarget {
+    pub file_name: String,
+    pub request: UserBackupArchiveExecutionRequest,
+}
+
+pub(crate) struct ArchiveImportExecutionReport {
+    pub source_users: Vec<String>,
+    pub target_user: String,
+}
+
+pub(crate) struct ArchiveExportExecutionReport {
+    pub file_name: String,
+    pub archive_path: PathBuf,
+}
+
+pub(crate) trait DataArchiveExecutor: Send + Sync {
+    fn import_full_data(
         &self,
-        archive_path: &Path,
-        archive_is_temporary: bool,
-    ) -> Result<String, DomainError>;
-    fn start_export(&self) -> Result<String, DomainError>;
+        request: ImportArchiveExecutionRequest,
+        report_progress: &mut dyn FnMut(&str, f32, &str),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<ArchiveImportExecutionReport, DomainError>;
+
+    fn export_full_data(
+        &self,
+        request: ExportArchiveExecutionRequest,
+        report_progress: &mut dyn FnMut(&str, f32, &str),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<ArchiveExportExecutionReport, DomainError>;
+
+    fn export_user_backup(
+        &self,
+        request: UserBackupArchiveExecutionRequest,
+        report_progress: &mut dyn FnMut(&str, f32, &str),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), DomainError>;
+}
+
+pub(crate) trait DataArchiveFileGateway: Send + Sync {
     fn imports_root(&self) -> PathBuf;
     #[cfg(target_os = "ios")]
     fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError>;
-    fn cleanup_export(&self, archive_path: &Path) -> Result<(), DomainError>;
-    fn save_export(&self, archive_path: &Path, file_name: &str) -> Result<PathBuf, DomainError>;
-    fn export_user_backup(
+    fn prepare_import_archive(
+        &self,
+        archive_path: &Path,
+        archive_is_temporary: bool,
+        job_id: &str,
+    ) -> Result<ImportArchiveExecutionRequest, DomainError>;
+    fn prepare_export_archive(&self) -> Result<ExportArchiveExecutionRequest, DomainError>;
+    fn prepare_user_backup_archive(
         &self,
         handle: &str,
         include_secrets: bool,
-    ) -> Result<UserBackupArchiveResult, DomainError>;
+    ) -> Result<UserBackupArchiveTarget, DomainError>;
+    fn cleanup_directory(&self, path: &Path);
+    fn cleanup_export(&self, archive_path: &Path) -> Result<(), DomainError>;
+    fn save_export(&self, archive_path: &Path, file_name: &str) -> Result<PathBuf, DomainError>;
     fn save_user_backup(&self, archive_path: &str, file_name: &str)
     -> Result<PathBuf, DomainError>;
     fn cleanup_user_backup(&self, archive_path: &str) -> Result<(), DomainError>;
 }
 
+#[async_trait]
+pub(crate) trait DataRootInitializer: Send + Sync {
+    async fn initialize_data_root(&self, data_root: &Path) -> Result<(), DomainError>;
+}
+
 pub struct DataArchiveService {
     jobs: Arc<DataArchiveJobRegistry>,
-    backend: Arc<dyn DataArchiveJobBackend>,
+    executor: Arc<dyn DataArchiveExecutor>,
+    files: Arc<dyn DataArchiveFileGateway>,
+    data_root_initializer: Arc<dyn DataRootInitializer>,
+    reconciler: Arc<dyn DataChangeReconciler>,
 }
 
 impl DataArchiveService {
     pub(crate) fn new(
         jobs: Arc<DataArchiveJobRegistry>,
-        backend: Arc<dyn DataArchiveJobBackend>,
+        executor: Arc<dyn DataArchiveExecutor>,
+        files: Arc<dyn DataArchiveFileGateway>,
+        data_root_initializer: Arc<dyn DataRootInitializer>,
+        reconciler: Arc<dyn DataChangeReconciler>,
     ) -> Self {
-        Self { jobs, backend }
+        Self {
+            jobs,
+            executor,
+            files,
+            data_root_initializer,
+            reconciler,
+        }
     }
 
     pub fn start_import(
@@ -246,21 +323,134 @@ impl DataArchiveService {
         archive_path: &Path,
         archive_is_temporary: bool,
     ) -> Result<String, DomainError> {
-        self.backend
-            .start_import(archive_path, archive_is_temporary)
+        let job_id = Uuid::new_v4().simple().to_string();
+        let request =
+            self.files
+                .prepare_import_archive(archive_path, archive_is_temporary, &job_id)?;
+        let workspace_root = request.workspace_root.clone();
+        let data_root = request.data_root.clone();
+        let job = Arc::new(DataArchiveJobHandle::new(&job_id, DATA_ARCHIVE_KIND_IMPORT));
+        if let Err(error) = self.jobs.insert(&job_id, job.clone()) {
+            self.files.cleanup_directory(&workspace_root);
+            return Err(error);
+        }
+
+        let executor = self.executor.clone();
+        let files = self.files.clone();
+        let data_root_initializer = self.data_root_initializer.clone();
+        let reconciler = self.reconciler.clone();
+
+        tokio::spawn(async move {
+            let _ = job.mark_running("starting", "Import job started");
+
+            let blocking_job = job.clone();
+            let blocking_result = tokio::task::spawn_blocking(move || {
+                let progress_job = blocking_job.clone();
+                let mut report_progress =
+                    move |stage: &str, progress_percent: f32, message: &str| {
+                        let _ = progress_job.update_progress(stage, progress_percent, message);
+                    };
+
+                let cancel_job = blocking_job.clone();
+                let is_cancelled = move || cancel_job.is_cancel_requested();
+
+                executor.import_full_data(request, &mut report_progress, &is_cancelled)
+            })
+            .await;
+
+            match blocking_result {
+                Ok(Ok(result)) => {
+                    if let Err(error) = data_root_initializer.initialize_data_root(&data_root).await
+                    {
+                        let _ = job.mark_failed(&format!(
+                            "Import completed but failed to initialize data directory: {}",
+                            error
+                        ));
+                    } else if let Err(error) = reconciler.reconcile("import").await {
+                        let _ = job.mark_failed(&format!(
+                            "Import completed but failed to refresh runtime caches: {}",
+                            error
+                        ));
+                    } else {
+                        let _ = job.mark_completed_import(result.source_users, result.target_user);
+                    }
+                }
+                Ok(Err(error)) => {
+                    if job.is_cancel_requested() || is_cancelled_error(&error) {
+                        let _ = job.mark_cancelled();
+                    } else {
+                        let _ = job.mark_failed(&error.to_string());
+                    }
+                }
+                Err(error) => {
+                    let _ = job.mark_failed(&format!("Import task join error: {}", error));
+                }
+            }
+
+            files.cleanup_directory(&workspace_root);
+        });
+
+        Ok(job_id)
     }
 
     pub fn start_export(&self) -> Result<String, DomainError> {
-        self.backend.start_export()
+        let job_id = Uuid::new_v4().simple().to_string();
+        let request = self.files.prepare_export_archive()?;
+        let output_path = request.output_path.clone();
+        let job = Arc::new(DataArchiveJobHandle::new(&job_id, DATA_ARCHIVE_KIND_EXPORT));
+        self.jobs.insert(&job_id, job.clone())?;
+
+        let executor = self.executor.clone();
+        let files = self.files.clone();
+
+        tokio::spawn(async move {
+            let _ = job.mark_running("starting", "Export job started");
+
+            let blocking_job = job.clone();
+            let blocking_result = tokio::task::spawn_blocking(move || {
+                let progress_job = blocking_job.clone();
+                let mut report_progress =
+                    move |stage: &str, progress_percent: f32, message: &str| {
+                        let _ = progress_job.update_progress(stage, progress_percent, message);
+                    };
+
+                let cancel_job = blocking_job.clone();
+                let is_cancelled = move || cancel_job.is_cancel_requested();
+
+                executor.export_full_data(request, &mut report_progress, &is_cancelled)
+            })
+            .await;
+
+            match blocking_result {
+                Ok(Ok(result)) => {
+                    let _ = job.mark_completed_export(result.file_name, result.archive_path);
+                }
+                Ok(Err(error)) => {
+                    if job.is_cancel_requested() || is_cancelled_error(&error) {
+                        let _ = job.mark_cancelled();
+                    } else {
+                        let _ = job.mark_failed(&error.to_string());
+                    }
+
+                    let _ = files.cleanup_export(&output_path);
+                }
+                Err(error) => {
+                    let _ = job.mark_failed(&format!("Export task join error: {}", error));
+                    let _ = files.cleanup_export(&output_path);
+                }
+            }
+        });
+
+        Ok(job_id)
     }
 
     pub fn imports_root(&self) -> PathBuf {
-        self.backend.imports_root()
+        self.files.imports_root()
     }
 
     #[cfg(target_os = "ios")]
     pub fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError> {
-        self.backend.prepare_incoming_import_archive_path()
+        self.files.prepare_incoming_import_archive_path()
     }
 
     pub fn get_status(&self, job_id: &str) -> Result<DataArchiveJobStatus, DomainError> {
@@ -320,14 +510,14 @@ impl DataArchiveService {
 
     pub fn cleanup_export(&self, job_id: &str) -> Result<(), DomainError> {
         let archive_path = self.completed_export_archive_path(job_id)?;
-        self.backend.cleanup_export(&archive_path)
+        self.files.cleanup_export(&archive_path)
     }
 
     pub async fn save_export(&self, job_id: String) -> Result<PathBuf, DomainError> {
         let (archive_path, file_name) = self.completed_export_artifact(&job_id)?;
-        let backend = self.backend.clone();
+        let files = self.files.clone();
         run_blocking("Save export task join error", move || {
-            backend.save_export(&archive_path, &file_name)
+            files.save_export(&archive_path, &file_name)
         })
         .await
     }
@@ -337,9 +527,25 @@ impl DataArchiveService {
         handle: String,
         include_secrets: bool,
     ) -> Result<UserBackupArchiveResult, DomainError> {
-        let backend = self.backend.clone();
+        let executor = self.executor.clone();
+        let files = self.files.clone();
         run_blocking("User backup export task join error", move || {
-            backend.export_user_backup(&handle, include_secrets)
+            let target = files.prepare_user_backup_archive(&handle, include_secrets)?;
+            let output_path = target.request.output_path.clone();
+            let mut report_progress = |_stage: &str, _progress_percent: f32, _message: &str| {};
+            let is_cancelled = || false;
+
+            if let Err(error) =
+                executor.export_user_backup(target.request, &mut report_progress, &is_cancelled)
+            {
+                let _ = files.cleanup_export(&output_path);
+                return Err(error);
+            }
+
+            Ok(UserBackupArchiveResult {
+                file_name: target.file_name,
+                archive_path: output_path.to_string_lossy().to_string(),
+            })
         })
         .await
     }
@@ -349,43 +555,93 @@ impl DataArchiveService {
         archive_path: String,
         file_name: String,
     ) -> Result<PathBuf, DomainError> {
-        let backend = self.backend.clone();
+        let files = self.files.clone();
         run_blocking("Save user backup task join error", move || {
-            backend.save_user_backup(&archive_path, &file_name)
+            files.save_user_backup(&archive_path, &file_name)
         })
         .await
     }
 
     pub fn cleanup_user_backup(&self, archive_path: &str) -> Result<(), DomainError> {
-        self.backend.cleanup_user_backup(archive_path)
+        self.files.cleanup_user_backup(archive_path)
     }
+}
+
+fn is_cancelled_error(error: &DomainError) -> bool {
+    matches!(error, DomainError::Cancelled(_))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
-    struct UnusedBackend;
+    struct UnusedExecutor;
 
-    impl DataArchiveJobBackend for UnusedBackend {
-        fn start_import(
+    impl DataArchiveExecutor for UnusedExecutor {
+        fn import_full_data(
             &self,
-            _archive_path: &Path,
-            _archive_is_temporary: bool,
-        ) -> Result<String, DomainError> {
+            _request: ImportArchiveExecutionRequest,
+            _report_progress: &mut dyn FnMut(&str, f32, &str),
+            _is_cancelled: &dyn Fn() -> bool,
+        ) -> Result<ArchiveImportExecutionReport, DomainError> {
             unreachable!()
         }
 
-        fn start_export(&self) -> Result<String, DomainError> {
+        fn export_full_data(
+            &self,
+            _request: ExportArchiveExecutionRequest,
+            _report_progress: &mut dyn FnMut(&str, f32, &str),
+            _is_cancelled: &dyn Fn() -> bool,
+        ) -> Result<ArchiveExportExecutionReport, DomainError> {
             unreachable!()
         }
 
+        fn export_user_backup(
+            &self,
+            _request: UserBackupArchiveExecutionRequest,
+            _report_progress: &mut dyn FnMut(&str, f32, &str),
+            _is_cancelled: &dyn Fn() -> bool,
+        ) -> Result<(), DomainError> {
+            unreachable!()
+        }
+    }
+
+    struct UnusedFiles;
+
+    impl DataArchiveFileGateway for UnusedFiles {
         fn imports_root(&self) -> PathBuf {
             unreachable!()
         }
 
         #[cfg(target_os = "ios")]
         fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError> {
+            unreachable!()
+        }
+
+        fn prepare_import_archive(
+            &self,
+            _archive_path: &Path,
+            _archive_is_temporary: bool,
+            _job_id: &str,
+        ) -> Result<ImportArchiveExecutionRequest, DomainError> {
+            unreachable!()
+        }
+
+        fn prepare_export_archive(&self) -> Result<ExportArchiveExecutionRequest, DomainError> {
+            unreachable!()
+        }
+
+        fn prepare_user_backup_archive(
+            &self,
+            _handle: &str,
+            _include_secrets: bool,
+        ) -> Result<UserBackupArchiveTarget, DomainError> {
+            unreachable!()
+        }
+
+        fn cleanup_directory(&self, _path: &Path) {
             unreachable!()
         }
 
@@ -401,11 +657,197 @@ mod tests {
             unreachable!()
         }
 
+        fn save_user_backup(
+            &self,
+            _archive_path: &str,
+            _file_name: &str,
+        ) -> Result<PathBuf, DomainError> {
+            unreachable!()
+        }
+
+        fn cleanup_user_backup(&self, _archive_path: &str) -> Result<(), DomainError> {
+            unreachable!()
+        }
+    }
+
+    struct UnusedInitializer;
+
+    #[async_trait]
+    impl DataRootInitializer for UnusedInitializer {
+        async fn initialize_data_root(&self, _data_root: &Path) -> Result<(), DomainError> {
+            unreachable!()
+        }
+    }
+
+    struct UnusedReconciler;
+
+    #[async_trait]
+    impl DataChangeReconciler for UnusedReconciler {
+        async fn reconcile(&self, _reason: &str) -> Result<(), DomainError> {
+            unreachable!()
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingExecutor {
+        import_result: Mutex<Option<ArchiveImportExecutionReport>>,
+        export_result: Mutex<Option<Result<String, DomainError>>>,
+    }
+
+    impl RecordingExecutor {
+        fn import_ok(source_users: Vec<String>, target_user: &str) -> Self {
+            Self {
+                import_result: Mutex::new(Some(ArchiveImportExecutionReport {
+                    source_users,
+                    target_user: target_user.to_string(),
+                })),
+                ..Self::default()
+            }
+        }
+
+        fn export_ok(file_name: &str) -> Self {
+            Self {
+                export_result: Mutex::new(Some(Ok(file_name.to_string()))),
+                ..Self::default()
+            }
+        }
+
+        fn export_error(error: DomainError) -> Self {
+            Self {
+                export_result: Mutex::new(Some(Err(error))),
+                ..Self::default()
+            }
+        }
+    }
+
+    impl DataArchiveExecutor for RecordingExecutor {
+        fn import_full_data(
+            &self,
+            _request: ImportArchiveExecutionRequest,
+            _report_progress: &mut dyn FnMut(&str, f32, &str),
+            _is_cancelled: &dyn Fn() -> bool,
+        ) -> Result<ArchiveImportExecutionReport, DomainError> {
+            self.import_result
+                .lock()
+                .expect("lock import result")
+                .take()
+                .ok_or_else(|| DomainError::InternalError("missing import result".to_string()))
+        }
+
+        fn export_full_data(
+            &self,
+            request: ExportArchiveExecutionRequest,
+            _report_progress: &mut dyn FnMut(&str, f32, &str),
+            _is_cancelled: &dyn Fn() -> bool,
+        ) -> Result<ArchiveExportExecutionReport, DomainError> {
+            match self
+                .export_result
+                .lock()
+                .expect("lock export result")
+                .take()
+                .ok_or_else(|| DomainError::InternalError("missing export result".to_string()))?
+            {
+                Ok(file_name) => Ok(ArchiveExportExecutionReport {
+                    file_name,
+                    archive_path: request.output_path,
+                }),
+                Err(error) => Err(error),
+            }
+        }
+
         fn export_user_backup(
+            &self,
+            _request: UserBackupArchiveExecutionRequest,
+            _report_progress: &mut dyn FnMut(&str, f32, &str),
+            _is_cancelled: &dyn Fn() -> bool,
+        ) -> Result<(), DomainError> {
+            unreachable!()
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingFiles {
+        import_request: Mutex<Option<ImportArchiveExecutionRequest>>,
+        export_request: Mutex<Option<ExportArchiveExecutionRequest>>,
+        cleaned_directories: Mutex<Vec<PathBuf>>,
+        cleaned_exports: Mutex<Vec<PathBuf>>,
+    }
+
+    impl RecordingFiles {
+        fn with_import(request: ImportArchiveExecutionRequest) -> Self {
+            Self {
+                import_request: Mutex::new(Some(request)),
+                ..Self::default()
+            }
+        }
+
+        fn with_export(request: ExportArchiveExecutionRequest) -> Self {
+            Self {
+                export_request: Mutex::new(Some(request)),
+                ..Self::default()
+            }
+        }
+    }
+
+    impl DataArchiveFileGateway for RecordingFiles {
+        fn imports_root(&self) -> PathBuf {
+            PathBuf::from("/tmp/imports")
+        }
+
+        #[cfg(target_os = "ios")]
+        fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError> {
+            unreachable!()
+        }
+
+        fn prepare_import_archive(
+            &self,
+            _archive_path: &Path,
+            _archive_is_temporary: bool,
+            _job_id: &str,
+        ) -> Result<ImportArchiveExecutionRequest, DomainError> {
+            self.import_request
+                .lock()
+                .expect("lock import request")
+                .take()
+                .ok_or_else(|| DomainError::InternalError("missing import request".to_string()))
+        }
+
+        fn prepare_export_archive(&self) -> Result<ExportArchiveExecutionRequest, DomainError> {
+            self.export_request
+                .lock()
+                .expect("lock export request")
+                .take()
+                .ok_or_else(|| DomainError::InternalError("missing export request".to_string()))
+        }
+
+        fn prepare_user_backup_archive(
             &self,
             _handle: &str,
             _include_secrets: bool,
-        ) -> Result<UserBackupArchiveResult, DomainError> {
+        ) -> Result<UserBackupArchiveTarget, DomainError> {
+            unreachable!()
+        }
+
+        fn cleanup_directory(&self, path: &Path) {
+            self.cleaned_directories
+                .lock()
+                .expect("lock cleaned directories")
+                .push(path.to_path_buf());
+        }
+
+        fn cleanup_export(&self, archive_path: &Path) -> Result<(), DomainError> {
+            self.cleaned_exports
+                .lock()
+                .expect("lock cleaned exports")
+                .push(archive_path.to_path_buf());
+            Ok(())
+        }
+
+        fn save_export(
+            &self,
+            _archive_path: &Path,
+            _file_name: &str,
+        ) -> Result<PathBuf, DomainError> {
             unreachable!()
         }
 
@@ -420,6 +862,65 @@ mod tests {
         fn cleanup_user_backup(&self, _archive_path: &str) -> Result<(), DomainError> {
             unreachable!()
         }
+    }
+
+    #[derive(Default)]
+    struct RecordingInitializer {
+        data_roots: Mutex<Vec<PathBuf>>,
+    }
+
+    #[async_trait]
+    impl DataRootInitializer for RecordingInitializer {
+        async fn initialize_data_root(&self, data_root: &Path) -> Result<(), DomainError> {
+            self.data_roots
+                .lock()
+                .expect("lock initialized data roots")
+                .push(data_root.to_path_buf());
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingReconciler {
+        reasons: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl DataChangeReconciler for RecordingReconciler {
+        async fn reconcile(&self, reason: &str) -> Result<(), DomainError> {
+            self.reasons
+                .lock()
+                .expect("lock reconcile reasons")
+                .push(reason.to_string());
+            Ok(())
+        }
+    }
+
+    async fn wait_for_job_state(
+        service: &DataArchiveService,
+        job_id: &str,
+        expected_state: &str,
+    ) -> DataArchiveJobStatus {
+        for _ in 0..100 {
+            let status = service.get_status(job_id).expect("job status");
+            if status.state == expected_state {
+                return status;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        panic!("job {job_id} did not reach state {expected_state}");
+    }
+
+    async fn wait_until(mut predicate: impl FnMut() -> bool) {
+        for _ in 0..100 {
+            if predicate() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        panic!("condition was not met");
     }
 
     #[test]
@@ -456,7 +957,13 @@ mod tests {
         .expect("mark completed export");
         jobs.insert("job-1", job).expect("insert job");
 
-        let service = DataArchiveService::new(jobs, Arc::new(UnusedBackend));
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(UnusedExecutor),
+            Arc::new(UnusedFiles),
+            Arc::new(UnusedInitializer),
+            Arc::new(UnusedReconciler),
+        );
 
         assert_eq!(
             service
@@ -467,6 +974,118 @@ mod tests {
                 "tauritavern-data.zip".to_string()
             )
         );
+    }
+
+    #[tokio::test]
+    async fn start_import_runs_executor_initializer_reconciler_and_cleanup() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let data_root = PathBuf::from("/tmp/tauritavern-data-root");
+        let workspace_root = PathBuf::from("/tmp/tauritavern-import-workspace");
+        let files = Arc::new(RecordingFiles::with_import(ImportArchiveExecutionRequest {
+            data_root: data_root.clone(),
+            archive_path: PathBuf::from("/tmp/import.archive"),
+            workspace_root: workspace_root.clone(),
+        }));
+        let initializer = Arc::new(RecordingInitializer::default());
+        let reconciler = Arc::new(RecordingReconciler::default());
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(RecordingExecutor::import_ok(
+                vec!["alice".to_string()],
+                "alice",
+            )),
+            files.clone(),
+            initializer.clone(),
+            reconciler.clone(),
+        );
+
+        let job_id = service
+            .start_import(Path::new("/tmp/source.archive"), true)
+            .expect("start import");
+
+        let status = wait_for_job_state(&service, &job_id, DATA_ARCHIVE_STATE_COMPLETED).await;
+        let result = status.result.expect("completed import result");
+        assert_eq!(result.source_users, vec!["alice"]);
+        assert_eq!(result.target_user.as_deref(), Some("alice"));
+
+        wait_until(|| {
+            files
+                .cleaned_directories
+                .lock()
+                .expect("lock cleaned directories")
+                .contains(&workspace_root)
+        })
+        .await;
+        assert_eq!(
+            *initializer
+                .data_roots
+                .lock()
+                .expect("lock initialized data roots"),
+            vec![data_root]
+        );
+        assert_eq!(
+            *reconciler.reasons.lock().expect("lock reconcile reasons"),
+            vec!["import".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn start_export_runs_executor_and_marks_completed() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let output_path = PathBuf::from("/tmp/tauritavern-data.zip");
+        let files = Arc::new(RecordingFiles::with_export(ExportArchiveExecutionRequest {
+            data_root: PathBuf::from("/tmp/data-root"),
+            output_path: output_path.clone(),
+        }));
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(RecordingExecutor::export_ok("tauritavern-data.zip")),
+            files,
+            Arc::new(UnusedInitializer),
+            Arc::new(UnusedReconciler),
+        );
+
+        let job_id = service.start_export().expect("start export");
+
+        let status = wait_for_job_state(&service, &job_id, DATA_ARCHIVE_STATE_COMPLETED).await;
+        let result = status.result.expect("completed export result");
+        assert_eq!(result.file_name.as_deref(), Some("tauritavern-data.zip"));
+        assert_eq!(
+            result.archive_path.as_deref(),
+            Some(output_path.to_string_lossy().as_ref())
+        );
+    }
+
+    #[tokio::test]
+    async fn start_export_cleans_partial_archive_on_failure() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let output_path = PathBuf::from("/tmp/partial-tauritavern-data.zip");
+        let files = Arc::new(RecordingFiles::with_export(ExportArchiveExecutionRequest {
+            data_root: PathBuf::from("/tmp/data-root"),
+            output_path: output_path.clone(),
+        }));
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(RecordingExecutor::export_error(DomainError::InternalError(
+                "boom".to_string(),
+            ))),
+            files.clone(),
+            Arc::new(UnusedInitializer),
+            Arc::new(UnusedReconciler),
+        );
+
+        let job_id = service.start_export().expect("start export");
+
+        let status = wait_for_job_state(&service, &job_id, DATA_ARCHIVE_STATE_FAILED).await;
+        assert_eq!(status.error.as_deref(), Some("Internal error: boom"));
+        wait_until(|| {
+            files
+                .cleaned_exports
+                .lock()
+                .expect("lock cleaned exports")
+                .contains(&output_path)
+        })
+        .await;
     }
 }
 

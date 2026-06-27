@@ -1,71 +1,100 @@
+use async_trait::async_trait;
 use chrono::Utc;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tauri::AppHandle;
 use tauri::Manager;
 use uuid::Uuid;
 
-use crate::application::dto::data_archive_dto::{
-    DATA_ARCHIVE_KIND_EXPORT, DATA_ARCHIVE_KIND_IMPORT, UserBackupArchiveResult,
-};
 #[cfg(target_os = "ios")]
 use crate::application::host_contract::IOS_EXPORT_STAGING_ROOT_NAME;
 use crate::application::services::data_archive_service::{
-    DataArchiveJobBackend, DataArchiveJobHandle, DataArchiveJobRegistry,
+    ArchiveExportExecutionReport, ArchiveImportExecutionReport, DataArchiveExecutor,
+    DataArchiveFileGateway, DataRootInitializer, ExportArchiveExecutionRequest,
+    ImportArchiveExecutionRequest, UserBackupArchiveExecutionRequest, UserBackupArchiveTarget,
 };
-use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::paths::RuntimePaths;
-use crate::infrastructure::persistence::file_system::DataDirectory;
-
-use super::data_archive::{
-    default_export_file_name, is_cancelled_error, run_export_data_archive,
-    run_export_user_backup_archive, run_import_data_archive,
+use crate::infrastructure::persistence::data_archive::{
+    default_export_file_name, run_export_data_archive, run_export_user_backup_archive,
+    run_import_data_archive,
 };
+use crate::infrastructure::persistence::file_system::DataDirectory;
 
 const EXPORT_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 
-pub(crate) struct TauriDataArchiveJobBackend {
-    app_handle: AppHandle,
-    reconciler: Arc<dyn DataChangeReconciler>,
-    jobs: Arc<DataArchiveJobRegistry>,
-}
+pub(crate) struct FileDataArchiveExecutor;
 
-impl TauriDataArchiveJobBackend {
-    pub(crate) fn new(
-        app_handle: AppHandle,
-        reconciler: Arc<dyn DataChangeReconciler>,
-        jobs: Arc<DataArchiveJobRegistry>,
-    ) -> Self {
-        Self {
-            app_handle,
-            reconciler,
-            jobs,
-        }
-    }
-}
-
-impl DataArchiveJobBackend for TauriDataArchiveJobBackend {
-    fn start_import(
+impl DataArchiveExecutor for FileDataArchiveExecutor {
+    fn import_full_data(
         &self,
-        archive_path: &Path,
-        archive_is_temporary: bool,
-    ) -> Result<String, DomainError> {
-        start_import_data_archive_job(
-            &self.app_handle,
-            self.reconciler.clone(),
-            self.jobs.clone(),
-            archive_path,
-            archive_is_temporary,
-        )
+        request: ImportArchiveExecutionRequest,
+        report_progress: &mut dyn FnMut(&str, f32, &str),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<ArchiveImportExecutionReport, DomainError> {
+        let result = run_import_data_archive(
+            &request.data_root,
+            &request.archive_path,
+            &request.workspace_root,
+            report_progress,
+            is_cancelled,
+        )?;
+
+        Ok(ArchiveImportExecutionReport {
+            source_users: result.source_users,
+            target_user: result.target_user,
+        })
     }
 
-    fn start_export(&self) -> Result<String, DomainError> {
-        start_export_data_archive_job(&self.app_handle, self.jobs.clone())
+    fn export_full_data(
+        &self,
+        request: ExportArchiveExecutionRequest,
+        report_progress: &mut dyn FnMut(&str, f32, &str),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<ArchiveExportExecutionReport, DomainError> {
+        let result = run_export_data_archive(
+            &request.data_root,
+            &request.output_path,
+            report_progress,
+            is_cancelled,
+        )?;
+
+        Ok(ArchiveExportExecutionReport {
+            file_name: result.file_name,
+            archive_path: result.archive_path,
+        })
     }
 
+    fn export_user_backup(
+        &self,
+        request: UserBackupArchiveExecutionRequest,
+        report_progress: &mut dyn FnMut(&str, f32, &str),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), DomainError> {
+        run_export_user_backup_archive(
+            &request.user_root,
+            &request.output_path,
+            request.include_secrets,
+            report_progress,
+            is_cancelled,
+        )?;
+
+        Ok(())
+    }
+}
+
+pub(crate) struct TauriDataArchiveFileGateway {
+    app_handle: AppHandle,
+}
+
+impl TauriDataArchiveFileGateway {
+    pub(crate) fn new(app_handle: AppHandle) -> Self {
+        Self { app_handle }
+    }
+}
+
+impl DataArchiveFileGateway for TauriDataArchiveFileGateway {
     fn imports_root(&self) -> PathBuf {
         self.app_handle
             .state::<RuntimePaths>()
@@ -75,7 +104,110 @@ impl DataArchiveJobBackend for TauriDataArchiveJobBackend {
 
     #[cfg(target_os = "ios")]
     fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError> {
-        prepare_incoming_import_archive_path(&self.app_handle)
+        let incoming_dir = self.imports_root().join("incoming");
+        fs::create_dir_all(&incoming_dir).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to create import staging directory {}: {}",
+                incoming_dir.display(),
+                error
+            ))
+        })?;
+
+        Ok(incoming_dir.join(format!(
+            "tauritavern-import-{}.archive",
+            Uuid::new_v4().simple()
+        )))
+    }
+
+    fn prepare_import_archive(
+        &self,
+        archive_path: &Path,
+        archive_is_temporary: bool,
+        job_id: &str,
+    ) -> Result<ImportArchiveExecutionRequest, DomainError> {
+        if !archive_path.is_file() {
+            return Err(DomainError::InvalidData(format!(
+                "Archive file does not exist: {}",
+                archive_path.display()
+            )));
+        }
+
+        let runtime_paths = self.app_handle.state::<RuntimePaths>();
+        let imports_root = runtime_paths.archive_imports_root.clone();
+        fs::create_dir_all(&imports_root).map_err(|error| {
+            DomainError::InternalError(format!("Failed to create job root: {}", error))
+        })?;
+
+        let workspace_root = imports_root.join(job_id);
+        fs::create_dir_all(&workspace_root).map_err(|error| {
+            DomainError::InternalError(format!("Failed to create job workspace: {}", error))
+        })?;
+
+        let archive_path = match prepare_import_archive_path(
+            archive_path,
+            &workspace_root,
+            archive_is_temporary,
+        ) {
+            Ok(archive_path) => archive_path,
+            Err(error) => {
+                cleanup_directory(&workspace_root);
+                return Err(error);
+            }
+        };
+
+        Ok(ImportArchiveExecutionRequest {
+            data_root: runtime_paths.data_root.clone(),
+            archive_path,
+            workspace_root,
+        })
+    }
+
+    fn prepare_export_archive(&self) -> Result<ExportArchiveExecutionRequest, DomainError> {
+        let runtime_paths = self.app_handle.state::<RuntimePaths>();
+        let export_root = runtime_paths.archive_exports_root.clone();
+        fs::create_dir_all(&export_root).map_err(|error| {
+            DomainError::InternalError(format!("Failed to create export directory: {}", error))
+        })?;
+        cleanup_stale_exports(&export_root);
+
+        Ok(ExportArchiveExecutionRequest {
+            data_root: runtime_paths.data_root.clone(),
+            output_path: export_root.join(default_export_file_name()),
+        })
+    }
+
+    fn prepare_user_backup_archive(
+        &self,
+        handle: &str,
+        include_secrets: bool,
+    ) -> Result<UserBackupArchiveTarget, DomainError> {
+        let runtime_paths = self.app_handle.state::<RuntimePaths>();
+        let export_root = resolve_user_backup_export_root(&self.app_handle, &runtime_paths)?;
+        fs::create_dir_all(&export_root).map_err(|error| {
+            DomainError::InternalError(format!("Failed to create export directory: {}", error))
+        })?;
+        cleanup_stale_exports(&export_root);
+
+        let (handle, user_root) = resolve_user_backup_root(&runtime_paths.data_root, handle)?;
+        let file_name = default_user_backup_file_name(&handle);
+        let output_path = export_root.join(format!(
+            ".user-backup-{}-{}",
+            Uuid::new_v4().simple(),
+            file_name
+        ));
+
+        Ok(UserBackupArchiveTarget {
+            file_name,
+            request: UserBackupArchiveExecutionRequest {
+                user_root,
+                output_path,
+                include_secrets,
+            },
+        })
+    }
+
+    fn cleanup_directory(&self, path: &Path) {
+        cleanup_directory(path);
     }
 
     fn cleanup_export(&self, archive_path: &Path) -> Result<(), DomainError> {
@@ -87,252 +219,32 @@ impl DataArchiveJobBackend for TauriDataArchiveJobBackend {
         save_staged_archive_to_downloads(&self.app_handle, archive_path, file_name)
     }
 
-    fn export_user_backup(
-        &self,
-        handle: &str,
-        include_secrets: bool,
-    ) -> Result<UserBackupArchiveResult, DomainError> {
-        export_user_backup_archive_file(&self.app_handle, handle, include_secrets)
-    }
-
     fn save_user_backup(
         &self,
         archive_path: &str,
         file_name: &str,
     ) -> Result<PathBuf, DomainError> {
-        save_user_backup_archive(&self.app_handle, archive_path, file_name)
+        let source_path = resolve_staged_user_backup_archive_path(&self.app_handle, archive_path)?;
+        let file_name = validate_archive_file_name(file_name)?;
+        save_staged_archive_to_downloads(&self.app_handle, &source_path, &file_name)
     }
 
     fn cleanup_user_backup(&self, archive_path: &str) -> Result<(), DomainError> {
-        cleanup_user_backup_archive(&self.app_handle, archive_path)
+        let source_path = resolve_staged_user_backup_archive_path(&self.app_handle, archive_path)?;
+        remove_file_if_exists(&source_path, "cleanup user backup archive");
+        Ok(())
     }
 }
 
-fn start_import_data_archive_job(
-    app_handle: &AppHandle,
-    reconciler: Arc<dyn DataChangeReconciler>,
-    jobs: Arc<DataArchiveJobRegistry>,
-    archive_path: &Path,
-    archive_is_temporary: bool,
-) -> Result<String, DomainError> {
-    if !archive_path.is_file() {
-        return Err(DomainError::InvalidData(format!(
-            "Archive file does not exist: {}",
-            archive_path.display()
-        )));
+pub(crate) struct DataDirectoryDataRootInitializer;
+
+#[async_trait]
+impl DataRootInitializer for DataDirectoryDataRootInitializer {
+    async fn initialize_data_root(&self, data_root: &Path) -> Result<(), DomainError> {
+        DataDirectory::new(data_root.to_path_buf())
+            .initialize()
+            .await
     }
-
-    let runtime_paths = app_handle.state::<RuntimePaths>();
-    let imports_root = runtime_paths.archive_imports_root.clone();
-    let data_root = runtime_paths.data_root.clone();
-    fs::create_dir_all(&imports_root).map_err(|error| {
-        DomainError::InternalError(format!("Failed to create job root: {}", error))
-    })?;
-
-    let job_id = Uuid::new_v4().simple().to_string();
-    let job_root = imports_root.join(&job_id);
-    fs::create_dir_all(&job_root).map_err(|error| {
-        DomainError::InternalError(format!("Failed to create job workspace: {}", error))
-    })?;
-
-    let prepared_archive_path =
-        prepare_import_archive_path(archive_path, &job_root, archive_is_temporary)?;
-
-    let job = Arc::new(DataArchiveJobHandle::new(&job_id, DATA_ARCHIVE_KIND_IMPORT));
-    jobs.insert(&job_id, job.clone())?;
-
-    tauri::async_runtime::spawn(async move {
-        let _ = job.mark_running("starting", "Import job started");
-
-        let blocking_job = job.clone();
-        let blocking_data_root = data_root.clone();
-        let blocking_archive = prepared_archive_path.clone();
-        let blocking_job_root = job_root.clone();
-
-        let blocking_result = tauri::async_runtime::spawn_blocking(move || {
-            let progress_job = blocking_job.clone();
-            let mut report_progress = move |stage: &str, progress_percent: f32, message: &str| {
-                let _ = progress_job.update_progress(stage, progress_percent, message);
-            };
-
-            let cancel_job = blocking_job.clone();
-            let is_cancelled = move || cancel_job.is_cancel_requested();
-
-            run_import_data_archive(
-                &blocking_data_root,
-                &blocking_archive,
-                &blocking_job_root,
-                &mut report_progress,
-                &is_cancelled,
-            )
-        })
-        .await;
-
-        match blocking_result {
-            Ok(Ok(result)) => {
-                let initialize_result = DataDirectory::new(data_root.clone()).initialize().await;
-                if let Err(error) = initialize_result {
-                    let _ = job.mark_failed(&format!(
-                        "Import completed but failed to initialize data directory: {}",
-                        error
-                    ));
-                    cleanup_directory(&job_root);
-                    return;
-                }
-
-                let refresh_result = reconciler.reconcile("import").await;
-                if let Err(error) = refresh_result {
-                    let _ = job.mark_failed(&format!(
-                        "Import completed but failed to refresh runtime caches: {}",
-                        error
-                    ));
-                    cleanup_directory(&job_root);
-                    return;
-                }
-
-                let _ = job.mark_completed_import(result.source_users, result.target_user);
-            }
-            Ok(Err(error)) => {
-                if job.is_cancel_requested() || is_cancelled_error(&error) {
-                    let _ = job.mark_cancelled();
-                } else {
-                    let _ = job.mark_failed(&error.to_string());
-                }
-            }
-            Err(error) => {
-                let _ = job.mark_failed(&format!("Import task join error: {}", error));
-            }
-        }
-
-        cleanup_directory(&job_root);
-    });
-
-    Ok(job_id)
-}
-
-fn start_export_data_archive_job(
-    app_handle: &AppHandle,
-    jobs: Arc<DataArchiveJobRegistry>,
-) -> Result<String, DomainError> {
-    let runtime_paths = app_handle.state::<RuntimePaths>();
-    let data_root = runtime_paths.data_root.clone();
-    let export_root = runtime_paths.archive_exports_root.clone();
-    fs::create_dir_all(&export_root).map_err(|error| {
-        DomainError::InternalError(format!("Failed to create export directory: {}", error))
-    })?;
-    cleanup_stale_exports(&export_root);
-
-    let job_id = Uuid::new_v4().simple().to_string();
-    let job = Arc::new(DataArchiveJobHandle::new(&job_id, DATA_ARCHIVE_KIND_EXPORT));
-    jobs.insert(&job_id, job.clone())?;
-
-    let output_path = export_root.join(default_export_file_name());
-
-    tauri::async_runtime::spawn(async move {
-        let _ = job.mark_running("starting", "Export job started");
-
-        let blocking_job = job.clone();
-        let blocking_data_root = data_root.clone();
-        let blocking_output = output_path.clone();
-
-        let blocking_result = tauri::async_runtime::spawn_blocking(move || {
-            let progress_job = blocking_job.clone();
-            let mut report_progress = move |stage: &str, progress_percent: f32, message: &str| {
-                let _ = progress_job.update_progress(stage, progress_percent, message);
-            };
-
-            let cancel_job = blocking_job.clone();
-            let is_cancelled = move || cancel_job.is_cancel_requested();
-
-            run_export_data_archive(
-                &blocking_data_root,
-                &blocking_output,
-                &mut report_progress,
-                &is_cancelled,
-            )
-        })
-        .await;
-
-        match blocking_result {
-            Ok(Ok(result)) => {
-                let _ = job.mark_completed_export(result.file_name, result.archive_path);
-            }
-            Ok(Err(error)) => {
-                if job.is_cancel_requested() || is_cancelled_error(&error) {
-                    let _ = job.mark_cancelled();
-                } else {
-                    let _ = job.mark_failed(&error.to_string());
-                }
-
-                remove_file_if_exists(&output_path, "cleanup partial export archive");
-            }
-            Err(error) => {
-                let _ = job.mark_failed(&format!("Export task join error: {}", error));
-                remove_file_if_exists(&output_path, "cleanup partial export archive");
-            }
-        }
-    });
-
-    Ok(job_id)
-}
-
-fn export_user_backup_archive_file(
-    app_handle: &AppHandle,
-    handle: &str,
-    include_secrets: bool,
-) -> Result<UserBackupArchiveResult, DomainError> {
-    let runtime_paths = app_handle.state::<RuntimePaths>();
-    let export_root = resolve_user_backup_export_root(app_handle, &runtime_paths)?;
-    fs::create_dir_all(&export_root).map_err(|error| {
-        DomainError::InternalError(format!("Failed to create export directory: {}", error))
-    })?;
-    cleanup_stale_exports(&export_root);
-
-    let (handle, user_root) = resolve_user_backup_root(&runtime_paths.data_root, handle)?;
-    let file_name = default_user_backup_file_name(&handle);
-    let output_path = export_root.join(format!(
-        ".user-backup-{}-{}",
-        Uuid::new_v4().simple(),
-        file_name
-    ));
-
-    let mut report_progress = |_stage: &str, _progress_percent: f32, _message: &str| {};
-    let is_cancelled = || false;
-
-    if let Err(error) = run_export_user_backup_archive(
-        &user_root,
-        &output_path,
-        include_secrets,
-        &mut report_progress,
-        &is_cancelled,
-    ) {
-        remove_file_if_exists(&output_path, "cleanup partial user backup archive");
-        return Err(error);
-    }
-
-    Ok(UserBackupArchiveResult {
-        file_name,
-        archive_path: output_path.to_string_lossy().to_string(),
-    })
-}
-
-fn save_user_backup_archive(
-    app_handle: &AppHandle,
-    archive_path: &str,
-    file_name: &str,
-) -> Result<PathBuf, DomainError> {
-    let source_path = resolve_staged_user_backup_archive_path(app_handle, archive_path)?;
-    let file_name = validate_archive_file_name(file_name)?;
-    save_staged_archive_to_downloads(app_handle, &source_path, &file_name)
-}
-
-fn cleanup_user_backup_archive(
-    app_handle: &AppHandle,
-    archive_path: &str,
-) -> Result<(), DomainError> {
-    let source_path = resolve_staged_user_backup_archive_path(app_handle, archive_path)?;
-    remove_file_if_exists(&source_path, "cleanup user backup archive");
-    Ok(())
 }
 
 fn save_staged_archive_to_downloads(
@@ -581,37 +493,16 @@ fn default_user_backup_file_name(handle: &str) -> String {
     format!("{}-{}.zip", handle, Utc::now().format("%Y%m%d-%H%M%S"))
 }
 
-#[cfg(target_os = "ios")]
-fn prepare_incoming_import_archive_path(app_handle: &AppHandle) -> Result<PathBuf, DomainError> {
-    let imports_root = app_handle
-        .state::<RuntimePaths>()
-        .archive_imports_root
-        .clone();
-    let incoming_dir = imports_root.join("incoming");
-    fs::create_dir_all(&incoming_dir).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to create import staging directory {}: {}",
-            incoming_dir.display(),
-            error
-        ))
-    })?;
-
-    Ok(incoming_dir.join(format!(
-        "tauritavern-import-{}.archive",
-        Uuid::new_v4().simple()
-    )))
-}
-
 fn prepare_import_archive_path(
     source_archive_path: &Path,
-    job_root: &Path,
+    workspace_root: &Path,
     archive_is_temporary: bool,
 ) -> Result<PathBuf, DomainError> {
     if !archive_is_temporary {
         return Ok(source_archive_path.to_path_buf());
     }
 
-    let staged_archive_path = job_root.join("import.archive");
+    let staged_archive_path = workspace_root.join("import.archive");
     if fs::rename(source_archive_path, &staged_archive_path).is_ok() {
         return Ok(staged_archive_path);
     }

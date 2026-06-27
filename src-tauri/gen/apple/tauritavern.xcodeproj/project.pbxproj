@@ -121,7 +121,7 @@
 		6761F8F2E0B2479182BA5C3C /* delete.rs */ = {isa = PBXFileReference; path = delete.rs; sourceTree = "<group>"; };
 		683A3158F03BE44CE894B1E1 /* file_preset_repository.rs */ = {isa = PBXFileReference; path = file_preset_repository.rs; sourceTree = "<group>"; };
 		699921634F610517994078E3 /* lan_sync_service.rs */ = {isa = PBXFileReference; path = lan_sync_service.rs; sourceTree = "<group>"; };
-		6BBB2C4C18F79E836DB065DB /* data_archive_jobs.rs */ = {isa = PBXFileReference; path = data_archive_jobs.rs; sourceTree = "<group>"; };
+		6BBB2C4C18F79E836DB065DB /* data_archive_adapters.rs */ = {isa = PBXFileReference; path = data_archive_adapters.rs; sourceTree = "<group>"; };
 		6CDA871F7C92BB069E8A51DA /* server.rs */ = {isa = PBXFileReference; path = server.rs; sourceTree = "<group>"; };
 		6D5A4C6C2903FA6AF7366FCB /* settings_repository.rs */ = {isa = PBXFileReference; path = settings_repository.rs; sourceTree = "<group>"; };
 		6F3A1C4632278D6BB617FCBB /* quick_reply.rs */ = {isa = PBXFileReference; path = quick_reply.rs; sourceTree = "<group>"; };
@@ -690,7 +690,7 @@
 			isa = PBXGroup;
 			children = (
 				046624CBBFE5B2C5A790D4CC /* chat_format_importers.rs */,
-				6BBB2C4C18F79E836DB065DB /* data_archive_jobs.rs */,
+				6BBB2C4C18F79E836DB065DB /* data_archive_adapters.rs */,
 				F435D02F5552CE80CA4B4FC1 /* file_system.rs */,
 				99FA97271F823AF6556C9DA2 /* jsonl_utils.rs */,
 				6343F615CF8507E740F6C0E8 /* mod.rs */,

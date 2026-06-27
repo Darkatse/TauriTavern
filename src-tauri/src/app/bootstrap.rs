@@ -116,7 +116,9 @@ use crate::infrastructure::lan_sync::store::LanSyncStore;
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
-use crate::infrastructure::persistence::data_archive_jobs::TauriDataArchiveJobBackend;
+use crate::infrastructure::persistence::data_archive_adapters::{
+    DataDirectoryDataRootInitializer, FileDataArchiveExecutor, TauriDataArchiveFileGateway,
+};
 use crate::infrastructure::persistence::file_system::DataDirectory;
 use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
@@ -631,14 +633,13 @@ pub(super) async fn build_services(
         group_service: group_service.clone(),
         secret_service: secret_service.clone(),
     });
-    let data_archive_jobs = Arc::new(DataArchiveJobRegistry::new());
+    let data_archive_job_registry = Arc::new(DataArchiveJobRegistry::new());
     let data_archive_service = Arc::new(DataArchiveService::new(
-        data_archive_jobs.clone(),
-        Arc::new(TauriDataArchiveJobBackend::new(
-            app_handle.clone(),
-            data_change_reconciler.clone(),
-            data_archive_jobs,
-        )),
+        data_archive_job_registry,
+        Arc::new(FileDataArchiveExecutor),
+        Arc::new(TauriDataArchiveFileGateway::new(app_handle.clone())),
+        Arc::new(DataDirectoryDataRootInitializer),
+        data_change_reconciler.clone(),
     ));
     let lan_runtime_state = Arc::new(LanSyncRuntimeState::new());
     let lan_settings_store = Arc::new(LanSyncStore::new(

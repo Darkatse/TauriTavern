@@ -72,21 +72,29 @@ pub async fn ios_import_data_archive_from_picker(
     let picked_url = picked.url.clone();
     let picked_file_name = picked.file_name.clone();
 
-    let job_id = tauri::async_runtime::spawn_blocking(move || -> Result<String, DomainError> {
-        let target_path = data_archive_service.prepare_incoming_import_archive_path()?;
-        let _cleanup_target = CleanupTempFile::new(target_path.clone());
+    let target_path =
+        tauri::async_runtime::spawn_blocking(move || -> Result<PathBuf, DomainError> {
+            let target_path = data_archive_service.prepare_incoming_import_archive_path()?;
+            if let Err(error) = copy_picked_url_to_path(&picked_url, &target_path) {
+                let _ = fs::remove_file(&target_path);
+                return Err(error);
+            }
+            Ok(target_path)
+        })
+        .await
+        .map_err(|error| {
+            CommandError::InternalServerError(format!(
+                "Failed to join iOS import staging task: {}",
+                error
+            ))
+        })?
+        .map_err(map_command_error("Failed to stage iOS data archive import"))?;
 
-        copy_picked_url_to_path(&picked_url, &target_path)?;
-        data_archive_service.start_import(&target_path, true)
-    })
-    .await
-    .map_err(|error| {
-        CommandError::InternalServerError(format!(
-            "Failed to join iOS import staging task: {}",
-            error
-        ))
-    })?
-    .map_err(map_command_error("Failed to start data archive import"))?;
+    let _cleanup_target = CleanupTempFile::new(target_path.clone());
+    let job_id = app_state
+        .data_archive_service
+        .start_import(&target_path, true)
+        .map_err(map_command_error("Failed to start data archive import"))?;
 
     Ok(IosImportArchiveResponse {
         cancelled: false,
