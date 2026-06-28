@@ -1,21 +1,21 @@
 use std::collections::BTreeSet;
-use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::domain::errors::DomainError;
 
 use super::archive::{self, ArchiveReadEntry};
-use super::layout::{LayoutKind, LayoutMeta};
+use super::layout::{ArchiveLayoutPolicy, DetectedArchiveLayout};
 use crate::infrastructure::persistence::data_archive::shared::{
-    COPY_BUFFER_BYTES, PROGRESS_REPORT_MIN_DELTA, components_after_prefix, copy_stream_with_cancel,
-    create_output_file_replacing_directory, ensure_not_cancelled, ensure_output_directory,
-    internal_error, progress_percent,
+    COPY_BUFFER_BYTES, IMPORT_TARGET_USER_HANDLE, PROGRESS_REPORT_MIN_DELTA,
+    components_after_prefix, copy_stream_with_cancel, create_output_file_replacing_directory,
+    ensure_not_cancelled, ensure_output_directory, internal_error, is_macos_resource_fork_path,
+    progress_percent,
 };
 
 pub fn extract_to_normalized_root_streaming(
     archive_path: &Path,
-    layout: &LayoutMeta,
+    layout: &DetectedArchiveLayout,
     normalized_root: &Path,
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
@@ -25,8 +25,8 @@ pub fn extract_to_normalized_root_streaming(
     let mut last_reported_percent = 0.0f32;
     let mut copy_buffer = vec![0u8; COPY_BUFFER_BYTES];
     let mut last_ensured_parent: Option<PathBuf> = None;
-    let source_users_lookup = layout
-        .source_users()
+    let detected_user_handles = layout
+        .detected_user_handles()
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
@@ -42,11 +42,7 @@ pub fn extract_to_normalized_root_streaming(
 
             processed_entries = processed_entries.saturating_add(1);
 
-            if matches!(
-                sanitized_path.components().next(),
-                Some(std::path::Component::Normal(component))
-                    if component == OsStr::new("__MACOSX")
-            ) {
+            if is_macos_resource_fork_path(&sanitized_path) {
                 maybe_report_extraction_progress(
                     processed_entries,
                     total_entries,
@@ -57,7 +53,7 @@ pub fn extract_to_normalized_root_streaming(
             }
 
             let Some(rel_components) =
-                components_after_prefix(&sanitized_path, &layout.source_prefix)
+                components_after_prefix(&sanitized_path, &layout.archive_root_prefix)
             else {
                 maybe_report_extraction_progress(
                     processed_entries,
@@ -77,8 +73,11 @@ pub fn extract_to_normalized_root_streaming(
                 return Ok(());
             }
 
-            let target_relative_path =
-                map_to_normalized_path(&rel_components, layout.kind, &source_users_lookup);
+            let target_relative_path = map_archive_entry_to_data_root_path(
+                &rel_components,
+                layout.policy,
+                &detected_user_handles,
+            );
             let output_path = normalized_root.join(target_relative_path);
 
             if archive_entry.is_dir() {
@@ -132,27 +131,23 @@ pub fn extract_to_normalized_root_streaming(
     )
 }
 
-fn map_to_normalized_path(
+fn map_archive_entry_to_data_root_path(
     relative_components: &[String],
-    kind: LayoutKind,
-    source_users: &BTreeSet<String>,
+    policy: ArchiveLayoutPolicy,
+    detected_user_handles: &BTreeSet<String>,
 ) -> PathBuf {
-    match kind {
-        LayoutKind::UserRoot => {
-            let mut target = PathBuf::from(
-                crate::infrastructure::persistence::data_archive::shared::DEFAULT_USER_HANDLE,
-            );
+    match policy {
+        ArchiveLayoutPolicy::SillyTavernUserRoot => {
+            let mut target = PathBuf::from(IMPORT_TARGET_USER_HANDLE);
             for component in relative_components {
                 target.push(component);
             }
             target
         }
-        LayoutKind::DataRoot | LayoutKind::UserHandleRoot => {
+        ArchiveLayoutPolicy::DataRoot | ArchiveLayoutPolicy::UserHandleRoot => {
             if let Some(first) = relative_components.first() {
-                if source_users.contains(first) {
-                    let mut target = PathBuf::from(
-                        crate::infrastructure::persistence::data_archive::shared::DEFAULT_USER_HANDLE,
-                    );
+                if detected_user_handles.contains(first) {
+                    let mut target = PathBuf::from(IMPORT_TARGET_USER_HANDLE);
                     for component in relative_components.iter().skip(1) {
                         target.push(component);
                     }

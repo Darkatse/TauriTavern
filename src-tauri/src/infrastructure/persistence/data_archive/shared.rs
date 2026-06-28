@@ -1,12 +1,15 @@
+use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path};
 
 use crate::domain::errors::DomainError;
 
-pub const DEFAULT_USER_HANDLE: &str = "default-user";
+pub const IMPORT_TARGET_USER_HANDLE: &str = "default-user";
+pub const MACOS_RESOURCE_FORK_ROOT: &str = "__MACOSX";
 
-pub const USER_HANDLE_DIR_MARKERS: &[&str] = &[
+// Root-level extensions/third-party is a full data-root signal, not a user-backup marker.
+pub const USER_HANDLE_ROOT_CHILD_DIR_MARKERS: &[&str] = &[
     "characters",
     "chats",
     "User Avatars",
@@ -33,7 +36,7 @@ pub const USER_HANDLE_DIR_MARKERS: &[&str] = &[
     "reasoning",
 ];
 
-pub const USER_ROOT_DIR_MARKERS: &[&str] = &[
+pub const SILLYTAVERN_USER_ROOT_DIR_MARKERS: &[&str] = &[
     "characters",
     "chats",
     "User Avatars",
@@ -59,7 +62,7 @@ pub const USER_ROOT_DIR_MARKERS: &[&str] = &[
     "reasoning",
 ];
 
-pub const USER_ROOT_FILE_MARKERS: &[&str] = &["settings.json"];
+pub const SILLYTAVERN_USER_ROOT_FILE_MARKERS: &[&str] = &["settings.json"];
 
 pub const MAX_ARCHIVE_ENTRIES: usize = 500_000;
 pub const MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 64 * 1024 * 1024 * 1024;
@@ -148,15 +151,24 @@ pub fn components_after_prefix(path: &Path, prefix: &Path) -> Option<Vec<String>
     Some(path_components(relative_path))
 }
 
-pub fn is_user_root_marker(component: &str) -> bool {
-    USER_ROOT_DIR_MARKERS.contains(&component) || USER_ROOT_FILE_MARKERS.contains(&component)
+pub fn is_sillytavern_user_root_entry(component: &str) -> bool {
+    SILLYTAVERN_USER_ROOT_DIR_MARKERS.contains(&component)
+        || SILLYTAVERN_USER_ROOT_FILE_MARKERS.contains(&component)
 }
 
-pub fn is_user_handle_marker(component: &str) -> bool {
-    USER_HANDLE_DIR_MARKERS.contains(&component) || USER_ROOT_FILE_MARKERS.contains(&component)
+pub fn is_user_handle_root_child_entry(component: &str) -> bool {
+    USER_HANDLE_ROOT_CHILD_DIR_MARKERS.contains(&component)
+        || SILLYTAVERN_USER_ROOT_FILE_MARKERS.contains(&component)
 }
 
-pub fn normalize_zip_path(path: &Path) -> String {
+pub fn is_macos_resource_fork_path(path: &Path) -> bool {
+    matches!(
+        path.components().next(),
+        Some(Component::Normal(component)) if component == OsStr::new(MACOS_RESOURCE_FORK_ROOT)
+    )
+}
+
+pub fn normalize_archive_entry_path(path: &Path) -> String {
     path_components(path).join("/")
 }
 

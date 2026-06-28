@@ -1,80 +1,77 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::domain::errors::DomainError;
 
 use super::archive::{self, ArchiveFormat};
 use crate::infrastructure::persistence::data_archive::shared::{
-    is_user_handle_marker, is_user_root_marker, path_components,
+    IMPORT_TARGET_USER_HANDLE, is_macos_resource_fork_path, is_sillytavern_user_root_entry,
+    is_user_handle_root_child_entry, path_components,
 };
 
+/// Controls how entries under `archive_root_prefix` map into the normalized data root.
+/// Wrapped `BackupRoot/data/...` archives are `DataRoot` with a non-empty prefix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LayoutKind {
+pub enum ArchiveLayoutPolicy {
     DataRoot,
     UserHandleRoot,
-    UserRoot,
+    SillyTavernUserRoot,
 }
 
 #[derive(Debug, Clone)]
-pub struct LayoutMeta {
+pub struct DetectedArchiveLayout {
     pub format: ArchiveFormat,
-    pub source_prefix: PathBuf,
-    pub kind: LayoutKind,
+    pub archive_root_prefix: PathBuf,
+    pub policy: ArchiveLayoutPolicy,
     pub scanned_entries: usize,
-    source_users: BTreeSet<String>,
+    detected_user_handles: BTreeSet<String>,
 }
 
-impl LayoutMeta {
-    pub fn source_users(&self) -> &BTreeSet<String> {
-        &self.source_users
+impl DetectedArchiveLayout {
+    pub fn detected_user_handles(&self) -> &BTreeSet<String> {
+        &self.detected_user_handles
     }
 
-    pub fn source_users_for_result(&self) -> Vec<String> {
-        if self.source_users.is_empty() {
-            return match self.kind {
-                LayoutKind::UserRoot => vec![
-                    crate::infrastructure::persistence::data_archive::shared::DEFAULT_USER_HANDLE
-                        .to_string(),
-                ],
+    pub fn source_user_handles_for_import_result(&self) -> Vec<String> {
+        if self.detected_user_handles.is_empty() {
+            return match self.policy {
+                ArchiveLayoutPolicy::SillyTavernUserRoot => {
+                    vec![IMPORT_TARGET_USER_HANDLE.to_string()]
+                }
                 _ => Vec::new(),
             };
         }
-        self.source_users.iter().cloned().collect()
+        self.detected_user_handles.iter().cloned().collect()
     }
 }
 
 #[derive(Debug, Clone)]
-struct PrefixEval {
-    prefix_components: Vec<String>,
-    prefix_path: PathBuf,
-    kind: LayoutKind,
-    source_users: BTreeSet<String>,
-    entries_under_prefix: usize,
+struct ArchiveLayoutCandidate {
+    archive_root_components: Vec<String>,
+    archive_root_prefix: PathBuf,
+    policy: ArchiveLayoutPolicy,
+    detected_user_handles: BTreeSet<String>,
+    entries_under_root: usize,
 }
 
 #[derive(Debug, Default, Clone)]
-struct PrefixStats {
-    entries_under_prefix: usize,
-    has_any: bool,
-    has_user_root_marker_at_root: bool,
-    has_root_tauritavern: bool,
-    has_global_extensions: bool,
-    source_users: BTreeSet<String>,
+struct ArchiveRootStats {
+    entries_under_root: usize,
+    has_entries: bool,
+    has_sillytavern_user_root_marker: bool,
+    has_tauritavern_state_root: bool,
+    has_global_extensions_root: bool,
+    detected_user_handles: BTreeSet<String>,
 }
 
-pub fn scan_archive_layout(
+pub fn detect_archive_layout(
     archive_path: &Path,
     is_cancelled: &dyn Fn() -> bool,
-) -> Result<LayoutMeta, DomainError> {
+) -> Result<DetectedArchiveLayout, DomainError> {
     let mut candidate_stats = BTreeMap::new();
 
     let scanned_archive = archive::scan_archive(archive_path, is_cancelled, &mut |path| {
-        if matches!(
-            path.components().next(),
-            Some(std::path::Component::Normal(component))
-                if component == OsStr::new("__MACOSX")
-        ) {
+        if is_macos_resource_fork_path(path) {
             return Ok(());
         }
 
@@ -83,7 +80,7 @@ pub fn scan_archive_layout(
             return Ok(());
         }
 
-        record_entry_layout(&mut candidate_stats, &components);
+        record_archive_layout_candidates(&mut candidate_stats, &components);
         Ok(())
     })?;
     let scanned_entries = scanned_archive.scanned_entries;
@@ -94,68 +91,71 @@ pub fn scan_archive_layout(
 
     let candidates = candidate_stats
         .iter()
-        .flat_map(|(prefix, stats)| eval_prefix(prefix, stats))
+        .flat_map(|(prefix, stats)| layout_policy_candidates_for_root(prefix, stats))
         .collect::<Vec<_>>();
 
-    let chosen = choose_candidate(&candidates)?;
+    let chosen = choose_archive_layout(&candidates)?;
 
-    Ok(LayoutMeta {
+    Ok(DetectedArchiveLayout {
         format: scanned_archive.format,
-        source_prefix: chosen.prefix_path,
-        kind: chosen.kind,
+        archive_root_prefix: chosen.archive_root_prefix,
+        policy: chosen.policy,
         scanned_entries,
-        source_users: chosen.source_users,
+        detected_user_handles: chosen.detected_user_handles,
     })
 }
 
-fn record_entry_layout(candidate_stats: &mut BTreeMap<Vec<String>, PrefixStats>, entry: &[String]) {
-    record_prefix_candidate(candidate_stats, &[], entry);
+fn record_archive_layout_candidates(
+    candidate_stats: &mut BTreeMap<Vec<String>, ArchiveRootStats>,
+    entry: &[String],
+) {
+    record_archive_root_candidate(candidate_stats, &[], entry);
 
     let first = &entry[0];
 
     if first == "data" {
-        record_prefix_candidate(candidate_stats, &entry[..1], &entry[1..]);
+        record_archive_root_candidate(candidate_stats, &entry[..1], &entry[1..]);
         return;
     }
 
-    record_prefix_candidate(candidate_stats, &entry[..1], &entry[1..]);
+    record_archive_root_candidate(candidate_stats, &entry[..1], &entry[1..]);
 
     if entry.len() >= 2 && entry[1] == "data" {
-        record_prefix_candidate(candidate_stats, &entry[..2], &entry[2..]);
+        record_archive_root_candidate(candidate_stats, &entry[..2], &entry[2..]);
     }
 }
 
-fn record_prefix_candidate(
-    candidate_stats: &mut BTreeMap<Vec<String>, PrefixStats>,
+fn record_archive_root_candidate(
+    candidate_stats: &mut BTreeMap<Vec<String>, ArchiveRootStats>,
     prefix: &[String],
     remainder: &[String],
 ) {
     let stats = candidate_stats.entry(prefix.to_vec()).or_default();
-    stats.entries_under_prefix += 1;
+    stats.entries_under_root += 1;
 
     if remainder.is_empty() {
         return;
     }
 
-    stats.has_any = true;
+    stats.has_entries = true;
 
     let first = remainder[0].as_str();
-    if is_user_root_marker(first) {
-        stats.has_user_root_marker_at_root = true;
+    if is_sillytavern_user_root_entry(first) {
+        stats.has_sillytavern_user_root_marker = true;
     }
 
     if first == "_tauritavern" {
-        stats.has_root_tauritavern = true;
+        stats.has_tauritavern_state_root = true;
     }
 
     if remainder.len() >= 2 && first == "extensions" && remainder[1] == "third-party" {
-        stats.has_global_extensions = true;
+        stats.has_global_extensions_root = true;
     }
 
-    collect_user_handles_from_components(remainder, &mut stats.source_users);
+    collect_user_handles_from_archive_entry(remainder, &mut stats.detected_user_handles);
 }
 
-fn collect_user_handles_from_components(
+fn collect_user_handles_from_archive_entry(
     components: &[String],
     user_handles: &mut BTreeSet<String>,
 ) {
@@ -164,54 +164,58 @@ fn collect_user_handles_from_components(
     }
 
     let handle = &components[0];
-    if is_user_root_marker(handle) {
+    if is_sillytavern_user_root_entry(handle) {
         return;
     }
 
-    if is_user_handle_marker(&components[1]) {
+    if is_user_handle_root_child_entry(&components[1]) {
         user_handles.insert(handle.clone());
     }
 }
 
-fn eval_prefix(prefix_components: &[String], stats: &PrefixStats) -> Vec<PrefixEval> {
-    if !stats.has_any {
+fn layout_policy_candidates_for_root(
+    archive_root_components: &[String],
+    stats: &ArchiveRootStats,
+) -> Vec<ArchiveLayoutCandidate> {
+    if !stats.has_entries {
         return Vec::new();
     }
 
-    let has_data_root_feature = stats.has_root_tauritavern || stats.has_global_extensions;
-    let prefix_last_is_data = prefix_components
+    let has_data_root_feature =
+        stats.has_tauritavern_state_root || stats.has_global_extensions_root;
+    let root_last_is_data = archive_root_components
         .last()
         .is_some_and(|value| value == "data");
 
     let mut candidates = Vec::new();
-    if has_data_root_feature || (prefix_last_is_data && !stats.source_users.is_empty()) {
-        candidates.push(build_prefix_eval(
-            prefix_components,
-            LayoutKind::DataRoot,
+    if has_data_root_feature || (root_last_is_data && !stats.detected_user_handles.is_empty()) {
+        candidates.push(build_archive_layout_candidate(
+            archive_root_components,
+            ArchiveLayoutPolicy::DataRoot,
             stats,
         ));
-        if stats.has_user_root_marker_at_root {
-            candidates.push(build_prefix_eval(
-                prefix_components,
-                LayoutKind::UserRoot,
+        if stats.has_sillytavern_user_root_marker {
+            candidates.push(build_archive_layout_candidate(
+                archive_root_components,
+                ArchiveLayoutPolicy::SillyTavernUserRoot,
                 stats,
             ));
         }
         return candidates;
     }
 
-    if !stats.source_users.is_empty() {
-        candidates.push(build_prefix_eval(
-            prefix_components,
-            LayoutKind::UserHandleRoot,
+    if !stats.detected_user_handles.is_empty() {
+        candidates.push(build_archive_layout_candidate(
+            archive_root_components,
+            ArchiveLayoutPolicy::UserHandleRoot,
             stats,
         ));
     }
 
-    if stats.has_user_root_marker_at_root {
-        candidates.push(build_prefix_eval(
-            prefix_components,
-            LayoutKind::UserRoot,
+    if stats.has_sillytavern_user_root_marker {
+        candidates.push(build_archive_layout_candidate(
+            archive_root_components,
+            ArchiveLayoutPolicy::SillyTavernUserRoot,
             stats,
         ));
     }
@@ -219,43 +223,45 @@ fn eval_prefix(prefix_components: &[String], stats: &PrefixStats) -> Vec<PrefixE
     candidates
 }
 
-fn build_prefix_eval(
-    prefix_components: &[String],
-    kind: LayoutKind,
-    stats: &PrefixStats,
-) -> PrefixEval {
-    let mut prefix_path = PathBuf::new();
-    for component in prefix_components {
-        prefix_path.push(component);
+fn build_archive_layout_candidate(
+    archive_root_components: &[String],
+    policy: ArchiveLayoutPolicy,
+    stats: &ArchiveRootStats,
+) -> ArchiveLayoutCandidate {
+    let mut archive_root_prefix = PathBuf::new();
+    for component in archive_root_components {
+        archive_root_prefix.push(component);
     }
 
-    PrefixEval {
-        prefix_components: prefix_components.to_vec(),
-        prefix_path,
-        kind,
-        source_users: stats.source_users.clone(),
-        entries_under_prefix: stats.entries_under_prefix,
+    ArchiveLayoutCandidate {
+        archive_root_components: archive_root_components.to_vec(),
+        archive_root_prefix,
+        policy,
+        detected_user_handles: stats.detected_user_handles.clone(),
+        entries_under_root: stats.entries_under_root,
     }
 }
 
-fn choose_candidate(candidates: &[PrefixEval]) -> Result<PrefixEval, DomainError> {
-    assert_no_same_prefix_kind_conflicts(candidates)?;
+fn choose_archive_layout(
+    candidates: &[ArchiveLayoutCandidate],
+) -> Result<ArchiveLayoutCandidate, DomainError> {
+    assert_no_ambiguous_layouts_for_same_root(candidates)?;
 
-    for kind in [
-        LayoutKind::DataRoot,
-        LayoutKind::UserHandleRoot,
-        LayoutKind::UserRoot,
+    for policy in [
+        ArchiveLayoutPolicy::DataRoot,
+        ArchiveLayoutPolicy::UserHandleRoot,
+        ArchiveLayoutPolicy::SillyTavernUserRoot,
     ] {
-        let kind_candidates = candidates
+        let layout_candidates = candidates
             .iter()
-            .filter(|candidate| candidate.kind == kind)
+            .filter(|candidate| candidate.policy == policy)
             .collect::<Vec<_>>();
-        if kind_candidates.is_empty() {
+        if layout_candidates.is_empty() {
             continue;
         }
 
-        let chosen = choose_covering_candidate(&kind_candidates)?;
-        assert_no_recognized_entries_outside_prefix(&chosen, candidates)?;
+        let chosen = choose_covering_archive_root(&layout_candidates)?;
+        assert_no_recognized_entries_outside_archive_root(&chosen, candidates)?;
         return Ok(chosen);
     }
 
@@ -264,10 +270,13 @@ fn choose_candidate(candidates: &[PrefixEval]) -> Result<PrefixEval, DomainError
     ))
 }
 
-fn assert_no_same_prefix_kind_conflicts(candidates: &[PrefixEval]) -> Result<(), DomainError> {
+fn assert_no_ambiguous_layouts_for_same_root(
+    candidates: &[ArchiveLayoutCandidate],
+) -> Result<(), DomainError> {
     for (index, candidate) in candidates.iter().enumerate() {
         if candidates.iter().skip(index + 1).any(|other| {
-            other.prefix_components == candidate.prefix_components && other.kind != candidate.kind
+            other.archive_root_components == candidate.archive_root_components
+                && other.policy != candidate.policy
         }) {
             return Err(DomainError::InvalidData(
                 "Archive layout is ambiguous".to_string(),
@@ -278,7 +287,9 @@ fn assert_no_same_prefix_kind_conflicts(candidates: &[PrefixEval]) -> Result<(),
     Ok(())
 }
 
-fn choose_covering_candidate(candidates: &[&PrefixEval]) -> Result<PrefixEval, DomainError> {
+fn choose_covering_archive_root(
+    candidates: &[&ArchiveLayoutCandidate],
+) -> Result<ArchiveLayoutCandidate, DomainError> {
     if candidates.len() == 1 {
         return Ok((*candidates[0]).clone());
     }
@@ -287,10 +298,10 @@ fn choose_covering_candidate(candidates: &[&PrefixEval]) -> Result<PrefixEval, D
         .iter()
         .filter(|candidate| {
             candidates.iter().all(|other| {
-                other.prefix_components == candidate.prefix_components
+                other.archive_root_components == candidate.archive_root_components
                     || other
-                        .prefix_components
-                        .starts_with(&candidate.prefix_components)
+                        .archive_root_components
+                        .starts_with(&candidate.archive_root_components)
             })
         })
         .collect::<Vec<_>>();
@@ -304,26 +315,26 @@ fn choose_covering_candidate(candidates: &[&PrefixEval]) -> Result<PrefixEval, D
     ))
 }
 
-fn assert_no_recognized_entries_outside_prefix(
-    chosen: &PrefixEval,
-    candidates: &[PrefixEval],
+fn assert_no_recognized_entries_outside_archive_root(
+    chosen: &ArchiveLayoutCandidate,
+    candidates: &[ArchiveLayoutCandidate],
 ) -> Result<(), DomainError> {
     for candidate in candidates {
-        if candidate.prefix_components == chosen.prefix_components {
+        if candidate.archive_root_components == chosen.archive_root_components {
             continue;
         }
 
         if candidate
-            .prefix_components
-            .starts_with(&chosen.prefix_components)
+            .archive_root_components
+            .starts_with(&chosen.archive_root_components)
         {
             continue;
         }
 
         if chosen
-            .prefix_components
-            .starts_with(&candidate.prefix_components)
-            && candidate.entries_under_prefix == chosen.entries_under_prefix
+            .archive_root_components
+            .starts_with(&candidate.archive_root_components)
+            && candidate.entries_under_root == chosen.entries_under_root
         {
             continue;
         }
@@ -359,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_data_default_user_layout() {
+    fn detects_tauritavern_data_root_layout() {
         let root =
             std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
@@ -367,15 +378,15 @@ mod tests {
 
         write_zip(&zip_path, &[("data/default-user/characters/a.json", b"{}")]);
 
-        let layout = scan_archive_layout(&zip_path, &|| false).expect("scan layout");
-        assert_eq!(layout.kind, LayoutKind::DataRoot);
-        assert_eq!(layout.source_prefix, PathBuf::from("data"));
+        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::DataRoot);
+        assert_eq!(layout.archive_root_prefix, PathBuf::from("data"));
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
-    fn detects_default_user_layout() {
+    fn detects_user_handle_root_layout() {
         let root =
             std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
@@ -383,15 +394,15 @@ mod tests {
 
         write_zip(&zip_path, &[("default-user/characters/a.json", b"{}")]);
 
-        let layout = scan_archive_layout(&zip_path, &|| false).expect("scan layout");
-        assert_eq!(layout.kind, LayoutKind::UserHandleRoot);
-        assert!(layout.source_prefix.as_os_str().is_empty());
+        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
+        assert!(layout.archive_root_prefix.as_os_str().is_empty());
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
-    fn detects_default_user_layout_with_extra_root_file() {
+    fn detects_user_handle_root_layout_with_extra_root_file() {
         let root =
             std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
@@ -405,15 +416,15 @@ mod tests {
             ],
         );
 
-        let layout = scan_archive_layout(&zip_path, &|| false).expect("scan layout");
-        assert_eq!(layout.kind, LayoutKind::UserHandleRoot);
-        assert!(layout.source_prefix.as_os_str().is_empty());
+        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
+        assert!(layout.archive_root_prefix.as_os_str().is_empty());
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
-    fn detects_default_user_layout_with_macosx_junk() {
+    fn detects_user_handle_root_layout_with_macos_resource_forks() {
         let root =
             std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
@@ -427,15 +438,15 @@ mod tests {
             ],
         );
 
-        let layout = scan_archive_layout(&zip_path, &|| false).expect("scan layout");
-        assert_eq!(layout.kind, LayoutKind::UserHandleRoot);
-        assert!(layout.source_prefix.as_os_str().is_empty());
+        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
+        assert!(layout.archive_root_prefix.as_os_str().is_empty());
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
-    fn ignores_macosx_resource_forks_for_data_root_layout() {
+    fn ignores_macos_resource_forks_for_data_root_layout() {
         let root =
             std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
@@ -449,15 +460,15 @@ mod tests {
             ],
         );
 
-        let layout = scan_archive_layout(&zip_path, &|| false).expect("scan layout");
-        assert_eq!(layout.kind, LayoutKind::DataRoot);
-        assert_eq!(layout.source_prefix, PathBuf::from("data"));
+        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::DataRoot);
+        assert_eq!(layout.archive_root_prefix, PathBuf::from("data"));
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
-    fn ignores_macosx_resource_forks_for_user_handle_layout() {
+    fn ignores_macos_resource_forks_for_user_handle_layout() {
         let root =
             std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
@@ -471,15 +482,15 @@ mod tests {
             ],
         );
 
-        let layout = scan_archive_layout(&zip_path, &|| false).expect("scan layout");
-        assert_eq!(layout.kind, LayoutKind::UserHandleRoot);
-        assert!(layout.source_prefix.as_os_str().is_empty());
+        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
+        assert!(layout.archive_root_prefix.as_os_str().is_empty());
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
-    fn detects_user_root_layout() {
+    fn detects_sillytavern_user_root_layout() {
         let root =
             std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
@@ -487,15 +498,15 @@ mod tests {
 
         write_zip(&zip_path, &[("characters/a.json", b"{}")]);
 
-        let layout = scan_archive_layout(&zip_path, &|| false).expect("scan layout");
-        assert_eq!(layout.kind, LayoutKind::UserRoot);
-        assert!(layout.source_prefix.as_os_str().is_empty());
+        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
+        assert!(layout.archive_root_prefix.as_os_str().is_empty());
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
-    fn detects_user_root_layout_with_marker_named_content_paths() {
+    fn detects_sillytavern_user_root_layout_with_marker_named_content_paths() {
         let root =
             std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
@@ -510,9 +521,9 @@ mod tests {
             ],
         );
 
-        let layout = scan_archive_layout(&zip_path, &|| false).expect("scan layout");
-        assert_eq!(layout.kind, LayoutKind::UserRoot);
-        assert!(layout.source_prefix.as_os_str().is_empty());
+        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
+        assert!(layout.archive_root_prefix.as_os_str().is_empty());
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
@@ -526,8 +537,8 @@ mod tests {
 
         write_zip(&zip_path, &[("settings.json", b"{}")]);
 
-        let layout = scan_archive_layout(&zip_path, &|| false).expect("scan layout");
-        assert_eq!(layout.kind, LayoutKind::UserRoot);
+        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
@@ -544,10 +555,10 @@ mod tests {
             &[("BackupRoot/data/default-user/chats/hello.jsonl", b"{}")],
         );
 
-        let layout = scan_archive_layout(&zip_path, &|| false).expect("scan layout");
-        assert_eq!(layout.kind, LayoutKind::DataRoot);
+        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::DataRoot);
         assert_eq!(
-            layout.source_prefix,
+            layout.archive_root_prefix,
             PathBuf::from("BackupRoot").join("data")
         );
 
@@ -555,7 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_mixed_user_root_and_user_handle_root_at_same_prefix() {
+    fn rejects_mixed_sillytavern_user_root_and_user_handle_root_at_same_prefix() {
         let root =
             std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
@@ -569,14 +580,14 @@ mod tests {
             ],
         );
 
-        let error = scan_archive_layout(&zip_path, &|| false).unwrap_err();
+        let error = detect_archive_layout(&zip_path, &|| false).unwrap_err();
         assert!(matches!(error, DomainError::InvalidData(_)));
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
-    fn rejects_mixed_data_root_and_user_root_at_same_prefix() {
+    fn rejects_mixed_data_root_and_sillytavern_user_root_at_same_prefix() {
         let root =
             std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
@@ -590,7 +601,7 @@ mod tests {
             ],
         );
 
-        let error = scan_archive_layout(&zip_path, &|| false).unwrap_err();
+        let error = detect_archive_layout(&zip_path, &|| false).unwrap_err();
         assert!(matches!(error, DomainError::InvalidData(_)));
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
@@ -611,7 +622,7 @@ mod tests {
             ],
         );
 
-        let error = scan_archive_layout(&zip_path, &|| false).unwrap_err();
+        let error = detect_archive_layout(&zip_path, &|| false).unwrap_err();
         assert!(matches!(error, DomainError::InvalidData(_)));
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);

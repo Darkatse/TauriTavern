@@ -11,7 +11,7 @@ use crate::domain::models::data_archive::DataArchiveImportFailure;
 
 use super::DataArchiveImportResult;
 use super::shared::{
-    DEFAULT_USER_HANDLE, cleanup_directory_sync, ensure_not_cancelled, internal_error,
+    IMPORT_TARGET_USER_HANDLE, cleanup_directory_sync, ensure_not_cancelled, internal_error,
 };
 
 pub fn run_import_data_archive(
@@ -39,7 +39,7 @@ pub fn run_import_data_archive(
     fs::create_dir_all(&normalized_root)
         .map_err(|error| internal_error("Failed to create normalized workspace", error))?;
 
-    let layout = layout::scan_archive_layout(archive_path, is_cancelled)?;
+    let layout = layout::detect_archive_layout(archive_path, is_cancelled)?;
     report_progress("scanning", 10.0, "Archive layout detected");
     ensure_not_cancelled(is_cancelled)?;
 
@@ -59,8 +59,8 @@ pub fn run_import_data_archive(
     report_progress("completed", 100.0, "Import completed");
 
     Ok(DataArchiveImportResult {
-        source_users: layout.source_users_for_result(),
-        target_user: DEFAULT_USER_HANDLE.to_string(),
+        source_users: layout.source_user_handles_for_import_result(),
+        target_user: IMPORT_TARGET_USER_HANDLE.to_string(),
         local_applied,
     })
 }
@@ -635,7 +635,7 @@ mod tests {
         let checks = AtomicUsize::new(0);
         let is_cancelled = || checks.fetch_add(1, Ordering::SeqCst) >= 2;
 
-        let error = layout::scan_archive_layout(&archive_path, &is_cancelled)
+        let error = layout::detect_archive_layout(&archive_path, &is_cancelled)
             .expect_err("cancelled scan should fail");
         assert!(
             matches!(error, DomainError::Cancelled(_)),
@@ -681,9 +681,9 @@ mod tests {
     }
 
     #[test]
-    fn import_supports_user_root_layout() {
+    fn import_supports_sillytavern_user_root_layout() {
         let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-user-root-{}",
+            "tauritavern-data-archive-sillytavern-user-root-{}",
             rand::random::<u64>()
         ));
         let data_root = root.join("data");
@@ -711,7 +711,7 @@ mod tests {
                 .join("characters")
                 .join("root.json")
                 .is_file(),
-            "user-root archive should map into default-user"
+            "SillyTavern user-root archive should map into default-user"
         );
 
         cleanup_directory_sync(&root);
@@ -885,7 +885,7 @@ mod tests {
         fs::write(&archive_path, bytes).expect("write fixture zip");
 
         let error =
-            layout::scan_archive_layout(&archive_path, &|| false).expect_err("scan should fail");
+            layout::detect_archive_layout(&archive_path, &|| false).expect_err("scan should fail");
         assert!(
             error.to_string().contains(entry_name),
             "error should reference utf-8 entry name, got: {}",

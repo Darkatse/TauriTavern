@@ -11,8 +11,8 @@ use crate::infrastructure::zipkit::export_file_options;
 use super::DataArchiveExportResult;
 use super::shared::{
     COPY_BUFFER_BYTES, FILE_IO_BUFFER_BYTES, PROGRESS_REPORT_MIN_DELTA, copy_stream_with_cancel,
-    ensure_not_cancelled, internal_error, normalize_zip_path, path_components, progress_percent,
-    read_directory_sorted,
+    ensure_not_cancelled, internal_error, normalize_archive_entry_path, path_components,
+    progress_percent, read_directory_sorted,
 };
 
 #[derive(Debug, Clone)]
@@ -59,7 +59,7 @@ pub fn run_export_user_backup_archive(
 fn run_export_archive(
     source_root: &Path,
     output_path: &Path,
-    zip_root: &str,
+    archive_root_prefix: &str,
     include_entry: &dyn Fn(&Path) -> bool,
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
@@ -79,8 +79,8 @@ fn run_export_archive(
             .map_err(|error| internal_error("Failed to create export output directory", error))?;
     }
 
-    let normalized_zip_root = zip_root.trim_matches('/');
-    let root_step_count = u64::from(!normalized_zip_root.is_empty());
+    let normalized_archive_root_prefix = archive_root_prefix.trim_matches('/');
+    let root_step_count = u64::from(!normalized_archive_root_prefix.is_empty());
     let total_steps = count_export_entries(source_root, source_root, include_entry, is_cancelled)?
         .saturating_add(root_step_count);
     let mut progress = ExportProgress {
@@ -101,9 +101,9 @@ fn run_export_archive(
     let buffered_output = BufWriter::with_capacity(FILE_IO_BUFFER_BYTES, output_file);
     let mut writer = ZipWriter::new(buffered_output);
 
-    if !normalized_zip_root.is_empty() {
+    if !normalized_archive_root_prefix.is_empty() {
         writer
-            .add_directory(format!("{}/", normalized_zip_root), dir_options)
+            .add_directory(format!("{}/", normalized_archive_root_prefix), dir_options)
             .map_err(|error| internal_error("Failed to add archive root directory", error))?;
         progress.processed_steps = progress.processed_steps.saturating_add(1);
         report_export_progress(&mut progress, report_progress);
@@ -114,7 +114,7 @@ fn run_export_archive(
         &mut writer,
         source_root,
         source_root,
-        normalized_zip_root,
+        normalized_archive_root_prefix,
         include_entry,
         dir_options,
         &mut progress,
@@ -191,7 +191,7 @@ fn write_export_entries(
     writer: &mut ZipWriter<impl Write + Seek>,
     root: &Path,
     current: &Path,
-    zip_prefix: &str,
+    archive_root_prefix: &str,
     include_entry: &dyn Fn(&Path) -> bool,
     dir_options: FileOptions,
     progress: &mut ExportProgress,
@@ -213,12 +213,12 @@ fn write_export_entries(
             continue;
         }
 
-        let zip_relative = normalize_zip_path(relative_path);
-        let zip_path = archive_zip_path(zip_prefix, &zip_relative);
+        let archive_relative_path = normalize_archive_entry_path(relative_path);
+        let entry_path = archive_entry_path(archive_root_prefix, &archive_relative_path);
 
         if file_type.is_dir() {
             writer
-                .add_directory(format!("{}/", zip_path), dir_options)
+                .add_directory(format!("{}/", entry_path), dir_options)
                 .map_err(|error| internal_error("Failed to add directory to archive", error))?;
             progress.processed_steps = progress.processed_steps.saturating_add(1);
             report_export_progress(progress, report_progress);
@@ -227,7 +227,7 @@ fn write_export_entries(
                 writer,
                 root,
                 &path,
-                zip_prefix,
+                archive_root_prefix,
                 include_entry,
                 dir_options,
                 progress,
@@ -244,7 +244,7 @@ fn write_export_entries(
 
         let file_options = export_file_options(&path);
         writer
-            .start_file(&zip_path, file_options)
+            .start_file(&entry_path, file_options)
             .map_err(|error| internal_error("Failed to add file to archive", error))?;
 
         let mut source_file = File::open(&path)
@@ -265,12 +265,12 @@ fn write_export_entries(
     Ok(())
 }
 
-fn archive_zip_path(zip_prefix: &str, zip_relative: &str) -> String {
-    if zip_prefix.is_empty() {
-        return zip_relative.to_string();
+fn archive_entry_path(archive_root_prefix: &str, archive_relative_path: &str) -> String {
+    if archive_root_prefix.is_empty() {
+        return archive_relative_path.to_string();
     }
 
-    format!("{}/{}", zip_prefix, zip_relative)
+    format!("{}/{}", archive_root_prefix, archive_relative_path)
 }
 
 fn should_include_user_backup_entry(relative_path: &Path, include_secrets: bool) -> bool {
