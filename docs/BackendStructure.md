@@ -42,6 +42,7 @@ TauriTavern的后端采用Clean Architecture架构，将代码组织为多个层
 - 外层可以依赖内层，但内层不能依赖外层
 - 内层定义接口，外层实现接口
 - 所有层次都可以使用领域模型和错误类型
+- `platform` 是宿主平台适配层，承载 iOS/UIKit、macOS/WebView 等 OS 级能力；`domain` 与 `application` 不得依赖它，`platform` 也不得依赖 `app`、`application`、`infrastructure` 或 `presentation`
 
 ## 2. 目录结构
 
@@ -65,6 +66,7 @@ src-tauri/
 │   │   ├── repositories/      # 仓库实现
 │   │   ├── apis/              # 外部API集成
 │   │   └── logging/           # 日志系统
+│   ├── platform/              # 宿主平台适配（UIKit/WebView/native UI）
 │   └── presentation/          # 表示层
 │       ├── commands/          # Tauri命令
 │       │   ├── helpers.rs     # 命令日志/错误映射公共工具

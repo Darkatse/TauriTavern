@@ -37,16 +37,19 @@ pub fn start_export_data_archive(
 }
 
 #[tauri::command]
-pub fn get_data_archive_imports_root(
+pub fn prepare_data_archive_import_target_path(
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<String, CommandError> {
-    log_command("get_data_archive_imports_root");
+    log_command("prepare_data_archive_import_target_path");
 
-    Ok(app_state
+    let path = app_state
         .data_archive_service
-        .imports_root()
-        .to_string_lossy()
-        .to_string())
+        .prepare_incoming_import_archive_path()
+        .map_err(map_command_error(
+            "Failed to prepare data archive import target path",
+        ))?;
+
+    Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]

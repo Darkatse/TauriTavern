@@ -98,16 +98,12 @@ impl TauriDataArchiveFileGateway {
 }
 
 impl DataArchiveFileGateway for TauriDataArchiveFileGateway {
-    fn imports_root(&self) -> PathBuf {
-        self.app_handle
+    fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError> {
+        let incoming_dir = self
+            .app_handle
             .state::<RuntimePaths>()
             .archive_imports_root
-            .clone()
-    }
-
-    #[cfg(target_os = "ios")]
-    fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError> {
-        let incoming_dir = self.imports_root().join("incoming");
+            .join("incoming");
         fs::create_dir_all(&incoming_dir).map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to create import staging directory {}: {}",
@@ -247,8 +243,7 @@ impl DataArchiveFileGateway for TauriDataArchiveFileGateway {
         file_name: &str,
     ) -> Result<PathBuf, DomainError> {
         let source_path = resolve_staged_user_backup_archive_path(&self.app_handle, archive_path)?;
-        let file_name = validate_archive_file_name(file_name)?;
-        save_staged_archive_to_downloads(&self.app_handle, &source_path, &file_name)
+        save_staged_archive_to_downloads(&self.app_handle, &source_path, file_name)
     }
 
     fn cleanup_user_backup(&self, archive_path: &str) -> Result<(), DomainError> {
@@ -287,6 +282,7 @@ fn save_staged_archive_to_downloads(
         )));
     }
 
+    let file_name = validate_archive_file_name(file_name)?;
     let download_dir = app_handle.path().download_dir().map_err(|error| {
         DomainError::InternalError(format!("Failed to resolve downloads directory: {}", error))
     })?;
@@ -298,7 +294,7 @@ fn save_staged_archive_to_downloads(
         ))
     })?;
 
-    let target_path = download_dir.join(file_name);
+    let target_path = download_dir.join(&file_name);
     if target_path.exists() {
         return Err(DomainError::InvalidData(format!(
             "Export target already exists: {}",

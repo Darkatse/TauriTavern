@@ -9,13 +9,7 @@ pub mod github;
 pub mod http_client;
 pub mod http_client_pool;
 pub mod http_error;
-#[cfg(target_os = "ios")]
-pub mod ios_document_picker;
 pub mod ios_policy_cache;
-#[cfg(target_os = "ios")]
-pub mod ios_share_sheet;
-#[cfg(target_os = "ios")]
-pub mod ios_ui;
 #[cfg(target_os = "ios")]
 pub mod ios_webview;
 pub mod lan_sync;
@@ -40,5 +34,7 @@ pub mod user_data_dirs;
 pub mod user_data_paths;
 pub mod zipkit;
 
+#[cfg(test)]
+mod platform_boundary_contract_tests;
 #[cfg(test)]
 mod webview_js_dialogs_contract_tests;

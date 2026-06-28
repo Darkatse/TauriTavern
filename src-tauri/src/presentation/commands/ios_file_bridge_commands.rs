@@ -10,10 +10,10 @@ use tauri::{AppHandle, Manager, State, WebviewWindow};
 use crate::app::AppState;
 use crate::application::host_contract::IOS_EXPORT_STAGING_ROOT_NAME;
 use crate::domain::errors::DomainError;
-use crate::infrastructure::ios_document_picker::{
+use crate::platform::ios_document_picker::{
     PickDocumentResult, copy_picked_url_to_path, pick_data_archive, pick_skill_import_archive,
 };
-use crate::infrastructure::ios_share_sheet::share_file;
+use crate::platform::ios_share_sheet::share_file;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 

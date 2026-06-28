@@ -2,6 +2,7 @@ mod app;
 mod application;
 mod domain;
 mod infrastructure;
+mod platform;
 mod presentation;
 
 // This module is the Tauri host composition root.

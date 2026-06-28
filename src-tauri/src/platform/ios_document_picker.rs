@@ -15,7 +15,7 @@ use tauri::WebviewWindow;
 use tokio::sync::oneshot;
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::ios_ui::resolve_presenting_view_controller;
+use crate::platform::ios_ui::resolve_presenting_view_controller;
 
 const DATA_ARCHIVE_CONTENT_TYPES: &[&str] = &[
     "public.zip-archive",

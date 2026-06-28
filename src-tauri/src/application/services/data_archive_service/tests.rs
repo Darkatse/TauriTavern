@@ -51,11 +51,6 @@ impl DataArchiveExecutor for UnusedExecutor {
 struct UnusedFiles;
 
 impl DataArchiveFileGateway for UnusedFiles {
-    fn imports_root(&self) -> PathBuf {
-        unreachable!()
-    }
-
-    #[cfg(target_os = "ios")]
     fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError> {
         unreachable!()
     }
@@ -282,11 +277,6 @@ impl RecordingFiles {
 }
 
 impl DataArchiveFileGateway for RecordingFiles {
-    fn imports_root(&self) -> PathBuf {
-        PathBuf::from("/tmp/imports")
-    }
-
-    #[cfg(target_os = "ios")]
     fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError> {
         unreachable!()
     }

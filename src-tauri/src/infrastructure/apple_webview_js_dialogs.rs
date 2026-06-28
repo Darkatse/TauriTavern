@@ -160,7 +160,7 @@ mod platform {
         UIAlertAction, UIAlertActionStyle, UIAlertController, UIAlertControllerStyle, UITextField,
     };
 
-    use crate::infrastructure::ios_ui::resolve_presenting_view_controller;
+    use crate::platform::ios_ui::resolve_presenting_view_controller;
 
     pub(super) fn present_alert(message: &NSString, completion_handler: RcBlock<dyn Fn()>) {
         let presenting = match resolve_presenting_view_controller() {

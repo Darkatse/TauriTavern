@@ -91,10 +91,11 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 - 前端扩展入口：`src/scripts/extensions/data-migration/index.js`
 - Host Kernel 路由：`src/tauri/main/routes/extensions-routes.js`
 - iOS-only Tauri commands：`src-tauri/src/presentation/commands/ios_file_bridge_commands.rs`
-- iOS UIKit 封装：
-  - `src-tauri/src/infrastructure/ios_ui.rs`
-- `src-tauri/src/infrastructure/ios_document_picker.rs`
-- `src-tauri/src/infrastructure/ios_share_sheet.rs`
+- iOS UIKit / picker / share host adapter：
+  - `src-tauri/src/platform/ios_ui.rs`
+  - `src-tauri/src/platform/ios_document_picker.rs`
+  - `src-tauri/src/platform/ios_share_sheet.rs`
+- Data Archive import staging 只暴露 `prepare_data_archive_import_target_path`；不要恢复旧的 `get_data_archive_imports_root`，避免把 staging root 交给前端自行拼路径。
 
 ### 2.5 macOS 元数据导致的“布局歧义”问题
 

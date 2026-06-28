@@ -205,11 +205,6 @@ impl DataArchiveService {
         Ok(job_id)
     }
 
-    pub fn imports_root(&self) -> PathBuf {
-        self.files.imports_root()
-    }
-
-    #[cfg(target_os = "ios")]
     pub fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError> {
         self.files.prepare_incoming_import_archive_path()
     }

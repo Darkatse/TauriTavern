@@ -64,8 +64,6 @@ pub(crate) trait DataArchiveExecutor: Send + Sync {
 }
 
 pub(crate) trait DataArchiveFileGateway: Send + Sync {
-    fn imports_root(&self) -> PathBuf;
-    #[cfg(target_os = "ios")]
     fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError>;
     fn prepare_import_archive(
         &self,
