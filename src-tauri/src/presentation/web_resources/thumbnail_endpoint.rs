@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use mime_guess::from_path;
 use tauri::http::StatusCode;
 
+use crate::application::services::host_resource_service::path_guard::validate_path_segment;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::thumbnail_cache::{
     ThumbnailAsset, read_thumbnail_or_original_sync,
@@ -272,7 +273,7 @@ fn parse_thumbnail_query(query: &str) -> Result<(String, String), ThumbnailQuery
         return Err(ThumbnailQueryError::MissingFile);
     }
 
-    if !crate::infrastructure::request_path::validate_path_segment(&file) {
+    if !validate_path_segment(&file) {
         return Err(ThumbnailQueryError::ForbiddenFile);
     }
 

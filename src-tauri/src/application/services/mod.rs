@@ -26,6 +26,7 @@ pub mod extension_service;
 pub mod extension_store_service;
 pub mod group_chat_service;
 pub mod group_service;
+pub mod host_resource_service;
 pub mod image_metadata_service;
 pub mod lan_sync_service;
 pub mod llm_connection_service;

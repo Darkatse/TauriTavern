@@ -8,6 +8,9 @@ use tauri::State;
 use tokio::fs;
 
 use crate::app::AppState;
+use crate::application::services::host_resource_service::routes::{
+    UserDataAssetKind, parse_user_data_asset_request_path,
+};
 use crate::domain::models::filename::sanitize_filename;
 use crate::presentation::commands::helpers::log_command;
 use crate::presentation::errors::CommandError;
@@ -312,13 +315,11 @@ fn normalize_user_image_reference(raw: &str) -> Result<PathBuf, CommandError> {
         format!("/{}", normalized)
     };
 
-    let parsed = crate::infrastructure::user_data_paths::parse_user_data_asset_request_path(
-        normalized.as_str(),
-    )
-    .map_err(|_| CommandError::BadRequest("Invalid path".to_string()))?
-    .ok_or_else(|| CommandError::BadRequest("Invalid path".to_string()))?;
+    let parsed = parse_user_data_asset_request_path(normalized.as_str())
+        .map_err(|_| CommandError::BadRequest("Invalid path".to_string()))?
+        .ok_or_else(|| CommandError::BadRequest("Invalid path".to_string()))?;
 
-    if parsed.kind != crate::infrastructure::user_data_paths::UserDataAssetKind::UserImage {
+    if parsed.kind != UserDataAssetKind::UserImage {
         return Err(CommandError::BadRequest("Invalid path".to_string()));
     }
 

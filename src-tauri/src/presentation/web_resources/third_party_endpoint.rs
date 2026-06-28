@@ -3,12 +3,14 @@ use std::path::Path;
 
 use tauri::http::StatusCode;
 
-use crate::domain::errors::DomainError;
-use crate::infrastructure::css_compat::{contains_layer_keyword, flatten_css_layers};
-use crate::infrastructure::third_party_assets::resolve_third_party_extension_asset;
-use crate::infrastructure::third_party_paths::{
+use crate::application::services::host_resource_service::css_compat::{
+    contains_layer_keyword, flatten_css_layers,
+};
+use crate::application::services::host_resource_service::routes::{
     THIRD_PARTY_EXTENSION_ROUTE_PREFIX, ThirdPartyPathError, parse_third_party_asset_request_path,
 };
+use crate::domain::errors::DomainError;
+use crate::infrastructure::third_party_assets::resolve_third_party_extension_asset;
 use crate::presentation::web_resources::response_helpers::{
     respond_bytes, respond_method_not_allowed, respond_no_content, respond_plain_text,
 };

@@ -16,7 +16,6 @@ use crate::domain::repositories::image_metadata_repository::ImageMetadataReposit
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::write_json_file;
 use crate::infrastructure::persistence::thumbnail_cache::is_animated_image;
-use crate::infrastructure::request_path;
 use crate::infrastructure::thumbnails::{BACKGROUND_THUMBNAIL_HEIGHT, BACKGROUND_THUMBNAIL_WIDTH};
 
 const METADATA_FILE_NAME: &str = "image-metadata.json";
@@ -208,7 +207,7 @@ impl FileImageMetadataRepository {
     }
 
     fn existing_background_asset_relative_path(filename: &str) -> Result<String, DomainError> {
-        if !request_path::validate_path_segment(filename) {
+        if !Self::validate_background_asset_path_segment(filename) {
             return Err(DomainError::InvalidData(format!(
                 "Invalid background filename: {}",
                 filename
@@ -232,7 +231,7 @@ impl FileImageMetadataRepository {
             || parts[0] != "backgrounds"
             || parts
                 .iter()
-                .any(|part| !request_path::validate_path_segment(part))
+                .any(|part| !Self::validate_background_asset_path_segment(part))
         {
             return Err(DomainError::InvalidData(format!(
                 "Invalid background path: {}",
@@ -241,6 +240,24 @@ impl FileImageMetadataRepository {
         }
 
         Ok(parts.join("/"))
+    }
+
+    fn is_forbidden_background_asset_path_segment_char(character: char) -> bool {
+        matches!(
+            character,
+            '\u{0000}'..='\u{001F}' | '\u{007F}' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+        )
+    }
+
+    fn validate_background_asset_path_segment(segment: &str) -> bool {
+        !(segment.is_empty()
+            || segment == "."
+            || segment == ".."
+            || segment.contains('/')
+            || segment.contains('\\')
+            || segment
+                .chars()
+                .any(Self::is_forbidden_background_asset_path_segment_char))
     }
 
     fn filename_from_background_relative_path(relative_path: &str) -> String {
@@ -906,6 +923,20 @@ mod tests {
 
         let repository = FileImageMetadataRepository::new(user_root, backgrounds_dir);
         (temp, repository)
+    }
+
+    #[test]
+    fn background_asset_segments_keep_legacy_mojibake_contract() {
+        assert!(
+            FileImageMetadataRepository::validate_background_asset_path_segment(
+                "ã\u{80}\u{90}.png"
+            )
+        );
+        assert!(!FileImageMetadataRepository::validate_background_asset_path_segment(".."));
+        assert!(!FileImageMetadataRepository::validate_background_asset_path_segment("a/b.png"));
+        assert!(
+            !FileImageMetadataRepository::validate_background_asset_path_segment("bad\u{001F}.png")
+        );
     }
 
     #[test]

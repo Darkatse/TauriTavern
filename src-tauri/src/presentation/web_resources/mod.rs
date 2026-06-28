@@ -1,4 +1,3 @@
-mod byte_range;
 #[cfg(any(dev, debug_assertions))]
 pub mod dev_protocol_endpoint;
 #[cfg(any(dev, debug_assertions))]

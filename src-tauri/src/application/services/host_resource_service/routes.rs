@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use super::path_guard::{decode_request_segment, validate_path_segment};
+
 pub(crate) const CHARACTERS_ROUTE_PREFIX: &str = "/characters/";
 pub(crate) const USER_AVATARS_ROUTE_PREFIX: &str = "/User Avatars/";
 pub(crate) const USER_AVATARS_ROUTE_PREFIX_ENCODED: &str = "/User%20Avatars/";
@@ -7,6 +9,7 @@ pub(crate) const BACKGROUNDS_ROUTE_PREFIX: &str = "/backgrounds/";
 pub(crate) const ASSETS_ROUTE_PREFIX: &str = "/assets/";
 pub(crate) const USER_IMAGES_ROUTE_PREFIX: &str = "/user/images/";
 pub(crate) const USER_FILES_ROUTE_PREFIX: &str = "/user/files/";
+pub(crate) const THIRD_PARTY_EXTENSION_ROUTE_PREFIX: &str = "/scripts/extensions/third-party/";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UserDataAssetKind {
@@ -27,6 +30,20 @@ pub(crate) struct UserDataAssetRequestPath {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UserDataPathError {
+    MissingAssetPath,
+    InvalidPath,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ThirdPartyAssetRequestPath {
+    pub(crate) extension_folder: String,
+    pub(crate) relative_path: PathBuf,
+    pub(crate) relative_path_display: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThirdPartyPathError {
+    MissingExtension,
     MissingAssetPath,
     InvalidPath,
 }
@@ -68,10 +85,10 @@ pub(crate) fn parse_user_data_asset_request_path(
             continue;
         }
 
-        let segment = crate::infrastructure::request_path::decode_request_segment(raw_segment)
-            .map_err(|_| UserDataPathError::InvalidPath)?;
+        let segment =
+            decode_request_segment(raw_segment).map_err(|_| UserDataPathError::InvalidPath)?;
 
-        if !crate::infrastructure::request_path::validate_path_segment(&segment) {
+        if !validate_path_segment(&segment) {
             return Err(UserDataPathError::InvalidPath);
         }
 
@@ -92,6 +109,61 @@ pub(crate) fn parse_user_data_asset_request_path(
         relative_path,
         relative_path_display: relative_segments.join("/"),
     }))
+}
+
+pub(crate) fn parse_third_party_asset_request_path(
+    path: &str,
+) -> Result<Option<ThirdPartyAssetRequestPath>, ThirdPartyPathError> {
+    let suffix = match path.strip_prefix(THIRD_PARTY_EXTENSION_ROUTE_PREFIX) {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+
+    let mut raw_segments = suffix.split('/');
+    let extension_folder = decode_third_party_segment(
+        raw_segments
+            .next()
+            .ok_or(ThirdPartyPathError::MissingExtension)?,
+    )?;
+    validate_third_party_segment(&extension_folder)?;
+
+    let mut relative_segments = Vec::new();
+    for raw_segment in raw_segments {
+        if raw_segment.is_empty() {
+            continue;
+        }
+
+        let segment = decode_third_party_segment(raw_segment)?;
+        validate_third_party_segment(&segment)?;
+        relative_segments.push(segment);
+    }
+
+    if relative_segments.is_empty() {
+        return Err(ThirdPartyPathError::MissingAssetPath);
+    }
+
+    let mut relative_path = PathBuf::new();
+    for segment in &relative_segments {
+        relative_path.push(segment);
+    }
+
+    Ok(Some(ThirdPartyAssetRequestPath {
+        extension_folder,
+        relative_path,
+        relative_path_display: relative_segments.join("/"),
+    }))
+}
+
+fn decode_third_party_segment(segment: &str) -> Result<String, ThirdPartyPathError> {
+    decode_request_segment(segment).map_err(|_| ThirdPartyPathError::InvalidPath)
+}
+
+fn validate_third_party_segment(segment: &str) -> Result<(), ThirdPartyPathError> {
+    if validate_path_segment(segment) {
+        Ok(())
+    } else {
+        Err(ThirdPartyPathError::InvalidPath)
+    }
 }
 
 #[cfg(test)]
@@ -192,5 +264,62 @@ mod tests {
         assert_eq!(parsed.kind, UserDataAssetKind::UserImage);
         assert_eq!(parsed.relative_path, PathBuf::from("folders").join("a.png"));
         assert_eq!(parsed.relative_path_display, "folders/a.png");
+    }
+
+    #[test]
+    fn parses_valid_third_party_asset_path() {
+        let path = "/scripts/extensions/third-party/mobile/manifest.json";
+        let parsed = parse_third_party_asset_request_path(path)
+            .expect("parse")
+            .expect("should match");
+
+        assert_eq!(parsed.extension_folder, "mobile");
+        assert_eq!(parsed.relative_path, PathBuf::from("manifest.json"));
+        assert_eq!(parsed.relative_path_display, "manifest.json");
+    }
+
+    #[test]
+    fn parses_legacy_c1_third_party_asset_path_segments() {
+        let path = "/scripts/extensions/third-party/%C3%A3%C2%80%C2%90/%C3%A3%C2%80%C2%90.js";
+        let parsed = parse_third_party_asset_request_path(path)
+            .expect("parse")
+            .expect("should match");
+
+        assert_eq!(parsed.extension_folder, "ã\u{80}\u{90}");
+        assert_eq!(parsed.relative_path, PathBuf::from("ã\u{80}\u{90}.js"));
+        assert_eq!(parsed.relative_path_display, "ã\u{80}\u{90}.js");
+    }
+
+    #[test]
+    fn normalizes_redundant_third_party_relative_separators() {
+        let path = "/scripts/extensions/third-party/mobile//a.js";
+        let parsed = parse_third_party_asset_request_path(path)
+            .expect("parse")
+            .expect("should match");
+
+        assert_eq!(parsed.extension_folder, "mobile");
+        assert_eq!(parsed.relative_path, PathBuf::from("a.js"));
+        assert_eq!(parsed.relative_path_display, "a.js");
+    }
+
+    #[test]
+    fn rejects_third_party_dot_segments() {
+        let path = "/scripts/extensions/third-party/mobile/../a.js";
+        let result = parse_third_party_asset_request_path(path);
+        assert_eq!(result, Err(ThirdPartyPathError::InvalidPath));
+    }
+
+    #[test]
+    fn rejects_third_party_encoded_path_separators() {
+        let path = "/scripts/extensions/third-party/mobile/%2fsecret.js";
+        let result = parse_third_party_asset_request_path(path);
+        assert_eq!(result, Err(ThirdPartyPathError::InvalidPath));
+    }
+
+    #[test]
+    fn rejects_third_party_c0_control_segments() {
+        let path = "/scripts/extensions/third-party/mobile/bad%1F.js";
+        let result = parse_third_party_asset_request_path(path);
+        assert_eq!(result, Err(ThirdPartyPathError::InvalidPath));
     }
 }

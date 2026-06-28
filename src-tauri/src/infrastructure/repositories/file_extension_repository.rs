@@ -10,9 +10,6 @@ use crate::domain::models::extension::{
 use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::persistence::file_system::read_json_file;
-use crate::infrastructure::third_party_paths::{
-    parse_third_party_extension_folder_name, sanitize_third_party_extension_folder_name,
-};
 
 mod archive_zip;
 mod delete;
@@ -56,6 +53,52 @@ const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "tts",
 ];
 const SOURCE_METADATA_FILE: &str = ".tauritavern-source.json";
+const THIRD_PARTY_EXTENSION_NAME_PREFIX: &str = "third-party/";
+
+fn is_forbidden_extension_folder_char(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0000}'..='\u{001F}' | '\u{007F}' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+    )
+}
+
+fn is_valid_extension_folder_segment(segment: &str) -> bool {
+    !(segment.is_empty()
+        || segment == "."
+        || segment == ".."
+        || segment.contains('/')
+        || segment.contains('\\')
+        || segment.chars().any(is_forbidden_extension_folder_char))
+}
+
+fn parse_third_party_extension_folder_name(value: &str) -> Option<String> {
+    let normalized = value.trim().replace('\\', "/");
+    let normalized = normalized.trim_matches('/');
+    let normalized = normalized
+        .strip_prefix(THIRD_PARTY_EXTENSION_NAME_PREFIX)
+        .unwrap_or(normalized);
+
+    let mut segments = normalized.split('/');
+    let folder_name = segments.next()?;
+    if !is_valid_extension_folder_segment(folder_name) || segments.next().is_some() {
+        return None;
+    }
+
+    Some(folder_name.to_string())
+}
+
+fn sanitize_third_party_extension_folder_name(value: &str) -> Option<String> {
+    let sanitized = value
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => c,
+        })
+        .collect::<String>();
+
+    is_valid_extension_folder_segment(&sanitized).then_some(sanitized)
+}
 
 impl FileExtensionRepository {
     pub fn new(
@@ -99,13 +142,13 @@ impl FileExtensionRepository {
         &self,
         extension_name: &str,
     ) -> Result<String, DomainError> {
-        parse_third_party_extension_folder_name(extension_name).map_err(|_| {
+        parse_third_party_extension_folder_name(extension_name).ok_or_else(|| {
             DomainError::InvalidData(format!("Invalid extension name: {}", extension_name))
         })
     }
 
     fn install_folder_name_from_repo_name(repo_name: &str) -> Result<String, DomainError> {
-        sanitize_third_party_extension_folder_name(repo_name).map_err(|_| {
+        sanitize_third_party_extension_folder_name(repo_name).ok_or_else(|| {
             DomainError::InvalidData(format!("Invalid extension repository name: {}", repo_name))
         })
     }
@@ -218,5 +261,44 @@ impl ExtensionRepository for FileExtensionRepository {
         destination: &str,
     ) -> Result<(), DomainError> {
         move_op::move_extension(self, extension_name, source, destination).await
+    }
+}
+
+#[cfg(test)]
+mod extension_folder_name_tests {
+    use super::{
+        parse_third_party_extension_folder_name, sanitize_third_party_extension_folder_name,
+    };
+
+    #[test]
+    fn parses_extension_folder_name_with_optional_prefix() {
+        assert_eq!(
+            parse_third_party_extension_folder_name("third-party/mobile").as_deref(),
+            Some("mobile")
+        );
+        assert_eq!(
+            parse_third_party_extension_folder_name("/third-party/mobile/").as_deref(),
+            Some("mobile")
+        );
+        assert_eq!(
+            parse_third_party_extension_folder_name("mobile").as_deref(),
+            Some("mobile")
+        );
+    }
+
+    #[test]
+    fn rejects_nested_extension_identifier() {
+        assert_eq!(
+            parse_third_party_extension_folder_name("third-party/mobile/nested"),
+            None
+        );
+    }
+
+    #[test]
+    fn sanitizes_install_folder_name() {
+        assert_eq!(
+            sanitize_third_party_extension_folder_name(" mobile:ext? ").as_deref(),
+            Some("mobile_ext_")
+        );
     }
 }

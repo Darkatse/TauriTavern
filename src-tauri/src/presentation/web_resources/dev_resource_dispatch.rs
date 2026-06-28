@@ -2,11 +2,12 @@ use std::borrow::Cow;
 
 use tauri::http::StatusCode;
 
+use crate::application::services::host_resource_service::routes::{
+    THIRD_PARTY_EXTENSION_ROUTE_PREFIX, is_user_data_asset_route,
+};
 use crate::infrastructure::data_root_content_dirs::DataRootContentDirs;
 use crate::infrastructure::third_party_assets::ThirdPartyExtensionDirs;
-use crate::infrastructure::third_party_paths::THIRD_PARTY_EXTENSION_ROUTE_PREFIX;
 use crate::infrastructure::user_data_dirs::DefaultUserWebDirs;
-use crate::infrastructure::user_data_paths::is_user_data_asset_route;
 use crate::presentation::web_resources::response_helpers::respond_plain_text;
 use crate::presentation::web_resources::third_party_endpoint::handle_third_party_asset_web_request;
 use crate::presentation::web_resources::thumbnail_endpoint::{

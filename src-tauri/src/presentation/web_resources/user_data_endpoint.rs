@@ -4,12 +4,14 @@ use std::io::{Read, Seek};
 use tauri::http::StatusCode;
 use tauri::http::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, HeaderValue, RANGE};
 
-use crate::infrastructure::user_data_dirs::DefaultUserWebDirs;
-use crate::infrastructure::user_data_paths::{
+use crate::application::services::host_resource_service::range::{
+    RangeHeaderError, parse_single_range_header,
+};
+use crate::application::services::host_resource_service::routes::{
     UserDataAssetKind, UserDataPathError, is_user_data_asset_route,
     parse_user_data_asset_request_path,
 };
-use crate::presentation::web_resources::byte_range::{RangeHeaderError, parse_single_range_header};
+use crate::infrastructure::user_data_dirs::DefaultUserWebDirs;
 use crate::presentation::web_resources::response_helpers::{
     respond_bytes, respond_method_not_allowed, respond_no_content, respond_plain_text,
 };
