@@ -86,6 +86,7 @@ pub struct AppState {
     pub tt_sync_service: Arc<TtSyncService>,
     pub sync_automation_service: Arc<SyncAutomationService>,
     pub sync_automation_cancel: CancellationToken,
+    pub agent_run_retention_automation_cancel: CancellationToken,
     pub data_archive_service: Arc<DataArchiveService>,
     pub update_service: Arc<UpdateService>,
     pub native_regex_service: Arc<NativeRegexService>,
@@ -109,6 +110,7 @@ impl AppState {
 
         tracing::info!("Application initialized successfully");
         let sync_automation_cancel = CancellationToken::new();
+        let agent_run_retention_automation_cancel = CancellationToken::new();
 
         Ok(Self {
             character_service: services.character_service,
@@ -148,6 +150,7 @@ impl AppState {
             tt_sync_service: services.tt_sync_service,
             sync_automation_service: services.sync_automation_service,
             sync_automation_cancel,
+            agent_run_retention_automation_cancel,
             data_archive_service: services.data_archive_service,
             update_service: services.update_service,
             native_regex_service: services.native_regex_service,
@@ -187,7 +190,15 @@ pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) 
                     .state::<Arc<AppState>>()
                     .agent_run_retention_automation_service
                     .clone();
-                agent_run_retention_automation_service.start();
+                let agent_run_retention_automation_cancel = app_handle
+                    .state::<Arc<AppState>>()
+                    .agent_run_retention_automation_cancel
+                    .clone();
+                tauri::async_runtime::spawn(async move {
+                    agent_run_retention_automation_service
+                        .run(agent_run_retention_automation_cancel)
+                        .await;
+                });
 
                 match app_handle.emit("app-ready", ()) {
                     Ok(_) => tracing::debug!("Application is ready"),

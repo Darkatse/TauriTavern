@@ -6,6 +6,8 @@ pub mod agent_profile_service;
 pub mod agent_run_history_service;
 pub mod agent_run_retention_automation_service;
 pub mod agent_run_retention_planner;
+#[cfg(test)]
+pub(crate) mod agent_run_retention_test_support;
 pub mod agent_runtime_service;
 pub mod agent_tools;
 pub mod agent_workspace_lifecycle_service;

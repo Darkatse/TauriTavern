@@ -1,8 +1,8 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::Notify;
 use tokio::time::{Duration, sleep};
+use tokio_util::sync::CancellationToken;
 
 use crate::application::dto::agent_dto::{AgentApplyRunPruneDto, AgentRunPruneRetentionDto};
 use crate::application::errors::ApplicationError;
@@ -17,7 +17,6 @@ pub struct AgentRunRetentionAutomationService {
     settings_repository: Arc<dyn SettingsRepository>,
     run_history_service: Arc<AgentRunHistoryService>,
     notify: Notify,
-    started: AtomicBool,
 }
 
 impl AgentRunRetentionAutomationService {
@@ -29,19 +28,11 @@ impl AgentRunRetentionAutomationService {
             settings_repository,
             run_history_service,
             notify: Notify::new(),
-            started: AtomicBool::new(false),
         }
     }
 
-    pub fn start(self: &Arc<Self>) {
-        if self.started.swap(true, Ordering::AcqRel) {
-            return;
-        }
-
-        let service = self.clone();
-        tauri::async_runtime::spawn(async move {
-            service.scheduler_loop().await;
-        });
+    pub(crate) async fn run(self: Arc<Self>, cancel: CancellationToken) {
+        self.scheduler_loop(cancel).await;
     }
 
     pub fn notify_settings_changed(&self) {
@@ -86,24 +77,31 @@ impl AgentRunRetentionAutomationService {
         Ok(true)
     }
 
-    async fn scheduler_loop(self: Arc<Self>) {
+    async fn scheduler_loop(self: Arc<Self>, cancel: CancellationToken) {
         let mut delay = Duration::from_secs(AGENT_RUN_RETENTION_AUTO_COLD_START_DELAY_SECS);
 
         loop {
+            if cancel.is_cancelled() {
+                break;
+            }
+
             let enabled = match self.auto_prune_enabled().await {
                 Ok(enabled) => enabled,
                 Err(error) => {
                     tracing::warn!("Failed to load Agent run retention settings: {}", error);
-                    sleep(Duration::from_secs(
-                        AGENT_RUN_RETENTION_AUTO_RETRY_DELAY_SECS,
-                    ))
-                    .await;
+                    tokio::select! {
+                        _ = sleep(Duration::from_secs(AGENT_RUN_RETENTION_AUTO_RETRY_DELAY_SECS)) => {}
+                        _ = cancel.cancelled() => break,
+                    }
                     continue;
                 }
             };
 
             if !enabled {
-                self.notify.notified().await;
+                tokio::select! {
+                    _ = self.notify.notified() => {}
+                    _ = cancel.cancelled() => break,
+                }
                 delay = Duration::from_secs(AGENT_RUN_RETENTION_AUTO_COLD_START_DELAY_SECS);
                 continue;
             }
@@ -117,6 +115,7 @@ impl AgentRunRetentionAutomationService {
                     delay = Duration::from_secs(AGENT_RUN_RETENTION_AUTO_COLD_START_DELAY_SECS);
                     continue;
                 }
+                _ = cancel.cancelled() => break,
             }
 
             match self.run_once_if_enabled().await {
@@ -145,23 +144,19 @@ impl AgentRunRetentionAutomationService {
 mod tests {
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
-    use serde_json::Value;
-    use std::path::PathBuf;
-    use tokio::fs;
 
     use super::*;
+    use crate::application::services::agent_run_retention_test_support::{
+        TestAgentRunRepository, TestSettingsRepository,
+    };
     use crate::application::services::agent_workspace_lifecycle_service::AgentRunActivity;
     use crate::domain::models::agent::{
-        AgentChatRef, AgentRun, AgentRunEventLevel, AgentRunPresentation, AgentRunSkillScopeRefs,
-        AgentRunStatus,
+        AgentChatRef, AgentRun, AgentRunPresentation, AgentRunSkillScopeRefs, AgentRunStatus,
     };
     use crate::domain::models::settings::{
         AgentRunRetentionSettings, AgentSettings, TauriTavernSettings,
     };
     use crate::domain::repositories::agent_run_repository::AgentRunRepository;
-    use crate::domain::repositories::settings_repository::SettingsRepository;
-    use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
-    use crate::infrastructure::repositories::file_settings_repository::FileSettingsRepository;
 
     struct TestRunActivity;
 
@@ -185,17 +180,6 @@ mod tests {
             .with_timezone(&Utc)
     }
 
-    fn temp_root(label: &str) -> PathBuf {
-        let suffix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time should be after unix epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "tauritavern-agent-run-retention-auto-{label}-{}-{suffix}",
-            std::process::id()
-        ))
-    }
-
     fn completed_run(id: &str) -> AgentRun {
         AgentRun {
             id: id.to_string(),
@@ -217,36 +201,9 @@ mod tests {
         }
     }
 
-    async fn seed_heavy_file(root: &std::path::Path, run: &AgentRun) {
-        let input_dir = root
-            .join("chats")
-            .join(&run.workspace_id)
-            .join("runs")
-            .join(&run.id)
-            .join("input");
-        fs::create_dir_all(&input_dir)
-            .await
-            .expect("create heavy input dir");
-        fs::write(input_dir.join("prompt_snapshot.json"), b"heavy")
-            .await
-            .expect("write heavy input file");
-    }
-
-    async fn append_terminal_event(repository: &FileAgentRepository, run: &AgentRun) {
-        repository
-            .append_event(
-                run.id.as_str(),
-                AgentRunEventLevel::Info,
-                "run_completed",
-                Value::Null,
-            )
-            .await
-            .expect("append terminal event");
-    }
-
     fn build_service(
-        settings_repository: Arc<FileSettingsRepository>,
-        run_repository: Arc<FileAgentRepository>,
+        settings_repository: Arc<TestSettingsRepository>,
+        run_repository: Arc<TestAgentRunRepository>,
     ) -> Arc<AgentRunRetentionAutomationService> {
         let history_service = Arc::new(AgentRunHistoryService::new(
             run_repository,
@@ -261,10 +218,8 @@ mod tests {
 
     #[tokio::test]
     async fn run_once_skips_when_auto_prune_is_disabled() {
-        let agent_root = temp_root("agent-disabled");
-        let settings_root = temp_root("settings-disabled");
-        let run_repository = Arc::new(FileAgentRepository::new(agent_root.clone()));
-        let settings_repository = Arc::new(FileSettingsRepository::new(settings_root.clone()));
+        let run_repository = TestAgentRunRepository::new();
+        let settings_repository = TestSettingsRepository::new();
 
         let service = build_service(settings_repository, run_repository);
         let ran = service
@@ -273,17 +228,12 @@ mod tests {
             .expect("run once should load default settings");
 
         assert!(!ran);
-
-        let _ = fs::remove_dir_all(agent_root).await;
-        let _ = fs::remove_dir_all(settings_root).await;
     }
 
     #[tokio::test]
     async fn run_once_applies_retention_when_auto_prune_is_enabled() {
-        let agent_root = temp_root("agent-enabled");
-        let settings_root = temp_root("settings-enabled");
-        let run_repository = Arc::new(FileAgentRepository::new(agent_root.clone()));
-        let settings_repository = Arc::new(FileSettingsRepository::new(settings_root.clone()));
+        let run_repository = TestAgentRunRepository::new();
+        let settings_repository = TestSettingsRepository::new();
 
         let mut settings = TauriTavernSettings::default();
         settings.agent = AgentSettings {
@@ -294,32 +244,21 @@ mod tests {
             },
         };
         settings_repository
-            .save_tauritavern_settings(&settings)
-            .await
-            .expect("save settings");
+            .store_tauritavern_settings(settings)
+            .await;
 
         let run = completed_run("run_auto_prune_delete");
         run_repository.create_run(&run).await.expect("create run");
-        append_terminal_event(&run_repository, &run).await;
-        seed_heavy_file(&agent_root, &run).await;
+        run_repository.append_terminal_event_for_run(&run).await;
+        run_repository.add_heavy_artifact(&run, 5).await;
 
-        let service = build_service(settings_repository, run_repository);
+        let service = build_service(settings_repository, run_repository.clone());
         let ran = service
             .run_once_if_enabled()
             .await
             .expect("run once should apply retention");
 
         assert!(ran);
-        assert!(
-            !agent_root
-                .join("chats")
-                .join(&run.workspace_id)
-                .join("runs")
-                .join(&run.id)
-                .exists()
-        );
-
-        let _ = fs::remove_dir_all(agent_root).await;
-        let _ = fs::remove_dir_all(settings_root).await;
+        assert!(!run_repository.has_run(&run.id).await);
     }
 }
