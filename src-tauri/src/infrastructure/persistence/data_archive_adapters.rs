@@ -55,6 +55,7 @@ impl DataArchiveExecutor for FileDataArchiveExecutor {
         report_progress: &mut dyn FnMut(&str, f32, &str),
         is_cancelled: &dyn Fn() -> bool,
     ) -> Result<ArchiveExportExecutionReport, DomainError> {
+        let file_name = request.file_name;
         let result = run_export_data_archive(
             &request.data_root,
             &request.output_path,
@@ -63,7 +64,7 @@ impl DataArchiveExecutor for FileDataArchiveExecutor {
         )?;
 
         Ok(ArchiveExportExecutionReport {
-            file_name: result.file_name,
+            file_name,
             archive_path: result.archive_path,
         })
     }
@@ -164,17 +165,23 @@ impl DataArchiveFileGateway for TauriDataArchiveFileGateway {
         })
     }
 
-    fn prepare_export_archive(&self) -> Result<ExportArchiveExecutionRequest, DomainError> {
+    fn prepare_export_archive(
+        &self,
+        job_id: &str,
+        protected_paths: &[PathBuf],
+    ) -> Result<ExportArchiveExecutionRequest, DomainError> {
         let runtime_paths = self.app_handle.state::<RuntimePaths>();
         let export_root = runtime_paths.archive_exports_root.clone();
         fs::create_dir_all(&export_root).map_err(|error| {
             DomainError::InternalError(format!("Failed to create export directory: {}", error))
         })?;
-        cleanup_stale_exports(&export_root);
+        cleanup_stale_exports(&export_root, protected_paths);
+        let file_name = default_export_file_name();
 
         Ok(ExportArchiveExecutionRequest {
             data_root: runtime_paths.data_root.clone(),
-            output_path: export_root.join(default_export_file_name()),
+            output_path: export_root.join(full_export_staging_file_name(job_id)),
+            file_name,
         })
     }
 
@@ -182,13 +189,14 @@ impl DataArchiveFileGateway for TauriDataArchiveFileGateway {
         &self,
         handle: &str,
         include_secrets: bool,
+        protected_paths: &[PathBuf],
     ) -> Result<UserBackupArchiveTarget, DomainError> {
         let runtime_paths = self.app_handle.state::<RuntimePaths>();
         let export_root = resolve_user_backup_export_root(&self.app_handle, &runtime_paths)?;
         fs::create_dir_all(&export_root).map_err(|error| {
             DomainError::InternalError(format!("Failed to create export directory: {}", error))
         })?;
-        cleanup_stale_exports(&export_root);
+        cleanup_stale_exports(&export_root, protected_paths);
 
         let (handle, user_root) = resolve_user_backup_root(&runtime_paths.data_root, handle)?;
         let file_name = default_user_backup_file_name(&handle);
@@ -213,8 +221,20 @@ impl DataArchiveFileGateway for TauriDataArchiveFileGateway {
     }
 
     fn cleanup_export(&self, archive_path: &Path) -> Result<(), DomainError> {
-        remove_file_if_exists(archive_path, "cleanup export archive");
-        Ok(())
+        fs::remove_file(archive_path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                DomainError::NotFound(format!(
+                    "Export archive file not found: {}",
+                    archive_path.display()
+                ))
+            } else {
+                DomainError::InternalError(format!(
+                    "Failed to cleanup export archive {}: {}",
+                    archive_path.display(),
+                    error
+                ))
+            }
+        })
     }
 
     fn save_export(&self, archive_path: &Path, file_name: &str) -> Result<PathBuf, DomainError> {
@@ -495,6 +515,10 @@ fn default_user_backup_file_name(handle: &str) -> String {
     format!("{}-{}.zip", handle, Utc::now().format("%Y%m%d-%H%M%S"))
 }
 
+fn full_export_staging_file_name(job_id: &str) -> String {
+    format!("export-{}.zip", job_id)
+}
+
 fn prepare_import_archive_path(
     source_archive_path: &Path,
     workspace_root: &Path,
@@ -545,7 +569,7 @@ fn remove_file_if_exists(path: &Path, operation: &str) {
     }
 }
 
-fn cleanup_stale_exports(export_root: &Path) {
+fn cleanup_stale_exports(export_root: &Path, protected_paths: &[PathBuf]) {
     let Ok(entries) = fs::read_dir(export_root) else {
         return;
     };
@@ -555,6 +579,9 @@ fn cleanup_stale_exports(export_root: &Path) {
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file() {
+            continue;
+        }
+        if protected_paths.iter().any(|protected| protected == &path) {
             continue;
         }
 
@@ -583,5 +610,50 @@ fn cleanup_stale_exports(export_root: &Path) {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime};
+
+    use filetime::{FileTime, set_file_mtime};
+    use uuid::Uuid;
+
+    use super::*;
+
+    fn temp_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-adapters-{}-{}",
+            name,
+            Uuid::new_v4().simple()
+        ))
+    }
+
+    fn make_stale(path: &Path) {
+        let stale_time = FileTime::from_system_time(
+            SystemTime::now() - EXPORT_RETENTION - Duration::from_secs(1),
+        );
+        set_file_mtime(path, stale_time).expect("set file mtime");
+    }
+
+    #[test]
+    fn cleanup_stale_exports_keeps_protected_active_artifact() {
+        let root = temp_root("protected-export");
+        fs::create_dir_all(&root).expect("create export root");
+        let protected = root.join("export-active.zip");
+        let stale = root.join("export-stale.zip");
+        fs::write(&protected, b"active").expect("write protected export");
+        fs::write(&stale, b"stale").expect("write stale export");
+        make_stale(&protected);
+        make_stale(&stale);
+
+        cleanup_stale_exports(&root, &[protected.clone()]);
+
+        assert!(protected.is_file());
+        assert!(!stale.exists());
+
+        fs::remove_dir_all(root).expect("cleanup temp root");
     }
 }

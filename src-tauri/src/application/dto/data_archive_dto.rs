@@ -11,12 +11,20 @@ pub const DATA_ARCHIVE_STATE_CANCELLED: &str = "cancelled";
 pub const DATA_ARCHIVE_KIND_IMPORT: &str = "import";
 pub const DATA_ARCHIVE_KIND_EXPORT: &str = "export";
 
+pub const DATA_ARCHIVE_ARTIFACT_AVAILABLE: &str = "available";
+pub const DATA_ARCHIVE_ARTIFACT_DISPOSED: &str = "disposed";
+pub const DATA_ARCHIVE_ARTIFACT_MISSING: &str = "missing";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DataArchiveJobResult {
     pub source_users: Vec<String>,
     pub target_user: Option<String>,
     pub file_name: Option<String>,
     pub archive_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -85,6 +93,8 @@ mod tests {
                 target_user: None,
                 file_name: Some("tauritavern-data.zip".to_string()),
                 archive_path: Some("/tmp/tauritavern-data.zip".to_string()),
+                artifact_state: Some(DATA_ARCHIVE_ARTIFACT_AVAILABLE.to_string()),
+                saved_path: None,
             }),
             error: None,
             local_applied: None,
@@ -106,7 +116,8 @@ mod tests {
                     "source_users": [],
                     "target_user": null,
                     "file_name": "tauritavern-data.zip",
-                    "archive_path": "/tmp/tauritavern-data.zip"
+                    "archive_path": "/tmp/tauritavern-data.zip",
+                    "artifact_state": "available"
                 },
                 "error": null,
                 "started_at": "2026-06-27T00:00:00Z",

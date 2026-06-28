@@ -105,6 +105,26 @@ pub fn cleanup_export_data_archive(
 }
 
 #[tauri::command]
+pub fn finalize_export_data_archive_delivery(
+    app_state: State<'_, Arc<AppState>>,
+    job_id: String,
+    saved_path: Option<String>,
+) -> Result<Option<String>, CommandError> {
+    log_command(format!("finalize_export_data_archive_delivery {}", job_id));
+
+    let saved_target = saved_path
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty());
+
+    app_state
+        .data_archive_service
+        .finalize_export_delivery(&job_id, saved_target)
+        .map_err(map_command_error(
+            "Failed to finalize export data archive delivery",
+        ))
+}
+
+#[tauri::command]
 pub async fn export_user_backup_archive(
     app_state: State<'_, Arc<AppState>>,
     handle: String,

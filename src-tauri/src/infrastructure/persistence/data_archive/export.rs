@@ -1,5 +1,5 @@
 use chrono::Utc;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
 use zip::write::SimpleFileOptions as FileOptions;
@@ -93,7 +93,10 @@ fn run_export_archive(
         .compression_method(CompressionMethod::Stored)
         .unix_permissions(0o755);
 
-    let output_file = File::create(output_path)
+    let output_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output_path)
         .map_err(|error| internal_error("Failed to create export archive file", error))?;
     let buffered_output = BufWriter::with_capacity(FILE_IO_BUFFER_BYTES, output_file);
     let mut writer = ZipWriter::new(buffered_output);
@@ -131,11 +134,6 @@ fn run_export_archive(
     report_progress("finalizing", 100.0, "Export completed");
 
     Ok(DataArchiveExportResult {
-        file_name: output_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("tauritavern-data.zip")
-            .to_string(),
         archive_path: output_path.to_path_buf(),
     })
 }
@@ -307,9 +305,18 @@ fn report_export_progress(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::fs;
+    use std::path::{Path, PathBuf};
 
     use super::*;
+
+    fn temp_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-export-{}-{}",
+            name,
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
 
     #[test]
     fn user_backup_filter_excludes_secret_files_when_secret_export_is_disabled() {
@@ -349,5 +356,27 @@ mod tests {
             Path::new("backups/secrets_migration_123.json"),
             true
         ));
+    }
+
+    #[test]
+    fn export_refuses_to_overwrite_existing_archive() {
+        let root = temp_root("existing-output");
+        let source_root = root.join("source");
+        let output_path = root.join("export.zip");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::write(source_root.join("settings.json"), b"{}").expect("write source file");
+        fs::write(&output_path, b"keep me").expect("write existing output");
+
+        let mut report_progress = |_stage: &str, _progress_percent: f32, _message: &str| {};
+        let result =
+            run_export_data_archive(&source_root, &output_path, &mut report_progress, &|| false);
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read(&output_path).expect("read existing output"),
+            b"keep me"
+        );
+
+        fs::remove_dir_all(root).expect("cleanup temp root");
     }
 }

@@ -5,8 +5,17 @@ function parseJobId(value) {
     return jobId || '';
 }
 
+function errorMessage(error) {
+    return error instanceof Error ? error.message : String(error || '');
+}
+
+function isAndroidExportDestinationSelectionCancelled(error) {
+    return errorMessage(error) === 'Export archive destination selection cancelled';
+}
+
 export function registerExtensionRoutes(router, context, { jsonResponse }) {
     const iosRuntime = isIosRuntime();
+    const activeAndroidExportSaves = new Set();
 
     async function startImportJobFromFileInfo(fileInfo) {
         if (!fileInfo?.filePath) {
@@ -51,10 +60,45 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
             };
         }
 
+        const artifactState = String(status?.result?.artifact_state || 'available');
+        if (artifactState === 'disposed') {
+            return {
+                error: jsonResponse({
+                    error: 'Export archive has already been handled',
+                    saved_target: String(status?.result?.saved_path || ''),
+                }, 409),
+                status: null,
+            };
+        }
+        if (artifactState === 'missing') {
+            return {
+                error: jsonResponse({ error: 'Export archive is missing' }, 410),
+                status: null,
+            };
+        }
+        if (artifactState !== 'available') {
+            return {
+                error: jsonResponse({ error: `Invalid export artifact state: ${artifactState}` }, 500),
+                status: null,
+            };
+        }
+
         return {
             error: null,
             status,
         };
+    }
+
+    async function finalizeExportDelivery(jobId, savedTarget = '') {
+        try {
+            const finalizationError = await context.safeInvoke('finalize_export_data_archive_delivery', {
+                job_id: jobId,
+                saved_path: savedTarget || null,
+            });
+            return finalizationError ? String(finalizationError) : null;
+        } catch (error) {
+            return errorMessage(error);
+        }
     }
 
     router.all('/api/extensions/discover', async () => {
@@ -197,26 +241,51 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
         if (!jobId) {
             return jsonResponse({ error: 'Missing job id' }, 400);
         }
-
-        const { error, status } = await loadCompletedExportJobStatus(jobId);
-        if (error) {
-            return error;
+        if (activeAndroidExportSaves.has(jobId)) {
+            return jsonResponse({ error: 'Export archive is already being saved' }, 409);
         }
 
-        const archivePath = String(status?.result?.archive_path || '').trim();
-        if (!archivePath) {
-            return jsonResponse({ error: 'Export archive path is missing' }, 500);
+        activeAndroidExportSaves.add(jobId);
+        try {
+            const { error, status } = await loadCompletedExportJobStatus(jobId);
+            if (error) {
+                return error;
+            }
+
+            const archivePath = String(status?.result?.archive_path || '').trim();
+            if (!archivePath) {
+                return jsonResponse({ error: 'Export archive path is missing' }, 500);
+            }
+
+            let saved;
+            try {
+                saved = await context.saveAndroidExportArchive(
+                    archivePath,
+                    String(status?.result?.file_name || 'tauritavern-data.zip'),
+                );
+            } catch (error) {
+                if (!isAndroidExportDestinationSelectionCancelled(error)) {
+                    throw error;
+                }
+
+                return jsonResponse({
+                    ok: true,
+                    cancelled: true,
+                    saved_target: '',
+                    cleanup_error: await finalizeExportDelivery(jobId),
+                });
+            }
+
+            const savedTarget = String(saved?.savedTarget || '');
+
+            return jsonResponse({
+                ok: true,
+                saved_target: savedTarget,
+                cleanup_error: await finalizeExportDelivery(jobId, savedTarget),
+            });
+        } finally {
+            activeAndroidExportSaves.delete(jobId);
         }
-
-        const saved = await context.saveAndroidExportArchive(
-            archivePath,
-            String(status?.result?.file_name || 'tauritavern-data.zip'),
-        );
-
-        return jsonResponse({
-            ok: true,
-            saved_target: String(saved?.savedTarget || ''),
-        });
     });
 
     router.post('/api/extensions/data-migration/export/save', async ({ body }) => {
@@ -245,6 +314,11 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
             const jobId = parseJobId(body?.job_id);
             if (!jobId) {
                 return jsonResponse({ error: 'Missing job id' }, 400);
+            }
+
+            const { error } = await loadCompletedExportJobStatus(jobId);
+            if (error) {
+                return error;
             }
 
             const result = await context.safeInvoke('ios_share_export_data_archive', {

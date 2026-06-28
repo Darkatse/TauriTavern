@@ -146,7 +146,9 @@ async function saveExportArchive(jobId) {
         const payload = await response.json();
         return {
             mode: 'mobile-native',
+            cancelled: Boolean(payload?.cancelled),
             savedPath: String(payload?.saved_target || ''),
+            cleanupError: payload?.cleanup_error ? String(payload.cleanup_error) : null,
         };
     }
 
@@ -187,19 +189,6 @@ async function saveExportArchive(jobId) {
         mode: 'desktop-native',
         savedPath: String(payload?.saved_target || ''),
     };
-}
-
-async function cleanupExportArchive(jobId) {
-    const response = await fetch('/api/extensions/data-migration/export/cleanup', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ job_id: jobId }),
-    });
-    if (!response.ok) {
-        throw new Error(await readFailureMessage(response));
-    }
 }
 
 function hasActiveJob() {
@@ -513,9 +502,14 @@ async function runMigrationJob(kind, startJob) {
                 }
 
                 if (saveResult.mode === 'mobile-native') {
-                    void cleanupExportArchive(jobId).catch((error) => {
-                        console.warn('Failed to cleanup export archive:', error);
-                    });
+                    if (saveResult.cleanupError) {
+                        toastr.warning(saveResult.cleanupError, t`Export cleanup failed`);
+                    }
+                    if (saveResult.cancelled) {
+                        toastr.info(t`Export cancelled`);
+                        setStatusText(t`Export cancelled`);
+                        return;
+                    }
                 }
 
                 const savedPath = saveResult.savedPath;

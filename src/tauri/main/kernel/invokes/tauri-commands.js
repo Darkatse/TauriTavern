@@ -61,6 +61,7 @@ export {};
  *   | 'export_character_content'
  *   | 'export_user_backup_archive'
  *   | 'export_skill'
+ *   | 'finalize_export_data_archive_delivery'
  *   | 'find_secret'
  *   | 'generate_chat_completion'
  *   | 'get_all_background_metadata'

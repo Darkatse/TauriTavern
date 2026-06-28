@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use crate::application::dto::data_archive_dto::{
+    DATA_ARCHIVE_ARTIFACT_AVAILABLE, DATA_ARCHIVE_ARTIFACT_DISPOSED, DATA_ARCHIVE_ARTIFACT_MISSING,
     DATA_ARCHIVE_KIND_EXPORT, DATA_ARCHIVE_KIND_IMPORT, DATA_ARCHIVE_STATE_CANCELLED,
     DATA_ARCHIVE_STATE_COMPLETED, DATA_ARCHIVE_STATE_FAILED, DATA_ARCHIVE_STATE_PENDING,
     DATA_ARCHIVE_STATE_RUNNING, DataArchiveJobResult, DataArchiveJobStatus,
@@ -50,6 +51,23 @@ impl DataArchiveJobRegistry {
             .cloned()
             .ok_or_else(|| DomainError::NotFound(format!("Data archive job not found: {}", job_id)))
     }
+
+    pub(crate) fn protected_export_artifact_paths(&self) -> Result<Vec<PathBuf>, DomainError> {
+        let jobs = self
+            .jobs
+            .lock()
+            .map_err(|_| DomainError::InternalError("Failed to lock job registry".to_string()))?;
+        let handles = jobs.values().cloned().collect::<Vec<_>>();
+        drop(jobs);
+
+        let mut paths = Vec::new();
+        for job in handles {
+            if let Some(path) = job.protected_export_artifact_path()? {
+                paths.push(path);
+            }
+        }
+        Ok(paths)
+    }
 }
 
 impl Drop for DataArchiveJobRegistry {
@@ -64,6 +82,7 @@ impl Drop for DataArchiveJobRegistry {
 
 pub(crate) struct DataArchiveJobHandle {
     status: Mutex<DataArchiveJobStatus>,
+    export_artifact_path: Mutex<Option<PathBuf>>,
     cancel_requested: AtomicBool,
 }
 
@@ -84,7 +103,15 @@ impl DataArchiveJobHandle {
                 started_at: Utc::now().to_rfc3339(),
                 finished_at: None,
             }),
+            export_artifact_path: Mutex::new(None),
             cancel_requested: AtomicBool::new(false),
+        }
+    }
+
+    pub(crate) fn new_export(job_id: &str, artifact_path: PathBuf) -> Self {
+        Self {
+            export_artifact_path: Mutex::new(Some(artifact_path)),
+            ..Self::new(job_id, DATA_ARCHIVE_KIND_EXPORT)
         }
     }
 
@@ -140,6 +167,8 @@ impl DataArchiveJobHandle {
                 target_user: Some(target_user),
                 file_name: None,
                 archive_path: None,
+                artifact_state: None,
+                saved_path: None,
             });
             status.error = None;
             status.local_applied = None;
@@ -153,6 +182,7 @@ impl DataArchiveJobHandle {
         file_name: String,
         archive_path: PathBuf,
     ) -> Result<(), DomainError> {
+        self.set_export_artifact_path(archive_path.clone())?;
         self.update_status(|status| {
             status.state = DATA_ARCHIVE_STATE_COMPLETED.to_string();
             status.stage = "completed".to_string();
@@ -163,6 +193,8 @@ impl DataArchiveJobHandle {
                 target_user: None,
                 file_name: Some(file_name),
                 archive_path: Some(archive_path.to_string_lossy().to_string()),
+                artifact_state: Some(DATA_ARCHIVE_ARTIFACT_AVAILABLE.to_string()),
+                saved_path: None,
             });
             status.error = None;
             status.local_applied = None;
@@ -226,6 +258,90 @@ impl DataArchiveJobHandle {
         })
     }
 
+    pub(crate) fn mark_export_artifact_disposed(
+        &self,
+        saved_target: Option<String>,
+    ) -> Result<(), DomainError> {
+        self.clear_export_artifact_path()?;
+        self.update_status(|status| {
+            if let Some(result) = status.result.as_mut() {
+                result.artifact_state = Some(DATA_ARCHIVE_ARTIFACT_DISPOSED.to_string());
+                result.saved_path = saved_target;
+            }
+        })
+    }
+
+    pub(crate) fn mark_export_artifact_missing(&self) -> Result<(), DomainError> {
+        self.clear_export_artifact_path()?;
+        self.update_status(|status| {
+            if let Some(result) = status.result.as_mut() {
+                result.artifact_state = Some(DATA_ARCHIVE_ARTIFACT_MISSING.to_string());
+                result.saved_path = None;
+            }
+        })
+    }
+
+    pub(crate) fn protected_export_artifact_path(&self) -> Result<Option<PathBuf>, DomainError> {
+        let status = self.snapshot()?;
+        if status.kind != DATA_ARCHIVE_KIND_EXPORT
+            || status.state == DATA_ARCHIVE_STATE_FAILED
+            || status.state == DATA_ARCHIVE_STATE_CANCELLED
+        {
+            return Ok(None);
+        }
+
+        if let Some(result) = status.result.as_ref() {
+            let artifact_state = result.artifact_state.as_deref();
+            if matches!(
+                artifact_state,
+                Some(DATA_ARCHIVE_ARTIFACT_DISPOSED | DATA_ARCHIVE_ARTIFACT_MISSING)
+            ) {
+                return Ok(None);
+            }
+            if status.state == DATA_ARCHIVE_STATE_COMPLETED {
+                return Ok(result.archive_path.as_ref().map(PathBuf::from));
+            }
+        }
+
+        let path = self.export_artifact_path.lock().map_err(|_| {
+            DomainError::InternalError("Failed to lock export artifact path".to_string())
+        })?;
+        Ok(path.clone())
+    }
+
+    fn set_export_artifact_path(&self, artifact_path: PathBuf) -> Result<(), DomainError> {
+        let mut path = self.export_artifact_path.lock().map_err(|_| {
+            DomainError::InternalError("Failed to lock export artifact path".to_string())
+        })?;
+        *path = Some(artifact_path);
+        Ok(())
+    }
+
+    fn claim_export_artifact_path(&self) -> Result<Option<PathBuf>, DomainError> {
+        let mut path = self.export_artifact_path.lock().map_err(|_| {
+            DomainError::InternalError("Failed to lock export artifact path".to_string())
+        })?;
+        Ok(path.take())
+    }
+
+    fn restore_export_artifact_path(&self, artifact_path: PathBuf) -> Result<(), DomainError> {
+        let mut path = self.export_artifact_path.lock().map_err(|_| {
+            DomainError::InternalError("Failed to lock export artifact path".to_string())
+        })?;
+        if path.is_none() {
+            *path = Some(artifact_path);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn clear_export_artifact_path(&self) -> Result<(), DomainError> {
+        let mut path = self.export_artifact_path.lock().map_err(|_| {
+            DomainError::InternalError("Failed to lock export artifact path".to_string())
+        })?;
+        *path = None;
+        Ok(())
+    }
+
     pub(crate) fn request_cancel(&self) {
         self.cancel_requested.store(true, Ordering::Relaxed);
         let _ = self.update_status(|status| {
@@ -263,6 +379,7 @@ pub(crate) struct ImportArchiveExecutionRequest {
 pub(crate) struct ExportArchiveExecutionRequest {
     pub data_root: PathBuf,
     pub output_path: PathBuf,
+    pub file_name: String,
 }
 
 pub(crate) struct UserBackupArchiveExecutionRequest {
@@ -320,11 +437,16 @@ pub(crate) trait DataArchiveFileGateway: Send + Sync {
         archive_is_temporary: bool,
         job_id: &str,
     ) -> Result<ImportArchiveExecutionRequest, DomainError>;
-    fn prepare_export_archive(&self) -> Result<ExportArchiveExecutionRequest, DomainError>;
+    fn prepare_export_archive(
+        &self,
+        job_id: &str,
+        protected_paths: &[PathBuf],
+    ) -> Result<ExportArchiveExecutionRequest, DomainError>;
     fn prepare_user_backup_archive(
         &self,
         handle: &str,
         include_secrets: bool,
+        protected_paths: &[PathBuf],
     ) -> Result<UserBackupArchiveTarget, DomainError>;
     fn cleanup_directory(&self, path: &Path);
     fn cleanup_export(&self, archive_path: &Path) -> Result<(), DomainError>;
@@ -332,6 +454,17 @@ pub(crate) trait DataArchiveFileGateway: Send + Sync {
     fn save_user_backup(&self, archive_path: &str, file_name: &str)
     -> Result<PathBuf, DomainError>;
     fn cleanup_user_backup(&self, archive_path: &str) -> Result<(), DomainError>;
+}
+
+struct CompletedExportJob {
+    job: Arc<DataArchiveJobHandle>,
+    result: DataArchiveJobResult,
+}
+
+struct CompletedExportArtifact {
+    job: Arc<DataArchiveJobHandle>,
+    archive_path: PathBuf,
+    file_name: String,
 }
 
 #[async_trait]
@@ -466,9 +599,15 @@ impl DataArchiveService {
 
     pub fn start_export(&self) -> Result<String, DomainError> {
         let job_id = Uuid::new_v4().simple().to_string();
-        let request = self.files.prepare_export_archive()?;
+        let protected_paths = self.jobs.protected_export_artifact_paths()?;
+        let request = self
+            .files
+            .prepare_export_archive(&job_id, &protected_paths)?;
         let output_path = request.output_path.clone();
-        let job = Arc::new(DataArchiveJobHandle::new(&job_id, DATA_ARCHIVE_KIND_EXPORT));
+        let job = Arc::new(DataArchiveJobHandle::new_export(
+            &job_id,
+            output_path.clone(),
+        ));
         self.jobs.insert(&job_id, job.clone())?;
 
         let executor = self.executor.clone();
@@ -504,10 +643,12 @@ impl DataArchiveService {
                     }
 
                     let _ = files.cleanup_export(&output_path);
+                    let _ = job.clear_export_artifact_path();
                 }
                 Err(error) => {
                     let _ = job.mark_failed(&format!("Export task join error: {}", error));
                     let _ = files.cleanup_export(&output_path);
+                    let _ = job.clear_export_artifact_path();
                 }
             }
         });
@@ -528,33 +669,94 @@ impl DataArchiveService {
         self.jobs.get(job_id)?.snapshot()
     }
 
+    #[cfg(target_os = "ios")]
     pub fn completed_export_archive_path(&self, job_id: &str) -> Result<PathBuf, DomainError> {
-        let result = self.completed_export_result(job_id)?;
-        let archive_path = result.archive_path.ok_or_else(|| {
+        Ok(self.completed_export_artifact(job_id)?.archive_path)
+    }
+
+    fn completed_export_artifact(
+        &self,
+        job_id: &str,
+    ) -> Result<CompletedExportArtifact, DomainError> {
+        let completed = self.completed_export_job(job_id)?;
+        let result = &completed.result;
+        match result.artifact_state.as_deref() {
+            Some(DATA_ARCHIVE_ARTIFACT_DISPOSED) => {
+                return Err(DomainError::InvalidData(format!(
+                    "Export archive has already been handled for job: {}",
+                    job_id
+                )));
+            }
+            Some(DATA_ARCHIVE_ARTIFACT_MISSING) => {
+                return Err(DomainError::NotFound(format!(
+                    "Export archive is missing for job: {}",
+                    job_id
+                )));
+            }
+            Some(DATA_ARCHIVE_ARTIFACT_AVAILABLE) | None => {}
+            Some(state) => {
+                return Err(DomainError::InvalidData(format!(
+                    "Invalid export artifact state for job {}: {}",
+                    job_id, state
+                )));
+            }
+        }
+
+        let export_result = result
+            .archive_path
+            .clone()
+            .zip(result.file_name.clone())
+            .ok_or_else(|| {
+                DomainError::InvalidData(format!(
+                    "Export archive result is missing for job: {}",
+                    job_id
+                ))
+            })?;
+        let (archive_path, file_name) = export_result;
+
+        Ok(CompletedExportArtifact {
+            job: completed.job,
+            archive_path: PathBuf::from(archive_path),
+            file_name,
+        })
+    }
+
+    fn claim_completed_export_artifact(
+        &self,
+        job_id: &str,
+    ) -> Result<CompletedExportArtifact, DomainError> {
+        let mut artifact = self.completed_export_artifact(job_id)?;
+        artifact.archive_path = artifact.job.claim_export_artifact_path()?.ok_or_else(|| {
+            DomainError::InvalidData(format!(
+                "Export archive is already being handled for job: {}",
+                job_id
+            ))
+        })?;
+        Ok(artifact)
+    }
+
+    fn terminal_export_artifact_path(&self, job_id: &str) -> Result<Option<PathBuf>, DomainError> {
+        let completed = self.completed_export_job(job_id)?;
+        if !matches!(
+            completed.result.artifact_state.as_deref(),
+            Some(DATA_ARCHIVE_ARTIFACT_DISPOSED | DATA_ARCHIVE_ARTIFACT_MISSING)
+        ) {
+            return Ok(None);
+        }
+
+        let archive_path = completed.result.archive_path.ok_or_else(|| {
             DomainError::InvalidData(format!(
                 "Export archive path is missing for job: {}",
                 job_id
             ))
         })?;
 
-        Ok(PathBuf::from(archive_path))
+        Ok(Some(PathBuf::from(archive_path)))
     }
 
-    fn completed_export_artifact(&self, job_id: &str) -> Result<(PathBuf, String), DomainError> {
-        let result = self.completed_export_result(job_id)?;
-        let (archive_path, file_name) =
-            result.archive_path.zip(result.file_name).ok_or_else(|| {
-                DomainError::InvalidData(format!(
-                    "Export archive result is missing for job: {}",
-                    job_id
-                ))
-            })?;
-
-        Ok((PathBuf::from(archive_path), file_name))
-    }
-
-    fn completed_export_result(&self, job_id: &str) -> Result<DataArchiveJobResult, DomainError> {
-        let status = self.get_status(job_id)?;
+    fn completed_export_job(&self, job_id: &str) -> Result<CompletedExportJob, DomainError> {
+        let job = self.jobs.get(job_id)?;
+        let status = job.snapshot()?;
         if status.kind != DATA_ARCHIVE_KIND_EXPORT {
             return Err(DomainError::InvalidData("Invalid export job".to_string()));
         }
@@ -566,12 +768,14 @@ impl DataArchiveService {
             )));
         }
 
-        status.result.ok_or_else(|| {
+        let result = status.result.ok_or_else(|| {
             DomainError::InvalidData(format!(
                 "Export archive result is missing for job: {}",
                 job_id
             ))
-        })
+        })?;
+
+        Ok(CompletedExportJob { job, result })
     }
 
     pub fn cancel(&self, job_id: &str) -> Result<(), DomainError> {
@@ -580,17 +784,77 @@ impl DataArchiveService {
     }
 
     pub fn cleanup_export(&self, job_id: &str) -> Result<(), DomainError> {
-        let archive_path = self.completed_export_archive_path(job_id)?;
-        self.files.cleanup_export(&archive_path)
+        let artifact = match self.claim_completed_export_artifact(job_id) {
+            Ok(artifact) => artifact,
+            Err(error) => {
+                if let Some(archive_path) = self.terminal_export_artifact_path(job_id)? {
+                    return match self.files.cleanup_export(&archive_path) {
+                        Ok(()) | Err(DomainError::NotFound(_)) => Ok(()),
+                        Err(error) => Err(error),
+                    };
+                }
+                return Err(error);
+            }
+        };
+
+        match self.files.cleanup_export(&artifact.archive_path) {
+            Ok(()) => artifact.job.mark_export_artifact_disposed(None),
+            Err(DomainError::NotFound(_)) => artifact.job.mark_export_artifact_missing(),
+            Err(error) => {
+                let _ = artifact
+                    .job
+                    .restore_export_artifact_path(artifact.archive_path);
+                Err(error)
+            }
+        }
     }
 
     pub async fn save_export(&self, job_id: String) -> Result<PathBuf, DomainError> {
-        let (archive_path, file_name) = self.completed_export_artifact(&job_id)?;
+        let artifact = self.claim_completed_export_artifact(&job_id)?;
+        let job = artifact.job.clone();
+        let archive_path = artifact.archive_path.clone();
         let files = self.files.clone();
-        run_blocking("Save export task join error", move || {
-            files.save_export(&archive_path, &file_name)
+        let saved_path = run_blocking("Save export task join error", move || {
+            files.save_export(&artifact.archive_path, &artifact.file_name)
         })
-        .await
+        .await;
+
+        match saved_path {
+            Ok(saved_path) => {
+                job.mark_export_artifact_disposed(Some(saved_path.to_string_lossy().to_string()))?;
+                Ok(saved_path)
+            }
+            Err(error @ DomainError::NotFound(_)) => {
+                let _ = job.mark_export_artifact_missing();
+                Err(error)
+            }
+            Err(error) => {
+                let _ = job.restore_export_artifact_path(archive_path);
+                Err(error)
+            }
+        }
+    }
+
+    pub fn finalize_export_delivery(
+        &self,
+        job_id: &str,
+        saved_target: Option<String>,
+    ) -> Result<Option<String>, DomainError> {
+        let artifact = match self.claim_completed_export_artifact(job_id) {
+            Ok(artifact) => artifact,
+            Err(error) => {
+                if self.terminal_export_artifact_path(job_id)?.is_some() {
+                    return Ok(None);
+                }
+                return Err(error);
+            }
+        };
+
+        artifact.job.mark_export_artifact_disposed(saved_target)?;
+        match self.files.cleanup_export(&artifact.archive_path) {
+            Ok(()) | Err(DomainError::NotFound(_)) => Ok(None),
+            Err(error) => Ok(Some(error.to_string())),
+        }
     }
 
     pub async fn export_user_backup(
@@ -600,8 +864,10 @@ impl DataArchiveService {
     ) -> Result<UserBackupArchiveResult, DomainError> {
         let executor = self.executor.clone();
         let files = self.files.clone();
+        let protected_paths = self.jobs.protected_export_artifact_paths()?;
         run_blocking("User backup export task join error", move || {
-            let target = files.prepare_user_backup_archive(&handle, include_secrets)?;
+            let target =
+                files.prepare_user_backup_archive(&handle, include_secrets, &protected_paths)?;
             let output_path = target.request.output_path.clone();
             let mut report_progress = |_stage: &str, _progress_percent: f32, _message: &str| {};
             let is_cancelled = || false;
@@ -716,7 +982,11 @@ mod tests {
             unreachable!()
         }
 
-        fn prepare_export_archive(&self) -> Result<ExportArchiveExecutionRequest, DomainError> {
+        fn prepare_export_archive(
+            &self,
+            _job_id: &str,
+            _protected_paths: &[PathBuf],
+        ) -> Result<ExportArchiveExecutionRequest, DomainError> {
             unreachable!()
         }
 
@@ -724,6 +994,7 @@ mod tests {
             &self,
             _handle: &str,
             _include_secrets: bool,
+            _protected_paths: &[PathBuf],
         ) -> Result<UserBackupArchiveTarget, DomainError> {
             unreachable!()
         }
@@ -887,6 +1158,9 @@ mod tests {
     struct RecordingFiles {
         import_request: Mutex<Option<ImportArchiveExecutionRequest>>,
         export_request: Mutex<Option<ExportArchiveExecutionRequest>>,
+        export_protected_paths: Mutex<Vec<Vec<PathBuf>>>,
+        save_export_result: Mutex<Option<Result<PathBuf, DomainError>>>,
+        cleanup_export_result: Mutex<Option<Result<(), DomainError>>>,
         cleaned_directories: Mutex<Vec<PathBuf>>,
         cleaned_exports: Mutex<Vec<PathBuf>>,
     }
@@ -902,6 +1176,27 @@ mod tests {
         fn with_export(request: ExportArchiveExecutionRequest) -> Self {
             Self {
                 export_request: Mutex::new(Some(request)),
+                ..Self::default()
+            }
+        }
+
+        fn with_save_export(saved_path: PathBuf) -> Self {
+            Self {
+                save_export_result: Mutex::new(Some(Ok(saved_path))),
+                ..Self::default()
+            }
+        }
+
+        fn with_save_export_result(result: Result<PathBuf, DomainError>) -> Self {
+            Self {
+                save_export_result: Mutex::new(Some(result)),
+                ..Self::default()
+            }
+        }
+
+        fn with_cleanup_export_result(result: Result<(), DomainError>) -> Self {
+            Self {
+                cleanup_export_result: Mutex::new(Some(result)),
                 ..Self::default()
             }
         }
@@ -930,7 +1225,15 @@ mod tests {
                 .ok_or_else(|| DomainError::InternalError("missing import request".to_string()))
         }
 
-        fn prepare_export_archive(&self) -> Result<ExportArchiveExecutionRequest, DomainError> {
+        fn prepare_export_archive(
+            &self,
+            _job_id: &str,
+            protected_paths: &[PathBuf],
+        ) -> Result<ExportArchiveExecutionRequest, DomainError> {
+            self.export_protected_paths
+                .lock()
+                .expect("lock export protected paths")
+                .push(protected_paths.to_vec());
             self.export_request
                 .lock()
                 .expect("lock export request")
@@ -942,6 +1245,7 @@ mod tests {
             &self,
             _handle: &str,
             _include_secrets: bool,
+            _protected_paths: &[PathBuf],
         ) -> Result<UserBackupArchiveTarget, DomainError> {
             unreachable!()
         }
@@ -958,7 +1262,11 @@ mod tests {
                 .lock()
                 .expect("lock cleaned exports")
                 .push(archive_path.to_path_buf());
-            Ok(())
+            self.cleanup_export_result
+                .lock()
+                .expect("lock cleanup export result")
+                .take()
+                .unwrap_or(Ok(()))
         }
 
         fn save_export(
@@ -966,7 +1274,15 @@ mod tests {
             _archive_path: &Path,
             _file_name: &str,
         ) -> Result<PathBuf, DomainError> {
-            unreachable!()
+            self.save_export_result
+                .lock()
+                .expect("lock save export result")
+                .take()
+                .unwrap_or_else(|| {
+                    Err(DomainError::InternalError(
+                        "missing save export result".to_string(),
+                    ))
+                })
         }
 
         fn save_user_backup(
@@ -1100,15 +1416,14 @@ mod tests {
             Arc::new(UnusedReconciler),
         );
 
+        let artifact = service
+            .completed_export_artifact("job-1")
+            .expect("completed export artifact");
         assert_eq!(
-            service
-                .completed_export_artifact("job-1")
-                .expect("completed export artifact"),
-            (
-                PathBuf::from("/tmp/tauritavern-data.zip"),
-                "tauritavern-data.zip".to_string()
-            )
+            artifact.archive_path,
+            PathBuf::from("/tmp/tauritavern-data.zip")
         );
+        assert_eq!(artifact.file_name, "tauritavern-data.zip");
     }
 
     #[tokio::test]
@@ -1336,6 +1651,7 @@ mod tests {
         let files = Arc::new(RecordingFiles::with_export(ExportArchiveExecutionRequest {
             data_root: PathBuf::from("/tmp/data-root"),
             output_path: output_path.clone(),
+            file_name: "tauritavern-data.zip".to_string(),
         }));
         let service = DataArchiveService::new(
             jobs,
@@ -1354,6 +1670,10 @@ mod tests {
             result.archive_path.as_deref(),
             Some(output_path.to_string_lossy().as_ref())
         );
+        assert_eq!(
+            result.artifact_state.as_deref(),
+            Some(DATA_ARCHIVE_ARTIFACT_AVAILABLE)
+        );
     }
 
     #[tokio::test]
@@ -1363,6 +1683,7 @@ mod tests {
         let files = Arc::new(RecordingFiles::with_export(ExportArchiveExecutionRequest {
             data_root: PathBuf::from("/tmp/data-root"),
             output_path: output_path.clone(),
+            file_name: "tauritavern-data.zip".to_string(),
         }));
         let service = DataArchiveService::new(
             jobs,
@@ -1386,6 +1707,266 @@ mod tests {
                 .contains(&output_path)
         })
         .await;
+    }
+
+    #[tokio::test]
+    async fn start_export_protects_claimed_completed_artifact_from_stale_cleanup() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let existing_job = Arc::new(DataArchiveJobHandle::new(
+            "old-job",
+            DATA_ARCHIVE_KIND_EXPORT,
+        ));
+        let existing_path = PathBuf::from("/tmp/old-staged-export.zip");
+        existing_job
+            .mark_completed_export("tauritavern-data.zip".to_string(), existing_path.clone())
+            .expect("mark completed export");
+        existing_job
+            .claim_export_artifact_path()
+            .expect("claim artifact path");
+        jobs.insert("old-job", existing_job)
+            .expect("insert old job");
+
+        let files = Arc::new(RecordingFiles::with_export(ExportArchiveExecutionRequest {
+            data_root: PathBuf::from("/tmp/data-root"),
+            output_path: PathBuf::from("/tmp/new-staged-export.zip"),
+            file_name: "tauritavern-data.zip".to_string(),
+        }));
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(RecordingExecutor::export_ok("tauritavern-data.zip")),
+            files.clone(),
+            Arc::new(UnusedInitializer),
+            Arc::new(UnusedReconciler),
+        );
+
+        let _ = service.start_export().expect("start export");
+
+        assert_eq!(
+            *files
+                .export_protected_paths
+                .lock()
+                .expect("lock export protected paths"),
+            vec![vec![existing_path]]
+        );
+    }
+
+    #[tokio::test]
+    async fn save_export_marks_artifact_disposed_with_saved_path() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let job = Arc::new(DataArchiveJobHandle::new("job-1", DATA_ARCHIVE_KIND_EXPORT));
+        job.mark_completed_export(
+            "tauritavern-data.zip".to_string(),
+            PathBuf::from("/tmp/staged-export.zip"),
+        )
+        .expect("mark completed export");
+        jobs.insert("job-1", job).expect("insert job");
+
+        let saved_path = PathBuf::from("/Downloads/tauritavern-data.zip");
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(UnusedExecutor),
+            Arc::new(RecordingFiles::with_save_export(saved_path.clone())),
+            Arc::new(UnusedInitializer),
+            Arc::new(UnusedReconciler),
+        );
+
+        assert_eq!(
+            service
+                .save_export("job-1".to_string())
+                .await
+                .expect("save export"),
+            saved_path
+        );
+
+        let status = service.get_status("job-1").expect("job status");
+        let result = status.result.expect("export result");
+        assert_eq!(
+            result.artifact_state.as_deref(),
+            Some(DATA_ARCHIVE_ARTIFACT_DISPOSED)
+        );
+        assert_eq!(
+            result.archive_path.as_deref(),
+            Some("/tmp/staged-export.zip")
+        );
+        assert_eq!(
+            result.saved_path.as_deref(),
+            Some("/Downloads/tauritavern-data.zip")
+        );
+        let error = match service.completed_export_artifact("job-1") {
+            Ok(_) => panic!("disposed artifact should not be reusable"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("already been handled"));
+    }
+
+    #[test]
+    fn cleanup_export_marks_artifact_disposed_and_is_idempotent() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let job = Arc::new(DataArchiveJobHandle::new("job-1", DATA_ARCHIVE_KIND_EXPORT));
+        let archive_path = PathBuf::from("/tmp/staged-export.zip");
+        job.mark_completed_export("tauritavern-data.zip".to_string(), archive_path.clone())
+            .expect("mark completed export");
+        jobs.insert("job-1", job).expect("insert job");
+
+        let files = Arc::new(RecordingFiles::default());
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(UnusedExecutor),
+            files.clone(),
+            Arc::new(UnusedInitializer),
+            Arc::new(UnusedReconciler),
+        );
+
+        service.cleanup_export("job-1").expect("cleanup export");
+        service
+            .cleanup_export("job-1")
+            .expect("cleanup export is idempotent");
+
+        assert_eq!(
+            *files.cleaned_exports.lock().expect("lock cleaned exports"),
+            vec![archive_path.clone(), archive_path]
+        );
+        let status = service.get_status("job-1").expect("job status");
+        let result = status.result.expect("export result");
+        assert_eq!(
+            result.artifact_state.as_deref(),
+            Some(DATA_ARCHIVE_ARTIFACT_DISPOSED)
+        );
+        assert_eq!(
+            result.archive_path.as_deref(),
+            Some("/tmp/staged-export.zip")
+        );
+    }
+
+    #[test]
+    fn cleanup_export_marks_missing_when_artifact_is_already_gone() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let job = Arc::new(DataArchiveJobHandle::new("job-1", DATA_ARCHIVE_KIND_EXPORT));
+        let archive_path = PathBuf::from("/tmp/staged-export.zip");
+        job.mark_completed_export("tauritavern-data.zip".to_string(), archive_path.clone())
+            .expect("mark completed export");
+        jobs.insert("job-1", job).expect("insert job");
+
+        let files = Arc::new(RecordingFiles::with_cleanup_export_result(Err(
+            DomainError::NotFound("gone".to_string()),
+        )));
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(UnusedExecutor),
+            files.clone(),
+            Arc::new(UnusedInitializer),
+            Arc::new(UnusedReconciler),
+        );
+
+        service.cleanup_export("job-1").expect("cleanup export");
+        service
+            .cleanup_export("job-1")
+            .expect("missing cleanup is idempotent");
+
+        assert_eq!(
+            *files.cleaned_exports.lock().expect("lock cleaned exports"),
+            vec![archive_path.clone(), archive_path]
+        );
+        let result = service
+            .get_status("job-1")
+            .expect("job status")
+            .result
+            .expect("export result");
+        assert_eq!(
+            result.artifact_state.as_deref(),
+            Some(DATA_ARCHIVE_ARTIFACT_MISSING)
+        );
+        assert_eq!(
+            result.archive_path.as_deref(),
+            Some("/tmp/staged-export.zip")
+        );
+    }
+
+    #[tokio::test]
+    async fn save_export_restores_available_artifact_on_save_error() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let job = Arc::new(DataArchiveJobHandle::new("job-1", DATA_ARCHIVE_KIND_EXPORT));
+        let archive_path = PathBuf::from("/tmp/staged-export.zip");
+        job.mark_completed_export("tauritavern-data.zip".to_string(), archive_path.clone())
+            .expect("mark completed export");
+        jobs.insert("job-1", job).expect("insert job");
+
+        let files = Arc::new(RecordingFiles::with_save_export_result(Err(
+            DomainError::InvalidData("target exists".to_string()),
+        )));
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(UnusedExecutor),
+            files.clone(),
+            Arc::new(UnusedInitializer),
+            Arc::new(UnusedReconciler),
+        );
+
+        assert!(
+            service
+                .save_export("job-1".to_string())
+                .await
+                .expect_err("save should fail")
+                .to_string()
+                .contains("target exists")
+        );
+        service.cleanup_export("job-1").expect("cleanup can retry");
+
+        assert_eq!(
+            *files.cleaned_exports.lock().expect("lock cleaned exports"),
+            vec![archive_path]
+        );
+    }
+
+    #[test]
+    fn finalize_export_delivery_disposes_even_when_cleanup_fails() {
+        let jobs = Arc::new(DataArchiveJobRegistry::new());
+        let job = Arc::new(DataArchiveJobHandle::new("job-1", DATA_ARCHIVE_KIND_EXPORT));
+        let archive_path = PathBuf::from("/tmp/staged-export.zip");
+        job.mark_completed_export("tauritavern-data.zip".to_string(), archive_path.clone())
+            .expect("mark completed export");
+        jobs.insert("job-1", job).expect("insert job");
+
+        let files = Arc::new(RecordingFiles::with_cleanup_export_result(Err(
+            DomainError::InternalError("permission denied".to_string()),
+        )));
+        let service = DataArchiveService::new(
+            jobs,
+            Arc::new(UnusedExecutor),
+            files.clone(),
+            Arc::new(UnusedInitializer),
+            Arc::new(UnusedReconciler),
+        );
+
+        assert!(
+            service
+                .finalize_export_delivery("job-1", Some("content://saved-export".to_string()))
+                .expect("finalize delivery")
+                .expect("cleanup warning")
+                .contains("permission denied")
+        );
+        service
+            .cleanup_export("job-1")
+            .expect("disposed cleanup can retry deletion");
+
+        assert_eq!(
+            *files.cleaned_exports.lock().expect("lock cleaned exports"),
+            vec![archive_path.clone(), archive_path]
+        );
+        let result = service
+            .get_status("job-1")
+            .expect("job status")
+            .result
+            .expect("export result");
+        assert_eq!(
+            result.artifact_state.as_deref(),
+            Some(DATA_ARCHIVE_ARTIFACT_DISPOSED)
+        );
+        assert_eq!(
+            result.archive_path.as_deref(),
+            Some("/tmp/staged-export.zip")
+        );
+        assert_eq!(result.saved_path.as_deref(), Some("content://saved-export"));
     }
 }
 

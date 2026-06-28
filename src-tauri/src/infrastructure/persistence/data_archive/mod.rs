@@ -20,6 +20,5 @@ pub struct DataArchiveImportResult {
 
 #[derive(Debug, Clone)]
 pub struct DataArchiveExportResult {
-    pub file_name: String,
     pub archive_path: PathBuf,
 }

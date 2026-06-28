@@ -336,11 +336,13 @@ pub async fn ios_share_export_data_archive(
 
     let share_result = present_ios_share_sheet_for_path(&window, &archive_path).await?;
 
-    let cleanup_error = app_state
+    let cleanup_error = match app_state
         .data_archive_service
-        .cleanup_export(&job_id)
-        .err()
-        .map(|error| error.to_string());
+        .finalize_export_delivery(&job_id, None)
+    {
+        Ok(cleanup_error) => cleanup_error,
+        Err(error) => Some(error.to_string()),
+    };
 
     Ok(IosShareExportArchiveResponse {
         completed: share_result.completed,
