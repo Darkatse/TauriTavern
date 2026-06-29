@@ -1,117 +1,58 @@
-use std::borrow::Cow;
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use mime_guess::from_path;
-use tauri::http::StatusCode;
 
+use crate::application::services::host_resource_service::contract::{
+    HostResourceMethod, HostResourceRequest, HostResourceResponse, status,
+};
 use crate::application::services::host_resource_service::path_guard::validate_path_segment;
+use crate::application::services::host_resource_service::policy::HostResourceRuntimePolicy;
+use crate::application::services::host_resource_service::roots::HostResourceRoots;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::thumbnail_cache::{
     ThumbnailAsset, read_thumbnail_or_original_sync,
 };
 use crate::infrastructure::thumbnails::{avatar_thumbnail_config, background_thumbnail_config};
-use crate::infrastructure::user_data_dirs::DefaultUserWebDirs;
-use crate::presentation::web_resources::response_helpers::{
-    respond_bytes, respond_method_not_allowed, respond_no_content, respond_plain_text,
-};
 
-const THUMBNAIL_ROUTE_PATH: &str = "/thumbnail";
 const THUMBNAIL_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 
-/// Runtime policy for the `/thumbnail` web endpoint.
-///
-/// Why does this live in host state instead of reading settings on each request?
-/// - `/thumbnail` is hit by `<img src>` and CSS `url()` loads at high frequency.
-/// - Reading `tauritavern-settings.json` per request would be unnecessary I/O and
-///   would add latency on the rendering path.
-/// - Tauri commands update this policy immediately after persisting settings so the
-///   endpoint reflects the latest value without requiring an app restart.
-#[derive(Debug)]
-pub struct ThumbnailEndpointPolicy {
-    avatar_persona_original_images_enabled: AtomicBool,
-}
-
-impl ThumbnailEndpointPolicy {
-    pub fn new(avatar_persona_original_images_enabled: bool) -> Self {
-        Self {
-            avatar_persona_original_images_enabled: AtomicBool::new(
-                avatar_persona_original_images_enabled,
-            ),
+pub(crate) fn serve_thumbnail(
+    roots: &HostResourceRoots,
+    policy: &HostResourceRuntimePolicy,
+    request: &HostResourceRequest<'_>,
+) -> HostResourceResponse {
+    match request.method {
+        HostResourceMethod::Options => {
+            return HostResourceResponse::no_content(THUMBNAIL_ALLOWED_METHODS);
         }
+        HostResourceMethod::Get | HostResourceMethod::Head => {}
+        _ => return HostResourceResponse::method_not_allowed(THUMBNAIL_ALLOWED_METHODS),
     }
 
-    pub fn avatar_persona_original_images_enabled(&self) -> bool {
-        self.avatar_persona_original_images_enabled
-            .load(Ordering::Relaxed)
-    }
-
-    pub fn set_avatar_persona_original_images_enabled(&self, enabled: bool) {
-        self.avatar_persona_original_images_enabled
-            .store(enabled, Ordering::Relaxed);
-    }
-}
-
-pub fn handle_thumbnail_web_request(
-    user_dirs: &DefaultUserWebDirs,
-    policy: &ThumbnailEndpointPolicy,
-    request: &tauri::http::Request<Vec<u8>>,
-    response: &mut tauri::http::Response<Cow<'static, [u8]>>,
-) {
-    if request.uri().path() != THUMBNAIL_ROUTE_PATH {
-        return;
-    }
-
-    handle_thumbnail_route_request(user_dirs, policy, request, response);
-}
-
-fn handle_thumbnail_route_request(
-    user_dirs: &DefaultUserWebDirs,
-    policy: &ThumbnailEndpointPolicy,
-    request: &tauri::http::Request<Vec<u8>>,
-    response: &mut tauri::http::Response<Cow<'static, [u8]>>,
-) {
-    use tauri::http::Method;
-
-    match request.method() {
-        &Method::OPTIONS => {
-            respond_no_content(response, THUMBNAIL_ALLOWED_METHODS);
-            return;
-        }
-        &Method::GET | &Method::HEAD => {}
-        _ => {
-            respond_method_not_allowed(response, THUMBNAIL_ALLOWED_METHODS);
-            return;
-        }
-    }
-
-    let query = request.uri().query().unwrap_or("");
+    let query = request.query.unwrap_or("");
     let (thumbnail_type, file) = match parse_thumbnail_query(query) {
         Ok(value) => value,
         Err(error) => {
-            respond_plain_text(response, error.status_code(), error.message());
-            return;
+            return HostResourceResponse::plain_text(error.status_code(), error.message());
         }
     };
 
     let (original_dir, thumbnail_dir, config) = match thumbnail_type.as_str() {
         "avatar" => (
-            user_dirs.characters_dir.as_path(),
-            user_dirs.thumbnails_avatar_dir.as_path(),
+            roots.characters_dir.as_path(),
+            roots.thumbnails_avatar_dir.as_path(),
             avatar_thumbnail_config(),
         ),
         "persona" => (
-            user_dirs.avatars_dir.as_path(),
-            user_dirs.thumbnails_persona_dir.as_path(),
+            roots.avatars_dir.as_path(),
+            roots.thumbnails_persona_dir.as_path(),
             avatar_thumbnail_config(),
         ),
         "bg" => (
-            user_dirs.backgrounds_dir.as_path(),
-            user_dirs.thumbnails_bg_dir.as_path(),
+            roots.backgrounds_dir.as_path(),
+            roots.thumbnails_bg_dir.as_path(),
             background_thumbnail_config(),
         ),
         _ => {
-            respond_plain_text(response, StatusCode::BAD_REQUEST, "Invalid thumbnail type");
-            return;
+            return HostResourceResponse::plain_text(status::BAD_REQUEST, "Invalid thumbnail type");
         }
     };
 
@@ -129,27 +70,23 @@ fn handle_thumbnail_route_request(
     {
         Ok(value) => value,
         Err(DomainError::NotFound(_)) => {
-            respond_plain_text(response, StatusCode::NOT_FOUND, "Not Found");
             tracing::debug!("Thumbnail 404: type={} file={}", thumbnail_type, file);
-            return;
+            return HostResourceResponse::plain_text(status::NOT_FOUND, "Not Found");
         }
         Err(error) => {
-            respond_plain_text(
-                response,
-                StatusCode::INTERNAL_SERVER_ERROR,
+            return HostResourceResponse::plain_text(
+                status::INTERNAL_SERVER_ERROR,
                 &error.to_string(),
             );
-            return;
         }
     };
 
-    if request.method() == Method::HEAD {
-        respond_bytes(response, StatusCode::OK, Vec::new(), &asset.mime_type);
-        return;
+    if request.method == HostResourceMethod::Head {
+        return HostResourceResponse::bytes(status::OK, Vec::new(), &asset.mime_type);
     }
 
-    respond_bytes(response, StatusCode::OK, asset.bytes, &asset.mime_type);
     tracing::debug!("Thumbnail hit: type={} file={}", thumbnail_type, file);
+    HostResourceResponse::bytes(status::OK, asset.bytes, &asset.mime_type)
 }
 
 fn read_thumbnail_asset(
@@ -218,10 +155,10 @@ enum ThumbnailQueryError {
 }
 
 impl ThumbnailQueryError {
-    fn status_code(self) -> StatusCode {
+    fn status_code(self) -> u16 {
         match self {
-            Self::ForbiddenFile => StatusCode::FORBIDDEN,
-            _ => StatusCode::BAD_REQUEST,
+            Self::ForbiddenFile => status::FORBIDDEN,
+            _ => status::BAD_REQUEST,
         }
     }
 
@@ -283,11 +220,16 @@ fn parse_thumbnail_query(query: &str) -> Result<(String, String), ThumbnailQuery
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::services::host_resource_service::contract::{
+        HostResourceHeaders, header,
+    };
     use std::path::PathBuf;
-    use tauri::http::header::CONTENT_TYPE;
 
-    fn dirs(root: &PathBuf) -> DefaultUserWebDirs {
-        DefaultUserWebDirs {
+    fn roots(root: &PathBuf) -> HostResourceRoots {
+        HostResourceRoots {
+            user_css_file: root.join("_css/user.css"),
+            local_extensions_dir: root.join("extensions/local"),
+            global_extensions_dir: root.join("extensions/global"),
             characters_dir: root.join("characters"),
             avatars_dir: root.join("avatars"),
             backgrounds_dir: root.join("backgrounds"),
@@ -298,6 +240,21 @@ mod tests {
             thumbnails_avatar_dir: root.join("thumbnails/avatar"),
             thumbnails_persona_dir: root.join("thumbnails/persona"),
         }
+    }
+
+    fn request(method: HostResourceMethod, uri: &'static str) -> HostResourceRequest<'static> {
+        let (path, query) = uri
+            .split_once('?')
+            .map_or((uri, None), |(path, query)| (path, Some(query)));
+        HostResourceRequest::new(method, path, query, HostResourceHeaders::empty())
+    }
+
+    fn header<'a>(response: &'a HostResourceResponse, name: &str) -> Option<&'a str> {
+        response
+            .headers
+            .iter()
+            .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
     }
 
     struct TempDirGuard {
@@ -322,66 +279,60 @@ mod tests {
     #[test]
     fn rejects_methods_outside_endpoint_contract() {
         let temp = TempDirGuard::new("thumbnail-endpoint-method-gate");
-        let policy = ThumbnailEndpointPolicy::new(false);
-        let request = tauri::http::Request::builder()
-            .method("POST")
-            .uri("/thumbnail?type=avatar&file=a.png")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+        let policy = HostResourceRuntimePolicy::new(false);
+        let response = serve_thumbnail(
+            &roots(&temp.path),
+            &policy,
+            &request(
+                HostResourceMethod::Other,
+                "/thumbnail?type=avatar&file=a.png",
+            ),
+        );
 
-        handle_thumbnail_web_request(&dirs(&temp.path), &policy, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(response.status, status::METHOD_NOT_ALLOWED);
     }
 
     #[test]
     fn returns_404_for_missing_thumbnail_source() {
         let temp = TempDirGuard::new("thumbnail-endpoint-404");
-        let policy = ThumbnailEndpointPolicy::new(false);
+        let policy = HostResourceRuntimePolicy::new(false);
         std::fs::create_dir_all(temp.path.join("characters")).expect("create characters dir");
 
-        let request = tauri::http::Request::builder()
-            .method("GET")
-            .uri("/thumbnail?type=avatar&file=missing.png")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+        let response = serve_thumbnail(
+            &roots(&temp.path),
+            &policy,
+            &request(
+                HostResourceMethod::Get,
+                "/thumbnail?type=avatar&file=missing.png",
+            ),
+        );
 
-        handle_thumbnail_web_request(&dirs(&temp.path), &policy, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.status, status::NOT_FOUND);
     }
 
     #[test]
     fn falls_back_to_original_when_thumbnail_missing() {
         let temp = TempDirGuard::new("thumbnail-endpoint-fallback-original");
-        let policy = ThumbnailEndpointPolicy::new(false);
+        let policy = HostResourceRuntimePolicy::new(false);
         std::fs::create_dir_all(temp.path.join("characters")).expect("create characters dir");
         std::fs::write(temp.path.join("characters").join("a.png"), b"original")
             .expect("write original");
 
-        let request = tauri::http::Request::builder()
-            .method("GET")
-            .uri("/thumbnail?type=avatar&file=a.png")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
-
-        handle_thumbnail_web_request(&dirs(&temp.path), &policy, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE),
-            Some(&tauri::http::header::HeaderValue::from_static("image/png"))
+        let response = serve_thumbnail(
+            &roots(&temp.path),
+            &policy,
+            &request(HostResourceMethod::Get, "/thumbnail?type=avatar&file=a.png"),
         );
-        assert_eq!(response.body().as_ref(), b"original");
+
+        assert_eq!(response.status, status::OK);
+        assert_eq!(header(&response, header::CONTENT_TYPE), Some("image/png"));
+        assert_eq!(response.body, b"original");
     }
 
     #[test]
     fn serves_cached_thumbnail_when_available() {
         let temp = TempDirGuard::new("thumbnail-endpoint-cached");
-        let policy = ThumbnailEndpointPolicy::new(false);
+        let policy = HostResourceRuntimePolicy::new(false);
         std::fs::create_dir_all(temp.path.join("characters")).expect("create characters dir");
         std::fs::create_dir_all(temp.path.join("thumbnails").join("avatar"))
             .expect("create thumbnail dir");
@@ -393,27 +344,21 @@ mod tests {
         )
         .expect("write thumbnail");
 
-        let request = tauri::http::Request::builder()
-            .method("GET")
-            .uri("/thumbnail?type=avatar&file=a.png")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
-
-        handle_thumbnail_web_request(&dirs(&temp.path), &policy, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE),
-            Some(&tauri::http::header::HeaderValue::from_static("image/jpeg"))
+        let response = serve_thumbnail(
+            &roots(&temp.path),
+            &policy,
+            &request(HostResourceMethod::Get, "/thumbnail?type=avatar&file=a.png"),
         );
-        assert_eq!(response.body().as_ref(), b"thumb");
+
+        assert_eq!(response.status, status::OK);
+        assert_eq!(header(&response, header::CONTENT_TYPE), Some("image/jpeg"));
+        assert_eq!(response.body, b"thumb");
     }
 
     #[test]
     fn serves_original_avatar_when_original_images_enabled_even_if_cached_thumbnail_exists() {
         let temp = TempDirGuard::new("thumbnail-endpoint-disabled-original");
-        let policy = ThumbnailEndpointPolicy::new(true);
+        let policy = HostResourceRuntimePolicy::new(true);
         std::fs::create_dir_all(temp.path.join("characters")).expect("create characters dir");
         std::fs::create_dir_all(temp.path.join("thumbnails").join("avatar"))
             .expect("create thumbnail dir");
@@ -425,27 +370,21 @@ mod tests {
         )
         .expect("write thumbnail");
 
-        let request = tauri::http::Request::builder()
-            .method("GET")
-            .uri("/thumbnail?type=avatar&file=a.png")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
-
-        handle_thumbnail_web_request(&dirs(&temp.path), &policy, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE),
-            Some(&tauri::http::header::HeaderValue::from_static("image/png"))
+        let response = serve_thumbnail(
+            &roots(&temp.path),
+            &policy,
+            &request(HostResourceMethod::Get, "/thumbnail?type=avatar&file=a.png"),
         );
-        assert_eq!(response.body().as_ref(), b"original");
+
+        assert_eq!(response.status, status::OK);
+        assert_eq!(header(&response, header::CONTENT_TYPE), Some("image/png"));
+        assert_eq!(response.body, b"original");
     }
 
     #[test]
     fn serves_background_thumbnails() {
         let temp = TempDirGuard::new("thumbnail-endpoint-bg");
-        let policy = ThumbnailEndpointPolicy::new(true);
+        let policy = HostResourceRuntimePolicy::new(true);
         std::fs::create_dir_all(temp.path.join("backgrounds")).expect("create backgrounds dir");
         std::fs::create_dir_all(temp.path.join("thumbnails").join("bg"))
             .expect("create thumbnail dir");
@@ -457,27 +396,21 @@ mod tests {
         )
         .expect("write thumbnail");
 
-        let request = tauri::http::Request::builder()
-            .method("GET")
-            .uri("/thumbnail?type=bg&file=a.png")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
-
-        handle_thumbnail_web_request(&dirs(&temp.path), &policy, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE),
-            Some(&tauri::http::header::HeaderValue::from_static("image/jpeg"))
+        let response = serve_thumbnail(
+            &roots(&temp.path),
+            &policy,
+            &request(HostResourceMethod::Get, "/thumbnail?type=bg&file=a.png"),
         );
-        assert_eq!(response.body().as_ref(), b"thumb");
+
+        assert_eq!(response.status, status::OK);
+        assert_eq!(header(&response, header::CONTENT_TYPE), Some("image/jpeg"));
+        assert_eq!(response.body, b"thumb");
     }
 
     #[test]
     fn serves_thumbnail_for_exact_file_query_segment() {
         let temp = TempDirGuard::new("thumbnail-endpoint-exact-file");
-        let policy = ThumbnailEndpointPolicy::new(true);
+        let policy = HostResourceRuntimePolicy::new(true);
         std::fs::create_dir_all(temp.path.join("backgrounds")).expect("create backgrounds dir");
         std::fs::create_dir_all(temp.path.join("thumbnails").join("bg"))
             .expect("create thumbnail dir");
@@ -492,17 +425,17 @@ mod tests {
         )
         .expect("write thumbnail");
 
-        let request = tauri::http::Request::builder()
-            .method("GET")
-            .uri("/thumbnail?type=bg&file=%20space.png")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+        let response = serve_thumbnail(
+            &roots(&temp.path),
+            &policy,
+            &request(
+                HostResourceMethod::Get,
+                "/thumbnail?type=bg&file=%20space.png",
+            ),
+        );
 
-        handle_thumbnail_web_request(&dirs(&temp.path), &policy, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.body().as_ref(), b"thumb");
+        assert_eq!(response.status, status::OK);
+        assert_eq!(response.body, b"thumb");
     }
 
     #[test]

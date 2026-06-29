@@ -7,6 +7,7 @@ use crate::application::dto::settings_dto::{
     SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
     UpdateTauriTavernSettingsDto, UserSettingsDto,
 };
+use crate::application::services::host_resource_service::policy::HostResourceRuntimePolicy;
 use crate::domain::models::settings::RequestProxySettings;
 use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::logging::llm_api_logs::LlmApiLogStore;
@@ -14,7 +15,6 @@ use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
-use crate::presentation::web_resources::thumbnail_endpoint::ThumbnailEndpointPolicy;
 
 #[tauri::command]
 pub async fn get_tauritavern_settings(
@@ -36,7 +36,7 @@ pub async fn update_tauritavern_settings(
     app_state: State<'_, Arc<AppState>>,
     http_clients: State<'_, Arc<HttpClientPool>>,
     llm_api_logs: State<'_, Arc<LlmApiLogStore>>,
-    thumbnail_policy: State<'_, Arc<ThumbnailEndpointPolicy>>,
+    thumbnail_policy: State<'_, Arc<HostResourceRuntimePolicy>>,
     tray_state: State<'_, Arc<crate::presentation::windows_tray::WindowsTrayState>>,
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
@@ -92,7 +92,7 @@ pub async fn update_tauritavern_settings(
     app_state: State<'_, Arc<AppState>>,
     http_clients: State<'_, Arc<HttpClientPool>>,
     llm_api_logs: State<'_, Arc<LlmApiLogStore>>,
-    thumbnail_policy: State<'_, Arc<ThumbnailEndpointPolicy>>,
+    thumbnail_policy: State<'_, Arc<HostResourceRuntimePolicy>>,
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
 

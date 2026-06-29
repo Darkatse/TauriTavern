@@ -10,6 +10,8 @@ pub(crate) const ASSETS_ROUTE_PREFIX: &str = "/assets/";
 pub(crate) const USER_IMAGES_ROUTE_PREFIX: &str = "/user/images/";
 pub(crate) const USER_FILES_ROUTE_PREFIX: &str = "/user/files/";
 pub(crate) const THIRD_PARTY_EXTENSION_ROUTE_PREFIX: &str = "/scripts/extensions/third-party/";
+pub(crate) const USER_CSS_ROUTE: &str = "/css/user.css";
+pub(crate) const THUMBNAIL_ROUTE_PATH: &str = "/thumbnail";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UserDataAssetKind {

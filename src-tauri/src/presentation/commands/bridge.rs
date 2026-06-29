@@ -7,7 +7,7 @@ use crate::infrastructure::assets::read_resource_text;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 #[cfg(any(dev, debug_assertions))]
-use crate::presentation::web_resources::dev_resource_dispatch::dispatch_dev_web_resource_request;
+use crate::presentation::web_resources::tauri_resource_adapter::serve_dev_web_resource_from_app;
 
 const SILLYTAVERN_COMPAT_VERSION: &str = "1.18.0";
 const BUILD_GIT_REVISION: &str = env!("TAURITAVERN_GIT_REVISION");
@@ -127,33 +127,15 @@ pub fn read_dev_web_resource(
         .uri(uri)
         .body(Vec::new())
         .map_err(|error| CommandError::BadRequest(error.to_string()))?;
-    let mut response = tauri::http::Response::new(std::borrow::Cow::Owned(Vec::new()));
-
-    dispatch_dev_web_resource_request(&app, &request, &mut response);
-
-    let headers = response
-        .headers()
-        .iter()
-        .map(|(name, value)| {
-            Ok::<_, CommandError>((
-                name.as_str().to_string(),
-                value
-                    .to_str()
-                    .map_err(|error| CommandError::InternalServerError(error.to_string()))?
-                    .to_string(),
-            ))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let response = serve_dev_web_resource_from_app(&app, &request);
+    let status = tauri::http::StatusCode::from_u16(response.status)
+        .map_err(|error| CommandError::InternalServerError(error.to_string()))?;
 
     Ok(DevWebResourceResponse {
-        status: response.status().as_u16(),
-        status_text: response
-            .status()
-            .canonical_reason()
-            .unwrap_or_default()
-            .to_string(),
-        headers,
-        body: response.body().to_vec(),
+        status: response.status,
+        status_text: status.canonical_reason().unwrap_or_default().to_string(),
+        headers: response.headers,
+        body: response.body,
     })
 }
 

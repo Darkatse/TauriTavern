@@ -1,75 +1,65 @@
-use std::borrow::Cow;
 use std::path::Path;
 
-use tauri::http::header::{CONTENT_LENGTH, HeaderValue};
-use tauri::http::{Method, StatusCode};
-
-use crate::presentation::web_resources::response_helpers::{
-    respond_bytes, respond_method_not_allowed, respond_no_content, respond_plain_text,
+use crate::application::services::host_resource_service::contract::{
+    HostResourceMethod, HostResourceRequest, HostResourceResponse, header, status,
 };
-
-const USER_CSS_ROUTE: &str = "/css/user.css";
 const USER_CSS_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 const USER_CSS_CONTENT_TYPE: &str = "text/css; charset=utf-8";
 
-pub fn is_user_css_route(path: &str) -> bool {
-    path == USER_CSS_ROUTE
-}
-
-pub fn handle_user_css_web_request(
+pub(crate) fn serve_user_css(
     user_css_file: &Path,
-    request: &tauri::http::Request<Vec<u8>>,
-    response: &mut tauri::http::Response<Cow<'static, [u8]>>,
-) {
-    if !is_user_css_route(request.uri().path()) {
-        return;
-    }
-
-    match request.method() {
-        &Method::OPTIONS => {
-            respond_no_content(response, USER_CSS_ALLOWED_METHODS);
-            return;
+    request: &HostResourceRequest<'_>,
+) -> HostResourceResponse {
+    match request.method {
+        HostResourceMethod::Options => {
+            return HostResourceResponse::no_content(USER_CSS_ALLOWED_METHODS);
         }
-        &Method::GET | &Method::HEAD => {}
-        _ => {
-            respond_method_not_allowed(response, USER_CSS_ALLOWED_METHODS);
-            return;
-        }
+        HostResourceMethod::Get | HostResourceMethod::Head => {}
+        _ => return HostResourceResponse::method_not_allowed(USER_CSS_ALLOWED_METHODS),
     }
 
     let bytes = match std::fs::read(user_css_file) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            respond_plain_text(response, StatusCode::NOT_FOUND, "User CSS not found");
-            return;
+            return HostResourceResponse::plain_text(status::NOT_FOUND, "User CSS not found");
         }
         Err(error) => {
-            respond_plain_text(
-                response,
-                StatusCode::INTERNAL_SERVER_ERROR,
+            return HostResourceResponse::plain_text(
+                status::INTERNAL_SERVER_ERROR,
                 &format!("Failed to read user CSS: {}", error),
             );
-            return;
         }
     };
 
     let content_length = bytes.len();
-    let body = if request.method() == Method::HEAD {
+    let body = if request.method == HostResourceMethod::Head {
         Vec::new()
     } else {
         bytes
     };
 
-    respond_bytes(response, StatusCode::OK, body, USER_CSS_CONTENT_TYPE);
-    response.headers_mut().insert(
-        CONTENT_LENGTH,
-        HeaderValue::from_str(&content_length.to_string()).expect("Invalid Content-Length"),
-    );
+    HostResourceResponse::bytes(status::OK, body, USER_CSS_CONTENT_TYPE)
+        .with_header(header::CONTENT_LENGTH, content_length.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::services::host_resource_service::contract::{
+        HostResourceHeaders, HostResourceMethod, HostResourceRequest,
+    };
+
+    fn request(method: HostResourceMethod) -> HostResourceRequest<'static> {
+        HostResourceRequest::new(method, "/css/user.css", None, HostResourceHeaders::empty())
+    }
+
+    fn header<'a>(response: &'a HostResourceResponse, name: &str) -> Option<&'a str> {
+        response
+            .headers
+            .iter()
+            .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
 
     struct TempDirGuard {
         path: std::path::PathBuf,
@@ -97,17 +87,10 @@ mod tests {
         std::fs::create_dir_all(css_file.parent().expect("css parent")).expect("create css dir");
         std::fs::write(&css_file, b"body { color: red; }").expect("write css");
 
-        let request = tauri::http::Request::builder()
-            .method("GET")
-            .uri("/css/user.css")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+        let response = serve_user_css(&css_file, &request(HostResourceMethod::Get));
 
-        handle_user_css_web_request(&css_file, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.body().as_ref(), b"body { color: red; }");
+        assert_eq!(response.status, status::OK);
+        assert_eq!(response.body, b"body { color: red; }");
     }
 
     #[test]
@@ -115,16 +98,9 @@ mod tests {
         let temp = TempDirGuard::new("user-css-endpoint-default");
         let css_file = temp.path.join("_css").join("user.css");
 
-        let request = tauri::http::Request::builder()
-            .method("GET")
-            .uri("/css/user.css")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+        let response = serve_user_css(&css_file, &request(HostResourceMethod::Get));
 
-        handle_user_css_web_request(&css_file, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.status, status::NOT_FOUND);
     }
 
     #[test]
@@ -134,24 +110,11 @@ mod tests {
         std::fs::create_dir_all(css_file.parent().expect("css parent")).expect("create css dir");
         std::fs::write(&css_file, b"body {}").expect("write css");
 
-        let request = tauri::http::Request::builder()
-            .method("HEAD")
-            .uri("/css/user.css")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+        let response = serve_user_css(&css_file, &request(HostResourceMethod::Head));
 
-        handle_user_css_web_request(&css_file, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(response.body().is_empty());
-        assert_eq!(
-            response
-                .headers()
-                .get(CONTENT_LENGTH)
-                .map(|value| value.to_str().unwrap_or("")),
-            Some("7")
-        );
+        assert_eq!(response.status, status::OK);
+        assert!(response.body.is_empty());
+        assert_eq!(header(&response, header::CONTENT_LENGTH), Some("7"));
     }
 
     #[test]
@@ -159,15 +122,8 @@ mod tests {
         let temp = TempDirGuard::new("user-css-endpoint-method");
         let css_file = temp.path.join("_css").join("user.css");
 
-        let request = tauri::http::Request::builder()
-            .method("POST")
-            .uri("/css/user.css")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+        let response = serve_user_css(&css_file, &request(HostResourceMethod::Other));
 
-        handle_user_css_web_request(&css_file, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(response.status, status::METHOD_NOT_ALLOWED);
     }
 }

@@ -5,7 +5,9 @@ use tauri::http::header::{
     HeaderValue,
 };
 
-use crate::presentation::web_resources::dev_resource_dispatch::dispatch_dev_web_resource_request;
+use crate::presentation::web_resources::tauri_resource_adapter::{
+    apply_host_resource_response, serve_dev_web_resource_from_app,
+};
 
 const DEV_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 
@@ -26,6 +28,7 @@ pub fn handle_dev_protocol_request<R: tauri::Runtime>(
         .headers_mut()
         .insert(ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("*"));
 
-    dispatch_dev_web_resource_request(&ctx.app_handle(), &request, &mut response);
+    let host_response = serve_dev_web_resource_from_app(&ctx.app_handle(), &request);
+    apply_host_resource_response(&mut response, host_response);
     response
 }

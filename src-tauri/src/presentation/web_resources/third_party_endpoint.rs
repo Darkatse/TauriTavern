@@ -1,26 +1,23 @@
-use std::borrow::Cow;
 use std::path::Path;
 
-use tauri::http::StatusCode;
-
+use crate::application::services::host_resource_service::contract::{
+    HostResourceMethod, HostResourceRequest, HostResourceResponse, status,
+};
 use crate::application::services::host_resource_service::css_compat::{
     contains_layer_keyword, flatten_css_layers,
 };
 use crate::application::services::host_resource_service::routes::{
-    THIRD_PARTY_EXTENSION_ROUTE_PREFIX, ThirdPartyPathError, parse_third_party_asset_request_path,
+    ThirdPartyPathError, parse_third_party_asset_request_path,
 };
 use crate::domain::errors::DomainError;
 use crate::infrastructure::third_party_assets::resolve_third_party_extension_asset;
-use crate::presentation::web_resources::response_helpers::{
-    respond_bytes, respond_method_not_allowed, respond_no_content, respond_plain_text,
-};
 
 const THIRD_PARTY_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 const MAX_MOBILE_INLINE_THIRD_PARTY_ASSET_BYTES: u64 = 32 * 1024 * 1024;
 const THIRD_PARTY_LAYER_COMPAT_QUERY: &str = "ttCompat=layer";
 
-fn should_apply_third_party_layer_compat(request: &tauri::http::Request<Vec<u8>>) -> bool {
-    request.uri().query().is_some_and(|query| {
+fn should_apply_third_party_layer_compat(request: &HostResourceRequest<'_>) -> bool {
+    request.query.is_some_and(|query| {
         query.split('&').any(|pair| {
             if pair == THIRD_PARTY_LAYER_COMPAT_QUERY {
                 return true;
@@ -35,63 +32,30 @@ fn should_apply_third_party_layer_compat(request: &tauri::http::Request<Vec<u8>>
     })
 }
 
-pub fn handle_third_party_asset_web_request(
+pub(crate) fn serve_third_party_asset(
     local_extensions_dir: &Path,
     global_extensions_dir: &Path,
-    request: &tauri::http::Request<Vec<u8>>,
-    response: &mut tauri::http::Response<Cow<'static, [u8]>>,
-) {
-    if !request
-        .uri()
-        .path()
-        .starts_with(THIRD_PARTY_EXTENSION_ROUTE_PREFIX)
-    {
-        return;
+    request: &HostResourceRequest<'_>,
+) -> HostResourceResponse {
+    match request.method {
+        HostResourceMethod::Options => {
+            return HostResourceResponse::no_content(THIRD_PARTY_ALLOWED_METHODS);
+        }
+        HostResourceMethod::Get | HostResourceMethod::Head => {}
+        _ => return HostResourceResponse::method_not_allowed(THIRD_PARTY_ALLOWED_METHODS),
     }
 
-    handle_third_party_asset_route_request(
-        local_extensions_dir,
-        global_extensions_dir,
-        request,
-        response,
-    );
-}
-
-fn handle_third_party_asset_route_request(
-    local_extensions_dir: &Path,
-    global_extensions_dir: &Path,
-    request: &tauri::http::Request<Vec<u8>>,
-    response: &mut tauri::http::Response<Cow<'static, [u8]>>,
-) {
-    use tauri::http::Method;
-
-    match request.method() {
-        &Method::OPTIONS => {
-            respond_no_content(response, THIRD_PARTY_ALLOWED_METHODS);
-            return;
-        }
-        &Method::GET | &Method::HEAD => {}
-        _ => {
-            respond_method_not_allowed(response, THIRD_PARTY_ALLOWED_METHODS);
-            return;
-        }
-    }
-
-    let request_path = request.uri().path();
-    let parsed = match parse_third_party_asset_request_path(request_path) {
+    let parsed = match parse_third_party_asset_request_path(request.path) {
         Ok(Some(value)) => value,
-        Ok(None) => return,
+        Ok(None) => return HostResourceResponse::plain_text(status::NOT_FOUND, "Not Found"),
         Err(ThirdPartyPathError::MissingExtension | ThirdPartyPathError::MissingAssetPath) => {
-            respond_plain_text(response, StatusCode::NOT_FOUND, "Not Found");
-            return;
+            return HostResourceResponse::plain_text(status::NOT_FOUND, "Not Found");
         }
         Err(ThirdPartyPathError::InvalidPath) => {
-            respond_plain_text(
-                response,
-                StatusCode::BAD_REQUEST,
+            return HostResourceResponse::plain_text(
+                status::BAD_REQUEST,
                 "Invalid third-party asset path",
             );
-            return;
         }
     };
 
@@ -102,9 +66,8 @@ fn handle_third_party_asset_route_request(
         &parsed.relative_path,
     ) {
         Ok(resolved) => {
-            if request.method() == Method::HEAD {
-                respond_bytes(response, StatusCode::OK, Vec::new(), &resolved.mime_type);
-                return;
+            if request.method == HostResourceMethod::Head {
+                return HostResourceResponse::bytes(status::OK, Vec::new(), &resolved.mime_type);
             }
 
             if cfg!(mobile) && resolved.size_bytes > MAX_MOBILE_INLINE_THIRD_PARTY_ASSET_BYTES {
@@ -114,12 +77,10 @@ fn handle_third_party_asset_route_request(
                     parsed.extension_folder,
                     parsed.relative_path_display
                 );
-                respond_plain_text(
-                    response,
-                    StatusCode::PAYLOAD_TOO_LARGE,
+                return HostResourceResponse::plain_text(
+                    status::PAYLOAD_TOO_LARGE,
                     "Third-party asset is too large to load on mobile.",
                 );
-                return;
             }
 
             let should_apply_layer_compat =
@@ -133,36 +94,29 @@ fn handle_third_party_asset_route_request(
                         bytes
                     };
 
-                    respond_bytes(response, StatusCode::OK, bytes, &resolved.mime_type);
                     tracing::debug!(
                         "Third-party asset hit: {}/{}",
                         parsed.extension_folder,
                         parsed.relative_path_display
                     );
+                    HostResourceResponse::bytes(status::OK, bytes, &resolved.mime_type)
                 }
-                Err(error) => {
-                    respond_plain_text(
-                        response,
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        &format!("Failed to read third-party asset: {}", error),
-                    );
-                }
+                Err(error) => HostResourceResponse::plain_text(
+                    status::INTERNAL_SERVER_ERROR,
+                    &format!("Failed to read third-party asset: {}", error),
+                ),
             }
         }
         Err(DomainError::NotFound(_)) => {
-            respond_plain_text(response, StatusCode::NOT_FOUND, "Not Found");
             tracing::debug!(
                 "Third-party asset 404: {}/{}",
                 parsed.extension_folder,
                 parsed.relative_path_display
             );
+            HostResourceResponse::plain_text(status::NOT_FOUND, "Not Found")
         }
         Err(error) => {
-            respond_plain_text(
-                response,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &error.to_string(),
-            );
+            HostResourceResponse::plain_text(status::INTERNAL_SERVER_ERROR, &error.to_string())
         }
     }
 }
@@ -170,8 +124,25 @@ fn handle_third_party_asset_route_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::services::host_resource_service::contract::{
+        HostResourceHeaders, HostResourceMethod, HostResourceRequest, header,
+    };
     use std::path::PathBuf;
-    use tauri::http::header::{ALLOW, CONTENT_TYPE, HeaderValue};
+
+    fn request(method: HostResourceMethod, uri: &'static str) -> HostResourceRequest<'static> {
+        let (path, query) = uri
+            .split_once('?')
+            .map_or((uri, None), |(path, query)| (path, Some(query)));
+        HostResourceRequest::new(method, path, query, HostResourceHeaders::empty())
+    }
+
+    fn header<'a>(response: &'a HostResourceResponse, name: &str) -> Option<&'a str> {
+        response
+            .headers
+            .iter()
+            .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
 
     struct TempDirGuard {
         path: PathBuf,
@@ -195,19 +166,19 @@ mod tests {
     #[test]
     fn rejects_methods_outside_endpoint_contract() {
         let temp = TempDirGuard::new("third-party-endpoint-method-gate");
-        let request = tauri::http::Request::builder()
-            .method("POST")
-            .uri("/scripts/extensions/third-party/mobile/manifest.json")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+        let response = serve_third_party_asset(
+            &temp.path,
+            &temp.path,
+            &request(
+                HostResourceMethod::Other,
+                "/scripts/extensions/third-party/mobile/manifest.json",
+            ),
+        );
 
-        handle_third_party_asset_web_request(&temp.path, &temp.path, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(response.status, status::METHOD_NOT_ALLOWED);
         assert_eq!(
-            response.headers().get(ALLOW),
-            Some(&HeaderValue::from_static(THIRD_PARTY_ALLOWED_METHODS))
+            header(&response, header::ALLOW),
+            Some(THIRD_PARTY_ALLOWED_METHODS)
         );
     }
 
@@ -223,21 +194,21 @@ mod tests {
         )
         .expect("write manifest");
 
-        let request = tauri::http::Request::builder()
-            .method("HEAD")
-            .uri("/scripts/extensions/third-party/mobile/manifest.json")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
-
-        handle_third_party_asset_web_request(&local_root, &global_root, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE),
-            Some(&HeaderValue::from_static("application/json"))
+        let response = serve_third_party_asset(
+            &local_root,
+            &global_root,
+            &request(
+                HostResourceMethod::Head,
+                "/scripts/extensions/third-party/mobile/manifest.json",
+            ),
         );
-        assert!(response.body().is_empty());
+
+        assert_eq!(response.status, status::OK);
+        assert_eq!(
+            header(&response, header::CONTENT_TYPE),
+            Some("application/json")
+        );
+        assert!(response.body.is_empty());
     }
 
     #[test]
@@ -252,21 +223,18 @@ mod tests {
         )
         .expect("write stylesheet");
 
-        let request = tauri::http::Request::builder()
-            .method("GET")
-            .uri("/scripts/extensions/third-party/mobile//style.css")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
-
-        handle_third_party_asset_web_request(&local_root, &global_root, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE),
-            Some(&HeaderValue::from_static("text/css"))
+        let response = serve_third_party_asset(
+            &local_root,
+            &global_root,
+            &request(
+                HostResourceMethod::Get,
+                "/scripts/extensions/third-party/mobile//style.css",
+            ),
         );
-        assert_eq!(response.body().as_ref(), b".example { color: red; }");
+
+        assert_eq!(response.status, status::OK);
+        assert_eq!(header(&response, header::CONTENT_TYPE), Some("text/css"));
+        assert_eq!(response.body, b".example { color: red; }");
     }
 
     #[test]
@@ -281,20 +249,17 @@ mod tests {
         )
         .expect("write stylesheet");
 
-        let request = tauri::http::Request::builder()
-            .method("GET")
-            .uri("/scripts/extensions/third-party/mobile/style.css?ttCompat=layer")
-            .body(Vec::new())
-            .expect("request");
-        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
-
-        handle_third_party_asset_web_request(&local_root, &global_root, &request, &mut response);
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE),
-            Some(&HeaderValue::from_static("text/css"))
+        let response = serve_third_party_asset(
+            &local_root,
+            &global_root,
+            &request(
+                HostResourceMethod::Get,
+                "/scripts/extensions/third-party/mobile/style.css?ttCompat=layer",
+            ),
         );
-        assert_eq!(response.body().as_ref(), b".x{color:red;}");
+
+        assert_eq!(response.status, status::OK);
+        assert_eq!(header(&response, header::CONTENT_TYPE), Some("text/css"));
+        assert_eq!(response.body, b".x{color:red;}");
     }
 }

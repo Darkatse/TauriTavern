@@ -11,6 +11,7 @@ mod presentation;
 // move it down into app/application/presentation instead of growing lib.rs further.
 
 use app::spawn_initialization;
+use application::services::host_resource_service::policy::HostResourceRuntimePolicy;
 use infrastructure::data_root_content_dirs::DataRootContentDirs;
 use infrastructure::http_client_pool::HttpClientPool;
 use infrastructure::logging::{devtools, llm_api_logs, logger};
@@ -20,12 +21,9 @@ use infrastructure::user_data_dirs::DefaultUserWebDirs;
 use presentation::commands::registry::invoke_handler;
 #[cfg(any(dev, debug_assertions))]
 use presentation::web_resources::dev_protocol_endpoint::handle_dev_protocol_request;
-use presentation::web_resources::third_party_endpoint::handle_third_party_asset_web_request;
-use presentation::web_resources::thumbnail_endpoint::{
-    ThumbnailEndpointPolicy, handle_thumbnail_web_request,
+use presentation::web_resources::tauri_resource_adapter::{
+    build_host_resource_roots, handle_tauri_web_resource_request,
 };
-use presentation::web_resources::user_css_endpoint::handle_user_css_web_request;
-use presentation::web_resources::user_data_endpoint::handle_user_data_asset_web_request;
 use tauri::Manager;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use tauri_plugin_opener::OpenerExt;
@@ -174,7 +172,7 @@ pub fn run() {
                     tauritavern_settings.ios_policy.as_ref(),
                 )?
             };
-            let thumbnail_policy = std::sync::Arc::new(ThumbnailEndpointPolicy::new(
+            let thumbnail_policy = std::sync::Arc::new(HostResourceRuntimePolicy::new(
                 tauritavern_settings.avatar_persona_original_images_enabled,
             ));
             app.manage(thumbnail_policy.clone());
@@ -253,7 +251,7 @@ fn create_main_window(
     third_party_dirs: ThirdPartyExtensionDirs,
     user_dirs: DefaultUserWebDirs,
     data_root_content_dirs: DataRootContentDirs,
-    thumbnail_policy: std::sync::Arc<ThumbnailEndpointPolicy>,
+    thumbnail_policy: std::sync::Arc<HostResourceRuntimePolicy>,
 ) -> Result<tauri::webview::WebviewWindow, Box<dyn std::error::Error>> {
     let window_config = app
         .config()
@@ -263,25 +261,20 @@ fn create_main_window(
         .find(|config| config.label == "main")
         .expect("Main window config with label 'main' is missing");
 
-    let local_extensions_dir = third_party_dirs.local_dir;
-    let global_extensions_dir = third_party_dirs.global_dir;
-    let user_dirs = user_dirs;
-    let user_css_file = data_root_content_dirs.user_css_file;
+    let host_resource_roots =
+        build_host_resource_roots(&third_party_dirs, &user_dirs, &data_root_content_dirs);
     let thumbnail_policy = thumbnail_policy;
 
     let builder = tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
         // Route browser-visible URLs to host-owned file handlers here so the frontend can keep
         // using stable HTTP-like paths for extensions, thumbnails, and user data assets.
         .on_web_resource_request(move |request, response| {
-            handle_user_css_web_request(&user_css_file, &request, response);
-            handle_third_party_asset_web_request(
-                &local_extensions_dir,
-                &global_extensions_dir,
+            handle_tauri_web_resource_request(
+                &host_resource_roots,
+                thumbnail_policy.as_ref(),
                 &request,
                 response,
             );
-            handle_thumbnail_web_request(&user_dirs, &thumbnail_policy, &request, response);
-            handle_user_data_asset_web_request(&user_dirs, &request, response);
         });
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
