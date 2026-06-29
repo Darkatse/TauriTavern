@@ -3,6 +3,7 @@ pub mod apis;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 pub mod apple_webview_js_dialogs;
 pub mod assets;
+pub mod bundled_resources;
 pub mod github;
 pub mod host_resources;
 pub mod http_client;
@@ -19,6 +20,8 @@ pub mod paths;
 pub mod persistence;
 pub mod preset_file_naming;
 pub mod repositories;
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+pub mod runtime_paths_config_store;
 pub mod sillytavern_sorting;
 pub mod sync;
 pub mod sync_automation_store;

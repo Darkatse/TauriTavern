@@ -463,6 +463,83 @@ fn is_initialized_data_root(path: &Path) -> bool {
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub(crate) async fn request_runtime_data_root_change(
+    app_root: &Path,
+    current_data_root: &Path,
+    raw_target: &str,
+) -> Result<(), crate::domain::errors::DomainError> {
+    let raw = raw_target.trim();
+    if raw.is_empty() {
+        return Err(crate::domain::errors::DomainError::InvalidData(
+            "data_root is required".to_string(),
+        ));
+    }
+
+    let target = PathBuf::from(raw);
+    if !target.is_absolute() {
+        return Err(crate::domain::errors::DomainError::InvalidData(
+            "data_root must be an absolute path".to_string(),
+        ));
+    }
+
+    if !target.is_dir() {
+        return Err(crate::domain::errors::DomainError::InvalidData(format!(
+            "data_root must be an existing directory: {}",
+            target.display()
+        )));
+    }
+
+    if !is_effectively_empty_directory(&target).map_err(|error| {
+        crate::domain::errors::DomainError::InternalError(format!(
+            "Failed to inspect data_root: {error}"
+        ))
+    })? {
+        return Err(crate::domain::errors::DomainError::InvalidData(format!(
+            "data_root must be an empty directory: {}",
+            target.display()
+        )));
+    }
+
+    let canonical_target = dunce::canonicalize(&target).map_err(|error| {
+        crate::domain::errors::DomainError::InternalError(format!(
+            "Failed to canonicalize path: {error}"
+        ))
+    })?;
+    let canonical_current = dunce::canonicalize(current_data_root).map_err(|error| {
+        crate::domain::errors::DomainError::InternalError(format!(
+            "Failed to canonicalize current data root: {error}"
+        ))
+    })?;
+
+    if canonical_target == canonical_current {
+        return Err(crate::domain::errors::DomainError::InvalidData(
+            "data_root is already the current data directory".to_string(),
+        ));
+    }
+
+    if canonical_target.starts_with(&canonical_current) {
+        return Err(crate::domain::errors::DomainError::InvalidData(
+            "data_root cannot be inside the current data directory".to_string(),
+        ));
+    }
+
+    let config = TauriTavernRuntimeConfig {
+        version: TAURITAVERN_RUNTIME_CONFIG_VERSION,
+        data_root: canonical_target,
+        migration: Some(DataRootMigration {
+            from: canonical_current,
+        }),
+        migration_error: None,
+    };
+
+    crate::infrastructure::persistence::file_system::write_json_file(
+        &runtime_config_path(app_root),
+        &config,
+    )
+    .await
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct TauriTavernRuntimeConfig {
@@ -772,6 +849,59 @@ mod tests {
         assert!(
             !to.join("desktop.ini").exists(),
             "expected ignorable metadata file to be removed before migration"
+        );
+    }
+
+    #[tokio::test]
+    async fn request_runtime_data_root_change_writes_pending_config() {
+        let temp = TempDirGuard::new("request-change");
+        let app_root = temp.root.join("app");
+        let current = temp.root.join("current");
+        let target = temp.root.join("target");
+        fs::create_dir_all(&app_root).expect("create app root");
+        fs::create_dir_all(&current).expect("create current root");
+        fs::create_dir_all(&target).expect("create target root");
+
+        request_runtime_data_root_change(&app_root, &current, &format!("  {}  ", target.display()))
+            .await
+            .expect("request data root change");
+
+        let persisted = load_runtime_config(&app_root)
+            .expect("load runtime config")
+            .expect("runtime config should exist");
+        assert_eq!(
+            persisted.data_root,
+            dunce::canonicalize(&target).expect("canonical target")
+        );
+        assert_eq!(
+            persisted.migration.expect("migration pending").from,
+            dunce::canonicalize(&current).expect("canonical current")
+        );
+        assert!(persisted.migration_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn request_runtime_data_root_change_rejects_current_child() {
+        let temp = TempDirGuard::new("request-change-child");
+        let app_root = temp.root.join("app");
+        let current = temp.root.join("current");
+        let target = current.join("child");
+        fs::create_dir_all(&app_root).expect("create app root");
+        fs::create_dir_all(&target).expect("create target root");
+
+        let error =
+            request_runtime_data_root_change(&app_root, &current, &target.to_string_lossy())
+                .await
+                .expect_err("expected current child to be rejected");
+
+        assert!(matches!(
+            error,
+            crate::domain::errors::DomainError::InvalidData(message)
+                if message == "data_root cannot be inside the current data directory"
+        ));
+        assert!(
+            !runtime_config_path(&app_root).exists(),
+            "rejected request must not write runtime config"
         );
     }
 

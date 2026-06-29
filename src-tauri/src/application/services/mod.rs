@@ -15,6 +15,7 @@ pub mod agent_workspace_scope;
 pub mod asset_service;
 pub mod avatar_service;
 pub mod background_service;
+pub mod bundled_template_service;
 pub mod character_service;
 pub mod chat_completion_service;
 mod chat_file_validation;
@@ -35,6 +36,8 @@ pub mod preset_service;
 pub mod prompt_assembly_service;
 pub mod provider_metadata_service;
 pub mod quick_reply_service;
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+pub mod runtime_paths_service;
 pub mod secret_service;
 mod settings_repair;
 pub mod settings_service;

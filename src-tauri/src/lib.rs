@@ -11,14 +11,22 @@ mod presentation;
 // move it down into app/application/presentation instead of growing lib.rs further.
 
 use app::spawn_initialization;
+use application::services::bundled_template_service::BundledTemplateService;
 use application::services::host_resource_service::{
     HostResourceService, policy::HostResourceRuntimePolicy,
 };
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+use application::services::runtime_paths_service::{
+    RuntimeModeInfo, RuntimePathsService, RuntimePathsSnapshot,
+};
 use application::services::user_media_service::UserMediaService;
+use infrastructure::bundled_resources::BundledResourceStore;
 use infrastructure::host_resources::FilesystemHostResourceStore;
 use infrastructure::http_client_pool::HttpClientPool;
 use infrastructure::logging::{devtools, llm_api_logs, logger};
 use infrastructure::paths::resolve_runtime_paths;
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+use infrastructure::runtime_paths_config_store::FilesystemRuntimePathConfigStore;
 use infrastructure::user_media_store::FilesystemUserMediaStore;
 use presentation::commands::registry::invoke_handler;
 #[cfg(any(dev, debug_assertions))]
@@ -62,6 +70,20 @@ fn install_window_state_plugin(
     Ok(())
 }
 
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+fn runtime_paths_snapshot(
+    runtime_paths: &crate::infrastructure::paths::RuntimePaths,
+) -> RuntimePathsSnapshot {
+    RuntimePathsSnapshot {
+        mode: match runtime_paths.mode {
+            crate::infrastructure::paths::RuntimeMode::Standard => RuntimeModeInfo::Standard,
+            crate::infrastructure::paths::RuntimeMode::Portable => RuntimeModeInfo::Portable,
+        },
+        app_root: runtime_paths.app_root.clone(),
+        data_root: runtime_paths.data_root.clone(),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Register cross-platform host plugins up front.
@@ -93,6 +115,12 @@ pub fn run() {
             let runtime_paths = resolve_runtime_paths(&app_handle)?;
             app.manage(runtime_paths.clone());
 
+            #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+            app.manage(std::sync::Arc::new(RuntimePathsService::new(
+                runtime_paths_snapshot(&runtime_paths),
+                std::sync::Arc::new(FilesystemRuntimePathConfigStore),
+            )));
+
             if let Err(error) = devtools::purge_old_log_files(
                 &runtime_paths.log_root,
                 std::time::Duration::from_secs(14 * 24 * 60 * 60),
@@ -105,6 +133,10 @@ pub fn run() {
 
             let http_client_pool = std::sync::Arc::new(HttpClientPool::new());
             app.manage(http_client_pool.clone());
+
+            app.manage(std::sync::Arc::new(BundledTemplateService::new(
+                std::sync::Arc::new(BundledResourceStore::new(app_handle.clone())),
+            )));
 
             #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
             install_window_state_plugin(&app_handle, &runtime_paths.data_root)?;
