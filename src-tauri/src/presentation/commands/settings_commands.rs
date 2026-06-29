@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
+use crate::app::dev_observability::DevObservabilityHub;
 use crate::application::dto::settings_dto::{
     SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
     UpdateTauriTavernSettingsDto, UserSettingsDto,
@@ -10,7 +11,6 @@ use crate::application::dto::settings_dto::{
 use crate::application::services::host_resource_service::HostResourceService;
 use crate::domain::models::settings::RequestProxySettings;
 use crate::infrastructure::http_client_pool::HttpClientPool;
-use crate::infrastructure::logging::llm_api_logs::LlmApiLogStore;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
@@ -35,7 +35,7 @@ pub async fn update_tauritavern_settings(
     dto: UpdateTauriTavernSettingsDto,
     app_state: State<'_, Arc<AppState>>,
     http_clients: State<'_, Arc<HttpClientPool>>,
-    llm_api_logs: State<'_, Arc<LlmApiLogStore>>,
+    observability: State<'_, Arc<DevObservabilityHub>>,
     host_resources: State<'_, Arc<HostResourceService>>,
     tray_state: State<'_, Arc<crate::presentation::windows_tray::WindowsTrayState>>,
 ) -> Result<TauriTavernSettingsDto, CommandError> {
@@ -74,7 +74,7 @@ pub async fn update_tauritavern_settings(
             .map_err(map_command_error("Failed to apply request proxy settings"))?;
     }
 
-    llm_api_logs.apply_settings(settings.dev.llm_api_keep);
+    observability.apply_llm_api_log_retention(settings.dev.llm_api_keep);
 
     if agent_retention_settings_updated {
         app_state
@@ -91,7 +91,7 @@ pub async fn update_tauritavern_settings(
     dto: UpdateTauriTavernSettingsDto,
     app_state: State<'_, Arc<AppState>>,
     http_clients: State<'_, Arc<HttpClientPool>>,
-    llm_api_logs: State<'_, Arc<LlmApiLogStore>>,
+    observability: State<'_, Arc<DevObservabilityHub>>,
     host_resources: State<'_, Arc<HostResourceService>>,
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
@@ -128,7 +128,7 @@ pub async fn update_tauritavern_settings(
             .map_err(map_command_error("Failed to apply request proxy settings"))?;
     }
 
-    llm_api_logs.apply_settings(settings.dev.llm_api_keep);
+    observability.apply_llm_api_log_retention(settings.dev.llm_api_keep);
 
     if agent_retention_settings_updated {
         app_state

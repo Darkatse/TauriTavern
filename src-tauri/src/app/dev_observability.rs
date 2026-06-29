@@ -55,6 +55,10 @@ impl DevObservabilityHub {
         self.llm_api_logs.set_stream_enabled(enabled);
     }
 
+    pub fn apply_llm_api_log_retention(&self, keep: u32) {
+        self.llm_api_logs.apply_settings(keep);
+    }
+
     pub fn tail_llm_api_index(&self, limit: usize) -> Vec<LlmApiLogIndexEntryDto> {
         self.llm_api_logs
             .tail_index(limit)
