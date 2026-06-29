@@ -1,5 +1,5 @@
 use super::contract::HostResourceRequest;
-use super::routes::{
+use crate::application::client_asset_paths::{
     THIRD_PARTY_EXTENSION_ROUTE_PREFIX, THUMBNAIL_ROUTE_PATH, USER_CSS_ROUTE,
     is_user_data_asset_route,
 };

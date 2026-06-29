@@ -4,12 +4,12 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::filename::sanitize_filename;
 
 use super::contract::{HostResourceMethod, HostResourceRequest, HostResourceResponse, status};
-use super::path_guard::validate_path_segment;
 use super::policy::HostResourceRuntimePolicy;
 use super::ports::{
     HostResourceAssetStore, HostResourceBinaryAsset, HostResourceStoreError, ThumbnailAssetRequest,
     ThumbnailKind,
 };
+use crate::application::client_asset_paths::validate_path_segment;
 
 const THUMBNAIL_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 
@@ -238,12 +238,12 @@ fn parse_thumbnail_query(query: &str) -> Result<(String, String), ThumbnailQuery
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::client_asset_paths::UserDataAssetKind;
     use crate::application::services::host_resource_service::contract::HostResourceHeaders;
     use crate::application::services::host_resource_service::ports::{
         HostResourceBinaryAsset, HostResourceFileStat,
     };
     use crate::application::services::host_resource_service::range::ByteRange;
-    use crate::application::services::host_resource_service::routes::UserDataAssetKind;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
 

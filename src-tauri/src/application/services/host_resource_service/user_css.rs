@@ -51,12 +51,12 @@ pub(super) fn serve_user_css(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::client_asset_paths::UserDataAssetKind;
     use crate::application::services::host_resource_service::contract::HostResourceHeaders;
     use crate::application::services::host_resource_service::ports::{
         HostResourceBinaryAsset, HostResourceFileStat, ThumbnailAssetRequest,
     };
     use crate::application::services::host_resource_service::range::ByteRange;
-    use crate::application::services::host_resource_service::routes::UserDataAssetKind;
     use std::path::Path;
 
     struct Store {

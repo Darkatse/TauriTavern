@@ -2,12 +2,12 @@ use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
+use crate::application::client_asset_paths::UserDataAssetKind;
 use crate::application::services::host_resource_service::ports::{
     HostResourceAssetStore, HostResourceBinaryAsset, HostResourceFileStat, HostResourceStoreError,
     ThumbnailAssetRequest, ThumbnailKind,
 };
 use crate::application::services::host_resource_service::range::ByteRange;
-use crate::application::services::host_resource_service::routes::UserDataAssetKind;
 use crate::domain::errors::DomainError;
 use crate::domain::models::user_directory::UserDirectory;
 use crate::infrastructure::persistence::thumbnail_cache::{

@@ -3,7 +3,9 @@ use super::contract::{
 };
 use super::ports::{HostResourceAssetStore, HostResourceStoreError};
 use super::range::{RangeHeaderError, parse_single_range_header};
-use super::routes::{UserDataAssetKind, UserDataPathError, parse_user_data_asset_request_path};
+use crate::application::client_asset_paths::{
+    UserDataAssetKind, UserDataPathError, parse_user_data_asset_request_path,
+};
 
 const USER_DATA_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 

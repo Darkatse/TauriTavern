@@ -1,11 +1,9 @@
 pub mod contract;
 pub mod css_compat;
-pub mod path_guard;
 pub mod policy;
 pub mod ports;
 pub mod range;
 pub mod route_classifier;
-pub mod routes;
 
 mod third_party;
 mod thumbnail;
@@ -104,6 +102,7 @@ fn next_trace_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::client_asset_paths::UserDataAssetKind;
     use crate::application::services::host_resource_service::contract::{
         HostResourceHeaders, HostResourceMethod, header,
     };
@@ -112,7 +111,6 @@ mod tests {
         ThumbnailAssetRequest,
     };
     use crate::application::services::host_resource_service::range::ByteRange;
-    use crate::application::services::host_resource_service::routes::UserDataAssetKind;
     use std::path::Path;
 
     struct Store;

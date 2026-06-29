@@ -110,6 +110,7 @@ mod tests {
     use tauri::http::header::CONTENT_LENGTH;
     use tauri::http::{Request, Response, StatusCode};
 
+    use crate::application::client_asset_paths::UserDataAssetKind;
     use crate::application::services::host_resource_service::contract::{header, status};
     use crate::application::services::host_resource_service::policy::HostResourceRuntimePolicy;
     use crate::application::services::host_resource_service::ports::{
@@ -117,7 +118,6 @@ mod tests {
         HostResourceStoreError, ThumbnailAssetRequest,
     };
     use crate::application::services::host_resource_service::range::ByteRange;
-    use crate::application::services::host_resource_service::routes::UserDataAssetKind;
 
     struct NoopStore;
 

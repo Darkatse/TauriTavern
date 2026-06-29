@@ -26,6 +26,7 @@ pub mod sync_fs;
 pub mod sync_transfer;
 pub mod thumbnails;
 pub mod tt_sync;
+pub mod user_media_store;
 pub mod zipkit;
 
 #[cfg(test)]

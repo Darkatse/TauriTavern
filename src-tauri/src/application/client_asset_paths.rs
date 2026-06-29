@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use super::path_guard::{decode_request_segment, validate_path_segment};
-
 pub(crate) const CHARACTERS_ROUTE_PREFIX: &str = "/characters/";
 pub(crate) const USER_AVATARS_ROUTE_PREFIX: &str = "/User Avatars/";
 pub(crate) const USER_AVATARS_ROUTE_PREFIX_ENCODED: &str = "/User%20Avatars/";
@@ -160,6 +158,38 @@ fn decode_third_party_segment(segment: &str) -> Result<String, ThirdPartyPathErr
     decode_request_segment(segment).map_err(|_| ThirdPartyPathError::InvalidPath)
 }
 
+fn decode_request_segment(segment: &str) -> Result<String, ()> {
+    percent_encoding::percent_decode_str(segment)
+        .decode_utf8()
+        .map(|value| value.into_owned())
+        .map_err(|_| ())
+}
+
+fn is_forbidden_path_segment_char(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0000}'..='\u{001F}' | '\u{007F}' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+    )
+}
+
+/// Validate a decoded browser asset path segment.
+///
+/// C1 controls are intentionally allowed for legacy mojibake filenames from
+/// migrated SillyTavern data. C0 controls and DEL remain rejected.
+pub(crate) fn validate_path_segment(segment: &str) -> bool {
+    if segment.is_empty()
+        || segment == "."
+        || segment == ".."
+        || segment.contains('/')
+        || segment.contains('\\')
+        || segment.chars().any(is_forbidden_path_segment_char)
+    {
+        return false;
+    }
+
+    true
+}
+
 fn validate_third_party_segment(segment: &str) -> Result<(), ThirdPartyPathError> {
     if validate_path_segment(segment) {
         Ok(())
@@ -172,6 +202,21 @@ fn validate_third_party_segment(segment: &str) -> Result<(), ThirdPartyPathError
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn validates_browser_asset_path_segments() {
+        assert!(validate_path_segment("avatar.png"));
+        assert!(validate_path_segment("ã\u{80}\u{90}.png"));
+
+        assert!(!validate_path_segment(""));
+        assert!(!validate_path_segment("."));
+        assert!(!validate_path_segment(".."));
+        assert!(!validate_path_segment("a/b.png"));
+        assert!(!validate_path_segment("a\\b.png"));
+        assert!(!validate_path_segment("bad:name.png"));
+        assert!(!validate_path_segment("bad\u{001F}.png"));
+        assert!(!validate_path_segment("bad\u{007F}.png"));
+    }
 
     #[test]
     fn parses_character_asset_path() {

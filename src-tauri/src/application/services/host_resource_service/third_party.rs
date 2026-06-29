@@ -1,7 +1,9 @@
 use super::contract::{HostResourceMethod, HostResourceRequest, HostResourceResponse, status};
 use super::css_compat::{contains_layer_keyword, flatten_css_layers};
 use super::ports::{HostResourceAssetStore, HostResourceStoreError};
-use super::routes::{ThirdPartyPathError, parse_third_party_asset_request_path};
+use crate::application::client_asset_paths::{
+    ThirdPartyPathError, parse_third_party_asset_request_path,
+};
 
 const THIRD_PARTY_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 const MAX_MOBILE_INLINE_THIRD_PARTY_ASSET_BYTES: u64 = 32 * 1024 * 1024;
@@ -138,6 +140,7 @@ fn store_error_response(error: HostResourceStoreError) -> HostResourceResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::client_asset_paths::UserDataAssetKind;
     use crate::application::services::host_resource_service::contract::{
         HostResourceHeaders, header,
     };
@@ -145,7 +148,6 @@ mod tests {
         HostResourceBinaryAsset, HostResourceFileStat, ThumbnailAssetRequest,
     };
     use crate::application::services::host_resource_service::range::ByteRange;
-    use crate::application::services::host_resource_service::routes::UserDataAssetKind;
     use std::path::Path;
 
     struct Store;

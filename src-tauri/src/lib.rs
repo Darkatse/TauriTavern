@@ -14,10 +14,12 @@ use app::spawn_initialization;
 use application::services::host_resource_service::{
     HostResourceService, policy::HostResourceRuntimePolicy,
 };
+use application::services::user_media_service::UserMediaService;
 use infrastructure::host_resources::FilesystemHostResourceStore;
 use infrastructure::http_client_pool::HttpClientPool;
 use infrastructure::logging::{devtools, llm_api_logs, logger};
 use infrastructure::paths::resolve_runtime_paths;
+use infrastructure::user_media_store::FilesystemUserMediaStore;
 use presentation::commands::registry::invoke_handler;
 #[cfg(any(dev, debug_assertions))]
 use presentation::web_resources::dev_protocol_endpoint::handle_dev_protocol_request;
@@ -173,6 +175,10 @@ pub fn run() {
                 host_resource_store,
             ));
             app.manage(host_resource_service.clone());
+            let user_media_store = std::sync::Arc::new(FilesystemUserMediaStore::from_data_root(
+                &runtime_paths.data_root,
+            ));
+            app.manage(std::sync::Arc::new(UserMediaService::new(user_media_store)));
 
             if ios_policy.scope == crate::domain::ios_policy::IosPolicyScope::Ios
                 && tauritavern_settings.request_proxy.enabled

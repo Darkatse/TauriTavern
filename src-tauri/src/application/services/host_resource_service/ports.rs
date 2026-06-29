@@ -1,5 +1,5 @@
 use super::range::ByteRange;
-use super::routes::UserDataAssetKind;
+use crate::application::client_asset_paths::UserDataAssetKind;
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
