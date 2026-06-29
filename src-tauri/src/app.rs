@@ -43,9 +43,9 @@ use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::paths::RuntimePaths;
 
+pub mod backend_errors;
 mod bootstrap;
 pub mod dev_observability;
 
@@ -207,10 +207,11 @@ pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) 
                 }
             }
             Err(error) => {
-                logger::error(&format!(
-                    "Failed to initialize application state: {}",
-                    error
-                ));
+                let message = format!("Failed to initialize application state: {}", error);
+                tracing::error!(
+                    target: crate::observability_targets::USER_VISIBLE_ERROR,
+                    "{message}",
+                );
 
                 match app_handle.emit("app-error", error.to_string()) {
                     Ok(_) => {}

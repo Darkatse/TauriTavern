@@ -6,7 +6,6 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
 use crate::domain::repositories::settings_repository::SettingsRepository;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
     list_files_with_extension, read_json_file, write_json_file,
 };
@@ -85,11 +84,7 @@ impl FileSettingsRepository {
                     result.push(settings);
                 }
                 Err(e) => {
-                    logger::warn(&format!(
-                        "Failed to read settings file {}: {}",
-                        path.display(),
-                        e
-                    ));
+                    tracing::warn!("Failed to read settings file {}: {}", path.display(), e);
                 }
             }
         }
@@ -153,18 +148,19 @@ impl SettingsRepository for FileSettingsRepository {
             return Ok(default_settings);
         }
 
-        logger::debug(&format!(
+        tracing::debug!(
             "Loading TauriTavern settings from {}",
             self.tauritavern_settings_file.display()
-        ));
+        );
 
         let contents = fs::read_to_string(&self.tauritavern_settings_file)
             .await
             .map_err(|e| {
-                logger::error(&format!(
+                tracing::error!(
                     "Failed to read file {:?}: {}",
-                    self.tauritavern_settings_file, e
-                ));
+                    self.tauritavern_settings_file,
+                    e
+                );
 
                 if e.kind() == std::io::ErrorKind::NotFound {
                     DomainError::NotFound(format!(
@@ -177,10 +173,11 @@ impl SettingsRepository for FileSettingsRepository {
             })?;
 
         TauriTavernSettings::from_json_str_with_compat(&contents).map_err(|e| {
-            logger::error(&format!(
+            tracing::error!(
                 "Failed to parse JSON from file {:?}: {}",
-                self.tauritavern_settings_file, e
-            ));
+                self.tauritavern_settings_file,
+                e
+            );
             DomainError::InvalidData(format!("Invalid JSON: {}", e))
         })
     }

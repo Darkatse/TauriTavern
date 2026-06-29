@@ -11,7 +11,6 @@ use crate::domain::repositories::content_repository::{
 use crate::infrastructure::assets::{
     copy_resource_to_file, list_default_content_files_under, read_resource_json,
 };
-use crate::infrastructure::logging::logger;
 
 /// Content index item from JSON
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,7 +163,7 @@ impl FileContentRepository {
                 .collect()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(error) => {
-                logger::error(&format!("Failed to read content log {:?}: {}", path, error));
+                tracing::error!("Failed to read content log {:?}: {}", path, error);
                 Err(DomainError::InternalError(format!(
                     "Failed to read content log: {}",
                     error
@@ -176,10 +175,11 @@ impl FileContentRepository {
     async fn write_content_log(path: &Path, entries: &[String]) -> Result<(), DomainError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await.map_err(|error| {
-                logger::error(&format!(
+                tracing::error!(
                     "Failed to create content log directory {:?}: {}",
-                    parent, error
-                ));
+                    parent,
+                    error
+                );
                 DomainError::InternalError(format!(
                     "Failed to create content log directory: {}",
                     error
@@ -188,10 +188,7 @@ impl FileContentRepository {
         }
 
         fs::write(path, entries.join("\n")).await.map_err(|error| {
-            logger::error(&format!(
-                "Failed to write content log {:?}: {}",
-                path, error
-            ));
+            tracing::error!("Failed to write content log {:?}: {}", path, error);
             DomainError::InternalError(format!("Failed to write content log: {}", error))
         })
     }
@@ -216,19 +213,17 @@ impl FileContentRepository {
 
         for item in scoped_items {
             if content_log.iter().any(|entry| entry == &item.filename) {
-                logger::debug(&format!(
-                    "Skipping content item {}, already in log",
-                    item.filename
-                ));
+                tracing::debug!("Skipping content item {}, already in log", item.filename);
                 continue;
             }
 
             let target_dir = self.get_target_directory(&item.content_type, user_dir);
             fs::create_dir_all(&target_dir).await.map_err(|error| {
-                logger::error(&format!(
+                tracing::error!(
                     "Failed to create target directory {:?}: {}",
-                    target_dir, error
-                ));
+                    target_dir,
+                    error
+                );
                 DomainError::InternalError(format!("Failed to create target directory: {}", error))
             })?;
 
@@ -239,14 +234,11 @@ impl FileContentRepository {
                 let dest_path = self.build_destination_path(item, &resource_entry, &target_dir)?;
 
                 if dest_path.exists() {
-                    logger::debug(&format!(
-                        "Skipping copy, file already exists: {:?}",
-                        dest_path
-                    ));
+                    tracing::debug!("Skipping copy, file already exists: {:?}", dest_path);
                     continue;
                 }
 
-                logger::debug(&format!("Copying {} to {:?}", resource_path, dest_path));
+                tracing::debug!("Copying {} to {:?}", resource_path, dest_path);
                 copy_resource_to_file(&self.app_handle, &resource_path, &dest_path).await?;
             }
 
@@ -317,10 +309,10 @@ impl ContentRepository for FileContentRepository {
     }
 
     async fn is_default_content_initialized(&self, user_handle: &str) -> Result<bool, DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "Checking if default content is initialized for user: {}",
             user_handle
-        ));
+        );
 
         let user_dir = self.user_content_dir.clone();
         let content_items = self.get_content_index().await?;
@@ -329,10 +321,11 @@ impl ContentRepository for FileContentRepository {
             .content_log_contains_any(ContentScope::User, &content_items, &user_dir)
             .await?;
 
-        logger::debug(&format!(
+        tracing::debug!(
             "Default content initialized for user {}: {}",
-            user_handle, has_content
-        ));
+            user_handle,
+            has_content
+        );
 
         Ok(has_content)
     }

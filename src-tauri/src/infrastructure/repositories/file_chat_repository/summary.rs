@@ -10,7 +10,6 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{parse_message_timestamp_value, strip_jsonl_extension};
 use crate::domain::repositories::chat_repository::ChatSearchResult;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::list_files_with_extension;
 
 use super::FileChatRepository;
@@ -220,10 +219,11 @@ impl SummaryCache {
         let bytes = match std::fs::read(&self.index_path) {
             Ok(bytes) => bytes,
             Err(error) => {
-                logger::warn(&format!(
+                tracing::warn!(
                     "Failed to read chat summary index {:?}: {}",
-                    self.index_path, error
-                ));
+                    self.index_path,
+                    error
+                );
                 return Ok(());
             }
         };
@@ -231,19 +231,21 @@ impl SummaryCache {
         let snapshot: SummaryIndexSnapshot = match serde_json::from_slice(&bytes) {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                logger::warn(&format!(
+                tracing::warn!(
                     "Failed to parse chat summary index {:?}: {}",
-                    self.index_path, error
-                ));
+                    self.index_path,
+                    error
+                );
                 return Ok(());
             }
         };
 
         if snapshot.schema_version != INDEX_SCHEMA_VERSION {
-            logger::warn(&format!(
+            tracing::warn!(
                 "Skipping incompatible chat summary index schema {} (expected {})",
-                snapshot.schema_version, INDEX_SCHEMA_VERSION
-            ));
+                snapshot.schema_version,
+                INDEX_SCHEMA_VERSION
+            );
             return Ok(());
         }
 

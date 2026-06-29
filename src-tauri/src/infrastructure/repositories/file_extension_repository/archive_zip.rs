@@ -8,7 +8,6 @@ use uuid::Uuid;
 use crate::domain::errors::DomainError;
 use crate::domain::models::extension::ExtensionManifestMetadata;
 use crate::domain::repositories::extension_repository::ExtensionRepository;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::zipkit;
 
 use super::FileExtensionRepository;
@@ -176,11 +175,11 @@ impl FileExtensionRepository {
         }
 
         if let Err(error) = fs::remove_dir_all(&backup_path) {
-            logger::warn(&format!(
+            tracing::warn!(
                 "Failed to remove extension backup directory '{}': {}",
                 backup_path.display(),
                 error
-            ));
+            );
         }
 
         Ok(())

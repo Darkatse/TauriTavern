@@ -299,30 +299,15 @@ pub fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), Domain
 
 #### 3.3.3 日志系统 (Logging)
 
-提供统一的日志记录功能。
+普通日志直接使用 `tracing` 宏；全局 subscriber 在 host setup 阶段初始化，统一写入 stdout、rolling file 与 Dev 面板 backend log。不要在 application / presentation 层重新引入 `logger` facade。
 
 ```rust
-// 示例: 日志模块
-pub fn init() {
-    env_logger::init();
-}
-
-pub fn debug(message: &str) {
-    log::debug!("{}", message);
-}
-
-pub fn info(message: &str) {
-    log::info!("{}", message);
-}
-
-pub fn warn(message: &str) {
-    log::warn!("{}", message);
-}
-
-pub fn error(message: &str) {
-    log::error!("{}", message);
-}
+tracing::debug!("Loading character index");
+tracing::warn!("Skipped invalid extension manifest: {}", path.display());
+tracing::error!("Failed to persist diagnostic log: {}", error);
 ```
+
+用户可见 backend error 是显式产品事件，不是所有 `tracing::error!` 的副作用。需要弹窗的内部错误使用 `target: crate::observability_targets::USER_VISIBLE_ERROR`，并受全局 `EnvFilter` 控制。
 
 ### 3.4 表示层 (Presentation)
 
@@ -804,18 +789,13 @@ TauriTavern采用分层的错误处理策略，确保错误信息在传递过程
 
 ### 6.3 错误日志
 
-所有错误都应记录到日志系统，便于调试和问题排查。
+错误应在拥有上下文的边界记录一次，避免 service、repository、command 多层重复打点。能通过 command `Result` 返回前端的失败，由 command boundary 统一转换并记录；预期失败可降为 warn，重要内部失败才触发用户可见 backend error。
 
 ```rust
-// 示例: 错误日志记录
-fn handle_error(error: &CommandError) {
-    match error {
-        CommandError::NotFound(msg) => logger::warn(&format!("Not found: {}", msg)),
-        CommandError::BadRequest(msg) => logger::warn(&format!("Bad request: {}", msg)),
-        CommandError::Forbidden(msg) => logger::warn(&format!("Forbidden: {}", msg)),
-        CommandError::Internal(msg) => logger::error(&format!("Internal error: {}", msg)),
-    }
-}
+service
+    .load_character(name)
+    .await
+    .map_err(map_command_error("Failed to load character"))?;
 ```
 
 ## 7. 扩展指南
@@ -1079,7 +1059,7 @@ pub async fn process_large_file(
                     .expect("Failed to emit app-ready event");
             },
             Err(e) => {
-                logger::error(&format!("Failed to initialize application state: {}", e));
+                tracing::error!("Failed to initialize application state: {}", e);
             }
         }
     });

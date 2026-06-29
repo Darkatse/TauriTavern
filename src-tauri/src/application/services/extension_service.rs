@@ -5,7 +5,6 @@ use crate::domain::models::extension::{
     Extension, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
 };
 use crate::domain::repositories::extension_repository::ExtensionRepository;
-use crate::infrastructure::logging::logger;
 
 /// Extension service
 pub struct ExtensionService {
@@ -22,7 +21,7 @@ impl ExtensionService {
 
     /// Get all extensions
     pub async fn get_extensions(&self) -> Result<Vec<Extension>, DomainError> {
-        logger::debug("Getting all extensions");
+        tracing::debug!("Getting all extensions");
         self.extension_repository.discover_extensions().await
     }
 
@@ -33,7 +32,7 @@ impl ExtensionService {
         global: bool,
         branch: Option<String>,
     ) -> Result<ExtensionInstallResult, DomainError> {
-        logger::debug(&format!("Installing extension from {}", url));
+        tracing::debug!("Installing extension from {}", url);
         self.extension_repository
             .install_extension(url, global, branch)
             .await
@@ -45,7 +44,7 @@ impl ExtensionService {
         extension_name: &str,
         global: bool,
     ) -> Result<ExtensionUpdateResult, DomainError> {
-        logger::debug(&format!("Updating extension: {}", extension_name));
+        tracing::debug!("Updating extension: {}", extension_name);
         self.extension_repository
             .update_extension(extension_name, global)
             .await
@@ -57,7 +56,7 @@ impl ExtensionService {
         extension_name: &str,
         global: bool,
     ) -> Result<(), DomainError> {
-        logger::debug(&format!("Deleting extension: {}", extension_name));
+        tracing::debug!("Deleting extension: {}", extension_name);
         self.extension_repository
             .delete_extension(extension_name, global)
             .await
@@ -69,7 +68,7 @@ impl ExtensionService {
         extension_name: &str,
         global: bool,
     ) -> Result<ExtensionVersion, DomainError> {
-        logger::debug(&format!("Getting extension version: {}", extension_name));
+        tracing::debug!("Getting extension version: {}", extension_name);
         self.extension_repository
             .get_extension_version(extension_name, global)
             .await
@@ -82,10 +81,12 @@ impl ExtensionService {
         source: &str,
         destination: &str,
     ) -> Result<(), DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "Moving extension: {} from {} to {}",
-            extension_name, source, destination
-        ));
+            extension_name,
+            source,
+            destination
+        );
         self.extension_repository
             .move_extension(extension_name, source, destination)
             .await

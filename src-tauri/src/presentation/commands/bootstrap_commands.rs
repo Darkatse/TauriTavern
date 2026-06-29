@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
+use crate::app::backend_errors::BackendErrorHub;
 use crate::application::dto::bootstrap_dto::BootstrapSnapshotDto;
 use crate::application::dto::group_dto::GroupDto;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -81,4 +82,12 @@ pub async fn get_bootstrap_snapshot(
         avatars,
         secret_state,
     })
+}
+
+#[tauri::command]
+pub async fn backend_error_bridge_ready(
+    backend_errors: State<'_, Arc<BackendErrorHub>>,
+) -> Result<Vec<String>, CommandError> {
+    log_command("backend_error_bridge_ready");
+    Ok(backend_errors.mark_bridge_ready_and_drain())
 }

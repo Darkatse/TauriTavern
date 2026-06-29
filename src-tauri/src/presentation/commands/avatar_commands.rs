@@ -10,8 +10,9 @@ use tokio::fs;
 
 use crate::app::AppState;
 use crate::domain::models::avatar::{AvatarUploadResult, CropInfo};
-use crate::infrastructure::logging::logger;
-use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::commands::helpers::{
+    log_command, log_user_visible_error, map_command_error,
+};
 use crate::presentation::errors::CommandError;
 
 const MAX_MOBILE_INLINE_AVATAR_BYTES: u64 = 8 * 1024 * 1024;
@@ -77,7 +78,8 @@ pub async fn upload_avatar(
         Some(crop_str) => match serde_json::from_str::<CropInfo>(&crop_str) {
             Ok(info) => Some(info),
             Err(error) => {
-                logger::error(&format!("Failed to parse crop information: {}", error));
+                let message = format!("Invalid avatar crop information: {}", error);
+                log_user_visible_error(&message);
                 None
             }
         },

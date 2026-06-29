@@ -74,3 +74,7 @@
 15. `docs/CurrentState/CharacterIdentityContract.md`
    - 角色身份契约当前实现快照
    - 包含 `avatar_url` exact filename 契约、Rust stem key、chat directory alias/lazy resolver、rename/delete 当前语义与持续开发约束
+
+16. `docs/CurrentState/LoggingObservability.md`
+   - Logging / Dev Observability 当前实现快照
+   - 包含 tracing 普通日志、用户可见 backend error、DevObservabilityHub、LLM API log 与边界守卫契约

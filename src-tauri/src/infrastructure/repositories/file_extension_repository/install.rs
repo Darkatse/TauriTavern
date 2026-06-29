@@ -2,7 +2,6 @@ use std::fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::extension::ExtensionInstallResult;
-use crate::infrastructure::logging::logger;
 
 use super::FileExtensionRepository;
 use super::repo_url::{normalize_requested_reference, parse_repo_url};
@@ -70,10 +69,11 @@ pub(super) async fn install_extension(
             .delete(scope, &extension_folder_name)
             .await
         {
-            logger::warn(&format!(
+            tracing::warn!(
                 "Failed to rollback extension source metadata for '{}': {}",
-                extension_folder_name, cleanup_error
-            ));
+                extension_folder_name,
+                cleanup_error
+            );
         }
         FileExtensionRepository::cleanup_temp_directory(&staging_dir).await;
         return Err(DomainError::InternalError(format!(

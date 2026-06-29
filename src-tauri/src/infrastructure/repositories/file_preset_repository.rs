@@ -9,7 +9,6 @@ use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::domain::repositories::content_repository::ContentRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::infrastructure::assets::read_resource_json;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
     delete_file, read_json_file, write_json_file,
 };
@@ -69,10 +68,7 @@ impl FilePresetRepository {
 
         if !directory.exists() {
             tokio::fs::create_dir_all(&directory).await.map_err(|e| {
-                logger::error(&format!(
-                    "Failed to create preset directory {:?}: {}",
-                    directory, e
-                ));
+                tracing::error!("Failed to create preset directory {:?}: {}", directory, e);
                 DomainError::InternalError(format!("Failed to create preset directory: {}", e))
             })?;
         }
@@ -86,10 +82,11 @@ impl FilePresetRepository {
         name: &str,
         preset_type: &PresetType,
     ) -> Result<Option<DefaultPreset>, DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "Looking for default preset: {} (type: {})",
-            name, preset_type
-        ));
+            name,
+            preset_type
+        );
 
         // Get content index
         let content_items = self.content_repository.get_content_index().await?;
@@ -152,10 +149,7 @@ impl FilePresetRepository {
             }
         }
 
-        logger::debug(&format!(
-            "Default preset not found: {} (type: {})",
-            name, preset_type
-        ));
+        tracing::debug!("Default preset not found: {} (type: {})", name, preset_type);
         Ok(None)
     }
 }
@@ -163,10 +157,11 @@ impl FilePresetRepository {
 #[async_trait]
 impl PresetRepository for FilePresetRepository {
     async fn save_preset(&self, preset: &Preset) -> Result<(), DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "Saving preset: {} (type: {})",
-            preset.name, preset.preset_type
-        ));
+            preset.name,
+            preset.preset_type
+        );
 
         // Ensure directory exists
         self.ensure_directory_exists(&preset.preset_type).await?;
@@ -182,15 +177,12 @@ impl PresetRepository for FilePresetRepository {
         // Write file
         write_json_file(&file_path, &data_with_name).await?;
 
-        logger::info(&format!("Preset saved to {:?}", file_path));
+        tracing::info!("Preset saved to {:?}", file_path);
         Ok(())
     }
 
     async fn delete_preset(&self, name: &str, preset_type: &PresetType) -> Result<(), DomainError> {
-        logger::debug(&format!(
-            "Deleting preset: {} (type: {})",
-            name, preset_type
-        ));
+        tracing::debug!("Deleting preset: {} (type: {})", name, preset_type);
 
         let file_path = self
             .get_preset_paths(name, preset_type)?
@@ -199,7 +191,7 @@ impl PresetRepository for FilePresetRepository {
 
         delete_file(&file_path).await?;
 
-        logger::info(&format!("Preset deleted: {:?}", file_path));
+        tracing::info!("Preset deleted: {:?}", file_path);
         Ok(())
     }
 
@@ -219,7 +211,7 @@ impl PresetRepository for FilePresetRepository {
         name: &str,
         preset_type: &PresetType,
     ) -> Result<Option<Preset>, DomainError> {
-        logger::debug(&format!("Getting preset: {} (type: {})", name, preset_type));
+        tracing::debug!("Getting preset: {} (type: {})", name, preset_type);
 
         let Some(file_path) = self
             .get_preset_paths(name, preset_type)?
@@ -236,12 +228,12 @@ impl PresetRepository for FilePresetRepository {
     }
 
     async fn list_presets(&self, preset_type: &PresetType) -> Result<Vec<String>, DomainError> {
-        logger::debug(&format!("Listing presets of type: {}", preset_type));
+        tracing::debug!("Listing presets of type: {}", preset_type);
 
         let directory = self.get_preset_directory(preset_type);
 
         if !directory.exists() {
-            logger::debug(&format!("Preset directory does not exist: {:?}", directory));
+            tracing::debug!("Preset directory does not exist: {:?}", directory);
             return Ok(vec![]);
         }
 
@@ -251,11 +243,11 @@ impl PresetRepository for FilePresetRepository {
             .map(|entry| entry.name)
             .collect();
 
-        logger::debug(&format!(
+        tracing::debug!(
             "Found {} presets of type {}",
             preset_names.len(),
             preset_type
-        ));
+        );
 
         Ok(preset_names)
     }

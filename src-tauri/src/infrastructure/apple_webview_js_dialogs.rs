@@ -167,6 +167,7 @@ mod platform {
             Ok(presenting) => presenting,
             Err(error) => {
                 tracing::error!(
+                    target: crate::observability_targets::USER_VISIBLE_ERROR,
                     "[WKUIDelegate] Failed to resolve presenting view controller: {error}"
                 );
                 completion_handler.call(());
@@ -175,7 +176,10 @@ mod platform {
         };
 
         let Some(mtm) = MainThreadMarker::new() else {
-            tracing::error!("[WKUIDelegate] JS dialog must be presented on the main thread");
+            tracing::error!(
+                target: crate::observability_targets::USER_VISIBLE_ERROR,
+                "[WKUIDelegate] JS dialog must be presented on the main thread"
+            );
             completion_handler.call(());
             return;
         };
@@ -214,6 +218,7 @@ mod platform {
             Ok(presenting) => presenting,
             Err(error) => {
                 tracing::error!(
+                    target: crate::observability_targets::USER_VISIBLE_ERROR,
                     "[WKUIDelegate] Failed to resolve presenting view controller: {error}"
                 );
                 completion_handler.call((objc2::runtime::Bool::NO,));
@@ -222,7 +227,10 @@ mod platform {
         };
 
         let Some(mtm) = MainThreadMarker::new() else {
-            tracing::error!("[WKUIDelegate] JS dialog must be presented on the main thread");
+            tracing::error!(
+                target: crate::observability_targets::USER_VISIBLE_ERROR,
+                "[WKUIDelegate] JS dialog must be presented on the main thread"
+            );
             completion_handler.call((objc2::runtime::Bool::NO,));
             return;
         };
@@ -284,6 +292,7 @@ mod platform {
             Ok(presenting) => presenting,
             Err(error) => {
                 tracing::error!(
+                    target: crate::observability_targets::USER_VISIBLE_ERROR,
                     "[WKUIDelegate] Failed to resolve presenting view controller: {error}"
                 );
                 completion_handler.call((std::ptr::null_mut(),));
@@ -292,7 +301,10 @@ mod platform {
         };
 
         let Some(mtm) = MainThreadMarker::new() else {
-            tracing::error!("[WKUIDelegate] JS dialog must be presented on the main thread");
+            tracing::error!(
+                target: crate::observability_targets::USER_VISIBLE_ERROR,
+                "[WKUIDelegate] JS dialog must be presented on the main thread"
+            );
             completion_handler.call((std::ptr::null_mut(),));
             return;
         };
@@ -377,7 +389,10 @@ mod platform {
 
     pub(super) fn present_alert(message: &NSString, completion_handler: RcBlock<dyn Fn()>) {
         if let Err(message) = run_alert(message) {
-            tracing::error!("[WKUIDelegate] Failed to present JS alert: {message}");
+            tracing::error!(
+                target: crate::observability_targets::USER_VISIBLE_ERROR,
+                "[WKUIDelegate] Failed to present JS alert: {message}"
+            );
         }
         completion_handler.call(());
     }
@@ -387,7 +402,10 @@ mod platform {
         completion_handler: RcBlock<dyn Fn(objc2::runtime::Bool)>,
     ) {
         let ok = run_confirm(message).unwrap_or_else(|message| {
-            tracing::error!("[WKUIDelegate] Failed to present JS confirm: {message}");
+            tracing::error!(
+                target: crate::observability_targets::USER_VISIBLE_ERROR,
+                "[WKUIDelegate] Failed to present JS confirm: {message}"
+            );
             false
         });
         completion_handler.call((objc2::runtime::Bool::new(ok),));
@@ -399,7 +417,10 @@ mod platform {
         completion_handler: RcBlock<dyn Fn(*mut NSString)>,
     ) {
         let result = run_prompt(prompt, default_text).unwrap_or_else(|message| {
-            tracing::error!("[WKUIDelegate] Failed to present JS prompt: {message}");
+            tracing::error!(
+                target: crate::observability_targets::USER_VISIBLE_ERROR,
+                "[WKUIDelegate] Failed to present JS prompt: {message}"
+            );
             None
         });
         let ptr = result

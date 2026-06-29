@@ -9,7 +9,6 @@ use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_types::{
     ChatMessageReadItem, ChatMessageRole, ChatMessagesReadResult,
 };
-use crate::infrastructure::logging::logger;
 
 use super::FileChatRepository;
 
@@ -44,7 +43,7 @@ async fn read_chat_messages_from_path(
         if error.kind() == std::io::ErrorKind::NotFound {
             DomainError::NotFound(format!("Chat payload not found: {}", path.display()))
         } else {
-            logger::error(&format!("Failed to open chat payload: {}", error));
+            tracing::error!("Failed to open chat payload: {}", error);
             DomainError::InternalError(format!(
                 "Failed to open chat payload {}: {}",
                 path.display(),

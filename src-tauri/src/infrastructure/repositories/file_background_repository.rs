@@ -5,7 +5,6 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::filename::sanitize_filename;
 use crate::domain::repositories::background_repository::BackgroundRepository;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::thumbnail_cache::invalidate_thumbnail_cache;
 
 /// File system implementation of the BackgroundRepository
@@ -55,10 +54,7 @@ impl FileBackgroundRepository {
         fs::create_dir_all(&self.backgrounds_dir)
             .await
             .map_err(|error| {
-                logger::error(&format!(
-                    "Failed to create backgrounds directory: {}",
-                    error
-                ));
+                tracing::error!("Failed to create backgrounds directory: {}", error);
                 DomainError::InternalError(format!(
                     "Failed to create backgrounds directory: {}",
                     error
@@ -75,10 +71,10 @@ impl FileBackgroundRepository {
 #[async_trait]
 impl BackgroundRepository for FileBackgroundRepository {
     async fn delete_background(&self, filename: &str) -> Result<(), DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "FileBackgroundRepository: Deleting background: {}",
             filename
-        ));
+        );
 
         let normalized = self.normalize_filename(filename)?;
         let file_path = self.backgrounds_dir.join(&normalized);
@@ -96,7 +92,7 @@ impl BackgroundRepository for FileBackgroundRepository {
         }
 
         fs::remove_file(&file_path).await.map_err(|error| {
-            logger::error(&format!("Failed to delete background file: {}", error));
+            tracing::error!("Failed to delete background file: {}", error);
             DomainError::InternalError(format!("Failed to delete background file: {}", error))
         })?;
 
@@ -109,10 +105,11 @@ impl BackgroundRepository for FileBackgroundRepository {
         old_filename: &str,
         new_filename: &str,
     ) -> Result<(), DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "FileBackgroundRepository: Renaming background from '{}' to '{}'",
-            old_filename, new_filename
-        ));
+            old_filename,
+            new_filename
+        );
 
         let old_normalized = self.normalize_filename(old_filename)?;
         let new_normalized = self.normalize_filename(new_filename)?;
@@ -145,7 +142,7 @@ impl BackgroundRepository for FileBackgroundRepository {
         }
 
         fs::rename(&old_path, &new_path).await.map_err(|error| {
-            logger::error(&format!("Failed to rename background file: {}", error));
+            tracing::error!("Failed to rename background file: {}", error);
             DomainError::InternalError(format!("Failed to rename background file: {}", error))
         })?;
 
@@ -155,17 +152,17 @@ impl BackgroundRepository for FileBackgroundRepository {
     }
 
     async fn upload_background(&self, filename: &str, data: &[u8]) -> Result<String, DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "FileBackgroundRepository: Uploading background: {}",
             filename
-        ));
+        );
 
         self.ensure_backgrounds_dir_exists().await?;
 
         let normalized = self.normalize_filename(filename)?;
         let file_path = self.backgrounds_dir.join(&normalized);
         fs::write(&file_path, data).await.map_err(|error| {
-            logger::error(&format!("Failed to write background file: {}", error));
+            tracing::error!("Failed to write background file: {}", error);
             DomainError::InternalError(format!("Failed to write background file: {}", error))
         })?;
 
@@ -178,10 +175,10 @@ impl BackgroundRepository for FileBackgroundRepository {
         filename: &str,
         source_path: &Path,
     ) -> Result<String, DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "FileBackgroundRepository: Uploading background from path: {}",
             filename
-        ));
+        );
 
         self.ensure_backgrounds_dir_exists().await?;
 
@@ -196,7 +193,7 @@ impl BackgroundRepository for FileBackgroundRepository {
                 ));
             }
 
-            logger::error(&format!("Failed to copy background file: {}", error));
+            tracing::error!("Failed to copy background file: {}", error);
             DomainError::InternalError(format!("Failed to copy background file: {}", error))
         })?;
 

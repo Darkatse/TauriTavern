@@ -10,7 +10,6 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::character::Character;
 use crate::domain::models::chat::parse_message_timestamp;
 use crate::domain::models::filename::sanitize_filename;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
     list_files_with_extension, replace_file_with_fallback, unique_temp_path,
 };
@@ -236,15 +235,15 @@ impl FileCharacterRepository {
         &self,
         path: &Path,
     ) -> Result<Character, DomainError> {
-        logger::debug(&format!("Reading character from file: {:?}", path));
+        tracing::debug!("Reading character from file: {:?}", path);
 
         let file_data = fs::read(path).await.map_err(|e| {
-            logger::error(&format!("Failed to read character file: {}", e));
+            tracing::error!("Failed to read character file: {}", e);
             DomainError::InternalError(format!("Failed to read character file: {}", e))
         })?;
 
         let metadata = fs::metadata(path).await.map_err(|e| {
-            logger::error(&format!("Failed to read file metadata: {}", e));
+            tracing::error!("Failed to read file metadata: {}", e);
             DomainError::InternalError(format!("Failed to read file metadata: {}", e))
         })?;
         let timestamp_millis = file_ctime_millis(&metadata);
@@ -252,11 +251,11 @@ impl FileCharacterRepository {
         let mut json_data = read_character_data_from_png(&file_data)?;
 
         let raw_value: Value = serde_json::from_str(&json_data).map_err(|e| {
-            logger::error(&format!("Failed to parse character data: {}", e));
+            tracing::error!("Failed to parse character data: {}", e);
             DomainError::InvalidData(format!("Failed to parse character data: {}", e))
         })?;
         let mut character: Character = serde_json::from_value(raw_value.clone()).map_err(|e| {
-            logger::error(&format!("Failed to decode character data: {}", e));
+            tracing::error!("Failed to decode character data: {}", e);
             DomainError::InvalidData(format!("Failed to decode character data: {}", e))
         })?;
         Self::sync_canonical_data_fields(&mut character, &raw_value);
@@ -406,7 +405,12 @@ impl FileCharacterRepository {
                     characters.push(character);
                 }
                 Err(e) => {
-                    logger::error(&format!("Failed to process character {}: {}", file_name, e));
+                    tracing::error!(
+                        target: crate::observability_targets::USER_VISIBLE_ERROR,
+                        "Failed to process character {}: {}",
+                        file_name,
+                        e
+                    );
                 }
             }
         }
@@ -437,14 +441,14 @@ impl FileCharacterRepository {
         match fs::read(&self.default_avatar_path).await {
             Ok(bytes) => Ok(bytes),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                logger::warn(&format!(
+                tracing::warn!(
                     "Default avatar not found at {:?}, using generated placeholder image",
                     self.default_avatar_path
-                ));
+                );
                 Self::generate_placeholder_avatar_png()
             }
             Err(error) => {
-                logger::error(&format!("Failed to read default avatar: {}", error));
+                tracing::error!("Failed to read default avatar: {}", error);
                 Err(DomainError::InternalError(format!(
                     "Failed to read default avatar: {}",
                     error

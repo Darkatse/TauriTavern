@@ -1,6 +1,5 @@
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::character_repository::ImageCrop;
-use crate::infrastructure::logging::logger;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use crc32fast::Hasher;
 use flate2::read::ZlibDecoder;
@@ -456,7 +455,7 @@ fn process_avatar_image_sync(
                 );
             }
         } else {
-            logger::warn("Invalid crop parameters, ignoring crop");
+            tracing::warn!("Invalid crop parameters, ignoring crop");
         }
     }
 

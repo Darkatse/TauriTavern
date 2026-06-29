@@ -13,7 +13,6 @@ use crate::domain::repositories::chat_repository::{
     ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
     PinnedCharacterChat,
 };
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::chat_format_importers::{
     export_payload_to_plain_text, import_chat_payloads_from_json, import_chat_payloads_from_jsonl,
 };
@@ -68,7 +67,7 @@ impl ChatRepository for FileChatRepository {
     }
 
     async fn get_character_chats(&self, character_name: &str) -> Result<Vec<Chat>, DomainError> {
-        logger::debug(&format!("Getting chats for character: {}", character_name));
+        tracing::debug!("Getting chats for character: {}", character_name);
 
         // Ensure the character directory exists
         let character_dir = self.resolve_character_chat_dir(character_name).await?;
@@ -105,21 +104,21 @@ impl ChatRepository for FileChatRepository {
     }
 
     async fn get_all_chats(&self) -> Result<Vec<Chat>, DomainError> {
-        logger::debug("Getting all chats");
+        tracing::debug!("Getting all chats");
 
         // Ensure the chats directory exists
         self.ensure_directory_exists().await?;
 
         // List all directories in the chats directory
         let mut entries = fs::read_dir(&self.chats_dir).await.map_err(|e| {
-            logger::error(&format!("Failed to read chats directory: {}", e));
+            tracing::error!("Failed to read chats directory: {}", e);
             DomainError::InternalError(format!("Failed to read chats directory: {}", e))
         })?;
 
         let mut all_chats = Vec::new();
 
         while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            logger::error(&format!("Failed to read directory entry: {}", e));
+            tracing::error!("Failed to read directory entry: {}", e);
             DomainError::InternalError(format!("Failed to read directory entry: {}", e))
         })? {
             let path = entry.path();
@@ -161,7 +160,7 @@ impl ChatRepository for FileChatRepository {
     }
 
     async fn delete_chat(&self, character_name: &str, file_name: &str) -> Result<(), DomainError> {
-        logger::debug(&format!("Deleting chat: {}/{}", character_name, file_name));
+        tracing::debug!("Deleting chat: {}/{}", character_name, file_name);
 
         let path = self
             .resolve_character_chat_path(character_name, file_name)
@@ -176,7 +175,7 @@ impl ChatRepository for FileChatRepository {
 
         // Delete the file
         fs::remove_file(&path).await.map_err(|e| {
-            logger::error(&format!("Failed to delete chat file: {}", e));
+            tracing::error!("Failed to delete chat file: {}", e);
             DomainError::InternalError(format!("Failed to delete chat file: {}", e))
         })?;
 
@@ -197,10 +196,13 @@ impl ChatRepository for FileChatRepository {
         old_file_name: &str,
         new_file_name: &str,
     ) -> Result<String, DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "Renaming chat: {}/{} -> {}/{}",
-            character_name, old_file_name, character_name, new_file_name
-        ));
+            character_name,
+            old_file_name,
+            character_name,
+            new_file_name
+        );
 
         let old_path = self
             .resolve_character_chat_path(character_name, old_file_name)
@@ -230,7 +232,7 @@ impl ChatRepository for FileChatRepository {
         move_file_no_replace_with_fallback(&old_path, &new_path)
             .await
             .map_err(|e| {
-                logger::error(&format!("Failed to rename chat file: {}", e));
+                tracing::error!("Failed to rename chat file: {}", e);
                 e
             })?;
 
@@ -260,10 +262,7 @@ impl ChatRepository for FileChatRepository {
         file_name: &str,
         message: ChatMessage,
     ) -> Result<Chat, DomainError> {
-        logger::debug(&format!(
-            "Adding message to chat: {}/{}",
-            character_name, file_name
-        ));
+        tracing::debug!("Adding message to chat: {}/{}", character_name, file_name);
 
         // Get the chat
         let mut chat = self.get_chat(character_name, file_name).await?;
@@ -282,7 +281,7 @@ impl ChatRepository for FileChatRepository {
         query: &str,
         character_filter: Option<&str>,
     ) -> Result<Vec<ChatSearchResult>, DomainError> {
-        logger::debug("Searching character chats with streaming scanner");
+        tracing::debug!("Searching character chats with streaming scanner");
 
         let normalized_query = Self::normalize_search_query(query);
         let fragments = Self::search_fragments(&normalized_query);
@@ -387,10 +386,11 @@ impl ChatRepository for FileChatRepository {
         file_path: &Path,
         format: ChatImportFormat,
     ) -> Result<Chat, DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "Importing chat for character {} from {:?}",
-            character_name, file_path
-        ));
+            character_name,
+            file_path
+        );
 
         let import_type = match format {
             ChatImportFormat::SillyTavern => "jsonl",
@@ -422,10 +422,12 @@ impl ChatRepository for FileChatRepository {
         target_path: &Path,
         format: ChatExportFormat,
     ) -> Result<(), DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "Exporting chat: {}/{} to {:?}",
-            character_name, file_name, target_path
-        ));
+            character_name,
+            file_name,
+            target_path
+        );
 
         match format {
             ChatExportFormat::JSONL => {
@@ -441,7 +443,7 @@ impl ChatRepository for FileChatRepository {
 
                 // Copy the file
                 fs::copy(&chat_path, target_path).await.map_err(|e| {
-                    logger::error(&format!("Failed to export chat: {}", e));
+                    tracing::error!("Failed to export chat: {}", e);
                     DomainError::InternalError(format!("Failed to export chat: {}", e))
                 })?;
             }
@@ -451,7 +453,7 @@ impl ChatRepository for FileChatRepository {
 
                 // Write the file
                 fs::write(target_path, text).await.map_err(|e| {
-                    logger::error(&format!("Failed to write export file: {}", e));
+                    tracing::error!("Failed to write export file: {}", e);
                     DomainError::InternalError(format!("Failed to write export file: {}", e))
                 })?;
             }
@@ -485,10 +487,11 @@ impl ChatRepository for FileChatRepository {
             match self.get_chat_summary(&descriptor, false).await {
                 Ok(summary) => results.push(summary),
                 Err(error) => {
-                    logger::warn(&format!(
+                    tracing::warn!(
                         "Failed to read chat backup summary {:?}: {}",
-                        descriptor.path, error
-                    ));
+                        descriptor.path,
+                        error
+                    );
                 }
             }
         }

@@ -3,12 +3,10 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::domain::errors::DomainError;
 use crate::domain::ios_policy::IosPolicyScope;
 use crate::domain::models::extension::{
     Extension, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
 };
-use crate::infrastructure::logging::logger;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
@@ -84,15 +82,7 @@ pub async fn install_extension(
         .extension_service
         .install_extension(&url, global, branch)
         .await
-        .map_err(|error| {
-            let message = format!("Failed to install extension: {}", error);
-            if matches!(&error, DomainError::RateLimited { .. }) {
-                logger::warn(&message);
-            } else {
-                logger::error(&message);
-            }
-            error.into()
-        })
+        .map_err(map_command_error("Failed to install extension"))
 }
 
 #[tauri::command]

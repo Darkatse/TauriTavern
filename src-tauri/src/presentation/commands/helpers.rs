@@ -1,6 +1,5 @@
 use std::fmt::Display;
 
-use crate::infrastructure::logging::logger;
 use crate::presentation::errors::CommandError;
 
 pub fn ensure_ios_policy_allows(
@@ -18,7 +17,11 @@ pub fn ensure_ios_policy_allows(
 }
 
 pub fn log_command(command: impl AsRef<str>) {
-    logger::debug(&format!("Command: {}", command.as_ref()));
+    tracing::debug!(
+        target: crate::observability_targets::COMMAND,
+        command = %command.as_ref(),
+        "Command invoked",
+    );
 }
 
 fn should_log_as_warning(error: &CommandError) -> bool {
@@ -40,13 +43,26 @@ where
         let message = format!("{}: {}", context, error_text);
 
         if should_log_as_warning(&command_error) {
-            logger::warn(&message);
+            tracing::warn!(
+                target: crate::observability_targets::COMMAND,
+                context = %context,
+                error = %error_text,
+                "Command returned expected failure",
+            );
         } else {
-            logger::error(&message);
+            log_user_visible_error(&message);
         }
 
         command_error
     }
+}
+
+pub fn log_user_visible_error(message: impl AsRef<str>) {
+    let message = message.as_ref();
+    tracing::error!(
+        target: crate::observability_targets::USER_VISIBLE_ERROR,
+        "{message}",
+    );
 }
 
 #[cfg(test)]

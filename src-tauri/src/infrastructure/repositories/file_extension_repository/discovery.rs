@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::extension::{Extension, ExtensionType};
-use crate::infrastructure::logging::logger;
 
 use super::FileExtensionRepository;
 use super::source_store::ExtensionStoreScope;
@@ -32,7 +31,7 @@ pub(super) async fn discover_extensions(
     discover_scoped_extensions(repository, ExtensionStoreScope::Local, &mut extensions).await?;
     discover_scoped_extensions(repository, ExtensionStoreScope::Global, &mut extensions).await?;
 
-    logger::debug(&format!("Discovered {} extensions", extensions.len()));
+    tracing::debug!("Discovered {} extensions", extensions.len());
     Ok(extensions)
 }
 

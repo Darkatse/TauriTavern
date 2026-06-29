@@ -1,6 +1,5 @@
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::content_repository::ContentRepository;
-use crate::infrastructure::logging::logger;
 use std::sync::Arc;
 
 /// Content Service
@@ -31,7 +30,7 @@ impl ContentService {
         &self,
         user_handle: &str,
     ) -> Result<bool, DomainError> {
-        logger::debug("Checking if default content is initialized");
+        tracing::debug!("Checking if default content is initialized");
 
         // Check if content is initialized
         let is_initialized = self
@@ -39,7 +38,7 @@ impl ContentService {
             .is_default_content_initialized(user_handle)
             .await?;
 
-        logger::debug(&format!("Default content initialized: {}", is_initialized));
+        tracing::debug!("Default content initialized: {}", is_initialized);
 
         Ok(is_initialized)
     }

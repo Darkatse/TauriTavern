@@ -8,7 +8,6 @@ use tokio::sync::Mutex;
 use crate::domain::errors::DomainError;
 use crate::domain::models::secret::{SecretEntry, SecretKeys, Secrets};
 use crate::domain::repositories::secret_repository::SecretRepository;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
 
 pub struct FileSecretRepository {
@@ -82,7 +81,11 @@ impl SecretRepository for FileSecretRepository {
         let raw = match read_json_file::<Value>(&self.secrets_file).await {
             Ok(value) => value,
             Err(e) => {
-                logger::error(&format!("Failed to read secrets file: {}", e));
+                tracing::error!(
+                    target: crate::observability_targets::USER_VISIBLE_ERROR,
+                    "Failed to read secrets file: {}",
+                    e
+                );
                 Value::Object(Default::default())
             }
         };
@@ -90,10 +93,11 @@ impl SecretRepository for FileSecretRepository {
 
         if migrated {
             if let Err(error) = self.save(&secrets).await {
-                logger::error(&format!(
+                tracing::error!(
+                    target: crate::observability_targets::USER_VISIBLE_ERROR,
                     "Failed to persist migrated secrets file: {}",
                     error
-                ));
+                );
             }
         } else {
             let mut cache = self.cache.lock().await;

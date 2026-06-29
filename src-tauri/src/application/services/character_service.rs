@@ -22,7 +22,6 @@ use crate::domain::models::world_info::sanitize_world_info_name;
 use crate::domain::repositories::character_repository::{CharacterRepository, ImageCrop};
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
-use crate::infrastructure::logging::logger;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::path::Path;
@@ -71,14 +70,14 @@ impl CharacterService {
         &self,
         shallow: bool,
     ) -> Result<Vec<CharacterDto>, ApplicationError> {
-        logger::debug("Getting all characters");
+        tracing::debug!("Getting all characters");
         let characters = self.repository.find_all(shallow).await?;
         Ok(characters.into_iter().map(CharacterDto::from).collect())
     }
 
     /// Get a character by name
     pub async fn get_character(&self, name: &str) -> Result<CharacterDto, ApplicationError> {
-        logger::debug(&format!("Getting character: {}", name));
+        tracing::debug!("Getting character: {}", name);
         let character = self.repository.find_by_name(name).await?;
         let raw_json = character.json_data.clone();
         Ok(CharacterDto::from(character).with_json_data(raw_json))
@@ -89,7 +88,7 @@ impl CharacterService {
         &self,
         dto: CreateCharacterDto,
     ) -> Result<CharacterDto, ApplicationError> {
-        logger::debug(&format!("Creating character: {}", dto.name));
+        tracing::debug!("Creating character: {}", dto.name);
         let primary_lorebook = dto.primary_lorebook.clone();
 
         // Convert DTO to domain model
@@ -113,10 +112,7 @@ impl CharacterService {
         &self,
         dto: CreateWithAvatarDto,
     ) -> Result<CreateCharacterWithAvatarResultDto, ApplicationError> {
-        logger::debug(&format!(
-            "Creating character with avatar: {}",
-            dto.character.name
-        ));
+        tracing::debug!("Creating character with avatar: {}", dto.character.name);
         let primary_lorebook = dto.character.primary_lorebook.clone();
 
         // Convert DTO to domain model
@@ -149,7 +145,7 @@ impl CharacterService {
         name: &str,
         dto: UpdateCharacterDto,
     ) -> Result<CharacterDto, ApplicationError> {
-        logger::debug(&format!("Updating character: {}", name));
+        tracing::debug!("Updating character: {}", name);
 
         // Get the existing character
         let mut character = self.repository.find_by_name(name).await?;
@@ -300,7 +296,7 @@ impl CharacterService {
         name: &str,
         dto: UpdateCharacterCardDataDto,
     ) -> Result<CharacterDto, ApplicationError> {
-        logger::debug(&format!("Updating character card data: {}", name));
+        tracing::debug!("Updating character card data: {}", name);
 
         let crop = dto.crop.map(ImageCrop::from);
         let avatar_path = dto.avatar_path.as_deref().map(Path::new);
@@ -322,10 +318,7 @@ impl CharacterService {
         &self,
         dto: CheckCharacterLorebookConflictDto,
     ) -> Result<CharacterLorebookConflictDto, ApplicationError> {
-        logger::debug(&format!(
-            "Checking character lorebook conflict: {}",
-            dto.name
-        ));
+        tracing::debug!("Checking character lorebook conflict: {}", dto.name);
 
         let character = self.repository.find_by_name(&dto.name).await?;
         self.character_lorebook_conflict(&character).await
@@ -335,10 +328,11 @@ impl CharacterService {
         &self,
         dto: ResolveCharacterLorebookConflictDto,
     ) -> Result<ResolveCharacterLorebookConflictResultDto, ApplicationError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "Resolving character lorebook conflict: {} ({:?})",
-            dto.name, dto.resolution
-        ));
+            dto.name,
+            dto.resolution
+        );
 
         let world = match dto.resolution {
             CharacterLorebookConflictResolution::Current => {
@@ -360,7 +354,7 @@ impl CharacterService {
         name: &str,
         dto: MergeCharacterCardDataDto,
     ) -> Result<CharacterDto, ApplicationError> {
-        logger::debug(&format!("Merging character card data: {}", name));
+        tracing::debug!("Merging character card data: {}", name);
 
         let raw_json = self.repository.read_character_card_json(name).await?;
         let mut card_value = card_contract::parse_character_card_json(&raw_json)?;
@@ -418,10 +412,7 @@ impl CharacterService {
                 Ok(true) => result.updated.push(avatar),
                 Ok(false) => result.skipped.push(avatar),
                 Err(error) => {
-                    logger::warn(&format!(
-                        "Bulk character merge failed for {}: {}",
-                        avatar, error
-                    ));
+                    tracing::warn!("Bulk character merge failed for {}: {}", avatar, error);
                     result.failed.push(avatar);
                 }
             }
@@ -432,7 +423,7 @@ impl CharacterService {
 
     /// Delete a character
     pub async fn delete_character(&self, dto: DeleteCharacterDto) -> Result<(), ApplicationError> {
-        logger::debug(&format!("Deleting character: {}", dto.name));
+        tracing::debug!("Deleting character: {}", dto.name);
         let workspace_targets = if dto.delete_chats {
             self.agent_workspace_targets_for_character_chats(&dto.name)
                 .await?
@@ -481,10 +472,7 @@ impl CharacterService {
     ) -> Result<CharacterDto, ApplicationError> {
         self.validate_character_name(&dto.new_name)?;
 
-        logger::debug(&format!(
-            "Renaming character: {} -> {}",
-            dto.old_name, dto.new_name
-        ));
+        tracing::debug!("Renaming character: {} -> {}", dto.old_name, dto.new_name);
         let character = self.repository.rename(&dto.old_name, &dto.new_name).await?;
         Ok(CharacterDto::from(character))
     }
@@ -494,7 +482,7 @@ impl CharacterService {
         &self,
         dto: DuplicateCharacterDto,
     ) -> Result<CharacterDto, ApplicationError> {
-        logger::debug(&format!("Duplicating character: {}", dto.name));
+        tracing::debug!("Duplicating character: {}", dto.name);
         let character = self.repository.duplicate(&dto.name).await?;
         Ok(CharacterDto::from(character))
     }
@@ -504,7 +492,7 @@ impl CharacterService {
         &self,
         dto: ImportCharacterDto,
     ) -> Result<CharacterDto, ApplicationError> {
-        logger::debug(&format!("Importing character from: {}", dto.file_path));
+        tracing::debug!("Importing character from: {}", dto.file_path);
         let mut character = self
             .repository
             .import_character(Path::new(&dto.file_path), dto.preserve_file_name)
@@ -530,10 +518,7 @@ impl CharacterService {
 
     /// Export a character
     pub async fn export_character(&self, dto: ExportCharacterDto) -> Result<(), ApplicationError> {
-        logger::debug(&format!(
-            "Exporting character: {} to {}",
-            dto.name, dto.target_path
-        ));
+        tracing::debug!("Exporting character: {} to {}", dto.name, dto.target_path);
         let export_value = self.build_export_card_value(&dto.name).await?;
         let export_json = serde_json::to_string_pretty(&export_value).map_err(|error| {
             ApplicationError::InternalError(format!(
@@ -597,7 +582,7 @@ impl CharacterService {
 
     /// Update a character's avatar
     pub async fn update_avatar(&self, dto: UpdateAvatarDto) -> Result<(), ApplicationError> {
-        logger::debug(&format!("Updating avatar for character: {}", dto.name));
+        tracing::debug!("Updating avatar for character: {}", dto.name);
         let mut character = self.repository.find_by_name(&dto.name).await?;
         self.materialize_primary_lorebook(&mut character).await?;
 
@@ -613,7 +598,7 @@ impl CharacterService {
         &self,
         dto: GetCharacterChatsDto,
     ) -> Result<Vec<CharacterChatDto>, ApplicationError> {
-        logger::debug(&format!("Getting chats for character: {}", dto.name));
+        tracing::debug!("Getting chats for character: {}", dto.name);
         let chats = self
             .repository
             .get_character_chats(&dto.name, dto.simple)
@@ -623,7 +608,7 @@ impl CharacterService {
 
     /// Clear the character cache
     pub async fn clear_cache(&self) -> Result<(), DomainError> {
-        logger::debug("Clearing character cache");
+        tracing::debug!("Clearing character cache");
         self.repository.clear_cache().await
     }
 
@@ -956,10 +941,10 @@ impl CharacterService {
             .get_world_info(world_name, false)
             .await?
         else {
-            logger::warn(&format!(
+            tracing::warn!(
                 "Failed to read world info file: {}. Character book will not be available.",
                 world_name
-            ));
+            );
             return Ok(());
         };
 

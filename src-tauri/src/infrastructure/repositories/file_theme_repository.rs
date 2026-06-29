@@ -5,7 +5,6 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::filename::sanitize_filename;
 use crate::domain::models::theme::Theme;
 use crate::domain::repositories::theme_repository::ThemeRepository;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{delete_file, write_json_file};
 
 /// File-based implementation of the ThemeRepository
@@ -26,7 +25,7 @@ impl FileThemeRepository {
             tokio::fs::create_dir_all(&self.themes_dir)
                 .await
                 .map_err(|e| {
-                    logger::error(&format!("Failed to create themes directory: {}", e));
+                    tracing::error!("Failed to create themes directory: {}", e);
                     DomainError::InternalError(format!("Failed to create themes directory: {}", e))
                 })?;
         }
@@ -50,7 +49,7 @@ impl FileThemeRepository {
 #[async_trait]
 impl ThemeRepository for FileThemeRepository {
     async fn save_theme(&self, theme: &Theme) -> Result<(), DomainError> {
-        logger::debug(&format!("Saving theme: {}", theme.name));
+        tracing::debug!("Saving theme: {}", theme.name);
 
         // Ensure the directory exists
         self.ensure_directory_exists().await?;
@@ -78,7 +77,7 @@ impl ThemeRepository for FileThemeRepository {
     }
 
     async fn delete_theme(&self, name: &str) -> Result<(), DomainError> {
-        logger::debug(&format!("Deleting theme: {}", name));
+        tracing::debug!("Deleting theme: {}", name);
 
         let path = self.get_theme_path(name)?;
 

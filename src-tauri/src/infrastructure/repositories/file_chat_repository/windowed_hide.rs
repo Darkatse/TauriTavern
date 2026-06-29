@@ -6,7 +6,6 @@ use tokio::io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_repository::ChatPayloadCursor;
-use crate::infrastructure::logging::logger;
 
 use super::FileChatRepository;
 use super::windowed_payload_io::{
@@ -268,10 +267,10 @@ async fn hide_payload_before_cursor_internal(
 
     replace_file(&temp_path, path).await?;
 
-    logger::debug(&format!(
+    tracing::debug!(
         "Rewrote hidden state before cursor in chat payload: {:?}",
         path
-    ));
+    );
 
     let metadata = read_existing_payload_metadata(path).await?;
     cursor_from_metadata(new_cursor_offset, &metadata)

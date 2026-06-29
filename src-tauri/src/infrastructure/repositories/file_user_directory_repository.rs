@@ -5,7 +5,6 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::user_directory::UserDirectory;
 use crate::domain::repositories::user_directory_repository::UserDirectoryRepository;
-use crate::infrastructure::logging::logger;
 
 pub struct FileUserDirectoryRepository {
     data_root: PathBuf,
@@ -50,7 +49,7 @@ impl UserDirectoryRepository for FileUserDirectoryRepository {
     }
 
     async fn get_default_user_directory(&self) -> Result<UserDirectory, DomainError> {
-        logger::debug("Getting default user directory");
+        tracing::debug!("Getting default user directory");
         Ok(UserDirectory::default_user(&self.data_root))
     }
 

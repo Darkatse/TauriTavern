@@ -1,7 +1,6 @@
 use crate::domain::errors::DomainError;
 use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::domain::repositories::preset_repository::PresetRepository;
-use crate::infrastructure::logging::logger;
 use std::sync::Arc;
 
 /// Service for managing presets
@@ -25,21 +24,18 @@ impl PresetService {
     ///
     /// * `Result<(), DomainError>` - Success or error
     pub async fn save_preset(&self, preset: &Preset) -> Result<(), DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "Saving preset: {} (type: {})",
-            preset.name, preset.preset_type
-        ));
+            preset.name,
+            preset.preset_type
+        );
 
-        // Validate the preset
-        preset.validate().map_err(|e| {
-            logger::error(&format!("Preset validation failed: {}", e));
-            DomainError::InvalidData(e)
-        })?;
+        preset.validate().map_err(DomainError::InvalidData)?;
 
         // Save the preset
         self.preset_repository.save_preset(preset).await?;
 
-        logger::info(&format!("Preset saved successfully: {}", preset.name));
+        tracing::debug!("Preset saved successfully: {}", preset.name);
         Ok(())
     }
 
@@ -58,21 +54,13 @@ impl PresetService {
         name: &str,
         preset_type: &PresetType,
     ) -> Result<(), DomainError> {
-        logger::debug(&format!(
-            "Deleting preset: {} (type: {})",
-            name, preset_type
-        ));
+        tracing::debug!("Deleting preset: {} (type: {})", name, preset_type);
 
-        // Check if preset exists
         if !self
             .preset_repository
             .preset_exists(name, preset_type)
             .await?
         {
-            logger::warn(&format!(
-                "Preset not found for deletion: {} (type: {})",
-                name, preset_type
-            ));
             return Err(DomainError::NotFound(format!("Preset not found: {}", name)));
         }
 
@@ -81,7 +69,7 @@ impl PresetService {
             .delete_preset(name, preset_type)
             .await?;
 
-        logger::info(&format!("Preset deleted successfully: {}", name));
+        tracing::debug!("Preset deleted successfully: {}", name);
         Ok(())
     }
 
@@ -100,14 +88,14 @@ impl PresetService {
         name: &str,
         preset_type: &PresetType,
     ) -> Result<Option<Preset>, DomainError> {
-        logger::debug(&format!("Getting preset: {} (type: {})", name, preset_type));
+        tracing::debug!("Getting preset: {} (type: {})", name, preset_type);
 
         let preset = self.preset_repository.get_preset(name, preset_type).await?;
 
         if preset.is_some() {
-            logger::debug(&format!("Preset found: {}", name));
+            tracing::debug!("Preset found: {}", name);
         } else {
-            logger::debug(&format!("Preset not found: {}", name));
+            tracing::debug!("Preset not found: {}", name);
         }
 
         Ok(preset)
@@ -123,15 +111,11 @@ impl PresetService {
     ///
     /// * `Result<Vec<String>, DomainError>` - List of preset names
     pub async fn list_presets(&self, preset_type: &PresetType) -> Result<Vec<String>, DomainError> {
-        logger::debug(&format!("Listing presets of type: {}", preset_type));
+        tracing::debug!("Listing presets of type: {}", preset_type);
 
         let presets = self.preset_repository.list_presets(preset_type).await?;
 
-        logger::debug(&format!(
-            "Found {} presets of type {}",
-            presets.len(),
-            preset_type
-        ));
+        tracing::debug!("Found {} presets of type {}", presets.len(), preset_type);
 
         Ok(presets)
     }
@@ -151,10 +135,7 @@ impl PresetService {
         name: &str,
         preset_type: &PresetType,
     ) -> Result<Option<DefaultPreset>, DomainError> {
-        logger::debug(&format!(
-            "Restoring default preset: {} (type: {})",
-            name, preset_type
-        ));
+        tracing::debug!("Restoring default preset: {} (type: {})", name, preset_type);
 
         let default_preset = self
             .preset_repository
@@ -162,9 +143,9 @@ impl PresetService {
             .await?;
 
         if default_preset.is_some() {
-            logger::info(&format!("Default preset found for restoration: {}", name));
+            tracing::debug!("Default preset found for restoration: {}", name);
         } else {
-            logger::debug(&format!("Default preset not found: {}", name));
+            tracing::debug!("Default preset not found: {}", name);
         }
 
         Ok(default_preset)
@@ -185,17 +166,18 @@ impl PresetService {
         name: &str,
         preset_type: &PresetType,
     ) -> Result<bool, DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "Checking if preset exists: {} (type: {})",
-            name, preset_type
-        ));
+            name,
+            preset_type
+        );
 
         let exists = self
             .preset_repository
             .preset_exists(name, preset_type)
             .await?;
 
-        logger::debug(&format!("Preset {} exists: {}", name, exists));
+        tracing::debug!("Preset {} exists: {}", name, exists);
 
         Ok(exists)
     }
@@ -217,22 +199,16 @@ impl PresetService {
         api_id: &str,
         data: serde_json::Value,
     ) -> Result<Preset, DomainError> {
-        logger::debug(&format!("Creating preset: {} (api_id: {})", name, api_id));
+        tracing::debug!("Creating preset: {} (api_id: {})", name, api_id);
 
-        let preset_type = PresetType::from_api_id(api_id).ok_or_else(|| {
-            logger::error(&format!("Unknown API ID: {}", api_id));
-            DomainError::InvalidData(format!("Unknown API ID: {}", api_id))
-        })?;
+        let preset_type = PresetType::from_api_id(api_id)
+            .ok_or_else(|| DomainError::InvalidData(format!("Unknown API ID: {}", api_id)))?;
 
         let preset = Preset::new(name, preset_type, data);
 
-        // Validate the preset
-        preset.validate().map_err(|e| {
-            logger::error(&format!("Preset validation failed: {}", e));
-            DomainError::InvalidData(e)
-        })?;
+        preset.validate().map_err(DomainError::InvalidData)?;
 
-        logger::debug(&format!("Preset created successfully: {}", preset.name));
+        tracing::debug!("Preset created successfully: {}", preset.name);
 
         Ok(preset)
     }

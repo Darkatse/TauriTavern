@@ -1,7 +1,6 @@
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::domain::repositories::image_metadata_repository::ImageMetadataRepository;
-use crate::infrastructure::logging::logger;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -25,10 +24,7 @@ impl BackgroundService {
 
     /// Delete a background image by filename
     pub async fn delete_background(&self, filename: &str) -> Result<(), DomainError> {
-        logger::debug(&format!(
-            "BackgroundService: Deleting background: {}",
-            filename
-        ));
+        tracing::debug!("BackgroundService: Deleting background: {}", filename);
 
         // Validate filename
         if filename.is_empty() {
@@ -49,10 +45,11 @@ impl BackgroundService {
         old_filename: &str,
         new_filename: &str,
     ) -> Result<(), DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "BackgroundService: Renaming background from '{}' to '{}'",
-            old_filename, new_filename
-        ));
+            old_filename,
+            new_filename
+        );
 
         // Validate filenames
         if old_filename.is_empty() || new_filename.is_empty() {
@@ -81,10 +78,7 @@ impl BackgroundService {
         filename: &str,
         data: &[u8],
     ) -> Result<String, DomainError> {
-        logger::debug(&format!(
-            "BackgroundService: Uploading background: {}",
-            filename
-        ));
+        tracing::debug!("BackgroundService: Uploading background: {}", filename);
 
         // Validate filename and data
         if filename.is_empty() {
@@ -107,10 +101,10 @@ impl BackgroundService {
         filename: &str,
         source_path: impl AsRef<Path>,
     ) -> Result<String, DomainError> {
-        logger::debug(&format!(
+        tracing::debug!(
             "BackgroundService: Uploading background from path: {}",
             filename
-        ));
+        );
 
         if filename.is_empty() {
             return Err(DomainError::InvalidData(

@@ -1,5 +1,4 @@
 use crate::domain::errors::DomainError;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
     replace_file_with_fallback, unique_temp_path,
 };
@@ -19,11 +18,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 /// * `Ok(Vec<Value>)` - The parsed JSON values
 /// * `Err(DomainError)` - If the file cannot be read or parsed
 pub async fn read_jsonl_file(path: &Path) -> Result<Vec<Value>, DomainError> {
-    logger::debug(&format!("Reading JSONL file: {:?}", path));
+    tracing::debug!("Reading JSONL file: {:?}", path);
 
     // Open the file
     let file = File::open(path).await.map_err(|e| {
-        logger::error(&format!("Failed to open JSONL file: {}", e));
+        tracing::error!("Failed to open JSONL file: {}", e);
         DomainError::InternalError(format!("Failed to open JSONL file: {}", e))
     })?;
 
@@ -46,7 +45,7 @@ pub fn parse_jsonl_bytes(bytes: &[u8]) -> Result<Vec<Value>, DomainError> {
 
         match serde_json::from_str::<Value>(line) {
             Ok(obj) => objects.push(obj),
-            Err(e) => logger::warn(&format!("Failed to parse JSON line: {}", e)),
+            Err(e) => tracing::warn!("Failed to parse JSON line: {}", e),
         }
     }
     Ok(objects)
@@ -55,14 +54,14 @@ pub fn parse_jsonl_bytes(bytes: &[u8]) -> Result<Vec<Value>, DomainError> {
 /// Read the first non-empty line from a JSONL file.
 pub async fn read_first_non_empty_jsonl_line(path: &Path) -> Result<Option<String>, DomainError> {
     let file = File::open(path).await.map_err(|e| {
-        logger::error(&format!("Failed to open JSONL file: {}", e));
+        tracing::error!("Failed to open JSONL file: {}", e);
         DomainError::InternalError(format!("Failed to open JSONL file: {}", e))
     })?;
 
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
     while let Some(line) = lines.next_line().await.map_err(|e| {
-        logger::error(&format!("Failed to read line from JSONL file: {}", e));
+        tracing::error!("Failed to read line from JSONL file: {}", e);
         DomainError::InternalError(format!("Failed to read line from JSONL file: {}", e))
     })? {
         if !line.trim().is_empty() {
@@ -85,13 +84,13 @@ pub async fn read_first_non_empty_jsonl_line(path: &Path) -> Result<Option<Strin
 /// * `Ok(())` - If the file was written successfully
 /// * `Err(DomainError)` - If the file cannot be written
 pub async fn write_jsonl_file(path: &Path, objects: &[Value]) -> Result<(), DomainError> {
-    logger::debug(&format!("Writing JSONL file: {:?}", path));
+    tracing::debug!("Writing JSONL file: {:?}", path);
 
     let mut serialized = Vec::new();
 
     for obj in objects {
         let line = serde_json::to_string(obj).map_err(|e| {
-            logger::error(&format!("Failed to serialize JSON: {}", e));
+            tracing::error!("Failed to serialize JSON: {}", e);
             DomainError::InternalError(format!("Failed to serialize JSON: {}", e))
         })?;
         serialized.extend_from_slice(line.as_bytes());
@@ -111,25 +110,25 @@ pub async fn write_jsonl_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), Dom
     if let Some(parent) = path.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent).await.map_err(|e| {
-                logger::error(&format!("Failed to create directory: {}", e));
+                tracing::error!("Failed to create directory: {}", e);
                 DomainError::InternalError(format!("Failed to create directory: {}", e))
             })?;
         }
     }
 
     let file = File::create(&temp_path).await.map_err(|e| {
-        logger::error(&format!("Failed to create temporary file: {}", e));
+        tracing::error!("Failed to create temporary file: {}", e);
         DomainError::InternalError(format!("Failed to create temporary file: {}", e))
     })?;
 
     let mut writer = BufWriter::new(file);
     writer.write_all(bytes).await.map_err(|e| {
-        logger::error(&format!("Failed to write to temporary file: {}", e));
+        tracing::error!("Failed to write to temporary file: {}", e);
         DomainError::InternalError(format!("Failed to write to temporary file: {}", e))
     })?;
 
     writer.flush().await.map_err(|e| {
-        logger::error(&format!("Failed to flush temporary file: {}", e));
+        tracing::error!("Failed to flush temporary file: {}", e);
         DomainError::InternalError(format!("Failed to flush temporary file: {}", e))
     })?;
 
@@ -145,7 +144,7 @@ where
     let mut objects = Vec::new();
 
     while let Some(line) = lines.next_line().await.map_err(|e| {
-        logger::error(&format!("Failed to read line from JSONL file: {}", e));
+        tracing::error!("Failed to read line from JSONL file: {}", e);
         DomainError::InternalError(format!("Failed to read line from JSONL file: {}", e))
     })? {
         if line.trim().is_empty() {
@@ -154,7 +153,7 @@ where
 
         match serde_json::from_str::<Value>(&line) {
             Ok(obj) => objects.push(obj),
-            Err(e) => logger::warn(&format!("Failed to parse JSON line: {}", e)),
+            Err(e) => tracing::warn!("Failed to parse JSON line: {}", e),
         }
     }
 

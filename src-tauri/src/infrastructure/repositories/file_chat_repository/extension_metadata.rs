@@ -5,7 +5,6 @@ use tokio::fs::File;
 use tokio::io::{self, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::replace_file_with_fallback;
 
 use super::FileChatRepository;
@@ -136,10 +135,11 @@ impl FileChatRepository {
         replace_file_with_fallback(&temp_path, path).await?;
         self.remove_summary_cache_for_path(path).await;
 
-        logger::debug(&format!(
+        tracing::debug!(
             "Updated chat metadata extension for {:?}: {}",
-            path, namespace
-        ));
+            path,
+            namespace
+        );
 
         Ok(())
     }

@@ -89,6 +89,7 @@ impl AgentTaskScheduler {
                 .await;
             if let Err(error) = result {
                 tracing::error!(
+                    target: crate::observability_targets::USER_VISIBLE_ERROR,
                     "Agent child task worker failed to record terminal state for task {}: {}",
                     task_id,
                     error

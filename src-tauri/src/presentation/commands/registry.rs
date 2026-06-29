@@ -109,6 +109,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::user_commands::delete_user,
         // Bootstrap commands
         super::bootstrap_commands::get_bootstrap_snapshot,
+        super::bootstrap_commands::backend_error_bridge_ready,
         // Settings commands
         super::settings_commands::get_tauritavern_settings,
         super::settings_commands::update_tauritavern_settings,

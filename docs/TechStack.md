@@ -44,8 +44,8 @@
 | tiktoken-rs | OpenAI 系列 tokenizer 计数/编解码 |
 | tauri-api | Tauri API访问 |
 | rusqlite | SQLite数据库访问（可选） |
-| log | 日志记录 |
-| env_logger | 日志配置 |
+| tracing | Rust 后端普通日志与结构化 instrumentation |
+| tracing-subscriber | 全局日志过滤、stdout/file/backend log/user-error layer 装配 |
 | async-trait | 异步trait支持 |
 | thiserror | 错误处理 |
 

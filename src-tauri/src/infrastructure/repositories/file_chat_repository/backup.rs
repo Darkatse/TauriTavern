@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::list_files_with_extension;
 
 use super::FileChatRepository;
@@ -33,7 +32,7 @@ impl FileChatRepository {
 
         // Copy the file
         fs::copy(chat_path, &backup_path).await.map_err(|e| {
-            logger::error(&format!("Failed to backup chat file: {}", e));
+            tracing::error!("Failed to backup chat file: {}", e);
             DomainError::InternalError(format!("Failed to backup chat file: {}", e))
         })?;
 
@@ -65,7 +64,7 @@ impl FileChatRepository {
             return Ok(());
         }
 
-        logger::debug(&format!("Removing old backups for prefix: {}", prefix));
+        tracing::debug!("Removing old backups for prefix: {}", prefix);
 
         // List all backup files
         let mut matching_backups: Vec<(PathBuf, std::fs::Metadata)> = Vec::new();
@@ -98,9 +97,9 @@ impl FileChatRepository {
             if let Some((path, _)) = matching_backups.first() {
                 let path = path.clone();
                 if let Err(e) = fs::remove_file(&path).await {
-                    logger::error(&format!("Failed to remove old backup {:?}: {}", path, e));
+                    tracing::error!("Failed to remove old backup {:?}: {}", path, e);
                 } else {
-                    logger::debug(&format!("Removed old backup: {:?}", path));
+                    tracing::debug!("Removed old backup: {:?}", path);
                 }
             }
             matching_backups.remove(0);

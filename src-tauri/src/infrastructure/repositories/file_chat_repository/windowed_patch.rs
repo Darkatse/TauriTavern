@@ -6,7 +6,6 @@ use tokio::io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_repository::{ChatPayloadCursor, ChatPayloadPatchOp};
-use crate::infrastructure::logging::logger;
 
 use super::FileChatRepository;
 use super::integrity::verify_integrity_match;
@@ -511,7 +510,7 @@ async fn patch_payload_windowed_internal(
         }
     }
 
-    logger::debug(&format!("Patched windowed chat payload: {:?}", path));
+    tracing::debug!("Patched windowed chat payload: {:?}", path);
 
     let metadata = read_existing_payload_metadata(path).await?;
     let new_cursor_offset = if header_changed {

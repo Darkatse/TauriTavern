@@ -139,7 +139,11 @@ async fn spawn_router(
 
     let task = tokio::spawn(async move {
         if let Err(error) = server.serve(app.into_make_service()).await {
-            tracing::error!("LAN Sync server failed: {}", error);
+            tracing::error!(
+                target: crate::observability_targets::USER_VISIBLE_ERROR,
+                "LAN Sync server failed: {}",
+                error
+            );
         }
     });
 

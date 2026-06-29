@@ -7,7 +7,6 @@ use crate::application::services::agent_workspace_lifecycle_service::AgentWorksp
 use crate::domain::errors::DomainError;
 use crate::domain::models::group::Group;
 use crate::domain::repositories::group_repository::GroupRepository;
-use crate::infrastructure::logging::logger;
 
 /// Service for managing groups
 pub struct GroupService {
@@ -30,19 +29,19 @@ impl GroupService {
 
     /// Get all groups
     pub async fn get_all_groups(&self) -> Result<Vec<Group>, DomainError> {
-        logger::debug("GroupService: Getting all groups");
+        tracing::debug!("GroupService: Getting all groups");
         self.repository.get_all_groups().await
     }
 
     /// Get a group by ID
     pub async fn get_group(&self, id: &str) -> Result<Option<Group>, DomainError> {
-        logger::debug(&format!("GroupService: Getting group {}", id));
+        tracing::debug!("GroupService: Getting group {}", id);
         self.repository.get_group(id).await
     }
 
     /// Create a new group
     pub async fn create_group(&self, dto: CreateGroupDto) -> Result<Group, DomainError> {
-        logger::debug(&format!("GroupService: Creating group {}", dto.name));
+        tracing::debug!("GroupService: Creating group {}", dto.name);
 
         // Generate a unique ID based on timestamp
         let id = SystemTime::now()
@@ -91,7 +90,7 @@ impl GroupService {
 
     /// Update an existing group
     pub async fn update_group(&self, dto: UpdateGroupDto) -> Result<Group, DomainError> {
-        logger::debug(&format!("GroupService: Updating group {}", dto.id));
+        tracing::debug!("GroupService: Updating group {}", dto.id);
 
         let group: Group = dto.into();
         self.repository.update_group(&group).await
@@ -99,7 +98,7 @@ impl GroupService {
 
     /// Delete a group
     pub async fn delete_group(&self, dto: DeleteGroupDto) -> Result<(), ApplicationError> {
-        logger::debug(&format!("GroupService: Deleting group {}", dto.id));
+        tracing::debug!("GroupService: Deleting group {}", dto.id);
         let group =
             self.repository.get_group(&dto.id).await?.ok_or_else(|| {
                 ApplicationError::NotFound(format!("Group not found: {}", dto.id))
@@ -122,13 +121,13 @@ impl GroupService {
 
     /// Get all group chat paths
     pub async fn get_group_chat_paths(&self) -> Result<Vec<String>, DomainError> {
-        logger::debug("GroupService: Getting all group chat paths");
+        tracing::debug!("GroupService: Getting all group chat paths");
         self.repository.get_group_chat_paths().await
     }
 
     /// Clear the group cache
     pub async fn clear_cache(&self) -> Result<(), DomainError> {
-        logger::debug("GroupService: Clearing group cache");
+        tracing::debug!("GroupService: Clearing group cache");
         self.repository.clear_cache().await
     }
 }

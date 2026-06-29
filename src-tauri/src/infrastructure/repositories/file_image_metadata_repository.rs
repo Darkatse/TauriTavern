@@ -13,7 +13,6 @@ use crate::domain::models::image_metadata::{
     BackgroundFoldersPayload, ImageMetadata, ImageMetadataFolder, ImageMetadataIndex,
 };
 use crate::domain::repositories::image_metadata_repository::ImageMetadataRepository;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::write_json_file;
 use crate::infrastructure::persistence::thumbnail_cache::is_animated_image;
 use crate::infrastructure::thumbnails::{BACKGROUND_THUMBNAIL_HEIGHT, BACKGROUND_THUMBNAIL_WIDTH};
@@ -300,21 +299,21 @@ impl FileImageMetadataRepository {
             }
 
             let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
-                logger::warn(&format!(
+                tracing::warn!(
                     "[ImageMetadata] Skipping background with non UTF-8 filename: '{}'",
                     path.display()
-                ));
+                );
                 continue;
             };
 
             let relative_path = match Self::existing_background_asset_relative_path(file_name) {
                 Ok(value) => value,
                 Err(error) => {
-                    logger::warn(&format!(
+                    tracing::warn!(
                         "[ImageMetadata] Skipping background with unsupported filename '{}': {}",
                         path.display(),
                         error
-                    ));
+                    );
                     continue;
                 }
             };
@@ -564,11 +563,11 @@ impl FileImageMetadataRepository {
                     }
                 }
                 Err(BackgroundMetadataBuildError::Skippable(message)) => {
-                    logger::warn(&format!(
+                    tracing::warn!(
                         "[ImageMetadata] Failed to refresh background metadata '{}': {}",
                         path.display(),
                         message
-                    ));
+                    );
                 }
                 Err(BackgroundMetadataBuildError::Fatal(error)) => return Err(error),
             }
@@ -760,10 +759,10 @@ impl ImageMetadataRepository for FileImageMetadataRepository {
             if self.background_file_exists(&relative_path).await? {
                 normalized_paths.push(relative_path);
             } else {
-                logger::warn(&format!(
+                tracing::warn!(
                     "[ImageMetadata] Skipping missing background file: '{}'",
                     path
-                ));
+                );
             }
         }
 
@@ -847,10 +846,10 @@ impl ImageMetadataRepository for FileImageMetadataRepository {
             index.images.insert(new_relative_path, metadata);
             modified = true;
         } else {
-            logger::debug(&format!(
+            tracing::debug!(
                 "No image metadata entry to rename for background '{}'",
                 old_filename
-            ));
+            );
         }
 
         for folder in &mut index.folders {

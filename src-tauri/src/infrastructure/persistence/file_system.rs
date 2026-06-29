@@ -1,5 +1,4 @@
 use crate::domain::errors::DomainError;
-use crate::infrastructure::logging::logger;
 use serde::{Serialize, de::DeserializeOwned};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -200,11 +199,11 @@ impl DataDirectory {
 /// into the specified type. It uses tokio's async file I/O operations for better
 /// performance and non-blocking behavior.
 pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, DomainError> {
-    logger::debug(&format!("Reading JSON file: {:?}", path));
+    tracing::debug!("Reading JSON file: {:?}", path);
 
     // Use tokio's async file operations
     let contents = read_to_string(path).await.map_err(|e| {
-        logger::error(&format!("Failed to read file {:?}: {}", path, e));
+        tracing::error!("Failed to read file {:?}: {}", path, e);
         if e.kind() == std::io::ErrorKind::NotFound {
             DomainError::NotFound(format!("File not found: {}", path.display()))
         } else {
@@ -213,7 +212,7 @@ pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, Domai
     })?;
 
     serde_json::from_str(&contents).map_err(|e| {
-        logger::error(&format!("Failed to parse JSON from file {:?}: {}", path, e));
+        tracing::error!("Failed to parse JSON from file {:?}: {}", path, e);
         DomainError::InvalidData(format!("Invalid JSON: {}", e))
     })
 }
@@ -334,17 +333,21 @@ pub async fn move_file_no_replace_with_fallback(
 
             match (source_after, target_after) {
                 (None, Some(target_metadata)) if target_metadata.is_file() => {
-                    logger::warn(&format!(
+                    tracing::warn!(
                         "Rename reported an error after moving file {:?} -> {:?}: {}",
-                        source_path, target_path, rename_error
-                    ));
+                        source_path,
+                        target_path,
+                        rename_error
+                    );
                     Ok(())
                 }
                 (Some(source_metadata), None) if source_metadata.is_file() => {
-                    logger::warn(&format!(
+                    tracing::warn!(
                         "Rename failed while moving file {:?} -> {:?}: {}. Falling back to copy/remove.",
-                        source_path, target_path, rename_error
-                    ));
+                        source_path,
+                        target_path,
+                        rename_error
+                    );
                     if let Err(copy_error) = copy_file_no_replace(source_path, target_path).await {
                         if !copy_error.target_created {
                             return Err(DomainError::InternalError(format!(
@@ -434,10 +437,12 @@ pub async fn replace_file_with_fallback(
 
             match (temp_after, target_after) {
                 (None, Some(target_metadata)) if target_metadata.is_file() => {
-                    logger::warn(&format!(
+                    tracing::warn!(
                         "Rename reported an error after replacing file {:?} -> {:?}: {}",
-                        temp_path, target_path, rename_error
-                    ));
+                        temp_path,
+                        target_path,
+                        rename_error
+                    );
                     Ok(())
                 }
                 (Some(temp_metadata), target_after) if temp_metadata.is_file() => {
@@ -448,10 +453,12 @@ pub async fn replace_file_with_fallback(
                         )));
                     }
 
-                    logger::warn(&format!(
+                    tracing::warn!(
                         "Rename failed while replacing file {:?} -> {:?}: {}. Falling back to copy/remove.",
-                        temp_path, target_path, rename_error
-                    ));
+                        temp_path,
+                        target_path,
+                        rename_error
+                    );
 
                     if let Some(parent) = target_path.parent() {
                         create_dir_all(parent).await.map_err(|error| {
@@ -525,10 +532,12 @@ pub fn replace_file_with_fallback_sync(
 
             match (temp_after, target_after) {
                 (None, Some(target_metadata)) if target_metadata.is_file() => {
-                    logger::warn(&format!(
+                    tracing::warn!(
                         "Rename reported an error after replacing file {:?} -> {:?}: {}",
-                        temp_path, target_path, rename_error
-                    ));
+                        temp_path,
+                        target_path,
+                        rename_error
+                    );
                     Ok(())
                 }
                 (Some(temp_metadata), target_after) if temp_metadata.is_file() => {
@@ -539,10 +548,12 @@ pub fn replace_file_with_fallback_sync(
                         )));
                     }
 
-                    logger::warn(&format!(
+                    tracing::warn!(
                         "Rename failed while replacing file {:?} -> {:?}: {}. Falling back to copy/remove.",
-                        temp_path, target_path, rename_error
-                    ));
+                        temp_path,
+                        target_path,
+                        rename_error
+                    );
 
                     if let Some(parent) = target_path.parent() {
                         std::fs::create_dir_all(parent).map_err(|error| {
@@ -594,25 +605,19 @@ pub async fn write_json_file<T: Serialize + ?Sized>(
     path: &Path,
     data: &T,
 ) -> Result<(), DomainError> {
-    logger::debug(&format!("Writing JSON file: {:?}", path));
+    tracing::debug!("Writing JSON file: {:?}", path);
 
     // Ensure the parent directory exists
     if let Some(parent) = path.parent() {
         create_dir_all(parent).await.map_err(|e| {
-            logger::error(&format!(
-                "Failed to create parent directory for {:?}: {}",
-                path, e
-            ));
+            tracing::error!("Failed to create parent directory for {:?}: {}", path, e);
             DomainError::InternalError(format!("Failed to create directory: {}", e))
         })?;
     }
 
     // Serialize data to JSON
     let json = serde_json::to_string_pretty(data).map_err(|e| {
-        logger::error(&format!(
-            "Failed to serialize to JSON for file {:?}: {}",
-            path, e
-        ));
+        tracing::error!("Failed to serialize to JSON for file {:?}: {}", path, e);
         DomainError::InvalidData(format!("Failed to serialize to JSON: {}", e))
     })?;
 
@@ -623,10 +628,12 @@ pub async fn write_json_file<T: Serialize + ?Sized>(
     tokio_fs::write(&temp_path, json.as_bytes())
         .await
         .map_err(|e| {
-            logger::error(&format!(
+            tracing::error!(
                 "Failed to write JSON temp file {:?} -> {:?}: {}",
-                temp_path, path, e
-            ));
+                temp_path,
+                path,
+                e
+            );
             DomainError::InternalError(format!("Failed to write file: {}", e))
         })?;
     replace_file_with_fallback(&temp_path, path).await?;
@@ -642,17 +649,18 @@ pub async fn list_files_with_extension(
     dir: &Path,
     extension: &str,
 ) -> Result<Vec<PathBuf>, DomainError> {
-    logger::debug(&format!(
+    tracing::debug!(
         "Listing files with extension '{}' in directory: {:?}",
-        extension, dir
-    ));
+        extension,
+        dir
+    );
 
     if !dir.exists() {
         return Ok(Vec::new());
     }
 
     let mut entries = tokio_fs::read_dir(dir).await.map_err(|e| {
-        logger::error(&format!("Failed to read directory {:?}: {}", dir, e));
+        tracing::error!("Failed to read directory {:?}: {}", dir, e);
         DomainError::InternalError(format!("Failed to read directory: {}", e))
     })?;
 
@@ -660,7 +668,7 @@ pub async fn list_files_with_extension(
 
     // Process each entry in the directory
     while let Some(entry) = entries.next_entry().await.map_err(|e| {
-        logger::error(&format!("Failed to read directory entry: {}", e));
+        tracing::error!("Failed to read directory entry: {}", e);
         DomainError::InternalError(format!("Failed to read directory entry: {}", e))
     })? {
         let path = entry.path();
@@ -679,14 +687,14 @@ pub async fn list_files_with_extension(
 /// This is an async function that deletes a file from the filesystem.
 /// It uses tokio's async file I/O operations for better performance and non-blocking behavior.
 pub async fn delete_file(path: &Path) -> Result<(), DomainError> {
-    logger::debug(&format!("Deleting file: {:?}", path));
+    tracing::debug!("Deleting file: {:?}", path);
 
     if !path.exists() {
         return Ok(());
     }
 
     tokio_fs::remove_file(path).await.map_err(|e| {
-        logger::error(&format!("Failed to delete file {:?}: {}", path, e));
+        tracing::error!("Failed to delete file {:?}: {}", path, e);
         DomainError::InternalError(format!("Failed to delete file: {}", e))
     })?;
 

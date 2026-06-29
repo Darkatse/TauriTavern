@@ -9,7 +9,6 @@ use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_repository::{
     ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
 };
-use crate::infrastructure::logging::logger;
 
 use super::FileChatRepository;
 use super::integrity::verify_integrity_match;
@@ -528,7 +527,7 @@ async fn save_payload_windowed_internal(
         replace_file(&temp_path, path).await?;
     }
 
-    logger::debug(&format!("Saved windowed chat payload: {:?}", path));
+    tracing::debug!("Saved windowed chat payload: {:?}", path);
 
     let metadata = read_existing_payload_metadata(path).await?;
 

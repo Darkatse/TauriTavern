@@ -4,7 +4,6 @@ use std::sync::Arc;
 use crate::domain::errors::DomainError;
 use crate::domain::models::avatar::{AvatarUploadResult, CropInfo};
 use crate::domain::repositories::avatar_repository::AvatarRepository;
-use crate::infrastructure::logging::logger;
 
 /// Service for managing user avatars
 pub struct AvatarService {
@@ -19,7 +18,7 @@ impl AvatarService {
 
     /// Get all avatars
     pub async fn get_avatars(&self) -> Result<Vec<String>, DomainError> {
-        logger::debug("Getting all avatars");
+        tracing::debug!("Getting all avatars");
         let avatars = self.avatar_repository.get_avatars().await?;
 
         // Return only the avatar names
@@ -29,7 +28,7 @@ impl AvatarService {
 
     /// Delete an avatar
     pub async fn delete_avatar(&self, avatar_name: &str) -> Result<(), DomainError> {
-        logger::debug(&format!("Deleting avatar: {}", avatar_name));
+        tracing::debug!("Deleting avatar: {}", avatar_name);
         self.avatar_repository.delete_avatar(avatar_name).await
     }
 
@@ -40,7 +39,7 @@ impl AvatarService {
         overwrite_name: Option<String>,
         crop_info: Option<CropInfo>,
     ) -> Result<AvatarUploadResult, DomainError> {
-        logger::debug(&format!("Uploading avatar: {:?}", file_path));
+        tracing::debug!("Uploading avatar: {:?}", file_path);
         self.avatar_repository
             .upload_avatar(file_path, overwrite_name, crop_info)
             .await

@@ -11,7 +11,6 @@ use tokio::sync::Mutex;
 use crate::domain::errors::DomainError;
 use crate::domain::models::group::Group;
 use crate::domain::repositories::group_repository::GroupRepository;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
     list_files_with_extension, read_json_file, write_json_file,
 };
@@ -66,12 +65,12 @@ impl FileGroupRepository {
     async fn initialize_cache_if_needed(&self) -> Result<(), DomainError> {
         let mut initialized = self.cache_initialized.lock().await;
         if !*initialized {
-            logger::debug("Initializing group cache");
+            tracing::debug!("Initializing group cache");
 
             // Ensure directories exist
             if !self.groups_dir.exists() {
                 fs::create_dir_all(&self.groups_dir).await.map_err(|e| {
-                    logger::error(&format!("Failed to create groups directory: {}", e));
+                    tracing::error!("Failed to create groups directory: {}", e);
                     DomainError::InternalError(format!("Failed to create groups directory: {}", e))
                 })?;
             }
@@ -80,7 +79,7 @@ impl FileGroupRepository {
                 fs::create_dir_all(&self.group_chats_dir)
                     .await
                     .map_err(|e| {
-                        logger::error(&format!("Failed to create group chats directory: {}", e));
+                        tracing::error!("Failed to create group chats directory: {}", e);
                         DomainError::InternalError(format!(
                             "Failed to create group chats directory: {}",
                             e
@@ -100,16 +99,18 @@ impl FileGroupRepository {
                         cache.insert(group.id.clone(), group);
                     }
                     Err(e) => {
-                        logger::error(&format!("Failed to load group from {:?}: {}", file_path, e));
+                        tracing::error!(
+                            target: crate::observability_targets::USER_VISIBLE_ERROR,
+                            "Failed to load group from {:?}: {}",
+                            file_path,
+                            e
+                        );
                     }
                 }
             }
 
             *initialized = true;
-            logger::debug(&format!(
-                "Group cache initialized with {} groups",
-                cache.len()
-            ));
+            tracing::debug!("Group cache initialized with {} groups", cache.len());
         }
 
         Ok(())
@@ -126,10 +127,7 @@ impl FileGroupRepository {
 
         // Get file stats for metadata
         let metadata = fs::metadata(file_path).await.map_err(|e| {
-            logger::error(&format!(
-                "Failed to get metadata for {:?}: {}",
-                file_path, e
-            ));
+            tracing::error!("Failed to get metadata for {:?}: {}", file_path, e);
             DomainError::InternalError(format!("Failed to get file metadata: {}", e))
         })?;
 
@@ -180,10 +178,11 @@ fn decode_group_manifest_compat(mut value: Value, file_path: &Path) -> Result<Gr
     normalize_group_manifest_compat(&mut value, file_path)?;
 
     serde_json::from_value(value).map_err(|error| {
-        logger::error(&format!(
+        tracing::error!(
             "Failed to decode group JSON from file {:?}: {}",
-            file_path, error
-        ));
+            file_path,
+            error
+        );
         DomainError::InvalidData(format!("Invalid group JSON: {}", error))
     })
 }
@@ -328,10 +327,13 @@ fn warn_group_manifest_normalization(
     original: &str,
     normalized: &str,
 ) {
-    logger::warn(&format!(
+    tracing::warn!(
         "Normalizing legacy group JSON field '{}' in {:?}: {} -> {}",
-        field, file_path, original, normalized
-    ));
+        field,
+        file_path,
+        original,
+        normalized
+    );
 }
 
 fn invalid_group_manifest_field(
@@ -463,10 +465,7 @@ impl GroupRepository for FileGroupRepository {
 
         // Delete the group file
         fs::remove_file(&file_path).await.map_err(|e| {
-            logger::error(&format!(
-                "Failed to delete group file {:?}: {}",
-                file_path, e
-            ));
+            tracing::error!("Failed to delete group file {:?}: {}", file_path, e);
             DomainError::InternalError(format!("Failed to delete group file: {}", e))
         })?;
 
@@ -476,10 +475,11 @@ impl GroupRepository for FileGroupRepository {
                 let chat_file_path = self.group_chats_dir.join(format!("{}.jsonl", chat_id));
                 if chat_file_path.exists() {
                     fs::remove_file(&chat_file_path).await.map_err(|e| {
-                        logger::error(&format!(
+                        tracing::error!(
                             "Failed to delete group chat file {:?}: {}",
-                            chat_file_path, e
-                        ));
+                            chat_file_path,
+                            e
+                        );
                         DomainError::InternalError(format!(
                             "Failed to delete group chat file: {}",
                             e
@@ -518,7 +518,7 @@ impl GroupRepository for FileGroupRepository {
         let mut initialized = self.cache_initialized.lock().await;
         *initialized = false;
 
-        logger::debug("Group cache cleared");
+        tracing::debug!("Group cache cleared");
         Ok(())
     }
 }

@@ -14,7 +14,6 @@ use crate::domain::repositories::chat_types::{
     LocatedChatMessage, PinnedGroupChat,
 };
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::move_file_no_replace_with_fallback;
 
 use super::FileChatRepository;
@@ -71,7 +70,7 @@ impl GroupChatRepository for FileChatRepository {
         query: &str,
         chat_ids: Option<&[String]>,
     ) -> Result<Vec<ChatSearchResult>, DomainError> {
-        logger::debug("Searching group chats with streaming scanner");
+        tracing::debug!("Searching group chats with streaming scanner");
 
         let normalized_query = Self::normalize_search_query(query);
         let fragments = Self::search_fragments(&normalized_query);

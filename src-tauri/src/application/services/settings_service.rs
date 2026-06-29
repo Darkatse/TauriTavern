@@ -64,6 +64,7 @@ impl SettingsService {
 
             if let Err(error) = result {
                 tracing::error!(
+                    target: crate::observability_targets::USER_VISIBLE_ERROR,
                     "Failed delayed SillyTavern PromptManager settings repair: {}",
                     error
                 );

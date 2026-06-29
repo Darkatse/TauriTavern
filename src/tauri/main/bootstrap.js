@@ -380,21 +380,35 @@ export function bootstrapTauriMain() {
         perfEnabled,
         perfReadyPromise,
         safePerfMark,
-    ).catch((error) => {
+    );
+    void readyPromise.catch((error) => {
         console.error('Failed to initialize Tauri integration:', error);
     });
+    const runAfterTauriReady = (callback) => {
+        void readyPromise.then(callback, () => {});
+    };
     window.__TAURITAVERN_MAIN_READY__ = readyPromise;
     if (window.__TAURITAVERN__) {
         window.__TAURITAVERN__.ready = readyPromise;
     }
 
-    void readyPromise.then(() => setFrontendLogBackendForwardingEnabled(true));
+    runAfterTauriReady(() => setFrontendLogBackendForwardingEnabled(true));
 
-    void readyPromise.then(() => import('../../scripts/tauri/setting/setting-panel.js').then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel()).catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
-    void readyPromise.then(() => import('../../scripts/tauri/regex/native-regex-settings.js').then(({ installNativeRegexBackendSetting }) => installNativeRegexBackendSetting()));
-    void readyPromise.then(() => import('./services/chat-history/install.js').then(({ installChatHistoryMode }) => installChatHistoryMode())); void readyPromise.then(() => import('./services/dynamic-theme/install.js').then(({ installDynamicTheme }) => installDynamicTheme()));
-    if (!isEmbeddedRuntimeTakeoverDisabled()) void readyPromise.then(() => import('./services/embedded-runtime/install.js').then(({ installEmbeddedRuntime }) => installEmbeddedRuntime()));
-    void readyPromise.then(() => import('./services/panel-runtime/install.js').then(({ installPanelRuntime }) => installPanelRuntime()));
+    runAfterTauriReady(() => import('../../scripts/tauri/setting/setting-panel.js')
+        .then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel())
+        .catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
+    runAfterTauriReady(() => import('../../scripts/tauri/regex/native-regex-settings.js')
+        .then(({ installNativeRegexBackendSetting }) => installNativeRegexBackendSetting()));
+    runAfterTauriReady(() => import('./services/chat-history/install.js')
+        .then(({ installChatHistoryMode }) => installChatHistoryMode()));
+    runAfterTauriReady(() => import('./services/dynamic-theme/install.js')
+        .then(({ installDynamicTheme }) => installDynamicTheme()));
+    if (!isEmbeddedRuntimeTakeoverDisabled()) {
+        runAfterTauriReady(() => import('./services/embedded-runtime/install.js')
+            .then(({ installEmbeddedRuntime }) => installEmbeddedRuntime()));
+    }
+    runAfterTauriReady(() => import('./services/panel-runtime/install.js')
+        .then(({ installPanelRuntime }) => installPanelRuntime()));
 
     if (perfEnabled) {
         readyPromise

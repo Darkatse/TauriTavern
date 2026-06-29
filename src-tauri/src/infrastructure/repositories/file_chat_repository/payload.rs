@@ -5,7 +5,6 @@ use tokio::fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, strip_jsonl_extension};
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::replace_file_with_fallback;
 use crate::infrastructure::persistence::jsonl_utils::{
     parse_jsonl_bytes, read_first_non_empty_jsonl_line, write_jsonl_file,
@@ -253,10 +252,7 @@ impl FileChatRepository {
         character_name: &str,
         file_name: &str,
     ) -> Result<Chat, DomainError> {
-        logger::debug(&format!(
-            "Reading chat file: {}/{}",
-            character_name, file_name
-        ));
+        tracing::debug!("Reading chat file: {}/{}", character_name, file_name);
 
         let file_name = Self::normalize_jsonl_file_name(file_name)?;
 
@@ -279,10 +275,7 @@ impl FileChatRepository {
             .as_ref()
             .ok_or_else(|| DomainError::InvalidData("Chat file name is not set".to_string()))?;
 
-        logger::debug(&format!(
-            "Writing chat file: {}/{}",
-            chat.character_name, file_name
-        ));
+        tracing::debug!("Writing chat file: {}/{}", chat.character_name, file_name);
 
         let path = self
             .resolve_character_chat_path(&chat.character_name, file_name)
@@ -295,7 +288,7 @@ impl FileChatRepository {
             .await?;
         if !character_dir.exists() {
             fs::create_dir_all(&character_dir).await.map_err(|e| {
-                logger::error(&format!("Failed to create character directory: {}", e));
+                tracing::error!("Failed to create character directory: {}", e);
                 DomainError::InternalError(format!("Failed to create character directory: {}", e))
             })?;
         }

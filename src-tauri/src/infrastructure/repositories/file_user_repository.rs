@@ -51,7 +51,12 @@ impl FileUserRepository {
                     users.push(user);
                 }
                 Err(e) => {
-                    tracing::error!("Failed to load user from {:?}: {}", file_path, e);
+                    tracing::error!(
+                        target: crate::observability_targets::USER_VISIBLE_ERROR,
+                        "Failed to load user from {:?}: {}",
+                        file_path,
+                        e
+                    );
                     // Continue loading other users
                 }
             }

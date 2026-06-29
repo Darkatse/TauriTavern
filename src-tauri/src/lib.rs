@@ -2,6 +2,7 @@ mod app;
 mod application;
 mod domain;
 mod infrastructure;
+mod observability_targets;
 mod platform;
 mod presentation;
 
@@ -10,6 +11,7 @@ mod presentation;
 // and startup sequencing. If code here starts knowing feature/business rules,
 // move it down into app/application/presentation instead of growing lib.rs further.
 
+use app::backend_errors::BackendErrorHub;
 use app::dev_observability::DevObservabilityHub;
 use app::spawn_initialization;
 use application::services::bundled_template_service::BundledTemplateService;
@@ -22,7 +24,7 @@ use application::services::user_media_service::UserMediaService;
 use infrastructure::bundled_resources::BundledResourceStore;
 use infrastructure::host_resources::FilesystemHostResourceStore;
 use infrastructure::http_client_pool::HttpClientPool;
-use infrastructure::logging::{devtools, llm_api_logs, logger};
+use infrastructure::logging::{devtools, llm_api_logs, tracing_runtime};
 use infrastructure::paths::resolve_runtime_paths;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use infrastructure::runtime_paths_config_store::FilesystemRuntimePathConfigStore;
@@ -83,6 +85,28 @@ fn runtime_paths_snapshot(
     }
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn emit_pending_runtime_migration_error(
+    runtime_paths: &crate::infrastructure::paths::RuntimePaths,
+) {
+    let Ok(Some(config)) =
+        crate::infrastructure::paths::load_runtime_config(&runtime_paths.app_root)
+    else {
+        return;
+    };
+
+    let Some(error) = config.migration_error.as_deref().map(str::trim) else {
+        return;
+    };
+    if config.migration.is_some() && !error.is_empty() {
+        tracing::error!(
+            target: crate::observability_targets::USER_VISIBLE_ERROR,
+            "Data directory migration failed: {}",
+            error
+        );
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Register cross-platform host plugins up front.
@@ -107,7 +131,6 @@ pub fn run() {
     builder
         .setup(move |app| {
             let app_handle = app.handle().clone();
-            logger::bind_app_handle(app_handle.clone());
 
             // Resolve and publish runtime paths before any managed service is created so every
             // host-facing subsystem reads from the same directory layout.
@@ -145,6 +168,8 @@ pub fn run() {
             // without teaching feature code about window/event plumbing.
             let backend_log_store =
                 std::sync::Arc::new(devtools::BackendLogStore::new(app_handle.clone()));
+            let backend_error_hub = std::sync::Arc::new(BackendErrorHub::new(app_handle.clone()));
+            app.manage(backend_error_hub.clone());
 
             let llm_api_log_store = std::sync::Arc::new(llm_api_logs::LlmApiLogStore::new(
                 app_handle.clone(),
@@ -158,11 +183,16 @@ pub fn run() {
                 llm_api_log_store.clone(),
             )));
 
-            if let Err(error) =
-                logger::init_logger(&runtime_paths.log_root, Some(backend_log_store))
-            {
-                eprintln!("Failed to initialize logger: {}", error);
-            }
+            let tracing_guard =
+                tracing_runtime::init_tracing(&runtime_paths.log_root, Some(backend_log_store), {
+                    let backend_error_hub = backend_error_hub.clone();
+                    std::sync::Arc::new(move |message| backend_error_hub.emit_or_queue(message))
+                })
+                .map_err(std::io::Error::other)?;
+            app.manage(tracing_guard);
+
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            emit_pending_runtime_migration_error(&runtime_paths);
 
             tracing::debug!("Starting TauriTavern application");
 

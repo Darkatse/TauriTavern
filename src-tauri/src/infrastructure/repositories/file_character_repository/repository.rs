@@ -13,7 +13,6 @@ use crate::domain::repositories::character_repository::{
     CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterChat, CharacterCreateResult,
     CharacterCreateWarning, CharacterRepository, ImageCrop,
 };
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::png_utils::{
     process_avatar_image, read_character_data_from_png, write_character_data_to_png,
 };
@@ -80,11 +79,11 @@ impl FileCharacterRepository {
         let file_data = match fs::read(path).await {
             Ok(file_data) => file_data,
             Err(error) => {
-                logger::warn(&format!(
+                tracing::warn!(
                     "Failed to read avatar file for character create {}: {}. Using default avatar.",
                     path.display(),
                     error
-                ));
+                );
                 let mut carrier = self.default_create_avatar_carrier().await?;
                 carrier.warnings.push(avatar_import_warning(
                     "Uploaded avatar could not be read; default avatar was used.",
@@ -111,11 +110,11 @@ impl FileCharacterRepository {
             }),
             Err(error) => {
                 let Some(image_data) = raw_png_candidate else {
-                    logger::warn(&format!(
+                    tracing::warn!(
                         "Failed to process avatar file for character create {}: {}. Using default avatar.",
                         path.display(),
                         error
-                    ));
+                    );
                     let mut carrier = self.default_create_avatar_carrier().await?;
                     carrier.warnings.push(avatar_import_warning(
                         "Uploaded avatar could not be processed; default avatar was used.",
@@ -123,11 +122,11 @@ impl FileCharacterRepository {
                     return Ok(carrier);
                 };
 
-                logger::warn(&format!(
+                tracing::warn!(
                     "Failed to process avatar file for character create {}: {}. Trying raw PNG bytes before default avatar fallback.",
                     path.display(),
                     error
-                ));
+                );
                 Ok(CreateAvatarCarrier {
                     image_data,
                     can_fallback_to_default: true,
@@ -147,10 +146,10 @@ impl FileCharacterRepository {
         match write_character_data_to_png(&carrier.image_data, json_data) {
             Ok(image_data) => Ok((image_data, carrier.warnings)),
             Err(error) if carrier.can_fallback_to_default => {
-                logger::warn(&format!(
+                tracing::warn!(
                     "Failed to write character metadata to uploaded avatar: {}. Using default avatar.",
                     error
-                ));
+                );
                 let default_avatar = self.read_default_avatar().await?;
                 carrier.warnings.push(avatar_import_warning(
                     "Uploaded avatar could not store character data; default avatar was used.",
@@ -317,7 +316,7 @@ impl CharacterRepository for FileCharacterRepository {
 
         let image_data = if file_path.exists() {
             fs::read(&file_path).await.map_err(|e| {
-                logger::error(&format!("Failed to read character file: {}", e));
+                tracing::error!("Failed to read character file: {}", e);
                 DomainError::InternalError(format!("Failed to read character file: {}", e))
             })?
         } else {
@@ -338,7 +337,7 @@ impl CharacterRepository for FileCharacterRepository {
         let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
 
         fs::write(&file_path, new_image_data).await.map_err(|e| {
-            logger::error(&format!("Failed to write character file: {}", e));
+            tracing::error!("Failed to write character file: {}", e);
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
@@ -397,7 +396,7 @@ impl CharacterRepository for FileCharacterRepository {
         }
 
         fs::remove_file(&file_path).await.map_err(|e| {
-            logger::error(&format!("Failed to delete character file: {}", e));
+            tracing::error!("Failed to delete character file: {}", e);
             DomainError::InternalError(format!("Failed to delete character file: {}", e))
         })?;
 
@@ -405,7 +404,7 @@ impl CharacterRepository for FileCharacterRepository {
             let chat_dir = self.resolve_chat_directory(name).await?;
             if chat_dir.exists() {
                 fs::remove_dir_all(&chat_dir).await.map_err(|e| {
-                    logger::error(&format!("Failed to delete chat directory: {}", e));
+                    tracing::error!("Failed to delete chat directory: {}", e);
                     DomainError::InternalError(format!("Failed to delete chat directory: {}", e))
                 })?;
             }
@@ -450,14 +449,14 @@ impl CharacterRepository for FileCharacterRepository {
         let replaced_avatar = avatar_path.is_some();
         let image_data = if let Some(avatar_path) = avatar_path {
             let file_data = fs::read(avatar_path).await.map_err(|e| {
-                logger::error(&format!("Failed to read avatar file: {}", e));
+                tracing::error!("Failed to read avatar file: {}", e);
                 DomainError::InternalError(format!("Failed to read avatar file: {}", e))
             })?;
 
             process_avatar_image(file_data, crop).await?
         } else {
             fs::read(&file_path).await.map_err(|e| {
-                logger::error(&format!("Failed to read character file: {}", e));
+                tracing::error!("Failed to read character file: {}", e);
                 DomainError::InternalError(format!("Failed to read character file: {}", e))
             })?
         };
@@ -465,7 +464,7 @@ impl CharacterRepository for FileCharacterRepository {
         let new_image_data = write_character_data_to_png(&image_data, character_card_json)?;
 
         fs::write(&file_path, new_image_data).await.map_err(|e| {
-            logger::error(&format!("Failed to write character file: {}", e));
+            tracing::error!("Failed to write character file: {}", e);
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
@@ -496,13 +495,13 @@ impl CharacterRepository for FileCharacterRepository {
         let new_path = self.get_character_path(&target_file_stem);
 
         let old_image_data = fs::read(&old_path).await.map_err(|e| {
-            logger::error(&format!("Failed to read character file: {}", e));
+            tracing::error!("Failed to read character file: {}", e);
             DomainError::InternalError(format!("Failed to read character file: {}", e))
         })?;
 
         let card_json = read_character_data_from_png(&old_image_data)?;
         let mut card_value: serde_json::Value = serde_json::from_str(&card_json).map_err(|e| {
-            logger::error(&format!("Failed to parse character data: {}", e));
+            tracing::error!("Failed to parse character data: {}", e);
             DomainError::InvalidData(format!("Failed to parse character data: {}", e))
         })?;
 
@@ -529,14 +528,14 @@ impl CharacterRepository for FileCharacterRepository {
         );
 
         let patched_json = serde_json::to_string(&card_value).map_err(|e| {
-            logger::error(&format!("Failed to serialize character data: {}", e));
+            tracing::error!("Failed to serialize character data: {}", e);
             DomainError::InvalidData(format!("Failed to serialize character data: {}", e))
         })?;
 
         let new_image_data = write_character_data_to_png(&old_image_data, &patched_json)?;
 
         fs::write(&new_path, new_image_data).await.map_err(|e| {
-            logger::error(&format!("Failed to write character file: {}", e));
+            tracing::error!("Failed to write character file: {}", e);
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
@@ -547,14 +546,14 @@ impl CharacterRepository for FileCharacterRepository {
             fs::rename(&old_chat_dir, &new_chat_dir)
                 .await
                 .map_err(|e| {
-                    logger::error(&format!("Failed to rename chat directory: {}", e));
+                    tracing::error!("Failed to rename chat directory: {}", e);
                     DomainError::InternalError(format!("Failed to rename chat directory: {}", e))
                 })?;
         }
 
         if old_path != new_path {
             fs::remove_file(&old_path).await.map_err(|e| {
-                logger::error(&format!("Failed to delete old character file: {}", e));
+                tracing::error!("Failed to delete old character file: {}", e);
                 DomainError::InternalError(format!("Failed to delete old character file: {}", e))
             })?;
         }
@@ -588,7 +587,7 @@ impl CharacterRepository for FileCharacterRepository {
         let target_path = self.get_character_path(&target_file_stem);
 
         fs::copy(&source_path, &target_path).await.map_err(|e| {
-            logger::error(&format!("Failed to duplicate character file: {}", e));
+            tracing::error!("Failed to duplicate character file: {}", e);
             DomainError::InternalError(format!("Failed to duplicate character file: {}", e))
         })?;
 
@@ -607,7 +606,7 @@ impl CharacterRepository for FileCharacterRepository {
         self.ensure_directory_exists().await?;
 
         let file_data = fs::read(file_path).await.map_err(|e| {
-            logger::error(&format!("Failed to read file: {}", e));
+            tracing::error!("Failed to read file: {}", e);
             DomainError::InternalError(format!("Failed to read file: {}", e))
         })?;
 
@@ -651,10 +650,7 @@ impl CharacterRepository for FileCharacterRepository {
                     .export_character_png_bytes(name, character_card_json)
                     .await?;
                 fs::write(target_path, png_bytes).await.map_err(|error| {
-                    logger::error(&format!(
-                        "Failed to write exported character PNG: {}",
-                        error
-                    ));
+                    tracing::error!("Failed to write exported character PNG: {}", error);
                     DomainError::InternalError(format!(
                         "Failed to write exported character PNG: {}",
                         error
@@ -666,10 +662,7 @@ impl CharacterRepository for FileCharacterRepository {
                 fs::write(target_path, character_card_json.as_bytes())
                     .await
                     .map_err(|error| {
-                        logger::error(&format!(
-                            "Failed to write exported character JSON: {}",
-                            error
-                        ));
+                        tracing::error!("Failed to write exported character JSON: {}", error);
                         DomainError::InternalError(format!(
                             "Failed to write exported character JSON: {}",
                             error
@@ -694,11 +687,11 @@ impl CharacterRepository for FileCharacterRepository {
         }
 
         let image_data = fs::read(&file_path).await.map_err(|error| {
-            logger::error(&format!(
+            tracing::error!(
                 "Failed to read character file {}: {}",
                 file_path.display(),
                 error
-            ));
+            );
             DomainError::InternalError(format!("Failed to read character file: {}", error))
         })?;
 
@@ -719,11 +712,11 @@ impl CharacterRepository for FileCharacterRepository {
         }
 
         let image_data = fs::read(&file_path).await.map_err(|e| {
-            logger::error(&format!(
+            tracing::error!(
                 "Failed to read character file for export {}: {}",
                 file_path.display(),
                 e
-            ));
+            );
             DomainError::InternalError(format!("Failed to read character file: {}", e))
         })?;
 
@@ -762,7 +755,7 @@ impl CharacterRepository for FileCharacterRepository {
         let file_path = self.get_character_path(&file_name);
 
         fs::write(&file_path, new_image_data).await.map_err(|e| {
-            logger::error(&format!("Failed to write character file: {}", e));
+            tracing::error!("Failed to write character file: {}", e);
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
@@ -794,7 +787,7 @@ impl CharacterRepository for FileCharacterRepository {
         }
 
         let existing_image_data = fs::read(&file_path).await.map_err(|e| {
-            logger::error(&format!("Failed to read character file: {}", e));
+            tracing::error!("Failed to read character file: {}", e);
             DomainError::InternalError(format!("Failed to read character file: {}", e))
         })?;
         let raw_json = read_character_data_from_png(&existing_image_data)?;
@@ -805,14 +798,14 @@ impl CharacterRepository for FileCharacterRepository {
         )?;
 
         let file_data = fs::read(avatar_path).await.map_err(|e| {
-            logger::error(&format!("Failed to read avatar file: {}", e));
+            tracing::error!("Failed to read avatar file: {}", e);
             DomainError::InternalError(format!("Failed to read avatar file: {}", e))
         })?;
         let image_data = process_avatar_image(file_data, crop).await?;
         let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
 
         fs::write(&file_path, new_image_data).await.map_err(|e| {
-            logger::error(&format!("Failed to write character file: {}", e));
+            tracing::error!("Failed to write character file: {}", e);
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 

@@ -11,7 +11,6 @@ use tauri_plugin_fs::FsExt;
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::logging::logger;
 
 static DEFAULT_CONTENT_MANIFEST: OnceLock<Vec<String>> = OnceLock::new();
 
@@ -26,10 +25,7 @@ pub fn read_resource_text(
 ) -> Result<String, DomainError> {
     let bytes = read_resource_bytes(app_handle, relative_path)?;
     String::from_utf8(bytes).map_err(|e| {
-        logger::error(&format!(
-            "Failed to decode resource text {:?}: {}",
-            relative_path, e
-        ));
+        tracing::error!("Failed to decode resource text {:?}: {}", relative_path, e);
         DomainError::InvalidData(format!(
             "Resource '{}' is not valid UTF-8: {}",
             relative_path, e
@@ -77,10 +73,12 @@ pub fn read_resource_bytes(
                     }
                 }
 
-                logger::error(&format!(
+                tracing::error!(
                     "Failed to read resource bytes {:?} (resolved to {:?}): {}",
-                    normalized, path, error
-                ));
+                    normalized,
+                    path,
+                    error
+                );
                 Err(map_resource_error(&normalized, error))
             }
         }
@@ -93,10 +91,7 @@ pub fn read_resource_json<T: DeserializeOwned>(
 ) -> Result<T, DomainError> {
     let text = read_resource_text(app_handle, relative_path)?;
     serde_json::from_str(&text).map_err(|e| {
-        logger::error(&format!(
-            "Failed to parse JSON resource {:?}: {}",
-            relative_path, e
-        ));
+        tracing::error!("Failed to parse JSON resource {:?}: {}", relative_path, e);
         DomainError::InvalidData(format!("Invalid JSON resource '{}': {}", relative_path, e))
     })
 }
@@ -108,20 +103,19 @@ pub async fn copy_resource_to_file(
 ) -> Result<(), DomainError> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).await.map_err(|e| {
-            logger::error(&format!(
-                "Failed to create destination directory {:?}: {}",
-                parent, e
-            ));
+            tracing::error!("Failed to create destination directory {:?}: {}", parent, e);
             DomainError::InternalError(format!("Failed to create directory: {}", e))
         })?;
     }
 
     let bytes = read_resource_bytes(app_handle, resource_relative_path)?;
     fs::write(destination, bytes).await.map_err(|e| {
-        logger::error(&format!(
+        tracing::error!(
             "Failed to write copied resource {:?} to {:?}: {}",
-            resource_relative_path, destination, e
-        ));
+            resource_relative_path,
+            destination,
+            e
+        );
         DomainError::InternalError(format!("Failed to write resource file: {}", e))
     })
 }
@@ -154,10 +148,11 @@ fn load_default_content_manifest() -> Vec<String> {
             entries
         }
         Err(error) => {
-            logger::error(&format!(
+            tracing::error!(
+                target: crate::observability_targets::USER_VISIBLE_ERROR,
                 "Failed to load generated default content manifest: {}",
                 error
-            ));
+            );
             Vec::new()
         }
     }
@@ -172,10 +167,7 @@ fn resolve_resource_path(
         .path()
         .resolve(relative_path, BaseDirectory::Resource)
         .map_err(|e| {
-            logger::error(&format!(
-                "Failed to resolve resource path {:?}: {}",
-                relative_path, e
-            ));
+            tracing::error!("Failed to resolve resource path {:?}: {}", relative_path, e);
             DomainError::InternalError(format!("Failed to resolve resource path: {}", e))
         })
 }
