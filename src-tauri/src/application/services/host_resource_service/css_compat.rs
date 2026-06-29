@@ -8,7 +8,7 @@
 //! **Linkage / Data Flow**
 //! - Frontend runtime (`src/scripts/extensions/runtime/third-party-runtime.js`) detects missing
 //!   `@layer` support and appends `ttCompat=layer` to third-party extension stylesheet URLs.
-//! - Backend web resource endpoint (`src-tauri/src/presentation/web_resources/third_party_endpoint.rs`)
+//! - Host resource service (`src-tauri/src/application/services/host_resource_service/third_party.rs`)
 //!   recognizes that query and, for `text/css` responses, uses this module to flatten `@layer`
 //!   wrappers before returning bytes.
 //!

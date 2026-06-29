@@ -74,18 +74,20 @@
 生产/打包运行时：
 
 - `src-tauri/src/lib.rs` 在主窗口安装 `on_web_resource_request`
-- `src-tauri/src/presentation/web_resources/third_party_endpoint.rs` 拦截 `/scripts/extensions/third-party/*`
-- `src-tauri/src/presentation/web_resources/thumbnail_endpoint.rs` 拦截 `/thumbnail`
-- `src-tauri/src/presentation/web_resources/user_data_endpoint.rs` 拦截用户数据静态资源：`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`
+- `src-tauri/src/application/services/host_resource_service/third_party.rs` 处理 `/scripts/extensions/third-party/*`
+- `src-tauri/src/application/services/host_resource_service/thumbnail.rs` 处理 `/thumbnail`
+- `src-tauri/src/application/services/host_resource_service/user_data.rs` 处理用户数据静态资源：`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`
 
 请求处理步骤：
 
 1. 校验请求方法，只接受 `GET` / `HEAD` / `OPTIONS`
-2. 通过 `src-tauri/src/infrastructure/third_party_paths.rs` 解析并校验路径
-3. 通过 `src-tauri/src/infrastructure/third_party_assets.rs` 定位文件并推断 MIME
+2. 通过 `src-tauri/src/application/services/host_resource_service/routes.rs` 解析并校验路径
+3. 通过 `src-tauri/src/infrastructure/host_resources.rs` 定位文件并推断 MIME
 4. 返回真实 bytes、正确 `Content-Type`、`Cache-Control: no-store`
    - 对用户静态资源端点（如 `/backgrounds/*`）若请求携带 `Range`，支持单范围并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
 5. 未命中时返回真正 `404`，不回退到 `index.html`
+
+Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 symlink 指向外部目录或文件。这样用户可以让 SillyTavern 与 TauriTavern 共享同一套数据目录布局。
 
 开发态本地 Web 入口：
 
@@ -155,8 +157,8 @@
 - 新兼容修复优先做成“最小能力补丁”，不要重新引入广泛源码扫描或 eager 预取
 - 若调整路径规则，至少同步检查：
   - `src/scripts/extensions/runtime/resource-paths.js`
-  - `src-tauri/src/infrastructure/third_party_paths.rs`
-  - `src-tauri/src/presentation/web_resources/third_party_endpoint.rs`
+  - `src-tauri/src/application/services/host_resource_service/routes.rs`
+  - `src-tauri/src/application/services/host_resource_service/third_party.rs`
   - 相关测试
 - 若改动开发态代理链路，也必须同步验证 `src/init.js` 与 `src/tt-ext-sw.js`
 

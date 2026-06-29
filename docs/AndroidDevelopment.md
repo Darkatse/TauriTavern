@@ -392,7 +392,7 @@ https://v2.tauri.app/develop/resources/#android
 
 当前已落地 workaround（仅背景视频）：
 
-- 实现：`src-tauri/src/presentation/web_resources/user_data_endpoint.rs`
+- 实现：`src-tauri/src/application/services/host_resource_service/user_data.rs`
 - 策略：对 Android + `/backgrounds/*` + `video/*` + `Range start != 0`：
   - 返回 `206` + 正确 `Content-Range/Content-Length`
   - body 提供完整文件 bytes，让 WebView 自己在流上执行 Range（skip）

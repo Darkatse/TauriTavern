@@ -2,7 +2,7 @@
 
 本文档记录当前**已经落地**的“浏览器原生媒体加载契约”：`<video>` / `<audio>` 在桌面与移动端对用户静态资源端点（尤其是 `/backgrounds/*`）的请求方式，以及宿主目前承诺的响应语义。
 
-> 实现位置：`src-tauri/src/presentation/web_resources/user_data_endpoint.rs`
+> 实现位置：`src-tauri/src/application/services/host_resource_service/user_data.rs`
 
 ---
 
@@ -13,7 +13,7 @@
 - 上游 SillyTavern 与第三方扩展可以把 `/backgrounds/*` 等路径当作“普通 HTTP 资源端点”使用（子资源加载 + Range）。
 - 媒体文件（`video/*` / `audio/*`）必须满足浏览器媒体管线的最小网络契约：**支持 `Range`（单范围）并返回 `206 + Content-Range`**。
 
-涉及端点（由 `user_data_endpoint.rs` 提供）：
+涉及端点（由 Host Resource Service 提供）：
 
 - `/backgrounds/*`（图片背景 + 视频背景）
 - `/assets/*`、`/user/files/*`（可能承载音视频/下载内容）
@@ -30,6 +30,7 @@
 - `Content-Type` 必须与文件类型匹配（基于扩展名推断）
 - `Cache-Control: no-store`
 - `Accept-Ranges: bytes`
+- 允许 data root 内的 symlink 指向外部文件或目录，以支持与 SillyTavern 共享同一套数据。
 
 ---
 
@@ -96,4 +97,3 @@ Android 端额外关注：
 当需要确认媒体编码兼容性（解码层问题）：
 
 - 使用 `ffprobe` 检查视频编码/音频声道布局（Android 上 AAC 5.1 可能存在兼容风险）。
-

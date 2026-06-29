@@ -1,11 +1,13 @@
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use mime_guess::from_path;
+use std::io::Write;
 use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
 use crate::domain::errors::DomainError;
+use crate::infrastructure::persistence::file_system::unique_temp_path;
 
 const ANIMATED_EXTENSIONS: &[&str] = &[".apng", ".mp4", ".webm", ".avi", ".mkv", ".flv", ".gif"];
 
@@ -246,14 +248,27 @@ fn generate_thumbnail_sync(
         })?;
     }
 
-    let temp_path = thumbnail_path.with_extension("tmp");
-    std::fs::write(&temp_path, &encoded).map_err(|error| {
+    let temp_path = unique_temp_path(thumbnail_path, "thumbnail");
+    let mut temp_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to create temporary thumbnail '{}': {}",
+                temp_path.display(),
+                error
+            ))
+        })?;
+
+    temp_file.write_all(&encoded).map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to write temporary thumbnail '{}': {}",
             temp_path.display(),
             error
         ))
     })?;
+    drop(temp_file);
 
     match std::fs::remove_file(thumbnail_path) {
         Ok(()) => {}
@@ -355,5 +370,62 @@ pub async fn invalidate_thumbnail_cache(thumbnail_path: &Path) -> Result<(), Dom
             thumbnail_path.display(),
             error
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageBuffer, Rgb};
+    use std::path::PathBuf;
+
+    struct TempDirGuard {
+        path: PathBuf,
+    }
+
+    impl TempDirGuard {
+        fn new(test_name: &str) -> Self {
+            let mut path = std::env::temp_dir();
+            path.push(format!("tauritavern-{test_name}-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn thumbnail_generation_does_not_follow_existing_temp_symlink() {
+        let temp = TempDirGuard::new("thumbnail-cache-temp-symlink");
+        let external = TempDirGuard::new("thumbnail-cache-temp-external");
+        let original_path = temp.path.join("source.png");
+        let thumbnail_path = temp.path.join("thumb.jpg");
+        let old_temp_path = thumbnail_path.with_extension("tmp");
+        let outside_path = external.path.join("outside.txt");
+
+        let image = ImageBuffer::from_pixel(2, 2, Rgb([255u8, 0, 0]));
+        image.save(&original_path).expect("write source image");
+        std::fs::write(&outside_path, b"keep").expect("write outside target");
+        std::os::unix::fs::symlink(&outside_path, &old_temp_path).expect("temp symlink");
+
+        generate_thumbnail_sync(
+            &original_path,
+            &thumbnail_path,
+            ThumbnailConfig {
+                width: 1,
+                height: 1,
+                quality: 90,
+                resize_mode: ThumbnailResizeMode::Cover,
+            },
+        )
+        .expect("generate thumbnail");
+
+        assert_eq!(std::fs::read(&outside_path).expect("read outside"), b"keep");
+        assert!(thumbnail_path.is_file());
     }
 }

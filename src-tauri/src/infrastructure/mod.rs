@@ -3,8 +3,8 @@ pub mod apis;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 pub mod apple_webview_js_dialogs;
 pub mod assets;
-pub mod data_root_content_dirs;
 pub mod github;
+pub mod host_resources;
 pub mod http_client;
 pub mod http_client_pool;
 pub mod http_error;
@@ -24,10 +24,8 @@ pub mod sync;
 pub mod sync_automation_store;
 pub mod sync_fs;
 pub mod sync_transfer;
-pub mod third_party_assets;
 pub mod thumbnails;
 pub mod tt_sync;
-pub mod user_data_dirs;
 pub mod zipkit;
 
 #[cfg(test)]

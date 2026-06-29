@@ -422,13 +422,12 @@ tauri::Builder::default()
 - 入口安装位置：`src-tauri/src/lib.rs`
   - 主窗口在 `create_main_window()` 中挂载 `on_web_resource_request`
   - 仅覆盖 `/scripts/extensions/third-party/*` 前缀
-- 表示层实现：`src-tauri/src/presentation/web_resources/third_party_endpoint.rs`
+- 应用层实现：`src-tauri/src/application/services/host_resource_service/third_party.rs`
   - 负责方法门禁、路径解析、状态码、`Content-Type`、`Cache-Control`
   - 仅允许 `GET` / `HEAD` / `OPTIONS`
   - 未命中返回真正 `404`，不回退 `index.html`
 - 基础设施支撑：
-  - `src-tauri/src/infrastructure/third_party_paths.rs`：路径解析与安全校验
-  - `src-tauri/src/infrastructure/third_party_assets.rs`：local/global 目录查找与 MIME 推断
+  - `src-tauri/src/infrastructure/host_resources.rs`：local/global 目录查找、MIME 推断与文件读取
 - 目录语义：
   - local：`data/default-user/extensions/<folder>`
   - global：`data/extensions/third-party/<folder>`
