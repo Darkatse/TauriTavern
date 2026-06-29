@@ -102,6 +102,7 @@ pub struct DevWebResourceRequest {
     pub pathname: String,
     pub search: Option<String>,
     pub method: Option<String>,
+    pub range: Option<String>,
 }
 
 #[cfg(any(dev, debug_assertions))]
@@ -122,9 +123,13 @@ pub fn read_dev_web_resource(
 ) -> Result<DevWebResourceResponse, CommandError> {
     let method = request.method.unwrap_or_else(|| "GET".to_string());
     let uri = format!("{}{}", request.pathname, request.search.unwrap_or_default());
-    let request = tauri::http::Request::builder()
+    let mut builder = tauri::http::Request::builder()
         .method(method.as_str())
-        .uri(uri)
+        .uri(uri);
+    if let Some(range) = request.range {
+        builder = builder.header(tauri::http::header::RANGE, range);
+    }
+    let request = builder
         .body(Vec::new())
         .map_err(|error| CommandError::BadRequest(error.to_string()))?;
     let response = serve_dev_web_resource_from_app(&app, &request);

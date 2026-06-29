@@ -74,6 +74,7 @@
 生产/打包运行时：
 
 - `src-tauri/src/lib.rs` 在主窗口安装 `on_web_resource_request`
+- `src-tauri/src/application/services/host_resource_service/user_css.rs` 处理 `/css/user.css`
 - `src-tauri/src/application/services/host_resource_service/third_party.rs` 处理 `/scripts/extensions/third-party/*`
 - `src-tauri/src/application/services/host_resource_service/thumbnail.rs` 处理 `/thumbnail`
 - `src-tauri/src/application/services/host_resource_service/user_data.rs` 处理用户数据静态资源：`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`
@@ -92,10 +93,10 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 开发态本地 Web 入口：
 
 - `src/init.js` 会注册 `/tt-ext-sw.js`
-- Service Worker 将 `/scripts/extensions/third-party/*`、`/thumbnail`、`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 转发到 `tt-ext` 自定义 scheme
+- Service Worker 将 `/css/user.css`、`/scripts/extensions/third-party/*`、`/thumbnail`、`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 转发到 `tt-ext` 自定义 scheme
 - Rust 侧 `register_uri_scheme_protocol("tt-ext", ...)` 在 dev 下统一分发上述资源请求
 - `convertFileSrc('', 'tt-ext')` 的结果可能因平台/WebView 不同而表现为 `tt-ext://localhost/` 或 `http(s)://tt-ext.localhost/`
-- 若某个平台的 Service Worker 无法直接 `fetch(tt-ext)`，fallback bridge 只传递 `pathname + search`，并由页面上下文通过 Tauri invoke 调用同一套 Rust 资源分发逻辑；不要让 fallback 再依赖 WebView 网络栈
+- 若某个平台的 Service Worker 无法直接 `fetch(tt-ext)`，fallback bridge 只传递 `pathname + search + method + Range`，并由页面上下文通过 Tauri invoke 调用同一套 Rust 资源分发逻辑；不要让 fallback 再依赖 WebView 网络栈
 
 因此，开发态与生产态虽然入口不同，但 third-party 路径语义保持一致。
 
@@ -124,6 +125,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 - `fetch('/scripts/extensions/third-party/...')`
 - CSS `url(...)`
 - iframe 页面及其相对资源
+- `/css/user.css` 作为用户 CSS 覆盖文件
 - `/thumbnail`、`/characters/*`、`/User Avatars/*` 作为头像相关的浏览器原生子资源端点
 - `/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 作为用户静态资源的浏览器原生子资源端点
 

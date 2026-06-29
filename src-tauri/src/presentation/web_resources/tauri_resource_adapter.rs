@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 #[cfg(any(dev, debug_assertions))]
 use tauri::Manager;
-use tauri::http::header::{HeaderName, HeaderValue};
+use tauri::http::header::{
+    ACCEPT_RANGES, ALLOW, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, HeaderName,
+    HeaderValue,
+};
 
 use crate::application::services::host_resource_service::HostResourceService;
 use crate::application::services::host_resource_service::contract::{
@@ -74,6 +77,7 @@ pub(crate) fn apply_host_resource_response(
     *response.status_mut() =
         tauri::http::StatusCode::from_u16(host_response.status).expect("Invalid status code");
 
+    clear_replaced_host_resource_headers(response);
     for (name, value) in host_response.headers {
         response.headers_mut().insert(
             HeaderName::from_bytes(name.as_bytes()).expect("Invalid header name"),
@@ -82,6 +86,20 @@ pub(crate) fn apply_host_resource_response(
     }
 
     *response.body_mut() = Cow::Owned(host_response.body);
+}
+
+fn clear_replaced_host_resource_headers(response: &mut tauri::http::Response<Cow<'static, [u8]>>) {
+    let headers = response.headers_mut();
+    for name in [
+        ACCEPT_RANGES,
+        ALLOW,
+        CACHE_CONTROL,
+        CONTENT_LENGTH,
+        CONTENT_RANGE,
+        CONTENT_TYPE,
+    ] {
+        headers.remove(name);
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +241,27 @@ mod tests {
                 .get(CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok()),
             Some("2")
+        );
+    }
+
+    #[test]
+    fn apply_host_response_removes_stale_entity_headers() {
+        let host_response = HostResourceResponse::bytes(status::OK, b"ab".to_vec(), "text/plain");
+        let mut response: Response<Cow<'static, [u8]>> = Response::new(Cow::Owned(b"old".to_vec()));
+        response
+            .headers_mut()
+            .insert(CONTENT_LENGTH, HeaderValue::from_static("999"));
+
+        apply_host_resource_response(&mut response, host_response);
+
+        assert_eq!(response.body().as_ref(), b"ab");
+        assert!(response.headers().get(CONTENT_LENGTH).is_none());
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/plain")
         );
     }
 }

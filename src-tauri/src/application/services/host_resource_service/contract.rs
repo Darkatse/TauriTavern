@@ -123,6 +123,7 @@ pub(crate) mod header {
     pub(crate) const CONTENT_RANGE: &str = "content-range";
     pub(crate) const CONTENT_TYPE: &str = "content-type";
     pub(crate) const RANGE: &str = "range";
+    pub(crate) const TAURITAVERN_TRACE_ID: &str = "x-tauritavern-trace-id";
 }
 
 pub(crate) mod status {

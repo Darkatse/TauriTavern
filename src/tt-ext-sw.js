@@ -1,4 +1,5 @@
 const THIRD_PARTY_EXTENSION_PREFIX = '/scripts/extensions/third-party/';
+const USER_CSS_ROUTE = '/css/user.css';
 const THUMBNAIL_ROUTE = '/thumbnail';
 const CHARACTERS_ROUTE_PREFIX = '/characters/';
 const BACKGROUNDS_ROUTE_PREFIX = '/backgrounds/';
@@ -13,7 +14,8 @@ const PROXY_READY_MESSAGE_TYPE = 'tt-ext-proxy-ready';
 const CLIENT_BRIDGE_TIMEOUT_MS = 8000;
 
 function shouldProxyRequestPath(pathname) {
-    return pathname === THUMBNAIL_ROUTE
+    return pathname === USER_CSS_ROUTE
+        || pathname === THUMBNAIL_ROUTE
         || pathname.startsWith(THIRD_PARTY_EXTENSION_PREFIX)
         || pathname.startsWith(CHARACTERS_ROUTE_PREFIX)
         || pathname.startsWith(BACKGROUNDS_ROUTE_PREFIX)
@@ -78,6 +80,10 @@ async function proxyWebAssetRequest(event, requestUrl) {
     const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, ttExtBaseUrl);
 
     const init = { method: request.method, credentials: 'omit' };
+    const range = request.headers.get('range');
+    if (range) {
+        init.headers = { range };
+    }
 
     if (request.method !== 'GET' && request.method !== 'HEAD') {
         init.body = await request.clone().arrayBuffer();
@@ -196,6 +202,7 @@ function sendProxyRequestToClient(client, requestUrl, init, originalError) {
                 pathname: requestUrl.pathname,
                 search: requestUrl.search,
                 method: init.method,
+                range: init.headers?.range || null,
             }, [channel.port2]);
         } catch (error) {
             fail(error);

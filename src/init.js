@@ -56,6 +56,7 @@ function safePerfMeasure(name, startMark, endMark) {
 }
 
 const DEV_SW_PROXY_ALLOWED_PATH_PREFIXES = [
+    '/css/user.css',
     '/thumbnail',
     '/scripts/extensions/third-party/',
     '/characters/',
@@ -69,7 +70,7 @@ const DEV_SW_PROXY_ALLOWED_PATH_PREFIXES = [
 
 function shouldAllowDevSwProxyPath(pathname) {
     return DEV_SW_PROXY_ALLOWED_PATH_PREFIXES
-        .some((prefix) => pathname === prefix || pathname.startsWith(prefix));
+        .some((prefix) => pathname === prefix || (prefix.endsWith('/') && pathname.startsWith(prefix)));
 }
 
 function normalizeInvokeBytes(value) {
@@ -141,11 +142,13 @@ async function setupDevThirdPartyExtensionServiceWorker() {
 
             const search = String(data.search ?? '');
             const method = String(data.method || 'GET').toUpperCase();
+            const range = typeof data.range === 'string' && data.range ? data.range : null;
             invoke('read_dev_web_resource', {
                 request: {
                     pathname,
                     search,
                     method,
+                    range,
                 },
             })
                 .then((response) => {
