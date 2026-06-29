@@ -3,14 +3,10 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::background::BackgroundAsset;
 use crate::domain::models::filename::sanitize_filename;
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::persistence::thumbnail_cache::{
-    invalidate_thumbnail_cache, read_thumbnail_or_original,
-};
-use crate::infrastructure::thumbnails::background_thumbnail_config;
+use crate::infrastructure::persistence::thumbnail_cache::invalidate_thumbnail_cache;
 
 /// File system implementation of the BackgroundRepository
 pub struct FileBackgroundRepository {
@@ -206,26 +202,6 @@ impl BackgroundRepository for FileBackgroundRepository {
 
         self.invalidate_thumbnail_cache(&normalized).await?;
         Ok(normalized)
-    }
-
-    async fn read_background_thumbnail(
-        &self,
-        filename: &str,
-        _animated: bool,
-    ) -> Result<BackgroundAsset, DomainError> {
-        let normalized = self.normalize_filename(filename)?;
-        let original_path = self.backgrounds_dir.join(&normalized);
-        let thumbnail_path = self.thumbnail_cache_path(&normalized);
-        let asset = read_thumbnail_or_original(
-            &original_path,
-            &thumbnail_path,
-            background_thumbnail_config(),
-        )
-        .await?;
-        Ok(BackgroundAsset {
-            bytes: asset.bytes,
-            mime_type: asset.mime_type,
-        })
     }
 }
 

@@ -7,103 +7,16 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::background_dto::{DeleteBackgroundDto, RenameBackgroundDto};
+use crate::application::services::host_resource_service::HostResourceService;
 use crate::domain::models::background::BackgroundListEntry;
 use crate::domain::models::image_metadata::ImageMetadataIndex;
-use crate::infrastructure::persistence::thumbnail_cache::read_thumbnail_or_original;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
-
-use crate::infrastructure::thumbnails::avatar_thumbnail_config;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ThumbnailAssetPayload {
     pub content_base64: String,
     pub mime_type: String,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ThumbnailType {
-    Bg,
-    Avatar,
-    Persona,
-}
-
-impl ThumbnailType {
-    fn parse(value: &str) -> Result<Self, CommandError> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "bg" => Ok(Self::Bg),
-            "avatar" => Ok(Self::Avatar),
-            "persona" => Ok(Self::Persona),
-            _ => Err(CommandError::BadRequest(
-                "Invalid thumbnail type".to_string(),
-            )),
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Bg => "bg",
-            Self::Avatar => "avatar",
-            Self::Persona => "persona",
-        }
-    }
-}
-
-fn sanitize_thumbnail_filename(filename: &str) -> Result<String, CommandError> {
-    let sanitized = filename
-        .chars()
-        .map(|character| match character {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ if character.is_control() => '_',
-            _ => character,
-        })
-        .collect::<String>();
-    let sanitized = sanitized.trim().trim_end_matches(['.', ' ']).to_string();
-
-    if sanitized.is_empty() {
-        return Err(CommandError::BadRequest(
-            "Invalid thumbnail file name".to_string(),
-        ));
-    }
-
-    Ok(sanitized)
-}
-
-async fn read_non_background_thumbnail_asset(
-    app_state: &Arc<AppState>,
-    thumbnail_type: ThumbnailType,
-    file: &str,
-) -> Result<ThumbnailAssetPayload, CommandError> {
-    let directories = app_state
-        .user_directory_service
-        .get_default_user_directory()
-        .await
-        .map_err(map_command_error(
-            "Failed to resolve default user directories for thumbnail",
-        ))?;
-    let safe_file_name = sanitize_thumbnail_filename(file)?;
-
-    let (source_directory, thumbnail_directory) = match thumbnail_type {
-        ThumbnailType::Avatar => (directories.characters, directories.thumbnails_avatar),
-        ThumbnailType::Persona => (directories.avatars, directories.thumbnails_persona),
-        ThumbnailType::Bg => {
-            return Err(CommandError::BadRequest(
-                "Unsupported non-background thumbnail type".to_string(),
-            ));
-        }
-    };
-
-    let original_path = std::path::PathBuf::from(source_directory).join(&safe_file_name);
-    let thumbnail_path = std::path::PathBuf::from(thumbnail_directory).join(&safe_file_name);
-    let asset =
-        read_thumbnail_or_original(&original_path, &thumbnail_path, avatar_thumbnail_config())
-            .await
-            .map_err(map_command_error("Failed to read non-background thumbnail"))?;
-
-    Ok(ThumbnailAssetPayload {
-        content_base64: BASE64_STANDARD.encode(asset.bytes),
-        mime_type: asset.mime_type,
-    })
 }
 
 #[tauri::command]
@@ -202,33 +115,24 @@ pub async fn upload_background_from_path(
 
 #[tauri::command]
 pub async fn read_thumbnail_asset(
-    app_state: State<'_, Arc<AppState>>,
+    host_resources: State<'_, Arc<HostResourceService>>,
     thumbnail_type: String,
     file: String,
     animated: Option<bool>,
 ) -> Result<ThumbnailAssetPayload, CommandError> {
-    let thumbnail_type = ThumbnailType::parse(&thumbnail_type)?;
     log_command(format!(
         "read_thumbnail_asset type={} file={}",
-        thumbnail_type.as_str(),
-        file
+        thumbnail_type, file
     ));
+    let _ = animated;
 
-    match thumbnail_type {
-        ThumbnailType::Bg => {
-            let asset = app_state
-                .background_service
-                .read_background_thumbnail(&file, animated.unwrap_or(false))
-                .await
-                .map_err(map_command_error("Failed to read background thumbnail"))?;
+    let asset = host_resources
+        .read_thumbnail_asset_for_command(&thumbnail_type, &file)
+        .await
+        .map_err(map_command_error("Failed to read thumbnail asset"))?;
 
-            Ok(ThumbnailAssetPayload {
-                content_base64: BASE64_STANDARD.encode(asset.bytes),
-                mime_type: asset.mime_type,
-            })
-        }
-        ThumbnailType::Avatar | ThumbnailType::Persona => {
-            read_non_background_thumbnail_asset(app_state.inner(), thumbnail_type, &file).await
-        }
-    }
+    Ok(ThumbnailAssetPayload {
+        content_base64: BASE64_STANDARD.encode(asset.bytes),
+        mime_type: asset.mime_type,
+    })
 }

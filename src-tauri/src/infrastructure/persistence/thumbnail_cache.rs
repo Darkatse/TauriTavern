@@ -303,22 +303,6 @@ fn ensure_thumbnail_sync(
     generate_thumbnail_sync(original_path, thumbnail_path, config)
 }
 
-pub async fn read_thumbnail_or_original(
-    original_path: &Path,
-    thumbnail_path: &Path,
-    config: ThumbnailConfig,
-) -> Result<ThumbnailAsset, DomainError> {
-    let original_path = original_path.to_path_buf();
-    let thumbnail_path = thumbnail_path.to_path_buf();
-    let task = tokio::task::spawn_blocking(move || {
-        read_thumbnail_or_original_sync(&original_path, &thumbnail_path, config)
-    });
-
-    task.await.map_err(|error| {
-        DomainError::InternalError(format!("Thumbnail worker failed: {}", error))
-    })?
-}
-
 pub fn read_thumbnail_or_original_sync(
     original_path: &Path,
     thumbnail_path: &Path,

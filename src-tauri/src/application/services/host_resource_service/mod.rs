@@ -14,9 +14,10 @@ mod user_data;
 
 use std::sync::Arc;
 
+use crate::domain::errors::DomainError;
 use contract::{HostResourceRequest, HostResourceResponse};
 use policy::HostResourceRuntimePolicy;
-use ports::HostResourceAssetStore;
+use ports::{HostResourceAssetStore, HostResourceBinaryAsset};
 use route_classifier::{HostResourceRoute, classify_host_resource_route};
 use user_data::UserDataAssetRequestPolicy;
 
@@ -61,6 +62,15 @@ impl HostResourceService {
                 self.user_data_policy,
             )),
         }
+    }
+
+    pub(crate) async fn read_thumbnail_asset_for_command(
+        &self,
+        thumbnail_type: &str,
+        file: &str,
+    ) -> Result<HostResourceBinaryAsset, DomainError> {
+        thumbnail::read_thumbnail_asset_for_command(Arc::clone(&self.store), thumbnail_type, file)
+            .await
     }
 
     #[cfg(any(dev, debug_assertions))]

@@ -1,5 +1,4 @@
 use crate::domain::errors::DomainError;
-use crate::domain::models::background::BackgroundAsset;
 use async_trait::async_trait;
 use std::path::Path;
 
@@ -25,11 +24,4 @@ pub trait BackgroundRepository: Send + Sync {
         filename: &str,
         source_path: &Path,
     ) -> Result<String, DomainError>;
-
-    /// Read a background thumbnail asset.
-    async fn read_background_thumbnail(
-        &self,
-        filename: &str,
-        animated: bool,
-    ) -> Result<BackgroundAsset, DomainError>;
 }

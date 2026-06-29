@@ -1,5 +1,4 @@
 use crate::domain::errors::DomainError;
-use crate::domain::models::background::BackgroundAsset;
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::domain::repositories::image_metadata_repository::ImageMetadataRepository;
 use crate::infrastructure::logging::logger;
@@ -128,27 +127,6 @@ impl BackgroundService {
 
         self.repository
             .upload_background_from_path(filename, source_path)
-            .await
-    }
-
-    pub async fn read_background_thumbnail(
-        &self,
-        filename: &str,
-        animated: bool,
-    ) -> Result<BackgroundAsset, DomainError> {
-        logger::debug(&format!(
-            "BackgroundService: Reading thumbnail for '{}' (animated: {})",
-            filename, animated
-        ));
-
-        if filename.is_empty() {
-            return Err(DomainError::InvalidData(
-                "Background filename cannot be empty".to_string(),
-            ));
-        }
-
-        self.repository
-            .read_background_thumbnail(filename, animated)
             .await
     }
 }
