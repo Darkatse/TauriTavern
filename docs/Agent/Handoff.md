@@ -123,7 +123,6 @@ Handoff task 形态：
     "contextSummary": "...",
     "workspaceRefs": ["output/main.md"]
   },
-  "budget": null,
   "createdByToolCallId": "<tool-call-id>",
   "resultRef": null,
   "error": null

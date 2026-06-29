@@ -6,7 +6,7 @@ use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
     AgentDelegationContinuation, AgentInvocation, AgentInvocationExitPolicy, AgentInvocationKind,
-    AgentInvocationStatus, AgentRunEventLevel, AgentTaskBudget, AgentTaskRecord, AgentTaskStatus,
+    AgentInvocationStatus, AgentRunEventLevel, AgentTaskRecord, AgentTaskStatus,
     ROOT_AGENT_INVOCATION_ID,
 };
 
@@ -140,7 +140,6 @@ impl AgentRuntimeService {
         workspace_key: String,
         created_by_tool_call_id: String,
         task: serde_json::Value,
-        budget: Option<AgentTaskBudget>,
     ) -> Result<AgentTaskRecord, ApplicationError> {
         self.create_delegation_task(
             run_id,
@@ -151,7 +150,6 @@ impl AgentRuntimeService {
             workspace_key,
             created_by_tool_call_id,
             task,
-            budget,
             AgentInvocationKind::Subagent,
             AgentInvocationExitPolicy::TaskReturnRequired,
             AgentDelegationContinuation::ReturnToParent,
@@ -179,7 +177,6 @@ impl AgentRuntimeService {
             workspace_key,
             created_by_tool_call_id,
             task,
-            None,
             AgentInvocationKind::Handoff,
             AgentInvocationExitPolicy::RunFinishAllowed,
             AgentDelegationContinuation::TransferControl,
@@ -197,7 +194,6 @@ impl AgentRuntimeService {
         workspace_key: String,
         created_by_tool_call_id: String,
         task: serde_json::Value,
-        budget: Option<AgentTaskBudget>,
         invocation_kind: AgentInvocationKind,
         exit_policy: AgentInvocationExitPolicy,
         continuation: AgentDelegationContinuation,
@@ -224,7 +220,6 @@ impl AgentRuntimeService {
             continuation,
             status: AgentTaskStatus::Queued,
             task,
-            budget,
             created_by_tool_call_id: Some(created_by_tool_call_id),
             result_ref: None,
             error: None,

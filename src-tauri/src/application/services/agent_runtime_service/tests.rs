@@ -373,6 +373,108 @@ async fn agent_list_returns_callable_profiles_allowed_by_delegation_policy() {
 }
 
 #[tokio::test]
+async fn agent_delegate_rejects_hard_budget_argument() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-delegate-budget-denied-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let profile_service = test_profile_service(&root);
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        profile_service,
+        test_llm_connection_service(&root),
+    ));
+    let profile = test_resolved_profile(&root).await;
+    let run = AgentRun {
+        id: "run_agent_delegate_budget_denied".to_string(),
+        workspace_id: "chat_agent_delegate_budget_denied".to_string(),
+        stable_chat_id: "stable_agent_delegate_budget_denied".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: Some(profile.id.as_str().to_string()),
+        skill_scope_refs: Default::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &profile),
+            &json!({ "chatCompletionPayload": { "messages": prompt_messages("hello") } }),
+            &profile,
+        )
+        .await
+        .expect("initialize run");
+
+    let call = AgentToolCall {
+        id: "call_delegate_with_budget".to_string(),
+        name: "agent.delegate".to_string(),
+        arguments: json!({
+            "agentId": "scene-critic",
+            "task": {
+                "objective": "Review the draft briefly."
+            },
+            "budget": {
+                "maxRounds": 1,
+                "maxToolCalls": 1
+            }
+        }),
+        provider_metadata: Value::Null,
+    };
+    let mut session = AgentToolSession::default();
+    let mut commit_ledger = RunCommitLedger::default();
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+
+    let outcome = service
+        .dispatch_tool_call(
+            &run.id,
+            "inv_root",
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            1,
+            &call,
+            &mut session,
+            &profile,
+            0,
+            &mut commit_ledger,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("dispatch agent.delegate");
+
+    assert!(outcome.result.is_error);
+    assert_eq!(
+        outcome.result.error_code.as_deref(),
+        Some("tool.invalid_arguments")
+    );
+    assert!(outcome.result.content.contains("budget"));
+    assert!(
+        repository
+            .list_tasks(&run.id)
+            .await
+            .expect("list tasks")
+            .is_empty()
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn skill_scope_order_uses_invocation_preset_profile_and_run_character() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-skill-scope-order-{}",
@@ -824,8 +926,7 @@ async fn subagent_current_prompt_snapshot_reads_ambient_preset_and_character_ski
                                         "objective": "Read preset and character skills before returning.",
                                         "context": { "draft": "A quiet scene." },
                                         "expectedOutput": { "format": "short capsule" }
-                                    },
-                                    "budget": { "maxRounds": 4, "maxToolCalls": 6 }
+                                    }
                                 })).unwrap()
                             }
                         },
@@ -1134,8 +1235,7 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
                                         "objective": "Find one concrete improvement.",
                                         "context": { "draft": "A quiet scene." },
                                         "expectedOutput": { "format": "short capsule" }
-                                    },
-                                    "budget": { "maxRounds": 4, "maxToolCalls": 4 }
+                                    }
                                 })).unwrap()
                             }
                         },
@@ -2793,7 +2893,6 @@ async fn completed_child_results_are_added_to_next_parent_turn_once() {
                 "title": "Critique",
                 "objective": "Return one note."
             }),
-            None,
         )
         .await
         .expect("create task");
@@ -2914,7 +3013,6 @@ async fn cancelled_child_task_does_not_emit_failed_event() {
                 "title": "Long critique",
                 "objective": "This task should be cancelled before it starts."
             }),
-            None,
         )
         .await
         .expect("create task");
@@ -3172,7 +3270,6 @@ async fn scheduler_cancels_unfinished_child_tasks_when_parent_finishes() {
                 "title": "Long critique",
                 "objective": "Keep working until cancelled."
             }),
-            None,
         )
         .await
         .expect("create task");
@@ -7443,7 +7540,6 @@ async fn child_worldinfo_reads_run_snapshot_without_exposing_input_workspace() {
             json!({
                 "objective": "Read activated World Info."
             }),
-            None,
         )
         .await
         .expect("create child task");
@@ -7641,7 +7737,6 @@ async fn task_return_rejects_artifact_path_outside_child_visible_roots() {
             "scene-critic".to_string(),
             "call_delegate_artifact_policy".to_string(),
             json!({ "objective": "Return a result." }),
-            None,
         )
         .await
         .expect("create child task");
@@ -7768,7 +7863,6 @@ async fn return_mode_child_write_rejects_non_writable_visible_root() {
             "scene-critic".to_string(),
             "call_delegate_write_policy".to_string(),
             json!({ "objective": "Write only allowed files." }),
-            None,
         )
         .await
         .expect("create child task");
@@ -8952,8 +9046,7 @@ fn finish_cancel_delegate_response() -> Value {
                                 "objective": "Find one concrete improvement.",
                                 "context": { "draft": "A quiet scene." },
                                 "expectedOutput": { "format": "short capsule" }
-                            },
-                            "budget": { "maxRounds": 4, "maxToolCalls": 4 }
+                            }
                         })).unwrap()
                     }
                 }]
@@ -8981,8 +9074,7 @@ fn pending_handoff_delegate_and_handoff_response() -> Value {
                                     "objective": "Find one concrete improvement.",
                                     "context": { "draft": "A quiet scene." },
                                     "expectedOutput": { "format": "short capsule" }
-                                },
-                                "budget": { "maxRounds": 4, "maxToolCalls": 4 }
+                                }
                             })).unwrap()
                         }
                     },

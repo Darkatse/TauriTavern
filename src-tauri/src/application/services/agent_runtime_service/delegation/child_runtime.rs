@@ -130,7 +130,7 @@ impl AgentRuntimeService {
 
         let mut profile = self.resolve_task_profile(&task).await?;
         ensure_profile_model_configured(&profile)?;
-        apply_child_invocation_policy(&mut profile, task.budget)?;
+        apply_child_invocation_policy(&mut profile);
         let PreparedDelegatedInvocationContext {
             profile,
             request,

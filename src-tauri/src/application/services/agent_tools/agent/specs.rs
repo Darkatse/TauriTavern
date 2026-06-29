@@ -79,20 +79,6 @@ pub(in crate::application::services::agent_tools) fn agent_delegate_spec() -> Ag
                         }
                     },
                     "required": ["objective"]
-                },
-                "budget": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "maxRounds": {
-                            "type": "integer",
-                            "description": "Optional round budget. Must be >= 1 and no greater than the target Agent allows."
-                        },
-                        "maxToolCalls": {
-                            "type": "integer",
-                            "description": "Optional tool-call budget. Must be >= 1 and no greater than the target Agent allows."
-                        }
-                    }
                 }
             },
             "required": ["agentId", "task"]

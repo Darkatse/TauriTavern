@@ -196,15 +196,6 @@ pub enum AgentTaskStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentTaskBudget {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_rounds: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_calls: Option<usize>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentTaskRecord {
@@ -218,8 +209,6 @@ pub struct AgentTaskRecord {
     pub status: AgentTaskStatus,
     #[serde(default)]
     pub task: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub budget: Option<AgentTaskBudget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_tool_call_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

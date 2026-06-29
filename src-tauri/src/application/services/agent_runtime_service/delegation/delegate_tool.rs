@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::policy::{AgentDelegateBudget, validate_delegate_budget, validate_subagent_target};
+use super::policy::validate_subagent_target;
 use super::tool_error::tool_error_outcome;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_profile_service::AgentProfileResolveInput;
@@ -14,7 +14,7 @@ use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
 use crate::domain::models::agent::profile::{AgentProfileId, ResolvedAgentProfile};
 use crate::domain::models::agent::{
-    AgentRunEventLevel, AgentTaskBudget, AgentTaskStatus, AgentToolCall, AgentToolResult,
+    AgentRunEventLevel, AgentTaskStatus, AgentToolCall, AgentToolResult,
 };
 
 const MAX_AGENT_DELEGATION_TASK_FIELD_CHARS: usize = 8_000;
@@ -24,8 +24,6 @@ const MAX_AGENT_DELEGATION_TASK_FIELD_CHARS: usize = 8_000;
 struct AgentDelegateArgs {
     agent_id: String,
     task: Value,
-    #[serde(default)]
-    budget: Option<AgentDelegateBudget>,
 }
 
 impl AgentRuntimeService {
@@ -106,14 +104,6 @@ impl AgentRuntimeService {
                 started.elapsed().as_millis(),
             ));
         }
-        if let Err(message) = validate_delegate_budget(args.budget, &target) {
-            return Ok(tool_error_outcome(
-                call,
-                "tool.invalid_arguments",
-                &message,
-                started.elapsed().as_millis(),
-            ));
-        }
         if let Err(message) = self
             .validate_parent_delegate_budget(run_id, invocation_id, profile)
             .await?
@@ -141,7 +131,6 @@ impl AgentRuntimeService {
                 workspace_key,
                 call.id.clone(),
                 args.task.clone(),
-                args.budget.map(AgentTaskBudget::from),
             )
             .await?;
         self.event(

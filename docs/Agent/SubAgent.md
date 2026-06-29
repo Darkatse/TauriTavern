@@ -2,7 +2,7 @@
 
 本文档记录当前 return-mode SubAgent 的实现基线、核心契约、Agent-friendly 设计原则与代码定位。`agent.handoff` 使用同一套 `AgentTaskRecord + AgentInvocation` 地基，但属于 foreground 接力流程；handoff 细节以 `docs/Agent/Handoff.md` 为准。后续开发多 Agent、task cancel 与 invocation-scoped prompt assembly 前，应先读本文和 `Handoff.md`。
 
-当前状态截至 2026-06-06：已实现 `agent.list`、`agent.delegate`、`agent.await`、return-mode child invocation 的 `task.return`，run-scoped `ActiveRunHandle` / `AgentTaskScheduler` 后台 worker 基线，`agent.handoff` foreground 接力，以及 child / handoff invocation 的 PromptAssemblyBroker handshake。模型可见 task cancel 工具仍是后续计划，当前没有模型可见 `agent.cancel_task`。
+当前状态截至 2026-06-29：已实现 `agent.list`、`agent.delegate`、`agent.await`、return-mode child invocation 的 `task.return`，run-scoped `ActiveRunHandle` / `AgentTaskScheduler` 后台 worker 基线，`agent.handoff` foreground 接力，以及 child / handoff invocation 的 PromptAssemblyBroker handshake。模型可见 task cancel 工具仍是后续计划，当前没有模型可见 `agent.cancel_task`。
 
 ## 1. 设计目标
 
@@ -81,7 +81,6 @@ AgentTaskRecord {
     continuation: ReturnToParent | TransferControl,
     status: Queued | Running | Completed | Failed | Cancelled,
     task,
-    budget,
     result_ref,
     error,
 }
@@ -130,17 +129,13 @@ summaries/<workspace-key>-result.md
     "objective": "找出当前草稿里会破坏角色动机连续性的地方。",
     "context": {},
     "expectedOutput": {}
-  },
-  "budget": {
-    "maxRounds": 4,
-    "maxToolCalls": 12
   }
 }
 ```
 
 `task.title` 是可选展示名；只有 `task.objective` 承载必须完成的任务目标。
 
-没有 `execution`、`continuation` 或 `invocationId` 参数。工具名已经表达了 continuation：`agent.delegate` 永远是 return-to-parent，`agent.handoff` 永远是 transfer-control。
+没有 `budget`、`execution`、`continuation` 或 `invocationId` 参数。工具名已经表达了 continuation：`agent.delegate` 永远是 return-to-parent，`agent.handoff` 永远是 transfer-control。return-mode SubAgent 的硬运行预算只来自 target Agent Profile 与宿主运行时策略；主 Agent 如需表达“简短”“快速”“只返回摘要”，应写入 task brief / expectedOutput，而不是 runtime policy。
 
 ## 5. Child Invocation Policy
 
@@ -152,7 +147,7 @@ return-mode child Agent 必须遵守更窄的执行契约：
 - 移除 `agent.list`、`agent.delegate`、`agent.handoff`、`agent.await`。
 - 注入 `task.return`。
 - `exit_policy = TaskReturnRequired`。
-- 可使用 target Agent Profile 的 model binding 与工具预算；delegate call 可进一步收窄 `maxRounds` / `maxToolCalls`。
+- 使用 target Agent Profile 的 model binding 与工具预算；delegate call 不能覆盖或收窄 `maxRounds` / `maxCallsPerRun`。
 - child 与请求它的 Agent 使用同一套逻辑 workspace path，不存在 return-mode 专用目录映射；可见/可写 root 仍由 target Agent Profile 的 `workspace.visibleRoots` / `workspace.writableRoots` 决定。
 
 实现入口：

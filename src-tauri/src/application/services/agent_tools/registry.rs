@@ -441,6 +441,12 @@ mod tests {
                 .pointer("/properties/task/properties/title")
                 .is_some()
         );
+        assert!(
+            delegate
+                .input_schema
+                .pointer("/properties/budget")
+                .is_none()
+        );
     }
 
     #[test]

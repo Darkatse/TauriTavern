@@ -192,6 +192,7 @@ fn gemini_builtin_tool_schemas_do_not_emit_nested_required() {
         .expect("agent_delegate tool must be present");
     let parameters = &delegate["function"]["parameters"];
     assert_eq!(parameters["required"], json!(["agentId", "task"]));
+    assert!(parameters["properties"].get("budget").is_none());
     assert!(parameters["properties"]["task"].get("required").is_none());
     assert_eq!(
         parameters["properties"]["task"]["properties"]["context"]["type"],
