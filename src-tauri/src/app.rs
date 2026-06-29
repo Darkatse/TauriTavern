@@ -47,6 +47,7 @@ use crate::infrastructure::logging::logger;
 use crate::infrastructure::paths::RuntimePaths;
 
 mod bootstrap;
+pub mod dev_observability;
 
 pub struct AppState {
     pub character_service: Arc<CharacterService>,

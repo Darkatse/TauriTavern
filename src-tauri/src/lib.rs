@@ -10,6 +10,7 @@ mod presentation;
 // and startup sequencing. If code here starts knowing feature/business rules,
 // move it down into app/application/presentation instead of growing lib.rs further.
 
+use app::dev_observability::DevObservabilityHub;
 use app::spawn_initialization;
 use application::services::bundled_template_service::BundledTemplateService;
 use application::services::host_resource_service::HostResourceService;
@@ -144,13 +145,18 @@ pub fn run() {
             // without teaching feature code about window/event plumbing.
             let backend_log_store =
                 std::sync::Arc::new(devtools::BackendLogStore::new(app_handle.clone()));
-            app.manage(backend_log_store.clone());
 
             let llm_api_log_store = std::sync::Arc::new(llm_api_logs::LlmApiLogStore::new(
                 app_handle.clone(),
                 runtime_paths.log_root.clone(),
             ));
             app.manage(llm_api_log_store.clone());
+            app.manage(std::sync::Arc::new(DevObservabilityHub::new(
+                app_handle.clone(),
+                runtime_paths.clone(),
+                backend_log_store.clone(),
+                llm_api_log_store.clone(),
+            )));
 
             if let Err(error) =
                 logger::init_logger(&runtime_paths.log_root, Some(backend_log_store))
