@@ -112,7 +112,6 @@ mod tests {
 
     use crate::application::client_asset_paths::UserDataAssetKind;
     use crate::application::services::host_resource_service::contract::{header, status};
-    use crate::application::services::host_resource_service::policy::HostResourceRuntimePolicy;
     use crate::application::services::host_resource_service::ports::{
         HostResourceAssetStore, HostResourceBinaryAsset, HostResourceFileStat,
         HostResourceStoreError, ThumbnailAssetRequest,
@@ -197,10 +196,7 @@ mod tests {
 
     #[test]
     fn unhandled_production_request_leaves_response_unchanged() {
-        let host_resources = HostResourceService::new(
-            Arc::new(HostResourceRuntimePolicy::new(false)),
-            Arc::new(NoopStore),
-        );
+        let host_resources = HostResourceService::new(false, Arc::new(NoopStore));
         let request = Request::builder()
             .method("GET")
             .uri("/index.html")

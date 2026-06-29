@@ -1,21 +1,19 @@
 pub mod contract;
-pub mod css_compat;
-pub mod policy;
 pub mod ports;
 pub mod range;
-pub mod route_classifier;
 
+mod css_compat;
+mod route_classifier;
 mod third_party;
 mod thumbnail;
 mod user_css;
 mod user_data;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::domain::errors::DomainError;
 use contract::{HostResourceRequest, HostResourceResponse, header};
-use policy::HostResourceRuntimePolicy;
 use ports::{HostResourceAssetStore, HostResourceBinaryAsset};
 use route_classifier::{HostResourceRoute, classify_host_resource_route};
 use user_data::UserDataAssetRequestPolicy;
@@ -23,18 +21,20 @@ use user_data::UserDataAssetRequestPolicy;
 static NEXT_TRACE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) struct HostResourceService {
-    policy: Arc<HostResourceRuntimePolicy>,
+    avatar_persona_original_images_enabled: AtomicBool,
     store: Arc<dyn HostResourceAssetStore>,
     user_data_policy: UserDataAssetRequestPolicy,
 }
 
 impl HostResourceService {
-    pub(crate) fn new<S>(policy: Arc<HostResourceRuntimePolicy>, store: Arc<S>) -> Self
+    pub(crate) fn new<S>(avatar_persona_original_images_enabled: bool, store: Arc<S>) -> Self
     where
         S: HostResourceAssetStore + 'static,
     {
         Self {
-            policy,
+            avatar_persona_original_images_enabled: AtomicBool::new(
+                avatar_persona_original_images_enabled,
+            ),
             store,
             user_data_policy: UserDataAssetRequestPolicy::for_current_platform(),
         }
@@ -54,7 +54,8 @@ impl HostResourceService {
             )),
             HostResourceRoute::Thumbnail => Some(thumbnail::serve_thumbnail(
                 self.store.as_ref(),
-                self.policy.as_ref(),
+                self.avatar_persona_original_images_enabled
+                    .load(Ordering::Relaxed),
                 request,
             )),
             HostResourceRoute::UserDataAsset => Some(user_data::serve_user_data_asset(
@@ -74,6 +75,11 @@ impl HostResourceService {
     ) -> Result<HostResourceBinaryAsset, DomainError> {
         thumbnail::read_thumbnail_asset_for_command(Arc::clone(&self.store), thumbnail_type, file)
             .await
+    }
+
+    pub(crate) fn set_avatar_persona_original_images_enabled(&self, enabled: bool) {
+        self.avatar_persona_original_images_enabled
+            .store(enabled, Ordering::Relaxed);
     }
 
     #[cfg(any(dev, debug_assertions))]
@@ -108,12 +114,16 @@ mod tests {
     };
     use crate::application::services::host_resource_service::ports::{
         HostResourceBinaryAsset, HostResourceFileStat, HostResourceStoreError,
-        ThumbnailAssetRequest,
+        ThumbnailAssetRequest, ThumbnailKind,
     };
     use crate::application::services::host_resource_service::range::ByteRange;
     use std::path::Path;
+    use std::sync::Mutex;
 
-    struct Store;
+    #[derive(Default)]
+    struct Store {
+        thumbnail_requests: Mutex<Vec<ThumbnailAssetRequest>>,
+    }
 
     impl HostResourceAssetStore for Store {
         fn read_user_css(&self) -> Result<Vec<u8>, HostResourceStoreError> {
@@ -173,9 +183,13 @@ mod tests {
 
         fn read_thumbnail_asset(
             &self,
-            _request: ThumbnailAssetRequest,
+            request: ThumbnailAssetRequest,
         ) -> Result<HostResourceBinaryAsset, HostResourceStoreError> {
-            unreachable!()
+            self.thumbnail_requests.lock().expect("lock").push(request);
+            Ok(HostResourceBinaryAsset {
+                bytes: b"thumbnail".to_vec(),
+                mime_type: "image/jpeg".to_string(),
+            })
         }
     }
 
@@ -189,10 +203,7 @@ mod tests {
 
     #[test]
     fn facade_dispatches_known_routes_and_ignores_frontend_assets() {
-        let service = HostResourceService::new(
-            Arc::new(HostResourceRuntimePolicy::new(false)),
-            Arc::new(Store),
-        );
+        let service = HostResourceService::new(false, Arc::new(Store::default()));
         let user_css = HostResourceRequest::new(
             HostResourceMethod::Get,
             "/css/user.css",
@@ -240,6 +251,38 @@ mod tests {
         assert!(
             header_value(&dev_fallback, header::TAURITAVERN_TRACE_ID)
                 .is_some_and(|value| value.starts_with("hr-"))
+        );
+    }
+
+    #[test]
+    fn runtime_thumbnail_setting_updates_subsequent_requests() {
+        let store = Arc::new(Store::default());
+        let service = HostResourceService::new(false, Arc::clone(&store));
+        let avatar = HostResourceRequest::new(
+            HostResourceMethod::Get,
+            "/thumbnail",
+            Some("type=avatar&file=a.png"),
+            HostResourceHeaders::empty(),
+        );
+
+        service.try_serve(&avatar).expect("served");
+        service.set_avatar_persona_original_images_enabled(true);
+        service.try_serve(&avatar).expect("served");
+
+        assert_eq!(
+            store.thumbnail_requests.lock().expect("lock").as_slice(),
+            &[
+                ThumbnailAssetRequest {
+                    kind: ThumbnailKind::Avatar,
+                    file: "a.png".to_string(),
+                    use_thumbnails: true,
+                },
+                ThumbnailAssetRequest {
+                    kind: ThumbnailKind::Avatar,
+                    file: "a.png".to_string(),
+                    use_thumbnails: false,
+                },
+            ]
         );
     }
 }

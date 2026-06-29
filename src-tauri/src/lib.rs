@@ -12,9 +12,7 @@ mod presentation;
 
 use app::spawn_initialization;
 use application::services::bundled_template_service::BundledTemplateService;
-use application::services::host_resource_service::{
-    HostResourceService, policy::HostResourceRuntimePolicy,
-};
+use application::services::host_resource_service::HostResourceService;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use application::services::runtime_paths_service::{
     RuntimeModeInfo, RuntimePathsService, RuntimePathsSnapshot,
@@ -195,15 +193,11 @@ pub fn run() {
                     tauritavern_settings.ios_policy.as_ref(),
                 )?
             };
-            let thumbnail_policy = std::sync::Arc::new(HostResourceRuntimePolicy::new(
-                tauritavern_settings.avatar_persona_original_images_enabled,
-            ));
-            app.manage(thumbnail_policy.clone());
             let host_resource_store = std::sync::Arc::new(
                 FilesystemHostResourceStore::from_data_root(&runtime_paths.data_root),
             );
             let host_resource_service = std::sync::Arc::new(HostResourceService::new(
-                thumbnail_policy.clone(),
+                tauritavern_settings.avatar_persona_original_images_enabled,
                 host_resource_store,
             ));
             app.manage(host_resource_service.clone());

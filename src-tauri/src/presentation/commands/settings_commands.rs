@@ -7,7 +7,7 @@ use crate::application::dto::settings_dto::{
     SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
     UpdateTauriTavernSettingsDto, UserSettingsDto,
 };
-use crate::application::services::host_resource_service::policy::HostResourceRuntimePolicy;
+use crate::application::services::host_resource_service::HostResourceService;
 use crate::domain::models::settings::RequestProxySettings;
 use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::logging::llm_api_logs::LlmApiLogStore;
@@ -36,7 +36,7 @@ pub async fn update_tauritavern_settings(
     app_state: State<'_, Arc<AppState>>,
     http_clients: State<'_, Arc<HttpClientPool>>,
     llm_api_logs: State<'_, Arc<LlmApiLogStore>>,
-    thumbnail_policy: State<'_, Arc<HostResourceRuntimePolicy>>,
+    host_resources: State<'_, Arc<HostResourceService>>,
     tray_state: State<'_, Arc<crate::presentation::windows_tray::WindowsTrayState>>,
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
@@ -64,7 +64,7 @@ pub async fn update_tauritavern_settings(
         .map_err(map_command_error("Failed to update TauriTavern settings"))?;
 
     tray_state.set_close_to_tray_on_close(settings.close_to_tray_on_close);
-    thumbnail_policy.set_avatar_persona_original_images_enabled(
+    host_resources.set_avatar_persona_original_images_enabled(
         settings.avatar_persona_original_images_enabled,
     );
 
@@ -92,7 +92,7 @@ pub async fn update_tauritavern_settings(
     app_state: State<'_, Arc<AppState>>,
     http_clients: State<'_, Arc<HttpClientPool>>,
     llm_api_logs: State<'_, Arc<LlmApiLogStore>>,
-    thumbnail_policy: State<'_, Arc<HostResourceRuntimePolicy>>,
+    host_resources: State<'_, Arc<HostResourceService>>,
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
 
@@ -118,7 +118,7 @@ pub async fn update_tauritavern_settings(
         .await
         .map_err(map_command_error("Failed to update TauriTavern settings"))?;
 
-    thumbnail_policy.set_avatar_persona_original_images_enabled(
+    host_resources.set_avatar_persona_original_images_enabled(
         settings.avatar_persona_original_images_enabled,
     );
 

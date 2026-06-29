@@ -4,7 +4,6 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::filename::sanitize_filename;
 
 use super::contract::{HostResourceMethod, HostResourceRequest, HostResourceResponse, status};
-use super::policy::HostResourceRuntimePolicy;
 use super::ports::{
     HostResourceAssetStore, HostResourceBinaryAsset, HostResourceStoreError, ThumbnailAssetRequest,
     ThumbnailKind,
@@ -15,7 +14,7 @@ const THUMBNAIL_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 
 pub(super) fn serve_thumbnail(
     store: &dyn HostResourceAssetStore,
-    policy: &HostResourceRuntimePolicy,
+    avatar_persona_original_images_enabled: bool,
     request: &HostResourceRequest<'_>,
 ) -> HostResourceResponse {
     match request.method {
@@ -42,9 +41,7 @@ pub(super) fn serve_thumbnail(
     };
 
     let use_thumbnails = match kind {
-        ThumbnailKind::Avatar | ThumbnailKind::Persona => {
-            !policy.avatar_persona_original_images_enabled()
-        }
+        ThumbnailKind::Avatar | ThumbnailKind::Persona => !avatar_persona_original_images_enabled,
         ThumbnailKind::Background => true,
     };
 
@@ -322,11 +319,10 @@ mod tests {
         let store = Store {
             requests: Mutex::new(Vec::new()),
         };
-        let policy = HostResourceRuntimePolicy::new(true);
 
         let response = serve_thumbnail(
             &store,
-            &policy,
+            true,
             &request(HostResourceMethod::Get, "/thumbnail?type=avatar&file=a.png"),
         );
 
@@ -346,11 +342,10 @@ mod tests {
         let store = Store {
             requests: Mutex::new(Vec::new()),
         };
-        let policy = HostResourceRuntimePolicy::new(false);
 
         let response = serve_thumbnail(
             &store,
-            &policy,
+            false,
             &request(
                 HostResourceMethod::Get,
                 "/thumbnail?type=bg&file=nested%2Fbad.png",
@@ -366,11 +361,10 @@ mod tests {
         let store = Store {
             requests: Mutex::new(Vec::new()),
         };
-        let policy = HostResourceRuntimePolicy::new(false);
 
         let response = serve_thumbnail(
             &store,
-            &policy,
+            false,
             &request(
                 HostResourceMethod::Get,
                 "/thumbnail?type=bg&file=a.png&animated=true",
@@ -394,7 +388,7 @@ mod tests {
             requests: Mutex::new(Vec::new()),
         });
         let service = crate::application::services::host_resource_service::HostResourceService::new(
-            Arc::new(HostResourceRuntimePolicy::new(true)),
+            true,
             Arc::clone(&store),
         );
 
@@ -420,7 +414,7 @@ mod tests {
             requests: Mutex::new(Vec::new()),
         });
         let service = crate::application::services::host_resource_service::HostResourceService::new(
-            Arc::new(HostResourceRuntimePolicy::new(false)),
+            false,
             Arc::clone(&store),
         );
 
@@ -441,7 +435,7 @@ mod tests {
             requests: Mutex::new(Vec::new()),
         });
         let service = crate::application::services::host_resource_service::HostResourceService::new(
-            Arc::new(HostResourceRuntimePolicy::new(false)),
+            false,
             Arc::clone(&store),
         );
 
