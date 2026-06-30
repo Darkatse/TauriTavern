@@ -17,6 +17,7 @@ pub async fn get_bootstrap_snapshot(
 
     let settings_fut = async {
         app_state
+            .services
             .settings_service
             .get_sillytavern_settings()
             .await
@@ -27,6 +28,7 @@ pub async fn get_bootstrap_snapshot(
 
     let characters_fut = async {
         app_state
+            .services
             .character_service
             .get_all_characters(true)
             .await
@@ -37,6 +39,7 @@ pub async fn get_bootstrap_snapshot(
 
     let groups_fut = async {
         app_state
+            .services
             .group_service
             .get_all_groups()
             .await
@@ -48,6 +51,7 @@ pub async fn get_bootstrap_snapshot(
 
     let avatars_fut = async {
         app_state
+            .services
             .avatar_service
             .get_avatars()
             .await
@@ -58,6 +62,7 @@ pub async fn get_bootstrap_snapshot(
 
     let secret_state_fut = async {
         app_state
+            .services
             .secret_service
             .read_secret_state()
             .await

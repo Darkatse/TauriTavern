@@ -22,6 +22,7 @@ pub async fn get_openrouter_model_providers(
     log_command(format!("get_openrouter_model_providers {}", dto.model));
 
     app_state
+        .services
         .provider_metadata_service
         .openrouter_model_providers(dto)
         .await
@@ -37,6 +38,7 @@ pub async fn get_openrouter_credits(
     log_command("get_openrouter_credits");
 
     app_state
+        .services
         .provider_metadata_service
         .openrouter_credits()
         .await
@@ -51,6 +53,7 @@ pub async fn get_nanogpt_model_providers(
     log_command(format!("get_nanogpt_model_providers {}", dto.model));
 
     app_state
+        .services
         .provider_metadata_service
         .nanogpt_model_providers(dto)
         .await
@@ -64,6 +67,7 @@ pub async fn get_nanogpt_credits(
     log_command("get_nanogpt_credits");
 
     app_state
+        .services
         .provider_metadata_service
         .nanogpt_credits()
         .await
@@ -78,6 +82,7 @@ pub async fn get_siliconflow_embedding_models(
     log_command("get_siliconflow_embedding_models");
 
     app_state
+        .services
         .provider_metadata_service
         .siliconflow_embedding_models(dto)
         .await
@@ -94,6 +99,7 @@ pub async fn get_workers_ai_embedding_models(
     log_command("get_workers_ai_embedding_models");
 
     app_state
+        .services
         .provider_metadata_service
         .workers_ai_embedding_models(dto)
         .await
@@ -110,6 +116,7 @@ pub async fn get_workers_ai_multimodal_models(
     log_command("get_workers_ai_multimodal_models");
 
     app_state
+        .services
         .provider_metadata_service
         .workers_ai_multimodal_models(dto)
         .await

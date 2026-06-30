@@ -14,6 +14,7 @@ pub async fn save_quick_reply_set(
     log_command("save_quick_reply_set");
 
     app_state
+        .services
         .quick_reply_service
         .save_quick_reply_set(payload)
         .await
@@ -28,6 +29,7 @@ pub async fn delete_quick_reply_set(
     log_command("delete_quick_reply_set");
 
     app_state
+        .services
         .quick_reply_service
         .delete_quick_reply_set(payload)
         .await

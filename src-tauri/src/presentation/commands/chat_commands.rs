@@ -23,6 +23,7 @@ pub async fn get_all_chats(
     log_command("get_all_chats");
 
     app_state
+        .services
         .chat_service
         .get_all_chats()
         .await
@@ -38,6 +39,7 @@ pub async fn get_chat(
     log_command(format!("get_chat {}/{}", character_name, file_name));
 
     app_state
+        .services
         .chat_service
         .get_chat(&character_name, &file_name)
         .await
@@ -55,6 +57,7 @@ pub async fn get_character_chats(
     log_command(format!("get_character_chats {}", character_name));
 
     app_state
+        .services
         .chat_service
         .get_character_chats(&character_name)
         .await
@@ -72,6 +75,7 @@ pub async fn create_chat(
     log_command(format!("create_chat for character {}", dto.character_name));
 
     app_state
+        .services
         .chat_service
         .create_chat(dto)
         .await
@@ -89,6 +93,7 @@ pub async fn add_message(
     ));
 
     app_state
+        .services
         .chat_service
         .add_message(dto)
         .await
@@ -106,6 +111,7 @@ pub async fn rename_chat(
     ));
 
     app_state
+        .services
         .chat_service
         .rename_chat(dto)
         .await
@@ -121,6 +127,7 @@ pub async fn delete_chat(
     log_command(format!("delete_chat {}/{}", character_name, file_name));
 
     app_state
+        .services
         .chat_service
         .delete_chat(&character_name, &file_name)
         .await
@@ -139,6 +146,7 @@ pub async fn search_chats(
     log_command(format!("search_chats {}", query));
 
     app_state
+        .services
         .chat_service
         .search_chats(&query, character_filter.as_deref())
         .await
@@ -154,6 +162,7 @@ pub async fn list_chat_summaries(
     log_command("list_chat_summaries");
 
     app_state
+        .services
         .chat_service
         .list_chat_summaries(
             character_filter.as_deref(),
@@ -176,6 +185,7 @@ pub async fn list_recent_chat_summaries(
     let pinned_refs = pinned.into_iter().map(Into::into).collect::<Vec<_>>();
 
     app_state
+        .services
         .chat_service
         .list_recent_chat_summaries(
             character_filter.as_deref(),
@@ -198,6 +208,7 @@ pub async fn import_chat(
     ));
 
     app_state
+        .services
         .chat_service
         .import_chat(dto)
         .await
@@ -215,6 +226,7 @@ pub async fn export_chat(
     ));
 
     app_state
+        .services
         .chat_service
         .export_chat(dto)
         .await
@@ -230,6 +242,7 @@ pub async fn backup_chat(
     log_command(format!("backup_chat {}/{}", character_name, file_name));
 
     app_state
+        .services
         .chat_service
         .backup_chat(&character_name, &file_name)
         .await
@@ -246,6 +259,7 @@ pub async fn list_chat_backups(
     log_command("list_chat_backups");
 
     app_state
+        .services
         .chat_service
         .list_chat_backups()
         .await
@@ -260,6 +274,7 @@ pub async fn get_chat_backup_raw(
     log_command(format!("get_chat_backup_raw {}", name));
 
     app_state
+        .services
         .chat_service
         .get_chat_backup_bytes(&name)
         .await
@@ -275,6 +290,7 @@ pub async fn delete_chat_backup(
     log_command(format!("delete_chat_backup {}", name));
 
     app_state
+        .services
         .chat_service
         .delete_chat_backup(&name)
         .await
@@ -286,6 +302,7 @@ pub async fn clear_chat_cache(app_state: State<'_, Arc<AppState>>) -> Result<(),
     log_command("clear_chat_cache");
 
     app_state
+        .services
         .chat_service
         .clear_cache()
         .await
@@ -306,6 +323,7 @@ pub async fn get_chat_payload_path(
 
     let allow_not_found = allow_not_found.unwrap_or(false);
     match app_state
+        .services
         .chat_service
         .get_chat_payload_path(&character_name, &file_name)
         .await
@@ -334,6 +352,7 @@ pub async fn get_chat_payload_tail(
 
     let allow_not_found = allow_not_found.unwrap_or(false);
     match app_state
+        .services
         .chat_service
         .get_chat_payload_tail_lines(&character_name, &file_name, max_lines)
         .await
@@ -370,6 +389,7 @@ pub async fn get_chat_payload_before(
     ));
 
     app_state
+        .services
         .chat_service
         .get_chat_payload_before_lines(&character_name, &file_name, cursor, max_lines)
         .await
@@ -394,6 +414,7 @@ pub async fn get_chat_payload_before_pages(
     ));
 
     app_state
+        .services
         .chat_service
         .get_chat_payload_before_pages_lines(
             &character_name,
@@ -420,6 +441,7 @@ pub async fn save_chat_payload_windowed(
     ));
 
     app_state
+        .services
         .chat_service
         .save_chat_payload_windowed(
             &dto.character_name,
@@ -445,6 +467,7 @@ pub async fn patch_chat_payload_windowed(
     ));
 
     app_state
+        .services
         .chat_service
         .patch_chat_payload_windowed(
             &dto.character_name,
@@ -470,6 +493,7 @@ pub async fn hide_chat_payload_before_cursor(
     ));
 
     app_state
+        .services
         .chat_service
         .hide_chat_payload_before_cursor(
             &dto.character_name,
@@ -496,6 +520,7 @@ pub async fn save_chat_payload_from_file(
     ));
 
     app_state
+        .services
         .chat_service
         .save_chat_from_file(dto)
         .await
@@ -510,6 +535,7 @@ pub async fn import_character_chats(
     log_command(format!("import_character_chats {}", dto.character_name));
 
     app_state
+        .services
         .chat_service
         .import_character_chats(dto)
         .await

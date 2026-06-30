@@ -19,6 +19,7 @@ pub fn start_import_data_archive(
     ));
 
     app_state
+        .services
         .data_archive_service
         .start_import(std::path::Path::new(&archive_path), archive_is_temporary)
         .map_err(map_command_error("Failed to start data archive import"))
@@ -31,6 +32,7 @@ pub fn start_export_data_archive(
     log_command("start_export_data_archive");
 
     app_state
+        .services
         .data_archive_service
         .start_export()
         .map_err(map_command_error("Failed to start data archive export"))
@@ -43,6 +45,7 @@ pub fn prepare_data_archive_import_target_path(
     log_command("prepare_data_archive_import_target_path");
 
     let path = app_state
+        .services
         .data_archive_service
         .prepare_incoming_import_archive_path()
         .map_err(map_command_error(
@@ -60,6 +63,7 @@ pub fn get_data_archive_job_status(
     log_command(format!("get_data_archive_job_status {}", job_id));
 
     app_state
+        .services
         .data_archive_service
         .get_status(&job_id)
         .map_err(map_command_error("Failed to get data archive job status"))
@@ -73,6 +77,7 @@ pub fn cancel_data_archive_job(
     log_command(format!("cancel_data_archive_job {}", job_id));
 
     app_state
+        .services
         .data_archive_service
         .cancel(&job_id)
         .map_err(map_command_error("Failed to cancel data archive job"))
@@ -86,6 +91,7 @@ pub async fn save_export_data_archive(
     log_command(format!("save_export_data_archive {}", job_id));
 
     let saved_path = app_state
+        .services
         .data_archive_service
         .save_export(job_id)
         .await
@@ -102,6 +108,7 @@ pub fn cleanup_export_data_archive(
     log_command(format!("cleanup_export_data_archive {}", job_id));
 
     app_state
+        .services
         .data_archive_service
         .cleanup_export(&job_id)
         .map_err(map_command_error("Failed to cleanup export data archive"))
@@ -120,6 +127,7 @@ pub fn finalize_export_data_archive_delivery(
         .filter(|path| !path.is_empty());
 
     app_state
+        .services
         .data_archive_service
         .finalize_export_delivery(&job_id, saved_target)
         .map_err(map_command_error(
@@ -139,6 +147,7 @@ pub async fn export_user_backup_archive(
     ));
 
     app_state
+        .services
         .data_archive_service
         .export_user_backup(handle, include_secrets)
         .await
@@ -154,6 +163,7 @@ pub async fn save_user_backup_archive(
     log_command("save_user_backup_archive");
 
     let saved_path = app_state
+        .services
         .data_archive_service
         .save_user_backup(archive_path, file_name)
         .await
@@ -170,6 +180,7 @@ pub fn cleanup_user_backup_archive(
     log_command("cleanup_user_backup_archive");
 
     app_state
+        .services
         .data_archive_service
         .cleanup_user_backup(&archive_path)
         .map_err(map_command_error("Failed to cleanup user backup archive"))

@@ -494,27 +494,28 @@ tauri::Builder::default()
 
 ### 4.1 AppState
 
-`AppState`结构体包含应用服务实例和启动期策略快照。数据目录由 composition root 在构建服务图时使用，不作为长期运行时状态挂载。
+`AppState` 只承载运行期需要长期挂载的状态：应用服务包、生命周期控制柄与启动期策略快照。数据目录由 composition root 在构建服务图时使用，不作为长期运行时状态挂载。
 
 ```rust
-// app.rs（示意）
+// app/state.rs（示意）
 mod composition;
 
 pub struct AppState {
-    pub character_service: Arc<CharacterService>,
-    pub chat_service: Arc<ChatService>,
-    pub user_service: Arc<UserService>,
-    pub settings_service: Arc<SettingsService>,
-    pub user_directory_service: Arc<UserDirectoryService>,
-    pub secret_service: Arc<SecretService>,
-    pub content_service: Arc<ContentService>,
-    pub extension_service: Arc<ExtensionService>,
-    pub avatar_service: Arc<AvatarService>,
-    pub group_service: Arc<GroupService>,
-    pub background_service: Arc<BackgroundService>,
-    pub theme_service: Arc<ThemeService>,
-    pub preset_service: Arc<PresetService>,
-    pub ios_policy: IosPolicyActivationReport,
+    services: AppServices,
+    lifecycle: AppLifecycle,
+    ios_policy: IosPolicyActivationReport,
+}
+
+pub struct AppLifecycle {
+    sync_automation_cancel: CancellationToken,
+    agent_run_retention_automation_cancel: CancellationToken,
+}
+
+pub struct AppServices {
+    character_service: Arc<CharacterService>,
+    chat_service: Arc<ChatService>,
+    settings_service: Arc<SettingsService>,
+    // 其他 application services 同样挂在服务包中。
 }
 
 impl AppState {
@@ -531,20 +532,9 @@ impl AppState {
             composition::build_services(&app_handle, &data_directory, &startup_profile).await?;
 
         Ok(Self {
-            character_service: services.character_service,
-            chat_service: services.chat_service,
-            user_service: services.user_service,
-            settings_service: services.settings_service,
-            user_directory_service: services.user_directory_service,
-            secret_service: services.secret_service,
-            content_service: services.content_service,
-            extension_service: services.extension_service,
-            avatar_service: services.avatar_service,
-            group_service: services.group_service,
-            background_service: services.background_service,
-            theme_service: services.theme_service,
-            preset_service: services.preset_service,
-            ios_policy: services.ios_policy,
+            services,
+            lifecycle: AppLifecycle::new(),
+            ios_policy: startup_profile.ios_policy,
         })
     }
 }

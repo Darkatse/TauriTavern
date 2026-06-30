@@ -15,6 +15,7 @@ pub async fn get_user_directory(
     log_command(format!("get_user_directory {}", handle));
 
     app_state
+        .services
         .user_directory_service
         .get_user_directory(&handle)
         .await
@@ -31,6 +32,7 @@ pub async fn get_default_user_directory(
     log_command("get_default_user_directory");
 
     app_state
+        .services
         .user_directory_service
         .get_default_user_directory()
         .await
@@ -45,6 +47,7 @@ pub async fn ensure_user_directories_exist(
     log_command(format!("ensure_user_directories_exist {}", handle));
 
     app_state
+        .services
         .user_directory_service
         .ensure_user_directories_exist(&handle)
         .await
@@ -61,6 +64,7 @@ pub async fn ensure_default_user_directories_exist(
     log_command("ensure_default_user_directories_exist");
 
     app_state
+        .services
         .user_directory_service
         .ensure_default_user_directories_exist()
         .await

@@ -17,6 +17,7 @@ pub async fn tts_handle(
     log_command(format!("tts_handle {}", path));
 
     app_state
+        .services
         .tts_service
         .handle_request(path, body)
         .await

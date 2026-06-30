@@ -45,6 +45,7 @@ pub async fn get_avatars(app_state: State<'_, Arc<AppState>>) -> Result<Vec<Stri
     log_command("get_avatars");
 
     app_state
+        .services
         .avatar_service
         .get_avatars()
         .await
@@ -59,6 +60,7 @@ pub async fn delete_avatar(
     log_command(format!("delete_avatar {}", avatar));
 
     app_state
+        .services
         .avatar_service
         .delete_avatar(&avatar)
         .await
@@ -88,6 +90,7 @@ pub async fn upload_avatar(
 
     let path = PathBuf::from(file_path);
     app_state
+        .services
         .avatar_service
         .upload_avatar(&path, overwrite_name, crop_info)
         .await
@@ -103,6 +106,7 @@ pub async fn read_user_avatar_asset(
 
     let safe_file = validate_user_avatar_file(&file)?;
     let directories = app_state
+        .services
         .user_directory_service
         .get_default_user_directory()
         .await

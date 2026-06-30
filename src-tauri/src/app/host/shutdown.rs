@@ -19,9 +19,12 @@ pub(super) fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunE
     {
         // Cancellation tokens stop long-running automation loops; LAN shutdown
         // remains best-effort and asynchronous, preserving existing exit timing.
-        state.sync_automation_cancel.cancel();
-        state.agent_run_retention_automation_cancel.cancel();
-        let lan_sync_service = state.lan_sync_service.clone();
+        state.lifecycle.sync_automation_cancel.cancel();
+        state
+            .lifecycle
+            .agent_run_retention_automation_cancel
+            .cancel();
+        let lan_sync_service = state.services.lan_sync_service.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(error) = lan_sync_service.shutdown().await {
                 tracing::warn!("Failed to shut down LAN Sync cleanly: {}", error);

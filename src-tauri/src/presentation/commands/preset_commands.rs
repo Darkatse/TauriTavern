@@ -40,12 +40,14 @@ pub async fn save_preset(
 
     // Create preset from DTO
     let preset = app_state
+        .services
         .preset_service
         .create_preset(dto.name.clone(), &dto.api_id, dto.preset)
         .map_err(map_command_error("Failed to create preset"))?;
 
     // Save preset
     app_state
+        .services
         .preset_service
         .save_preset(&preset)
         .await
@@ -76,6 +78,7 @@ pub async fn delete_preset(
 
     // Delete preset
     app_state
+        .services
         .preset_service
         .delete_preset(&dto.name, &preset_type)
         .await
@@ -83,6 +86,7 @@ pub async fn delete_preset(
 
     let source_id = preset_skill_source_id(preset_type.to_api_id(), &dto.name);
     let deleted_skills = app_state
+        .services
         .skill_service
         .delete_skills_for_source(SKILL_SOURCE_KIND_PRESET, &source_id)
         .await
@@ -124,6 +128,7 @@ pub async fn restore_preset(
 
     // Try to restore default preset
     match app_state
+        .services
         .preset_service
         .restore_default_preset(&dto.name, &preset_type)
         .await
@@ -159,12 +164,14 @@ pub async fn save_openai_preset(
 
     // Create preset
     let preset = app_state
+        .services
         .preset_service
         .create_preset(name.clone(), "openai", dto.preset)
         .map_err(map_command_error("Failed to create OpenAI preset"))?;
 
     // Save preset
     app_state
+        .services
         .preset_service
         .save_preset(&preset)
         .await
@@ -192,6 +199,7 @@ pub async fn delete_openai_preset(
 
     // Delete preset
     match app_state
+        .services
         .preset_service
         .delete_preset(&dto.name, &PresetType::OpenAI)
         .await
@@ -199,6 +207,7 @@ pub async fn delete_openai_preset(
         Ok(()) => {
             let source_id = preset_skill_source_id(PresetType::OpenAI.to_api_id(), &dto.name);
             if let Err(e) = app_state
+                .services
                 .skill_service
                 .delete_skills_for_source(SKILL_SOURCE_KIND_PRESET, &source_id)
                 .await
@@ -244,6 +253,7 @@ pub async fn list_presets(
 
     // List presets
     let presets = app_state
+        .services
         .preset_service
         .list_presets(&preset_type)
         .await
@@ -267,6 +277,7 @@ pub async fn preset_exists(
 
     // Check if preset exists
     let exists = app_state
+        .services
         .preset_service
         .preset_exists(&name, &preset_type)
         .await
@@ -290,6 +301,7 @@ pub async fn get_preset(
 
     // Get preset
     let preset = app_state
+        .services
         .preset_service
         .get_preset(&name, &preset_type)
         .await

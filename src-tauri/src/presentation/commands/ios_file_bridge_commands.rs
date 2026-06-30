@@ -68,7 +68,7 @@ pub async fn ios_import_data_archive_from_picker(
         PickDocumentResult::Picked(picked) => picked,
     };
 
-    let data_archive_service = app_state.data_archive_service.clone();
+    let data_archive_service = app_state.services.data_archive_service.clone();
     let picked_url = picked.url.clone();
     let picked_file_name = picked.file_name.clone();
 
@@ -92,6 +92,7 @@ pub async fn ios_import_data_archive_from_picker(
 
     let _cleanup_target = CleanupTempFile::new(target_path.clone());
     let job_id = app_state
+        .services
         .data_archive_service
         .start_import(&target_path, true)
         .map_err(map_command_error("Failed to start data archive import"))?;
@@ -330,6 +331,7 @@ pub async fn ios_share_export_data_archive(
     }
 
     let archive_path = app_state
+        .services
         .data_archive_service
         .completed_export_archive_path(&job_id)
         .map_err(map_command_error("Failed to resolve export archive path"))?;
@@ -337,6 +339,7 @@ pub async fn ios_share_export_data_archive(
     let share_result = present_ios_share_sheet_for_path(&window, &archive_path).await?;
 
     let cleanup_error = match app_state
+        .services
         .data_archive_service
         .finalize_export_delivery(&job_id, None)
     {

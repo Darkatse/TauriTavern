@@ -39,6 +39,7 @@ pub async fn download_skill_import_url(
     )?;
 
     app_state
+        .services
         .skill_service
         .download_import_url(&url)
         .await
@@ -55,6 +56,7 @@ pub async fn list_skills(
     log_command("list_skills");
 
     app_state
+        .services
         .skill_service
         .list_skills(scope.unwrap_or_default())
         .await
@@ -70,6 +72,7 @@ pub async fn list_skill_files(
     log_command(format!("list_skill_files {}", name));
 
     app_state
+        .services
         .skill_service
         .list_skill_files(scope.unwrap_or_default(), &name)
         .await
@@ -85,6 +88,7 @@ pub async fn preview_skill_import(
     log_command("preview_skill_import");
 
     app_state
+        .services
         .skill_service
         .preview_import(input, target_scope.unwrap_or_default())
         .await
@@ -99,6 +103,7 @@ pub async fn install_skill_import(
     log_command("install_skill_import");
 
     app_state
+        .services
         .skill_service
         .install_import(request)
         .await
@@ -134,6 +139,7 @@ pub async fn read_skill_file(
     };
 
     app_state
+        .services
         .skill_service
         .read_skill_file(SkillReadRequest {
             scope: scope.unwrap_or_default(),
@@ -160,6 +166,7 @@ pub async fn write_skill_file(
     log_command(format!("write_skill_file {}/{}", name, path));
 
     app_state
+        .services
         .skill_service
         .write_skill_file(SkillWriteRequest {
             scope: scope.unwrap_or_default(),
@@ -181,6 +188,7 @@ pub async fn export_skill(
     log_command(format!("export_skill {}", name));
 
     let exported = app_state
+        .services
         .skill_service
         .export_skill(scope.unwrap_or_default(), &name)
         .await
@@ -202,6 +210,7 @@ pub async fn delete_skill(
     log_command(format!("delete_skill {}", name));
 
     app_state
+        .services
         .skill_service
         .delete_skill(scope.unwrap_or_default(), &name)
         .await
@@ -216,6 +225,7 @@ pub async fn move_skill(
     log_command(format!("move_skill {}", request.name));
 
     app_state
+        .services
         .skill_service
         .move_skill(request)
         .await
@@ -234,6 +244,7 @@ pub async fn retarget_skill_scope(
     ));
 
     app_state
+        .services
         .skill_service
         .retarget_scope(request)
         .await

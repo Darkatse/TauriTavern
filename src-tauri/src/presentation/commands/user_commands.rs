@@ -14,6 +14,7 @@ pub async fn get_all_users(
     log_command("get_all_users");
 
     app_state
+        .services
         .user_service
         .get_all_users()
         .await
@@ -28,6 +29,7 @@ pub async fn get_user(
     log_command(format!("get_user {}", id));
 
     app_state
+        .services
         .user_service
         .get_user(&id)
         .await
@@ -42,6 +44,7 @@ pub async fn get_user_by_username(
     log_command(format!("get_user_by_username {}", username));
 
     app_state
+        .services
         .user_service
         .get_user_by_username(&username)
         .await
@@ -59,6 +62,7 @@ pub async fn create_user(
     log_command(format!("create_user {}", dto.username));
 
     app_state
+        .services
         .user_service
         .create_user(dto)
         .await
@@ -73,6 +77,7 @@ pub async fn update_user(
     log_command(format!("update_user {}", dto.id));
 
     app_state
+        .services
         .user_service
         .update_user(dto)
         .await
@@ -87,6 +92,7 @@ pub async fn delete_user(
     log_command(format!("delete_user {}", id));
 
     app_state
+        .services
         .user_service
         .delete_user(&id)
         .await

@@ -17,6 +17,7 @@ pub async fn list_llm_connections(
     log_command("list_llm_connections");
 
     app_state
+        .services
         .llm_connection_service
         .list_connections()
         .await
@@ -32,6 +33,7 @@ pub async fn load_llm_connection(
     log_command("load_llm_connection");
 
     app_state
+        .services
         .llm_connection_service
         .load_connection(&dto.connection_id)
         .await
@@ -47,6 +49,7 @@ pub async fn save_llm_connection(
     log_command("save_llm_connection");
 
     app_state
+        .services
         .llm_connection_service
         .save_connection(dto.connection)
         .await
@@ -61,6 +64,7 @@ pub async fn delete_llm_connection(
     log_command("delete_llm_connection");
 
     app_state
+        .services
         .llm_connection_service
         .delete_connection(&dto.connection_id)
         .await

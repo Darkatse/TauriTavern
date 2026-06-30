@@ -28,6 +28,7 @@ pub async fn sd_handle(
     )?;
 
     app_state
+        .services
         .stable_diffusion_service
         .handle_request(&request_id, path, body)
         .await
@@ -44,6 +45,7 @@ pub async fn cancel_sd_request(
     log_command(format!("cancel_sd_request {}", request_id));
 
     app_state
+        .services
         .stable_diffusion_service
         .cancel_request(&request_id)
         .await;

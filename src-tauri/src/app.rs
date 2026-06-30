@@ -1,48 +1,7 @@
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager};
-use tokio_util::sync::CancellationToken;
 
-use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
-use crate::application::services::agent_profile_service::AgentProfileService;
-use crate::application::services::agent_run_history_service::AgentRunHistoryService;
-use crate::application::services::agent_run_retention_automation_service::AgentRunRetentionAutomationService;
-use crate::application::services::agent_runtime_service::AgentRuntimeService;
-use crate::application::services::asset_service::AssetService;
-use crate::application::services::avatar_service::AvatarService;
-use crate::application::services::background_service::BackgroundService;
-use crate::application::services::character_service::CharacterService;
-use crate::application::services::chat_completion_service::ChatCompletionService;
-use crate::application::services::chat_service::ChatService;
-use crate::application::services::content_service::ContentService;
-use crate::application::services::data_archive_service::DataArchiveService;
-use crate::application::services::extension_service::ExtensionService;
-use crate::application::services::extension_store_service::ExtensionStoreService;
-use crate::application::services::group_chat_service::GroupChatService;
-use crate::application::services::group_service::GroupService;
-use crate::application::services::image_metadata_service::ImageMetadataService;
-use crate::application::services::lan_sync_service::LanSyncService;
-use crate::application::services::llm_connection_service::LlmConnectionService;
-use crate::application::services::native_regex_service::NativeRegexService;
-use crate::application::services::preset_service::PresetService;
-use crate::application::services::prompt_assembly_service::PromptAssemblyService;
-use crate::application::services::provider_metadata_service::ProviderMetadataService;
-use crate::application::services::quick_reply_service::QuickReplyService;
-use crate::application::services::secret_service::SecretService;
-use crate::application::services::settings_service::SettingsService;
-use crate::application::services::skill_service::SkillService;
-use crate::application::services::stable_diffusion_service::StableDiffusionService;
-use crate::application::services::sync_automation_service::SyncAutomationService;
-use crate::application::services::theme_service::ThemeService;
-use crate::application::services::tokenization_service::TokenizationService;
-use crate::application::services::translate_service::TranslateService;
-use crate::application::services::tt_sync_service::TtSyncService;
-use crate::application::services::tts_service::TtsService;
-use crate::application::services::update_service::UpdateService;
-use crate::application::services::user_directory_service::UserDirectoryService;
-use crate::application::services::user_service::UserService;
-use crate::application::services::world_info_service::WorldInfoService;
-use crate::domain::errors::DomainError;
 use crate::infrastructure::paths::RuntimePaths;
 
 pub mod backend_errors;
@@ -53,123 +12,12 @@ mod contract_tests;
 pub mod dev_observability;
 pub(crate) mod host;
 mod startup_profile;
+mod state;
 
 pub(crate) use backend_readiness::BackendReadiness;
 pub(crate) use startup_profile::StartupProfile;
-
-pub struct AppState {
-    pub character_service: Arc<CharacterService>,
-    pub chat_service: Arc<ChatService>,
-    pub group_chat_service: Arc<GroupChatService>,
-    pub user_service: Arc<UserService>,
-    pub settings_service: Arc<SettingsService>,
-    pub user_directory_service: Arc<UserDirectoryService>,
-    pub secret_service: Arc<SecretService>,
-    pub skill_service: Arc<SkillService>,
-    pub content_service: Arc<ContentService>,
-    pub asset_service: Arc<AssetService>,
-    pub extension_service: Arc<ExtensionService>,
-    pub extension_store_service: Arc<ExtensionStoreService>,
-    pub avatar_service: Arc<AvatarService>,
-    pub group_service: Arc<GroupService>,
-    pub background_service: Arc<BackgroundService>,
-    pub image_metadata_service: Arc<ImageMetadataService>,
-    pub theme_service: Arc<ThemeService>,
-    pub preset_service: Arc<PresetService>,
-    pub quick_reply_service: Arc<QuickReplyService>,
-    pub agent_profile_service: Arc<AgentProfileService>,
-    pub agent_profile_diagnostic_service: Arc<AgentProfileDiagnosticService>,
-    pub prompt_assembly_service: Arc<PromptAssemblyService>,
-    pub agent_run_history_service: Arc<AgentRunHistoryService>,
-    pub agent_run_retention_automation_service: Arc<AgentRunRetentionAutomationService>,
-    pub agent_runtime_service: Arc<AgentRuntimeService>,
-    pub chat_completion_service: Arc<ChatCompletionService>,
-    pub llm_connection_service: Arc<LlmConnectionService>,
-    pub provider_metadata_service: Arc<ProviderMetadataService>,
-    pub tokenization_service: Arc<TokenizationService>,
-    pub stable_diffusion_service: Arc<StableDiffusionService>,
-    pub translate_service: Arc<TranslateService>,
-    pub tts_service: Arc<TtsService>,
-    pub world_info_service: Arc<WorldInfoService>,
-    pub lan_sync_service: Arc<LanSyncService>,
-    pub tt_sync_service: Arc<TtSyncService>,
-    pub sync_automation_service: Arc<SyncAutomationService>,
-    pub sync_automation_cancel: CancellationToken,
-    pub agent_run_retention_automation_cancel: CancellationToken,
-    pub data_archive_service: Arc<DataArchiveService>,
-    pub update_service: Arc<UpdateService>,
-    pub native_regex_service: Arc<NativeRegexService>,
-    pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
-}
-
-impl AppState {
-    pub async fn new(
-        app_handle: AppHandle,
-        runtime_paths: RuntimePaths,
-        startup_profile: StartupProfile,
-    ) -> Result<Self, DomainError> {
-        tracing::info!(
-            "Initializing application in {:?} mode with data root: {:?}",
-            runtime_paths.mode,
-            runtime_paths.data_root
-        );
-
-        let data_directory =
-            composition::initialize_data_directory(&runtime_paths.data_root).await?;
-
-        let services =
-            composition::build_services(&app_handle, &data_directory, &startup_profile).await?;
-
-        tracing::info!("Application initialized successfully");
-        let sync_automation_cancel = CancellationToken::new();
-        let agent_run_retention_automation_cancel = CancellationToken::new();
-
-        Ok(Self {
-            character_service: services.character_service,
-            chat_service: services.chat_service,
-            group_chat_service: services.group_chat_service,
-            user_service: services.user_service,
-            settings_service: services.settings_service,
-            user_directory_service: services.user_directory_service,
-            secret_service: services.secret_service,
-            skill_service: services.skill_service,
-            content_service: services.content_service,
-            asset_service: services.asset_service,
-            extension_service: services.extension_service,
-            extension_store_service: services.extension_store_service,
-            avatar_service: services.avatar_service,
-            group_service: services.group_service,
-            background_service: services.background_service,
-            image_metadata_service: services.image_metadata_service,
-            theme_service: services.theme_service,
-            preset_service: services.preset_service,
-            quick_reply_service: services.quick_reply_service,
-            agent_profile_service: services.agent_profile_service,
-            agent_profile_diagnostic_service: services.agent_profile_diagnostic_service,
-            prompt_assembly_service: services.prompt_assembly_service,
-            agent_run_history_service: services.agent_run_history_service,
-            agent_run_retention_automation_service: services.agent_run_retention_automation_service,
-            agent_runtime_service: services.agent_runtime_service,
-            chat_completion_service: services.chat_completion_service,
-            llm_connection_service: services.llm_connection_service,
-            provider_metadata_service: services.provider_metadata_service,
-            tokenization_service: services.tokenization_service,
-            stable_diffusion_service: services.stable_diffusion_service,
-            translate_service: services.translate_service,
-            tts_service: services.tts_service,
-            world_info_service: services.world_info_service,
-            lan_sync_service: services.lan_sync_service,
-            tt_sync_service: services.tt_sync_service,
-            sync_automation_service: services.sync_automation_service,
-            sync_automation_cancel,
-            agent_run_retention_automation_cancel,
-            data_archive_service: services.data_archive_service,
-            update_service: services.update_service,
-            native_regex_service: services.native_regex_service,
-            ios_policy: services.ios_policy,
-        })
-    }
-}
+pub(crate) use state::AppServices;
+pub use state::AppState;
 
 pub fn spawn_initialization(
     app_handle: AppHandle,
@@ -202,6 +50,7 @@ pub fn spawn_initialization(
                 backend_readiness.mark_ready();
 
                 match state
+                    .services
                     .content_service
                     .initialize_default_content("default-user")
                     .await
@@ -210,16 +59,20 @@ pub fn spawn_initialization(
                     Err(error) => tracing::warn!("Failed to initialize default content: {}", error),
                 }
 
-                let sync_automation_service = state.sync_automation_service.clone();
-                let sync_automation_cancel = state.sync_automation_cancel.clone();
+                let sync_automation_service = state.services.sync_automation_service.clone();
+                let sync_automation_cancel = state.lifecycle.sync_automation_cancel.clone();
                 tauri::async_runtime::spawn(async move {
                     sync_automation_service.run(sync_automation_cancel).await;
                 });
 
-                let agent_run_retention_automation_service =
-                    state.agent_run_retention_automation_service.clone();
-                let agent_run_retention_automation_cancel =
-                    state.agent_run_retention_automation_cancel.clone();
+                let agent_run_retention_automation_service = state
+                    .services
+                    .agent_run_retention_automation_service
+                    .clone();
+                let agent_run_retention_automation_cancel = state
+                    .lifecycle
+                    .agent_run_retention_automation_cancel
+                    .clone();
                 tauri::async_runtime::spawn(async move {
                     agent_run_retention_automation_service
                         .run(agent_run_retention_automation_cancel)

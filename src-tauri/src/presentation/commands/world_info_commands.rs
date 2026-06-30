@@ -19,6 +19,7 @@ pub async fn get_world_info(
     log_command(format!("get_world_info, name: {}", dto.name));
 
     app_state
+        .services
         .world_info_service
         .get_world_info(&dto.name)
         .await
@@ -33,6 +34,7 @@ pub async fn get_world_infos_batch(
     log_command(format!("get_world_infos_batch, count: {}", dto.names.len()));
 
     let items = app_state
+        .services
         .world_info_service
         .get_world_infos_batch(dto.names)
         .await
@@ -52,6 +54,7 @@ pub async fn normalize_world_info_name(
     ));
 
     let name = app_state
+        .services
         .world_info_service
         .normalize_world_info_name(&dto.name, dto.import_filename)
         .map_err(map_command_error("Failed to normalize world info name"))?;
@@ -67,6 +70,7 @@ pub async fn save_world_info(
     log_command(format!("save_world_info, name: {}", dto.name));
 
     app_state
+        .services
         .world_info_service
         .save_world_info(&dto.name, dto.data)
         .await
@@ -81,6 +85,7 @@ pub async fn delete_world_info(
     log_command(format!("delete_world_info, name: {}", dto.name));
 
     app_state
+        .services
         .world_info_service
         .delete_world_info(&dto.name)
         .await
@@ -98,6 +103,7 @@ pub async fn import_world_info(
     ));
 
     let name = app_state
+        .services
         .world_info_service
         .import_world_info(&dto.file_path, &dto.original_filename, dto.converted_data)
         .await

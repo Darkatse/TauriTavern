@@ -39,6 +39,7 @@ pub async fn start_agent_run(
     log_command("start_agent_run");
 
     app_state
+        .services
         .agent_runtime_service
         .start_run(dto)
         .await
@@ -53,16 +54,18 @@ pub async fn prepare_agent_prompt_assembly(
     log_command("prepare_agent_prompt_assembly");
 
     let profile = app_state
+        .services
         .prompt_assembly_service
         .resolve_profile(
             dto.profile_id.as_deref(),
-            app_state.agent_runtime_service.tool_specs(),
+            app_state.services.agent_runtime_service.tool_specs(),
         )
         .await
         .map_err(map_command_error(
             "Failed to resolve agent profile for prompt assembly",
         ))?;
     let visible_tools = app_state
+        .services
         .agent_runtime_service
         .visible_tool_specs(&profile)
         .map_err(map_command_error(
@@ -70,6 +73,7 @@ pub async fn prepare_agent_prompt_assembly(
         ))?;
 
     app_state
+        .services
         .prompt_assembly_service
         .prepare_frontend_prompt_assembly(dto, profile, &visible_tools)
         .await
@@ -84,6 +88,7 @@ pub async fn build_agent_current_model_connection_snapshot(
     log_command("build_agent_current_model_connection_snapshot");
 
     app_state
+        .services
         .prompt_assembly_service
         .build_current_model_connection_snapshot(
             &dto.settings,
@@ -108,6 +113,7 @@ pub async fn apply_agent_current_model_connection_snapshot(
     log_command("apply_agent_current_model_connection_snapshot");
 
     app_state
+        .services
         .prompt_assembly_service
         .apply_current_model_connection_snapshot(dto.settings, &dto.current_model_connection)
         .map(|settings| AgentApplyCurrentModelConnectionSnapshotResultDto { settings })
@@ -123,6 +129,7 @@ pub async fn list_agent_profiles(
     log_command("list_agent_profiles");
 
     app_state
+        .services
         .agent_profile_service
         .list_profiles()
         .await
@@ -140,7 +147,11 @@ pub async fn list_agent_tool_specs(
     log_command("list_agent_tool_specs");
 
     Ok(AgentListToolSpecsResultDto {
-        tools: app_state.agent_runtime_service.tool_specs().to_vec(),
+        tools: app_state
+            .services
+            .agent_runtime_service
+            .tool_specs()
+            .to_vec(),
     })
 }
 
@@ -152,6 +163,7 @@ pub async fn resolve_agent_system_prompt(
     log_command("resolve_agent_system_prompt");
 
     app_state
+        .services
         .agent_runtime_service
         .resolve_agent_system_prompt(dto.profile_id.as_deref())
         .await
@@ -169,6 +181,7 @@ pub async fn load_agent_profile(
     log_command("load_agent_profile");
 
     app_state
+        .services
         .agent_profile_service
         .load_profile(&dto.profile_id)
         .await
@@ -184,10 +197,11 @@ pub async fn diagnose_agent_profile(
     log_command("diagnose_agent_profile");
 
     app_state
+        .services
         .agent_profile_diagnostic_service
         .diagnose_profile(
             &dto.profile_id,
-            app_state.agent_runtime_service.tool_specs(),
+            app_state.services.agent_runtime_service.tool_specs(),
         )
         .await
         .map_err(map_command_error("Failed to diagnose agent profile"))
@@ -200,8 +214,13 @@ pub async fn save_agent_profile(
 ) -> Result<(), CommandError> {
     log_command("save_agent_profile");
 
-    let known_tools = app_state.agent_runtime_service.tool_specs().to_vec();
+    let known_tools = app_state
+        .services
+        .agent_runtime_service
+        .tool_specs()
+        .to_vec();
     app_state
+        .services
         .agent_profile_service
         .save_profile(dto.profile, &known_tools)
         .await
@@ -216,6 +235,7 @@ pub async fn delete_agent_profile(
     log_command("delete_agent_profile");
 
     app_state
+        .services
         .agent_profile_service
         .delete_profile(&dto.profile_id)
         .await
@@ -230,6 +250,7 @@ pub async fn repair_agent_profile_file(
     log_command("repair_agent_profile_file");
 
     app_state
+        .services
         .agent_profile_service
         .repair_profile_file(&dto.profile_id, dto.action)
         .await
@@ -247,6 +268,7 @@ pub async fn retarget_agent_profile_preset_refs(
     ));
 
     app_state
+        .services
         .agent_profile_service
         .retarget_preset_refs(dto.from, dto.to)
         .await
@@ -271,6 +293,7 @@ pub async fn cancel_agent_run(
     log_command("cancel_agent_run");
 
     app_state
+        .services
         .agent_runtime_service
         .cancel_run(dto)
         .await
@@ -285,6 +308,7 @@ pub async fn submit_agent_run_guidance(
     log_command("submit_agent_run_guidance");
 
     app_state
+        .services
         .agent_runtime_service
         .submit_guidance(dto)
         .await
@@ -299,6 +323,7 @@ pub async fn list_agent_runs(
     log_command("list_agent_runs");
 
     app_state
+        .services
         .agent_run_history_service
         .list_runs(dto)
         .await
@@ -313,6 +338,7 @@ pub async fn plan_agent_run_prune(
     log_command("plan_agent_run_prune");
 
     app_state
+        .services
         .agent_run_history_service
         .plan_run_prune(dto)
         .await
@@ -327,6 +353,7 @@ pub async fn apply_agent_run_prune(
     log_command("apply_agent_run_prune");
 
     app_state
+        .services
         .agent_run_history_service
         .apply_run_prune(dto)
         .await
@@ -341,6 +368,7 @@ pub async fn read_agent_run_events(
     log_command("read_agent_run_events");
 
     app_state
+        .services
         .agent_runtime_service
         .read_events(dto)
         .await
@@ -355,6 +383,7 @@ pub async fn read_agent_workspace_file(
     log_command("read_agent_workspace_file");
 
     app_state
+        .services
         .agent_runtime_service
         .read_workspace_file(dto)
         .await
@@ -369,6 +398,7 @@ pub async fn read_agent_model_turn(
     log_command("read_agent_model_turn");
 
     app_state
+        .services
         .agent_runtime_service
         .read_model_turn(dto)
         .await
@@ -383,6 +413,7 @@ pub async fn read_agent_prompt_assembly_request(
     log_command("read_agent_prompt_assembly_request");
 
     app_state
+        .services
         .agent_runtime_service
         .read_prompt_assembly_request(dto)
         .await
@@ -399,6 +430,7 @@ pub async fn resolve_agent_chat_commit(
     log_command("resolve_agent_chat_commit");
 
     app_state
+        .services
         .agent_runtime_service
         .resolve_chat_commit(dto)
         .await
@@ -413,6 +445,7 @@ pub async fn resolve_agent_prompt_assembly(
     log_command("resolve_agent_prompt_assembly");
 
     app_state
+        .services
         .agent_runtime_service
         .resolve_prompt_assembly(dto)
         .await
@@ -427,6 +460,7 @@ pub async fn resolve_agent_persistent_state_metadata_update(
     log_command("resolve_agent_persistent_state_metadata_update");
 
     app_state
+        .services
         .agent_runtime_service
         .resolve_persistent_state_metadata_update(dto)
         .await
@@ -466,6 +500,7 @@ pub async fn prune_agent_chat_persistent_states(
         )
     })?;
     let payload = app_state
+        .services
         .chat_service
         .get_chat_payload(character_id, file_name)
         .await
@@ -479,6 +514,7 @@ pub async fn prune_agent_chat_persistent_states(
     };
 
     app_state
+        .services
         .chat_service
         .prune_agent_persistent_states(
             &target,

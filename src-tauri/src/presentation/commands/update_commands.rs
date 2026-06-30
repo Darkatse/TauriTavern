@@ -22,6 +22,7 @@ pub async fn check_for_update(
     )?;
 
     app_state
+        .services
         .update_service
         .check_for_update()
         .await

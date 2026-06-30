@@ -26,6 +26,7 @@ pub async fn get_all_backgrounds(
     log_command("get_all_backgrounds");
 
     app_state
+        .services
         .image_metadata_service
         .get_background_list_entries()
         .await
@@ -43,6 +44,7 @@ pub async fn get_all_background_metadata(
     ));
 
     app_state
+        .services
         .image_metadata_service
         .get_all_background_metadata(prefix.as_deref())
         .await
@@ -57,6 +59,7 @@ pub async fn delete_background(
     log_command(format!("delete_background, filename: {}", dto.bg));
 
     app_state
+        .services
         .background_service
         .delete_background(&dto.bg)
         .await
@@ -74,6 +77,7 @@ pub async fn rename_background(
     ));
 
     app_state
+        .services
         .background_service
         .rename_background(&dto.old_bg, &dto.new_bg)
         .await
@@ -89,6 +93,7 @@ pub async fn upload_background(
     log_command(format!("upload_background, filename: {}", filename));
 
     app_state
+        .services
         .background_service
         .upload_background(&filename, &data)
         .await
@@ -107,6 +112,7 @@ pub async fn upload_background_from_path(
     ));
 
     app_state
+        .services
         .background_service
         .upload_background_from_path(&filename, std::path::Path::new(&file_path))
         .await

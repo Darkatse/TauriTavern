@@ -24,6 +24,7 @@ pub async fn get_character_chat_summary(
     ));
 
     app_state
+        .services
         .chat_service
         .get_character_chat_summary(
             &character_name,
@@ -49,6 +50,7 @@ pub async fn get_character_chat_metadata(
     ));
 
     app_state
+        .services
         .chat_service
         .get_character_chat_metadata(&character_name, &file_name)
         .await
@@ -72,6 +74,7 @@ pub async fn set_character_chat_metadata_extension(
     ));
 
     app_state
+        .services
         .chat_service
         .set_character_chat_metadata_extension(&character_name, &file_name, &namespace, value)
         .await
@@ -95,6 +98,7 @@ pub async fn get_character_chat_store_json(
     ));
 
     app_state
+        .services
         .chat_service
         .get_character_chat_store_json(&character_name, &file_name, &namespace, &key)
         .await
@@ -119,6 +123,7 @@ pub async fn set_character_chat_store_json(
     ));
 
     app_state
+        .services
         .chat_service
         .set_character_chat_store_json(&character_name, &file_name, &namespace, &key, value)
         .await
@@ -143,6 +148,7 @@ pub async fn update_character_chat_store_json(
     ));
 
     app_state
+        .services
         .chat_service
         .update_character_chat_store_json(&character_name, &file_name, &namespace, &key, value)
         .await
@@ -167,6 +173,7 @@ pub async fn rename_character_chat_store_key(
     ));
 
     app_state
+        .services
         .chat_service
         .rename_character_chat_store_key(&character_name, &file_name, &namespace, &key, &new_key)
         .await
@@ -190,6 +197,7 @@ pub async fn delete_character_chat_store_json(
     ));
 
     app_state
+        .services
         .chat_service
         .delete_character_chat_store_json(&character_name, &file_name, &namespace, &key)
         .await
@@ -212,6 +220,7 @@ pub async fn list_character_chat_store_keys(
     ));
 
     app_state
+        .services
         .chat_service
         .list_character_chat_store_keys(&character_name, &file_name, &namespace)
         .await
@@ -234,6 +243,7 @@ pub async fn find_last_character_chat_message(
     ));
 
     app_state
+        .services
         .chat_service
         .find_last_character_chat_message(&character_name, &file_name, query)
         .await
@@ -256,6 +266,7 @@ pub async fn search_character_chat_messages(
     ));
 
     app_state
+        .services
         .chat_service
         .search_character_chat_messages(&character_name, &file_name, query)
         .await

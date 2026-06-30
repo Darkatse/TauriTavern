@@ -16,6 +16,7 @@ pub async fn translate_text(
     log_command(format!("translate_text {}", provider));
 
     app_state
+        .services
         .translate_service
         .translate(&provider, body)
         .await

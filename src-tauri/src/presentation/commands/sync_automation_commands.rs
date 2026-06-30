@@ -14,6 +14,7 @@ pub async fn sync_automation_get_config(
     log_command("sync_automation_get_config");
 
     app_state
+        .services
         .sync_automation_service
         .get_config()
         .await
@@ -28,6 +29,7 @@ pub async fn sync_automation_update_config(
     log_command("sync_automation_update_config");
 
     app_state
+        .services
         .sync_automation_service
         .update_config(config)
         .await
@@ -40,5 +42,9 @@ pub async fn sync_automation_get_status(
 ) -> Result<SyncAutomationStatus, CommandError> {
     log_command("sync_automation_get_status");
 
-    Ok(app_state.sync_automation_service.get_status().await)
+    Ok(app_state
+        .services
+        .sync_automation_service
+        .get_status()
+        .await)
 }

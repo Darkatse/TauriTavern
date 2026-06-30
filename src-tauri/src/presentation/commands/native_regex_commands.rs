@@ -17,6 +17,7 @@ pub async fn apply_native_regex_batch(
     log_command("apply_native_regex_batch");
 
     app_state
+        .services
         .native_regex_service
         .apply_batch(dto)
         .await

@@ -18,6 +18,7 @@ pub async fn get_background_folders(
     log_command("get_background_folders");
 
     app_state
+        .services
         .image_metadata_service
         .get_background_folders()
         .await
@@ -32,6 +33,7 @@ pub async fn create_image_metadata_folder(
     log_command("create_image_metadata_folder");
 
     app_state
+        .services
         .image_metadata_service
         .create_folder(dto)
         .await
@@ -46,6 +48,7 @@ pub async fn update_image_metadata_folder(
     log_command(format!("update_image_metadata_folder, id: {}", dto.id));
 
     app_state
+        .services
         .image_metadata_service
         .update_folder(dto)
         .await
@@ -60,6 +63,7 @@ pub async fn delete_image_metadata_folder(
     log_command(format!("delete_image_metadata_folder, id: {}", dto.id));
 
     app_state
+        .services
         .image_metadata_service
         .delete_folder(dto)
         .await
@@ -74,6 +78,7 @@ pub async fn set_image_metadata_folder_thumbnails(
     log_command("set_image_metadata_folder_thumbnails");
 
     app_state
+        .services
         .image_metadata_service
         .set_folder_thumbnails(dto)
         .await
@@ -90,6 +95,7 @@ pub async fn assign_images_to_metadata_folder(
     log_command(format!("assign_images_to_metadata_folder, id: {}", dto.id));
 
     app_state
+        .services
         .image_metadata_service
         .assign_images_to_folder(dto)
         .await
@@ -109,6 +115,7 @@ pub async fn unassign_images_from_metadata_folder(
     ));
 
     app_state
+        .services
         .image_metadata_service
         .unassign_images_from_folder(dto)
         .await

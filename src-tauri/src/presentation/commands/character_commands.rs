@@ -27,6 +27,7 @@ pub async fn get_all_characters(
     log_command(format!("get_all_characters (shallow: {})", shallow));
 
     app_state
+        .services
         .character_service
         .get_all_characters(shallow)
         .await
@@ -41,6 +42,7 @@ pub async fn get_character(
     log_command(format!("get_character {}", name));
 
     app_state
+        .services
         .character_service
         .get_character(&name)
         .await
@@ -58,6 +60,7 @@ pub async fn create_character(
     log_command(format!("create_character {}", dto.name));
 
     app_state
+        .services
         .character_service
         .create_character(dto)
         .await
@@ -75,6 +78,7 @@ pub async fn create_character_with_avatar(
     ));
 
     app_state
+        .services
         .character_service
         .create_with_avatar(dto)
         .await
@@ -90,6 +94,7 @@ pub async fn update_character(
     log_command(format!("update_character {}", name));
 
     app_state
+        .services
         .character_service
         .update_character(&name, dto)
         .await
@@ -105,6 +110,7 @@ pub async fn update_character_card_data(
     log_command(format!("update_character_card_data {}", name));
 
     app_state
+        .services
         .character_service
         .update_character_card_data(&name, dto)
         .await
@@ -119,6 +125,7 @@ pub async fn check_character_lorebook_conflict(
     log_command(format!("check_character_lorebook_conflict {}", dto.name));
 
     app_state
+        .services
         .character_service
         .check_lorebook_conflict(dto)
         .await
@@ -135,6 +142,7 @@ pub async fn resolve_character_lorebook_conflict(
     log_command(format!("resolve_character_lorebook_conflict {}", dto.name));
 
     app_state
+        .services
         .character_service
         .resolve_lorebook_conflict(dto)
         .await
@@ -152,6 +160,7 @@ pub async fn merge_character_card_data(
     log_command(format!("merge_character_card_data {}", name));
 
     app_state
+        .services
         .character_service
         .merge_character_card_data(&name, dto)
         .await
@@ -166,6 +175,7 @@ pub async fn bulk_merge_character_card_data(
     log_command("bulk_merge_character_card_data");
 
     app_state
+        .services
         .character_service
         .bulk_merge_character_card_data(dto)
         .await
@@ -183,12 +193,14 @@ pub async fn delete_character(
 
     let name = dto.name.clone();
     app_state
+        .services
         .character_service
         .delete_character(dto)
         .await
         .map_err(map_command_error("Failed to delete character"))?;
 
     app_state
+        .services
         .skill_service
         .delete_skills_for_source(
             SKILL_SOURCE_KIND_CHARACTER,
@@ -214,6 +226,7 @@ pub async fn rename_character(
 
     let old_character_id = dto.old_name.clone();
     let renamed = app_state
+        .services
         .character_service
         .rename_character(dto)
         .await
@@ -222,6 +235,7 @@ pub async fn rename_character(
     let new_character_id = character_id_from_avatar(&renamed.avatar)?;
     if old_character_id != new_character_id {
         app_state
+            .services
             .skill_service
             .retarget_scope(SkillScopeRetargetRequest {
                 from_scope: SkillScope::Character {
@@ -248,6 +262,7 @@ pub async fn duplicate_character(
     log_command(format!("duplicate_character {}", dto.name));
 
     app_state
+        .services
         .character_service
         .duplicate_character(dto)
         .await
@@ -262,6 +277,7 @@ pub async fn import_character(
     log_command(format!("import_character from {}", dto.file_path));
 
     app_state
+        .services
         .character_service
         .import_character(dto)
         .await
@@ -279,6 +295,7 @@ pub async fn export_character(
     ));
 
     app_state
+        .services
         .character_service
         .export_character(dto)
         .await
@@ -296,6 +313,7 @@ pub async fn export_character_content(
     ));
 
     app_state
+        .services
         .character_service
         .export_character_content(dto)
         .await
@@ -310,6 +328,7 @@ pub async fn update_avatar(
     log_command(format!("update_avatar for {}", dto.name));
 
     app_state
+        .services
         .character_service
         .update_avatar(dto)
         .await
@@ -324,6 +343,7 @@ pub async fn get_character_chats_by_id(
     log_command(format!("get_character_chats_by_id for {}", dto.name));
 
     app_state
+        .services
         .character_service
         .get_character_chats(dto)
         .await
@@ -337,6 +357,7 @@ pub async fn clear_character_cache(
     log_command("clear_character_cache");
 
     app_state
+        .services
         .character_service
         .clear_cache()
         .await

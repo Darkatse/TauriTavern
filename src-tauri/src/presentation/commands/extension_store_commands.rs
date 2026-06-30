@@ -38,6 +38,7 @@ pub async fn get_extension_store_json(
     ));
 
     app_state
+        .services
         .extension_store_service
         .get_json(&namespace, table.as_deref(), &key)
         .await
@@ -62,6 +63,7 @@ pub async fn try_get_extension_store_json(
     ));
 
     let value = app_state
+        .services
         .extension_store_service
         .try_get_json(&namespace, table.as_deref(), &key)
         .await
@@ -92,6 +94,7 @@ pub async fn set_extension_store_json(
     ));
 
     app_state
+        .services
         .extension_store_service
         .set_json(&namespace, table.as_deref(), &key, value)
         .await
@@ -117,6 +120,7 @@ pub async fn update_extension_store_json(
     ));
 
     app_state
+        .services
         .extension_store_service
         .update_json(&namespace, table.as_deref(), &key, value)
         .await
@@ -143,6 +147,7 @@ pub async fn rename_extension_store_key(
     ));
 
     app_state
+        .services
         .extension_store_service
         .rename_json_key(&namespace, table.as_deref(), &key, &new_key)
         .await
@@ -167,6 +172,7 @@ pub async fn delete_extension_store_json(
     ));
 
     app_state
+        .services
         .extension_store_service
         .delete_json(&namespace, table.as_deref(), &key)
         .await
@@ -189,6 +195,7 @@ pub async fn list_extension_store_keys(
     ));
 
     app_state
+        .services
         .extension_store_service
         .list_json_keys(&namespace, table.as_deref())
         .await
@@ -206,6 +213,7 @@ pub async fn list_extension_store_tables(
     log_command(format!("list_extension_store_tables {}", namespace));
 
     app_state
+        .services
         .extension_store_service
         .list_tables(&namespace)
         .await
@@ -227,6 +235,7 @@ pub async fn delete_extension_store_table(
     ));
 
     app_state
+        .services
         .extension_store_service
         .delete_table(&namespace, &table)
         .await
@@ -251,6 +260,7 @@ pub async fn get_extension_store_blob(
     ));
 
     let bytes = app_state
+        .services
         .extension_store_service
         .get_blob(&namespace, table.as_deref(), &key)
         .await
@@ -297,6 +307,7 @@ pub async fn set_extension_store_blob(
         .map_err(|error| CommandError::BadRequest(format!("Invalid base64: {}", error)))?;
 
     app_state
+        .services
         .extension_store_service
         .set_blob(&namespace, table.as_deref(), &key, bytes)
         .await
@@ -321,6 +332,7 @@ pub async fn delete_extension_store_blob(
     ));
 
     app_state
+        .services
         .extension_store_service
         .delete_blob(&namespace, table.as_deref(), &key)
         .await
@@ -343,6 +355,7 @@ pub async fn list_extension_store_blob_keys(
     ));
 
     app_state
+        .services
         .extension_store_service
         .list_blob_keys(&namespace, table.as_deref())
         .await

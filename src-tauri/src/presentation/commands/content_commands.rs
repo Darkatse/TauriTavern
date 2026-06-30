@@ -16,6 +16,7 @@ pub async fn initialize_default_content(
     log_command("initialize_default_content");
 
     app_state
+        .services
         .content_service
         .initialize_default_content("default-user")
         .await
@@ -29,6 +30,7 @@ pub async fn is_default_content_initialized(
     log_command("is_default_content_initialized");
 
     app_state
+        .services
         .content_service
         .is_default_content_initialized("default-user")
         .await
@@ -51,6 +53,7 @@ pub async fn download_external_import_url(
     )?;
 
     app_state
+        .services
         .content_service
         .download_external_import_url(&url)
         .await

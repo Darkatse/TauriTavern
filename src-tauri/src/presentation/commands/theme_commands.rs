@@ -16,6 +16,7 @@ pub async fn save_theme(
     log_command(format!("save_theme, name: {}", theme_name));
 
     app_state
+        .services
         .theme_service
         .save_theme(&theme_name, dto.data)
         .await
@@ -33,6 +34,7 @@ pub async fn delete_theme(
     log_command(format!("delete_theme, name: {}", dto.name));
 
     app_state
+        .services
         .theme_service
         .delete_theme(&dto.name)
         .await

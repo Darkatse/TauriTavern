@@ -21,6 +21,7 @@ pub async fn get_tauritavern_settings(
     log_command("get_tauritavern_settings");
 
     app_state
+        .services
         .settings_service
         .get_tauritavern_settings()
         .await
@@ -52,6 +53,7 @@ pub async fn update_tauritavern_settings(
     }
 
     let settings = app_state
+        .services
         .settings_service
         .update_tauritavern_settings(dto)
         .await
@@ -66,6 +68,7 @@ pub async fn update_tauritavern_settings(
 
     if agent_retention_settings_updated {
         app_state
+            .services
             .agent_run_retention_automation_service
             .notify_settings_changed();
     }
@@ -97,6 +100,7 @@ pub async fn update_tauritavern_settings(
     }
 
     let settings = app_state
+        .services
         .settings_service
         .update_tauritavern_settings(dto)
         .await
@@ -110,6 +114,7 @@ pub async fn update_tauritavern_settings(
 
     if agent_retention_settings_updated {
         app_state
+            .services
             .agent_run_retention_automation_service
             .notify_settings_changed();
     }
@@ -125,6 +130,7 @@ pub async fn save_user_settings(
     log_command("save_user_settings");
 
     app_state
+        .services
         .settings_service
         .save_user_settings(settings)
         .await
@@ -138,6 +144,7 @@ pub async fn get_sillytavern_settings(
     log_command("get_sillytavern_settings");
 
     app_state
+        .services
         .settings_service
         .get_sillytavern_settings()
         .await
@@ -151,6 +158,7 @@ pub async fn create_settings_snapshot(
     log_command("create_settings_snapshot");
 
     app_state
+        .services
         .settings_service
         .create_snapshot()
         .await
@@ -164,6 +172,7 @@ pub async fn get_settings_snapshots(
     log_command("get_settings_snapshots");
 
     app_state
+        .services
         .settings_service
         .get_snapshots()
         .await
@@ -178,6 +187,7 @@ pub async fn load_settings_snapshot(
     log_command(format!("load_settings_snapshot - {}", name));
 
     app_state
+        .services
         .settings_service
         .load_snapshot(&name)
         .await
@@ -192,6 +202,7 @@ pub async fn restore_settings_snapshot(
     log_command(format!("restore_settings_snapshot - {}", name));
 
     app_state
+        .services
         .settings_service
         .restore_snapshot(&name)
         .await

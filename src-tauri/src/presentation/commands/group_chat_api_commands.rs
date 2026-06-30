@@ -20,6 +20,7 @@ pub async fn get_group_chat_summary(
     log_command(format!("get_group_chat_summary {}", chat_id));
 
     app_state
+        .services
         .group_chat_service
         .get_group_chat_summary(&chat_id, include_metadata.unwrap_or(false))
         .await
@@ -37,6 +38,7 @@ pub async fn get_group_chat_metadata(
     log_command(format!("get_group_chat_metadata {}", chat_id));
 
     app_state
+        .services
         .group_chat_service
         .get_group_chat_metadata(&chat_id)
         .await
@@ -59,6 +61,7 @@ pub async fn set_group_chat_metadata_extension(
     ));
 
     app_state
+        .services
         .group_chat_service
         .set_group_chat_metadata_extension(&chat_id, &namespace, value)
         .await
@@ -81,6 +84,7 @@ pub async fn get_group_chat_store_json(
     ));
 
     app_state
+        .services
         .group_chat_service
         .get_group_chat_store_json(&chat_id, &namespace, &key)
         .await
@@ -104,6 +108,7 @@ pub async fn set_group_chat_store_json(
     ));
 
     app_state
+        .services
         .group_chat_service
         .set_group_chat_store_json(&chat_id, &namespace, &key, value)
         .await
@@ -127,6 +132,7 @@ pub async fn update_group_chat_store_json(
     ));
 
     app_state
+        .services
         .group_chat_service
         .update_group_chat_store_json(&chat_id, &namespace, &key, value)
         .await
@@ -150,6 +156,7 @@ pub async fn rename_group_chat_store_key(
     ));
 
     app_state
+        .services
         .group_chat_service
         .rename_group_chat_store_key(&chat_id, &namespace, &key, &new_key)
         .await
@@ -172,6 +179,7 @@ pub async fn delete_group_chat_store_json(
     ));
 
     app_state
+        .services
         .group_chat_service
         .delete_group_chat_store_json(&chat_id, &namespace, &key)
         .await
@@ -193,6 +201,7 @@ pub async fn list_group_chat_store_keys(
     ));
 
     app_state
+        .services
         .group_chat_service
         .list_group_chat_store_keys(&chat_id, &namespace)
         .await
@@ -211,6 +220,7 @@ pub async fn find_last_group_chat_message(
     log_command(format!("find_last_group_chat_message {}", chat_id));
 
     app_state
+        .services
         .group_chat_service
         .find_last_group_chat_message(&chat_id, query)
         .await
@@ -229,6 +239,7 @@ pub async fn search_group_chat_messages(
     log_command(format!("search_group_chat_messages {}", chat_id));
 
     app_state
+        .services
         .group_chat_service
         .search_group_chat_messages(&chat_id, query)
         .await

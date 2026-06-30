@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
 
-use crate::app::StartupProfile;
+use crate::app::{AppServices, StartupProfile};
 use crate::application::services::asset_service::AssetService;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
@@ -42,7 +42,7 @@ use crate::infrastructure::apis::http_external_import_downloader::HttpExternalIm
 use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::persistence::file_system::DataDirectory;
 
-use super::{AppServices, adapters, repositories};
+use super::{adapters, repositories};
 
 pub(super) async fn build(
     app_handle: &AppHandle,
@@ -218,6 +218,5 @@ pub(super) async fn build(
         data_archive_service,
         update_service,
         native_regex_service,
-        ios_policy,
     })
 }

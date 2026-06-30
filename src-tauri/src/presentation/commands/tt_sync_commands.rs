@@ -54,6 +54,7 @@ pub async fn tt_sync_pair(
     log_command("tt_sync_pair");
 
     app_state
+        .services
         .tt_sync_service
         .pair(&pair_uri)
         .await
@@ -68,6 +69,7 @@ pub async fn tt_sync_list_servers(
     log_command("tt_sync_list_servers");
 
     app_state
+        .services
         .tt_sync_service
         .list_servers()
         .await
@@ -88,6 +90,7 @@ pub async fn tt_sync_remove_server(
     log_command("tt_sync_remove_server");
 
     app_state
+        .services
         .tt_sync_service
         .remove_server(&server_device_id)
         .await
@@ -104,6 +107,7 @@ pub async fn tt_sync_pull(
     log_command("tt_sync_pull");
 
     app_state
+        .services
         .tt_sync_service
         .pull(&server_device_id, mode, options)
         .await
@@ -120,6 +124,7 @@ pub async fn tt_sync_push(
     log_command("tt_sync_push");
 
     app_state
+        .services
         .tt_sync_service
         .push(&server_device_id, mode, options)
         .await

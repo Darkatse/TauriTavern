@@ -21,6 +21,7 @@ pub async fn get_chat_completions_status(
     log_command("get_chat_completions_status");
 
     app_state
+        .services
         .chat_completion_service
         .get_status(dto)
         .await
@@ -37,7 +38,7 @@ pub async fn generate_chat_completion(
     validate_stream_id(&request_id)?;
     log_command(format!("generate_chat_completion {}", request_id));
 
-    let service = app_state.chat_completion_service.clone();
+    let service = app_state.services.chat_completion_service.clone();
     let cancel = service.register_generation(&request_id).await;
     let result = service.generate_with_cancel(dto, cancel).await;
     service.complete_generation(&request_id).await;
@@ -69,7 +70,7 @@ pub async fn start_chat_completion_stream(
     validate_stream_id(&stream_id)?;
     log_command(format!("start_chat_completion_stream {}", stream_id));
 
-    let service = app_state.chat_completion_service.clone();
+    let service = app_state.services.chat_completion_service.clone();
     let cancel = service.register_stream(&stream_id).await;
 
     tauri::async_runtime::spawn(run_stream_generation(
@@ -88,6 +89,7 @@ pub async fn cancel_chat_completion_stream(
     log_command(format!("cancel_chat_completion_stream {}", stream_id));
 
     app_state
+        .services
         .chat_completion_service
         .cancel_stream(&stream_id)
         .await;
@@ -103,6 +105,7 @@ pub async fn cancel_chat_completion_generation(
     log_command(format!("cancel_chat_completion_generation {}", request_id));
 
     app_state
+        .services
         .chat_completion_service
         .cancel_generation(&request_id)
         .await;

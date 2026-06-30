@@ -24,6 +24,7 @@ pub async fn list_group_chat_summaries(
     log_command("list_group_chat_summaries");
 
     app_state
+        .services
         .group_chat_service
         .list_group_chat_summaries(chat_ids.as_deref(), include_metadata.unwrap_or(false))
         .await
@@ -43,6 +44,7 @@ pub async fn list_recent_group_chat_summaries(
     let pinned_refs = pinned.into_iter().map(Into::into).collect::<Vec<_>>();
 
     app_state
+        .services
         .group_chat_service
         .list_recent_group_chat_summaries(
             chat_ids.as_deref(),
@@ -65,6 +67,7 @@ pub async fn search_group_chats(
     log_command(format!("search_group_chats {}", query));
 
     app_state
+        .services
         .group_chat_service
         .search_group_chats(&query, chat_ids.as_deref())
         .await
@@ -81,6 +84,7 @@ pub async fn get_group_chat_path(
 
     let allow_not_found = allow_not_found.unwrap_or(false);
     match app_state
+        .services
         .group_chat_service
         .get_group_chat_payload_path(&id)
         .await
@@ -105,6 +109,7 @@ pub async fn get_group_chat_payload_tail(
 
     let allow_not_found = allow_not_found.unwrap_or(false);
     match app_state
+        .services
         .group_chat_service
         .get_group_chat_payload_tail_lines(&id, max_lines)
         .await
@@ -137,6 +142,7 @@ pub async fn get_group_chat_payload_before(
     log_command(format!("get_group_chat_payload_before {}", id));
 
     app_state
+        .services
         .group_chat_service
         .get_group_chat_payload_before_lines(&id, cursor, max_lines)
         .await
@@ -157,6 +163,7 @@ pub async fn get_group_chat_payload_before_pages(
     log_command(format!("get_group_chat_payload_before_pages {}", id));
 
     app_state
+        .services
         .group_chat_service
         .get_group_chat_payload_before_pages_lines(&id, cursor, max_lines, max_pages)
         .await
@@ -174,6 +181,7 @@ pub async fn save_group_chat_payload_windowed(
     log_command(format!("save_group_chat_payload_windowed {}", dto.id));
 
     app_state
+        .services
         .group_chat_service
         .save_group_chat_payload_windowed(
             &dto.id,
@@ -197,6 +205,7 @@ pub async fn patch_group_chat_payload_windowed(
     log_command(format!("patch_group_chat_payload_windowed {}", dto.id));
 
     app_state
+        .services
         .group_chat_service
         .patch_group_chat_payload_windowed(
             &dto.id,
@@ -220,6 +229,7 @@ pub async fn hide_group_chat_payload_before_cursor(
     log_command(format!("hide_group_chat_payload_before_cursor {}", dto.id));
 
     app_state
+        .services
         .group_chat_service
         .hide_group_chat_payload_before_cursor(
             &dto.id,
@@ -242,6 +252,7 @@ pub async fn save_group_chat_from_file(
     log_command(format!("save_group_chat_from_file {}", dto.id));
 
     app_state
+        .services
         .group_chat_service
         .save_group_chat_from_file(dto)
         .await
@@ -258,6 +269,7 @@ pub async fn delete_group_chat(
     log_command(format!("delete_group_chat {}", dto.id));
 
     app_state
+        .services
         .group_chat_service
         .delete_group_chat(dto)
         .await
@@ -275,6 +287,7 @@ pub async fn rename_group_chat(
     ));
 
     app_state
+        .services
         .group_chat_service
         .rename_group_chat(dto)
         .await
@@ -289,6 +302,7 @@ pub async fn import_group_chat_payload(
     log_command("import_group_chat_payload");
 
     app_state
+        .services
         .group_chat_service
         .import_group_chat(dto)
         .await

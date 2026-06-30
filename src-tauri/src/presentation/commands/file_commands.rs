@@ -208,6 +208,7 @@ async fn get_default_user_files_directory(
     app_state: &Arc<AppState>,
 ) -> Result<PathBuf, CommandError> {
     let directory = app_state
+        .services
         .user_directory_service
         .get_default_user_directory()
         .await?;

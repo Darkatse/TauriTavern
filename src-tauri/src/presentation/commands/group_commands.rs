@@ -16,6 +16,7 @@ pub async fn get_all_groups(
     log_command("get_all_groups");
 
     app_state
+        .services
         .group_service
         .get_all_groups()
         .await
@@ -31,6 +32,7 @@ pub async fn get_group(
     log_command(format!("get_group {}", id));
 
     app_state
+        .services
         .group_service
         .get_group(&id)
         .await
@@ -46,6 +48,7 @@ pub async fn create_group(
     log_command(format!("create_group {}", dto.name));
 
     app_state
+        .services
         .group_service
         .create_group(dto)
         .await
@@ -61,6 +64,7 @@ pub async fn update_group(
     log_command(format!("update_group {}", dto.id));
 
     app_state
+        .services
         .group_service
         .update_group(dto)
         .await
@@ -76,6 +80,7 @@ pub async fn delete_group(
     log_command(format!("delete_group {}", dto.id));
 
     app_state
+        .services
         .group_service
         .delete_group(dto)
         .await
@@ -89,6 +94,7 @@ pub async fn get_group_chat_paths(
     log_command("get_group_chat_paths");
 
     app_state
+        .services
         .group_service
         .get_group_chat_paths()
         .await
@@ -100,6 +106,7 @@ pub async fn clear_group_cache(app_state: State<'_, Arc<AppState>>) -> Result<()
     log_command("clear_group_cache");
 
     app_state
+        .services
         .group_service
         .clear_cache()
         .await

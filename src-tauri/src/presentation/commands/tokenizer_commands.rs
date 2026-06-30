@@ -20,6 +20,7 @@ pub async fn count_openai_tokens(
     log_command("count_openai_tokens");
 
     app_state
+        .services
         .tokenization_service
         .count_openai_tokens(dto)
         .await
@@ -34,6 +35,7 @@ pub async fn count_openai_tokens_batch(
     log_command("count_openai_tokens_batch");
 
     app_state
+        .services
         .tokenization_service
         .count_openai_tokens_batch(dto)
         .await
@@ -48,6 +50,7 @@ pub async fn encode_openai_tokens(
     log_command("encode_openai_tokens");
 
     app_state
+        .services
         .tokenization_service
         .encode_openai_tokens(dto)
         .await
@@ -62,6 +65,7 @@ pub async fn decode_openai_tokens(
     log_command("decode_openai_tokens");
 
     app_state
+        .services
         .tokenization_service
         .decode_openai_tokens(dto)
         .await
@@ -76,6 +80,7 @@ pub async fn build_openai_logit_bias(
     log_command("build_openai_logit_bias");
 
     app_state
+        .services
         .tokenization_service
         .build_openai_logit_bias(dto)
         .await

@@ -19,6 +19,7 @@ pub async fn get_extensions(
     log_command("get_extensions");
 
     let mut extensions = app_state
+        .services
         .extension_service
         .get_extensions()
         .await
@@ -79,6 +80,7 @@ pub async fn install_extension(
     )?;
 
     app_state
+        .services
         .extension_service
         .install_extension(&url, global, branch)
         .await
@@ -104,6 +106,7 @@ pub async fn update_extension(
     )?;
 
     app_state
+        .services
         .extension_service
         .update_extension(&extension_name, global)
         .await
@@ -129,6 +132,7 @@ pub async fn delete_extension(
     )?;
 
     app_state
+        .services
         .extension_service
         .delete_extension(&extension_name, global)
         .await
@@ -154,6 +158,7 @@ pub async fn get_extension_version(
     )?;
 
     app_state
+        .services
         .extension_service
         .get_extension_version(&extension_name, global)
         .await
@@ -183,6 +188,7 @@ pub async fn move_extension(
     )?;
 
     app_state
+        .services
         .extension_service
         .move_extension(&extension_name, &source, &destination)
         .await

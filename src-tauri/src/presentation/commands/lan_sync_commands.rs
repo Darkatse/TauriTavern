@@ -29,6 +29,7 @@ pub async fn lan_sync_get_status(
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .get_status()
         .await
@@ -43,6 +44,7 @@ pub async fn lan_sync_start_server(
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .start_server()
         .await
@@ -55,6 +57,7 @@ pub async fn lan_sync_stop_server(app_state: State<'_, Arc<AppState>>) -> Result
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .stop_server()
         .await
@@ -78,6 +81,7 @@ pub async fn lan_sync_enable_pairing(
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .enable_pairing(address)
         .await
@@ -102,6 +106,7 @@ pub async fn lan_sync_get_pairing_info(
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .get_pairing_info(&address)
         .await
@@ -147,6 +152,7 @@ pub async fn lan_sync_request_pairing(
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .request_pairing(&pair_uri)
         .await
@@ -164,6 +170,7 @@ pub async fn lan_sync_confirm_pairing(
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .confirm_pairing(&request_id, accept)
         .await
@@ -178,6 +185,7 @@ pub async fn lan_sync_list_devices(
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .list_paired_devices()
         .await
@@ -199,6 +207,7 @@ pub async fn lan_sync_remove_device(
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .remove_paired_device(&device_id)
         .await
@@ -215,6 +224,7 @@ pub async fn lan_sync_sync_from_device(
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .sync_from_device(&device_id, options)
         .await
@@ -231,6 +241,7 @@ pub async fn lan_sync_push_to_device(
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .push_to_device(&device_id, options)
         .await
@@ -247,6 +258,7 @@ pub async fn lan_sync_set_sync_mode(
     ensure_lan_sync_allowed(&app_state)?;
 
     app_state
+        .services
         .lan_sync_service
         .set_sync_mode(mode, persist)
         .await
@@ -260,7 +272,11 @@ pub async fn lan_sync_clear_sync_mode_override(
     log_command("lan_sync_clear_sync_mode_override");
     ensure_lan_sync_allowed(&app_state)?;
 
-    app_state.lan_sync_service.clear_sync_mode_override().await;
+    app_state
+        .services
+        .lan_sync_service
+        .clear_sync_mode_override()
+        .await;
     Ok(())
 }
 

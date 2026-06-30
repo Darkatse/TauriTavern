@@ -17,6 +17,7 @@ pub async fn get_assets_library(
     log_command("get_assets_library");
 
     app_state
+        .services
         .asset_service
         .list_assets()
         .await
@@ -39,6 +40,7 @@ pub async fn download_asset(
     )?;
 
     app_state
+        .services
         .asset_service
         .download_asset(&url, &category, &filename)
         .await
@@ -54,6 +56,7 @@ pub async fn delete_asset(
     log_command(format!("delete_asset {}", category));
 
     app_state
+        .services
         .asset_service
         .delete_asset_file(&category, &filename)
         .await
@@ -69,6 +72,7 @@ pub async fn get_character_assets(
     log_command(format!("get_character_assets {}", category));
 
     app_state
+        .services
         .asset_service
         .list_character_assets(&name, &category)
         .await

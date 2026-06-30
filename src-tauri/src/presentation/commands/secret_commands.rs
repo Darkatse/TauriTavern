@@ -18,6 +18,7 @@ pub async fn write_secret(
     log_command(format!("write_secret {}", dto.key));
 
     let id = app_state
+        .services
         .secret_service
         .write_secret(&dto.key, &dto.value, dto.label.as_deref())
         .await
@@ -36,6 +37,7 @@ pub async fn read_secret_state(
     log_command("read_secret_state");
 
     app_state
+        .services
         .secret_service
         .read_secret_state()
         .await
@@ -48,7 +50,7 @@ pub async fn read_secret_settings(
 ) -> Result<SecretSettingsDto, CommandError> {
     log_command("read_secret_settings");
 
-    Ok(app_state.secret_service.read_settings())
+    Ok(app_state.services.secret_service.read_settings())
 }
 
 #[tauri::command]
@@ -58,6 +60,7 @@ pub async fn view_secrets(
     log_command("view_secrets");
 
     app_state
+        .services
         .secret_service
         .view_secrets()
         .await
@@ -72,6 +75,7 @@ pub async fn find_secret(
     log_command(format!("find_secret {}", dto.key));
 
     app_state
+        .services
         .secret_service
         .find_secret(&dto.key, dto.id.as_deref())
         .await
@@ -89,6 +93,7 @@ pub async fn delete_secret(
     log_command(format!("delete_secret {}", dto.key));
 
     app_state
+        .services
         .secret_service
         .delete_secret(&dto.key, dto.id.as_deref())
         .await
@@ -106,6 +111,7 @@ pub async fn rotate_secret(
     log_command(format!("rotate_secret {}", dto.key));
 
     app_state
+        .services
         .secret_service
         .rotate_secret(&dto.key, &dto.id)
         .await
@@ -123,6 +129,7 @@ pub async fn rename_secret(
     log_command(format!("rename_secret {}", dto.key));
 
     app_state
+        .services
         .secret_service
         .rename_secret(&dto.key, &dto.id, &dto.label)
         .await
