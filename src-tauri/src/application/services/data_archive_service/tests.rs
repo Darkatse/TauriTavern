@@ -412,6 +412,16 @@ fn import_local_applied() -> DataArchiveLocalMutationSummary {
     }
 }
 
+fn test_runtime_handle() -> tokio::runtime::Handle {
+    tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
+        static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+        RUNTIME
+            .get_or_init(|| tokio::runtime::Runtime::new().expect("create test runtime"))
+            .handle()
+            .clone()
+    })
+}
+
 async fn wait_for_job_state(
     service: &DataArchiveService,
     job_id: &str,
@@ -475,6 +485,7 @@ fn service_resolves_completed_export_artifact() {
 
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(UnusedExecutor),
         Arc::new(UnusedFiles),
         Arc::new(UnusedInitializer),
@@ -505,6 +516,7 @@ async fn start_import_runs_executor_initializer_reconciler_and_cleanup() {
     let reconciler = Arc::new(RecordingReconciler::default());
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(RecordingExecutor::import_ok(
             vec!["alice".to_string()],
             "alice",
@@ -558,6 +570,7 @@ async fn start_import_with_no_local_mutation_skips_initializer_and_reconciler() 
     let reconciler = Arc::new(RecordingReconciler::default());
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(RecordingExecutor::import_ok_without_local_mutation(
             vec!["alice".to_string()],
             "alice",
@@ -604,6 +617,7 @@ async fn partial_import_failure_initializes_reconciles_and_reports_local_mutatio
     let local_applied = import_local_applied();
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(RecordingExecutor::import_error(
             DomainError::InternalError("boom".to_string()),
             local_applied,
@@ -648,6 +662,7 @@ async fn partial_import_cancel_initializes_reconciles_and_reports_local_mutation
     let local_applied = import_local_applied();
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(RecordingExecutor::import_error(
             DomainError::Cancelled("cancelled".to_string()),
             local_applied,
@@ -688,6 +703,7 @@ async fn partial_import_failure_reports_reconcile_error() {
     let local_applied = import_local_applied();
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(RecordingExecutor::import_error(
             DomainError::InternalError("boom".to_string()),
             local_applied,
@@ -720,6 +736,7 @@ async fn start_export_runs_executor_and_marks_completed() {
     }));
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(RecordingExecutor::export_ok("tauritavern-data.zip")),
         files,
         Arc::new(UnusedInitializer),
@@ -741,6 +758,40 @@ async fn start_export_runs_executor_and_marks_completed() {
     );
 }
 
+#[test]
+fn start_export_uses_runtime_handle_outside_tokio_context() {
+    let runtime = tokio::runtime::Runtime::new().expect("create runtime");
+    let jobs = Arc::new(DataArchiveJobRegistry::new());
+    let output_path = PathBuf::from("/tmp/tauritavern-data.zip");
+    let files = Arc::new(RecordingFiles::with_export(ExportArchiveExecutionRequest {
+        data_root: PathBuf::from("/tmp/data-root"),
+        output_path: output_path.clone(),
+        file_name: "tauritavern-data.zip".to_string(),
+    }));
+    let service = DataArchiveService::new(
+        jobs,
+        runtime.handle().clone(),
+        Arc::new(RecordingExecutor::export_ok("tauritavern-data.zip")),
+        files,
+        Arc::new(UnusedInitializer),
+        Arc::new(UnusedReconciler),
+    );
+
+    let job_id = service.start_export().expect("start export");
+
+    let status = runtime.block_on(wait_for_job_state(
+        &service,
+        &job_id,
+        DATA_ARCHIVE_STATE_COMPLETED,
+    ));
+    let result = status.result.expect("completed export result");
+    assert_eq!(result.file_name.as_deref(), Some("tauritavern-data.zip"));
+    assert_eq!(
+        result.archive_path.as_deref(),
+        Some(output_path.to_string_lossy().as_ref())
+    );
+}
+
 #[tokio::test]
 async fn start_export_cleans_partial_archive_on_failure() {
     let jobs = Arc::new(DataArchiveJobRegistry::new());
@@ -752,6 +803,7 @@ async fn start_export_cleans_partial_archive_on_failure() {
     }));
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(RecordingExecutor::export_error(DomainError::InternalError(
             "boom".to_string(),
         ))),
@@ -798,6 +850,7 @@ async fn start_export_protects_claimed_completed_artifact_from_stale_cleanup() {
     }));
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(RecordingExecutor::export_ok("tauritavern-data.zip")),
         files.clone(),
         Arc::new(UnusedInitializer),
@@ -829,6 +882,7 @@ async fn save_export_marks_artifact_disposed_with_saved_path() {
     let saved_path = PathBuf::from("/Downloads/tauritavern-data.zip");
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(UnusedExecutor),
         Arc::new(RecordingFiles::with_save_export(saved_path.clone())),
         Arc::new(UnusedInitializer),
@@ -876,6 +930,7 @@ fn cleanup_export_marks_artifact_disposed_and_is_idempotent() {
     let files = Arc::new(RecordingFiles::default());
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(UnusedExecutor),
         files.clone(),
         Arc::new(UnusedInitializer),
@@ -917,6 +972,7 @@ fn cleanup_export_marks_missing_when_artifact_is_already_gone() {
     )));
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(UnusedExecutor),
         files.clone(),
         Arc::new(UnusedInitializer),
@@ -961,6 +1017,7 @@ async fn save_export_restores_available_artifact_on_save_error() {
     )));
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(UnusedExecutor),
         files.clone(),
         Arc::new(UnusedInitializer),
@@ -997,6 +1054,7 @@ fn finalize_export_delivery_disposes_even_when_cleanup_fails() {
     )));
     let service = DataArchiveService::new(
         jobs,
+        test_runtime_handle(),
         Arc::new(UnusedExecutor),
         files.clone(),
         Arc::new(UnusedInitializer),

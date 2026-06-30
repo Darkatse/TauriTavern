@@ -162,9 +162,11 @@ impl DataArchiveService {
         let job = artifact.job.clone();
         let archive_path = artifact.archive_path.clone();
         let files = self.files.clone();
-        let saved_path = run_blocking("Save export task join error", move || {
-            files.save_export(&artifact.archive_path, &artifact.file_name)
-        })
+        let saved_path = run_blocking(
+            self.runtime.clone(),
+            "Save export task join error",
+            move || files.save_export(&artifact.archive_path, &artifact.file_name),
+        )
         .await;
 
         match saved_path {
@@ -213,25 +215,32 @@ impl DataArchiveService {
         let executor = self.executor.clone();
         let files = self.files.clone();
         let protected_paths = self.jobs.protected_export_artifact_paths()?;
-        run_blocking("User backup export task join error", move || {
-            let target =
-                files.prepare_user_backup_archive(&handle, include_secrets, &protected_paths)?;
-            let output_path = target.request.output_path.clone();
-            let mut report_progress = |_stage: &str, _progress_percent: f32, _message: &str| {};
-            let is_cancelled = || false;
+        run_blocking(
+            self.runtime.clone(),
+            "User backup export task join error",
+            move || {
+                let target = files.prepare_user_backup_archive(
+                    &handle,
+                    include_secrets,
+                    &protected_paths,
+                )?;
+                let output_path = target.request.output_path.clone();
+                let mut report_progress = |_stage: &str, _progress_percent: f32, _message: &str| {};
+                let is_cancelled = || false;
 
-            if let Err(error) =
-                executor.export_user_backup(target.request, &mut report_progress, &is_cancelled)
-            {
-                let _ = files.cleanup_export(&output_path);
-                return Err(error);
-            }
+                if let Err(error) =
+                    executor.export_user_backup(target.request, &mut report_progress, &is_cancelled)
+                {
+                    let _ = files.cleanup_export(&output_path);
+                    return Err(error);
+                }
 
-            Ok(UserBackupArchiveResult {
-                file_name: target.file_name,
-                archive_path: output_path.to_string_lossy().to_string(),
-            })
-        })
+                Ok(UserBackupArchiveResult {
+                    file_name: target.file_name,
+                    archive_path: output_path.to_string_lossy().to_string(),
+                })
+            },
+        )
         .await
     }
 
@@ -241,9 +250,11 @@ impl DataArchiveService {
         file_name: String,
     ) -> Result<PathBuf, DomainError> {
         let files = self.files.clone();
-        run_blocking("Save user backup task join error", move || {
-            files.save_user_backup(&archive_path, &file_name)
-        })
+        run_blocking(
+            self.runtime.clone(),
+            "Save user backup task join error",
+            move || files.save_user_backup(&archive_path, &file_name),
+        )
         .await
     }
 

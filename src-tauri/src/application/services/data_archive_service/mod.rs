@@ -8,6 +8,7 @@ mod tests;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use tokio::runtime::Handle as TokioRuntimeHandle;
 use uuid::Uuid;
 
 use crate::application::dto::data_archive_dto::{DATA_ARCHIVE_KIND_IMPORT, DataArchiveJobStatus};
@@ -23,6 +24,7 @@ pub(crate) use ports::{
 
 pub struct DataArchiveService {
     jobs: Arc<DataArchiveJobRegistry>,
+    runtime: TokioRuntimeHandle,
     executor: Arc<dyn DataArchiveExecutor>,
     files: Arc<dyn DataArchiveFileGateway>,
     data_root_initializer: Arc<dyn DataRootInitializer>,
@@ -32,6 +34,7 @@ pub struct DataArchiveService {
 impl DataArchiveService {
     pub(crate) fn new(
         jobs: Arc<DataArchiveJobRegistry>,
+        runtime: TokioRuntimeHandle,
         executor: Arc<dyn DataArchiveExecutor>,
         files: Arc<dyn DataArchiveFileGateway>,
         data_root_initializer: Arc<dyn DataRootInitializer>,
@@ -39,6 +42,7 @@ impl DataArchiveService {
     ) -> Self {
         Self {
             jobs,
+            runtime,
             executor,
             files,
             data_root_initializer,
@@ -67,24 +71,26 @@ impl DataArchiveService {
         let files = self.files.clone();
         let data_root_initializer = self.data_root_initializer.clone();
         let reconciler = self.reconciler.clone();
+        let runtime = self.runtime.clone();
 
-        tokio::spawn(async move {
+        runtime.clone().spawn(async move {
             let _ = job.mark_running("starting", "Import job started");
 
             let blocking_job = job.clone();
-            let blocking_result = tokio::task::spawn_blocking(move || {
-                let progress_job = blocking_job.clone();
-                let mut report_progress =
-                    move |stage: &str, progress_percent: f32, message: &str| {
-                        let _ = progress_job.update_progress(stage, progress_percent, message);
-                    };
+            let blocking_result = runtime
+                .spawn_blocking(move || {
+                    let progress_job = blocking_job.clone();
+                    let mut report_progress =
+                        move |stage: &str, progress_percent: f32, message: &str| {
+                            let _ = progress_job.update_progress(stage, progress_percent, message);
+                        };
 
-                let cancel_job = blocking_job.clone();
-                let is_cancelled = move || cancel_job.is_cancel_requested();
+                    let cancel_job = blocking_job.clone();
+                    let is_cancelled = move || cancel_job.is_cancel_requested();
 
-                executor.import_full_data(request, &mut report_progress, &is_cancelled)
-            })
-            .await;
+                    executor.import_full_data(request, &mut report_progress, &is_cancelled)
+                })
+                .await;
 
             match blocking_result {
                 Ok(Ok(result)) => {
@@ -161,24 +167,26 @@ impl DataArchiveService {
 
         let executor = self.executor.clone();
         let files = self.files.clone();
+        let runtime = self.runtime.clone();
 
-        tokio::spawn(async move {
+        runtime.clone().spawn(async move {
             let _ = job.mark_running("starting", "Export job started");
 
             let blocking_job = job.clone();
-            let blocking_result = tokio::task::spawn_blocking(move || {
-                let progress_job = blocking_job.clone();
-                let mut report_progress =
-                    move |stage: &str, progress_percent: f32, message: &str| {
-                        let _ = progress_job.update_progress(stage, progress_percent, message);
-                    };
+            let blocking_result = runtime
+                .spawn_blocking(move || {
+                    let progress_job = blocking_job.clone();
+                    let mut report_progress =
+                        move |stage: &str, progress_percent: f32, message: &str| {
+                            let _ = progress_job.update_progress(stage, progress_percent, message);
+                        };
 
-                let cancel_job = blocking_job.clone();
-                let is_cancelled = move || cancel_job.is_cancel_requested();
+                    let cancel_job = blocking_job.clone();
+                    let is_cancelled = move || cancel_job.is_cancel_requested();
 
-                executor.export_full_data(request, &mut report_progress, &is_cancelled)
-            })
-            .await;
+                    executor.export_full_data(request, &mut report_progress, &is_cancelled)
+                })
+                .await;
 
             match blocking_result {
                 Ok(Ok(result)) => {
@@ -240,13 +248,15 @@ async fn reconcile_import_data_change(
 }
 
 async fn run_blocking<T>(
+    runtime: TokioRuntimeHandle,
     context: &'static str,
     operation: impl FnOnce() -> Result<T, DomainError> + Send + 'static,
 ) -> Result<T, DomainError>
 where
     T: Send + 'static,
 {
-    tokio::task::spawn_blocking(operation)
+    runtime
+        .spawn_blocking(operation)
         .await
         .map_err(|error| DomainError::InternalError(format!("{}: {}", context, error)))?
 }

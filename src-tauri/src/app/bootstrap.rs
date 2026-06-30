@@ -639,6 +639,7 @@ pub(super) async fn build_services(
     let data_archive_job_registry = Arc::new(DataArchiveJobRegistry::new());
     let data_archive_service = Arc::new(DataArchiveService::new(
         data_archive_job_registry,
+        tauri::async_runtime::handle().inner().clone(),
         Arc::new(FileDataArchiveExecutor),
         Arc::new(TauriDataArchiveFileGateway::new(app_handle.clone())),
         Arc::new(DataDirectoryDataRootInitializer),
