@@ -5511,6 +5511,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "tt-domain",
  "ttsync-client",
  "ttsync-contract",
  "ttsync-core",
@@ -5996,6 +5997,31 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tt-application"
+version = "0.1.0"
+
+[[package]]
+name = "tt-contracts"
+version = "0.1.0"
+
+[[package]]
+name = "tt-domain"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "ttsync-contract",
+ "uuid",
+]
+
+[[package]]
+name = "tt-ports"
+version = "0.1.0"
 
 [[package]]
 name = "ttsync-client"

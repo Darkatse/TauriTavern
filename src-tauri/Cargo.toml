@@ -7,6 +7,27 @@ edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[workspace]
+members = [
+    ".",
+    "crates/tt-domain",
+    "crates/tt-contracts",
+    "crates/tt-ports",
+    "crates/tt-application",
+]
+default-members = ["."]
+resolver = "3"
+
+[workspace.dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+rand = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+ttsync-contract = "2"
+ttsync-core = { version = "2", default-features = false }
+uuid = { version = "1.4", default-features = false, features = ["serde", "std", "v4"] }
+
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
@@ -16,7 +37,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.5.5", features = [] }
-serde_json = "1"
+serde_json = { workspace = true }
 
 [dependencies]
 tauri = { version = "2.10.2", features = ["macos-private-api", "protocol-asset", "tray-icon"] }
@@ -24,14 +45,14 @@ tauri-plugin-barcode-scanner = "2.4.4"
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-fs = "2.4.5"
 tauri-plugin-notification = "2.3.1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
 serde_yaml = "0.9"
-thiserror = "2"
+thiserror = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "std"] }
 tracing-appender = "0.2"
-chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+chrono = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", default-features = false, features = ["io", "rt"] }
 futures-util = "0.3"
@@ -41,10 +62,10 @@ bytes = "1"
 async-compression = { version = "0.4", features = ["tokio", "zstd"] }
 base64 = "0.22"
 sha2 = "0.10"
-rand = "0.9"
+rand = { workspace = true }
 yup-oauth2 = { version = "12.1.2", default-features = false, features = ["hyper-rustls", "aws-lc-rs", "service-account"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
-uuid = { version = "1.4", default-features = false, features = ["serde", "std", "v4"] }
+uuid = { workspace = true }
 async-trait = "0.1"
 url = "2.4"
 percent-encoding = "2"
@@ -68,10 +89,11 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 rustls = "0.23"
 webpki-roots = "1"
 dunce = "1"
+tt-domain = { path = "crates/tt-domain" }
 
 # TT-Sync v2 shared protocol crates. (crates.io)
-ttsync-contract = "2"
-ttsync-core = "2"
+ttsync-contract = { workspace = true }
+ttsync-core = { workspace = true }
 ttsync-http = "2"
 ttsync-client = "2"
 

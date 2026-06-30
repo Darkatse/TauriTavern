@@ -2,7 +2,7 @@ use serde_json::Value;
 
 const UNSET_SENTINEL: &str = "__@@UNSET@@__";
 
-pub(crate) fn merge_json_value(current: &mut Value, updates: Value) {
+pub fn merge_json_value(current: &mut Value, updates: Value) {
     match (current, updates) {
         (Value::Object(current_object), Value::Object(updates_object)) => {
             for (key, value) in updates_object {
@@ -37,7 +37,7 @@ fn prune_unset_sentinels(value: &mut Value) {
     });
 }
 
-pub(crate) fn merge_json_value_with_unset(current: &mut Value, updates: Value) {
+pub fn merge_json_value_with_unset(current: &mut Value, updates: Value) {
     match (current, updates) {
         (Value::Object(current_object), Value::Object(updates_object)) => {
             for (key, mut value) in updates_object {

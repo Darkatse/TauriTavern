@@ -12,7 +12,7 @@ fn default_ios_policy_seed() -> Option<Value> {
     }
 
     Some(json!({
-        "version": crate::domain::ios_policy::IOS_POLICY_VERSION,
+        "version": crate::ios_policy::IOS_POLICY_VERSION,
         "profile": profile,
     }))
 }

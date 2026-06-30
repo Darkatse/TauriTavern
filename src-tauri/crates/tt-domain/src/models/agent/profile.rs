@@ -429,7 +429,7 @@ mod tests {
         DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
         DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
     };
-    use crate::domain::models::agent::plan::DEFAULT_AGENT_PLAN_BETA;
+    use crate::models::agent::plan::DEFAULT_AGENT_PLAN_BETA;
 
     #[test]
     fn profile_definition_applies_schema_defaults_for_optional_fields() {

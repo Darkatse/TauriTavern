@@ -1,4 +1,4 @@
-use crate::domain::errors::DomainError;
+use crate::errors::DomainError;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DataArchiveLocalMutationSummary {

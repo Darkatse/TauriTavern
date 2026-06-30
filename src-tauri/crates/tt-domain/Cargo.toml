@@ -1,0 +1,14 @@
+[package]
+name = "tt-domain"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+chrono = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ttsync-contract = { workspace = true }
+uuid = { workspace = true }

@@ -389,7 +389,7 @@ Profile validation：
 
 ```text
 src-tauri/src/application/services/agent_profile_service/validation.rs
-src-tauri/src/domain/models/agent/profile.rs
+src-tauri/crates/tt-domain/src/models/agent/profile.rs
 ```
 
 Tests：

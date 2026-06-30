@@ -4,8 +4,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::domain::models::chat::humanized_date as humanized_chat_date;
-use crate::domain::models::filename::sanitize_filename;
+use crate::models::chat::humanized_date as humanized_chat_date;
+use crate::models::filename::sanitize_filename;
 
 /// Character model representing a character card in SillyTavern format
 /// Supports both V2 and V3 character card formats

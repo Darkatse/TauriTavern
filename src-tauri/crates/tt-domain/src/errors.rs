@@ -2,7 +2,7 @@ use std::fmt;
 
 use thiserror::Error;
 
-use crate::domain::models::upstream_failure::UpstreamFailure;
+use crate::models::upstream_failure::UpstreamFailure;
 
 pub const GENERATION_CANCELLED_BY_USER_MESSAGE: &str = "Generation cancelled by user";
 

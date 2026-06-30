@@ -58,7 +58,7 @@ root Agent may also call agent.await to wait for selected tasks before continuin
 
 ## 3. 核心模型
 
-当前 domain model 位于 `src-tauri/src/domain/models/agent/mod.rs`：
+当前 domain model 位于 `src-tauri/crates/tt-domain/src/models/agent/mod.rs`：
 
 ```rust
 AgentInvocation {
@@ -269,7 +269,7 @@ src-tauri/src/application/services/agent_tools/dispatcher.rs
 Profile / policy：
 
 ```text
-src-tauri/src/domain/models/agent/profile.rs
+src-tauri/crates/tt-domain/src/models/agent/profile.rs
 src-tauri/src/application/services/agent_profile_service.rs
 src-tauri/src/infrastructure/repositories/file_agent_profile_repository/mod.rs
 ```

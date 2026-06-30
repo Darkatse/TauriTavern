@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::domain::models::filename::{
+use crate::models::filename::{
     MAX_SANITIZED_FILENAME_BYTES, sanitize_filename, truncate_utf8_bytes,
 };
 
@@ -57,7 +57,7 @@ pub fn normalize_chat_file_stem(file_name: &str) -> Option<String> {
 }
 
 /// Truncate an already-sanitized stem prefix while reserving byte space for a suffix.
-pub(crate) fn truncate_chat_file_stem_prefix<'a>(prefix: &'a str, suffix: &str) -> &'a str {
+pub fn truncate_chat_file_stem_prefix<'a>(prefix: &'a str, suffix: &str) -> &'a str {
     let max_prefix_bytes = MAX_CHAT_FILE_STEM_BYTES.saturating_sub(suffix.len());
     truncate_utf8_bytes(prefix, max_prefix_bytes)
 }

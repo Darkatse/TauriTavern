@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
+use crate::errors::DomainError;
+use crate::models::chat_completion_source::ChatCompletionSource;
 
 pub const IOS_POLICY_VERSION: u32 = 1;
 

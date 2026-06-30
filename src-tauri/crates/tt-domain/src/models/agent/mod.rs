@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::domain::errors::DomainError;
+use crate::errors::DomainError;
 
 pub mod plan;
 pub mod profile;
