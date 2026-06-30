@@ -47,6 +47,8 @@ use crate::infrastructure::paths::RuntimePaths;
 
 pub mod backend_errors;
 mod bootstrap;
+#[cfg(test)]
+mod contract_tests;
 pub mod dev_observability;
 
 pub struct AppState {

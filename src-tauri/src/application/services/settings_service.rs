@@ -11,20 +11,38 @@ use crate::application::dto::settings_dto::{
     UpdateAgentSettingsDto, UpdateTauriTavernSettingsDto, UserSettingsDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::domain::errors::DomainError;
 use crate::domain::models::settings::{
-    AgentRunRetentionSettings, AgentSettings, DevLoggingSettings,
+    AgentRunRetentionSettings, AgentSettings, DevLoggingSettings, RequestProxySettings,
 };
 use crate::domain::repositories::settings_repository::SettingsRepository;
 
+pub trait RequestProxyRuntime: Send + Sync {
+    fn validate_request_proxy_settings(
+        &self,
+        settings: &RequestProxySettings,
+    ) -> Result<(), DomainError>;
+
+    fn apply_request_proxy_settings(
+        &self,
+        settings: &RequestProxySettings,
+    ) -> Result<(), DomainError>;
+}
+
 pub struct SettingsService {
     settings_repository: Arc<dyn SettingsRepository>,
+    request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
     pending_user_settings_repair_writeback: Arc<AtomicBool>,
 }
 
 impl SettingsService {
-    pub fn new(settings_repository: Arc<dyn SettingsRepository>) -> Self {
+    pub fn new(
+        settings_repository: Arc<dyn SettingsRepository>,
+        request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
+    ) -> Self {
         Self {
             settings_repository,
+            request_proxy_runtime,
             pending_user_settings_repair_writeback: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -89,6 +107,12 @@ impl SettingsService {
         dto: UpdateTauriTavernSettingsDto,
     ) -> Result<TauriTavernSettingsDto, ApplicationError> {
         tracing::debug!("Updating TauriTavern settings");
+
+        let request_proxy_update = dto.request_proxy.clone().map(RequestProxySettings::from);
+        if let Some(settings) = request_proxy_update.as_ref() {
+            self.request_proxy_runtime
+                .validate_request_proxy_settings(settings)?;
+        }
 
         let mut settings = self.settings_repository.load_tauritavern_settings().await?;
 
@@ -220,6 +244,11 @@ impl SettingsService {
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;
+
+        if request_proxy_update.is_some() {
+            self.request_proxy_runtime
+                .apply_request_proxy_settings(&settings.request_proxy)?;
+        }
 
         Ok(TauriTavernSettingsDto::from(settings))
     }
@@ -406,7 +435,13 @@ fn validate_agent_retention_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dto::settings_dto::UpdateAgentRunRetentionSettingsDto;
+    use crate::application::dto::settings_dto::{
+        RequestProxySettingsDto, UpdateAgentRunRetentionSettingsDto,
+    };
+    use crate::domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
+    use async_trait::async_trait;
+    use std::sync::Mutex as StdMutex;
+    use tokio::sync::Mutex;
 
     #[test]
     fn agent_retention_update_applies_partial_settings() {
@@ -489,5 +524,156 @@ mod tests {
             ApplicationError::ValidationError(message)
                 if message.contains("agent.retention_keep_full_recent_runs_invalid")
         ));
+    }
+
+    #[tokio::test]
+    async fn tauritavern_settings_update_applies_request_proxy_runtime() {
+        let repository = Arc::new(TestSettingsRepository::default());
+        let runtime = Arc::new(TestRequestProxyRuntime::default());
+        let service = SettingsService::new(repository, runtime.clone());
+
+        let updated = service
+            .update_tauritavern_settings(UpdateTauriTavernSettingsDto {
+                request_proxy: Some(RequestProxySettingsDto {
+                    enabled: true,
+                    url: "http://127.0.0.1:8080".to_string(),
+                    bypass: vec!["localhost".to_string()],
+                }),
+                updates: None,
+                perf_profile: None,
+                panel_runtime_profile: None,
+                embedded_runtime_profile: None,
+                chat_history_mode: None,
+                close_to_tray_on_close: None,
+                allow_keys_exposure: None,
+                avatar_persona_original_images_enabled: None,
+                native_regex_backend_enabled: None,
+                dev: None,
+                dynamic_theme: None,
+                models: None,
+                agent: None,
+            })
+            .await
+            .expect("update settings");
+
+        assert!(updated.request_proxy.enabled);
+        assert_eq!(
+            runtime.applied.lock().unwrap().as_slice(),
+            ["http://127.0.0.1:8080"]
+        );
+    }
+
+    #[derive(Default)]
+    struct TestSettingsRepository {
+        settings: Mutex<TauriTavernSettings>,
+    }
+
+    #[async_trait]
+    impl SettingsRepository for TestSettingsRepository {
+        async fn save_tauritavern_settings(
+            &self,
+            settings: &TauriTavernSettings,
+        ) -> Result<(), DomainError> {
+            *self.settings.lock().await = settings.clone();
+            Ok(())
+        }
+
+        async fn load_tauritavern_settings(&self) -> Result<TauriTavernSettings, DomainError> {
+            Ok(self.settings.lock().await.clone())
+        }
+
+        async fn save_user_settings(&self, _settings: &UserSettings) -> Result<(), DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn load_user_settings(&self) -> Result<UserSettings, DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn create_snapshot(&self) -> Result<(), DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_snapshots(&self) -> Result<Vec<SettingsSnapshot>, DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn load_snapshot(&self, _name: &str) -> Result<UserSettings, DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn restore_snapshot(&self, _name: &str) -> Result<(), DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_quick_reply_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_instruct_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_context_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_sysprompt_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_reasoning_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_koboldai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_novelai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_openai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_textgen_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
+            unimplemented!("not used by these tests")
+        }
+
+        async fn get_world_names(&self) -> Result<Vec<String>, DomainError> {
+            unimplemented!("not used by these tests")
+        }
+    }
+
+    #[derive(Default)]
+    struct TestRequestProxyRuntime {
+        applied: StdMutex<Vec<String>>,
+    }
+
+    impl RequestProxyRuntime for TestRequestProxyRuntime {
+        fn validate_request_proxy_settings(
+            &self,
+            _settings: &RequestProxySettings,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn apply_request_proxy_settings(
+            &self,
+            settings: &RequestProxySettings,
+        ) -> Result<(), DomainError> {
+            self.applied.lock().unwrap().push(settings.url.clone());
+            Ok(())
+        }
     }
 }

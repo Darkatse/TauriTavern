@@ -1,19 +1,21 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::json;
-use uuid::Uuid;
 
 use crate::application::services::agent_tools::BuiltinAgentToolRegistry;
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::models::agent::profile::{
     AgentContextPolicy, AgentModelBinding, AgentModelBindingMode, AgentPresetBindingMode,
-    AgentPresetRef, AgentProfileId, ResolvedAgentProfile,
+    AgentPresetRef, AgentProfileDefinition, AgentProfileId, ResolvedAgentProfile,
 };
 use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
+use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
+use crate::domain::repositories::agent_profile_storage_health_repository::{
+    AgentProfileStorageHealthRepository, AgentProfileStorageScan,
+};
 use crate::domain::repositories::preset_repository::PresetRepository;
-use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 
 use super::{AgentProfileService, materialize_agent_system_prompt};
 
@@ -306,9 +308,7 @@ fn direct_runnable_false_requires_subagent_entrypoint() {
 
 #[tokio::test]
 async fn profile_preset_retarget_updates_only_matching_refs() {
-    let root = temp_profile_root("retarget");
     let profile_service = test_profile_service_with_presets(
-        &root,
         TestPresetRepository::with_user_openai("New Writer Preset"),
     );
 
@@ -333,15 +333,11 @@ async fn profile_preset_retarget_updates_only_matching_refs() {
         loaded_preset_name(&profile_service, "critic").await,
         "Other Preset"
     );
-
-    cleanup_profile_root(root).await;
 }
 
 #[tokio::test]
 async fn profile_preset_retarget_accepts_default_target_preset() {
-    let root = temp_profile_root("retarget-default-target");
     let profile_service = test_profile_service_with_presets(
-        &root,
         TestPresetRepository::with_default_openai("Built In Writer Preset"),
     );
     save_profile_with_preset_ref(&profile_service, "writer", "openai", "Old Writer Preset").await;
@@ -358,14 +354,11 @@ async fn profile_preset_retarget_accepts_default_target_preset() {
         loaded_preset_name(&profile_service, "writer").await,
         "Built In Writer Preset"
     );
-
-    cleanup_profile_root(root).await;
 }
 
 #[tokio::test]
 async fn profile_preset_retarget_requires_existing_target_preset() {
-    let root = temp_profile_root("retarget-missing-target");
-    let profile_service = test_profile_service_with_presets(&root, TestPresetRepository::default());
+    let profile_service = test_profile_service_with_presets(TestPresetRepository::default());
     save_profile_with_preset_ref(&profile_service, "writer", "openai", "Old Writer Preset").await;
 
     let error = profile_service
@@ -385,15 +378,11 @@ async fn profile_preset_retarget_requires_existing_target_preset() {
         loaded_preset_name(&profile_service, "writer").await,
         "Old Writer Preset"
     );
-
-    cleanup_profile_root(root).await;
 }
 
 #[tokio::test]
 async fn profile_preset_retarget_ignores_unmatched_malformed_preset_refs() {
-    let root = temp_profile_root("retarget-unmatched-malformed");
     let profile_service = test_profile_service_with_presets(
-        &root,
         TestPresetRepository::with_user_openai("New Writer Preset"),
     );
     save_profile_with_preset_ref(&profile_service, "writer", "openai", "Old Writer Preset").await;
@@ -430,14 +419,11 @@ async fn profile_preset_retarget_ignores_unmatched_malformed_preset_refs() {
         loaded_preset_api_id(&profile_service, "unrelated").await,
         "unsupported-api"
     );
-
-    cleanup_profile_root(root).await;
 }
 
 #[tokio::test]
 async fn profile_preset_retarget_rejects_same_or_cross_api_refs() {
-    let root = temp_profile_root("retarget-invalid-pair");
-    let profile_service = test_profile_service_with_presets(&root, TestPresetRepository::default());
+    let profile_service = test_profile_service_with_presets(TestPresetRepository::default());
 
     let same_error = profile_service
         .retarget_preset_refs(
@@ -464,35 +450,82 @@ async fn profile_preset_retarget_rejects_same_or_cross_api_refs() {
             .to_string()
             .contains("agent.profile_preset_retarget_api_mismatch")
     );
-
-    cleanup_profile_root(root).await;
-}
-
-fn temp_profile_root(label: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "tauritavern-agent-profile-{label}-{}",
-        Uuid::new_v4().simple()
-    ))
-}
-
-async fn cleanup_profile_root(root: std::path::PathBuf) {
-    match tokio::fs::remove_dir_all(root).await {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => panic!("cleanup: {error}"),
-    }
 }
 
 fn test_profile_service_with_presets(
-    root: &std::path::Path,
     preset_repository: TestPresetRepository,
 ) -> Arc<AgentProfileService> {
-    let profile_repository = Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles")));
+    let profile_repository = Arc::new(TestAgentProfileRepository::default());
     Arc::new(AgentProfileService::new(
         profile_repository.clone(),
         profile_repository,
         Arc::new(preset_repository),
     ))
+}
+
+#[derive(Default)]
+struct TestAgentProfileRepository {
+    profiles: Mutex<Vec<AgentProfileDefinition>>,
+}
+
+#[async_trait]
+impl AgentProfileRepository for TestAgentProfileRepository {
+    async fn load_profile(
+        &self,
+        id: &AgentProfileId,
+    ) -> Result<Option<AgentProfileDefinition>, DomainError> {
+        Ok(self
+            .profiles
+            .lock()
+            .expect("profiles lock")
+            .iter()
+            .find(|profile| profile.id == *id)
+            .cloned())
+    }
+
+    async fn save_profile(&self, profile: &AgentProfileDefinition) -> Result<(), DomainError> {
+        let mut profiles = self.profiles.lock().expect("profiles lock");
+        if let Some(existing) = profiles
+            .iter_mut()
+            .find(|existing| existing.id == profile.id)
+        {
+            *existing = profile.clone();
+        } else {
+            profiles.push(profile.clone());
+        }
+        Ok(())
+    }
+
+    async fn delete_profile(&self, id: &AgentProfileId) -> Result<(), DomainError> {
+        self.profiles
+            .lock()
+            .expect("profiles lock")
+            .retain(|profile| profile.id != *id);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl AgentProfileStorageHealthRepository for TestAgentProfileRepository {
+    async fn scan_profiles(&self) -> Result<AgentProfileStorageScan, DomainError> {
+        Ok(AgentProfileStorageScan {
+            profiles: self
+                .profiles
+                .lock()
+                .expect("profiles lock")
+                .iter()
+                .map(AgentProfileDefinition::summary)
+                .collect(),
+            issues: Vec::new(),
+        })
+    }
+
+    async fn normalize_profile_file_identity(
+        &self,
+        _id: &AgentProfileId,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
 }
 
 async fn save_profile_with_preset_ref(

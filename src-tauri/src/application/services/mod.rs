@@ -25,6 +25,7 @@ pub mod data_archive_service;
 pub mod data_change_reconciler;
 pub mod extension_service;
 pub mod extension_store_service;
+pub mod external_import_service;
 pub mod group_chat_service;
 pub mod group_service;
 pub mod host_resource_service;

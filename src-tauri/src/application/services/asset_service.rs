@@ -1,6 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde::Serialize;
+use url::Url;
+
+use crate::application::errors::ApplicationError;
+use crate::application::services::external_import_service::ExternalImportDownloader;
 use crate::domain::errors::DomainError;
 use crate::domain::models::asset::{AssetCatalog, AssetCategory};
 use crate::domain::repositories::asset_repository::AssetRepository;
@@ -87,11 +92,18 @@ const RESERVED_WINDOWS_NAMES: &[&str] = &[
 
 pub struct AssetService {
     repository: Arc<dyn AssetRepository>,
+    external_import_downloader: Arc<dyn ExternalImportDownloader>,
 }
 
 impl AssetService {
-    pub fn new(repository: Arc<dyn AssetRepository>) -> Self {
-        Self { repository }
+    pub fn new(
+        repository: Arc<dyn AssetRepository>,
+        external_import_downloader: Arc<dyn ExternalImportDownloader>,
+    ) -> Self {
+        Self {
+            repository,
+            external_import_downloader,
+        }
     }
 
     pub async fn list_assets(&self) -> Result<AssetCatalog, DomainError> {
@@ -154,6 +166,85 @@ impl AssetService {
         let _ = validate_asset_file_name(filename)?;
         Ok(category)
     }
+
+    pub async fn download_asset(
+        &self,
+        url: &str,
+        category: &str,
+        filename: &str,
+    ) -> Result<AssetDownloadResult, ApplicationError> {
+        let category = self.validate_download_request(category, filename)?;
+        let parsed_url = parse_asset_download_url(url)?;
+        let host = parsed_url
+            .host_str()
+            .ok_or_else(|| {
+                ApplicationError::ValidationError("Asset download URL host is required".to_string())
+            })?
+            .to_ascii_lowercase();
+
+        if !is_import_host_whitelisted(&host) {
+            return Err(ApplicationError::NotFound(format!(
+                "Asset import host is not whitelisted: {}",
+                host
+            )));
+        }
+
+        if category == AssetCategory::Character {
+            let downloaded = self
+                .external_import_downloader
+                .fetch_bytes(parsed_url, None)
+                .await?;
+            let mime_type = mime_guess::from_path(filename)
+                .first_or_octet_stream()
+                .essence_str()
+                .to_string();
+            return Ok(AssetDownloadResult {
+                data: downloaded.bytes,
+                mime_type,
+            });
+        }
+
+        let (category, temp_path) = self.stage_asset_file(category.as_str(), filename).await?;
+
+        if let Err(error) = self
+            .external_import_downloader
+            .fetch_to_file(parsed_url, &temp_path)
+            .await
+        {
+            if let Err(cleanup_error) = self.discard_staged_asset_file(filename).await {
+                return Err(ApplicationError::InternalError(format!(
+                    "{}; additionally failed to remove partial asset download: {}",
+                    error, cleanup_error
+                )));
+            }
+
+            return Err(error);
+        }
+
+        if let Err(error) = self.commit_staged_asset_file(category, filename).await {
+            let error = ApplicationError::from(error);
+            if let Err(cleanup_error) = self.discard_staged_asset_file(filename).await {
+                return Err(ApplicationError::InternalError(format!(
+                    "{}; additionally failed to remove staged asset download: {}",
+                    error, cleanup_error
+                )));
+            }
+
+            return Err(error);
+        }
+
+        Ok(AssetDownloadResult {
+            data: Vec::new(),
+            mime_type: "application/octet-stream".to_string(),
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetDownloadResult {
+    pub data: Vec<u8>,
+    pub mime_type: String,
 }
 
 pub fn validate_asset_category(input: &str) -> Result<AssetCategory, DomainError> {
@@ -216,6 +307,30 @@ fn is_reserved_windows_name(input: &str) -> bool {
         .unwrap_or_default()
         .to_ascii_uppercase();
     RESERVED_WINDOWS_NAMES.contains(&stem.as_str())
+}
+
+fn parse_asset_download_url(raw: &str) -> Result<Url, ApplicationError> {
+    let url = Url::parse(raw.trim()).map_err(|_| {
+        ApplicationError::ValidationError("Asset download URL must be valid".to_string())
+    })?;
+    match url.scheme() {
+        "http" | "https" => Ok(url),
+        _ => Err(ApplicationError::ValidationError(
+            "Unsupported asset download URL protocol".to_string(),
+        )),
+    }
+}
+
+pub(crate) fn is_import_host_whitelisted(host: &str) -> bool {
+    matches!(
+        host,
+        "localhost"
+            | "127.0.0.1"
+            | "::1"
+            | "cdn.discordapp.com"
+            | "files.catbox.moe"
+            | "raw.githubusercontent.com"
+    )
 }
 
 fn validate_character_name(input: &str) -> Result<String, DomainError> {

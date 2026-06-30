@@ -1,23 +1,46 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use sha2::{Digest, Sha256};
+use url::Url;
+
 use crate::application::errors::ApplicationError;
+use crate::application::services::external_import_service::{
+    DownloadByteLimit, ExternalImportDownloader,
+};
 use crate::domain::models::agent::profile::AgentSkillPolicy;
 use crate::domain::models::skill::{
     SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
-    SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult,
-    SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
-    SkillSearchRequest, SkillSearchResult, SkillWriteRequest,
+    SkillInlineFile, SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest,
+    SkillReadResult, SkillScope, SkillScopeFilter, SkillScopeRetargetRequest,
+    SkillScopeRetargetResult, SkillSearchRequest, SkillSearchResult, SkillWriteRequest,
 };
 use crate::domain::repositories::skill_repository::SkillRepository;
 
+const MAX_REMOTE_SKILL_MD_BYTES: usize = 1024 * 1024;
+
 pub struct SkillService {
     repository: Arc<dyn SkillRepository>,
+    external_import_downloader: Arc<dyn ExternalImportDownloader>,
 }
 
 impl SkillService {
+    #[cfg(test)]
     pub fn new(repository: Arc<dyn SkillRepository>) -> Self {
-        Self { repository }
+        Self {
+            repository,
+            external_import_downloader: Arc::new(UnavailableExternalImportDownloader),
+        }
+    }
+
+    pub fn with_external_import_downloader(
+        repository: Arc<dyn SkillRepository>,
+        external_import_downloader: Arc<dyn ExternalImportDownloader>,
+    ) -> Self {
+        Self {
+            repository,
+            external_import_downloader,
+        }
     }
 
     pub async fn list_skills(
@@ -147,6 +170,45 @@ impl SkillService {
             .delete_skills_for_source(source_kind, source_id)
             .await?)
     }
+
+    pub async fn download_import_url(
+        &self,
+        url: &str,
+    ) -> Result<SkillImportInput, ApplicationError> {
+        let parsed_url = normalize_skill_import_url(url)?;
+        let downloaded = self
+            .external_import_downloader
+            .fetch_bytes(
+                parsed_url.clone(),
+                Some(DownloadByteLimit {
+                    label: "Remote SKILL.md",
+                    max_bytes: MAX_REMOTE_SKILL_MD_BYTES,
+                }),
+            )
+            .await?;
+        let bytes = downloaded.bytes;
+        let content = String::from_utf8(bytes.clone()).map_err(|_| {
+            ApplicationError::ValidationError("Remote SKILL.md must be valid UTF-8".to_string())
+        })?;
+        let sha256 = sha256_hex(&bytes);
+        let source_url = sanitized_source_url(parsed_url);
+
+        Ok(SkillImportInput::InlineFiles {
+            files: vec![SkillInlineFile {
+                path: "SKILL.md".to_string(),
+                encoding: "utf8".to_string(),
+                content,
+                media_type: Some("text/markdown".to_string()),
+                size_bytes: Some(bytes.len() as u64),
+                sha256: Some(sha256),
+            }],
+            source: serde_json::json!({
+                "kind": "url",
+                "id": source_url,
+                "label": source_url,
+            }),
+        })
+    }
 }
 
 fn skill_is_visible(policy: &AgentSkillPolicy, name: &str) -> bool {
@@ -163,14 +225,87 @@ fn skill_is_visible(policy: &AgentSkillPolicy, name: &str) -> bool {
         .any(|visible| visible == "*" || visible == name)
 }
 
+pub(crate) fn normalize_skill_import_url(raw: &str) -> Result<Url, ApplicationError> {
+    let url = Url::parse(raw.trim()).map_err(|_| {
+        ApplicationError::ValidationError("Skill import URL must be valid".to_string())
+    })?;
+    if url.scheme() != "https" {
+        return Err(ApplicationError::ValidationError(
+            "Skill import URL must use https".to_string(),
+        ));
+    }
+    if url.host_str().is_none() {
+        return Err(ApplicationError::ValidationError(
+            "Skill import URL host is required".to_string(),
+        ));
+    }
+    let file_name = url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .unwrap_or_default();
+    if file_name != "SKILL.md" {
+        return Err(ApplicationError::ValidationError(
+            "Skill import URL must point to a raw SKILL.md file".to_string(),
+        ));
+    }
+    Ok(url)
+}
+
+pub(crate) fn sanitized_source_url(mut url: Url) -> String {
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url.to_string()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+struct UnavailableExternalImportDownloader;
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl ExternalImportDownloader for UnavailableExternalImportDownloader {
+    async fn fetch_bytes(
+        &self,
+        _url: Url,
+        _limit: Option<DownloadByteLimit>,
+    ) -> Result<
+        crate::application::services::external_import_service::DownloadedBytes,
+        ApplicationError,
+    > {
+        Err(ApplicationError::InternalError(
+            "Skill remote import downloader is not configured".to_string(),
+        ))
+    }
+
+    async fn fetch_to_file(
+        &self,
+        _url: Url,
+        _path: &std::path::Path,
+    ) -> Result<(), ApplicationError> {
+        Err(ApplicationError::InternalError(
+            "Skill remote import downloader is not configured".to_string(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::sync::Arc;
+    use std::sync::Mutex as StdMutex;
 
     use async_trait::async_trait;
     use chrono::Utc;
 
     use super::*;
+    use crate::application::services::external_import_service::DownloadedBytes;
     use crate::domain::errors::DomainError;
     use crate::domain::models::agent::profile::AgentSkillPolicy;
     use crate::domain::models::skill::{
@@ -275,6 +410,66 @@ mod tests {
             _source_id: &str,
         ) -> Result<Vec<String>, DomainError> {
             unreachable!("not needed for resolver tests")
+        }
+    }
+
+    #[tokio::test]
+    async fn download_import_url_fetches_skill_md_with_limit_and_sanitized_source() {
+        let downloader = Arc::new(FakeExternalImportDownloader {
+            bytes: b"# Skill\n\nDo useful work.".to_vec(),
+            limit: StdMutex::new(None),
+        });
+        let service = SkillService::with_external_import_downloader(
+            Arc::new(FakeSkillRepository { skills: Vec::new() }),
+            downloader.clone(),
+        );
+
+        let input = service
+            .download_import_url("https://user:secret@example.com/path/SKILL.md?token=1#frag")
+            .await
+            .expect("download skill");
+
+        let limit = downloader
+            .limit
+            .lock()
+            .unwrap()
+            .expect("download byte limit");
+        assert_eq!(limit.label, "Remote SKILL.md");
+        assert_eq!(limit.max_bytes, 1024 * 1024);
+        let SkillImportInput::InlineFiles { files, source } = input else {
+            panic!("expected inline skill import");
+        };
+        assert_eq!(files[0].path, "SKILL.md");
+        assert_eq!(files[0].content, "# Skill\n\nDo useful work.");
+        assert_eq!(
+            files[0].size_bytes,
+            Some(b"# Skill\n\nDo useful work.".len() as u64)
+        );
+        assert_eq!(source["id"], "https://example.com/path/SKILL.md");
+    }
+
+    struct FakeExternalImportDownloader {
+        bytes: Vec<u8>,
+        limit: StdMutex<Option<DownloadByteLimit>>,
+    }
+
+    #[async_trait]
+    impl ExternalImportDownloader for FakeExternalImportDownloader {
+        async fn fetch_bytes(
+            &self,
+            _url: Url,
+            limit: Option<DownloadByteLimit>,
+        ) -> Result<DownloadedBytes, ApplicationError> {
+            *self.limit.lock().unwrap() = limit;
+            Ok(DownloadedBytes {
+                bytes: self.bytes.clone(),
+                content_type: Some("text/markdown".to_string()),
+                content_disposition: None,
+            })
+        }
+
+        async fn fetch_to_file(&self, _url: Url, _path: &Path) -> Result<(), ApplicationError> {
+            unimplemented!("not used by these tests")
         }
     }
 

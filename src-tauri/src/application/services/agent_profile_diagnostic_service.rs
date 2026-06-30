@@ -342,33 +342,31 @@ fn blocks(diagnostics: &[AgentProfileDiagnostic], block: AgentProfileDiagnosticB
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
-    use std::path::Path;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
     use serde_json::json;
-    use uuid::Uuid;
 
     use super::*;
     use crate::application::services::agent_tools::BuiltinAgentToolRegistry;
     use crate::domain::errors::DomainError;
     use crate::domain::models::agent::profile::{
-        AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef,
+        AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef, AgentProfileDefinition,
+        AgentProfileId,
     };
     use crate::domain::models::llm_connection::{
         LlmConnectionDefinition, LlmConnectionId, LlmConnectionSummary,
     };
     use crate::domain::models::preset::{DefaultPreset, Preset};
     use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
-    use crate::domain::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
+    use crate::domain::repositories::agent_profile_storage_health_repository::{
+        AgentProfileStorageHealthRepository, AgentProfileStorageScan,
+    };
     use crate::domain::repositories::llm_connection_repository::LlmConnectionRepository;
-    use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 
     #[tokio::test]
     async fn default_profile_is_healthy() {
-        let root = temp_root("healthy-default");
         let (profile_service, diagnostic_service, registry) = test_services(
-            &root,
             TestPresetRepository::default(),
             TestLlmConnectionRepository::default(),
         );
@@ -383,15 +381,12 @@ mod tests {
         assert!(health.direct_run_available);
         assert!(health.diagnostics.is_empty());
 
-        cleanup(root).await;
         drop(profile_service);
     }
 
     #[tokio::test]
     async fn dangling_openai_preset_is_diagnostic_not_preview_failure() {
-        let root = temp_root("dangling-preset");
         let (profile_service, diagnostic_service, registry) = test_services(
-            &root,
             TestPresetRepository::default(),
             TestLlmConnectionRepository::default(),
         );
@@ -434,15 +429,11 @@ mod tests {
                 .repair_actions
                 .contains(&AgentProfileDiagnosticRepairAction::SelectPreset)
         );
-
-        cleanup(root).await;
     }
 
     #[tokio::test]
     async fn non_openai_preset_ref_is_diagnostic_for_independent_prompt_assembly() {
-        let root = temp_root("unsupported-preset-api");
         let (profile_service, diagnostic_service, registry) = test_services(
-            &root,
             TestPresetRepository::default(),
             TestLlmConnectionRepository::default(),
         );
@@ -480,15 +471,11 @@ mod tests {
                 .and_then(|resource| resource.api_id.as_deref()),
             Some("textgenerationwebui")
         );
-
-        cleanup(root).await;
     }
 
     #[tokio::test]
     async fn requires_configuration_is_diagnostic_and_blocks_run() {
-        let root = temp_root("requires-configuration");
         let (profile_service, diagnostic_service, registry) = test_services(
-            &root,
             TestPresetRepository::default(),
             TestLlmConnectionRepository::default(),
         );
@@ -526,15 +513,11 @@ mod tests {
                 .repair_actions
                 .contains(&AgentProfileDiagnosticRepairAction::SelectModel)
         );
-
-        cleanup(root).await;
     }
 
     #[tokio::test]
     async fn missing_connection_blocks_run_without_blocking_current_snapshot_prompt_assembly() {
-        let root = temp_root("missing-connection");
         let (profile_service, diagnostic_service, registry) = test_services(
-            &root,
             TestPresetRepository::default(),
             TestLlmConnectionRepository::default(),
         );
@@ -574,12 +557,9 @@ mod tests {
                 .blocks
                 .contains(&AgentProfileDiagnosticBlock::DirectRun)
         );
-
-        cleanup(root).await;
     }
 
     fn test_services(
-        root: &Path,
         preset_repository: TestPresetRepository,
         llm_connection_repository: TestLlmConnectionRepository,
     ) -> (
@@ -587,8 +567,7 @@ mod tests {
         AgentProfileDiagnosticService,
         BuiltinAgentToolRegistry,
     ) {
-        let profile_repository =
-            Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles")));
+        let profile_repository = Arc::new(TestAgentProfileRepository::default());
         let profile_repository_trait: Arc<dyn AgentProfileRepository> = profile_repository.clone();
         let profile_health_repository: Arc<dyn AgentProfileStorageHealthRepository> =
             profile_repository;
@@ -618,18 +597,68 @@ mod tests {
         &health.diagnostics[0]
     }
 
-    fn temp_root(label: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "tauritavern-agent-profile-diagnostic-{label}-{}",
-            Uuid::new_v4().simple()
-        ))
+    #[derive(Default)]
+    struct TestAgentProfileRepository {
+        profiles: Mutex<Vec<AgentProfileDefinition>>,
     }
 
-    async fn cleanup(root: std::path::PathBuf) {
-        match tokio::fs::remove_dir_all(root).await {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => panic!("cleanup: {error}"),
+    #[async_trait]
+    impl AgentProfileRepository for TestAgentProfileRepository {
+        async fn load_profile(
+            &self,
+            id: &AgentProfileId,
+        ) -> Result<Option<AgentProfileDefinition>, DomainError> {
+            Ok(self
+                .profiles
+                .lock()
+                .expect("profiles lock")
+                .iter()
+                .find(|profile| profile.id == *id)
+                .cloned())
+        }
+
+        async fn save_profile(&self, profile: &AgentProfileDefinition) -> Result<(), DomainError> {
+            let mut profiles = self.profiles.lock().expect("profiles lock");
+            if let Some(existing) = profiles
+                .iter_mut()
+                .find(|existing| existing.id == profile.id)
+            {
+                *existing = profile.clone();
+            } else {
+                profiles.push(profile.clone());
+            }
+            Ok(())
+        }
+
+        async fn delete_profile(&self, id: &AgentProfileId) -> Result<(), DomainError> {
+            self.profiles
+                .lock()
+                .expect("profiles lock")
+                .retain(|profile| profile.id != *id);
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl AgentProfileStorageHealthRepository for TestAgentProfileRepository {
+        async fn scan_profiles(&self) -> Result<AgentProfileStorageScan, DomainError> {
+            Ok(AgentProfileStorageScan {
+                profiles: self
+                    .profiles
+                    .lock()
+                    .expect("profiles lock")
+                    .iter()
+                    .map(AgentProfileDefinition::summary)
+                    .collect(),
+                issues: Vec::new(),
+            })
+        }
+
+        async fn normalize_profile_file_identity(
+            &self,
+            _id: &AgentProfileId,
+        ) -> Result<(), DomainError> {
+            Ok(())
         }
     }
 

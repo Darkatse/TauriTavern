@@ -6,6 +6,7 @@ use std::time::Duration;
 use reqwest::redirect::Policy;
 use reqwest::{Client, NoProxy, Proxy};
 
+use crate::application::services::settings_service::RequestProxyRuntime;
 use crate::domain::errors::DomainError;
 use crate::domain::models::settings::RequestProxySettings;
 use crate::infrastructure::http_client::build_http_client;
@@ -114,6 +115,22 @@ impl HttpClientPool {
                 }
             }
         }
+    }
+}
+
+impl RequestProxyRuntime for HttpClientPool {
+    fn validate_request_proxy_settings(
+        &self,
+        settings: &RequestProxySettings,
+    ) -> Result<(), DomainError> {
+        Self::validate_request_proxy_settings(settings)
+    }
+
+    fn apply_request_proxy_settings(
+        &self,
+        settings: &RequestProxySettings,
+    ) -> Result<(), DomainError> {
+        HttpClientPool::apply_request_proxy_settings(self, settings)
     }
 }
 

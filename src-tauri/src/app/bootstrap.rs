@@ -29,6 +29,7 @@ use crate::application::services::data_archive_service::{
 use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::extension_store_service::ExtensionStoreService;
+use crate::application::services::external_import_service::ExternalImportDownloader;
 use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::image_metadata_service::ImageMetadataService;
@@ -43,7 +44,7 @@ use crate::application::services::prompt_assembly_service::PromptAssemblyService
 use crate::application::services::provider_metadata_service::ProviderMetadataService;
 use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
-use crate::application::services::settings_service::SettingsService;
+use crate::application::services::settings_service::{RequestProxyRuntime, SettingsService};
 use crate::application::services::skill_service::SkillService;
 use crate::application::services::stable_diffusion_service::StableDiffusionService;
 use crate::application::services::sync_automation_service::{
@@ -106,6 +107,7 @@ use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
 use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
+use crate::infrastructure::apis::http_external_import_downloader::HttpExternalImportDownloader;
 use crate::infrastructure::apis::http_provider_metadata_repository::HttpProviderMetadataRepository;
 use crate::infrastructure::apis::http_stable_diffusion_repository::HttpStableDiffusionRepository;
 use crate::infrastructure::apis::http_translate_repository::HttpTranslateRepository;
@@ -497,8 +499,19 @@ pub(super) async fn build_services(
         )?
     };
 
-    let content_service = Arc::new(ContentService::new(repositories.content_repository.clone()));
-    let asset_service = Arc::new(AssetService::new(repositories.asset_repository.clone()));
+    let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
+    let external_import_downloader: Arc<dyn ExternalImportDownloader> =
+        Arc::new(HttpExternalImportDownloader::new(http_client_pool.clone()));
+    let request_proxy_runtime: Arc<dyn RequestProxyRuntime> = http_client_pool;
+
+    let content_service = Arc::new(ContentService::new(
+        repositories.content_repository.clone(),
+        external_import_downloader.clone(),
+    ));
+    let asset_service = Arc::new(AssetService::new(
+        repositories.asset_repository.clone(),
+        external_import_downloader.clone(),
+    ));
     let extension_service = Arc::new(ExtensionService::new(
         repositories.extension_repository.clone(),
     ));
@@ -518,7 +531,10 @@ pub(super) async fn build_services(
     let quick_reply_service = Arc::new(QuickReplyService::new(
         repositories.quick_reply_repository.clone(),
     ));
-    let skill_service = Arc::new(SkillService::new(repositories.skill_repository.clone()));
+    let skill_service = Arc::new(SkillService::with_external_import_downloader(
+        repositories.skill_repository.clone(),
+        external_import_downloader,
+    ));
     let llm_connection_service = Arc::new(LlmConnectionService::new(
         repositories.llm_connection_repository.clone(),
     ));
@@ -622,7 +638,10 @@ pub(super) async fn build_services(
         tauritavern_settings.allow_keys_exposure,
     ));
     let user_service = Arc::new(UserService::new(repositories.user_repository));
-    let settings_service = Arc::new(SettingsService::new(repositories.settings_repository));
+    let settings_service = Arc::new(SettingsService::new(
+        repositories.settings_repository,
+        request_proxy_runtime,
+    ));
     let user_directory_service = Arc::new(UserDirectoryService::new(
         repositories.user_directory_repository,
     ));

@@ -2,25 +2,20 @@ use std::sync::Arc;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use futures_util::TryStreamExt;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use tauri::State;
 
 use crate::app::AppState;
 use crate::domain::models::skill::{
     DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS, SkillFileRef, SkillImportInput, SkillImportPreview,
-    SkillIndexEntry, SkillInlineFile, SkillInstallRequest, SkillInstallResult, SkillMoveRequest,
-    SkillReadRequest, SkillReadResult, SkillScope, SkillScopeFilter, SkillScopeRetargetRequest,
+    SkillIndexEntry, SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest,
+    SkillReadResult, SkillScope, SkillScopeFilter, SkillScopeRetargetRequest,
     SkillScopeRetargetResult, SkillWriteRequest,
 };
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
-
-const MAX_REMOTE_SKILL_MD_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,7 +29,6 @@ pub struct SkillExportPayload {
 pub async fn download_skill_import_url(
     url: String,
     app_state: State<'_, Arc<AppState>>,
-    http_clients: State<'_, Arc<HttpClientPool>>,
 ) -> Result<SkillImportInput, CommandError> {
     log_command("download_skill_import_url");
 
@@ -44,53 +38,13 @@ pub async fn download_skill_import_url(
         "content.external_import",
     )?;
 
-    let parsed_url = normalize_skill_import_url(&url)?;
-    let client = http_clients
-        .client(HttpClientProfile::Download)
-        .map_err(|error| CommandError::InternalServerError(error.to_string()))?;
-    let response = client
-        .get(parsed_url.clone())
-        .send()
+    app_state
+        .skill_service
+        .download_import_url(&url)
         .await
-        .map_err(|error| CommandError::InternalServerError(error.to_string()))?;
-
-    if !response.status().is_success() {
-        return Err(CommandError::InternalServerError(format!(
-            "Skill download upstream responded with HTTP {}",
-            response.status()
-        )));
-    }
-
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_REMOTE_SKILL_MD_BYTES as u64)
-    {
-        return Err(CommandError::BadRequest(format!(
-            "Remote SKILL.md must be <= {MAX_REMOTE_SKILL_MD_BYTES} bytes"
-        )));
-    }
-
-    let bytes = read_remote_skill_bytes(response).await?;
-    let content = String::from_utf8(bytes.clone())
-        .map_err(|_| CommandError::BadRequest("Remote SKILL.md must be valid UTF-8".to_string()))?;
-    let sha256 = sha256_hex(&bytes);
-    let source_url = sanitized_source_url(parsed_url);
-
-    Ok(SkillImportInput::InlineFiles {
-        files: vec![SkillInlineFile {
-            path: "SKILL.md".to_string(),
-            encoding: "utf8".to_string(),
-            content,
-            media_type: Some("text/markdown".to_string()),
-            size_bytes: Some(bytes.len() as u64),
-            sha256: Some(sha256),
-        }],
-        source: serde_json::json!({
-            "kind": "url",
-            "id": source_url,
-            "label": source_url,
-        }),
-    })
+        .map_err(map_command_error(
+            "Failed to download Agent Skill import URL",
+        ))
 }
 
 #[tauri::command]
@@ -286,65 +240,15 @@ pub async fn retarget_skill_scope(
         .map_err(map_command_error("Failed to retarget Agent Skill scope"))
 }
 
-fn normalize_skill_import_url(raw: &str) -> Result<reqwest::Url, CommandError> {
-    let url = reqwest::Url::parse(raw.trim())
-        .map_err(|_| CommandError::BadRequest("Skill import URL must be valid".to_string()))?;
-    if url.scheme() != "https" {
-        return Err(CommandError::BadRequest(
-            "Skill import URL must use https".to_string(),
-        ));
-    }
-    if url.host_str().is_none() {
-        return Err(CommandError::BadRequest(
-            "Skill import URL host is required".to_string(),
-        ));
-    }
-    let file_name = url
-        .path_segments()
-        .and_then(|mut segments| segments.next_back())
-        .unwrap_or_default();
-    if file_name != "SKILL.md" {
-        return Err(CommandError::BadRequest(
-            "Skill import URL must point to a raw SKILL.md file".to_string(),
-        ));
-    }
-    Ok(url)
+#[cfg(test)]
+fn normalize_skill_import_url(raw: &str) -> Result<url::Url, CommandError> {
+    crate::application::services::skill_service::normalize_skill_import_url(raw)
+        .map_err(CommandError::from)
 }
 
-async fn read_remote_skill_bytes(response: reqwest::Response) -> Result<Vec<u8>, CommandError> {
-    let mut bytes = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream
-        .try_next()
-        .await
-        .map_err(|error| CommandError::InternalServerError(error.to_string()))?
-    {
-        let next_len = bytes
-            .len()
-            .checked_add(chunk.len())
-            .ok_or_else(|| CommandError::BadRequest("Remote SKILL.md is too large".to_string()))?;
-        if next_len > MAX_REMOTE_SKILL_MD_BYTES {
-            return Err(CommandError::BadRequest(format!(
-                "Remote SKILL.md must be <= {MAX_REMOTE_SKILL_MD_BYTES} bytes"
-            )));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
-}
-
-fn sanitized_source_url(mut url: reqwest::Url) -> String {
-    let _ = url.set_username("");
-    let _ = url.set_password(None);
-    url.set_query(None);
-    url.set_fragment(None);
-    url.to_string()
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+#[cfg(test)]
+fn sanitized_source_url(url: url::Url) -> String {
+    crate::application::services::skill_service::sanitized_source_url(url)
 }
 
 #[cfg(test)]

@@ -128,7 +128,7 @@ impl AgentRuntimeService {
     }
 
     #[cfg(test)]
-    pub(super) async fn execute_agent_loop_run_inner(
+    pub(crate) async fn execute_agent_loop_run_inner(
         &self,
         run_id: &str,
         prompt_snapshot: Value,
@@ -166,7 +166,7 @@ impl AgentRuntimeService {
     fn close_model_session_after_run(&self, run_id: String) {
         let model_gateway = Arc::clone(&self.model_gateway);
         let invocation_repository = Arc::clone(&self.invocation_repository);
-        tauri::async_runtime::spawn(async move {
+        tokio::spawn(async move {
             let session_ids = match invocation_repository.list_invocations(&run_id).await {
                 Ok(invocations) if !invocations.is_empty() => invocations
                     .iter()

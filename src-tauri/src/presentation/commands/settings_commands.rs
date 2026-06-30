@@ -9,8 +9,6 @@ use crate::application::dto::settings_dto::{
     UpdateTauriTavernSettingsDto, UserSettingsDto,
 };
 use crate::application::services::host_resource_service::HostResourceService;
-use crate::domain::models::settings::RequestProxySettings;
-use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
@@ -34,7 +32,6 @@ pub async fn get_tauritavern_settings(
 pub async fn update_tauritavern_settings(
     dto: UpdateTauriTavernSettingsDto,
     app_state: State<'_, Arc<AppState>>,
-    http_clients: State<'_, Arc<HttpClientPool>>,
     observability: State<'_, Arc<DevObservabilityHub>>,
     host_resources: State<'_, Arc<HostResourceService>>,
     tray_state: State<'_, Arc<crate::presentation::windows_tray::WindowsTrayState>>,
@@ -42,19 +39,16 @@ pub async fn update_tauritavern_settings(
     log_command("update_tauritavern_settings");
 
     let agent_retention_settings_updated = has_agent_retention_settings_update(&dto);
-    let request_proxy_settings: Option<RequestProxySettings> =
-        dto.request_proxy.clone().map(Into::into);
-    if let Some(settings) = request_proxy_settings.as_ref() {
-        if settings.enabled {
-            ensure_ios_policy_allows(
-                &app_state.ios_policy,
-                app_state.ios_policy.capabilities.network.request_proxy,
-                "network.request_proxy",
-            )?;
-        }
-
-        HttpClientPool::validate_request_proxy_settings(settings)
-            .map_err(map_command_error("Invalid request proxy settings"))?;
+    if dto
+        .request_proxy
+        .as_ref()
+        .is_some_and(|settings| settings.enabled)
+    {
+        ensure_ios_policy_allows(
+            &app_state.ios_policy,
+            app_state.ios_policy.capabilities.network.request_proxy,
+            "network.request_proxy",
+        )?;
     }
 
     let settings = app_state
@@ -67,12 +61,6 @@ pub async fn update_tauritavern_settings(
     host_resources.set_avatar_persona_original_images_enabled(
         settings.avatar_persona_original_images_enabled,
     );
-
-    if request_proxy_settings.is_some() {
-        http_clients
-            .apply_request_proxy_settings(&settings.request_proxy.clone().into())
-            .map_err(map_command_error("Failed to apply request proxy settings"))?;
-    }
 
     observability.apply_llm_api_log_retention(settings.dev.llm_api_keep);
 
@@ -90,26 +78,22 @@ pub async fn update_tauritavern_settings(
 pub async fn update_tauritavern_settings(
     dto: UpdateTauriTavernSettingsDto,
     app_state: State<'_, Arc<AppState>>,
-    http_clients: State<'_, Arc<HttpClientPool>>,
     observability: State<'_, Arc<DevObservabilityHub>>,
     host_resources: State<'_, Arc<HostResourceService>>,
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
 
     let agent_retention_settings_updated = has_agent_retention_settings_update(&dto);
-    let request_proxy_settings: Option<RequestProxySettings> =
-        dto.request_proxy.clone().map(Into::into);
-    if let Some(settings) = request_proxy_settings.as_ref() {
-        if settings.enabled {
-            ensure_ios_policy_allows(
-                &app_state.ios_policy,
-                app_state.ios_policy.capabilities.network.request_proxy,
-                "network.request_proxy",
-            )?;
-        }
-
-        HttpClientPool::validate_request_proxy_settings(settings)
-            .map_err(map_command_error("Invalid request proxy settings"))?;
+    if dto
+        .request_proxy
+        .as_ref()
+        .is_some_and(|settings| settings.enabled)
+    {
+        ensure_ios_policy_allows(
+            &app_state.ios_policy,
+            app_state.ios_policy.capabilities.network.request_proxy,
+            "network.request_proxy",
+        )?;
     }
 
     let settings = app_state
@@ -121,12 +105,6 @@ pub async fn update_tauritavern_settings(
     host_resources.set_avatar_persona_original_images_enabled(
         settings.avatar_persona_original_images_enabled,
     );
-
-    if request_proxy_settings.is_some() {
-        http_clients
-            .apply_request_proxy_settings(&settings.request_proxy.clone().into())
-            .map_err(map_command_error("Failed to apply request proxy settings"))?;
-    }
 
     observability.apply_llm_api_log_retention(settings.dev.llm_api_keep);
 

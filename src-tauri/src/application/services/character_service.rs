@@ -268,12 +268,16 @@ impl CharacterService {
             character.fav = character.data.extensions.fav;
         }
 
-        let updated_value = serde_json::to_value(&character.to_v2()).map_err(|error| {
+        let mut updated_value = serde_json::to_value(&character.to_v2()).map_err(|error| {
             ApplicationError::InternalError(format!(
                 "Failed to serialize updated character payload: {}",
                 error
             ))
         })?;
+        if let Some(updated_object) = updated_value.as_object_mut() {
+            updated_object.remove("spec");
+            updated_object.remove("spec_version");
+        }
         merge_json_value(&mut card_value, updated_value);
 
         let updated = self
@@ -704,7 +708,7 @@ impl CharacterService {
             card_value,
             None,
             None,
-            CharacterCardValidationMode::Strict,
+            CharacterCardValidationMode::ReadableOnly,
             CharacterCardLorebookMaterializationMode::Skip,
         )
         .await?;
