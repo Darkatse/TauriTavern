@@ -50,6 +50,7 @@ mod bootstrap;
 #[cfg(test)]
 mod contract_tests;
 pub mod dev_observability;
+pub(crate) mod host;
 mod startup_profile;
 
 pub(crate) use startup_profile::StartupProfile;

@@ -50,9 +50,11 @@ TauriTavern的后端采用Clean Architecture架构，将代码组织为多个层
 src-tauri/
 ├── src/
 │   ├── main.rs                # 应用入口点
-│   ├── lib.rs                 # 库入口点
+│   ├── lib.rs                 # 库入口点（薄入口）
 │   ├── app.rs                 # 应用状态与运行时启动编排
 │   ├── app/
+│   │   ├── host/              # Tauri host shell（插件、setup、窗口、资源、shutdown）
+│   │   ├── startup_profile.rs # 启动期 settings / iOS policy 快照
 │   │   └── bootstrap.rs       # 仓库/服务装配（依赖构建）
 │   ├── domain/                # 领域层
 │   │   ├── models/            # 领域模型
