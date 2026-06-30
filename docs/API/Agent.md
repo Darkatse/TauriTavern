@@ -681,9 +681,9 @@ Chat commit 不是公开 Host API 方法，而是 Agent tool 与 host bridge 的
 - 模型调用 `workspace.commit`，无参数时默认 `replace output/main.md`。
 - Rust runtime 读取 workspace 文件、校验 required message body、创建 checkpoint，并写 `chat_commit_requested` event。
 - 前端 host bridge 校验当前 active chat 与 run 的 `chatRef/stableChatId` 一致。
-- bridge 通过上游 `saveReply()` 写入聊天，再调用 `resolve_agent_chat_commit`。
+- bridge 先应用上游生成输出保存前后处理，再通过上游 `saveReply()` 写入聊天，最后调用 `resolve_agent_chat_commit`。
 - `chat_commit_requested` 不携带 `persistStateId`；该字段只能在 `workspace.finish` 成功提交 persistent state 后，由 `persistent_state_metadata_update_requested` / `resolve_agent_persistent_state_metadata_update` 写回同一条 chat message。
-- `replace` 后续使用 `appendFinal` 覆盖同一消息；`append` 后续使用 `append` 追加同一消息。
+- 首次 commit 按 generation type 创建或改写目标楼层；后续 commit 使用 `appendFinal` 写入完整 postprocessed 目标文本。`append` mode 会把本次读取到的文件文本作为 raw 追加贡献累计后再整体处理，避免片段级 regex。
 - `append` 在本 run 尚无 commit 时不会报错，会创建本 run 的消息楼层。
 - 前台 run 在 `workspace.finish` 前必须至少成功 commit 一次；后台 run 可无 chat commit 完成。
 
@@ -794,7 +794,7 @@ Agent Mode on：
 | `workspace.read_file` | `workspace_read_file` | 读取 UTF-8 文本文件并返回行号；支持行范围和字符范围；完整读取记录 read-state |
 | `workspace.write_file` | `workspace_write_file` | 写 UTF-8 文本到 manifest 可写 roots；`mode` 默认为 `replace`，`append` 原样追加并在缺失时创建文件 |
 | `workspace.apply_patch` | `workspace_apply_patch` | 单文件 `old_string` / `new_string` 精确替换，要求已完整读取或由本 run 创建/修改 |
-| `workspace.commit` | `workspace_commit` | 提交可见 workspace 文件到当前聊天；无参数默认 replace `output/main.md`；append 首次创建、后续追加同一消息 |
+| `workspace.commit` | `workspace_commit` | 提交可见 workspace 文件到当前聊天；无参数默认 replace `output/main.md`；append 将本次读取到的文件文本追加到同一消息 |
 | `workspace.finish` | `workspace_finish` | 结束工具循环；前台 run 要求已有成功 commit，后台 run 可直接结束 |
 
 当前不存在 MCP、shell 或 extension bridge 工具。

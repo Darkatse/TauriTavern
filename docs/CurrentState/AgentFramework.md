@@ -252,7 +252,8 @@ Chat commit 当前由模型显式调用 `workspace.commit` 触发，并由前端
 workspace.commit(path?, mode?)
   -> backend 读取 workspace file / checkpoint
   -> chat_commit_requested event
-  -> 前端 saveReply(normal | append | appendFinal)
+  -> 前端应用 Legacy generated-output postprocess
+  -> 前端 saveReply() 写同一消息楼层
   -> resolve_agent_chat_commit
   -> workspace.finish 成功提交 persist projection 后
   -> persistent_state_metadata_update_requested event
@@ -260,7 +261,7 @@ workspace.commit(path?, mode?)
   -> resolve_agent_persistent_state_metadata_update
 ```
 
-`mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。Commit 必须遵守 SillyTavern/windowed payload 保存契约，不能直接写 chat JSONL。`persistStateId` 只能表示已经落盘的 durable persistent state；`chat_commit_requested` 不携带该字段，partial success 保留的聊天输出不会成为下一轮可复用 persist base。下一轮 run 的 `persistBaseStateId` 由 Rust runtime 从同一个输入历史前缀内解析，前端不再负责扫描聊天历史来决定 base state。
+`mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。`append` 追加的是本次 commit 读取到的文件文本，不计算 workspace file diff；host bridge 会对累计后的 raw 目标文本做一次 Legacy output postprocess。Commit 必须遵守 SillyTavern/windowed payload 保存契约，不能直接写 chat JSONL。`persistStateId` 只能表示已经落盘的 durable persistent state；`chat_commit_requested` 不携带该字段，partial success 保留的聊天输出不会成为下一轮可复用 persist base。下一轮 run 的 `persistBaseStateId` 由 Rust runtime 从同一个输入历史前缀内解析，前端不再负责扫描聊天历史来决定 base state。
 
 聊天删除现在会联动清理对应的 Agent chat workspace：
 

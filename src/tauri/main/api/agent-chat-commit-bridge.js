@@ -5,7 +5,7 @@ import { resolveStableChatId } from './agent-chat-identity.js';
 const activeCommitBridges = new Map();
 const TERMINAL_EVENTS = new Set(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 
-export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, subscribe }) {
+export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, subscribe, loadScript = loadMainScript, persistChat = persistActiveChat }) {
     const normalizedRunId = requireRunId(runId);
     if (activeCommitBridges.has(normalizedRunId)) {
         return activeCommitBridges.get(normalizedRunId);
@@ -21,9 +21,15 @@ export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, s
         // types). See agent-run-message-rollback.js for the consumer.
         createdMessage: null,
         firstSwipeId: null,
+        // Keep the raw chat target for this run. `append` adds the selected
+        // file text as the next raw contribution, then cleanup runs on the
+        // whole target so storage-time regex can match across commit chunks.
+        rawCommittedText: '',
         commitSeq: 0,
         resolvedCommitIds: new Set(),
         resolvedPersistentStateUpdateIds: new Set(),
+        loadScript,
+        persistChat,
         stop: null,
     };
     const stop = subscribe(normalizedRunId, (event) => {
@@ -95,10 +101,19 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
         const path = requirePayloadString(payload, 'path');
         const mode = normalizeCommitMode(payload.mode);
         const file = await readWorkspaceFile({ runId: state.runId, path });
-        const script = await import('../../../script.js');
+        const script = await state.loadScript();
         if (typeof script.saveReply !== 'function') {
             throw new Error('saveReply is not available');
         }
+        if (typeof script.cleanUpMessage !== 'function') {
+            throw new Error('cleanUpMessage is not available');
+        }
+
+        const rawCommitText = String(file?.text ?? '');
+        const rawCommittedText = mode === 'append'
+            ? state.rawCommittedText + rawCommitText
+            : rawCommitText;
+        const getMessage = prepareGeneratedReplyForSave(script, rawCommittedText, payload.generationType);
 
         const isFirstCommit = state.messageId == null;
         let messageId;
@@ -106,7 +121,7 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
             const lengthBefore = script.chat.length;
             await script.saveReply({
                 type: initialCommitSaveType(payload.generationType, mode),
-                getMessage: String(file?.text ?? ''),
+                getMessage,
             });
             messageId = getActiveMessageId(script.chat);
             state.messageId = messageId;
@@ -120,18 +135,21 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
         } else {
             messageId = Number(state.messageId);
             assertActiveAgentMessage(script.chat, messageId, state.runId);
+            // `getMessage` is the complete cleaned target, not an append
+            // fragment. Use appendFinal to rewrite this run's chat message.
             await script.saveReply({
-                type: mode === 'append' ? 'append' : 'appendFinal',
-                getMessage: String(file?.text ?? ''),
+                type: 'appendFinal',
+                getMessage,
             });
         }
 
+        state.rawCommittedText = rawCommittedText;
         state.commitSeq += 1;
         mergeAgentCommitExtraIntoMessage(script.chat, messageId, payload, file, state.commitSeq, {
             createdMessage: state.createdMessage,
             firstSwipeId: state.firstSwipeId,
         });
-        await persistActiveChat(script);
+        await state.persistChat(script);
 
         await safeInvoke('resolve_agent_chat_commit', {
             dto: {
@@ -161,11 +179,11 @@ async function handlePersistentStateMetadataUpdateRequested({ state, event, safe
 
     try {
         await assertCurrentChat(payload.chatRef, payload.stableChatId);
-        const script = await import('../../../script.js');
+        const script = await state.loadScript();
         const messageId = normalizeMessageId(payload.messageId ?? state.messageId);
         const stateId = requirePayloadString(payload, 'stateId');
         mergePersistentStateExtraIntoMessage(script.chat, messageId, payload, stateId);
-        await persistActiveChat(script);
+        await state.persistChat(script);
 
         await safeInvoke('resolve_agent_persistent_state_metadata_update', {
             dto: {
@@ -182,6 +200,22 @@ async function handlePersistentStateMetadataUpdateRequested({ state, event, safe
             },
         });
     }
+}
+
+async function loadMainScript() {
+    return import('../../../script.js');
+}
+
+function prepareGeneratedReplyForSave(script, rawText, generationType) {
+    // saveReply is a low-level chat writer. Legacy generation runs cleanup
+    // before saveReply, so Agent commit must preserve that boundary here.
+    const type = String(generationType || 'normal').trim() || 'normal';
+    return script.cleanUpMessage({
+        getMessage: rawText,
+        isImpersonate: type === 'impersonate',
+        isContinue: type === 'continue',
+        displayIncompleteSentences: false,
+    });
 }
 
 function requireRunId(value) {
