@@ -16,7 +16,7 @@ TauriTavern 当前存在两种同步拓扑：
 关键结论（后续改动优先守住这些）：
 
 1. **同步语义以“用户数据一致性”为中心**：scope/exclude、`(size_bytes, modified_ms)` 增量判定、Mirror delete 的时序、原子写入与 mtime 保留。
-2. **同步作业全局串行**：LAN Sync 与 TT-Sync v2 共用同一个 `Semaphore(1)`（即同一时刻只能跑一个同步作业），避免多条链路并发写入相同数据目录导致破坏性竞态（见 `src-tauri/src/app/bootstrap.rs`）。
+2. **同步作业全局串行**：LAN Sync 与 TT-Sync v2 共用同一个 `Semaphore(1)`（即同一时刻只能跑一个同步作业），避免多条链路并发写入相同数据目录导致破坏性竞态（见 `src-tauri/src/app/composition/services/sync.rs`）。
 3. **长期同步 scope 由 TT-Sync `DatasetPolicy` 定义**：LAN Sync 与 TT-Sync v2 消费同一份策略，不再存在独立的 LAN v1 allowlist。
 4. **v2 协议已落地 Bundle + zstd 传输形态**：把 N 个 per-file 请求收敛为 1 个 bundle 请求，并可选 zstd 压缩；旧的 per-file 端点仍保留作为 fallback。
 5. **Sync Panel 入口默认走 scoped sync**：前端持久化一份 `DatasetSelection` 作为后续 LAN Sync / TT-Sync v2 默认范围，并要求对端支持 `bundle_v1 + zstd_v1`；不再静默降级到旧 LAN v1。
@@ -72,7 +72,7 @@ Agent run retention 复用同一套 run storage class 词汇来描述 `run_journ
   - 进度/完成/错误：`sync:job`
   - 手动作业完成/错误：命令返回 `SyncJobReport`；后台 inbound pull-request 由 `sync:job` final event 驱动提示和 reload。
   - 应用边界：`src-tauri/src/application/services/lan_sync_service.rs`
-  - Tauri event / pairing approval adapter：`src-tauri/src/app/bootstrap.rs`
+  - Tauri event / pairing approval adapter：`src-tauri/src/app/composition/adapters.rs`
   - Axum server lifecycle adapter：`src-tauri/src/infrastructure/sync/lan/control.rs`
 - TT-Sync：
   - 进度/完成/错误：`sync:job`

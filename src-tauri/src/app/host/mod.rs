@@ -2,7 +2,7 @@
 //!
 //! Keep this module at the framework edge: plugin registration, setup sequencing,
 //! invoke handler wiring, and shutdown hooks. Application services are still built
-//! in `app::bootstrap`; frontend-visible behavior is still owned by presentation
+//! in `app::composition`; frontend-visible behavior is still owned by presentation
 //! commands and web resource adapters.
 
 mod observability;

@@ -53,9 +53,10 @@ src-tauri/
 │   ├── lib.rs                 # 库入口点（薄入口）
 │   ├── app.rs                 # 应用状态与运行时启动编排
 │   ├── app/
+│   │   ├── composition.rs     # 应用对象图装配 facade
+│   │   ├── composition/       # 仓库/服务/适配器装配子模块
 │   │   ├── host/              # Tauri host shell（插件、setup、窗口、资源、shutdown）
 │   │   ├── startup_profile.rs # 启动期 settings / iOS policy 快照
-│   │   └── bootstrap.rs       # 仓库/服务装配（依赖构建）
 │   ├── domain/                # 领域层
 │   │   ├── models/            # 领域模型
 │   │   ├── repositories/      # 仓库接口
@@ -493,14 +494,13 @@ tauri::Builder::default()
 
 ### 4.1 AppState
 
-`AppState`结构体包含应用的全局状态，如服务实例和数据目录。
+`AppState`结构体包含应用服务实例和启动期策略快照。数据目录由 composition root 在构建服务图时使用，不作为长期运行时状态挂载。
 
 ```rust
 // app.rs（示意）
-mod bootstrap;
+mod composition;
 
 pub struct AppState {
-    pub data_directory: DataDirectory,
     pub character_service: Arc<CharacterService>,
     pub chat_service: Arc<ChatService>,
     pub user_service: Arc<UserService>,
@@ -514,17 +514,23 @@ pub struct AppState {
     pub background_service: Arc<BackgroundService>,
     pub theme_service: Arc<ThemeService>,
     pub preset_service: Arc<PresetService>,
+    pub ios_policy: IosPolicyActivationReport,
 }
 
 impl AppState {
-    pub async fn new(app_handle: AppHandle, data_root: &Path) -> Result<Self, DomainError> {
+    pub async fn new(
+        app_handle: AppHandle,
+        runtime_paths: RuntimePaths,
+        startup_profile: StartupProfile,
+    ) -> Result<Self, DomainError> {
         // 初始化目录
-        let data_directory = bootstrap::initialize_data_directory(data_root).await?;
+        let data_directory =
+            composition::initialize_data_directory(&runtime_paths.data_root).await?;
         // 统一装配仓库与服务
-        let services = bootstrap::build_services(&app_handle, &data_directory);
+        let services =
+            composition::build_services(&app_handle, &data_directory, &startup_profile).await?;
 
         Ok(Self {
-            data_directory,
             character_service: services.character_service,
             chat_service: services.chat_service,
             user_service: services.user_service,
@@ -538,6 +544,7 @@ impl AppState {
             background_service: services.background_service,
             theme_service: services.theme_service,
             preset_service: services.preset_service,
+            ios_policy: services.ios_policy,
         })
     }
 }
@@ -812,7 +819,7 @@ service
 4. 在`application/services`中创建服务
 5. 在`application/dto`中定义数据传输对象
 6. 在`presentation/commands`中添加命令
-7. 在`app/bootstrap.rs`中注册仓库和服务构建逻辑，并在`app.rs`的`AppState`中挂载
+7. 在`app/composition/`中注册仓库和服务构建逻辑，并在`app.rs`的`AppState`中挂载
 
 ### 7.2 添加新API
 
@@ -829,7 +836,7 @@ service
 
 1. 在`infrastructure/apis`中创建服务客户端
 2. 在`application/services`中创建服务适配器
-3. 在`app/bootstrap.rs`中初始化服务装配
+3. 在`app/composition/`中初始化服务装配
 4. 在`presentation/commands`中暴露API
 
 ### 7.4 使用Tauri资源系统
@@ -1037,34 +1044,12 @@ pub async fn process_large_file(
 ```rust
 // 示例: 异步初始化
 .setup(move |app| {
-    // 获取AppHandle
-    let app_handle = app.handle();
+    let runtime_paths = runtime_paths::install_runtime_paths(app)?;
+    let startup_profile = StartupProfile::load(&runtime_paths.data_root)?;
+    let app_handle = app.handle().clone();
 
-    // 获取应用数据目录
-    let app_data_dir = app_handle.path().app_data_dir()
-        .expect("Failed to get app data directory");
-
-    // 构建数据根目录
-    let data_root = app_data_dir.join("data");
-
-    // 在异步任务中初始化AppState
-    let app_handle_clone = app_handle.clone();
-    tauri::async_runtime::spawn(async move {
-        // 初始化应用程序状态
-        match AppState::new(app_handle_clone.clone(), &data_root).await {
-            Ok(state) => {
-                // 管理应用程序状态（整个AppState）
-                app_handle_clone.manage(Arc::new(state));
-
-                // 通知前端应用程序已准备就绪
-                app_handle_clone.emit_all("app-ready", ())
-                    .expect("Failed to emit app-ready event");
-            },
-            Err(e) => {
-                tracing::error!("Failed to initialize application state: {}", e);
-            }
-        }
-    });
+    // AppState 初始化进入后台任务；成功后 manage AppState 并 emit app-ready。
+    spawn_initialization(app_handle, runtime_paths, startup_profile);
 
     Ok(())
 })

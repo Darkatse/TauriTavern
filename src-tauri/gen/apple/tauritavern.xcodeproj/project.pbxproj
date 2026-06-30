@@ -77,7 +77,15 @@
 		3CFB229DC0F8AC82D62A968F /* tokenizer_repository.rs */ = {isa = PBXFileReference; path = tokenizer_repository.rs; sourceTree = "<group>"; };
 		3D2F43A675FFCFD523D5B76C /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
 		3DF579298F528439D611A8DE /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
-		3F5948C6FAF6D4CDC3834F05 /* bootstrap.rs */ = {isa = PBXFileReference; path = bootstrap.rs; sourceTree = "<group>"; };
+		EA7EDB9451245A4F42D51D3D /* composition.rs */ = {isa = PBXFileReference; path = composition.rs; sourceTree = "<group>"; };
+		58586DFA90E4D5477D0D8AF0 /* adapters.rs */ = {isa = PBXFileReference; path = adapters.rs; sourceTree = "<group>"; };
+		69858FD516AED39FA3C1BA5A /* repositories.rs */ = {isa = PBXFileReference; path = repositories.rs; sourceTree = "<group>"; };
+		A3D36D65E861847E7849DE42 /* cache_reconciler.rs */ = {isa = PBXFileReference; path = cache_reconciler.rs; sourceTree = "<group>"; };
+		6377543CAF362176A65CA1AE /* tauri_sync.rs */ = {isa = PBXFileReference; path = tauri_sync.rs; sourceTree = "<group>"; };
+		0880FF808BBDC63C29D42A8D /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
+		FE54B95DD758754804D30264 /* agent.rs */ = {isa = PBXFileReference; path = agent.rs; sourceTree = "<group>"; };
+		5418D3E333231A59AD6C85F0 /* archive.rs */ = {isa = PBXFileReference; path = archive.rs; sourceTree = "<group>"; };
+		B022DF5A7BEF0D57698149CC /* sync.rs */ = {isa = PBXFileReference; path = sync.rs; sourceTree = "<group>"; };
 		3FD66A9AF4DA898BBC89492E /* theme_service.rs */ = {isa = PBXFileReference; path = theme_service.rs; sourceTree = "<group>"; };
 		41384B1874CB022080B299A9 /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
 		41529818A32E0D37AA90A63F /* registry.rs */ = {isa = PBXFileReference; path = registry.rs; sourceTree = "<group>"; };
@@ -604,14 +612,46 @@
 			path = repositories;
 			sourceTree = "<group>";
 		};
-		C8C52A8F2AA2ADA447ACB21D /* app */ = {
-			isa = PBXGroup;
-			children = (
-				3F5948C6FAF6D4CDC3834F05 /* bootstrap.rs */,
-			);
-			path = app;
-			sourceTree = "<group>";
-		};
+			C8C52A8F2AA2ADA447ACB21D /* app */ = {
+				isa = PBXGroup;
+				children = (
+					EA7EDB9451245A4F42D51D3D /* composition.rs */,
+					85EB10A8758F8C491D3203F3 /* composition */,
+				);
+				path = app;
+				sourceTree = "<group>";
+			};
+			85EB10A8758F8C491D3203F3 /* composition */ = {
+				isa = PBXGroup;
+				children = (
+					58586DFA90E4D5477D0D8AF0 /* adapters.rs */,
+					69858FD516AED39FA3C1BA5A /* repositories.rs */,
+					6816D7C4D420413AC32A6B4C /* adapters */,
+					DBD0F4A854BEC80247FCB063 /* services */,
+				);
+				path = composition;
+				sourceTree = "<group>";
+			};
+			6816D7C4D420413AC32A6B4C /* adapters */ = {
+				isa = PBXGroup;
+				children = (
+					A3D36D65E861847E7849DE42 /* cache_reconciler.rs */,
+					6377543CAF362176A65CA1AE /* tauri_sync.rs */,
+				);
+				path = adapters;
+				sourceTree = "<group>";
+			};
+			DBD0F4A854BEC80247FCB063 /* services */ = {
+				isa = PBXGroup;
+				children = (
+					FE54B95DD758754804D30264 /* agent.rs */,
+					5418D3E333231A59AD6C85F0 /* archive.rs */,
+					0880FF808BBDC63C29D42A8D /* mod.rs */,
+					B022DF5A7BEF0D57698149CC /* sync.rs */,
+				);
+				path = services;
+				sourceTree = "<group>";
+			};
 		CCF365CAD029BC49743BB7B5 /* models */ = {
 			isa = PBXGroup;
 			children = (

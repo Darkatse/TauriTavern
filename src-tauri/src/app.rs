@@ -46,7 +46,7 @@ use crate::domain::errors::DomainError;
 use crate::infrastructure::paths::RuntimePaths;
 
 pub mod backend_errors;
-mod bootstrap;
+mod composition;
 #[cfg(test)]
 mod contract_tests;
 pub mod dev_observability;
@@ -112,10 +112,11 @@ impl AppState {
             runtime_paths.data_root
         );
 
-        let data_directory = bootstrap::initialize_data_directory(&runtime_paths.data_root).await?;
+        let data_directory =
+            composition::initialize_data_directory(&runtime_paths.data_root).await?;
 
         let services =
-            bootstrap::build_services(&app_handle, &data_directory, &startup_profile).await?;
+            composition::build_services(&app_handle, &data_directory, &startup_profile).await?;
 
         tracing::info!("Application initialized successfully");
         let sync_automation_cancel = CancellationToken::new();

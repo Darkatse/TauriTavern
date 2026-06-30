@@ -86,7 +86,7 @@
 实现位置：
 
 - 启动快照：`src-tauri/src/app/startup_profile.rs`
-- AppState 注入：`src-tauri/src/app.rs` / `src-tauri/src/app/bootstrap.rs`
+- AppState 注入：`src-tauri/src/app.rs` / `src-tauri/src/app/composition.rs`
 - Bootstrap DTO：`src-tauri/src/presentation/commands/bootstrap_commands.rs`
 - Host 路由：`src/tauri/main/routes/bootstrap-routes.js`
 - 前端启动：`src/script.js`
