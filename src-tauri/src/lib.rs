@@ -13,7 +13,7 @@ mod presentation;
 
 use app::backend_errors::BackendErrorHub;
 use app::dev_observability::DevObservabilityHub;
-use app::spawn_initialization;
+use app::{StartupProfile, spawn_initialization};
 use application::services::bundled_template_service::BundledTemplateService;
 use application::services::host_resource_service::HostResourceService;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -210,25 +210,9 @@ pub fn run() {
                 );
             }
 
-            let tauritavern_settings = load_tauritavern_settings(&runtime_paths.data_root)?;
-            let ios_policy_scope =
-                crate::domain::ios_policy::IosPolicyScope::for_current_platform();
-            let ios_policy = if ios_policy_scope == crate::domain::ios_policy::IosPolicyScope::Ios {
-                let raw_policy =
-                    crate::infrastructure::ios_policy_cache::resolve_effective_raw_policy_sync(
-                        &runtime_paths.data_root,
-                        tauritavern_settings.ios_policy.as_ref(),
-                    )?;
-                crate::domain::ios_policy::resolve_ios_policy_activation_report(
-                    ios_policy_scope,
-                    raw_policy.as_ref(),
-                )?
-            } else {
-                crate::domain::ios_policy::resolve_ios_policy_activation_report(
-                    ios_policy_scope,
-                    tauritavern_settings.ios_policy.as_ref(),
-                )?
-            };
+            let startup_profile = StartupProfile::load(&runtime_paths.data_root)?;
+            let tauritavern_settings = &startup_profile.tauritavern_settings;
+            let ios_policy = &startup_profile.ios_policy;
             let host_resource_store = std::sync::Arc::new(
                 FilesystemHostResourceStore::from_data_root(&runtime_paths.data_root),
             );
@@ -257,8 +241,7 @@ pub fn run() {
 
             #[cfg(target_os = "windows")]
             {
-                let close_to_tray_on_close =
-                    load_close_to_tray_on_close_setting(&runtime_paths.data_root)?;
+                let close_to_tray_on_close = tauritavern_settings.close_to_tray_on_close;
                 let tray_state = std::sync::Arc::new(
                     presentation::windows_tray::WindowsTrayState::new(close_to_tray_on_close),
                 );
@@ -272,7 +255,7 @@ pub fn run() {
             // Heavy app state initialization is spawned after the shell is ready so window
             // creation and host plumbing stay responsive. The async initializer emits the
             // readiness/error events consumed by the frontend bootstrap.
-            spawn_initialization(app_handle.clone(), runtime_paths.clone());
+            spawn_initialization(app_handle.clone(), runtime_paths.clone(), startup_profile);
             Ok(())
         })
         .invoke_handler(invoke_handler())
@@ -392,29 +375,4 @@ fn create_main_window(
     }
 
     Ok(window)
-}
-
-#[cfg(target_os = "windows")]
-fn load_close_to_tray_on_close_setting(
-    data_root: &std::path::Path,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let settings = load_tauritavern_settings(data_root)?;
-    Ok(settings.close_to_tray_on_close)
-}
-
-fn load_tauritavern_settings(
-    data_root: &std::path::Path,
-) -> Result<crate::domain::models::settings::TauriTavernSettings, Box<dyn std::error::Error>> {
-    let path = data_root
-        .join("default-user")
-        .join("tauritavern-settings.json");
-
-    if !path.is_file() {
-        return Ok(crate::domain::models::settings::TauriTavernSettings::default());
-    }
-
-    let raw = std::fs::read_to_string(&path)?;
-    let settings =
-        crate::domain::models::settings::TauriTavernSettings::from_json_str_with_compat(&raw)?;
-    Ok(settings)
 }

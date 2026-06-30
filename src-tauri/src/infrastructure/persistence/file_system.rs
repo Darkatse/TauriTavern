@@ -242,7 +242,6 @@ async fn optional_metadata(path: &Path) -> Result<Option<std::fs::Metadata>, Dom
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn optional_metadata_sync(path: &Path) -> Result<Option<std::fs::Metadata>, DomainError> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) => Ok(Some(metadata)),
@@ -506,7 +505,6 @@ pub async fn replace_file_with_fallback(
 
 /// Synchronous variant of `replace_file_with_fallback` for startup/runtime code paths
 /// that cannot rely on Tokio being available yet.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn replace_file_with_fallback_sync(
     temp_path: &Path,
     target_path: &Path,
@@ -595,6 +593,41 @@ pub fn replace_file_with_fallback_sync(
             }
         }
     }
+}
+
+/// Synchronous variant of `write_json_file` for startup code paths that run before
+/// async application services exist.
+pub fn write_json_file_sync<T: Serialize + ?Sized>(
+    path: &Path,
+    data: &T,
+) -> Result<(), DomainError> {
+    tracing::debug!("Writing JSON file: {:?}", path);
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            tracing::error!("Failed to create parent directory for {:?}: {}", path, e);
+            DomainError::InternalError(format!("Failed to create directory: {}", e))
+        })?;
+    }
+
+    let json = serde_json::to_string_pretty(data).map_err(|e| {
+        tracing::error!("Failed to serialize to JSON for file {:?}: {}", path, e);
+        DomainError::InvalidData(format!("Failed to serialize to JSON: {}", e))
+    })?;
+
+    let temp_path = unique_temp_path(path, "data.json");
+    std::fs::write(&temp_path, json.as_bytes()).map_err(|e| {
+        tracing::error!(
+            "Failed to write JSON temp file {:?} -> {:?}: {}",
+            temp_path,
+            path,
+            e
+        );
+        DomainError::InternalError(format!("Failed to write file: {}", e))
+    })?;
+    replace_file_with_fallback_sync(&temp_path, path)?;
+
+    Ok(())
 }
 
 /// Write a JSON file

@@ -50,6 +50,9 @@ mod bootstrap;
 #[cfg(test)]
 mod contract_tests;
 pub mod dev_observability;
+mod startup_profile;
+
+pub(crate) use startup_profile::StartupProfile;
 
 pub struct AppState {
     pub character_service: Arc<CharacterService>,
@@ -100,6 +103,7 @@ impl AppState {
     pub async fn new(
         app_handle: AppHandle,
         runtime_paths: RuntimePaths,
+        startup_profile: StartupProfile,
     ) -> Result<Self, DomainError> {
         tracing::info!(
             "Initializing application in {:?} mode with data root: {:?}",
@@ -109,7 +113,8 @@ impl AppState {
 
         let data_directory = bootstrap::initialize_data_directory(&runtime_paths.data_root).await?;
 
-        let services = bootstrap::build_services(&app_handle, &data_directory).await?;
+        let services =
+            bootstrap::build_services(&app_handle, &data_directory, &startup_profile).await?;
 
         tracing::info!("Application initialized successfully");
         let sync_automation_cancel = CancellationToken::new();
@@ -162,9 +167,13 @@ impl AppState {
     }
 }
 
-pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) {
+pub fn spawn_initialization(
+    app_handle: AppHandle,
+    runtime_paths: RuntimePaths,
+    startup_profile: StartupProfile,
+) {
     tauri::async_runtime::spawn(async move {
-        match AppState::new(app_handle.clone(), runtime_paths).await {
+        match AppState::new(app_handle.clone(), runtime_paths, startup_profile).await {
             Ok(state) => {
                 app_handle.manage(Arc::new(state));
 

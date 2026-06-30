@@ -156,6 +156,8 @@ use crate::infrastructure::sync_automation_store::SyncAutomationStore;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 use ttsync_contract::sync::SyncMode;
 
+use super::StartupProfile;
+
 pub(super) struct AppServices {
     pub character_service: Arc<CharacterService>,
     pub chat_service: Arc<ChatService>,
@@ -475,29 +477,11 @@ pub(super) async fn initialize_data_directory(
 pub(super) async fn build_services(
     app_handle: &AppHandle,
     data_directory: &DataDirectory,
+    startup_profile: &StartupProfile,
 ) -> Result<AppServices, DomainError> {
     let repositories = build_repositories(app_handle, data_directory)?;
-    let tauritavern_settings = repositories
-        .settings_repository
-        .load_tauritavern_settings()
-        .await?;
-    let ios_policy_scope = crate::domain::ios_policy::IosPolicyScope::for_current_platform();
-    let ios_policy = if ios_policy_scope == crate::domain::ios_policy::IosPolicyScope::Ios {
-        let raw_policy = crate::infrastructure::ios_policy_cache::resolve_effective_raw_policy(
-            data_directory.root(),
-            tauritavern_settings.ios_policy.as_ref(),
-        )
-        .await?;
-        crate::domain::ios_policy::resolve_ios_policy_activation_report(
-            ios_policy_scope,
-            raw_policy.as_ref(),
-        )?
-    } else {
-        crate::domain::ios_policy::resolve_ios_policy_activation_report(
-            ios_policy_scope,
-            tauritavern_settings.ios_policy.as_ref(),
-        )?
-    };
+    let tauritavern_settings = &startup_profile.tauritavern_settings;
+    let ios_policy = startup_profile.ios_policy.clone();
 
     let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
     let external_import_downloader: Arc<dyn ExternalImportDownloader> =

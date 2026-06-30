@@ -7,7 +7,7 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
 use crate::domain::repositories::settings_repository::SettingsRepository;
 use crate::infrastructure::persistence::file_system::{
-    list_files_with_extension, read_json_file, write_json_file,
+    list_files_with_extension, read_json_file, write_json_file, write_json_file_sync,
 };
 use crate::infrastructure::preset_file_naming::load_named_preset_files;
 use crate::infrastructure::sillytavern_sorting::{
@@ -18,6 +18,26 @@ pub struct FileSettingsRepository {
     tauritavern_settings_file: PathBuf,
     user_settings_file: PathBuf,
     base_directory: PathBuf,
+}
+
+fn map_tauritavern_settings_read_error(path: &Path, error: std::io::Error) -> DomainError {
+    tracing::error!("Failed to read file {:?}: {}", path, error);
+
+    if error.kind() == std::io::ErrorKind::NotFound {
+        DomainError::NotFound(format!("File not found: {}", path.display()))
+    } else {
+        DomainError::InternalError(format!("Failed to read file: {}", error))
+    }
+}
+
+fn parse_tauritavern_settings(
+    path: &Path,
+    contents: &str,
+) -> Result<TauriTavernSettings, DomainError> {
+    TauriTavernSettings::from_json_str_with_compat(contents).map_err(|error| {
+        tracing::error!("Failed to parse JSON from file {:?}: {}", path, error);
+        DomainError::InvalidData(format!("Invalid JSON: {}", error))
+    })
 }
 
 impl FileSettingsRepository {
@@ -31,6 +51,35 @@ impl FileSettingsRepository {
             user_settings_file,
             base_directory,
         }
+    }
+
+    pub(crate) fn load_tauritavern_settings_sync(
+        &self,
+    ) -> Result<TauriTavernSettings, DomainError> {
+        if !self.tauritavern_settings_file.exists() {
+            let default_settings = TauriTavernSettings::default();
+            self.save_tauritavern_settings_sync(&default_settings)?;
+            return Ok(default_settings);
+        }
+
+        tracing::debug!(
+            "Loading TauriTavern settings from {}",
+            self.tauritavern_settings_file.display()
+        );
+
+        let contents =
+            std::fs::read_to_string(&self.tauritavern_settings_file).map_err(|error| {
+                map_tauritavern_settings_read_error(&self.tauritavern_settings_file, error)
+            })?;
+
+        parse_tauritavern_settings(&self.tauritavern_settings_file, &contents)
+    }
+
+    fn save_tauritavern_settings_sync(
+        &self,
+        settings: &TauriTavernSettings,
+    ) -> Result<(), DomainError> {
+        write_json_file_sync(&self.tauritavern_settings_file, settings)
     }
 
     async fn ensure_directory_exists(&self) -> Result<(), DomainError> {
@@ -155,31 +204,11 @@ impl SettingsRepository for FileSettingsRepository {
 
         let contents = fs::read_to_string(&self.tauritavern_settings_file)
             .await
-            .map_err(|e| {
-                tracing::error!(
-                    "Failed to read file {:?}: {}",
-                    self.tauritavern_settings_file,
-                    e
-                );
-
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    DomainError::NotFound(format!(
-                        "File not found: {}",
-                        self.tauritavern_settings_file.display()
-                    ))
-                } else {
-                    DomainError::InternalError(format!("Failed to read file: {}", e))
-                }
+            .map_err(|error| {
+                map_tauritavern_settings_read_error(&self.tauritavern_settings_file, error)
             })?;
 
-        TauriTavernSettings::from_json_str_with_compat(&contents).map_err(|e| {
-            tracing::error!(
-                "Failed to parse JSON from file {:?}: {}",
-                self.tauritavern_settings_file,
-                e
-            );
-            DomainError::InvalidData(format!("Invalid JSON: {}", e))
-        })
+        parse_tauritavern_settings(&self.tauritavern_settings_file, &contents)
     }
 
     async fn save_user_settings(&self, settings: &UserSettings) -> Result<(), DomainError> {
@@ -448,6 +477,18 @@ mod tests {
                 .as_deref(),
             Some("token")
         );
+    }
+
+    #[test]
+    fn load_tauritavern_settings_sync_creates_default_file() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+
+        repository
+            .load_tauritavern_settings_sync()
+            .expect("load default tauritavern settings synchronously");
+
+        assert!(dir.path().join("tauritavern-settings.json").is_file());
     }
 
     #[tokio::test]
