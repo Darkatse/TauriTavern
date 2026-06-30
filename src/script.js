@@ -930,7 +930,7 @@ async function firstLoadInit() {
 
     const nextPaint = () => new Promise((resolve) => requestAnimationFrame(resolve));
 
-    const hostReadyPromise = waitForTauriMainReady();
+    const hostReadyPromise = waitForTauriMainReady({ failFast: true });
 
     perfMark('tt:startup:start');
 

@@ -46,6 +46,7 @@ use crate::domain::errors::DomainError;
 use crate::infrastructure::paths::RuntimePaths;
 
 pub mod backend_errors;
+mod backend_readiness;
 mod composition;
 #[cfg(test)]
 mod contract_tests;
@@ -53,6 +54,7 @@ pub mod dev_observability;
 pub(crate) mod host;
 mod startup_profile;
 
+pub(crate) use backend_readiness::BackendReadiness;
 pub(crate) use startup_profile::StartupProfile;
 
 pub struct AppState {
@@ -173,14 +175,34 @@ pub fn spawn_initialization(
     app_handle: AppHandle,
     runtime_paths: RuntimePaths,
     startup_profile: StartupProfile,
+    backend_readiness: Arc<BackendReadiness>,
 ) {
     tauri::async_runtime::spawn(async move {
         match AppState::new(app_handle.clone(), runtime_paths, startup_profile).await {
             Ok(state) => {
-                app_handle.manage(Arc::new(state));
+                let state = Arc::new(state);
+                if !app_handle.manage(state.clone()) {
+                    let message =
+                        "Failed to initialize application state: AppState is already managed"
+                            .to_string();
+                    backend_readiness.mark_failed(message.clone());
+                    tracing::error!(
+                        target: crate::observability_targets::USER_VISIBLE_ERROR,
+                        "{message}",
+                    );
+                    match app_handle.emit("app-error", message) {
+                        Ok(_) => {}
+                        Err(emit_error) => {
+                            tracing::error!("Failed to emit app-error event: {}", emit_error);
+                        }
+                    }
+                    return;
+                }
 
-                let content_service = app_handle.state::<Arc<AppState>>().content_service.clone();
-                match content_service
+                backend_readiness.mark_ready();
+
+                match state
+                    .content_service
                     .initialize_default_content("default-user")
                     .await
                 {
@@ -188,26 +210,16 @@ pub fn spawn_initialization(
                     Err(error) => tracing::warn!("Failed to initialize default content: {}", error),
                 }
 
-                let sync_automation_service = app_handle
-                    .state::<Arc<AppState>>()
-                    .sync_automation_service
-                    .clone();
-                let sync_automation_cancel = app_handle
-                    .state::<Arc<AppState>>()
-                    .sync_automation_cancel
-                    .clone();
+                let sync_automation_service = state.sync_automation_service.clone();
+                let sync_automation_cancel = state.sync_automation_cancel.clone();
                 tauri::async_runtime::spawn(async move {
                     sync_automation_service.run(sync_automation_cancel).await;
                 });
 
-                let agent_run_retention_automation_service = app_handle
-                    .state::<Arc<AppState>>()
-                    .agent_run_retention_automation_service
-                    .clone();
-                let agent_run_retention_automation_cancel = app_handle
-                    .state::<Arc<AppState>>()
-                    .agent_run_retention_automation_cancel
-                    .clone();
+                let agent_run_retention_automation_service =
+                    state.agent_run_retention_automation_service.clone();
+                let agent_run_retention_automation_cancel =
+                    state.agent_run_retention_automation_cancel.clone();
                 tauri::async_runtime::spawn(async move {
                     agent_run_retention_automation_service
                         .run(agent_run_retention_automation_cancel)
@@ -221,6 +233,7 @@ pub fn spawn_initialization(
             }
             Err(error) => {
                 let message = format!("Failed to initialize application state: {}", error);
+                backend_readiness.mark_failed(message.clone());
                 tracing::error!(
                     target: crate::observability_targets::USER_VISIBLE_ERROR,
                     "{message}",

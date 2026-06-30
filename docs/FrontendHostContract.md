@@ -34,6 +34,7 @@
 
 - `window.__TAURITAVERN_MAIN_READY__ : Promise<void>`
   - 由 `src/tauri/main/bootstrap.js` 写入，表示宿主层初始化已完成（或失败已被捕获并写入 console）。
+  - 在 Tauri runtime 下，resolve 前必须完成 Rust `BackendReadiness` 等待，确保首批依赖 `AppState` 的命令不靠 “state not managed” 文本重试作为正常控制流。
 - `window.__TAURITAVERN_PERF_READY__ : Promise<unknown> | undefined`
   - 仅在 perf-hud 启用时存在（见第 5 节）。
 - `globalThis.__TAURITAVERN_PERF_ENABLED__ : boolean`

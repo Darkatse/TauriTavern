@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::app::{StartupProfile, spawn_initialization};
+use crate::app::{BackendReadiness, StartupProfile, spawn_initialization};
 use crate::domain::errors::DomainError;
 use crate::domain::ios_policy::IosPolicyScope;
 use crate::infrastructure::http_client_pool::HttpClientPool;
@@ -49,6 +49,13 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
         &observability.llm_api_logs,
     )?;
 
+    let backend_readiness = Arc::new(BackendReadiness::new());
+    if !app.manage(backend_readiness.clone()) {
+        return Err(Box::new(DomainError::InternalError(
+            "BackendReadiness state is already managed".to_string(),
+        )));
+    }
+
     // 5. Resource state depends on StartupProfile settings, and must be managed
     // before the first webview can request browser-visible assets.
     let host_resource_service = super::resources::install_runtime_resources(
@@ -70,7 +77,12 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
 
     // 6. Heavy AppState construction stays off the shell critical path. The
     // initializer manages AppState and emits app-ready/app-error as before.
-    spawn_initialization(app_handle, runtime_paths, startup_profile);
+    spawn_initialization(
+        app_handle,
+        runtime_paths,
+        startup_profile,
+        backend_readiness,
+    );
     Ok(())
 }
 

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::app::AppState;
 use crate::app::backend_errors::BackendErrorHub;
+use crate::app::{AppState, BackendReadiness};
 use crate::application::dto::bootstrap_dto::BootstrapSnapshotDto;
 use crate::application::dto::group_dto::GroupDto;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -90,4 +90,15 @@ pub async fn backend_error_bridge_ready(
 ) -> Result<Vec<String>, CommandError> {
     log_command("backend_error_bridge_ready");
     Ok(backend_errors.mark_bridge_ready_and_drain())
+}
+
+#[tauri::command]
+pub async fn wait_for_backend_ready(
+    backend_readiness: State<'_, Arc<BackendReadiness>>,
+) -> Result<(), CommandError> {
+    log_command("wait_for_backend_ready");
+    backend_readiness
+        .wait_ready()
+        .await
+        .map_err(|error| CommandError::InternalServerError(error.to_string()))
 }

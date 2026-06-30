@@ -231,6 +231,7 @@ export {};
  *   | 'upload_user_file'
  *   | 'verify_user_files'
  *   | 'view_secrets'
+ *   | 'wait_for_backend_ready'
  *   | 'write_skill_file'
  *   | 'write_secret'
  *   | 'get_group_chat_payload_tail'

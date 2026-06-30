@@ -26,7 +26,7 @@ async function waitForReadyPromiseRegistration() {
     while (Date.now() < deadline) {
         const readyPromise = window[TAURI_MAIN_READY_KEY];
         if (readyPromise && typeof readyPromise.then === 'function') {
-            return readyPromise;
+            return { readyPromise };
         }
 
         await sleep(READY_PROMISE_POLL_INTERVAL_MS);
@@ -35,15 +35,18 @@ async function waitForReadyPromiseRegistration() {
     return null;
 }
 
-export async function waitForTauriMainReady() {
-    const readyPromise = await waitForReadyPromiseRegistration();
-    if (!readyPromise) {
+export async function waitForTauriMainReady({ failFast = false } = {}) {
+    const registration = await waitForReadyPromiseRegistration();
+    if (!registration) {
         return;
     }
 
     try {
-        await readyPromise;
-    } catch {
+        await registration.readyPromise;
+    } catch (error) {
+        if (failFast) {
+            throw error;
+        }
         // Continue with fallback URL behavior.
     }
 }
