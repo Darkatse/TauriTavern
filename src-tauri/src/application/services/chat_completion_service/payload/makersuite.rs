@@ -446,6 +446,8 @@ fn convert_messages(
             }
         }
 
+        strip_function_call_ids(&mut parts);
+
         contents.push(json!({
             "role": target_role,
             "parts": parts,
@@ -453,6 +455,24 @@ fn convert_messages(
     }
 
     (contents, system_parts.join("\n\n"))
+}
+
+/// Gemini's `generateContent` request API rejects an `id` field inside
+/// `functionCall` parts (`Unknown name "id" at '…parts[N].function_call'`),
+/// even though Gemini *responses* return one. Native parts are echoed back
+/// verbatim on tool-call turns, so strip the response-only `id` before the
+/// part is sent upstream. The id is still preserved in the normalized
+/// `tool_calls`, and Gemini pairs `functionResponse` by `name`, not id.
+fn strip_function_call_ids(parts: &mut [Value]) {
+    for part in parts.iter_mut() {
+        if let Some(function_call) = part
+            .as_object_mut()
+            .and_then(|object| object.get_mut("functionCall"))
+            .and_then(Value::as_object_mut)
+        {
+            function_call.remove("id");
+        }
+    }
 }
 
 fn convert_message_content_to_parts(content: Option<&Value>, is_gemini3: bool) -> Vec<Value> {
@@ -1257,6 +1277,70 @@ mod tests {
             .unwrap_or_default();
 
         assert_eq!(thought_signature, "sig_1");
+    }
+
+    #[test]
+    fn makersuite_strips_function_call_id_from_replayed_native_parts() {
+        // Gemini responses return `functionCall.id`, which we persist verbatim in
+        // `native.gemini`. The request API rejects that `id`, so it must be
+        // stripped before the assistant turn is echoed back.
+        let payload = json!({
+            "model": "gemini-3-pro",
+            "messages": [
+                {"role": "user", "content": "weather?"},
+                {
+                    "role": "assistant",
+                    "content": "checking",
+                    "tool_calls": [{
+                        "id": "call_weather",
+                        "type": "function",
+                        "function": {"name": "weather", "arguments": "{\"city\":\"Paris\"}"}
+                    }],
+                    "native": {
+                        "gemini": {
+                            "content": {
+                                "role": "model",
+                                "parts": [{
+                                    "functionCall": {
+                                        "name": "weather",
+                                        "args": {"city": "Paris"},
+                                        "id": "call_weather"
+                                    }
+                                }]
+                            }
+                        }
+                    }
+                },
+                {"role": "tool", "tool_call_id": "call_weather", "content": "{\"temperature\":20}"}
+            ]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+        let function_call = body
+            .get("contents")
+            .and_then(Value::as_array)
+            .and_then(|contents| contents.get(1))
+            .and_then(Value::as_object)
+            .and_then(|content| content.get("parts"))
+            .and_then(Value::as_array)
+            .and_then(|parts| parts.first())
+            .and_then(Value::as_object)
+            .and_then(|part| part.get("functionCall"))
+            .and_then(Value::as_object)
+            .expect("assistant functionCall part must exist");
+
+        assert!(
+            function_call.get("id").is_none(),
+            "functionCall.id must be stripped from the Gemini request"
+        );
+        assert_eq!(
+            function_call.get("name").and_then(Value::as_str),
+            Some("weather")
+        );
     }
 
     #[test]
