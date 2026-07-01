@@ -9,7 +9,7 @@ use reqwest::{RequestBuilder, Response, StatusCode};
 use serde_json::{Value, json};
 use tokio::time::sleep;
 
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tts_repository::{
     GrokOutputFormat, MinimaxGenerateRequest, TtsRepository, TtsRequest, TtsRouteResponse,

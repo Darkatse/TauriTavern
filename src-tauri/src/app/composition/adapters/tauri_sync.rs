@@ -7,19 +7,18 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, oneshot};
 use ttsync_contract::sync::SyncMode;
 
-use crate::application::services::lan_sync_service::{
-    LanPairingApprovalRequest, LanSyncService, PairingApproval,
-};
-use crate::application::services::sync_automation_service::{
-    SyncAutomationEndpointCatalog, SyncAutomationEventPublisher, SyncAutomationLanServerControl,
-};
-use crate::application::services::sync_job_coordinator::SyncJobEventPublisher;
+use crate::application::services::lan_sync_service::LanSyncService;
 use crate::application::services::tt_sync_service::TtSyncService;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::LanSyncPairRequestEvent;
-use crate::domain::models::sync::SyncJobEvent;
-use crate::domain::models::sync_automation::{
+use tt_contracts::sync::SyncJobEvent;
+use tt_contracts::sync_automation::{
     SyncAutomationStatus, SyncAutomationTarget, SyncAutomationToastEvent,
+};
+use tt_ports::lan_sync::{LanPairingApprovalRequest, PairingApproval};
+use tt_ports::sync::SyncJobEventPublisher;
+use tt_ports::sync_automation::{
+    SyncAutomationEndpointCatalog, SyncAutomationEventPublisher, SyncAutomationLanServerControl,
 };
 
 pub(in crate::app::composition) fn sync_automation_events(

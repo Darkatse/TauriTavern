@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::persistence::file_system::read_json_file;
+use tt_adapter_http::HttpClientPool;
 use tt_domain::errors::DomainError;
 use tt_domain::models::extension::{
     Extension, ExtensionInstallResult, ExtensionManifestMetadata, ExtensionUpdateResult,

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::infrastructure::github::classify_github_rate_limit;
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 
 use super::{

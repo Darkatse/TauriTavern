@@ -1,15 +1,17 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::io::ErrorKind;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
 use miktik::{TokenizerError, TokenizerRegistry};
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
 
@@ -177,16 +179,30 @@ impl MiktikTokenizerRepository {
             return Ok(());
         }
 
-        let model_path = self.ensure_model_file(canonical).await?;
-        self.registry
-            .register_model_file(canonical, &model_path)
-            .map_err(|error| {
-                Self::map_tokenizer_error("register model resource", canonical, error)
-            })?;
+        let mut model_path = self.ensure_model_file(canonical).await?;
+        self.register_model_file(canonical, &model_path)?;
 
-        self.warm_model(canonical).await?;
+        if self.warm_model(canonical).await.is_err() {
+            self.remove_model_file(&model_path).await?;
+            model_path = self.materialize_model_file(canonical).await?;
+            self.register_model_file(canonical, &model_path)?;
+            self.warm_model(canonical).await?;
+        }
+
         self.mark_model_ready(canonical).await;
         Ok(())
+    }
+
+    fn register_model_file(
+        &self,
+        canonical: &'static str,
+        model_path: &Path,
+    ) -> Result<(), DomainError> {
+        self.registry
+            .register_model_file(canonical, model_path)
+            .map_err(|error| {
+                Self::map_tokenizer_error("register model resource", canonical, error)
+            })
     }
 
     async fn warm_model(&self, canonical: &'static str) -> Result<(), DomainError> {
@@ -217,9 +233,32 @@ impl MiktikTokenizerRepository {
             return Ok(path);
         }
 
-        let bytes = self.load_model_bytes(spec).await?;
-        self.write_bytes(&path, &bytes).await?;
+        self.write_model_file(&path, spec).await?;
         Ok(path)
+    }
+
+    async fn materialize_model_file(
+        &self,
+        canonical: &'static str,
+    ) -> Result<PathBuf, DomainError> {
+        let spec = Self::model_resource_spec(canonical).ok_or_else(|| {
+            DomainError::NotFound(format!(
+                "Tokenizer resource spec is missing for model '{}'",
+                canonical
+            ))
+        })?;
+        let path = self.cache_dir.join(spec.file_name);
+        self.write_model_file(&path, spec).await?;
+        Ok(path)
+    }
+
+    async fn write_model_file(
+        &self,
+        path: &Path,
+        spec: ModelResourceSpec,
+    ) -> Result<(), DomainError> {
+        let bytes = self.load_model_bytes(spec).await?;
+        self.write_bytes(path, &bytes).await
     }
 
     async fn load_model_bytes(&self, spec: ModelResourceSpec) -> Result<Vec<u8>, DomainError> {
@@ -296,15 +335,53 @@ impl MiktikTokenizerRepository {
             })?;
         }
 
-        tokio::fs::write(path, bytes).await.map_err(|error| {
+        let temp_path = Self::temp_cache_path(path);
+        tokio::fs::write(&temp_path, bytes).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to persist tokenizer resource to '{}': {}",
-                path.display(),
+                temp_path.display(),
                 error
             ))
         })?;
 
+        if let Err(error) = tokio::fs::rename(&temp_path, path).await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(DomainError::InternalError(format!(
+                "Failed to publish tokenizer resource to '{}': {}",
+                path.display(),
+                error
+            )));
+        }
+
         Ok(())
+    }
+
+    fn temp_cache_path(path: &Path) -> PathBuf {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("tokenizer");
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        path.with_file_name(format!(
+            ".{file_name}.{}.{}.tmp",
+            std::process::id(),
+            nonce
+        ))
+    }
+
+    async fn remove_model_file(&self, path: &Path) -> Result<(), DomainError> {
+        match tokio::fs::remove_file(path).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(DomainError::InternalError(format!(
+                "Failed to remove invalid tokenizer resource '{}': {}",
+                path.display(),
+                error
+            ))),
+        }
     }
 
     async fn is_model_ready(&self, canonical: &'static str) -> bool {
@@ -502,13 +579,17 @@ impl MiktikTokenizerRepository {
 mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use serde_json::json;
 
     use super::{MiktikTokenizerRepository, ModelSource, ResourceCompression};
-    use crate::infrastructure::http_client_pool::HttpClientPool;
+    use tt_adapter_http::HttpClientPool;
     use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
+
+    const TEST_USER_AGENT: &str = "TauriTavern/test";
+    static NEXT_TEMP_CACHE_DIR_ID: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn canonical_model_aligns_sillytavern_aliases() {
@@ -588,14 +669,40 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after unix epoch")
             .as_nanos();
+        let sequence = NEXT_TEMP_CACHE_DIR_ID.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "tauritavern-tokenizer-test-{}-{nonce}",
+            "tauritavern-tokenizer-test-{}-{nonce}-{sequence}",
             std::process::id()
         ))
     }
 
     fn test_http_clients() -> Arc<HttpClientPool> {
-        Arc::new(HttpClientPool::new())
+        Arc::new(HttpClientPool::new(TEST_USER_AGENT))
+    }
+
+    fn bundled_model_bytes(canonical: &str) -> Vec<u8> {
+        let spec = MiktikTokenizerRepository::model_resource_spec(canonical)
+            .expect("bundled model spec should exist");
+        match spec.source {
+            ModelSource::Bundled { bytes, compression } => {
+                MiktikTokenizerRepository::decode_model_payload(bytes, compression, spec.file_name)
+                    .expect("bundled tokenizer payload should decode")
+            }
+            ModelSource::Remote { .. } => panic!("expected bundled tokenizer source"),
+        }
+    }
+
+    fn cache_temp_files(cache_dir: &std::path::Path) -> Vec<PathBuf> {
+        std::fs::read_dir(cache_dir)
+            .expect("cache dir should be readable")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".tmp"))
+            })
+            .collect()
     }
 
     #[tokio::test]
@@ -713,6 +820,56 @@ mod tests {
 
             let _ = std::fs::remove_dir_all(cache_dir);
         }
+    }
+
+    #[tokio::test]
+    async fn bundled_cache_publish_leaves_no_temp_files() {
+        let cache_dir = unique_temp_cache_dir();
+        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+
+        TokenizerRepository::ensure_model_ready(&repository, "claude")
+            .await
+            .expect("bundled tokenizer should prepare");
+
+        assert!(cache_temp_files(&cache_dir).is_empty());
+
+        let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[tokio::test]
+    async fn corrupt_bundled_cache_is_rebuilt() {
+        let cache_dir = unique_temp_cache_dir();
+        std::fs::create_dir_all(&cache_dir).expect("cache dir should be created");
+        std::fs::write(cache_dir.join("claude.json"), b"not a tokenizer")
+            .expect("corrupt cache should be written");
+
+        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+
+        TokenizerRepository::ensure_model_ready(&repository, "claude")
+            .await
+            .expect("corrupt bundled cache should be rebuilt");
+
+        let cached = std::fs::read(cache_dir.join("claude.json"))
+            .expect("rebuilt cache should be readable");
+        assert_eq!(cached, bundled_model_bytes("claude"));
+
+        let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn openai_0301_keeps_legacy_message_count_rules() {
+        let cache_dir = unique_temp_cache_dir();
+        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+        let messages = vec![json!({"role": "user", "name": "Alice", "content": "hello"})];
+
+        let legacy =
+            TokenizerRepository::count_messages(&repository, "gpt-3.5-turbo-0301", &messages)
+                .expect("legacy OpenAI tokenizer should count");
+        let modern = TokenizerRepository::count_messages(&repository, "gpt-3.5-turbo", &messages)
+            .expect("modern OpenAI tokenizer should count");
+
+        let _ = std::fs::remove_dir_all(cache_dir);
+        assert_eq!(legacy, modern + 8);
     }
 }
 

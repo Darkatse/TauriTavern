@@ -5,11 +5,13 @@ use rand::random;
 use serde_json::json;
 use tokio::fs;
 
-use crate::infrastructure::http_client_pool::HttpClientPool;
+use tt_adapter_http::HttpClientPool;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::extension_repository::ExtensionRepository;
 
 use super::FileExtensionRepository;
+
+const TEST_USER_AGENT: &str = "TauriTavern/test";
 
 fn unique_temp_root() -> PathBuf {
     std::env::temp_dir().join(format!("tauritavern-extension-repo-{}", random::<u64>()))
@@ -53,7 +55,7 @@ fn legacy_source_metadata() -> serde_json::Value {
 }
 
 fn test_http_clients() -> Arc<HttpClientPool> {
-    Arc::new(HttpClientPool::new())
+    Arc::new(HttpClientPool::new(TEST_USER_AGENT))
 }
 
 #[tokio::test]

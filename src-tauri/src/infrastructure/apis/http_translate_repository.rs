@@ -5,7 +5,7 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::Value;
 use url::Url;
 
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::translate_repository::{TranslateRepository, TranslateRequest};
 

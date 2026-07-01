@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use reqwest::redirect::Policy;
 use reqwest::{Client, NoProxy, Proxy};
-
-use crate::infrastructure::http_client::build_http_client;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::RequestProxySettings;
 use tt_ports::settings::RequestProxyRuntime;
+
+use crate::client::build_http_client;
 
 pub const CHAT_COMPLETION_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 pub const CHAT_COMPLETION_NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -45,18 +45,20 @@ struct HttpClientPoolState {
 }
 
 pub struct HttpClientPool {
+    product_user_agent: String,
     state: RwLock<HttpClientPoolState>,
 }
 
-impl Default for HttpClientPool {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl HttpClientPool {
-    pub fn new() -> Self {
+    pub fn new(product_user_agent: impl Into<String>) -> Self {
+        let product_user_agent = product_user_agent.into();
+        assert!(
+            !product_user_agent.trim().is_empty(),
+            "HTTP product user-agent must not be empty"
+        );
+
         Self {
+            product_user_agent,
             state: RwLock::new(HttpClientPoolState::default()),
         }
     }
@@ -86,7 +88,7 @@ impl HttpClientPool {
             .map(|(client, _revision)| client)
     }
 
-    pub(crate) fn client_with_revision(
+    pub fn client_with_revision(
         &self,
         profile: HttpClientProfile,
     ) -> Result<(Client, u64), DomainError> {
@@ -100,7 +102,7 @@ impl HttpClientPool {
                 (state.revision, state.proxy.clone())
             };
 
-            let client = build_profile_client(profile, proxy)?;
+            let client = build_profile_client(profile, proxy, &self.product_user_agent)?;
 
             let mut state = self.state.write().unwrap();
             if state.revision != revision {
@@ -169,6 +171,7 @@ fn normalized_bypass_csv(entries: &[String]) -> String {
 fn build_profile_client(
     profile: HttpClientProfile,
     proxy: Option<Proxy>,
+    product_user_agent: &str,
 ) -> Result<Client, DomainError> {
     let mut builder = Client::builder().no_proxy();
 
@@ -205,7 +208,7 @@ fn build_profile_client(
         builder = builder.proxy(proxy);
     }
 
-    build_http_client(builder).map_err(|error| {
+    build_http_client(builder, product_user_agent).map_err(|error| {
         DomainError::InternalError(format!("Failed to build HTTP client: {error}"))
     })
 }
@@ -214,6 +217,17 @@ fn build_profile_client(
 mod tests {
     use super::{HttpClientPool, HttpClientProfile};
     use tt_domain::models::settings::RequestProxySettings;
+
+    const TEST_USER_AGENT: &str = "TauriTavern/test";
+
+    fn pool() -> HttpClientPool {
+        HttpClientPool::new(TEST_USER_AGENT)
+    }
+
+    #[test]
+    fn stores_product_user_agent() {
+        assert_eq!(pool().product_user_agent, TEST_USER_AGENT);
+    }
 
     #[test]
     fn disabled_proxy_is_valid() {
@@ -254,7 +268,7 @@ mod tests {
         let settings = RequestProxySettings {
             enabled: true,
             url: "socks5://127.0.0.1:1080".to_string(),
-            bypass: vec!["localhost".to_string()],
+            bypass: vec![],
         };
 
         HttpClientPool::validate_request_proxy_settings(&settings).unwrap();
@@ -262,7 +276,7 @@ mod tests {
 
     #[test]
     fn clients_are_cached_per_profile() {
-        let pool = HttpClientPool::new();
+        let pool = pool();
 
         pool.client(HttpClientProfile::Default).unwrap();
         assert_eq!(pool.state.read().unwrap().clients.len(), 1);
@@ -276,7 +290,7 @@ mod tests {
 
     #[test]
     fn apply_clears_cached_clients() {
-        let pool = HttpClientPool::new();
+        let pool = pool();
 
         pool.client(HttpClientProfile::Default).unwrap();
         assert_eq!(pool.state.read().unwrap().clients.len(), 1);
@@ -292,7 +306,7 @@ mod tests {
 
     #[test]
     fn client_with_revision_tracks_proxy_revision() {
-        let pool = HttpClientPool::new();
+        let pool = pool();
 
         let (_, initial_revision) = pool
             .client_with_revision(HttpClientProfile::ChatCompletionWebSocket)
@@ -310,7 +324,7 @@ mod tests {
 
     #[test]
     fn apply_sets_and_clears_proxy() {
-        let pool = HttpClientPool::new();
+        let pool = pool();
 
         let enabled = RequestProxySettings {
             enabled: true,

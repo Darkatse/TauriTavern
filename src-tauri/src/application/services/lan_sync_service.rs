@@ -29,8 +29,8 @@ use pairing_link::{
     parse_device_id, parse_pair_uri, validate_https_base_url,
 };
 pub use ports::{
-    LanAddressDiscovery, LanInboundRequestHandler, LanPairingApprovalRequest, LanPairingClient,
-    LanPeerRepository, LanServerControl, LanServerInfo, LanSyncSettingsRepository, PairingApproval,
+    LanAddressDiscovery, LanInboundRequestHandler, LanPairingClient, LanPeerRepository,
+    LanServerControl, LanServerInfo, LanSyncSettingsRepository, PairingApproval,
 };
 pub use runtime_state::{LanPairingSession, LanSyncRuntimeState};
 pub use tt_contracts::sync::PAIRING_REJECTED_MESSAGE;

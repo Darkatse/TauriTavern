@@ -5476,7 +5476,6 @@ dependencies = [
  "icu_locale_core",
  "image",
  "local-ip-address",
- "miktik",
  "mime_guess",
  "objc2",
  "objc2-foundation",
@@ -5511,6 +5510,8 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "tt-adapter-http",
+ "tt-adapter-tokenization",
  "tt-contracts",
  "tt-domain",
  "tt-ports",
@@ -5999,6 +6000,31 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tt-adapter-http"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "rustls",
+ "tt-domain",
+ "tt-ports",
+ "webpki-roots",
+]
+
+[[package]]
+name = "tt-adapter-tokenization"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "flate2",
+ "miktik",
+ "serde_json",
+ "tokio",
+ "tt-adapter-http",
+ "tt-domain",
+ "tt-ports",
+]
 
 [[package]]
 name = "tt-application"

@@ -6,6 +6,7 @@ use ttsync_contract::peer::DeviceId;
 use ttsync_contract::sync::SyncMode;
 
 use super::pairing_link::{default_lan_permissions, device_pubkey_b64url};
+use super::ports::LanPairingApprovalRequest;
 use super::*;
 use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::application::services::sync_job_coordinator::{SyncJobEventPublisher, SyncJobExecutor};

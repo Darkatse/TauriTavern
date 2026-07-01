@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use tauri::AppHandle;
 
-use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::application::services::lan_sync_service::{
-    LanInboundService, LanPeerRepository, LanServerControl, LanSyncRuntimeState, LanSyncService,
-    LanSyncSettingsRepository,
+    LanInboundService, LanSyncRuntimeState, LanSyncService,
 };
 use crate::application::services::sync_automation_service::SyncAutomationService;
 use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
@@ -21,6 +19,8 @@ use crate::infrastructure::sync::lan::discovery::LocalLanAddressDiscovery;
 use crate::infrastructure::sync::lan::store::LanPeerStore;
 use crate::infrastructure::sync_automation_store::SyncAutomationStore;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
+use tt_ports::lan_sync::{LanPeerRepository, LanServerControl, LanSyncSettingsRepository};
+use tt_ports::sync::DataChangeReconciler;
 
 use super::super::adapters;
 

@@ -10,7 +10,7 @@ use url::Url;
 use crate::infrastructure::apis::workers_ai_models::{
     fetch_workers_ai_models, workers_ai_model_name,
 };
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::provider_metadata_repository::{
     NanoGptCredits, NanoGptModelProviders, NanoGptSubscriptionCredits, NanoGptSubscriptionLimits,

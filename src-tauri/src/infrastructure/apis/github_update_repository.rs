@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::infrastructure::github::classify_github_rate_limit;
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_domain::models::update::ReleaseInfo;
 use tt_ports::repositories::update_repository::UpdateRepository;

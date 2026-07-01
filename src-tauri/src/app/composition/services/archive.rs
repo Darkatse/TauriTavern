@@ -5,10 +5,10 @@ use tauri::AppHandle;
 use crate::application::services::data_archive_service::{
     DataArchiveJobRegistry, DataArchiveService,
 };
-use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::infrastructure::persistence::data_archive_adapters::{
     DataDirectoryDataRootInitializer, FileDataArchiveExecutor, TauriDataArchiveFileGateway,
 };
+use tt_ports::sync::DataChangeReconciler;
 
 pub(super) fn build(
     app_handle: &AppHandle,

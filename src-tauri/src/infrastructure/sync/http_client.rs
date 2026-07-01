@@ -11,7 +11,7 @@ use ttsync_http::client::{
 };
 use url::Url;
 
-use crate::infrastructure::http_client::APP_USER_AGENT;
+use crate::product;
 use tt_domain::errors::DomainError;
 use tt_ports::sync::TtPairingClient;
 
@@ -109,7 +109,7 @@ pub(crate) fn new_sync_client(
         base_url,
         SyncClientOptions {
             spki_sha256: Some(spki_sha256),
-            user_agent: Some(APP_USER_AGENT.to_string()),
+            user_agent: Some(product::USER_AGENT.to_string()),
             http_version: SyncClientHttpVersion::Http1Only,
         },
     )

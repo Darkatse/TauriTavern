@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use url::Url;
 
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 
 use super::{ExtensionSourceProvider, parse_bytes_or_error, parse_json_or_error};

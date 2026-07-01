@@ -39,8 +39,8 @@ use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::apis::http_external_import_downloader::HttpExternalImportDownloader;
-use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::persistence::file_system::DataDirectory;
+use tt_adapter_http::HttpClientPool;
 
 use super::{adapters, repositories};
 

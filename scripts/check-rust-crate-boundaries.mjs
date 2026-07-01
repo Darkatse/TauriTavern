@@ -87,10 +87,66 @@ const PORTS_FORBIDDEN_SOURCE_PATTERNS = [
     ['network IO', /\bstd::net::/],
 ];
 
+const ADAPTER_HTTP_FORBIDDEN_PACKAGES = new Set([
+    'axum',
+    'image',
+    'miktik',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'tt-application',
+    'ttsync-core',
+    'zip',
+]);
+
+const ADAPTER_FORBIDDEN_SOURCE_PATTERNS = [
+    ['application path', /\bcrate::application::/],
+    ['app host path', /\bcrate::app::/],
+    ['infrastructure path', /\bcrate::infrastructure::/],
+    ['presentation path', /\bcrate::presentation::/],
+    ['tauri', /\btauri::/],
+    ['tt-application', /\btt_application::/],
+    ['main crate', /\btauritavern(_lib)?::/],
+];
+
+const ADAPTER_TOKENIZATION_FORBIDDEN_PACKAGES = new Set([
+    'axum',
+    'image',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'tt-application',
+    'ttsync-core',
+    'zip',
+]);
+
+const ADAPTER_TOKENIZATION_FORBIDDEN_SOURCE_PATTERNS = [
+    ...ADAPTER_FORBIDDEN_SOURCE_PATTERNS,
+    ['axum', /\baxum::/],
+    ['image', /\bimage::/],
+    ['reqwest', /\breqwest::/],
+    ['ttsync-core', /\bttsync_core::/],
+    ['zip', /\bzip::/],
+];
+
 const CRATES = [
     crateConfig('tt-domain', DOMAIN_FORBIDDEN_PACKAGES, DOMAIN_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-contracts', CONTRACTS_FORBIDDEN_PACKAGES, CONTRACTS_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-ports', PORTS_FORBIDDEN_PACKAGES, PORTS_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-http', ADAPTER_HTTP_FORBIDDEN_PACKAGES, ADAPTER_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-tokenization', ADAPTER_TOKENIZATION_FORBIDDEN_PACKAGES, ADAPTER_TOKENIZATION_FORBIDDEN_SOURCE_PATTERNS),
+];
+
+const MAIN_CRATE_SOURCE_RULES = [
+    sourceRule('app composition', path.join(REPO_ROOT, 'src-tauri', 'src', 'app', 'composition'), [
+        ['repository facade', /\bcrate::domain::repositories::/],
+        ['sync contract facade', /\bcrate::domain::models::sync(_automation)?::/],
+        ['data-change port facade', /\bcrate::application::services::data_change_reconciler::/],
+    ]),
+    sourceRule('web resource adapter', path.join(REPO_ROOT, 'src-tauri', 'src', 'presentation', 'web_resources'), [
+        ['client asset contract facade', /\bcrate::application::client_asset_paths::/],
+        ['host resource facade', /\bcrate::application::services::host_resource_service::(contract|ports|range)::/],
+    ]),
 ];
 
 function crateConfig(name, forbiddenPackages, forbiddenSourcePatterns) {
@@ -101,6 +157,14 @@ function crateConfig(name, forbiddenPackages, forbiddenSourcePatterns) {
         src: path.join(root, 'src'),
         manifest: path.join(root, 'Cargo.toml'),
         forbiddenPackages,
+        forbiddenSourcePatterns,
+    };
+}
+
+function sourceRule(name, root, forbiddenSourcePatterns) {
+    return {
+        name,
+        root,
         forbiddenSourcePatterns,
     };
 }
@@ -148,10 +212,33 @@ async function crateFiles(config) {
     return files;
 }
 
+async function sourceRuleFiles(config) {
+    return (await listFiles(config.root)).filter((file) => file.endsWith('.rs'));
+}
+
 async function checkSourceBoundaries(config) {
     const violations = [];
 
     for (const filePath of await crateFiles(config)) {
+        const relPath = toPosixPath(path.relative(REPO_ROOT, filePath));
+        const text = await fs.readFile(filePath, 'utf8');
+        const lines = text.split(/\r?\n/);
+        lines.forEach((line, index) => {
+            for (const [kind, pattern] of config.forbiddenSourcePatterns) {
+                if (pattern.test(line)) {
+                    violations.push(`${relPath}:${index + 1}: ${config.name} ${kind}: ${line.trim()}`);
+                }
+            }
+        });
+    }
+
+    return violations;
+}
+
+async function checkMainCrateSourceRule(config) {
+    const violations = [];
+
+    for (const filePath of await sourceRuleFiles(config)) {
         const relPath = toPosixPath(path.relative(REPO_ROOT, filePath));
         const text = await fs.readFile(filePath, 'utf8');
         const lines = text.split(/\r?\n/);
@@ -205,6 +292,9 @@ async function main() {
             ...(await checkSourceBoundaries(config)),
             ...checkDependencyTree(config),
         );
+    }
+    for (const config of MAIN_CRATE_SOURCE_RULES) {
+        violations.push(...await checkMainCrateSourceRule(config));
     }
 
     if (violations.length > 0) {

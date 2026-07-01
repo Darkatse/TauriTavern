@@ -14,6 +14,8 @@ members = [
     "crates/tt-contracts",
     "crates/tt-ports",
     "crates/tt-application",
+    "crates/tt-adapter-http",
+    "crates/tt-adapter-tokenization",
 ]
 default-members = ["."]
 resolver = "3"
@@ -21,6 +23,7 @@ resolver = "3"
 [workspace.dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 rand = "0.9"
+reqwest = { version = "0.13", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -41,7 +44,6 @@ serde_json = { workspace = true }
 
 [dependencies]
 tauri = { version = "2.10.2", features = ["macos-private-api", "protocol-asset", "tray-icon"] }
-tauri-plugin-barcode-scanner = "2.4.4"
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-fs = "2.4.5"
 tauri-plugin-notification = "2.3.1"
@@ -57,7 +59,7 @@ tokio = { version = "1", default-features = false, features = ["fs", "io-util", 
 tokio-util = { version = "0.7", default-features = false, features = ["io", "rt"] }
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
-reqwest = { version = "0.13", default-features = false, features = ["http2", "json", "multipart", "query", "rustls", "socks", "stream"] }
+reqwest = { workspace = true, features = ["http2", "json", "multipart", "query", "rustls", "socks", "stream"] }
 bytes = "1"
 async-compression = { version = "0.4", features = ["tokio", "zstd"] }
 base64 = "0.22"
@@ -81,7 +83,6 @@ mime_guess = "2.0.5"
 flate2 = "1.1.9"
 crc32fast = "1"
 filetime = "0.2"
-miktik = { version = "0.2.0", default-features = false, features = ["openai", "huggingface", "sentencepiece"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "multipart", "query", "tokio"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
 local-ip-address = "0.6"
@@ -92,6 +93,8 @@ dunce = "1"
 tt-domain = { path = "crates/tt-domain" }
 tt-contracts = { path = "crates/tt-contracts" }
 tt-ports = { path = "crates/tt-ports" }
+tt-adapter-http = { path = "crates/tt-adapter-http" }
+tt-adapter-tokenization = { path = "crates/tt-adapter-tokenization" }
 
 # TT-Sync v2 shared protocol crates. (crates.io)
 ttsync-contract = { workspace = true }
@@ -108,6 +111,7 @@ tauri-winrt-notification = "0.7.2"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "http2", "tokio"] }
+tauri-plugin-barcode-scanner = "2.4.4"
 
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6.4"

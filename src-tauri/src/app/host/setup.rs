@@ -9,9 +9,9 @@ use std::sync::Arc;
 use crate::app::{BackendReadiness, StartupProfile, spawn_initialization};
 use crate::domain::errors::DomainError;
 use crate::domain::ios_policy::IosPolicyScope;
-use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::logging::llm_api_logs::LlmApiLogStore;
 use tauri::Manager;
+use tt_adapter_http::HttpClientPool;
 
 pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let app_handle = app.handle().clone();
@@ -23,7 +23,7 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
 
     // 2. Publish lightweight host services that do not depend on user settings.
     // AppState construction later reuses the same HTTP pool via managed state.
-    let http_client_pool = Arc::new(HttpClientPool::new());
+    let http_client_pool = Arc::new(HttpClientPool::new(crate::product::USER_AGENT));
     app.manage(http_client_pool.clone());
     super::resources::install_bundled_templates(app, &app_handle);
 

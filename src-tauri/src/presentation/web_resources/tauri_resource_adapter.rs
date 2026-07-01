@@ -8,12 +8,12 @@ use tauri::http::header::{
     ACCEPT_RANGES, ALLOW, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, HeaderName,
     HeaderValue,
 };
-
-use crate::application::services::host_resource_service::HostResourceService;
-use crate::application::services::host_resource_service::contract::{
+use tt_contracts::host_resource::{
     HostResourceHeader, HostResourceHeaders, HostResourceMethod, HostResourceRequest,
     HostResourceResponse,
 };
+
+use crate::application::services::host_resource_service::HostResourceService;
 
 pub(crate) fn handle_tauri_web_resource_request(
     host_resources: &HostResourceService,
@@ -110,13 +110,13 @@ mod tests {
     use tauri::http::header::CONTENT_LENGTH;
     use tauri::http::{Request, Response, StatusCode};
 
-    use crate::application::client_asset_paths::UserDataAssetKind;
-    use crate::application::services::host_resource_service::contract::{header, status};
-    use crate::application::services::host_resource_service::ports::{
+    use tt_contracts::client_asset_paths::UserDataAssetKind;
+    use tt_contracts::host_resource::{header, status};
+    use tt_contracts::range::ByteRange;
+    use tt_ports::host_resource::{
         HostResourceAssetStore, HostResourceBinaryAsset, HostResourceFileStat,
         HostResourceStoreError, ThumbnailAssetRequest,
     };
-    use crate::application::services::host_resource_service::range::ByteRange;
 
     struct NoopStore;
 

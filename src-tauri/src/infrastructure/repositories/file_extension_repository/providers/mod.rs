@@ -5,7 +5,7 @@ use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use url::Url;
 
-use crate::infrastructure::http_client_pool::HttpClientPool;
+use tt_adapter_http::HttpClientPool;
 use tt_domain::errors::DomainError;
 
 use super::repo_url::{HOST_GITEE, HOST_GITHUB, HOST_GITLAB};

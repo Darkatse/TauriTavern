@@ -18,8 +18,8 @@ use crate::infrastructure::apis::workers_ai_endpoint::workers_ai_run_url;
 use crate::infrastructure::apis::workers_ai_models::{
     fetch_workers_ai_models, workers_ai_model_name,
 };
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 use crate::infrastructure::sync_fs;
+use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
 use tt_ports::repositories::stable_diffusion_repository::{
