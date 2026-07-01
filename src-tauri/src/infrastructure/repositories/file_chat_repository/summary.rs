@@ -7,7 +7,7 @@ use serde_json::Value;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
-use crate::infrastructure::persistence::file_system::list_files_with_extension;
+use tt_adapter_storage_core::file_system::list_files_with_extension;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{parse_message_timestamp_value, strip_jsonl_extension};
 use tt_ports::repositories::chat_repository::ChatSearchResult;

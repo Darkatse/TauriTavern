@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::infrastructure::persistence::file_system::write_json_file_sync;
+use tt_adapter_storage_core::file_system::write_json_file_sync;
 use tt_domain::errors::DomainError;
 
 fn cache_path(data_root: &Path) -> PathBuf {

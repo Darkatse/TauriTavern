@@ -22,7 +22,7 @@ use serde::de::DeserializeOwned;
 use tokio::fs::read_to_string;
 use tokio::sync::Mutex;
 
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
+use tt_adapter_storage_core::file_system::{read_json_file, write_json_file};
 use tt_domain::errors::DomainError;
 
 pub struct FileAgentRepository {

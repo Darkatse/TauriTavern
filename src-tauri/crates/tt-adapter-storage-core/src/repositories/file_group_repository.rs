@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::infrastructure::persistence::file_system::{
+use crate::file_system::{
     list_files_with_extension, read_json_file, write_json_file,
 };
 use tt_domain::errors::DomainError;
@@ -100,7 +100,7 @@ impl FileGroupRepository {
                     }
                     Err(e) => {
                         tracing::error!(
-                            target: crate::observability_targets::USER_VISIBLE_ERROR,
+                            target: tt_contracts::observability::USER_VISIBLE_ERROR,
                             "Failed to load group from {:?}: {}",
                             file_path,
                             e

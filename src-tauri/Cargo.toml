@@ -19,6 +19,7 @@ members = [
     "crates/tt-adapter-sync",
     "crates/tt-adapter-archive",
     "crates/tt-adapter-provider-http",
+    "crates/tt-adapter-storage-core",
 ]
 default-members = ["."]
 resolver = "3"
@@ -75,9 +76,6 @@ async-trait = "0.1"
 url = "2.4"
 percent-encoding = "2"
 regress = "0.11.1"
-icu_collator = "2.1.1"
-icu_locale_core = "2.1.1"
-sys-locale = "0.3.2"
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 typed-path = "0.12"
 image = { version = "0.24", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
@@ -95,6 +93,7 @@ tt-adapter-tokenization = { path = "crates/tt-adapter-tokenization" }
 tt-adapter-sync = { path = "crates/tt-adapter-sync" }
 tt-adapter-archive = { path = "crates/tt-adapter-archive" }
 tt-adapter-provider-http = { path = "crates/tt-adapter-provider-http" }
+tt-adapter-storage-core = { path = "crates/tt-adapter-storage-core" }
 
 # TT-Sync v2 shared protocol crates. (crates.io)
 ttsync-contract = { workspace = true }

@@ -4,7 +4,7 @@ use serde_json::Value;
 use tokio::fs;
 
 use crate::domain::json_merge::merge_json_value;
-use crate::infrastructure::persistence::file_system::{
+use tt_adapter_storage_core::file_system::{
     move_file_no_replace_with_fallback, replace_file_with_fallback, unique_temp_path,
 };
 use tt_domain::errors::DomainError;

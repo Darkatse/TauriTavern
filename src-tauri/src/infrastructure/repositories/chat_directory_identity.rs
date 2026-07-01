@@ -8,9 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::infrastructure::persistence::file_system::{
-    replace_file_with_fallback, unique_temp_path,
-};
+use tt_adapter_storage_core::file_system::{replace_file_with_fallback, unique_temp_path};
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
 

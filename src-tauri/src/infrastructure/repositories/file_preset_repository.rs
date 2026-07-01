@@ -5,10 +5,8 @@ use std::sync::Arc;
 use tauri::AppHandle;
 
 use crate::infrastructure::assets::read_resource_json;
-use crate::infrastructure::persistence::file_system::{
-    delete_file, read_json_file, write_json_file,
-};
-use crate::infrastructure::preset_file_naming::{PresetFilePaths, load_named_preset_files};
+use tt_adapter_storage_core::file_system::{delete_file, read_json_file, write_json_file};
+use tt_adapter_storage_core::preset_file_naming::{PresetFilePaths, load_named_preset_files};
 use tt_domain::errors::DomainError;
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
 use tt_ports::repositories::content_repository::ContentRepository;

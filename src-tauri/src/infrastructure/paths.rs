@@ -532,11 +532,8 @@ pub(crate) async fn request_runtime_data_root_change(
         migration_error: None,
     };
 
-    crate::infrastructure::persistence::file_system::write_json_file(
-        &runtime_config_path(app_root),
-        &config,
-    )
-    .await
+    tt_adapter_storage_core::file_system::write_json_file(&runtime_config_path(app_root), &config)
+        .await
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -623,9 +620,7 @@ fn write_runtime_config_sync(
     path: &std::path::Path,
     config: &TauriTavernRuntimeConfig,
 ) -> Result<(), Box<dyn Error>> {
-    use crate::infrastructure::persistence::file_system::{
-        replace_file_with_fallback_sync, unique_temp_path,
-    };
+    use tt_adapter_storage_core::file_system::{replace_file_with_fallback_sync, unique_temp_path};
 
     let bytes = serde_json::to_vec_pretty(config)?;
     if let Some(parent) = path.parent() {

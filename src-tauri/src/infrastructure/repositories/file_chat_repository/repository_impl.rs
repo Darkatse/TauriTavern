@@ -8,11 +8,11 @@ use tokio::fs;
 use crate::infrastructure::persistence::chat_format_importers::{
     export_payload_to_plain_text, import_chat_payloads_from_json, import_chat_payloads_from_jsonl,
 };
-use crate::infrastructure::persistence::file_system::{
-    list_files_with_extension, move_file_no_replace_with_fallback,
-};
 use crate::infrastructure::persistence::jsonl_utils::{
     parse_jsonl_bytes, read_jsonl_file, write_jsonl_file,
+};
+use tt_adapter_storage_core::file_system::{
+    list_files_with_extension, move_file_no_replace_with_fallback,
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};

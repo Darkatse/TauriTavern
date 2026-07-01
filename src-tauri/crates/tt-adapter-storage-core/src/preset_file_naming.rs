@@ -4,29 +4,29 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use tokio::fs;
 
-use crate::infrastructure::persistence::file_system::list_files_with_extension;
-use crate::infrastructure::sillytavern_sorting::sort_paths_by_file_name_sillytavern_name;
+use crate::file_system::list_files_with_extension;
+use crate::sillytavern_sorting::sort_paths_by_file_name_sillytavern_name;
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
 
 #[derive(Debug, Clone)]
-pub(crate) struct NamedPresetFile {
+pub struct NamedPresetFile {
     #[cfg(test)]
-    pub(crate) path: PathBuf,
-    pub(crate) name: String,
+    path: PathBuf,
+    pub name: String,
     pub(crate) raw_content: String,
-    pub(crate) is_canonical: bool,
+    is_canonical: bool,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PresetFilePaths {
+pub struct PresetFilePaths {
     logical_name: String,
     canonical: PathBuf,
     legacy: PathBuf,
 }
 
 impl PresetFilePaths {
-    pub(crate) fn new(
+    pub fn new(
         logical_name: &str,
         directory: &Path,
         extension: &str,
@@ -55,7 +55,7 @@ impl PresetFilePaths {
         &self.legacy
     }
 
-    pub(crate) fn resolve_existing(&self) -> Result<Option<PathBuf>, DomainError> {
+    pub fn resolve_existing(&self) -> Result<Option<PathBuf>, DomainError> {
         let canonical_exists = self.canonical.exists();
         let legacy_exists = self.legacy != self.canonical && self.legacy.exists();
 
@@ -72,7 +72,7 @@ impl PresetFilePaths {
         }
     }
 
-    pub(crate) async fn prepare_for_save(&self) -> Result<PathBuf, DomainError> {
+    pub async fn prepare_for_save(&self) -> Result<PathBuf, DomainError> {
         let canonical_exists = self.canonical.exists();
         let legacy_exists = self.legacy != self.canonical && self.legacy.exists();
 
@@ -128,9 +128,7 @@ pub(crate) fn legacy_preset_file_stem(logical_name: &str) -> String {
         .to_string()
 }
 
-pub(crate) async fn load_named_preset_files(
-    dir: &Path,
-) -> Result<Vec<NamedPresetFile>, DomainError> {
+pub async fn load_named_preset_files(dir: &Path) -> Result<Vec<NamedPresetFile>, DomainError> {
     let mut files = list_files_with_extension(dir, "json").await?;
     sort_paths_by_file_name_sillytavern_name(&mut files)?;
 

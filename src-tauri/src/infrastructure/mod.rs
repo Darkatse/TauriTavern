@@ -14,11 +14,9 @@ pub mod logging;
 pub mod macos_webview;
 pub mod paths;
 pub mod persistence;
-pub mod preset_file_naming;
 pub mod repositories;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 pub mod runtime_paths_config_store;
-pub mod sillytavern_sorting;
 pub mod thumbnails;
 pub mod user_media_store;
 pub mod zipkit;

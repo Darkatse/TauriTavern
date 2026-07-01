@@ -6,7 +6,7 @@ use crate::domain::ios_policy::{
 };
 use crate::domain::models::settings::TauriTavernSettings;
 use crate::infrastructure::ios_policy_cache::resolve_effective_raw_policy_sync;
-use crate::infrastructure::repositories::file_settings_repository::FileSettingsRepository;
+use tt_adapter_storage_core::FileSettingsRepository;
 
 #[derive(Debug, Clone)]
 pub(crate) struct StartupProfile {

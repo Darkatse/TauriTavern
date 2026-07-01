@@ -3,7 +3,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 use tokio::fs::read_to_string;
 
-use crate::infrastructure::persistence::file_system::write_json_file;
+use tt_adapter_storage_core::file_system::write_json_file;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::AgentRun;
 

@@ -4,8 +4,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::domain::json_merge::merge_json_value;
-use crate::infrastructure::persistence::file_system::{
+use tt_domain::json_merge::merge_json_value;
+use crate::file_system::{
     replace_file_with_fallback, unique_temp_path,
 };
 use tt_domain::errors::DomainError;

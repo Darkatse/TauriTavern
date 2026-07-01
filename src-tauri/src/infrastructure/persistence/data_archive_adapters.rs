@@ -8,7 +8,7 @@ use tauri::Manager;
 use uuid::Uuid;
 
 use crate::infrastructure::paths::RuntimePaths;
-use crate::infrastructure::persistence::file_system::DataDirectory;
+use tt_adapter_storage_core::file_system::DataDirectory;
 #[cfg(target_os = "ios")]
 use tt_contracts::host::IOS_EXPORT_STAGING_ROOT_NAME;
 use tt_domain::errors::DomainError;

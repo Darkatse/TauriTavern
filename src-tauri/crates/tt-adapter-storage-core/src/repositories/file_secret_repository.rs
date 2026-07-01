@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
+use crate::file_system::{read_json_file, write_json_file};
 use tt_domain::errors::DomainError;
 use tt_domain::models::secret::{SecretEntry, SecretKeys, Secrets};
 use tt_ports::repositories::secret_repository::SecretRepository;
@@ -82,7 +82,7 @@ impl SecretRepository for FileSecretRepository {
             Ok(value) => value,
             Err(e) => {
                 tracing::error!(
-                    target: crate::observability_targets::USER_VISIBLE_ERROR,
+                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
                     "Failed to read secrets file: {}",
                     e
                 );
@@ -94,7 +94,7 @@ impl SecretRepository for FileSecretRepository {
         if migrated {
             if let Err(error) = self.save(&secrets).await {
                 tracing::error!(
-                    target: crate::observability_targets::USER_VISIBLE_ERROR,
+                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
                     "Failed to persist migrated secrets file: {}",
                     error
                 );

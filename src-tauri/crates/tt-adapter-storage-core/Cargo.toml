@@ -1,0 +1,23 @@
+[package]
+name = "tt-adapter-storage-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+chrono = { workspace = true }
+icu_collator = "2.1.1"
+icu_locale_core = "2.1.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sys-locale = "0.3.2"
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "rt", "sync"] }
+tracing = "0.1"
+tt-contracts = { path = "../tt-contracts" }
+tt-domain = { path = "../tt-domain" }
+tt-ports = { path = "../tt-ports" }
+uuid = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }

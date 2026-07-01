@@ -66,9 +66,9 @@ use crate::infrastructure::repositories::file_agent_profile_repository::FileAgen
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
-use crate::infrastructure::repositories::file_llm_connection_repository::FileLlmConnectionRepository;
 use crate::infrastructure::repositories::file_skill_repository::FileSkillRepository;
 use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
+use tt_adapter_storage_core::FileLlmConnectionRepository;
 
 const AGENT_CONTRACT_ASYNC_TIMEOUT: Duration = Duration::from_secs(5);
 

@@ -7,7 +7,7 @@ use std::path::Path;
 use tauri::AppHandle;
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::persistence::file_system::DataDirectory;
+use tt_adapter_storage_core::file_system::DataDirectory;
 
 use super::{AppServices, StartupProfile};
 

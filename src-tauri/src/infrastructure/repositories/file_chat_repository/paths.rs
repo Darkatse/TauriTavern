@@ -5,8 +5,8 @@ use chrono::Local;
 use tokio::fs;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
-use crate::infrastructure::persistence::file_system::unique_temp_path;
 use crate::infrastructure::repositories::chat_directory_identity::sanitize_chat_dir_key;
+use tt_adapter_storage_core::file_system::unique_temp_path;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{normalize_chat_file_name, normalize_chat_file_stem};
 use tt_domain::models::filename::sanitize_filename;

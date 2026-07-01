@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::fs;
 
-use crate::infrastructure::persistence::file_system::{
+use crate::file_system::{
     replace_file_with_fallback, unique_temp_path,
 };
 use tt_domain::errors::DomainError;

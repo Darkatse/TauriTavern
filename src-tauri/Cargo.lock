@@ -5436,8 +5436,6 @@ dependencies = [
  "filetime",
  "flate2",
  "futures-util",
- "icu_collator",
- "icu_locale_core",
  "image",
  "mime_guess",
  "objc2",
@@ -5453,7 +5451,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
- "sys-locale",
  "tauri",
  "tauri-build",
  "tauri-plugin-barcode-scanner",
@@ -5472,6 +5469,7 @@ dependencies = [
  "tt-adapter-archive",
  "tt-adapter-http",
  "tt-adapter-provider-http",
+ "tt-adapter-storage-core",
  "tt-adapter-sync",
  "tt-adapter-tokenization",
  "tt-contracts",
@@ -6010,6 +6008,26 @@ dependencies = [
  "uuid",
  "webpki-roots",
  "yup-oauth2",
+]
+
+[[package]]
+name = "tt-adapter-storage-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "icu_collator",
+ "icu_locale_core",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "sys-locale",
+ "tokio",
+ "tracing",
+ "tt-contracts",
+ "tt-domain",
+ "tt-ports",
+ "uuid",
 ]
 
 [[package]]

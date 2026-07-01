@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 use tokio::fs;
 
-use crate::infrastructure::persistence::file_system::{delete_file, write_json_file};
+use crate::file_system::{delete_file, write_json_file};
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
 use tt_domain::models::quick_reply::QuickReplySet;

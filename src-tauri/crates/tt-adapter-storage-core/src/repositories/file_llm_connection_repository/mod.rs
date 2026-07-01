@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use tokio::fs;
 use uuid::Uuid;
 
-use crate::infrastructure::persistence::file_system::{
+use crate::file_system::{
     list_files_with_extension, read_json_file, replace_file_with_fallback,
 };
 use tt_domain::errors::DomainError;
@@ -167,4 +167,148 @@ fn validate_connection_file_identity(
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use serde_json::json;
+    use tt_domain::errors::DomainError;
+    use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
+
+    use super::{
+        FileLlmConnectionRepository, LLM_CONNECTION_KIND, LLM_CONNECTION_SCHEMA_VERSION,
+        LlmConnectionId,
+    };
+
+    static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            let suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be after unix epoch")
+                .as_nanos();
+            let counter = NEXT_TEST_DIR_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "tauritavern-llm-connection-repository-test-{}-{}-{}",
+                std::process::id(),
+                suffix,
+                counter
+            ));
+            std::fs::create_dir_all(path.join("connections")).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn connection_json(id: &str, kind: &str, schema_version: u32) -> serde_json::Value {
+        json!({
+            "schemaVersion": schema_version,
+            "kind": kind,
+            "id": id,
+            "displayName": "Test Connection",
+            "provider": {
+                "chatCompletionSource": "openai"
+            },
+            "auth": {
+                "secretRef": {
+                    "key": "api_key_openai",
+                    "id": "secret-id"
+                }
+            }
+        })
+    }
+
+    async fn write_connection_file(dir: &TestDir, file_id: &str, value: serde_json::Value) {
+        let path = dir.path().join("connections").join(format!("{file_id}.json"));
+        let json = serde_json::to_vec_pretty(&value).expect("serialize connection json");
+        tokio::fs::write(path, json).await.expect("write connection");
+    }
+
+    fn assert_invalid_data_contains(error: DomainError, expected: &str) {
+        match error {
+            DomainError::InvalidData(message) => assert!(
+                message.contains(expected),
+                "expected `{message}` to contain `{expected}`"
+            ),
+            other => panic!("expected invalid data error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn load_connection_rejects_id_that_does_not_match_filename() {
+        let dir = TestDir::new();
+        write_connection_file(
+            &dir,
+            "expected",
+            connection_json("actual", LLM_CONNECTION_KIND, LLM_CONNECTION_SCHEMA_VERSION),
+        )
+        .await;
+        let repository = FileLlmConnectionRepository::new(dir.path().to_path_buf());
+        let id = LlmConnectionId::parse("expected").expect("valid id");
+
+        let error = repository
+            .load_connection(&id)
+            .await
+            .expect_err("mismatched id should fail");
+
+        assert_invalid_data_contains(error, "does not match filename");
+    }
+
+    #[tokio::test]
+    async fn load_connection_rejects_wrong_kind() {
+        let dir = TestDir::new();
+        write_connection_file(
+            &dir,
+            "expected",
+            connection_json("expected", "wrong.kind", LLM_CONNECTION_SCHEMA_VERSION),
+        )
+        .await;
+        let repository = FileLlmConnectionRepository::new(dir.path().to_path_buf());
+        let id = LlmConnectionId::parse("expected").expect("valid id");
+
+        let error = repository
+            .load_connection(&id)
+            .await
+            .expect_err("wrong kind should fail");
+
+        assert_invalid_data_contains(error, "kind must be");
+    }
+
+    #[tokio::test]
+    async fn load_connection_rejects_wrong_schema_version() {
+        let dir = TestDir::new();
+        write_connection_file(
+            &dir,
+            "expected",
+            connection_json("expected", LLM_CONNECTION_KIND, LLM_CONNECTION_SCHEMA_VERSION + 1),
+        )
+        .await;
+        let repository = FileLlmConnectionRepository::new(dir.path().to_path_buf());
+        let id = LlmConnectionId::parse("expected").expect("valid id");
+
+        let error = repository
+            .load_connection(&id)
+            .await
+            .expect_err("wrong schema version should fail");
+
+        assert_invalid_data_contains(error, "schemaVersion");
+    }
 }

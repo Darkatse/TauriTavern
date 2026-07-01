@@ -3,10 +3,10 @@ use std::path::Path;
 use serde_json::Value;
 use tokio::fs;
 
-use crate::infrastructure::persistence::file_system::replace_file_with_fallback;
 use crate::infrastructure::persistence::jsonl_utils::{
     parse_jsonl_bytes, read_first_non_empty_jsonl_line, write_jsonl_file,
 };
+use tt_adapter_storage_core::file_system::replace_file_with_fallback;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, strip_jsonl_extension};
 

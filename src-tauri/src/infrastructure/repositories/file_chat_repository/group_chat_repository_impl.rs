@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::fs;
 
-use crate::infrastructure::persistence::file_system::move_file_no_replace_with_fallback;
+use tt_adapter_storage_core::file_system::move_file_no_replace_with_fallback;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::strip_jsonl_extension;
 use tt_ports::repositories::chat_repository::ChatRepository;

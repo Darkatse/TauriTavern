@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs as tokio_fs;
 use url::Url;
 
-use crate::infrastructure::persistence::file_system::read_json_file;
+use tt_adapter_storage_core::file_system::read_json_file;
 use tt_domain::errors::DomainError;
 
 use super::SOURCE_METADATA_FILE;

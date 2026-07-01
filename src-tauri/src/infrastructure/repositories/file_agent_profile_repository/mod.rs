@@ -6,7 +6,7 @@ use serde_json::Value;
 use tokio::fs;
 use uuid::Uuid;
 
-use crate::infrastructure::persistence::file_system::{
+use tt_adapter_storage_core::file_system::{
     list_files_with_extension, read_json_file, replace_file_with_fallback,
 };
 use tt_domain::errors::DomainError;

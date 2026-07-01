@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
-use crate::infrastructure::persistence::file_system::{
+use crate::file_system::{
     list_files_with_extension, read_json_file, write_json_file, write_json_file_sync,
 };
-use crate::infrastructure::preset_file_naming::load_named_preset_files;
-use crate::infrastructure::sillytavern_sorting::{
+use crate::preset_file_naming::load_named_preset_files;
+use crate::sillytavern_sorting::{
     sort_paths_by_file_name_js_default, sort_strings_sillytavern_name,
 };
 use tt_domain::errors::DomainError;
@@ -53,9 +53,7 @@ impl FileSettingsRepository {
         }
     }
 
-    pub(crate) fn load_tauritavern_settings_sync(
-        &self,
-    ) -> Result<TauriTavernSettings, DomainError> {
+    pub fn load_tauritavern_settings_sync(&self) -> Result<TauriTavernSettings, DomainError> {
         if !self.tauritavern_settings_file.exists() {
             let default_settings = TauriTavernSettings::default();
             self.save_tauritavern_settings_sync(&default_settings)?;

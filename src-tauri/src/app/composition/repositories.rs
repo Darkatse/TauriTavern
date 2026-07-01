@@ -6,35 +6,29 @@ use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepositor
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
-use crate::infrastructure::persistence::file_system::DataDirectory;
 use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
-use crate::infrastructure::repositories::file_asset_repository::FileAssetRepository;
 use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
 use crate::infrastructure::repositories::file_content_repository::FileContentRepository;
 use crate::infrastructure::repositories::file_extension_repository::FileExtensionRepository;
-use crate::infrastructure::repositories::file_extension_store_repository::FileExtensionStoreRepository;
-use crate::infrastructure::repositories::file_group_repository::FileGroupRepository;
 use crate::infrastructure::repositories::file_image_metadata_repository::FileImageMetadataRepository;
-use crate::infrastructure::repositories::file_llm_connection_repository::FileLlmConnectionRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
-use crate::infrastructure::repositories::file_prompt_cache_repository::FilePromptCacheRepository;
-use crate::infrastructure::repositories::file_quick_reply_repository::FileQuickReplyRepository;
-use crate::infrastructure::repositories::file_secret_repository::FileSecretRepository;
-use crate::infrastructure::repositories::file_settings_repository::FileSettingsRepository;
 use crate::infrastructure::repositories::file_skill_repository::FileSkillRepository;
-use crate::infrastructure::repositories::file_theme_repository::FileThemeRepository;
-use crate::infrastructure::repositories::file_user_directory_repository::FileUserDirectoryRepository;
-use crate::infrastructure::repositories::file_user_repository::FileUserRepository;
 use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
 use tt_adapter_http::HttpClientPool;
 use tt_adapter_provider_http::{
     HttpChatCompletionRepository, HttpProviderMetadataRepository, HttpStableDiffusionRepository,
     HttpTranslateRepository, HttpTtsRepository,
+};
+use tt_adapter_storage_core::{
+    DataDirectory, FileAssetRepository, FileExtensionStoreRepository, FileGroupRepository,
+    FileLlmConnectionRepository, FilePromptCacheRepository, FileQuickReplyRepository,
+    FileSecretRepository, FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository,
+    FileUserRepository,
 };
 use tt_adapter_tokenization::MiktikTokenizerRepository;
 use tt_domain::errors::DomainError;
