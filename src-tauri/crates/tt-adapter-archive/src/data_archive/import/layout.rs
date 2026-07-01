@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use tt_domain::errors::DomainError;
 
-use super::archive::{self, ArchiveFormat};
-use crate::infrastructure::persistence::data_archive::shared::{
+use super::archive::ScannedArchive;
+use crate::data_archive::shared::{
     IMPORT_TARGET_USER_HANDLE, is_macos_resource_fork_path, is_sillytavern_user_root_entry,
     is_user_handle_root_child_entry, path_components,
 };
@@ -20,7 +20,6 @@ pub enum ArchiveLayoutPolicy {
 
 #[derive(Debug, Clone)]
 pub struct DetectedArchiveLayout {
-    pub format: ArchiveFormat,
     pub archive_root_prefix: PathBuf,
     pub policy: ArchiveLayoutPolicy,
     pub scanned_entries: usize,
@@ -64,13 +63,17 @@ struct ArchiveRootStats {
     detected_user_handles: BTreeSet<String>,
 }
 
-pub fn detect_archive_layout(
-    archive_path: &Path,
-    is_cancelled: &dyn Fn() -> bool,
-) -> Result<DetectedArchiveLayout, DomainError> {
-    let mut candidate_stats = BTreeMap::new();
+#[derive(Debug, Default)]
+pub struct ArchiveLayoutScan {
+    candidate_stats: BTreeMap<Vec<String>, ArchiveRootStats>,
+}
 
-    let scanned_archive = archive::scan_archive(archive_path, is_cancelled, &mut |path| {
+impl ArchiveLayoutScan {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn visit_path(&mut self, path: &Path) -> Result<(), DomainError> {
         if is_macos_resource_fork_path(path) {
             return Ok(());
         }
@@ -80,29 +83,32 @@ pub fn detect_archive_layout(
             return Ok(());
         }
 
-        record_archive_layout_candidates(&mut candidate_stats, &components);
+        record_archive_layout_candidates(&mut self.candidate_stats, &components);
         Ok(())
-    })?;
-    let scanned_entries = scanned_archive.scanned_entries;
-
-    if scanned_entries == 0 {
-        return Err(DomainError::InvalidData("Archive is empty".to_string()));
     }
 
-    let candidates = candidate_stats
-        .iter()
-        .flat_map(|(prefix, stats)| layout_policy_candidates_for_root(prefix, stats))
-        .collect::<Vec<_>>();
+    pub fn finish(self, scanned_archive: ScannedArchive) -> Result<DetectedArchiveLayout, DomainError> {
+        let scanned_entries = scanned_archive.scanned_entries;
 
-    let chosen = choose_archive_layout(&candidates)?;
+        if scanned_entries == 0 {
+            return Err(DomainError::InvalidData("Archive is empty".to_string()));
+        }
 
-    Ok(DetectedArchiveLayout {
-        format: scanned_archive.format,
-        archive_root_prefix: chosen.archive_root_prefix,
-        policy: chosen.policy,
-        scanned_entries,
-        detected_user_handles: chosen.detected_user_handles,
-    })
+        let candidates = self
+            .candidate_stats
+            .iter()
+            .flat_map(|(prefix, stats)| layout_policy_candidates_for_root(prefix, stats))
+            .collect::<Vec<_>>();
+
+        let chosen = choose_archive_layout(&candidates)?;
+
+        Ok(DetectedArchiveLayout {
+            archive_root_prefix: chosen.archive_root_prefix,
+            policy: chosen.policy,
+            scanned_entries,
+            detected_user_handles: chosen.detected_user_handles,
+        })
+    }
 }
 
 fn record_archive_layout_candidates(
@@ -351,280 +357,126 @@ fn assert_no_recognized_entries_outside_archive_root(
 mod tests {
     use super::*;
 
-    use std::fs;
-    use std::fs::File;
-    use std::io::Write;
-    use zip::ZipWriter;
-    use zip::write::SimpleFileOptions as FileOptions;
-
-    fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
-        let file = File::create(path).expect("create zip");
-        let mut writer = ZipWriter::new(file);
-        for (name, bytes) in entries {
-            writer
-                .start_file(*name, FileOptions::default())
-                .expect("start file");
-            writer.write_all(bytes).expect("write bytes");
+    fn detect_layout(entries: &[&str]) -> Result<DetectedArchiveLayout, DomainError> {
+        let mut scan = ArchiveLayoutScan::new();
+        for entry in entries {
+            scan.visit_path(Path::new(entry))?;
         }
-        writer.finish().expect("finish zip");
+        scan.finish(ScannedArchive {
+            scanned_entries: entries.len(),
+        })
     }
 
     #[test]
     fn detects_tauritavern_data_root_layout() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(&zip_path, &[("data/default-user/characters/a.json", b"{}")]);
-
-        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        let layout = detect_layout(&["data/default-user/characters/a.json"]).expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::DataRoot);
         assert_eq!(layout.archive_root_prefix, PathBuf::from("data"));
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn detects_user_handle_root_layout() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(&zip_path, &[("default-user/characters/a.json", b"{}")]);
-
-        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        let layout = detect_layout(&["default-user/characters/a.json"]).expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
         assert!(layout.archive_root_prefix.as_os_str().is_empty());
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn detects_user_handle_root_layout_with_extra_root_file() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(
-            &zip_path,
-            &[
-                ("README.txt", b"hello"),
-                ("default-user/characters/a.json", b"{}"),
-            ],
-        );
-
-        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        let layout =
+            detect_layout(&["README.txt", "default-user/characters/a.json"]).expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
         assert!(layout.archive_root_prefix.as_os_str().is_empty());
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn detects_user_handle_root_layout_with_macos_resource_forks() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(
-            &zip_path,
-            &[
-                ("__MACOSX/._junk", b"junk"),
-                ("default-user/characters/a.json", b"{}"),
-            ],
-        );
-
-        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        let layout =
+            detect_layout(&["__MACOSX/._junk", "default-user/characters/a.json"])
+                .expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
         assert!(layout.archive_root_prefix.as_os_str().is_empty());
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn ignores_macos_resource_forks_for_data_root_layout() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(
-            &zip_path,
-            &[
-                ("data/default-user/characters/a.json", b"{}"),
-                ("__MACOSX/data/default-user/characters/._a.json", b"junk"),
-            ],
-        );
-
-        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        let layout = detect_layout(&[
+            "data/default-user/characters/a.json",
+            "__MACOSX/data/default-user/characters/._a.json",
+        ])
+        .expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::DataRoot);
         assert_eq!(layout.archive_root_prefix, PathBuf::from("data"));
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn ignores_macos_resource_forks_for_user_handle_layout() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(
-            &zip_path,
-            &[
-                ("default-user/characters/a.json", b"{}"),
-                ("__MACOSX/default-user/characters/._a.json", b"junk"),
-            ],
-        );
-
-        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        let layout = detect_layout(&[
+            "default-user/characters/a.json",
+            "__MACOSX/default-user/characters/._a.json",
+        ])
+        .expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
         assert!(layout.archive_root_prefix.as_os_str().is_empty());
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn detects_sillytavern_user_root_layout() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(&zip_path, &[("characters/a.json", b"{}")]);
-
-        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        let layout = detect_layout(&["characters/a.json"]).expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
         assert!(layout.archive_root_prefix.as_os_str().is_empty());
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn detects_sillytavern_user_root_layout_with_marker_named_content_paths() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(
-            &zip_path,
-            &[
-                ("characters/a.json", b"{}"),
-                ("chats/characters/session.jsonl", b"{}"),
-                ("assets/worlds/cover.png", b"image"),
-            ],
-        );
-
-        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        let layout = detect_layout(&[
+            "characters/a.json",
+            "chats/characters/session.jsonl",
+            "assets/worlds/cover.png",
+        ])
+        .expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
         assert!(layout.archive_root_prefix.as_os_str().is_empty());
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn detects_single_file_settings_layout() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(&zip_path, &[("settings.json", b"{}")]);
-
-        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        let layout = detect_layout(&["settings.json"]).expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn detects_wrapped_data_layout() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(
-            &zip_path,
-            &[("BackupRoot/data/default-user/chats/hello.jsonl", b"{}")],
-        );
-
-        let layout = detect_archive_layout(&zip_path, &|| false).expect("scan layout");
+        let layout =
+            detect_layout(&["BackupRoot/data/default-user/chats/hello.jsonl"])
+                .expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::DataRoot);
         assert_eq!(
             layout.archive_root_prefix,
             PathBuf::from("BackupRoot").join("data")
         );
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn rejects_mixed_sillytavern_user_root_and_user_handle_root_at_same_prefix() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(
-            &zip_path,
-            &[
-                ("characters/a.json", b"{}"),
-                ("default-user/characters/b.json", b"{}"),
-            ],
-        );
-
-        let error = detect_archive_layout(&zip_path, &|| false).unwrap_err();
+        let error =
+            detect_layout(&["characters/a.json", "default-user/characters/b.json"]).unwrap_err();
         assert!(matches!(error, DomainError::InvalidData(_)));
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn rejects_mixed_data_root_and_sillytavern_user_root_at_same_prefix() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(
-            &zip_path,
-            &[
-                ("_tauritavern/state.json", b"{}"),
-                ("characters/a.json", b"{}"),
-            ],
-        );
-
-        let error = detect_archive_layout(&zip_path, &|| false).unwrap_err();
+        let error = detect_layout(&["_tauritavern/state.json", "characters/a.json"]).unwrap_err();
         assert!(matches!(error, DomainError::InvalidData(_)));
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn rejects_ambiguous_mixed_roots() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
-        let zip_path = root.join("fixture.zip");
-        fs::create_dir_all(&root).expect("create root");
-
-        write_zip(
-            &zip_path,
-            &[
-                ("data/default-user/characters/a.json", b"{}"),
-                ("default-user/characters/b.json", b"{}"),
-            ],
-        );
-
-        let error = detect_archive_layout(&zip_path, &|| false).unwrap_err();
+        let error = detect_layout(&[
+            "data/default-user/characters/a.json",
+            "default-user/characters/b.json",
+        ])
+        .unwrap_err();
         assert!(matches!(error, DomainError::InvalidData(_)));
-
-        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 }

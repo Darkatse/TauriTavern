@@ -21,7 +21,7 @@
     "check:rust:release-path": "cargo check --manifest-path src-tauri/Cargo.toml --workspace",
     "test": "pnpm run test:contracts",
     "test:contracts": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\"",
-    "test:rust:split-crates": "cargo test --manifest-path src-tauri/Cargo.toml -p tt-domain -p tt-contracts -p tt-ports -p tt-adapter-http -p tt-adapter-tokenization -p tt-adapter-sync --no-default-features",
+    "test:rust:split-crates": "cargo test --manifest-path src-tauri/Cargo.toml -p tt-domain -p tt-contracts -p tt-ports -p tt-adapter-http -p tt-adapter-tokenization -p tt-adapter-sync -p tt-adapter-archive --no-default-features",
     "web:build": "rspack build --config rspack.config.js",
     "web:dev": "rspack build --config rspack.config.js --watch",
     "tauri:dev": "tauri dev",

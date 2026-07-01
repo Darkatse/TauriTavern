@@ -1,11 +1,10 @@
-use chrono::Utc;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
 use zip::write::SimpleFileOptions as FileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use crate::infrastructure::zipkit::export_file_options;
+use crate::zipkit::export_file_options;
 use tt_domain::errors::DomainError;
 
 use super::DataArchiveExportResult;
@@ -22,7 +21,7 @@ struct ExportProgress {
     last_reported_percent: f32,
 }
 
-pub fn run_export_data_archive(
+pub(crate) fn run_export_data_archive(
     data_root: &Path,
     output_path: &Path,
     report_progress: &mut dyn FnMut(&str, f32, &str),
@@ -38,7 +37,7 @@ pub fn run_export_data_archive(
     )
 }
 
-pub fn run_export_user_backup_archive(
+pub(crate) fn run_export_user_backup_archive(
     user_root: &Path,
     output_path: &Path,
     include_secrets: bool,
@@ -136,13 +135,6 @@ fn run_export_archive(
     Ok(DataArchiveExportResult {
         archive_path: output_path.to_path_buf(),
     })
-}
-
-pub fn default_export_file_name() -> String {
-    format!(
-        "tauritavern-data-{}.zip",
-        Utc::now().format("%Y%m%d-%H%M%S")
-    )
 }
 
 fn count_export_entries(

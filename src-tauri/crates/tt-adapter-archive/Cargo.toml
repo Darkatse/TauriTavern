@@ -1,0 +1,19 @@
+[package]
+name = "tt-adapter-archive"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+flate2 = "1.1.9"
+tar = { version = "0.4", default-features = false }
+tracing = "0.1"
+typed-path = "0.12"
+uuid = { workspace = true }
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+tt-domain = { path = "../tt-domain" }
+tt-ports = { path = "../tt-ports" }
+
+[dev-dependencies]
+base64 = "0.22"
+rand = { workspace = true }

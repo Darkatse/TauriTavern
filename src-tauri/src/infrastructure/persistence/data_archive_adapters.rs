@@ -8,84 +8,16 @@ use tauri::Manager;
 use uuid::Uuid;
 
 use crate::infrastructure::paths::RuntimePaths;
-use crate::infrastructure::persistence::data_archive::{
-    default_export_file_name, run_export_data_archive, run_export_user_backup_archive,
-    run_import_data_archive,
-};
 use crate::infrastructure::persistence::file_system::DataDirectory;
 #[cfg(target_os = "ios")]
 use tt_contracts::host::IOS_EXPORT_STAGING_ROOT_NAME;
 use tt_domain::errors::DomainError;
-use tt_domain::models::data_archive::DataArchiveImportFailure;
 use tt_ports::data_archive::{
-    ArchiveExportExecutionReport, ArchiveImportExecutionReport, DataArchiveExecutor,
     DataArchiveFileGateway, DataRootInitializer, ExportArchiveExecutionRequest,
     ImportArchiveExecutionRequest, UserBackupArchiveExecutionRequest, UserBackupArchiveTarget,
 };
 
 const EXPORT_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
-
-pub(crate) struct FileDataArchiveExecutor;
-
-impl DataArchiveExecutor for FileDataArchiveExecutor {
-    fn import_full_data(
-        &self,
-        request: ImportArchiveExecutionRequest,
-        report_progress: &mut dyn FnMut(&str, f32, &str),
-        is_cancelled: &dyn Fn() -> bool,
-    ) -> Result<ArchiveImportExecutionReport, DataArchiveImportFailure> {
-        let result = run_import_data_archive(
-            &request.data_root,
-            &request.archive_path,
-            &request.workspace_root,
-            report_progress,
-            is_cancelled,
-        )?;
-
-        Ok(ArchiveImportExecutionReport {
-            source_users: result.source_users,
-            target_user: result.target_user,
-            local_applied: result.local_applied,
-        })
-    }
-
-    fn export_full_data(
-        &self,
-        request: ExportArchiveExecutionRequest,
-        report_progress: &mut dyn FnMut(&str, f32, &str),
-        is_cancelled: &dyn Fn() -> bool,
-    ) -> Result<ArchiveExportExecutionReport, DomainError> {
-        let file_name = request.file_name;
-        let result = run_export_data_archive(
-            &request.data_root,
-            &request.output_path,
-            report_progress,
-            is_cancelled,
-        )?;
-
-        Ok(ArchiveExportExecutionReport {
-            file_name,
-            archive_path: result.archive_path,
-        })
-    }
-
-    fn export_user_backup(
-        &self,
-        request: UserBackupArchiveExecutionRequest,
-        report_progress: &mut dyn FnMut(&str, f32, &str),
-        is_cancelled: &dyn Fn() -> bool,
-    ) -> Result<(), DomainError> {
-        run_export_user_backup_archive(
-            &request.user_root,
-            &request.output_path,
-            request.include_secrets,
-            report_progress,
-            is_cancelled,
-        )?;
-
-        Ok(())
-    }
-}
 
 pub(crate) struct TauriDataArchiveFileGateway {
     app_handle: AppHandle,
@@ -505,6 +437,13 @@ fn resolve_user_backup_root(
     }
 
     Ok((handle.to_string(), user_root))
+}
+
+fn default_export_file_name() -> String {
+    format!(
+        "tauritavern-data-{}.zip",
+        Utc::now().format("%Y%m%d-%H%M%S")
+    )
 }
 
 fn default_user_backup_file_name(handle: &str) -> String {
