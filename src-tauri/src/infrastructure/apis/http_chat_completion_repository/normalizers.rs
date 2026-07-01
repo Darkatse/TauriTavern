@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-use crate::domain::repositories::chat_completion_repository::{
+use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionNormalizationReport, ChatCompletionRepositoryGenerateResponse,
 };
 

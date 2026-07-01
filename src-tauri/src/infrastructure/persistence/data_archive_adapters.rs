@@ -7,21 +7,21 @@ use tauri::AppHandle;
 use tauri::Manager;
 use uuid::Uuid;
 
-#[cfg(target_os = "ios")]
-use crate::application::host_contract::IOS_EXPORT_STAGING_ROOT_NAME;
-use crate::application::services::data_archive_service::{
-    ArchiveExportExecutionReport, ArchiveImportExecutionReport, DataArchiveExecutor,
-    DataArchiveFileGateway, DataRootInitializer, ExportArchiveExecutionRequest,
-    ImportArchiveExecutionRequest, UserBackupArchiveExecutionRequest, UserBackupArchiveTarget,
-};
-use crate::domain::errors::DomainError;
-use crate::domain::models::data_archive::DataArchiveImportFailure;
 use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::persistence::data_archive::{
     default_export_file_name, run_export_data_archive, run_export_user_backup_archive,
     run_import_data_archive,
 };
 use crate::infrastructure::persistence::file_system::DataDirectory;
+#[cfg(target_os = "ios")]
+use tt_contracts::host::IOS_EXPORT_STAGING_ROOT_NAME;
+use tt_domain::errors::DomainError;
+use tt_domain::models::data_archive::DataArchiveImportFailure;
+use tt_ports::data_archive::{
+    ArchiveExportExecutionReport, ArchiveImportExecutionReport, DataArchiveExecutor,
+    DataArchiveFileGateway, DataRootInitializer, ExportArchiveExecutionRequest,
+    ImportArchiveExecutionRequest, UserBackupArchiveExecutionRequest, UserBackupArchiveTarget,
+};
 
 const EXPORT_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 

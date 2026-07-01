@@ -6,8 +6,8 @@ use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::file_system::unique_temp_path;
+use tt_domain::errors::DomainError;
 
 const ANIMATED_EXTENSIONS: &[&str] = &[".apng", ".mp4", ".webm", ".avi", ".mkv", ".flv", ".gif"];
 

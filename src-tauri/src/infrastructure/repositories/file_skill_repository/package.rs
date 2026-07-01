@@ -10,8 +10,8 @@ use super::manifest::{read_sidecar, read_skill_frontmatter};
 use super::paths::{normalize_optional_string, normalize_skill_path, validate_skill_name};
 use super::source_refs::skill_source_ref_from_import_source;
 use super::{MAX_FILES, MAX_SINGLE_FILE_BYTES, MAX_TOTAL_BYTES};
-use crate::domain::errors::DomainError;
-use crate::domain::models::skill::{
+use tt_domain::errors::DomainError;
+use tt_domain::models::skill::{
     SkillFileKind, SkillFileRef, SkillImportConflict, SkillImportConflictKind, SkillImportPreview,
     SkillIndexEntry,
 };

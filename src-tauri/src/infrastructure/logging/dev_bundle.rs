@@ -6,10 +6,10 @@ use tauri::Manager;
 use zip::write::SimpleFileOptions as FileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use crate::application::host_contract::IOS_EXPORT_STAGING_ROOT_NAME;
-use crate::domain::errors::DomainError;
 use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::zipkit::export_file_options;
+use tt_contracts::host::IOS_EXPORT_STAGING_ROOT_NAME;
+use tt_domain::errors::DomainError;
 
 const BUNDLE_ROOT_DIR: &str = "tauritavern-dev-bundle";
 

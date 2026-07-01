@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::file_system::list_files_with_extension;
+use tt_domain::errors::DomainError;
 
 use super::FileChatRepository;
 

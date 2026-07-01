@@ -8,13 +8,13 @@ use tokio::fs as tokio_fs;
 use uuid::Uuid;
 
 use super::*;
-use crate::domain::models::skill::{
+use tt_domain::models::skill::{
     DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS, SkillFileKind, SkillImportConflictKind,
     SkillImportInput, SkillInlineFile, SkillInstallAction, SkillInstallConflictStrategy,
     SkillInstallRequest, SkillMoveRequest, SkillReadRequest, SkillScope, SkillScopeFilter,
     SkillScopeRetargetRequest, SkillSearchRequest, SkillWriteRequest,
 };
-use crate::domain::repositories::skill_repository::SkillRepository;
+use tt_ports::repositories::skill_repository::SkillRepository;
 
 fn temp_root(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(

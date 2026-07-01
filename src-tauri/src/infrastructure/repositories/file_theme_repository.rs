@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use std::path::PathBuf;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::filename::sanitize_filename;
-use crate::domain::models::theme::Theme;
-use crate::domain::repositories::theme_repository::ThemeRepository;
 use crate::infrastructure::persistence::file_system::{delete_file, write_json_file};
+use tt_domain::errors::DomainError;
+use tt_domain::models::filename::sanitize_filename;
+use tt_domain::models::theme::Theme;
+use tt_ports::repositories::theme_repository::ThemeRepository;
 
 /// File-based implementation of the ThemeRepository
 pub struct FileThemeRepository {

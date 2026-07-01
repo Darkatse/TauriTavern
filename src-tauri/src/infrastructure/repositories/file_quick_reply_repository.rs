@@ -2,11 +2,11 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::filename::sanitize_filename;
-use crate::domain::models::quick_reply::QuickReplySet;
-use crate::domain::repositories::quick_reply_repository::QuickReplyRepository;
 use crate::infrastructure::persistence::file_system::{delete_file, write_json_file};
+use tt_domain::errors::DomainError;
+use tt_domain::models::filename::sanitize_filename;
+use tt_domain::models::quick_reply::QuickReplySet;
+use tt_ports::repositories::quick_reply_repository::QuickReplyRepository;
 
 pub struct FileQuickReplyRepository {
     quick_replies_dir: PathBuf,

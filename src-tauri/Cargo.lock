@@ -5511,7 +5511,9 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "tt-contracts",
  "tt-domain",
+ "tt-ports",
  "ttsync-client",
  "ttsync-contract",
  "ttsync-core",
@@ -6005,6 +6007,13 @@ version = "0.1.0"
 [[package]]
 name = "tt-contracts"
 version = "0.1.0"
+dependencies = [
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "tt-domain",
+ "ttsync-contract",
+]
 
 [[package]]
 name = "tt-domain"
@@ -6022,6 +6031,17 @@ dependencies = [
 [[package]]
 name = "tt-ports"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tt-contracts",
+ "tt-domain",
+ "ttsync-contract",
+ "url",
+]
 
 [[package]]
 name = "ttsync-client"

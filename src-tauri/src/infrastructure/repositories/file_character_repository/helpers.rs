@@ -6,10 +6,6 @@ use std::path::{Path, PathBuf};
 
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::character::Character;
-use crate::domain::models::chat::parse_message_timestamp;
-use crate::domain::models::filename::sanitize_filename;
 use crate::infrastructure::persistence::file_system::{
     list_files_with_extension, replace_file_with_fallback, unique_temp_path,
 };
@@ -17,6 +13,10 @@ use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
 use crate::infrastructure::repositories::chat_directory_identity;
+use tt_domain::errors::DomainError;
+use tt_domain::models::character::Character;
+use tt_domain::models::chat::parse_message_timestamp;
+use tt_domain::models::filename::sanitize_filename;
 
 use super::FileCharacterRepository;
 

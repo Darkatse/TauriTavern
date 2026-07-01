@@ -1,7 +1,7 @@
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::chat::strip_jsonl_extension;
+use tt_domain::errors::DomainError;
+use tt_domain::models::chat::strip_jsonl_extension;
 
 use super::FileChatRepository;
 use super::summary::ChatFileDescriptor;

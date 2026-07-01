@@ -6,12 +6,12 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, RequestBuilder, StatusCode};
 use serde_json::Value;
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_completion_repository::{
+use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamSender,
 };
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
 mod aws_bedrock;
 mod claude;
@@ -775,8 +775,8 @@ mod tests {
     use reqwest::header::AUTHORIZATION;
     use tokio::sync::mpsc;
 
-    use crate::domain::errors::DomainError;
-    use crate::domain::repositories::chat_completion_repository::ChatCompletionApiConfig;
+    use tt_domain::errors::DomainError;
+    use tt_ports::repositories::chat_completion_repository::ChatCompletionApiConfig;
 
     use super::HttpChatCompletionRepository;
 
@@ -835,7 +835,7 @@ mod tests {
             extra_headers: HashMap::new(),
             additional_headers: HashMap::new(),
             anthropic_beta_header_mode:
-                crate::domain::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
+                tt_ports::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
             aws_bedrock_custom_response_path: None,
             aws_bedrock_custom_stream_path: None,
         };
@@ -866,7 +866,7 @@ mod tests {
                 "Bearer final".to_string(),
             )]),
             anthropic_beta_header_mode:
-                crate::domain::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
+                tt_ports::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
             aws_bedrock_custom_response_path: None,
             aws_bedrock_custom_stream_path: None,
         };

@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use ttsync_client::{SyncDirection as ClientSyncDirection, SyncObserver, SyncProgress};
 
-use crate::application::services::sync_job_coordinator::SyncJobEventPublisher;
-use crate::domain::models::sync::{
-    SyncJobContext, SyncJobEvent, SyncJobProgress, SyncJobProgressDirection,
-};
+use tt_contracts::sync::{SyncJobContext, SyncJobEvent, SyncJobProgress, SyncJobProgressDirection};
+use tt_ports::sync::SyncJobEventPublisher;
 
 pub struct SyncJobProgressObserver {
     events: Arc<dyn SyncJobEventPublisher>,

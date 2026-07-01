@@ -12,8 +12,8 @@ use super::index::sort_index;
 use super::package::{sha256_hex, validate_skill_root};
 use super::paths::{normalize_skill_path, validate_skill_name, validate_skill_scope};
 use super::{FileSkillRepository, MAX_SINGLE_FILE_BYTES, MAX_SKILL_MD_BYTES};
-use crate::domain::errors::DomainError;
-use crate::domain::models::skill::{
+use tt_domain::errors::DomainError;
+use tt_domain::models::skill::{
     DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS, SkillReadRequest, SkillReadResult, SkillWriteRequest,
 };
 

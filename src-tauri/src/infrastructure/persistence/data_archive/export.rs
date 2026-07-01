@@ -5,8 +5,8 @@ use std::path::Path;
 use zip::write::SimpleFileOptions as FileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::zipkit::export_file_options;
+use tt_domain::errors::DomainError;
 
 use super::DataArchiveExportResult;
 use super::shared::{

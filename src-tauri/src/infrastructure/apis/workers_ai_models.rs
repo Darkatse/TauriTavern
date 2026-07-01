@@ -2,8 +2,8 @@ use reqwest::header::{ACCEPT, AUTHORIZATION};
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::apis::workers_ai_endpoint::workers_ai_models_search_url;
+use tt_domain::errors::DomainError;
 
 pub(crate) async fn fetch_workers_ai_models(
     client: &Client,

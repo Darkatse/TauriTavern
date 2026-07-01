@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use icu_collator::{CollatorBorrowed, options::CollatorOptions};
 use icu_locale_core::Locale;
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 std::thread_local! {
     static SILLYTAVERN_NAME_COLLATOR: CollatorBorrowed<'static> = build_sillytavern_name_collator();

@@ -73,6 +73,7 @@ use crate::infrastructure::repositories::file_world_info_repository::FileWorldIn
 const AGENT_CONTRACT_ASYNC_TIMEOUT: Duration = Duration::from_secs(5);
 
 mod agent_runtime;
+mod architecture;
 mod character;
 
 struct AgentRuntimeFixture {

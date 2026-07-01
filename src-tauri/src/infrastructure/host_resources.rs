@@ -2,18 +2,18 @@ use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use crate::application::client_asset_paths::UserDataAssetKind;
-use crate::application::services::host_resource_service::ports::{
-    HostResourceAssetStore, HostResourceBinaryAsset, HostResourceFileStat, HostResourceStoreError,
-    ThumbnailAssetRequest, ThumbnailKind,
-};
-use crate::application::services::host_resource_service::range::ByteRange;
-use crate::domain::errors::DomainError;
-use crate::domain::models::user_directory::UserDirectory;
 use crate::infrastructure::persistence::thumbnail_cache::{
     ThumbnailConfig, read_thumbnail_or_original_sync,
 };
 use crate::infrastructure::thumbnails::{avatar_thumbnail_config, background_thumbnail_config};
+use tt_contracts::client_asset_paths::UserDataAssetKind;
+use tt_contracts::range::ByteRange;
+use tt_domain::errors::DomainError;
+use tt_domain::models::user_directory::UserDirectory;
+use tt_ports::host_resource::{
+    HostResourceAssetStore, HostResourceBinaryAsset, HostResourceFileStat, HostResourceStoreError,
+    ThumbnailAssetRequest, ThumbnailKind,
+};
 
 #[derive(Debug, Clone)]
 struct HostResourceRoots {

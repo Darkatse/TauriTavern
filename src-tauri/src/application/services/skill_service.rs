@@ -8,6 +8,8 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::external_import_service::{
     DownloadByteLimit, ExternalImportDownloader,
 };
+#[cfg(test)]
+use crate::domain::errors::DomainError;
 use crate::domain::models::agent::profile::AgentSkillPolicy;
 use crate::domain::models::skill::{
     SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
@@ -275,21 +277,15 @@ impl ExternalImportDownloader for UnavailableExternalImportDownloader {
         &self,
         _url: Url,
         _limit: Option<DownloadByteLimit>,
-    ) -> Result<
-        crate::application::services::external_import_service::DownloadedBytes,
-        ApplicationError,
-    > {
-        Err(ApplicationError::InternalError(
+    ) -> Result<crate::application::services::external_import_service::DownloadedBytes, DomainError>
+    {
+        Err(DomainError::InternalError(
             "Skill remote import downloader is not configured".to_string(),
         ))
     }
 
-    async fn fetch_to_file(
-        &self,
-        _url: Url,
-        _path: &std::path::Path,
-    ) -> Result<(), ApplicationError> {
-        Err(ApplicationError::InternalError(
+    async fn fetch_to_file(&self, _url: Url, _path: &std::path::Path) -> Result<(), DomainError> {
+        Err(DomainError::InternalError(
             "Skill remote import downloader is not configured".to_string(),
         ))
     }
@@ -459,7 +455,7 @@ mod tests {
             &self,
             _url: Url,
             limit: Option<DownloadByteLimit>,
-        ) -> Result<DownloadedBytes, ApplicationError> {
+        ) -> Result<DownloadedBytes, DomainError> {
             *self.limit.lock().unwrap() = limit;
             Ok(DownloadedBytes {
                 bytes: self.bytes.clone(),
@@ -468,7 +464,7 @@ mod tests {
             })
         }
 
-        async fn fetch_to_file(&self, _url: Url, _path: &Path) -> Result<(), ApplicationError> {
+        async fn fetch_to_file(&self, _url: Url, _path: &Path) -> Result<(), DomainError> {
             unimplemented!("not used by these tests")
         }
     }

@@ -9,13 +9,13 @@ use uuid::Uuid;
 use super::FileAgentRepository;
 use super::fs_tree::{copy_directory_contents, scan_workspace_files, snapshot_map};
 use super::paths::validate_workspace_root_path;
-use crate::domain::errors::DomainError;
-use crate::domain::models::agent::{
+use tt_domain::errors::DomainError;
+use tt_domain::models::agent::{
     AgentRun, WorkspaceManifest, WorkspacePersistentChange, WorkspacePersistentChangeKind,
     WorkspacePersistentChangeSet, WorkspaceRootCommit, WorkspaceRootMount, WorkspaceRootScope,
 };
-use crate::domain::repositories::agent_run_repository::AgentRunRepository;
-use crate::domain::repositories::workspace_repository::WorkspaceRepository;
+use tt_ports::repositories::agent_run_repository::AgentRunRepository;
+use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -336,7 +336,7 @@ impl FileAgentRepository {
 pub(super) fn persistent_roots(manifest: &WorkspaceManifest) -> Result<Vec<String>, DomainError> {
     let mut roots = Vec::new();
     for root in &manifest.roots {
-        if root.lifecycle != crate::domain::models::agent::WorkspaceRootLifecycle::Persistent {
+        if root.lifecycle != tt_domain::models::agent::WorkspaceRootLifecycle::Persistent {
             continue;
         }
         if root.scope != WorkspaceRootScope::Chat

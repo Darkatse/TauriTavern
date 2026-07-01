@@ -4,9 +4,9 @@ use serde::Deserialize;
 use std::sync::Arc;
 use url::Url;
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::github::classify_github_rate_limit;
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_domain::errors::DomainError;
 
 use super::{
     ExtensionSourceProvider, parse_bytes_or_error, parse_json_or_error,

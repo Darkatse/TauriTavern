@@ -6,16 +6,16 @@ use tokio::fs;
 use uuid::Uuid;
 
 use super::FileAgentRepository;
-use crate::domain::errors::DomainError;
-use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
-use crate::domain::models::agent::profile::{
+use tt_domain::errors::DomainError;
+use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
+use tt_domain::models::agent::profile::{
     AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentDelegationPolicy,
     AgentModelBinding, AgentModelBindingMode, AgentPresetBinding, AgentPresetBindingMode,
     AgentProfileId, AgentProfileInstructions, AgentProfileSourceTrace, AgentRunPolicy,
     AgentSkillPolicy, AgentToolPolicy, AgentWorkspacePolicy, ResolvedAgentOutputPolicy,
     ResolvedAgentProfile,
 };
-use crate::domain::models::agent::{
+use tt_domain::models::agent::{
     AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION, AgentChatRef, AgentInvocation,
     AgentInvocationExitPolicy, AgentInvocationKind, AgentInvocationStatus, AgentRun,
     AgentRunCommittedMessageProjection, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
@@ -23,15 +23,15 @@ use crate::domain::models::agent::{
     WorkspaceManifest, WorkspacePath, WorkspaceRootCommit, WorkspaceRootLifecycle,
     WorkspaceRootMount, WorkspaceRootScope, WorkspaceRootSpec,
 };
-use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
-use crate::domain::repositories::agent_run_repository::{
+use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
+use tt_ports::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunListCursor, AgentRunListQuery, AgentRunRepository,
 };
-use crate::domain::repositories::agent_workspace_lifecycle_repository::{
+use tt_ports::repositories::agent_workspace_lifecycle_repository::{
     AgentPersistentStatePruneRequest, AgentWorkspaceLifecycleRepository,
 };
-use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
-use crate::domain::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
+use tt_ports::repositories::checkpoint_repository::CheckpointRepository;
+use tt_ports::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
 fn temp_root() -> PathBuf {
     std::env::temp_dir().join(format!("tauritavern-agent-repo-{}", Uuid::new_v4()))
 }

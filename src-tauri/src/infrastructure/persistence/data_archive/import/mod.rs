@@ -6,8 +6,8 @@ mod layout;
 use std::fs;
 use std::path::Path;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::data_archive::DataArchiveImportFailure;
+use tt_domain::errors::DomainError;
+use tt_domain::models::data_archive::DataArchiveImportFailure;
 
 use super::DataArchiveImportResult;
 use super::shared::{

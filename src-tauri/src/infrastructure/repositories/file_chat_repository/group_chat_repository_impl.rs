@@ -5,16 +5,16 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::chat::strip_jsonl_extension;
-use crate::domain::repositories::chat_repository::ChatRepository;
-use crate::domain::repositories::chat_types::{
+use crate::infrastructure::persistence::file_system::move_file_no_replace_with_fallback;
+use tt_domain::errors::DomainError;
+use tt_domain::models::chat::strip_jsonl_extension;
+use tt_ports::repositories::chat_repository::ChatRepository;
+use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
     ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery,
     LocatedChatMessage, PinnedGroupChat,
 };
-use crate::domain::repositories::group_chat_repository::GroupChatRepository;
-use crate::infrastructure::persistence::file_system::move_file_no_replace_with_fallback;
+use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 
 use super::FileChatRepository;
 

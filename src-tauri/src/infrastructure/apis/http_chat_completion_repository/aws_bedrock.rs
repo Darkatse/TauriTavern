@@ -18,11 +18,9 @@ use reqwest::RequestBuilder;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::bedrock_model::{
-    BedrockModelFamily, BedrockModelSpec, extract_provider,
-};
-use crate::domain::repositories::chat_completion_repository::{
+use tt_domain::errors::DomainError;
+use tt_domain::models::bedrock_model::{BedrockModelFamily, BedrockModelSpec, extract_provider};
+use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };
@@ -640,7 +638,7 @@ mod tests {
     use serde_json::json;
     use tokio::sync::mpsc::unbounded_channel;
 
-    use crate::domain::models::bedrock_model::{BedrockModelFamily, extract_provider};
+    use tt_domain::models::bedrock_model::{BedrockModelFamily, extract_provider};
 
     use super::{
         ResponseMode, StreamMode, decode_eventstream_payload, derive_control_plane_base,

@@ -1,4 +1,4 @@
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 pub(super) fn verify_integrity_match(
     existing_integrity: Option<&str>,

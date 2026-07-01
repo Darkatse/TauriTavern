@@ -5,9 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tokio::fs as tokio_fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::avatar::{Avatar, AvatarUploadResult, CropInfo};
-use crate::domain::repositories::avatar_repository::AvatarRepository;
+use tt_domain::errors::DomainError;
+use tt_domain::models::avatar::{Avatar, AvatarUploadResult, CropInfo};
+use tt_ports::repositories::avatar_repository::AvatarRepository;
 
 // Constants for avatar dimensions
 const AVATAR_WIDTH: u32 = 400;
@@ -195,11 +195,11 @@ impl AvatarRepository for FileAvatarRepository {
 #[cfg(test)]
 mod tests {
     use super::FileAvatarRepository;
-    use crate::domain::repositories::avatar_repository::AvatarRepository;
     use image::{ImageFormat, Rgba, RgbaImage};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tt_ports::repositories::avatar_repository::AvatarRepository;
 
     struct TestDir {
         path: PathBuf,

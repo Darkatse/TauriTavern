@@ -3,9 +3,9 @@ use tokio::fs;
 
 use super::FileAgentRepository;
 use super::paths::validate_segment;
-use crate::domain::errors::DomainError;
-use crate::domain::models::agent::{AgentInvocation, AgentTaskRecord};
-use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
+use tt_domain::errors::DomainError;
+use tt_domain::models::agent::{AgentInvocation, AgentTaskRecord};
+use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 
 #[async_trait]
 impl AgentInvocationRepository for FileAgentRepository {

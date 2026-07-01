@@ -4,10 +4,8 @@ use std::time::UNIX_EPOCH;
 use async_trait::async_trait;
 use tokio::fs;
 
-use crate::application::services::user_media_service::{
-    UserMediaEntry, UserMediaStore, UserMediaStoreError,
-};
-use crate::domain::models::user_directory::UserDirectory;
+use tt_domain::models::user_directory::UserDirectory;
+use tt_ports::user_media::{UserMediaEntry, UserMediaStore, UserMediaStoreError};
 
 #[derive(Debug, Clone)]
 pub(crate) struct FilesystemUserMediaStore {
@@ -159,7 +157,7 @@ impl UserMediaStore for FilesystemUserMediaStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::services::user_media_service::UserMediaStore;
+    use tt_ports::user_media::UserMediaStore;
 
     struct TempDirGuard {
         path: PathBuf,

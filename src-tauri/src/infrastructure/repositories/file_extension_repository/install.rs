@@ -1,7 +1,7 @@
 use std::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::extension::ExtensionInstallResult;
+use tt_domain::errors::DomainError;
+use tt_domain::models::extension::ExtensionInstallResult;
 
 use super::FileExtensionRepository;
 use super::repo_url::{normalize_requested_reference, parse_repo_url};

@@ -7,11 +7,11 @@ use uuid::Uuid;
 
 use super::FileAgentRepository;
 use super::run_record::{read_agent_run_record, write_agent_run_record};
-use crate::domain::errors::DomainError;
-use crate::domain::models::agent::{
+use tt_domain::errors::DomainError;
+use tt_domain::models::agent::{
     AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunSummaryProjection,
 };
-use crate::domain::repositories::agent_run_repository::{
+use tt_ports::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunListCursor, AgentRunListQuery, AgentRunRepository,
     AgentRunStorageEntryStats, AgentRunStorageStats, event_belongs_to_invocation,
 };

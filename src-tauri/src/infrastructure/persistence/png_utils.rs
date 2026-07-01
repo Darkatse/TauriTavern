@@ -1,10 +1,10 @@
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::character_repository::ImageCrop;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use crc32fast::Hasher;
 use flate2::read::ZlibDecoder;
 use image::ImageFormat;
 use std::io::{Cursor, Read};
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::character_repository::ImageCrop;
 
 /// PNG text keys used for character data.
 const CHUNK_NAME_V2: &str = "chara";

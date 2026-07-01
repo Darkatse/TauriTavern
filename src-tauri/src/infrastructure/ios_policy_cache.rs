@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::file_system::write_json_file_sync;
+use tt_domain::errors::DomainError;
 
 fn cache_path(data_root: &Path) -> PathBuf {
     data_root.join("_tauritavern").join(".ios-policy.json")

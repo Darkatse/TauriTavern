@@ -1,35 +1,19 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
-use ttsync_contract::pair::{PairCompleteRequest, PairCompleteResponse, PairUri};
+use ttsync_contract::pair::{PairCompleteRequest, PairUri};
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::sync::SyncMode;
 
 use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
+use crate::application::services::sync_policy::validate_sync_operation_options;
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::{
     ResolvedSyncPolicy, SyncEndpointRef, SyncIntent, SyncJobReport, SyncJobRequest,
     SyncOperationOptions, SyncOrigin,
 };
-use crate::domain::models::tt_sync::{TtSyncIdentity, TtSyncPairedServer};
-
-#[async_trait]
-pub trait TtSyncRepository: Send + Sync {
-    async fn load_or_create_identity(&self) -> Result<TtSyncIdentity, DomainError>;
-    async fn load_paired_servers(&self) -> Result<Vec<TtSyncPairedServer>, DomainError>;
-    async fn upsert_paired_server(&self, server: TtSyncPairedServer) -> Result<(), DomainError>;
-    async fn remove_paired_server(&self, server_device_id: &DeviceId) -> Result<(), DomainError>;
-}
-
-#[async_trait]
-pub trait TtPairingClient: Send + Sync {
-    async fn complete_pairing(
-        &self,
-        pair: &PairUri,
-        request: &PairCompleteRequest,
-    ) -> Result<PairCompleteResponse, DomainError>;
-}
+use crate::domain::models::tt_sync::TtSyncPairedServer;
+pub use tt_ports::sync::{TtPairingClient, TtSyncRepository};
 
 pub struct TtSyncService {
     repository: Arc<dyn TtSyncRepository>,
@@ -111,7 +95,7 @@ impl TtSyncService {
     ) -> Result<SyncJobReport, DomainError> {
         let server_device_id = DeviceId::new(server_device_id.to_string())
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
-        let options = options.validate()?;
+        let options = validate_sync_operation_options(options)?;
         Ok(self
             .run_remote_job(
                 server_device_id,
@@ -131,7 +115,7 @@ impl TtSyncService {
     ) -> Result<SyncJobReport, DomainError> {
         let server_device_id = DeviceId::new(server_device_id.to_string())
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
-        let options = options.validate()?;
+        let options = validate_sync_operation_options(options)?;
         let report = self
             .run_remote_job(
                 server_device_id,

@@ -6,7 +6,7 @@ use zip::CompressionMethod;
 use zip::read::ZipFile;
 use zip::write::SimpleFileOptions as FileOptions;
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 pub const DEFLATE_TEXT_COMPRESSION_LEVEL: i64 = 1;
 pub const DEFLATE_TEXT_EXTENSIONS: &[&str] = &[

@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::content_repository::{
-    ContentItem, ContentRepository, ContentScope, ContentType,
-};
 use crate::infrastructure::assets::{
     copy_resource_to_file, list_default_content_files_under, read_resource_json,
+};
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::content_repository::{
+    ContentItem, ContentRepository, ContentScope, ContentType,
 };
 
 /// Content index item from JSON

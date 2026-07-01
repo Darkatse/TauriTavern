@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::Serialize;
@@ -11,6 +10,9 @@ use crate::application::client_asset_paths::{
 };
 use crate::domain::errors::DomainError;
 use crate::domain::models::filename::sanitize_filename;
+#[cfg(test)]
+use tt_ports::user_media::UserMediaStoreError;
+pub(crate) use tt_ports::user_media::{UserMediaEntry, UserMediaStore};
 
 const MEDIA_EXTENSIONS: &[&str] = &[
     "bmp", "png", "jpg", "webp", "jpeg", "jfif", "gif", "mp4", "avi", "mov", "wmv", "flv", "webm",
@@ -40,58 +42,6 @@ pub(crate) struct ListUserImagesInput {
     pub(crate) sort_field: Option<String>,
     pub(crate) sort_order: Option<String>,
     pub(crate) media_type: Option<u32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct UserMediaEntry {
-    pub(crate) name: String,
-    pub(crate) mime_type: Option<String>,
-    pub(crate) modified_ms: Option<i128>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum UserMediaStoreError {
-    NotFound(String),
-    Internal(String),
-}
-
-impl UserMediaStoreError {
-    pub(crate) fn not_found(message: impl Into<String>) -> Self {
-        Self::NotFound(message.into())
-    }
-
-    pub(crate) fn internal(message: impl Into<String>) -> Self {
-        Self::Internal(message.into())
-    }
-}
-
-impl From<UserMediaStoreError> for DomainError {
-    fn from(error: UserMediaStoreError) -> Self {
-        match error {
-            UserMediaStoreError::NotFound(message) => DomainError::NotFound(message),
-            UserMediaStoreError::Internal(message) => DomainError::InternalError(message),
-        }
-    }
-}
-
-#[async_trait]
-pub(crate) trait UserMediaStore: Send + Sync {
-    async fn write_file(
-        &self,
-        relative_path: &Path,
-        bytes: Vec<u8>,
-    ) -> Result<(), UserMediaStoreError>;
-
-    async fn ensure_folder(&self, relative_folder: &Path) -> Result<(), UserMediaStoreError>;
-
-    async fn list_files(
-        &self,
-        relative_folder: &Path,
-    ) -> Result<Vec<UserMediaEntry>, UserMediaStoreError>;
-
-    async fn list_folders(&self) -> Result<Vec<String>, UserMediaStoreError>;
-
-    async fn delete_file(&self, relative_path: &Path) -> Result<(), UserMediaStoreError>;
 }
 
 #[derive(Clone)]
@@ -325,6 +275,7 @@ fn normalize_user_image_reference(raw: &str) -> Result<PathBuf, DomainError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use std::sync::Mutex;
 
     #[derive(Default)]

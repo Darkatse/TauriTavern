@@ -1,4 +1,3 @@
-use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::file_system::{
     replace_file_with_fallback, unique_temp_path,
 };
@@ -6,6 +5,7 @@ use serde_json::Value;
 use std::path::Path;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tt_domain::errors::DomainError;
 
 /// Read a JSONL file and parse it into a vector of JSON values
 ///

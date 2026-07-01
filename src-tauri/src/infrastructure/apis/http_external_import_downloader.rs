@@ -7,11 +7,9 @@ use reqwest::header::{CONTENT_DISPOSITION, CONTENT_TYPE, HeaderMap, HeaderName};
 use tokio::io::AsyncWriteExt;
 use url::Url;
 
-use crate::application::errors::ApplicationError;
-use crate::application::services::external_import_service::{
-    DownloadByteLimit, DownloadedBytes, ExternalImportDownloader,
-};
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_domain::errors::DomainError;
+use tt_ports::external_import::{DownloadByteLimit, DownloadedBytes, ExternalImportDownloader};
 
 pub struct HttpExternalImportDownloader {
     http_clients: Arc<HttpClientPool>,
@@ -29,12 +27,12 @@ impl ExternalImportDownloader for HttpExternalImportDownloader {
         &self,
         url: Url,
         limit: Option<DownloadByteLimit>,
-    ) -> Result<DownloadedBytes, ApplicationError> {
+    ) -> Result<DownloadedBytes, DomainError> {
         let client = self.http_clients.client(HttpClientProfile::Download)?;
         let response = client.get(url).send().await.map_err(internal_error)?;
 
         if !response.status().is_success() {
-            return Err(ApplicationError::InternalError(format!(
+            return Err(DomainError::InternalError(format!(
                 "Upstream responded with HTTP {}",
                 response.status()
             )));
@@ -62,12 +60,12 @@ impl ExternalImportDownloader for HttpExternalImportDownloader {
         })
     }
 
-    async fn fetch_to_file(&self, url: Url, path: &Path) -> Result<(), ApplicationError> {
+    async fn fetch_to_file(&self, url: Url, path: &Path) -> Result<(), DomainError> {
         let client = self.http_clients.client(HttpClientProfile::Download)?;
         let response = client.get(url).send().await.map_err(internal_error)?;
 
         if !response.status().is_success() {
-            return Err(ApplicationError::InternalError(format!(
+            return Err(DomainError::InternalError(format!(
                 "Upstream responded with HTTP {}",
                 response.status()
             )));
@@ -87,7 +85,7 @@ impl ExternalImportDownloader for HttpExternalImportDownloader {
 async fn read_limited_response(
     response: reqwest::Response,
     limit: DownloadByteLimit,
-) -> Result<Vec<u8>, ApplicationError> {
+) -> Result<Vec<u8>, DomainError> {
     let mut bytes = Vec::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.try_next().await.map_err(internal_error)? {
@@ -110,13 +108,13 @@ fn header_string(headers: &HeaderMap, name: HeaderName) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn limit_error(limit: DownloadByteLimit) -> ApplicationError {
-    ApplicationError::ValidationError(format!(
+fn limit_error(limit: DownloadByteLimit) -> DomainError {
+    DomainError::InvalidData(format!(
         "{} must be <= {} bytes",
         limit.label, limit.max_bytes
     ))
 }
 
-fn internal_error(error: impl std::fmt::Display) -> ApplicationError {
-    ApplicationError::InternalError(error.to_string())
+fn internal_error(error: impl std::fmt::Display) -> DomainError {
+    DomainError::InternalError(error.to_string())
 }

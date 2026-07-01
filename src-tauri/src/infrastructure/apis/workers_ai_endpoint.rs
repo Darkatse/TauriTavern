@@ -1,7 +1,7 @@
 use url::Url;
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::apis::endpoint_url::{append_endpoint_path, append_endpoint_segments};
+use tt_domain::errors::DomainError;
 
 const WORKERS_AI_API_BASE: &str = "https://api.cloudflare.com/client/v4/accounts";
 

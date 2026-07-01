@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::repositories::chat_directory_identity;
+use tt_domain::errors::DomainError;
 
 use super::FileChatRepository;
 

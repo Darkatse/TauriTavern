@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::domain::models::chat::Chat;
+use tt_domain::models::chat::Chat;
 
 /// Memory cache for chat data
 pub(super) struct MemoryCache {

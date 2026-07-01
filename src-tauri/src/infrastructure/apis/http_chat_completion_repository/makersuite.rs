@@ -1,8 +1,8 @@
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_completion_repository::{
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };
@@ -278,7 +278,7 @@ mod tests {
     use reqwest::header::{AUTHORIZATION, HeaderName};
 
     use super::apply_gemini_auth;
-    use crate::domain::repositories::chat_completion_repository::{
+    use tt_ports::repositories::chat_completion_repository::{
         AnthropicBetaHeaderMode, ChatCompletionApiConfig,
     };
 

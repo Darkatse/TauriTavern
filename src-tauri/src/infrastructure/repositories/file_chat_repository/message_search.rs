@@ -3,8 +3,8 @@ use std::collections::{BinaryHeap, HashSet};
 
 use serde::Deserialize;
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_repository::{
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_repository::{
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery,
 };
 

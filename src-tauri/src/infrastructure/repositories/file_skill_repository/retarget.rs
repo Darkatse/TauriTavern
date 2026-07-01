@@ -8,8 +8,8 @@ use super::fs_ops::{
 use super::index::sort_index;
 use super::paths::validate_skill_scope;
 use super::source_refs::{merge_source_refs, sort_dedup_source_refs};
-use crate::domain::errors::DomainError;
-use crate::domain::models::skill::{
+use tt_domain::errors::DomainError;
+use tt_domain::models::skill::{
     SkillIndexEntry, SkillScope, SkillScopeRetargetRequest, SkillScopeRetargetResult,
 };
 

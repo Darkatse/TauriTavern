@@ -1,14 +1,15 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use tokio::sync::{Mutex, Notify};
 use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
 use ttsync_contract::peer::DeviceId;
-use ttsync_contract::sync::SyncMode;
 
 use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
+use crate::application::services::sync_policy::{
+    validate_scheduled_sync_rule, validate_sync_automation_config,
+};
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::LanServerSettings;
 use crate::domain::models::sync::{
@@ -18,65 +19,13 @@ use crate::domain::models::sync::{
 use crate::domain::models::sync_automation::{
     SYNC_AUTOMATION_COLD_START_DELAY_SECS, ScheduledSyncRule, SyncAutomationConfig,
     SyncAutomationStatus, SyncAutomationTarget, SyncAutomationToastEvent, SyncAutomationToastLevel,
-    validate_sync_automation_config,
 };
-
-#[async_trait]
-pub trait SyncAutomationRuleRepository: Send + Sync {
-    async fn load_or_create_rule(&self) -> Result<LoadedScheduledSyncRule, DomainError>;
-    async fn save_rule(&self, rule: &ScheduledSyncRule) -> Result<(), DomainError>;
-}
-
-#[async_trait]
-pub trait SyncAutomationLanSettingsRepository: Send + Sync {
-    async fn load_or_create_server_settings(&self) -> Result<LoadedLanServerSettings, DomainError>;
-    async fn save_server_settings(&self, settings: &LanServerSettings) -> Result<(), DomainError>;
-    async fn load_manual_default_sync_mode(&self) -> Result<SyncMode, DomainError>;
-}
-
-#[async_trait]
-pub trait SyncAutomationEndpointCatalog: Send + Sync {
-    async fn validate_target(
-        &self,
-        target: &SyncAutomationTarget,
-        mode: SyncMode,
-    ) -> Result<(), DomainError>;
-}
-
-#[async_trait]
-pub trait SyncAutomationLanServerControl: Send + Sync {
-    fn validate_allowed(&self) -> Result<(), DomainError>;
-    async fn start(&self) -> Result<(), DomainError>;
-    async fn ensure_running(&self) -> Result<(), DomainError>;
-}
-
-pub trait SyncAutomationEventPublisher: Send + Sync {
-    fn publish_status(&self, status: SyncAutomationStatus);
-    fn publish_toast(&self, event: SyncAutomationToastEvent);
-}
-
-pub struct LoadedScheduledSyncRule {
-    pub rule: ScheduledSyncRule,
-    pub legacy_lan_server_auto_start: Option<bool>,
-    pub legacy_missing_sync_mode: bool,
-    pub rewrite_canonical: bool,
-}
-
-pub struct LoadedLanServerSettings {
-    pub settings: LanServerSettings,
-    pub created: bool,
-}
-
-impl LoadedScheduledSyncRule {
-    pub fn new(rule: ScheduledSyncRule) -> Self {
-        Self {
-            rule,
-            legacy_lan_server_auto_start: None,
-            legacy_missing_sync_mode: false,
-            rewrite_canonical: false,
-        }
-    }
-}
+#[cfg(test)]
+use tt_ports::sync_automation::{LoadedLanServerSettings, LoadedScheduledSyncRule};
+pub use tt_ports::sync_automation::{
+    SyncAutomationEndpointCatalog, SyncAutomationEventPublisher, SyncAutomationLanServerControl,
+    SyncAutomationLanSettingsRepository, SyncAutomationRuleRepository,
+};
 
 pub struct SyncAutomationService {
     events: Arc<dyn SyncAutomationEventPublisher>,
@@ -178,6 +127,8 @@ impl SyncAutomationService {
                 .load_manual_default_sync_mode()
                 .await?;
         }
+
+        validate_scheduled_sync_rule(&loaded.rule)?;
 
         if loaded.rewrite_canonical {
             self.rule_repository.save_rule(&loaded.rule).await?;
@@ -536,10 +487,13 @@ mod tests {
     use crate::application::services::sync_job_coordinator::{
         SyncJobEventPublisher, SyncJobExecutor,
     };
+    use crate::application::services::sync_policy::default_scheduled_sync_rule;
     use crate::domain::models::sync::{
         LocalAppliedChangeSummary, SyncExecutionFailure, SyncExecutionKind, SyncExecutionReport,
         SyncJob, SyncJobEvent, SyncJobSummary,
     };
+    use async_trait::async_trait;
+    use ttsync_contract::sync::SyncMode;
 
     #[derive(Default)]
     struct RecordingEvents {
@@ -568,7 +522,7 @@ mod tests {
     #[async_trait]
     impl SyncAutomationRuleRepository for NoopRuleRepository {
         async fn load_or_create_rule(&self) -> Result<LoadedScheduledSyncRule, DomainError> {
-            Ok(LoadedScheduledSyncRule::new(ScheduledSyncRule::default()))
+            Ok(LoadedScheduledSyncRule::new(default_scheduled_sync_rule()))
         }
 
         async fn save_rule(&self, _rule: &ScheduledSyncRule) -> Result<(), DomainError> {
@@ -622,7 +576,7 @@ mod tests {
             Ok(LoadedScheduledSyncRule {
                 rule: ScheduledSyncRule {
                     interval_minutes: 15,
-                    ..ScheduledSyncRule::default()
+                    ..default_scheduled_sync_rule()
                 },
                 legacy_lan_server_auto_start: Some(true),
                 legacy_missing_sync_mode: true,
@@ -824,7 +778,7 @@ mod tests {
             target: Some(SyncAutomationTarget::Lan {
                 device_id: "11111111-1111-4111-8111-111111111111".to_string(),
             }),
-            ..ScheduledSyncRule::default()
+            ..default_scheduled_sync_rule()
         };
 
         let result = service.run_scheduled_upload(rule).await;
@@ -847,7 +801,7 @@ mod tests {
             target: Some(SyncAutomationTarget::Tt {
                 server_device_id: "22222222-2222-4222-8222-222222222222".to_string(),
             }),
-            ..ScheduledSyncRule::default()
+            ..default_scheduled_sync_rule()
         };
 
         let result = service.run_scheduled_upload(rule).await;

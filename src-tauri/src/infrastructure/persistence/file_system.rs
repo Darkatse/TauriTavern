@@ -1,9 +1,9 @@
-use crate::domain::errors::DomainError;
 use serde::{Serialize, de::DeserializeOwned};
 use std::io;
 use std::path::{Path, PathBuf};
 use tokio::fs::{self as tokio_fs, create_dir_all, read_to_string};
 use tokio::io as tokio_io;
+use tt_domain::errors::DomainError;
 use uuid::Uuid;
 
 /// Represents the application data directory structure

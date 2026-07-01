@@ -48,7 +48,7 @@ test('version extension gates iOS export success toast by share completion', asy
 
 test('iOS export staging root name stays in sync across JS and Rust', async () => {
     const jsPath = path.join(REPO_ROOT, 'src/scripts/file-export.js');
-    const rustPath = path.join(REPO_ROOT, 'src-tauri/src/application/host_contract.rs');
+    const rustPath = path.join(REPO_ROOT, 'src-tauri/crates/tt-contracts/src/host.rs');
 
     const [jsSource, rustSource] = await Promise.all([
         readFile(jsPath, 'utf8'),

@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::filename::sanitize_filename;
 use crate::infrastructure::persistence::file_system::list_files_with_extension;
 use crate::infrastructure::sillytavern_sorting::sort_paths_by_file_name_sillytavern_name;
+use tt_domain::errors::DomainError;
+use tt_domain::models::filename::sanitize_filename;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NamedPresetFile {
@@ -211,10 +211,10 @@ mod tests {
         PresetFilePaths, canonical_preset_file_stem, legacy_preset_file_stem,
         load_named_preset_files,
     };
-    use crate::domain::errors::DomainError;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tt_domain::errors::DomainError;
 
     static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
 

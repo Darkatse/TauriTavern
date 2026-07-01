@@ -45,7 +45,7 @@ test('Stable Diffusion media swipe keeps prompt refinement and dimensions in one
 
 test('Stable Diffusion backend request uses explicit credentials instead of provider-specific loose fields', async () => {
     const repositorySource = await readFile(
-        path.join(REPO_ROOT, 'src-tauri', 'src', 'domain', 'repositories', 'stable_diffusion_repository.rs'),
+        path.join(REPO_ROOT, 'src-tauri', 'crates', 'tt-ports', 'src', 'repositories', 'stable_diffusion_repository.rs'),
         'utf8',
     );
     const serviceSource = await readFile(

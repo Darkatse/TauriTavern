@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::extension::{Extension, ExtensionType};
+use tt_domain::errors::DomainError;
+use tt_domain::models::extension::{Extension, ExtensionType};
 
 use super::FileExtensionRepository;
 use super::source_store::ExtensionStoreScope;

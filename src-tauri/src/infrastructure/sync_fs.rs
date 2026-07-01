@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 #[derive(Debug)]
 pub(crate) struct AtomicWriteError {

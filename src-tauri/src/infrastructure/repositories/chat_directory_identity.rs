@@ -8,11 +8,11 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::filename::sanitize_filename;
 use crate::infrastructure::persistence::file_system::{
     replace_file_with_fallback, unique_temp_path,
 };
+use tt_domain::errors::DomainError;
+use tt_domain::models::filename::sanitize_filename;
 
 const CHAT_ALIAS_VERSION: u32 = 1;
 

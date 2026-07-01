@@ -13,12 +13,6 @@ use tokio::sync::watch;
 use tokio::time::{Duration, sleep};
 use url::Url;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::filename::sanitize_filename;
-use crate::domain::repositories::stable_diffusion_repository::{
-    SdRouteCredentials, SdRouteRequest, SdRouteResponse, SdRouteResponseKind,
-    StableDiffusionRepository,
-};
 use crate::infrastructure::apis::endpoint_url::append_endpoint_path;
 use crate::infrastructure::apis::workers_ai_endpoint::workers_ai_run_url;
 use crate::infrastructure::apis::workers_ai_models::{
@@ -26,6 +20,12 @@ use crate::infrastructure::apis::workers_ai_models::{
 };
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 use crate::infrastructure::sync_fs;
+use tt_domain::errors::DomainError;
+use tt_domain::models::filename::sanitize_filename;
+use tt_ports::repositories::stable_diffusion_repository::{
+    SdRouteCredentials, SdRouteRequest, SdRouteResponse, SdRouteResponseKind,
+    StableDiffusionRepository,
+};
 
 pub struct HttpStableDiffusionRepository {
     http_clients: Arc<HttpClientPool>,

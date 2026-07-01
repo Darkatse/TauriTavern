@@ -1,13 +1,1 @@
-use crate::domain::errors::DomainError;
-use crate::domain::models::theme::Theme;
-use async_trait::async_trait;
-
-/// Repository interface for managing themes
-#[async_trait]
-pub trait ThemeRepository: Send + Sync {
-    /// Save a theme
-    async fn save_theme(&self, theme: &Theme) -> Result<(), DomainError>;
-
-    /// Delete a theme
-    async fn delete_theme(&self, name: &str) -> Result<(), DomainError>;
-}
+pub use tt_ports::repositories::theme_repository::*;

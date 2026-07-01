@@ -6,10 +6,10 @@ use std::time::Duration;
 use reqwest::redirect::Policy;
 use reqwest::{Client, NoProxy, Proxy};
 
-use crate::application::services::settings_service::RequestProxyRuntime;
-use crate::domain::errors::DomainError;
-use crate::domain::models::settings::RequestProxySettings;
 use crate::infrastructure::http_client::build_http_client;
+use tt_domain::errors::DomainError;
+use tt_domain::models::settings::RequestProxySettings;
+use tt_ports::settings::RequestProxyRuntime;
 
 pub const CHAT_COMPLETION_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 pub const CHAT_COMPLETION_NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -213,7 +213,7 @@ fn build_profile_client(
 #[cfg(test)]
 mod tests {
     use super::{HttpClientPool, HttpClientProfile};
-    use crate::domain::models::settings::RequestProxySettings;
+    use tt_domain::models::settings::RequestProxySettings;
 
     #[test]
     fn disabled_proxy_is_valid() {

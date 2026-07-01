@@ -4,15 +4,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::AppHandle;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
-use crate::domain::repositories::content_repository::ContentRepository;
-use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::infrastructure::assets::read_resource_json;
 use crate::infrastructure::persistence::file_system::{
     delete_file, read_json_file, write_json_file,
 };
 use crate::infrastructure::preset_file_naming::{PresetFilePaths, load_named_preset_files};
+use tt_domain::errors::DomainError;
+use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
+use tt_ports::repositories::content_repository::ContentRepository;
+use tt_ports::repositories::preset_repository::PresetRepository;
 
 /// File-based implementation of the PresetRepository
 pub struct FilePresetRepository {
@@ -95,28 +95,28 @@ impl FilePresetRepository {
         for item in content_items {
             // Check if this is a preset of the right type
             let item_preset_type = match item.content_type {
-                crate::domain::repositories::content_repository::ContentType::KoboldPreset => {
+                tt_ports::repositories::content_repository::ContentType::KoboldPreset => {
                     Some(PresetType::Kobold)
                 }
-                crate::domain::repositories::content_repository::ContentType::NovelPreset => {
+                tt_ports::repositories::content_repository::ContentType::NovelPreset => {
                     Some(PresetType::Novel)
                 }
-                crate::domain::repositories::content_repository::ContentType::OpenAIPreset => {
+                tt_ports::repositories::content_repository::ContentType::OpenAIPreset => {
                     Some(PresetType::OpenAI)
                 }
-                crate::domain::repositories::content_repository::ContentType::TextGenPreset => {
+                tt_ports::repositories::content_repository::ContentType::TextGenPreset => {
                     Some(PresetType::TextGen)
                 }
-                crate::domain::repositories::content_repository::ContentType::Instruct => {
+                tt_ports::repositories::content_repository::ContentType::Instruct => {
                     Some(PresetType::Instruct)
                 }
-                crate::domain::repositories::content_repository::ContentType::Context => {
+                tt_ports::repositories::content_repository::ContentType::Context => {
                     Some(PresetType::Context)
                 }
-                crate::domain::repositories::content_repository::ContentType::SysPrompt => {
+                tt_ports::repositories::content_repository::ContentType::SysPrompt => {
                     Some(PresetType::SysPrompt)
                 }
-                crate::domain::repositories::content_repository::ContentType::Reasoning => {
+                tt_ports::repositories::content_repository::ContentType::Reasoning => {
                     Some(PresetType::Reasoning)
                 }
                 _ => None,

@@ -5,7 +5,7 @@ use reqwest::StatusCode;
 use reqwest::header::CONTENT_TYPE;
 use serde_json::Value;
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 /// Maximum number of bytes from a non-JSON upstream body to capture in the
 /// diagnostic log. Anything larger is truncated; the full `body_len` is still

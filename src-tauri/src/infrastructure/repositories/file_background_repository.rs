@@ -2,10 +2,10 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::filename::sanitize_filename;
-use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::infrastructure::persistence::thumbnail_cache::invalidate_thumbnail_cache;
+use tt_domain::errors::DomainError;
+use tt_domain::models::filename::sanitize_filename;
+use tt_ports::repositories::background_repository::BackgroundRepository;
 
 /// File system implementation of the BackgroundRepository
 pub struct FileBackgroundRepository {
@@ -204,8 +204,8 @@ impl BackgroundRepository for FileBackgroundRepository {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::repositories::background_repository::BackgroundRepository;
     use std::path::PathBuf;
+    use tt_ports::repositories::background_repository::BackgroundRepository;
 
     use super::FileBackgroundRepository;
 

@@ -5,9 +5,9 @@ use serde_json::Value;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_repository::ChatPayloadCursor;
 use crate::infrastructure::persistence::file_system::replace_file_with_fallback;
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_repository::ChatPayloadCursor;
 
 pub(super) const WINDOW_READ_CHUNK_BYTES: usize = 64 * 1024;
 

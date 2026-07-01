@@ -16,6 +16,7 @@ use super::ports::{
 use super::runtime_state::LanSyncRuntimeState;
 use super::{PAIRING_REJECTED_MESSAGE, now_ms};
 use crate::application::services::sync_job_coordinator::{StartedSyncJob, SyncJobCoordinator};
+use crate::application::services::sync_policy::validate_sync_operation_options;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
     LanPairCompleteRequest, LanPairCompleteResponse, LanSyncPairedDevice,
@@ -139,7 +140,7 @@ impl LanInboundRequestHandler for LanInboundService {
         peer_device_id: DeviceId,
         options: SyncOperationOptions,
     ) -> Result<(), DomainError> {
-        let options = options.validate()?;
+        let options = validate_sync_operation_options(options)?;
         let mode = self.effective_sync_mode().await?;
         let request = SyncJobRequest {
             endpoint: SyncEndpointRef::LanPeer {

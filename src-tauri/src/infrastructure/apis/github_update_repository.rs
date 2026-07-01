@@ -2,11 +2,11 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::update::ReleaseInfo;
-use crate::domain::repositories::update_repository::UpdateRepository;
 use crate::infrastructure::github::classify_github_rate_limit;
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_domain::errors::DomainError;
+use tt_domain::models::update::ReleaseInfo;
+use tt_ports::repositories::update_repository::UpdateRepository;
 
 const GITHUB_API_LATEST_RELEASE: &str =
     "https://api.github.com/repos/Darkatse/TauriTavern/releases/latest";

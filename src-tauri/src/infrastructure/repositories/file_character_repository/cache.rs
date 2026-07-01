@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::domain::models::character::Character;
+use tt_domain::models::character::Character;
 
 /// Memory cache for character data.
 pub(crate) struct MemoryCache {

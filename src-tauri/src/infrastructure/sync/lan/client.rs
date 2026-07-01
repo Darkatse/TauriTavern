@@ -5,15 +5,15 @@ use ttsync_contract::peer::DeviceId;
 use ttsync_contract::session::{SessionOpenResponse, SessionToken};
 use ttsync_contract::status::StatusResponse;
 
-use crate::application::services::lan_sync_service::ports::LanPairingClient;
-use crate::domain::errors::DomainError;
-use crate::domain::models::lan_sync::{LanPairCompleteRequest, LanPairCompleteResponse};
-use crate::domain::models::sync::SyncOperationOptions;
 use crate::infrastructure::sync::http_client::{
     SyncHttpClient, bearer_auth_value, ensure_dataset_scope_v1, ensure_success,
 };
 use crate::infrastructure::sync::lan::server::LAN_PULL_REQUEST_SELECTION_FEATURE_V1;
 use crate::infrastructure::sync::lan::store::LanPeerStore;
+use tt_contracts::sync::SyncOperationOptions;
+use tt_domain::errors::DomainError;
+use tt_domain::models::lan_sync::{LanPairCompleteRequest, LanPairCompleteResponse};
+use tt_ports::lan_sync::LanPairingClient;
 
 #[derive(Clone)]
 pub struct LanSyncClient {

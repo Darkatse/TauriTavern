@@ -1,5 +1,5 @@
-use crate::domain::errors::DomainError;
-use crate::domain::models::extension::ExtensionVersion;
+use tt_domain::errors::DomainError;
+use tt_domain::models::extension::ExtensionVersion;
 
 use super::FileExtensionRepository;
 use super::source_store::ExtensionStoreScope;

@@ -1,8 +1,8 @@
 use tokio::fs;
 
 use super::FileAgentRepository;
-use crate::domain::errors::DomainError;
-use crate::domain::models::agent::AgentRunEvent;
+use tt_domain::errors::DomainError;
+use tt_domain::models::agent::AgentRunEvent;
 
 impl FileAgentRepository {
     pub(super) async fn read_all_events(

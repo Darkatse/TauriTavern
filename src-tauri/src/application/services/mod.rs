@@ -46,6 +46,7 @@ pub mod skill_service;
 pub mod stable_diffusion_service;
 pub mod sync_automation_service;
 pub mod sync_job_coordinator;
+pub mod sync_policy;
 pub mod theme_service;
 pub mod tokenization_service;
 pub mod translate_service;

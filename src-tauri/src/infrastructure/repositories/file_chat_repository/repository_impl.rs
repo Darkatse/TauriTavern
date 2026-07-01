@@ -5,14 +5,6 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
-use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatMessageSearchHit, ChatMessageSearchQuery,
-    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp,
-    ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
-    PinnedCharacterChat,
-};
 use crate::infrastructure::persistence::chat_format_importers::{
     export_payload_to_plain_text, import_chat_payloads_from_json, import_chat_payloads_from_jsonl,
 };
@@ -21,6 +13,14 @@ use crate::infrastructure::persistence::file_system::{
 };
 use crate::infrastructure::persistence::jsonl_utils::{
     parse_jsonl_bytes, read_jsonl_file, write_jsonl_file,
+};
+use tt_domain::errors::DomainError;
+use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
+use tt_ports::repositories::chat_repository::{
+    ChatExportFormat, ChatImportFormat, ChatMessageSearchHit, ChatMessageSearchQuery,
+    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp,
+    ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
+    PinnedCharacterChat,
 };
 
 use super::FileChatRepository;

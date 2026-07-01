@@ -1,7 +1,7 @@
 use reqwest::StatusCode;
 use serde::Deserialize;
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 pub const GITHUB_RATE_LIMIT_MESSAGE: &str = "GitHub has rate-limited your requests. Please try again later, or change your network and try again.";
 
@@ -42,8 +42,8 @@ pub fn classify_github_rate_limit(status: StatusCode, body: &str) -> Option<Doma
 #[cfg(test)]
 mod tests {
     use super::{GITHUB_RATE_LIMIT_MESSAGE, classify_github_rate_limit};
-    use crate::domain::errors::DomainError;
     use reqwest::StatusCode;
+    use tt_domain::errors::DomainError;
 
     #[test]
     fn classifies_primary_github_rate_limit_as_domain_rate_limit() {

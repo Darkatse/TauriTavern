@@ -2,10 +2,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::data_archive::{
-    DataArchiveImportFailure, DataArchiveLocalMutationSummary,
-};
+use tt_domain::errors::DomainError;
+use tt_domain::models::data_archive::{DataArchiveImportFailure, DataArchiveLocalMutationSummary};
 
 use crate::infrastructure::persistence::data_archive::shared::{
     COPY_BUFFER_BYTES, copy_stream_with_cancel, ensure_not_cancelled, internal_error,

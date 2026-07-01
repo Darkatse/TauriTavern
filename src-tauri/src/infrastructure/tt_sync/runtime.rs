@@ -5,10 +5,10 @@ use tokio::sync::Mutex;
 
 use ttsync_contract::peer::DeviceId;
 
-use crate::application::services::tt_sync_service::TtSyncRepository;
-use crate::domain::errors::DomainError;
-use crate::domain::models::tt_sync::{TtSyncIdentity, TtSyncPairedServer};
 use crate::infrastructure::tt_sync::store::TtSyncStore;
+use tt_domain::errors::DomainError;
+use tt_domain::models::tt_sync::{TtSyncIdentity, TtSyncPairedServer};
+use tt_ports::sync::TtSyncRepository;
 
 pub struct TtSyncRuntime {
     pub sync_root: PathBuf,

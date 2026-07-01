@@ -17,7 +17,7 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 /// Translate a dotted JSON path (`a.b.0.c`) into an RFC 6901 JSON Pointer
 /// (`/a/b/0/c`). Empty / whitespace-only inputs return `None` so callers can

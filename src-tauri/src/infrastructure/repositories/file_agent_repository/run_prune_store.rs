@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use super::FileAgentRepository;
-use crate::domain::errors::DomainError;
-use crate::domain::models::agent::{AgentRun, storage::AgentRunStorageClass};
-use crate::domain::repositories::agent_run_repository::{
+use tt_domain::errors::DomainError;
+use tt_domain::models::agent::{AgentRun, storage::AgentRunStorageClass};
+use tt_ports::repositories::agent_run_repository::{
     AgentRunStorageEntryStats, AgentRunStorageStats,
 };
 

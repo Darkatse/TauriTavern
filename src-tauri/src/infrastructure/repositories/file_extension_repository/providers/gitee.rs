@@ -3,8 +3,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 use url::Url;
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_domain::errors::DomainError;
 
 use super::{ExtensionSourceProvider, parse_bytes_or_error, parse_json_or_error, split_owner_repo};
 use crate::infrastructure::repositories::file_extension_repository::repo_url::HOST_GITEE;

@@ -218,7 +218,7 @@ impl AssetService {
                 )));
             }
 
-            return Err(error);
+            return Err(error.into());
         }
 
         if let Err(error) = self.commit_staged_asset_file(category, filename).await {

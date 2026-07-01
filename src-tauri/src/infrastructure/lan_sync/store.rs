@@ -5,13 +5,11 @@ use rand::Rng;
 use serde::Deserialize;
 use ttsync_contract::sync::SyncMode;
 
-use crate::application::services::lan_sync_service::ports::LanSyncSettingsRepository;
-use crate::application::services::sync_automation_service::{
-    LoadedLanServerSettings, SyncAutomationLanSettingsRepository,
-};
-use crate::domain::errors::DomainError;
-use crate::domain::models::lan_sync::{LanServerSettings, SyncPreferences};
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
+use tt_domain::errors::DomainError;
+use tt_domain::models::lan_sync::{LanServerSettings, SyncPreferences};
+use tt_ports::lan_sync::LanSyncSettingsRepository;
+use tt_ports::sync_automation::{LoadedLanServerSettings, SyncAutomationLanSettingsRepository};
 
 pub struct LanSyncStore {
     lan_sync_dir: PathBuf,

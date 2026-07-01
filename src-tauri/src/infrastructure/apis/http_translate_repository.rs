@@ -5,9 +5,9 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::Value;
 use url::Url;
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::translate_repository::{TranslateRepository, TranslateRequest};
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::translate_repository::{TranslateRepository, TranslateRequest};
 
 pub struct HttpTranslateRepository {
     http_clients: Arc<HttpClientPool>,

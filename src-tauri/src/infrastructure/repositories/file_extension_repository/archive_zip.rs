@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use tokio::fs as tokio_fs;
 use uuid::Uuid;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::extension::ExtensionManifestMetadata;
-use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::infrastructure::zipkit;
+use tt_domain::errors::DomainError;
+use tt_domain::models::extension::ExtensionManifestMetadata;
+use tt_ports::repositories::extension_repository::ExtensionRepository;
 
 use super::FileExtensionRepository;
 

@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_completion_repository::ChatCompletionApiConfig;
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_completion_repository::ChatCompletionApiConfig;
 
 use super::{HttpChatCompletionRepository, openai};
 

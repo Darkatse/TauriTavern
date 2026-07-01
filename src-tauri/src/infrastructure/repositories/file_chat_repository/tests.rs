@@ -5,14 +5,14 @@ use rand::random;
 use serde_json::{Value, json};
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::filename::sanitize_filename;
-use crate::domain::repositories::chat_repository::{
+use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use tt_domain::errors::DomainError;
+use tt_domain::models::filename::sanitize_filename;
+use tt_ports::repositories::chat_repository::{
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchQuery, ChatPayloadPatchOp,
     ChatRepository, PinnedCharacterChat, PinnedGroupChat,
 };
-use crate::domain::repositories::group_chat_repository::GroupChatRepository;
-use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 
 use super::FileChatRepository;
 

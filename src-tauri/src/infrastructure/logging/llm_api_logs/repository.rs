@@ -11,8 +11,8 @@ use super::readable::{
 };
 use super::store::LlmApiLogStore;
 use super::types::{LlmApiLogMeta, LlmApiRawKind};
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_completion_repository::{
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamSender,
 };

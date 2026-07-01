@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use ttsync_core::crypto::random_base64url;
 use uuid::Uuid;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::tt_sync::{TtSyncIdentity, TtSyncPairedServer};
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
+use tt_domain::errors::DomainError;
+use tt_domain::models::tt_sync::{TtSyncIdentity, TtSyncPairedServer};
 
 pub struct TtSyncStore {
     tt_sync_dir: PathBuf,

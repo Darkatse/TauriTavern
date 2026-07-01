@@ -7,12 +7,12 @@ use flate2::read::GzDecoder;
 use tar::{Archive as TarArchive, EntryType};
 use zip::ZipArchive;
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::data_archive::shared::{
     COPY_BUFFER_BYTES, FILE_IO_BUFFER_BYTES, MAX_ARCHIVE_ENTRIES, ensure_not_cancelled,
     internal_error, validate_archive_compression_ratio, validate_archive_entry_limits,
 };
 use crate::infrastructure::zipkit;
+use tt_domain::errors::DomainError;
 
 const CANCELLED_READ_MESSAGE: &str = "Job cancelled";
 

@@ -1,24 +1,15 @@
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use uuid::Uuid;
 
-use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::domain::errors::DomainError;
 use crate::domain::models::sync::{
     SyncEndpointRef, SyncExecutionFailure, SyncExecutionKind, SyncExecutionReport, SyncIntent,
     SyncJob, SyncJobEvent, SyncJobOutcome, SyncJobReport, SyncJobRequest,
 };
-
-#[async_trait]
-pub trait SyncJobExecutor: Send + Sync {
-    async fn execute(&self, job: SyncJob) -> Result<SyncExecutionReport, SyncExecutionFailure>;
-}
-
-pub trait SyncJobEventPublisher: Send + Sync {
-    fn publish_sync_job(&self, event: SyncJobEvent);
-}
+use tt_ports::sync::DataChangeReconciler;
+pub use tt_ports::sync::{SyncJobEventPublisher, SyncJobExecutor};
 
 pub struct SyncJobCoordinator {
     gate: Arc<Semaphore>,
@@ -309,10 +300,12 @@ mod tests {
 
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    use crate::application::services::sync_policy::default_sync_operation_options;
     use crate::domain::models::sync::{
         LocalAppliedChangeSummary, ResolvedSyncPolicy, SyncJobReportResult, SyncJobSummary,
-        SyncOperationOptions, SyncOrigin,
+        SyncOrigin,
     };
+    use async_trait::async_trait;
     use ttsync_contract::peer::DeviceId;
     use ttsync_contract::sync::SyncMode;
 
@@ -379,7 +372,7 @@ mod tests {
             origin: SyncOrigin::Manual,
             policy: ResolvedSyncPolicy::Transfer {
                 mode: SyncMode::Incremental,
-                options: SyncOperationOptions::default(),
+                options: default_sync_operation_options(),
             },
         }
     }
@@ -387,7 +380,7 @@ mod tests {
     fn remote_pull_request() -> SyncJobRequest {
         SyncJobRequest {
             policy: ResolvedSyncPolicy::RemotePullRequest {
-                options: SyncOperationOptions::default(),
+                options: default_sync_operation_options(),
             },
             ..request(SyncIntent::ReplicateLocalToRemote)
         }

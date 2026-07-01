@@ -4,8 +4,8 @@ use serde_json::{Map, Value};
 use tokio::fs::File;
 use tokio::io::{self, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::file_system::replace_file_with_fallback;
+use tt_domain::errors::DomainError;
 
 use super::FileChatRepository;
 use super::windowed_payload_io::{open_existing_payload_file, read_first_line_and_end_offset};

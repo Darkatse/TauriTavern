@@ -5,9 +5,9 @@ use tokio::fs;
 use tokio::sync::OwnedMutexGuard;
 
 use super::FileAgentRepository;
-use crate::domain::errors::DomainError;
-use crate::domain::models::agent::{AgentRun, WorkspacePath};
-use crate::domain::repositories::agent_run_repository::AgentRunRepository;
+use tt_domain::errors::DomainError;
+use tt_domain::models::agent::{AgentRun, WorkspacePath};
+use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 
 impl FileAgentRepository {
     pub(super) fn index_run_path(&self, run_id: &str) -> Result<PathBuf, DomainError> {

@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path};
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 pub const IMPORT_TARGET_USER_HANDLE: &str = "default-user";
 pub const MACOS_RESOURCE_FORK_ROOT: &str = "__MACOSX";

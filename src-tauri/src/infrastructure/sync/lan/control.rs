@@ -5,12 +5,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::application::services::lan_sync_service::ports::{
-    LanInboundRequestHandler, LanServerControl, LanServerInfo,
-};
-use crate::domain::errors::DomainError;
 use crate::infrastructure::sync::lan::server::{LanSyncServerHandle, spawn_lan_sync_server};
 use crate::infrastructure::sync::lan::store::LanPeerStore;
+use tt_domain::errors::DomainError;
+use tt_ports::lan_sync::{LanInboundRequestHandler, LanServerControl, LanServerInfo};
 
 pub struct AxumLanServerControl {
     sync_root: PathBuf,

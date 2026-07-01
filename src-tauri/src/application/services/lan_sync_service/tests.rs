@@ -9,6 +9,7 @@ use super::pairing_link::{default_lan_permissions, device_pubkey_b64url};
 use super::*;
 use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::application::services::sync_job_coordinator::{SyncJobEventPublisher, SyncJobExecutor};
+use crate::application::services::sync_policy::default_sync_operation_options;
 use crate::domain::models::lan_sync::{
     LanPairCompleteRequest, LanPairCompleteResponse, LanServerSettings, LanSyncIdentity,
     LanSyncPairedDevice, SyncPreferences,
@@ -483,7 +484,7 @@ async fn inbound_pull_request_starts_remote_request_job() {
     let peer_id = test_device_id("22222222-2222-4222-8222-222222222222");
 
     inbound
-        .accept_pull_request(peer_id.clone(), SyncOperationOptions::default())
+        .accept_pull_request(peer_id.clone(), default_sync_operation_options())
         .await
         .expect("accept pull request");
 
@@ -560,7 +561,7 @@ async fn stop_server_does_not_abort_accepted_inbound_job() {
     inbound
         .accept_pull_request(
             test_device_id("22222222-2222-4222-8222-222222222222"),
-            SyncOperationOptions::default(),
+            default_sync_operation_options(),
         )
         .await
         .expect("accept pull request");

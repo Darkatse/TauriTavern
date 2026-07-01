@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use tokio::fs as tokio_fs;
 use url::Url;
 
-use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::file_system::read_json_file;
+use tt_domain::errors::DomainError;
 
 use super::SOURCE_METADATA_FILE;
 use super::repo_url::{HOST_GITHUB, parse_repo_url};

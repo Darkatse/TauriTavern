@@ -4,12 +4,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
 use crate::domain::json_merge::merge_json_value;
-use crate::domain::repositories::extension_store_repository::ExtensionStoreRepository;
 use crate::infrastructure::persistence::file_system::{
     replace_file_with_fallback, unique_temp_path,
 };
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::extension_store_repository::ExtensionStoreRepository;
 
 pub struct FileExtensionStoreRepository {
     base_dir: PathBuf,
@@ -567,9 +567,9 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
 #[cfg(test)]
 mod tests {
     use super::FileExtensionStoreRepository;
-    use crate::domain::repositories::extension_store_repository::ExtensionStoreRepository;
     use serde_json::json;
     use std::path::PathBuf;
+    use tt_ports::repositories::extension_store_repository::ExtensionStoreRepository;
 
     fn create_temp_dir() -> PathBuf {
         let root = std::env::temp_dir().join(format!(

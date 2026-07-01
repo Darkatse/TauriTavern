@@ -90,6 +90,8 @@ rustls = "0.23"
 webpki-roots = "1"
 dunce = "1"
 tt-domain = { path = "crates/tt-domain" }
+tt-contracts = { path = "crates/tt-contracts" }
+tt-ports = { path = "crates/tt-ports" }
 
 # TT-Sync v2 shared protocol crates. (crates.io)
 ttsync-contract = { workspace = true }

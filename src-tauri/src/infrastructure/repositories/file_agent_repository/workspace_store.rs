@@ -5,17 +5,17 @@ use tokio::fs;
 use super::FileAgentRepository;
 use super::fs_tree::{sha256_hex, workspace_file_from_text, workspace_path_from_run_dir};
 use super::paths::validate_workspace_root_path;
-use crate::domain::errors::{DomainError, WorkspaceWriteConflictKind};
-use crate::domain::models::agent::profile::ResolvedAgentProfile;
-use crate::domain::models::agent::{
-    AgentRun, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
-};
-use crate::domain::repositories::workspace_repository::{
-    WorkspaceAppendResult, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList,
-    WorkspaceRepository, WorkspaceWriteGuard,
-};
 use crate::infrastructure::persistence::file_system::{
     replace_file_with_fallback, unique_temp_path,
+};
+use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
+use tt_domain::models::agent::profile::ResolvedAgentProfile;
+use tt_domain::models::agent::{
+    AgentRun, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
+};
+use tt_ports::repositories::workspace_repository::{
+    WorkspaceAppendResult, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList,
+    WorkspaceRepository, WorkspaceWriteGuard,
 };
 
 #[async_trait]

@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
+use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
 use super::reasoning::{
     collect_visible_reasoning_texts, collect_visible_reasoning_value, has_reasoning_native_state,

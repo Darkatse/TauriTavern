@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde_json::{Value, json};
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 fn default_header() -> Value {
     json!({

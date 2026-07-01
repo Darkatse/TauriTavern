@@ -8,12 +8,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::group::Group;
-use crate::domain::repositories::group_repository::GroupRepository;
 use crate::infrastructure::persistence::file_system::{
     list_files_with_extension, read_json_file, write_json_file,
 };
+use tt_domain::errors::DomainError;
+use tt_domain::models::group::Group;
+use tt_ports::repositories::group_repository::GroupRepository;
 
 /// File-based implementation of the GroupRepository
 pub struct FileGroupRepository {

@@ -11,9 +11,9 @@ use ttsync_http::client::{
 };
 use url::Url;
 
-use crate::application::services::tt_sync_service::TtPairingClient;
-use crate::domain::errors::DomainError;
 use crate::infrastructure::http_client::APP_USER_AGENT;
+use tt_domain::errors::DomainError;
+use tt_ports::sync::TtPairingClient;
 
 #[derive(Clone)]
 pub struct SyncHttpClient {
@@ -210,7 +210,7 @@ mod tests {
     use ttsync_core::error::SyncError;
 
     use super::{ensure_dataset_scope_v1, sync_error_to_domain};
-    use crate::domain::errors::DomainError;
+    use tt_domain::errors::DomainError;
 
     fn status(features: Vec<String>, version: Option<u32>) -> StatusResponse {
         StatusResponse {

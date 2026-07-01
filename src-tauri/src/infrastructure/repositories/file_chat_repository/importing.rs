@@ -1,8 +1,8 @@
 use chrono::Utc;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::chat::{humanized_date, truncate_chat_file_stem_prefix};
-use crate::domain::models::filename::sanitize_filename;
+use tt_domain::errors::DomainError;
+use tt_domain::models::chat::{humanized_date, truncate_chat_file_stem_prefix};
+use tt_domain::models::filename::sanitize_filename;
 
 use super::FileChatRepository;
 

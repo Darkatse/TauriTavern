@@ -5,9 +5,9 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use super::persistent_store::PersistentSnapshotFile;
-use crate::domain::errors::DomainError;
-use crate::domain::models::agent::WorkspacePath;
-use crate::domain::repositories::workspace_repository::WorkspaceFile;
+use tt_domain::errors::DomainError;
+use tt_domain::models::agent::WorkspacePath;
+use tt_ports::repositories::workspace_repository::WorkspaceFile;
 
 pub(super) fn should_skip_platform_metadata_file(
     path: &Path,

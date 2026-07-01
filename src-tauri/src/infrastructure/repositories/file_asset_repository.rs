@@ -3,11 +3,9 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::asset::{
-    AssetCatalog, AssetCatalogEntry, AssetCategory, VrmAssetCatalog,
-};
-use crate::domain::repositories::asset_repository::AssetRepository;
+use tt_domain::errors::DomainError;
+use tt_domain::models::asset::{AssetCatalog, AssetCatalogEntry, AssetCategory, VrmAssetCatalog};
+use tt_ports::repositories::asset_repository::AssetRepository;
 
 pub struct FileAssetRepository {
     user_root: PathBuf,
@@ -437,8 +435,8 @@ mod tests {
 
     use uuid::Uuid;
 
-    use crate::domain::models::asset::{AssetCatalogEntry, AssetCategory};
-    use crate::domain::repositories::asset_repository::AssetRepository;
+    use tt_domain::models::asset::{AssetCatalogEntry, AssetCategory};
+    use tt_ports::repositories::asset_repository::AssetRepository;
 
     use super::FileAssetRepository;
 

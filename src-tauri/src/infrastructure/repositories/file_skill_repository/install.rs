@@ -7,8 +7,8 @@ use super::index::{SkillIndexFile, sort_index};
 use super::materialize::PreparedImport;
 use super::package::{ValidatedSkill, validate_skill_root};
 use super::source_refs::merge_source_refs;
-use crate::domain::errors::DomainError;
-use crate::domain::models::skill::{
+use tt_domain::errors::DomainError;
+use tt_domain::models::skill::{
     SkillImportConflict, SkillImportConflictKind, SkillInstallAction, SkillInstallConflictStrategy,
     SkillInstallResult, SkillScope,
 };
@@ -175,7 +175,7 @@ impl FileSkillRepository {
 }
 
 fn import_conflict(
-    entry: &crate::domain::models::skill::SkillIndexEntry,
+    entry: &tt_domain::models::skill::SkillIndexEntry,
     index: &SkillIndexFile,
 ) -> SkillImportConflict {
     let installed = index

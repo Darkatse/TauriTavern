@@ -2,11 +2,9 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use crate::application::services::runtime_paths_service::{
-    RuntimePathConfigInfo, RuntimePathConfigStore,
-};
-use crate::domain::errors::DomainError;
 use crate::infrastructure::paths::{load_runtime_config, request_runtime_data_root_change};
+use tt_domain::errors::DomainError;
+use tt_ports::runtime_paths::{RuntimePathConfigInfo, RuntimePathConfigStore};
 
 pub(crate) struct FilesystemRuntimePathConfigStore;
 

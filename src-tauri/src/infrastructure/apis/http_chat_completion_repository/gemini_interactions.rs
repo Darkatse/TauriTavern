@@ -5,8 +5,8 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_completion_repository::{
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };

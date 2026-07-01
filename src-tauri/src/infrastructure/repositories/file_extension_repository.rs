@@ -2,14 +2,14 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::extension::{
+use crate::infrastructure::http_client_pool::HttpClientPool;
+use crate::infrastructure::persistence::file_system::read_json_file;
+use tt_domain::errors::DomainError;
+use tt_domain::models::extension::{
     Extension, ExtensionInstallResult, ExtensionManifestMetadata, ExtensionUpdateResult,
     ExtensionVersion,
 };
-use crate::domain::repositories::extension_repository::ExtensionRepository;
-use crate::infrastructure::http_client_pool::HttpClientPool;
-use crate::infrastructure::persistence::file_system::read_json_file;
+use tt_ports::repositories::extension_repository::ExtensionRepository;
 
 mod archive_zip;
 mod delete;

@@ -8,14 +8,14 @@ use rand::random;
 use serde_json::json;
 use tokio::fs;
 
-use crate::domain::models::character::Character;
-use crate::domain::repositories::character_repository::{
-    CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterRepository,
-};
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, read_text_chunks_from_png, write_character_data_to_png,
 };
 use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use tt_domain::models::character::Character;
+use tt_ports::repositories::character_repository::{
+    CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterRepository,
+};
 
 use super::FileCharacterRepository;
 

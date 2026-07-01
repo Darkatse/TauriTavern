@@ -5,8 +5,8 @@ use serde_json::Value;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_types::{
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_types::{
     ChatMessageReadItem, ChatMessageRole, ChatMessagesReadResult,
 };
 

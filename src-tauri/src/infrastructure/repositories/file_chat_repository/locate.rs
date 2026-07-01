@@ -1,7 +1,7 @@
 use serde_json::Value;
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_repository::{
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_repository::{
     ChatMessageRole, FindLastMessageQuery, LocatedChatMessage,
 };
 

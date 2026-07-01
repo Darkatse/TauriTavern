@@ -4,8 +4,8 @@ use tokio::fs as tokio_fs;
 
 use super::FileSkillRepository;
 use super::paths::skill_scope_storage_dir;
-use crate::domain::errors::DomainError;
-use crate::domain::models::skill::SkillScope;
+use tt_domain::errors::DomainError;
+use tt_domain::models::skill::SkillScope;
 
 impl FileSkillRepository {
     pub(super) fn installed_root(&self) -> PathBuf {

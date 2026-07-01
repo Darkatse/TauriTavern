@@ -5,6 +5,7 @@ use ttsync_contract::peer::{DeviceId, PeerGrant};
 use ttsync_contract::sync::SyncMode;
 
 use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
+use crate::application::services::sync_policy::validate_sync_operation_options;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
     LanPairCompleteRequest, LanSyncPairedDevice, LanSyncPairedDeviceSummary, LanSyncStatus,
@@ -32,8 +33,7 @@ pub use ports::{
     LanPeerRepository, LanServerControl, LanServerInfo, LanSyncSettingsRepository, PairingApproval,
 };
 pub use runtime_state::{LanPairingSession, LanSyncRuntimeState};
-
-pub const PAIRING_REJECTED_MESSAGE: &str = "Pairing rejected";
+pub use tt_contracts::sync::PAIRING_REJECTED_MESSAGE;
 
 pub struct LanSyncService {
     state: Arc<LanSyncRuntimeState>,
@@ -352,7 +352,7 @@ impl LanSyncService {
         options: SyncOperationOptions,
     ) -> Result<SyncJobReport, DomainError> {
         let device_id = parse_device_id(device_id)?;
-        let options = options.validate()?;
+        let options = validate_sync_operation_options(options)?;
         let mode = self.effective_sync_mode().await?;
         let request = self.job_request(
             SyncEndpointRef::LanPeer { device_id },
@@ -371,7 +371,7 @@ impl LanSyncService {
     ) -> Result<SyncJobReport, DomainError> {
         self.ensure_server_running().await?;
         let device_id = parse_device_id(device_id)?;
-        let options = options.validate()?;
+        let options = validate_sync_operation_options(options)?;
         self.run_request_remote_pull(device_id, SyncOrigin::Manual, options)
             .await
     }

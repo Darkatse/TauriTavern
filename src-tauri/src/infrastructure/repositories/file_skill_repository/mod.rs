@@ -22,14 +22,14 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::skill::{
+use tt_domain::errors::DomainError;
+use tt_domain::models::skill::{
     SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
     SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult,
     SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
     SkillSearchRequest, SkillSearchResult, SkillWriteRequest,
 };
-use crate::domain::repositories::skill_repository::SkillRepository;
+use tt_ports::repositories::skill_repository::SkillRepository;
 
 const INDEX_VERSION: u32 = 2;
 const SIDECAR_VERSION: u32 = 1;

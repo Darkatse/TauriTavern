@@ -5,18 +5,18 @@ use serde_json::Value;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::domain::errors::DomainError;
 use crate::domain::json_merge::merge_json_value;
-use crate::domain::models::character::Character;
-use crate::domain::models::chat::parse_message_timestamp_value;
-use crate::domain::repositories::character_repository::{
-    CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterChat, CharacterCreateResult,
-    CharacterCreateWarning, CharacterRepository, ImageCrop,
-};
 use crate::infrastructure::persistence::png_utils::{
     process_avatar_image, read_character_data_from_png, write_character_data_to_png,
 };
 use crate::infrastructure::persistence::thumbnail_cache::invalidate_thumbnail_cache;
+use tt_domain::errors::DomainError;
+use tt_domain::models::character::Character;
+use tt_domain::models::chat::parse_message_timestamp_value;
+use tt_ports::repositories::character_repository::{
+    CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterChat, CharacterCreateResult,
+    CharacterCreateWarning, CharacterRepository, ImageCrop,
+};
 
 use super::FileCharacterRepository;
 

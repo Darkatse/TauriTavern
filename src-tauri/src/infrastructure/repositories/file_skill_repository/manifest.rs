@@ -4,7 +4,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use super::{MAX_SKILL_MD_BYTES, SIDECAR_VERSION};
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 #[derive(Debug, Default)]
 pub(super) struct SkillFrontmatter {

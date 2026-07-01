@@ -10,7 +10,7 @@ use tauri::path::BaseDirectory;
 use tauri_plugin_fs::FsExt;
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 static DEFAULT_CONTENT_MANIFEST: OnceLock<Vec<String>> = OnceLock::new();
 

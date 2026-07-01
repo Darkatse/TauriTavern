@@ -3,12 +3,12 @@ use std::path::Path;
 use serde_json::Value;
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::chat::{Chat, strip_jsonl_extension};
 use crate::infrastructure::persistence::file_system::replace_file_with_fallback;
 use crate::infrastructure::persistence::jsonl_utils::{
     parse_jsonl_bytes, read_first_non_empty_jsonl_line, write_jsonl_file,
 };
+use tt_domain::errors::DomainError;
+use tt_domain::models::chat::{Chat, strip_jsonl_extension};
 
 use super::FileChatRepository;
 use super::integrity::verify_integrity_match;

@@ -9,11 +9,11 @@ use reqwest::{RequestBuilder, Response, StatusCode};
 use serde_json::{Value, json};
 use tokio::time::sleep;
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::tts_repository::{
+use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::tts_repository::{
     GrokOutputFormat, MinimaxGenerateRequest, TtsRepository, TtsRequest, TtsRouteResponse,
 };
-use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
 const GROK_VOICES_URL: &str = "https://api.x.ai/v1/tts/voices";
 const GROK_TTS_URL: &str = "https://api.x.ai/v1/tts";
@@ -587,7 +587,7 @@ mod tests {
         decode_hex_audio, minimax_generate, parse_minimax_base_resp_error,
         parse_minimax_upstream_error_message, parse_upstream_error_message,
     };
-    use crate::domain::repositories::tts_repository::MinimaxGenerateRequest;
+    use tt_ports::repositories::tts_repository::MinimaxGenerateRequest;
 
     #[test]
     fn parses_nested_json_error_message() {

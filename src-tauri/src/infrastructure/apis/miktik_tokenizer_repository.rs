@@ -9,9 +9,9 @@ use miktik::{TokenizerError, TokenizerRegistry};
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
 
 const CLAUDE_JSON_GZIP_BYTES: &[u8] =
     include_bytes!("../../../resources/tokenizers/claude.json.gz");
@@ -507,8 +507,8 @@ mod tests {
     use serde_json::json;
 
     use super::{MiktikTokenizerRepository, ModelSource, ResourceCompression};
-    use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
     use crate::infrastructure::http_client_pool::HttpClientPool;
+    use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
 
     #[test]
     fn canonical_model_aligns_sillytavern_aliases() {

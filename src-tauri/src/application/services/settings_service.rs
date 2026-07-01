@@ -11,23 +11,11 @@ use crate::application::dto::settings_dto::{
     UpdateAgentSettingsDto, UpdateTauriTavernSettingsDto, UserSettingsDto,
 };
 use crate::application::errors::ApplicationError;
-use crate::domain::errors::DomainError;
 use crate::domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, DevLoggingSettings, RequestProxySettings,
 };
 use crate::domain::repositories::settings_repository::SettingsRepository;
-
-pub trait RequestProxyRuntime: Send + Sync {
-    fn validate_request_proxy_settings(
-        &self,
-        settings: &RequestProxySettings,
-    ) -> Result<(), DomainError>;
-
-    fn apply_request_proxy_settings(
-        &self,
-        settings: &RequestProxySettings,
-    ) -> Result<(), DomainError>;
-}
+pub use tt_ports::settings::RequestProxyRuntime;
 
 pub struct SettingsService {
     settings_repository: Arc<dyn SettingsRepository>,
@@ -438,6 +426,7 @@ mod tests {
     use crate::application::dto::settings_dto::{
         RequestProxySettingsDto, UpdateAgentRunRetentionSettingsDto,
     };
+    use crate::domain::errors::DomainError;
     use crate::domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
     use async_trait::async_trait;
     use std::sync::Mutex as StdMutex;

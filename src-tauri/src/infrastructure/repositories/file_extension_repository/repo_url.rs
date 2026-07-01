@@ -1,6 +1,6 @@
 use url::Url;
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 pub(super) const HOST_GITHUB: &str = "github.com";
 pub(super) const HOST_GITLAB: &str = "gitlab.com";

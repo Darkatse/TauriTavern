@@ -4,13 +4,13 @@ use std::path::PathBuf;
 use super::FileSkillRepository;
 use super::package::{collect_skill_files, sha256_hex};
 use super::paths::{normalize_skill_path, validate_skill_name};
-use crate::domain::errors::DomainError;
-use crate::domain::models::skill::{
+use crate::domain::text_metrics::TextMetrics;
+use crate::domain::text_search::PreparedTextSearch;
+use tt_domain::errors::DomainError;
+use tt_domain::models::skill::{
     DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS, SkillFileKind, SkillFileRef, SkillReadRequest,
     SkillReadResult, SkillScope, SkillSearchHit, SkillSearchRequest, SkillSearchResult,
 };
-use crate::domain::text_metrics::TextMetrics;
-use crate::domain::text_search::PreparedTextSearch;
 
 struct SkillTextFile {
     scope: SkillScope,

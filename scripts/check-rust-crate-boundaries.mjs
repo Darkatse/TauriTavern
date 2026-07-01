@@ -4,12 +4,10 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DOMAIN_ROOT = path.join(REPO_ROOT, 'src-tauri', 'crates', 'tt-domain');
-const DOMAIN_SRC = path.join(DOMAIN_ROOT, 'src');
-const DOMAIN_MANIFEST = path.join(DOMAIN_ROOT, 'Cargo.toml');
+const RUST_CRATES_ROOT = path.join(REPO_ROOT, 'src-tauri', 'crates');
 const WORKSPACE_MANIFEST = path.join(REPO_ROOT, 'src-tauri', 'Cargo.toml');
 
-const FORBIDDEN_PACKAGES = new Set([
+const DOMAIN_FORBIDDEN_PACKAGES = new Set([
     'async-trait',
     'axum',
     'image',
@@ -17,12 +15,13 @@ const FORBIDDEN_PACKAGES = new Set([
     'reqwest',
     'tar',
     'tauri',
+    'tauritavern',
     'tokio',
     'ttsync-core',
     'zip',
 ]);
 
-const FORBIDDEN_SOURCE_PATTERNS = [
+const DOMAIN_FORBIDDEN_SOURCE_PATTERNS = [
     ['main crate domain path', /\bcrate::domain::/],
     ['repository path', /\bcrate::repositories::/],
     ['async-trait', /\basync_trait\b/],
@@ -35,6 +34,76 @@ const FORBIDDEN_SOURCE_PATTERNS = [
     ['filesystem IO', /\bstd::fs::/],
     ['network IO', /\bstd::net::/],
 ];
+
+const CONTRACTS_FORBIDDEN_PACKAGES = new Set([
+    'async-trait',
+    'axum',
+    'image',
+    'miktik',
+    'reqwest',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'tokio',
+    'tt-ports',
+    'ttsync-core',
+    'zip',
+]);
+
+const CONTRACTS_FORBIDDEN_SOURCE_PATTERNS = [
+    ['async-trait', /\basync_trait\b/],
+    ['axum', /\baxum::/],
+    ['image', /\bimage::/],
+    ['miktik', /\bmiktik::/],
+    ['reqwest', /\breqwest::/],
+    ['tauri', /\btauri::/],
+    ['tokio', /\btokio::/],
+    ['tt-ports', /\btt_ports::/],
+    ['ttsync-core', /\bttsync_core::/],
+    ['filesystem IO', /\bstd::fs::/],
+    ['network IO', /\bstd::net::/],
+];
+
+const PORTS_FORBIDDEN_PACKAGES = new Set([
+    'axum',
+    'image',
+    'miktik',
+    'reqwest',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'ttsync-core',
+    'zip',
+]);
+
+const PORTS_FORBIDDEN_SOURCE_PATTERNS = [
+    ['axum', /\baxum::/],
+    ['image', /\bimage::/],
+    ['miktik', /\bmiktik::/],
+    ['reqwest', /\breqwest::/],
+    ['tauri', /\btauri::/],
+    ['ttsync-core', /\bttsync_core::/],
+    ['filesystem IO', /\bstd::fs::/],
+    ['network IO', /\bstd::net::/],
+];
+
+const CRATES = [
+    crateConfig('tt-domain', DOMAIN_FORBIDDEN_PACKAGES, DOMAIN_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-contracts', CONTRACTS_FORBIDDEN_PACKAGES, CONTRACTS_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-ports', PORTS_FORBIDDEN_PACKAGES, PORTS_FORBIDDEN_SOURCE_PATTERNS),
+];
+
+function crateConfig(name, forbiddenPackages, forbiddenSourcePatterns) {
+    const root = path.join(RUST_CRATES_ROOT, name);
+    return {
+        name,
+        root,
+        src: path.join(root, 'src'),
+        manifest: path.join(root, 'Cargo.toml'),
+        forbiddenPackages,
+        forbiddenSourcePatterns,
+    };
+}
 
 function toPosixPath(value) {
     return String(value).replace(/\\/g, '/');
@@ -58,22 +127,38 @@ async function listFiles(dir) {
     return files;
 }
 
-async function checkSourceBoundaries() {
+async function fileExists(filePath) {
+    try {
+        await fs.access(filePath);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function crateFiles(config) {
     const files = [
-        ...(await listFiles(DOMAIN_SRC)).filter((file) => file.endsWith('.rs')),
-        path.join(DOMAIN_ROOT, 'build.rs'),
-        DOMAIN_MANIFEST,
+        ...(await listFiles(config.src)).filter((file) => file.endsWith('.rs')),
+        config.manifest,
     ];
+    const buildScript = path.join(config.root, 'build.rs');
+    if (await fileExists(buildScript)) {
+        files.push(buildScript);
+    }
+    return files;
+}
+
+async function checkSourceBoundaries(config) {
     const violations = [];
 
-    for (const filePath of files) {
+    for (const filePath of await crateFiles(config)) {
         const relPath = toPosixPath(path.relative(REPO_ROOT, filePath));
         const text = await fs.readFile(filePath, 'utf8');
         const lines = text.split(/\r?\n/);
         lines.forEach((line, index) => {
-            for (const [kind, pattern] of FORBIDDEN_SOURCE_PATTERNS) {
+            for (const [kind, pattern] of config.forbiddenSourcePatterns) {
                 if (pattern.test(line)) {
-                    violations.push(`${relPath}:${index + 1}: ${kind}: ${line.trim()}`);
+                    violations.push(`${relPath}:${index + 1}: ${config.name} ${kind}: ${line.trim()}`);
                 }
             }
         });
@@ -82,13 +167,13 @@ async function checkSourceBoundaries() {
     return violations;
 }
 
-function checkDependencyTree() {
+function checkDependencyTree(config) {
     const result = spawnSync('cargo', [
         'tree',
         '--manifest-path',
         WORKSPACE_MANIFEST,
         '-p',
-        'tt-domain',
+        config.name,
         '--no-default-features',
         '--prefix',
         'none',
@@ -98,7 +183,7 @@ function checkDependencyTree() {
     });
 
     if (result.status !== 0) {
-        return [`cargo tree failed:\n${result.stderr || result.stdout}`];
+        return [`${config.name} cargo tree failed:\n${result.stderr || result.stdout}`];
     }
 
     const packages = new Set(
@@ -108,16 +193,19 @@ function checkDependencyTree() {
             .filter(Boolean),
     );
 
-    return [...FORBIDDEN_PACKAGES]
+    return [...config.forbiddenPackages]
         .filter((name) => packages.has(name))
-        .map((name) => `tt-domain dependency tree includes forbidden package: ${name}`);
+        .map((name) => `${config.name} dependency tree includes forbidden package: ${name}`);
 }
 
 async function main() {
-    const violations = [
-        ...(await checkSourceBoundaries()),
-        ...checkDependencyTree(),
-    ];
+    const violations = [];
+    for (const config of CRATES) {
+        violations.push(
+            ...(await checkSourceBoundaries(config)),
+            ...checkDependencyTree(config),
+        );
+    }
 
     if (violations.length > 0) {
         console.error(`[rust-crate-boundaries] FAILED\n${violations.join('\n')}`);
@@ -125,7 +213,7 @@ async function main() {
         return;
     }
 
-    console.log('[rust-crate-boundaries] clean');
+    console.log(`[rust-crate-boundaries] clean (${CRATES.map((config) => config.name).join(', ')})`);
 }
 
 main().catch((error) => {

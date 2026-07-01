@@ -5,17 +5,17 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::world_info::{
-    WORLD_INFO_EXTENSION, sanitize_world_info_file_name, sanitize_world_info_import_name,
-    validate_world_info_data,
-};
-use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::persistence::file_system::{
     delete_file, list_files_with_extension, read_json_file, write_json_file,
 };
 use crate::infrastructure::persistence::png_utils::read_text_chunks_from_png;
 use crate::infrastructure::sillytavern_sorting::sort_strings_sillytavern_name;
+use tt_domain::errors::DomainError;
+use tt_domain::models::world_info::{
+    WORLD_INFO_EXTENSION, sanitize_world_info_file_name, sanitize_world_info_import_name,
+    validate_world_info_data,
+};
+use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 
 pub struct FileWorldInfoRepository {
     worlds_dir: PathBuf,
@@ -248,10 +248,10 @@ impl WorldInfoRepository for FileWorldInfoRepository {
 #[cfg(test)]
 mod tests {
     use super::FileWorldInfoRepository;
-    use crate::domain::repositories::world_info_repository::WorldInfoRepository;
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 
     struct TestDir {
         path: PathBuf,

@@ -12,8 +12,8 @@ use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::Role;
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_completion_repository::{
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };
@@ -1156,7 +1156,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::domain::repositories::chat_completion_repository::AnthropicBetaHeaderMode;
+    use tt_ports::repositories::chat_completion_repository::AnthropicBetaHeaderMode;
 
     #[test]
     fn responses_ws_url_maps_http_schemes() {

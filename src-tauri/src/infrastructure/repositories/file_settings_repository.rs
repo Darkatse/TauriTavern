@@ -3,9 +3,6 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
-use crate::domain::repositories::settings_repository::SettingsRepository;
 use crate::infrastructure::persistence::file_system::{
     list_files_with_extension, read_json_file, write_json_file, write_json_file_sync,
 };
@@ -13,6 +10,9 @@ use crate::infrastructure::preset_file_naming::load_named_preset_files;
 use crate::infrastructure::sillytavern_sorting::{
     sort_paths_by_file_name_js_default, sort_strings_sillytavern_name,
 };
+use tt_domain::errors::DomainError;
+use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
+use tt_ports::repositories::settings_repository::SettingsRepository;
 
 pub struct FileSettingsRepository {
     tauritavern_settings_file: PathBuf,
@@ -391,11 +391,11 @@ impl SettingsRepository for FileSettingsRepository {
 #[cfg(test)]
 mod tests {
     use super::FileSettingsRepository;
-    use crate::domain::repositories::settings_repository::SettingsRepository;
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tt_ports::repositories::settings_repository::SettingsRepository;
 
     struct TestDir {
         path: PathBuf,

@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use serde_json::Value;
 
-use crate::domain::repositories::chat_completion_repository::{
+use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionSource,
 };
 

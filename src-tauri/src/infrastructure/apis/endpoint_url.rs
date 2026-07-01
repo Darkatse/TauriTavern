@@ -1,6 +1,6 @@
 use url::Url;
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 pub(crate) fn append_endpoint_path(
     base_url: &str,

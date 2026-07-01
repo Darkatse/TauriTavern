@@ -5,9 +5,9 @@ use rand::random;
 use serde_json::json;
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::infrastructure::http_client_pool::HttpClientPool;
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::extension_repository::ExtensionRepository;
 
 use super::FileExtensionRepository;
 

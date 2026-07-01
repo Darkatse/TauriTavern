@@ -3,3 +3,10 @@ name = "tt-contracts"
 version = "0.1.0"
 edition = "2024"
 publish = false
+
+[dependencies]
+percent-encoding = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tt-domain = { path = "../tt-domain" }
+ttsync-contract = { workspace = true }

@@ -256,7 +256,7 @@ test('TauriTavern Sync automation status events refresh status only while toasts
 test('TauriTavern Sync automation success toasts include next run time', async () => {
     const listeners = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-listeners.js');
     const service = await readRepoFile('src-tauri/src/application/services/sync_automation_service.rs');
-    const model = await readRepoFile('src-tauri/src/domain/models/sync_automation.rs');
+    const model = await readRepoFile('src-tauri/crates/tt-contracts/src/sync_automation.rs');
     const zhCn = await readRepoFile('src/locales/zh-cn.json');
     const zhTw = await readRepoFile('src/locales/zh-tw.json');
 

@@ -1,8 +1,8 @@
 use tauri::AppHandle;
 
-use crate::application::services::bundled_template_service::BundledTemplateStore;
-use crate::domain::errors::DomainError;
 use crate::infrastructure::assets::read_resource_text;
+use tt_domain::errors::DomainError;
+use tt_ports::bundled_template::BundledTemplateStore;
 
 #[derive(Clone)]
 pub(crate) struct BundledResourceStore {

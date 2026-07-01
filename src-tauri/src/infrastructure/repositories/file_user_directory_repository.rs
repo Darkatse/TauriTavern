@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 use tokio::fs;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::user_directory::UserDirectory;
-use crate::domain::repositories::user_directory_repository::UserDirectoryRepository;
+use tt_domain::errors::DomainError;
+use tt_domain::models::user_directory::UserDirectory;
+use tt_ports::repositories::user_directory_repository::UserDirectoryRepository;
 
 pub struct FileUserDirectoryRepository {
     data_root: PathBuf,

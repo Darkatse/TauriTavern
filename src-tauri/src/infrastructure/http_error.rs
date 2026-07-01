@@ -2,7 +2,7 @@ use std::error::Error;
 
 use reqwest::Url;
 
-use crate::domain::models::upstream_failure::{
+use tt_domain::models::upstream_failure::{
     UPSTREAM_NETWORK_BODY_INTERRUPTED, UPSTREAM_NETWORK_CONNECT_FAILED,
     UPSTREAM_NETWORK_DNS_FAILED, UPSTREAM_NETWORK_PROXY_FAILED, UPSTREAM_NETWORK_REQUEST_FAILED,
     UPSTREAM_NETWORK_TIMEOUT, UPSTREAM_NETWORK_TLS_FAILED, UpstreamFailure,

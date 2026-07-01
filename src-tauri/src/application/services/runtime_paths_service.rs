@@ -1,50 +1,11 @@
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use async_trait::async_trait;
-
 use crate::domain::errors::DomainError;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RuntimeModeInfo {
-    Standard,
-    Portable,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RuntimePathsSnapshot {
-    pub(crate) mode: RuntimeModeInfo,
-    pub(crate) app_root: PathBuf,
-    pub(crate) data_root: PathBuf,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RuntimePathConfigInfo {
-    pub(crate) data_root: PathBuf,
-    pub(crate) migration_pending: bool,
-    pub(crate) migration_error: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RuntimePathsInfo {
-    pub(crate) mode: RuntimeModeInfo,
-    pub(crate) data_root: PathBuf,
-    pub(crate) configured_data_root: Option<PathBuf>,
-    pub(crate) migration_pending: bool,
-    pub(crate) migration_error: Option<String>,
-}
-
-#[async_trait]
-pub(crate) trait RuntimePathConfigStore: Send + Sync {
-    fn load_config(&self, app_root: &Path) -> Result<Option<RuntimePathConfigInfo>, DomainError>;
-
-    async fn request_data_root_change(
-        &self,
-        app_root: &Path,
-        current_data_root: &Path,
-        raw_target: &str,
-    ) -> Result<(), DomainError>;
-}
+#[cfg(test)]
+pub(crate) use tt_ports::runtime_paths::RuntimePathConfigInfo;
+pub(crate) use tt_ports::runtime_paths::{
+    RuntimeModeInfo, RuntimePathConfigStore, RuntimePathsInfo, RuntimePathsSnapshot,
+};
 
 #[derive(Clone)]
 pub(crate) struct RuntimePathsService {
@@ -91,9 +52,11 @@ impl RuntimePathsService {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
     use super::*;
+    use async_trait::async_trait;
 
     struct Store {
         config: Option<RuntimePathConfigInfo>,

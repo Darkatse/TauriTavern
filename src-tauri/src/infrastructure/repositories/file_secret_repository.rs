@@ -5,10 +5,10 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::secret::{SecretEntry, SecretKeys, Secrets};
-use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
+use tt_domain::errors::DomainError;
+use tt_domain::models::secret::{SecretEntry, SecretKeys, Secrets};
+use tt_ports::repositories::secret_repository::SecretRepository;
 
 pub struct FileSecretRepository {
     secrets_file: PathBuf,

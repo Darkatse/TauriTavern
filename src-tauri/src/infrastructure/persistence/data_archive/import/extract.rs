@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 use super::archive::{self, ArchiveReadEntry};
 use super::layout::{ArchiveLayoutPolicy, DetectedArchiveLayout};

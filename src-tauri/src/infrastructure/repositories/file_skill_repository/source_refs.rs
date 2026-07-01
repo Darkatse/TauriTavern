@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use super::paths::normalize_source_string;
-use crate::domain::errors::DomainError;
-use crate::domain::models::skill::SkillSourceRef;
+use tt_domain::errors::DomainError;
+use tt_domain::models::skill::SkillSourceRef;
 
 pub(super) fn skill_source_ref_from_import_source(
     source: &Value,

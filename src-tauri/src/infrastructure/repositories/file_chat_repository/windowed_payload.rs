@@ -5,8 +5,8 @@ use serde_json::Value;
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_repository::{
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_repository::{
     ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
 };
 

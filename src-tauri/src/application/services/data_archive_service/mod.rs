@@ -16,11 +16,12 @@ use crate::application::services::data_change_reconciler::DataChangeReconciler;
 use crate::domain::errors::DomainError;
 
 pub(crate) use job::{DataArchiveJobHandle, DataArchiveJobRegistry};
+#[cfg(test)]
 pub(crate) use ports::{
-    ArchiveExportExecutionReport, ArchiveImportExecutionReport, DataArchiveExecutor,
-    DataArchiveFileGateway, DataRootInitializer, ExportArchiveExecutionRequest,
+    ArchiveExportExecutionReport, ArchiveImportExecutionReport, ExportArchiveExecutionRequest,
     ImportArchiveExecutionRequest, UserBackupArchiveExecutionRequest, UserBackupArchiveTarget,
 };
+pub(crate) use ports::{DataArchiveExecutor, DataArchiveFileGateway, DataRootInitializer};
 
 pub struct DataArchiveService {
     jobs: Arc<DataArchiveJobRegistry>,

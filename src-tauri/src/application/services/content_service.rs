@@ -217,7 +217,7 @@ mod tests {
             _limit: Option<
                 crate::application::services::external_import_service::DownloadByteLimit,
             >,
-        ) -> Result<DownloadedBytes, ApplicationError> {
+        ) -> Result<DownloadedBytes, DomainError> {
             Ok(DownloadedBytes {
                 bytes: self.bytes.clone(),
                 content_type: self.content_type.map(str::to_string),
@@ -225,7 +225,7 @@ mod tests {
             })
         }
 
-        async fn fetch_to_file(&self, _url: Url, _path: &Path) -> Result<(), ApplicationError> {
+        async fn fetch_to_file(&self, _url: Url, _path: &Path) -> Result<(), DomainError> {
             unimplemented!("not used by these tests")
         }
     }

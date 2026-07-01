@@ -8,12 +8,6 @@ use ttsync_client::{
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::sync::SyncMode;
 
-use crate::application::services::sync_job_coordinator::{SyncJobEventPublisher, SyncJobExecutor};
-use crate::domain::errors::DomainError;
-use crate::domain::models::sync::{
-    LocalAppliedChangeSummary, ResolvedSyncPolicy, SyncEndpointRef, SyncExecutionFailure,
-    SyncExecutionKind, SyncExecutionReport, SyncJob, SyncJobSummary, SyncOperationOptions,
-};
 use crate::infrastructure::sync::http_client::{new_sync_client, sync_error_to_domain};
 use crate::infrastructure::sync::lan::client::request_peer_pull as request_lan_peer_pull;
 use crate::infrastructure::sync::lan::store::LanPeerStore;
@@ -21,6 +15,12 @@ use crate::infrastructure::sync::observer::SyncJobProgressObserver;
 use crate::infrastructure::sync::workspace::TauriTavernSyncWorkspace;
 use crate::infrastructure::sync_transfer;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
+use tt_contracts::sync::{
+    LocalAppliedChangeSummary, ResolvedSyncPolicy, SyncEndpointRef, SyncExecutionFailure,
+    SyncExecutionKind, SyncExecutionReport, SyncJob, SyncJobSummary, SyncOperationOptions,
+};
+use tt_domain::errors::DomainError;
+use tt_ports::sync::{SyncJobEventPublisher, SyncJobExecutor};
 
 pub struct InfrastructureSyncJobExecutor {
     lan_sync_root: std::path::PathBuf,

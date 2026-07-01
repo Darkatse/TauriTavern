@@ -3,9 +3,9 @@ use std::path::Path;
 use serde_json::{Value, json};
 use tokio::fs::read_to_string;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::agent::AgentRun;
 use crate::infrastructure::persistence::file_system::write_json_file;
+use tt_domain::errors::DomainError;
+use tt_domain::models::agent::AgentRun;
 
 pub(super) async fn write_agent_run_record(path: &Path, run: &AgentRun) -> Result<(), DomainError> {
     write_json_file(path, run).await

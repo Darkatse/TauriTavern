@@ -5,7 +5,7 @@ use ttsync_contract::manifest::{ManifestEntryV2, ManifestV2};
 use ttsync_contract::path::SyncPath;
 use ttsync_core::dataset::ResolvedDatasetPolicy;
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 pub async fn scan_manifest_with_policy(
     sync_root: PathBuf,

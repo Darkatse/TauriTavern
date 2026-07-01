@@ -5,14 +5,10 @@ use serde::Deserialize;
 use serde_json::Value;
 use ttsync_core::dataset::tauri_tavern_default_selection;
 
-use crate::application::services::sync_automation_service::{
-    LoadedScheduledSyncRule, SyncAutomationRuleRepository,
-};
-use crate::domain::errors::DomainError;
-use crate::domain::models::sync_automation::{
-    ScheduledSyncRule, SyncAutomationConfig, validate_scheduled_sync_rule,
-};
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
+use tt_contracts::sync_automation::{ScheduledSyncRule, SyncAutomationConfig};
+use tt_domain::errors::DomainError;
+use tt_ports::sync_automation::{LoadedScheduledSyncRule, SyncAutomationRuleRepository};
 
 pub struct SyncAutomationStore {
     config_path: PathBuf,
@@ -32,17 +28,15 @@ impl SyncAutomationStore {
         if self.config_path.is_file() {
             let value = read_json_file::<Value>(&self.config_path).await?;
             let loaded = decode_rule(value)?;
-            validate_scheduled_sync_rule(&loaded.rule)?;
             return Ok(loaded);
         }
 
-        let rule = ScheduledSyncRule::default();
+        let rule = default_scheduled_sync_rule();
         write_json_file(&self.config_path, &rule).await?;
         Ok(LoadedScheduledSyncRule::new(rule))
     }
 
     pub async fn save_rule(&self, rule: &ScheduledSyncRule) -> Result<(), DomainError> {
-        validate_scheduled_sync_rule(rule)?;
         write_json_file(&self.config_path, rule).await
     }
 }
@@ -67,7 +61,7 @@ struct LegacySyncAutomationConfig {
     #[serde(default = "legacy_default_interval_minutes", alias = "intervalMinutes")]
     interval_minutes: u16,
     #[serde(default)]
-    target: Option<crate::domain::models::sync_automation::SyncAutomationTarget>,
+    target: Option<tt_contracts::sync_automation::SyncAutomationTarget>,
     #[serde(default, alias = "syncMode")]
     sync_mode: ttsync_contract::sync::SyncMode,
     #[serde(default = "tauri_tavern_default_selection")]
@@ -120,12 +114,20 @@ fn legacy_default_interval_minutes() -> u16 {
     30
 }
 
+fn default_scheduled_sync_rule() -> ScheduledSyncRule {
+    ScheduledSyncRule {
+        enabled: false,
+        interval_minutes: legacy_default_interval_minutes(),
+        target: None,
+        sync_mode: ttsync_contract::sync::SyncMode::Incremental,
+        selection: tauri_tavern_default_selection(),
+        require_bundle_zstd: true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SyncAutomationStore;
-    use crate::domain::models::sync_automation::{
-        SYNC_AUTOMATION_MIN_INTERVAL_MINUTES, ScheduledSyncRule, validate_scheduled_sync_rule,
-    };
 
     fn temp_default_user_dir() -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -152,32 +154,6 @@ mod tests {
         );
 
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;
-    }
-
-    #[test]
-    fn validation_rejects_too_frequent_interval() {
-        let rule = ScheduledSyncRule {
-            interval_minutes: SYNC_AUTOMATION_MIN_INTERVAL_MINUTES - 1,
-            ..ScheduledSyncRule::default()
-        };
-
-        assert!(matches!(
-            validate_scheduled_sync_rule(&rule),
-            Err(crate::domain::errors::DomainError::InvalidData(_))
-        ));
-    }
-
-    #[test]
-    fn validation_rejects_enabled_auto_sync_without_target() {
-        let rule = ScheduledSyncRule {
-            enabled: true,
-            ..ScheduledSyncRule::default()
-        };
-
-        assert!(matches!(
-            validate_scheduled_sync_rule(&rule),
-            Err(crate::domain::errors::DomainError::InvalidData(_))
-        ));
     }
 
     #[tokio::test]

@@ -467,58 +467,58 @@ pub(crate) async fn request_runtime_data_root_change(
     app_root: &Path,
     current_data_root: &Path,
     raw_target: &str,
-) -> Result<(), crate::domain::errors::DomainError> {
+) -> Result<(), tt_domain::errors::DomainError> {
     let raw = raw_target.trim();
     if raw.is_empty() {
-        return Err(crate::domain::errors::DomainError::InvalidData(
+        return Err(tt_domain::errors::DomainError::InvalidData(
             "data_root is required".to_string(),
         ));
     }
 
     let target = PathBuf::from(raw);
     if !target.is_absolute() {
-        return Err(crate::domain::errors::DomainError::InvalidData(
+        return Err(tt_domain::errors::DomainError::InvalidData(
             "data_root must be an absolute path".to_string(),
         ));
     }
 
     if !target.is_dir() {
-        return Err(crate::domain::errors::DomainError::InvalidData(format!(
+        return Err(tt_domain::errors::DomainError::InvalidData(format!(
             "data_root must be an existing directory: {}",
             target.display()
         )));
     }
 
     if !is_effectively_empty_directory(&target).map_err(|error| {
-        crate::domain::errors::DomainError::InternalError(format!(
+        tt_domain::errors::DomainError::InternalError(format!(
             "Failed to inspect data_root: {error}"
         ))
     })? {
-        return Err(crate::domain::errors::DomainError::InvalidData(format!(
+        return Err(tt_domain::errors::DomainError::InvalidData(format!(
             "data_root must be an empty directory: {}",
             target.display()
         )));
     }
 
     let canonical_target = dunce::canonicalize(&target).map_err(|error| {
-        crate::domain::errors::DomainError::InternalError(format!(
+        tt_domain::errors::DomainError::InternalError(format!(
             "Failed to canonicalize path: {error}"
         ))
     })?;
     let canonical_current = dunce::canonicalize(current_data_root).map_err(|error| {
-        crate::domain::errors::DomainError::InternalError(format!(
+        tt_domain::errors::DomainError::InternalError(format!(
             "Failed to canonicalize current data root: {error}"
         ))
     })?;
 
     if canonical_target == canonical_current {
-        return Err(crate::domain::errors::DomainError::InvalidData(
+        return Err(tt_domain::errors::DomainError::InvalidData(
             "data_root is already the current data directory".to_string(),
         ));
     }
 
     if canonical_target.starts_with(&canonical_current) {
-        return Err(crate::domain::errors::DomainError::InvalidData(
+        return Err(tt_domain::errors::DomainError::InvalidData(
             "data_root cannot be inside the current data directory".to_string(),
         ));
     }
@@ -896,7 +896,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            crate::domain::errors::DomainError::InvalidData(message)
+            tt_domain::errors::DomainError::InvalidData(message)
                 if message == "data_root cannot be inside the current data directory"
         ));
         assert!(

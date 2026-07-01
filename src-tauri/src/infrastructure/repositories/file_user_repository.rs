@@ -4,12 +4,12 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::user::User;
-use crate::domain::repositories::user_repository::UserRepository;
 use crate::infrastructure::persistence::file_system::{
     delete_file, list_files_with_extension, read_json_file, write_json_file,
 };
+use tt_domain::errors::DomainError;
+use tt_domain::models::user::User;
+use tt_ports::repositories::user_repository::UserRepository;
 
 pub struct FileUserRepository {
     users_dir: PathBuf,

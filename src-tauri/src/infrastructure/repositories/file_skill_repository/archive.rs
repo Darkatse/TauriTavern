@@ -8,8 +8,8 @@ use zip::read::ZipFile;
 use super::package::collect_skill_files;
 use super::paths::normalize_skill_path;
 use super::{MAX_FILES, MAX_SINGLE_FILE_BYTES, MAX_TOTAL_BYTES, MAX_ZIP_COMPRESSION_RATIO};
-use crate::domain::errors::DomainError;
 use crate::infrastructure::zipkit;
+use tt_domain::errors::DomainError;
 
 pub(super) fn extract_archive(archive_path: &Path, destination: &Path) -> Result<(), DomainError> {
     let file = fs::File::open(archive_path).map_err(|error| {

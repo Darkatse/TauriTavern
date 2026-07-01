@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 use super::archive::{self, ArchiveFormat};
 use crate::infrastructure::persistence::data_archive::shared::{

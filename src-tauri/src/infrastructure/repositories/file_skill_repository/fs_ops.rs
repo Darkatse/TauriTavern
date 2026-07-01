@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::MAX_SINGLE_FILE_BYTES;
 use super::paths::normalize_skill_path;
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 pub(super) struct SkillDirCleanup {
     pub(super) name: String,

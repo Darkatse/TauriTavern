@@ -7,15 +7,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::background::BackgroundListEntry;
-use crate::domain::models::image_metadata::{
-    BackgroundFoldersPayload, ImageMetadata, ImageMetadataFolder, ImageMetadataIndex,
-};
-use crate::domain::repositories::image_metadata_repository::ImageMetadataRepository;
 use crate::infrastructure::persistence::file_system::write_json_file;
 use crate::infrastructure::persistence::thumbnail_cache::is_animated_image;
 use crate::infrastructure::thumbnails::{BACKGROUND_THUMBNAIL_HEIGHT, BACKGROUND_THUMBNAIL_WIDTH};
+use tt_domain::errors::DomainError;
+use tt_domain::models::background::BackgroundListEntry;
+use tt_domain::models::image_metadata::{
+    BackgroundFoldersPayload, ImageMetadata, ImageMetadataFolder, ImageMetadataIndex,
+};
+use tt_ports::repositories::image_metadata_repository::ImageMetadataRepository;
 
 const METADATA_FILE_NAME: &str = "image-metadata.json";
 const BACKGROUNDS_PREFIX: &str = "backgrounds/";
@@ -874,11 +874,11 @@ mod tests {
     use base64::Engine;
     use serde_json::json;
 
-    use crate::domain::errors::DomainError;
-    use crate::domain::models::image_metadata::{
+    use tt_domain::errors::DomainError;
+    use tt_domain::models::image_metadata::{
         ImageMetadata, ImageMetadataFolder, ImageMetadataIndex,
     };
-    use crate::domain::repositories::image_metadata_repository::ImageMetadataRepository;
+    use tt_ports::repositories::image_metadata_repository::ImageMetadataRepository;
 
     use super::{BackgroundMetadataBuildError, FileImageMetadataRepository};
 

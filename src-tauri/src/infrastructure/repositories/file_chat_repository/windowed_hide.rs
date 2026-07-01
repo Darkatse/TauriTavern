@@ -4,8 +4,8 @@ use serde_json::Value;
 use tokio::fs::File;
 use tokio::io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_repository::ChatPayloadCursor;
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_repository::ChatPayloadCursor;
 
 use super::FileChatRepository;
 use super::windowed_payload_io::{

@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
 use crate::domain::errors::DomainError;
-
-pub(crate) trait BundledTemplateStore: Send + Sync {
-    fn read_text(&self, relative_path: &str) -> Result<String, DomainError>;
-}
+pub(crate) use tt_ports::bundled_template::BundledTemplateStore;
 
 #[derive(Clone)]
 pub(crate) struct BundledTemplateService {

@@ -4,9 +4,9 @@ use tokio::fs;
 
 use super::FileAgentRepository;
 use super::fs_tree::sha256_hex;
-use crate::domain::errors::DomainError;
-use crate::domain::models::agent::{Checkpoint, CheckpointFile, WorkspacePath};
-use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
+use tt_domain::errors::DomainError;
+use tt_domain::models::agent::{Checkpoint, CheckpointFile, WorkspacePath};
+use tt_ports::repositories::checkpoint_repository::CheckpointRepository;
 
 #[async_trait]
 impl CheckpointRepository for FileAgentRepository {

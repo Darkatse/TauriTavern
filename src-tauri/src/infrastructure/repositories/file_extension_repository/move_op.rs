@@ -1,6 +1,6 @@
 use tokio::fs as tokio_fs;
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 use super::FileExtensionRepository;
 use super::archive_zip::copy_dir_all;

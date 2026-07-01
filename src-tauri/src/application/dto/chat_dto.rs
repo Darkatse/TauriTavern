@@ -1,7 +1,6 @@
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatPayloadCursor, ChatPayloadPatchOp, ChatSearchResult,
-    PinnedCharacterChat, PinnedGroupChat,
+    ChatPayloadCursor, ChatPayloadPatchOp, ChatSearchResult, PinnedCharacterChat, PinnedGroupChat,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -400,29 +399,6 @@ impl From<PinnedGroupChatDto> for PinnedGroupChat {
     fn from(dto: PinnedGroupChatDto) -> Self {
         Self {
             chat_id: dto.chat_id,
-        }
-    }
-}
-
-impl From<String> for ChatImportFormat {
-    fn from(s: String) -> Self {
-        match s.to_lowercase().as_str() {
-            "sillytavern" => ChatImportFormat::SillyTavern,
-            "ooba" => ChatImportFormat::Ooba,
-            "agnai" => ChatImportFormat::Agnai,
-            "caitools" => ChatImportFormat::CAITools,
-            "koboldlite" => ChatImportFormat::KoboldLite,
-            "risuai" => ChatImportFormat::RisuAI,
-            _ => ChatImportFormat::SillyTavern,
-        }
-    }
-}
-
-impl From<String> for ChatExportFormat {
-    fn from(s: String) -> Self {
-        match s.to_lowercase().as_str() {
-            "plaintext" => ChatExportFormat::PlainText,
-            _ => ChatExportFormat::JSONL,
         }
     }
 }

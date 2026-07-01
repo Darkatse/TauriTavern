@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 
-use crate::domain::errors::DomainError;
-use crate::domain::models::skill::{SkillScope, SkillScopeFilter};
+use tt_domain::errors::DomainError;
+use tt_domain::models::skill::{SkillScope, SkillScopeFilter};
 
 pub(super) fn validate_skill_name(raw: &str) -> Result<String, DomainError> {
     let value = raw.trim();

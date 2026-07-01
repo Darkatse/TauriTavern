@@ -7,16 +7,16 @@ use reqwest::{Client, RequestBuilder, StatusCode};
 use serde_json::{Map, Value};
 use url::Url;
 
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::provider_metadata_repository::{
-    NanoGptCredits, NanoGptModelProviders, NanoGptSubscriptionCredits, NanoGptSubscriptionLimits,
-    NanoGptSubscriptionPeriod, NanoGptUsageBucket, OpenRouterCredits, ProviderMetadataRepository,
-    SiliconFlowEndpoint,
-};
 use crate::infrastructure::apis::workers_ai_models::{
     fetch_workers_ai_models, workers_ai_model_name,
 };
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::provider_metadata_repository::{
+    NanoGptCredits, NanoGptModelProviders, NanoGptSubscriptionCredits, NanoGptSubscriptionLimits,
+    NanoGptSubscriptionPeriod, NanoGptUsageBucket, OpenRouterCredits, ProviderMetadataRepository,
+    SiliconFlowEndpoint,
+};
 
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 const NANOGPT_API_BASE: &str = "https://nano-gpt.com/api";

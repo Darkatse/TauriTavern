@@ -7,8 +7,8 @@ use tokio::fs;
 use super::FileAgentRepository;
 use super::fs_tree::should_skip_platform_metadata_file;
 use super::paths::validate_segment;
-use crate::domain::errors::DomainError;
-use crate::domain::repositories::agent_workspace_lifecycle_repository::{
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::agent_workspace_lifecycle_repository::{
     AgentChatWorkspaceDeletion, AgentPersistentStatePrune, AgentPersistentStatePruneRequest,
     AgentWorkspaceLifecycleRepository,
 };

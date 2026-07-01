@@ -20,18 +20,16 @@ use ttsync_core::session::{SessionManager, SessionManagerConfig};
 use ttsync_http::server::{ServerState, build_transfer_router, default_status_response};
 use ttsync_http::tls::{SelfManagedTls, TlsProvider};
 
-use crate::application::services::lan_sync_service::PAIRING_REJECTED_MESSAGE;
-use crate::application::services::lan_sync_service::ports::{
-    LanInboundRequestHandler, LanServerInfo,
-};
-use crate::domain::errors::DomainError;
-use crate::domain::models::lan_sync::{LanPairCompleteRequest, LanPairCompleteResponse};
-use crate::domain::models::sync::SyncOperationOptions;
 use crate::infrastructure::sync::http_client::{domain_error_to_sync, sync_error_to_domain};
 use crate::infrastructure::sync::lan::store::LanPeerStore;
 use crate::infrastructure::sync_fs;
 use crate::infrastructure::sync_transfer;
 use crate::infrastructure::tt_sync::fs::scan_manifest_with_policy;
+use tt_contracts::sync::PAIRING_REJECTED_MESSAGE;
+use tt_contracts::sync::SyncOperationOptions;
+use tt_domain::errors::DomainError;
+use tt_domain::models::lan_sync::{LanPairCompleteRequest, LanPairCompleteResponse};
+use tt_ports::lan_sync::{LanInboundRequestHandler, LanServerInfo};
 
 const LAN_HTTPS_FEATURE_V1: &str = "lan_https_v1";
 const LAN_SESSION_FEATURE_V1: &str = "lan_session_v1";
@@ -337,7 +335,6 @@ async fn handle_pull_request(
             "Invalid LAN Sync pull request: {error}"
         )))
     })?;
-    let options = options.validate()?;
     state
         .inbound
         .accept_pull_request(peer.device_id, options)
@@ -439,10 +436,10 @@ mod tests {
     use ttsync_core::dataset::tauri_tavern_default_selection;
     use uuid::Uuid;
 
-    use crate::domain::models::lan_sync::LanSyncPairedDevice;
     use crate::infrastructure::sync::http_client::{bearer_auth_value, new_sync_client};
     use crate::infrastructure::sync::lan::client::{LanSyncClient, complete_pairing};
     use crate::infrastructure::sync::workspace::TauriTavernSyncWorkspace;
+    use tt_domain::models::lan_sync::LanSyncPairedDevice;
 
     fn temp_default_user_dir() -> PathBuf {
         std::env::temp_dir().join(format!("tauritavern-lan-server-{}", Uuid::new_v4()))

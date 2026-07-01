@@ -11,8 +11,8 @@ use super::fs_ops::{cleanup_dir, copy_dir_contents};
 use super::package::sha256_hex;
 use super::paths::normalize_skill_path;
 use super::{FileSkillRepository, MAX_FILES, MAX_SINGLE_FILE_BYTES, MAX_TOTAL_BYTES};
-use crate::domain::errors::DomainError;
-use crate::domain::models::skill::{SkillImportInput, SkillInlineFile};
+use tt_domain::errors::DomainError;
+use tt_domain::models::skill::{SkillImportInput, SkillInlineFile};
 
 pub(super) struct PreparedImport {
     pub(super) cleanup_root: PathBuf,
