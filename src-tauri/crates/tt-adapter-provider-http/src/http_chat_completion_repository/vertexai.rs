@@ -10,6 +10,7 @@ use tt_ports::repositories::chat_completion_repository::{
 use super::HttpChatCompletionRepository;
 use super::normalizers;
 use super::response_body::read_upstream_json_body;
+use super::vertexai_auth;
 
 const PROVIDER_NAME: &str = "Google Vertex AI";
 
@@ -53,11 +54,7 @@ pub(super) async fn generate(
         .header(ACCEPT, "application/json")
         .json(&Value::Object(body));
 
-    let request = if let Some(auth_header) = config.authorization_header.as_deref() {
-        HttpChatCompletionRepository::apply_header_if_present(request, "Authorization", auth_header)
-    } else {
-        request.query(&[("key", config.api_key.as_str())])
-    };
+    let request = apply_vertexai_auth(request, config).await?;
 
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
@@ -115,12 +112,9 @@ pub(super) async fn generate_stream(
         .header(ACCEPT, "text/event-stream")
         .json(&Value::Object(body));
 
-    let request = if let Some(auth_header) = config.authorization_header.as_deref() {
-        HttpChatCompletionRepository::apply_header_if_present(request, "Authorization", auth_header)
-            .query(&[("alt", "sse")])
-    } else {
-        request.query(&[("key", config.api_key.as_str()), ("alt", "sse")])
-    };
+    let request = apply_vertexai_auth(request, config)
+        .await?
+        .query(&[("alt", "sse")]);
 
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
@@ -157,4 +151,30 @@ fn resolve_generation_method(endpoint_path: &str, stream: bool) -> &'static str 
     } else {
         "generateContent"
     }
+}
+
+async fn apply_vertexai_auth(
+    request: reqwest::RequestBuilder,
+    config: &ChatCompletionApiConfig,
+) -> Result<reqwest::RequestBuilder, DomainError> {
+    if let Some(auth_header) = config.authorization_header.as_deref() {
+        return Ok(HttpChatCompletionRepository::apply_header_if_present(
+            request,
+            "Authorization",
+            auth_header,
+        ));
+    }
+
+    if let Some(service_account_json) = config.vertexai_service_account_json.as_deref() {
+        let access_token =
+            vertexai_auth::get_service_account_access_token(service_account_json).await?;
+        let auth_header = format!("Bearer {access_token}");
+        return Ok(HttpChatCompletionRepository::apply_header_if_present(
+            request,
+            "Authorization",
+            &auth_header,
+        ));
+    }
+
+    Ok(request.query(&[("key", config.api_key.as_str())]))
 }

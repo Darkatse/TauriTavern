@@ -12,8 +12,7 @@
 //! Provider-specific request shaping lives in the matching submodule
 //! (`anthropic.rs`, `nova.rs`, `llama.rs`, `mistral.rs`, `deepseek.rs`,
 //! `cohere.rs`, `ai21_jamba.rs`). Provider-specific response/stream chunk
-//! shaping lives in the symmetrical infrastructure module
-//! (`infrastructure::apis::http_chat_completion_repository::aws_bedrock`).
+//! shaping lives in the provider HTTP adapter crate.
 
 use serde_json::{Map, Value};
 

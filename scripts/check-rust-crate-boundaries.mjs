@@ -179,6 +179,35 @@ const ADAPTER_ARCHIVE_FORBIDDEN_SOURCE_PATTERNS = [
     ['ttsync-core', /\bttsync_core::/],
 ];
 
+const ADAPTER_PROVIDER_HTTP_FORBIDDEN_PACKAGES = new Set([
+    'axum',
+    'image',
+    'miktik',
+    'qrcode',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'tt-adapter-archive',
+    'tt-adapter-sync',
+    'tt-adapter-tokenization',
+    'tt-application',
+    'ttsync-core',
+    'zip',
+]);
+
+const ADAPTER_PROVIDER_HTTP_FORBIDDEN_SOURCE_PATTERNS = [
+    ...ADAPTER_FORBIDDEN_SOURCE_PATTERNS,
+    ['axum', /\baxum::/],
+    ['image', /\bimage::/],
+    ['miktik', /\bmiktik::/],
+    ['qrcode', /\bqrcode::/],
+    ['tt-adapter-archive', /\btt_adapter_archive::/],
+    ['tt-adapter-sync', /\btt_adapter_sync::/],
+    ['tt-adapter-tokenization', /\btt_adapter_tokenization::/],
+    ['ttsync-core', /\bttsync_core::/],
+    ['zip', /\bzip::/],
+];
+
 const CRATES = [
     crateConfig('tt-domain', DOMAIN_FORBIDDEN_PACKAGES, DOMAIN_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-contracts', CONTRACTS_FORBIDDEN_PACKAGES, CONTRACTS_FORBIDDEN_SOURCE_PATTERNS),
@@ -187,6 +216,7 @@ const CRATES = [
     crateConfig('tt-adapter-tokenization', ADAPTER_TOKENIZATION_FORBIDDEN_PACKAGES, ADAPTER_TOKENIZATION_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-sync', ADAPTER_SYNC_FORBIDDEN_PACKAGES, ADAPTER_SYNC_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-archive', ADAPTER_ARCHIVE_FORBIDDEN_PACKAGES, ADAPTER_ARCHIVE_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-provider-http', ADAPTER_PROVIDER_HTTP_FORBIDDEN_PACKAGES, ADAPTER_PROVIDER_HTTP_FORBIDDEN_SOURCE_PATTERNS),
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [
@@ -198,6 +228,12 @@ const MAIN_CRATE_SOURCE_RULES = [
     sourceRule('web resource adapter', path.join(REPO_ROOT, 'src-tauri', 'src', 'presentation', 'web_resources'), [
         ['client asset contract facade', /\bcrate::application::client_asset_paths::/],
         ['host resource facade', /\bcrate::application::services::host_resource_service::(contract|ports|range)::/],
+    ]),
+    sourceRule('application provider auth boundary', path.join(REPO_ROOT, 'src-tauri', 'src', 'application'), [
+        ['provider oauth client', /\byup_oauth2::/],
+        ['concrete hyper client', /\bhyper_util::/],
+        ['concrete rustls client', /\brustls::/],
+        ['tls root store', /\bwebpki_roots::/],
     ]),
 ];
 

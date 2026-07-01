@@ -6,7 +6,6 @@ pub mod assets;
 pub mod bundled_resources;
 pub mod github;
 pub mod host_resources;
-pub mod http_error;
 pub mod ios_policy_cache;
 #[cfg(target_os = "ios")]
 pub mod ios_webview;

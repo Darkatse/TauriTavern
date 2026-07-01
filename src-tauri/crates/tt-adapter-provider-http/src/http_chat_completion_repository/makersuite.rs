@@ -288,6 +288,7 @@ mod tests {
             base_url: "https://example.com".to_string(),
             api_key: "saved-secret".to_string(),
             authorization_header: Some("Bearer override".to_string()),
+            vertexai_service_account_json: None,
             extra_headers: HashMap::new(),
             additional_headers: HashMap::new(),
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,

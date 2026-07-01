@@ -8,12 +8,12 @@ use tt_domain::models::upstream_failure::{
     UPSTREAM_NETWORK_TIMEOUT, UPSTREAM_NETWORK_TLS_FAILED, UpstreamFailure,
 };
 
-pub fn reqwest_transport_failure(error: &reqwest::Error) -> UpstreamFailure {
+pub(crate) fn reqwest_transport_failure(error: &reqwest::Error) -> UpstreamFailure {
     let endpoint = error.url().map(sanitize_endpoint);
     classify_reqwest_error(error, endpoint, None)
 }
 
-pub fn reqwest_body_failure(
+pub(crate) fn reqwest_body_failure(
     error: &reqwest::Error,
     fallback_endpoint: Option<&Url>,
 ) -> UpstreamFailure {
@@ -24,7 +24,7 @@ pub fn reqwest_body_failure(
     classify_reqwest_error(error, endpoint, Some(UPSTREAM_NETWORK_BODY_INTERRUPTED))
 }
 
-pub fn sanitize_endpoint(url: &Url) -> String {
+fn sanitize_endpoint(url: &Url) -> String {
     let mut sanitized = url.clone();
     let _ = sanitized.set_username("");
     let _ = sanitized.set_password(None);

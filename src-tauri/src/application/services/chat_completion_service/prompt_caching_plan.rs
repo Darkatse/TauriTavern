@@ -159,6 +159,7 @@ mod tests {
             base_url: base_url.to_string(),
             api_key: String::new(),
             authorization_header: None,
+            vertexai_service_account_json: None,
             extra_headers: HashMap::new(),
             additional_headers: HashMap::new(),
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,

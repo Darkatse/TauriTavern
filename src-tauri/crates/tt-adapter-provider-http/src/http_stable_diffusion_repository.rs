@@ -11,14 +11,10 @@ use tokio::sync::watch;
 use tokio::time::{Duration, sleep};
 use url::Url;
 
-use crate::infrastructure::apis::endpoint_url::append_endpoint_path;
-use crate::infrastructure::apis::workers_ai_endpoint::workers_ai_run_url;
-use crate::infrastructure::apis::workers_ai_models::{
-    fetch_workers_ai_models, workers_ai_model_name,
-};
-use crate::infrastructure::persistence::file_system::{
-    replace_file_with_fallback, unique_temp_path,
-};
+use crate::endpoint_url::append_endpoint_path;
+use crate::file_replace::{replace_file_with_fallback, unique_temp_path};
+use crate::workers_ai_endpoint::workers_ai_run_url;
+use crate::workers_ai_models::{fetch_workers_ai_models, workers_ai_model_name};
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;

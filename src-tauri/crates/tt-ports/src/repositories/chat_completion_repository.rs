@@ -19,6 +19,7 @@ pub struct ChatCompletionApiConfig {
     pub base_url: String,
     pub api_key: String,
     pub authorization_header: Option<String>,
+    pub vertexai_service_account_json: Option<String>,
     pub extra_headers: HashMap<String, String>,
     pub additional_headers: HashMap<String, String>,
     pub anthropic_beta_header_mode: AnthropicBetaHeaderMode,

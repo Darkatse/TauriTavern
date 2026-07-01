@@ -18,6 +18,7 @@ members = [
     "crates/tt-adapter-tokenization",
     "crates/tt-adapter-sync",
     "crates/tt-adapter-archive",
+    "crates/tt-adapter-provider-http",
 ]
 default-members = ["."]
 resolver = "3"
@@ -62,14 +63,12 @@ chrono = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", default-features = false, features = ["io", "rt"] }
 futures-util = "0.3"
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
-reqwest = { workspace = true, features = ["http2", "json", "multipart", "query", "rustls", "socks", "stream"] }
+reqwest = { workspace = true, features = ["http2", "json", "rustls", "socks", "stream"] }
 bytes = "1"
 async-compression = { version = "0.4", features = ["tokio", "zstd"] }
 base64 = "0.22"
 sha2 = "0.10"
 rand = { workspace = true }
-yup-oauth2 = { version = "12.1.2", default-features = false, features = ["hyper-rustls", "aws-lc-rs", "service-account"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 uuid = { workspace = true }
 async-trait = "0.1"
@@ -87,8 +86,6 @@ flate2 = "1.1.9"
 crc32fast = "1"
 filetime = "0.2"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
-rustls = "0.23"
-webpki-roots = "1"
 dunce = "1"
 tt-domain = { path = "crates/tt-domain" }
 tt-contracts = { path = "crates/tt-contracts" }
@@ -97,6 +94,7 @@ tt-adapter-http = { path = "crates/tt-adapter-http" }
 tt-adapter-tokenization = { path = "crates/tt-adapter-tokenization" }
 tt-adapter-sync = { path = "crates/tt-adapter-sync" }
 tt-adapter-archive = { path = "crates/tt-adapter-archive" }
+tt-adapter-provider-http = { path = "crates/tt-adapter-provider-http" }
 
 # TT-Sync v2 shared protocol crates. (crates.io)
 ttsync-contract = { workspace = true }
@@ -110,7 +108,6 @@ tauri-plugin-window-state = "2.4.1"
 tauri-winrt-notification = "0.7.2"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
-hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "http2", "tokio"] }
 tauri-plugin-barcode-scanner = "2.4.4"
 
 [target.'cfg(target_os = "ios")'.dependencies]

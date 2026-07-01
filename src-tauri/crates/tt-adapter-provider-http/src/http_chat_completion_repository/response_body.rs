@@ -70,8 +70,7 @@ pub(super) async fn read_upstream_json_body(
     let endpoint = response.url().clone();
 
     let body = response.bytes().await.map_err(|error| {
-        let failure =
-            crate::infrastructure::http_error::reqwest_body_failure(&error, Some(&endpoint));
+        let failure = crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
         tracing::warn!(
             provider = provider_name,
             operation = operation,

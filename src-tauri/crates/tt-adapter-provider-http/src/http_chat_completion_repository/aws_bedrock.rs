@@ -472,10 +472,8 @@ async fn forward_eventstream_response(
             }
             chunk = response.chunk() => {
                 chunk.map_err(|error| {
-                    let failure = crate::infrastructure::http_error::reqwest_body_failure(
-                        &error,
-                        Some(&endpoint),
-                    );
+                    let failure =
+                        crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
                     tracing::warn!(
                         provider = BEDROCK_PROVIDER_NAME,
                         operation = "eventstream",

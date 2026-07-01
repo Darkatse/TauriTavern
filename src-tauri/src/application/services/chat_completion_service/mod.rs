@@ -29,7 +29,6 @@ mod model_capabilities;
 mod payload;
 mod prompt_caching;
 mod prompt_caching_plan;
-mod vertexai_auth;
 
 use self::additional_parameters::AdditionalParameters;
 use self::exchange::{

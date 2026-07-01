@@ -3,11 +3,6 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
-use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
-use crate::infrastructure::apis::http_provider_metadata_repository::HttpProviderMetadataRepository;
-use crate::infrastructure::apis::http_stable_diffusion_repository::HttpStableDiffusionRepository;
-use crate::infrastructure::apis::http_translate_repository::HttpTranslateRepository;
-use crate::infrastructure::apis::http_tts_repository::HttpTtsRepository;
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
@@ -37,6 +32,10 @@ use crate::infrastructure::repositories::file_user_directory_repository::FileUse
 use crate::infrastructure::repositories::file_user_repository::FileUserRepository;
 use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
 use tt_adapter_http::HttpClientPool;
+use tt_adapter_provider_http::{
+    HttpChatCompletionRepository, HttpProviderMetadataRepository, HttpStableDiffusionRepository,
+    HttpTranslateRepository, HttpTtsRepository,
+};
 use tt_adapter_tokenization::MiktikTokenizerRepository;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;

@@ -16,7 +16,6 @@ use crate::domain::repositories::provider_metadata_repository::SiliconFlowEndpoi
 use crate::domain::repositories::secret_repository::SecretRepository;
 
 use super::additional_parameters::AdditionalParameters;
-use super::vertexai_auth;
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
@@ -205,6 +204,7 @@ async fn resolve_api_config(
                 base_url,
                 api_key,
                 authorization_header: None,
+                vertexai_service_account_json: None,
                 extra_headers,
                 additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
@@ -247,6 +247,7 @@ async fn resolve_api_config(
                 base_url,
                 api_key,
                 authorization_header: None,
+                vertexai_service_account_json: None,
                 extra_headers,
                 additional_headers,
                 anthropic_beta_header_mode: source_anthropic_beta_header_mode(source),
@@ -552,6 +553,7 @@ async fn resolve_vertexai_generate_api_config(
             base_url: format!("{}/v1", reverse_proxy.trim_end_matches('/')),
             api_key: String::new(),
             authorization_header: Some(format!("Bearer {}", proxy_password)),
+            vertexai_service_account_json: None,
             extra_headers,
             additional_headers,
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
@@ -601,6 +603,7 @@ async fn resolve_vertexai_generate_api_config(
                 base_url,
                 api_key,
                 authorization_header: None,
+                vertexai_service_account_json: None,
                 extra_headers,
                 additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
@@ -616,8 +619,7 @@ async fn resolve_vertexai_generate_api_config(
                 "Google Vertex AI",
             )
             .await?;
-            let (project_id, access_token) =
-                vertexai_auth::get_service_account_access_token(&service_account_json).await?;
+            let project_id = vertexai_service_account_project_id(&service_account_json)?;
 
             let base_url = format!(
                 "{}/v1/projects/{project_id}/locations/{region}",
@@ -627,7 +629,8 @@ async fn resolve_vertexai_generate_api_config(
             Ok(ChatCompletionApiConfig {
                 base_url,
                 api_key: String::new(),
-                authorization_header: Some(format!("Bearer {}", access_token)),
+                authorization_header: None,
+                vertexai_service_account_json: Some(service_account_json),
                 extra_headers,
                 additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
@@ -647,6 +650,28 @@ fn vertexai_host(region: &str) -> String {
     } else {
         format!("https://{}-aiplatform.googleapis.com", region.trim())
     }
+}
+
+fn vertexai_service_account_project_id(
+    service_account_json: &str,
+) -> Result<String, ApplicationError> {
+    let value = serde_json::from_str::<Value>(service_account_json).map_err(|error| {
+        ApplicationError::ValidationError(format!(
+            "Vertex AI service account JSON parse failed: {error}"
+        ))
+    })?;
+
+    value
+        .get("project_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "Vertex AI service account JSON is missing project_id".to_string(),
+            )
+        })
 }
 
 fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String> {
@@ -1295,6 +1320,53 @@ mod tests {
                 .expect("vertex express config should resolve");
 
         assert_eq!(config.api_key, "selected-secret");
+    }
+
+    #[tokio::test]
+    async fn vertexai_full_mode_defers_service_account_auth_to_provider_adapter() {
+        let service_account_json = r#"{
+            "type": "service_account",
+            "project_id": "vertex-project",
+            "private_key_id": "key-id",
+            "private_key": "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n",
+            "client_email": "service@example.iam.gserviceaccount.com",
+            "client_id": "client-id",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token"
+        }"#;
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[(
+                SecretKeys::VERTEXAI_SERVICE_ACCOUNT,
+                Some("vertex-profile"),
+                service_account_json,
+            )]));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "vertexai",
+                "vertexai_auth_mode": "full",
+                "vertexai_region": "europe-west4",
+                "secret_id": "vertex-profile",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_for_test(ChatCompletionSource::VertexAi, &dto, &secret_repository)
+                .await
+                .expect("vertex full config should resolve without building oauth client");
+
+        assert_eq!(
+            config.base_url,
+            "https://europe-west4-aiplatform.googleapis.com/v1/projects/vertex-project/locations/europe-west4"
+        );
+        assert!(config.api_key.is_empty());
+        assert_eq!(config.authorization_header, None);
+        assert_eq!(
+            config.vertexai_service_account_json.as_deref(),
+            Some(service_account_json)
+        );
     }
 
     #[tokio::test]

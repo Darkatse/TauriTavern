@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 
 const openaiSource = await readFile(new URL('../src/scripts/openai.js', import.meta.url), 'utf8');
@@ -8,8 +8,24 @@ const aiRoutesSource = await readFile(new URL('../src/tauri/main/routes/ai-route
 const rustSource = await readFile(new URL('../src-tauri/crates/tt-domain/src/models/chat_completion_source.rs', import.meta.url), 'utf8');
 const rustConfigSource = await readFile(new URL('../src-tauri/src/application/services/chat_completion_service/config.rs', import.meta.url), 'utf8');
 const rustPayloadSource = await readFile(new URL('../src-tauri/src/application/services/chat_completion_service/payload/minimax.rs', import.meta.url), 'utf8');
-const rustRepositorySource = await readFile(new URL('../src-tauri/src/infrastructure/apis/http_chat_completion_repository/mod.rs', import.meta.url), 'utf8');
+const rustRepositorySource = await readRustSources(new URL('../src-tauri/crates/tt-adapter-provider-http/src/http_chat_completion_repository/', import.meta.url));
 const rossAscendsSource = await readFile(new URL('../src/scripts/RossAscends-mods.js', import.meta.url), 'utf8');
+
+async function readRustSources(rootUrl) {
+    const entries = await readdir(rootUrl, { withFileTypes: true });
+    const chunks = [];
+
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+        const childUrl = new URL(entry.name + (entry.isDirectory() ? '/' : ''), rootUrl);
+        if (entry.isDirectory()) {
+            chunks.push(await readRustSources(childUrl));
+        } else if (entry.isFile() && entry.name.endsWith('.rs')) {
+            chunks.push(await readFile(childUrl, 'utf8'));
+        }
+    }
+
+    return chunks.join('\n');
+}
 
 test('MiniMax chat source is wired through frontend settings and backend source parsing', () => {
     assert.match(openaiSource, /MINIMAX:\s*'minimax'/);

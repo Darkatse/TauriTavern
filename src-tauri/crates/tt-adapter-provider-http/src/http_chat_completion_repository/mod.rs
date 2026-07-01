@@ -23,6 +23,7 @@ mod openai;
 mod openai_responses;
 mod response_body;
 mod vertexai;
+mod vertexai_auth;
 mod workers_ai;
 
 #[derive(Debug, Clone, Copy)]
@@ -266,7 +267,7 @@ impl HttpChatCompletionRepository {
     }
 
     fn map_transport_error(label: &str, error: reqwest::Error) -> DomainError {
-        let failure = crate::infrastructure::http_error::reqwest_transport_failure(&error);
+        let failure = crate::http_error::reqwest_transport_failure(&error);
         tracing::warn!(
             operation = label,
             code = %failure.code,
@@ -318,10 +319,8 @@ impl HttpChatCompletionRepository {
                 }
                 chunk = response.chunk() => {
                     chunk.map_err(|error| {
-                        let failure = crate::infrastructure::http_error::reqwest_body_failure(
-                            &error,
-                            Some(&endpoint),
-                        );
+                        let failure =
+                            crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
                         tracing::warn!(
                             provider = provider_name,
                             operation = "stream",
@@ -832,6 +831,7 @@ mod tests {
             base_url: "https://example.com/v1".to_string(),
             api_key: "saved-secret".to_string(),
             authorization_header: Some("Bearer override".to_string()),
+            vertexai_service_account_json: None,
             extra_headers: HashMap::new(),
             additional_headers: HashMap::new(),
             anthropic_beta_header_mode:
@@ -860,6 +860,7 @@ mod tests {
             base_url: "https://example.com/v1".to_string(),
             api_key: "saved-secret".to_string(),
             authorization_header: None,
+            vertexai_service_account_json: None,
             extra_headers: HashMap::new(),
             additional_headers: HashMap::from([(
                 "Authorization".to_string(),
