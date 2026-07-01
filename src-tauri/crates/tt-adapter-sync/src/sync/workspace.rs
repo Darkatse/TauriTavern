@@ -7,9 +7,9 @@ use ttsync_contract::path::SyncPath;
 use ttsync_core::dataset::ResolvedDatasetPolicy;
 use ttsync_core::error::SyncError;
 
-use crate::infrastructure::sync::http_client::domain_error_to_sync;
-use crate::infrastructure::tt_sync::fs::scan_manifest_with_policy;
-use crate::infrastructure::{sync_fs, sync_transfer};
+use crate::sync::http_client::domain_error_to_sync;
+use crate::tt_sync::fs::scan_manifest_with_policy;
+use crate::{sync_fs, sync_transfer};
 
 #[derive(Debug)]
 pub struct TauriTavernSyncWorkspace {

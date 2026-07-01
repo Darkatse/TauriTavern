@@ -11,7 +11,6 @@ use ttsync_http::client::{
 };
 use url::Url;
 
-use crate::product;
 use tt_domain::errors::DomainError;
 use tt_ports::sync::TtPairingClient;
 
@@ -21,8 +20,12 @@ pub struct SyncHttpClient {
 }
 
 impl SyncHttpClient {
-    pub fn new(base_url: String, spki_sha256: String) -> Result<Self, DomainError> {
-        let inner = new_sync_client(base_url, spki_sha256)?;
+    pub fn new(
+        base_url: String,
+        spki_sha256: String,
+        product_user_agent: &str,
+    ) -> Result<Self, DomainError> {
+        let inner = new_sync_client(base_url, spki_sha256, product_user_agent)?;
         Ok(Self { inner })
     }
 
@@ -104,12 +107,18 @@ impl SyncHttpClient {
 pub(crate) fn new_sync_client(
     base_url: String,
     spki_sha256: String,
+    product_user_agent: &str,
 ) -> Result<SyncClient, DomainError> {
+    assert!(
+        !product_user_agent.trim().is_empty(),
+        "sync product user agent must not be empty"
+    );
+
     SyncClient::with_options(
         base_url,
         SyncClientOptions {
             spki_sha256: Some(spki_sha256),
-            user_agent: Some(product::USER_AGENT.to_string()),
+            user_agent: Some(product_user_agent.to_string()),
             http_version: SyncClientHttpVersion::Http1Only,
         },
     )
@@ -188,7 +197,20 @@ pub(crate) fn domain_error_to_sync(error: DomainError) -> SyncError {
     }
 }
 
-pub struct HttpTtPairingClient;
+pub struct HttpTtPairingClient {
+    product_user_agent: String,
+}
+
+impl HttpTtPairingClient {
+    pub fn new(product_user_agent: impl Into<String>) -> Self {
+        let product_user_agent = product_user_agent.into();
+        assert!(
+            !product_user_agent.trim().is_empty(),
+            "sync product user agent must not be empty"
+        );
+        Self { product_user_agent }
+    }
+}
 
 #[async_trait::async_trait]
 impl TtPairingClient for HttpTtPairingClient {
@@ -197,9 +219,13 @@ impl TtPairingClient for HttpTtPairingClient {
         pair: &PairUri,
         request: &PairCompleteRequest,
     ) -> Result<PairCompleteResponse, DomainError> {
-        SyncHttpClient::new(pair.url.clone(), pair.spki_sha256.clone())?
-            .pair_complete(&pair.token, request)
-            .await
+        SyncHttpClient::new(
+            pair.url.clone(),
+            pair.spki_sha256.clone(),
+            &self.product_user_agent,
+        )?
+        .pair_complete(&pair.token, request)
+        .await
     }
 }
 

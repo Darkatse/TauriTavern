@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 
 use ttsync_contract::peer::DeviceId;
 
-use crate::infrastructure::tt_sync::store::TtSyncStore;
+use crate::tt_sync::store::TtSyncStore;
 use tt_domain::errors::DomainError;
 use tt_domain::models::tt_sync::{TtSyncIdentity, TtSyncPairedServer};
 use tt_ports::sync::TtSyncRepository;

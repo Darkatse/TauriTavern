@@ -20,16 +20,15 @@ use ttsync_core::session::{SessionManager, SessionManagerConfig};
 use ttsync_http::server::{ServerState, build_transfer_router, default_status_response};
 use ttsync_http::tls::{SelfManagedTls, TlsProvider};
 
-use crate::infrastructure::sync::http_client::{domain_error_to_sync, sync_error_to_domain};
-use crate::infrastructure::sync::lan::store::LanPeerStore;
-use crate::infrastructure::sync_fs;
-use crate::infrastructure::sync_transfer;
-use crate::infrastructure::tt_sync::fs::scan_manifest_with_policy;
+use crate::sync::http_client::{domain_error_to_sync, sync_error_to_domain};
+use crate::sync::lan::store::LanPeerStore;
+use crate::tt_sync::fs::scan_manifest_with_policy;
+use crate::{sync_fs, sync_transfer};
 use tt_contracts::sync::PAIRING_REJECTED_MESSAGE;
 use tt_contracts::sync::SyncOperationOptions;
 use tt_domain::errors::DomainError;
 use tt_domain::models::lan_sync::{LanPairCompleteRequest, LanPairCompleteResponse};
-use tt_ports::lan_sync::{LanInboundRequestHandler, LanServerInfo};
+use tt_ports::lan_sync::{LanInboundRequestHandler, LanServerErrorReporter, LanServerInfo};
 
 const LAN_HTTPS_FEATURE_V1: &str = "lan_https_v1";
 const LAN_SESSION_FEATURE_V1: &str = "lan_session_v1";
@@ -62,6 +61,7 @@ pub async fn spawn_lan_sync_server(
     sync_root: PathBuf,
     store: LanPeerStore,
     inbound: Arc<dyn LanInboundRequestHandler>,
+    errors: Arc<dyn LanServerErrorReporter>,
 ) -> Result<LanSyncServerHandle, DomainError> {
     let identity = store.load_or_create_identity().await?;
     let tls = SelfManagedTls::load_or_create(&store.state_dir()).map_err(sync_error_to_domain)?;
@@ -103,7 +103,7 @@ pub async fn spawn_lan_sync_server(
             .with_state(lan_state),
     );
 
-    spawn_router(addr, Arc::new(tls), spki_sha256, app).await
+    spawn_router(addr, Arc::new(tls), spki_sha256, app, errors).await
 }
 
 async fn spawn_router(
@@ -111,6 +111,7 @@ async fn spawn_router(
     tls: Arc<dyn TlsProvider>,
     spki_sha256: String,
     app: Router,
+    errors: Arc<dyn LanServerErrorReporter>,
 ) -> Result<LanSyncServerHandle, DomainError> {
     let server_config = tls.server_config().map_err(sync_error_to_domain)?;
     let tls_config = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(server_config));
@@ -137,11 +138,7 @@ async fn spawn_router(
 
     let task = tokio::spawn(async move {
         if let Err(error) = server.serve(app.into_make_service()).await {
-            tracing::error!(
-                target: crate::observability_targets::USER_VISIBLE_ERROR,
-                "LAN Sync server failed: {}",
-                error
-            );
+            report_server_task_failure(error, errors.as_ref());
         }
     });
 
@@ -151,6 +148,12 @@ async fn spawn_router(
         handle,
         _task: task,
     })
+}
+
+fn report_server_task_failure(error: impl std::fmt::Display, errors: &dyn LanServerErrorReporter) {
+    let message = format!("LAN Sync server stopped unexpectedly: {error}");
+    tracing::error!("{message}");
+    errors.report_lan_server_error(message);
 }
 
 #[derive(Clone)]
@@ -436,10 +439,12 @@ mod tests {
     use ttsync_core::dataset::tauri_tavern_default_selection;
     use uuid::Uuid;
 
-    use crate::infrastructure::sync::http_client::{bearer_auth_value, new_sync_client};
-    use crate::infrastructure::sync::lan::client::{LanSyncClient, complete_pairing};
-    use crate::infrastructure::sync::workspace::TauriTavernSyncWorkspace;
+    use crate::sync::http_client::{bearer_auth_value, ensure_dataset_scope_v1, new_sync_client};
+    use crate::sync::lan::client::{LanSyncClient, complete_pairing};
+    use crate::sync::workspace::TauriTavernSyncWorkspace;
     use tt_domain::models::lan_sync::LanSyncPairedDevice;
+
+    const TEST_USER_AGENT: &str = "TauriTavern/test";
 
     fn temp_default_user_dir() -> PathBuf {
         std::env::temp_dir().join(format!("tauritavern-lan-server-{}", Uuid::new_v4()))
@@ -516,6 +521,46 @@ mod tests {
         Arc::new(NoopInboundHandler)
     }
 
+    struct NoopErrorReporter;
+
+    impl LanServerErrorReporter for NoopErrorReporter {
+        fn report_lan_server_error(&self, _message: String) {}
+    }
+
+    fn noop_errors() -> Arc<dyn LanServerErrorReporter> {
+        Arc::new(NoopErrorReporter)
+    }
+
+    struct RecordingErrorReporter {
+        messages: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl LanServerErrorReporter for RecordingErrorReporter {
+        fn report_lan_server_error(&self, message: String) {
+            self.messages
+                .lock()
+                .expect("error messages lock")
+                .push(message);
+        }
+    }
+
+    #[test]
+    fn server_task_failure_is_reported() {
+        let errors = RecordingErrorReporter {
+            messages: std::sync::Mutex::new(Vec::new()),
+        };
+
+        report_server_task_failure(
+            std::io::Error::new(std::io::ErrorKind::Other, "listener failed"),
+            &errors,
+        );
+
+        let messages = errors.messages.lock().expect("error messages lock");
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].contains("LAN Sync server stopped unexpectedly"));
+        assert!(messages[0].contains("listener failed"));
+    }
+
     #[test]
     fn pairing_rejection_maps_to_forbidden() {
         let response = ApiError::from(DomainError::AuthenticationError(
@@ -543,6 +588,7 @@ mod tests {
             default_user_dir.clone(),
             store,
             noop_inbound(),
+            noop_errors(),
         )
         .await
         .expect("spawn LAN Sync server");
@@ -550,6 +596,7 @@ mod tests {
         let api = LanSyncClient::new(
             format!("https://127.0.0.1:{}", handle.addr.port()),
             handle.spki_sha256.clone(),
+            TEST_USER_AGENT,
         )
         .expect("pinned api");
 
@@ -602,6 +649,7 @@ mod tests {
             default_user_dir.clone(),
             store.clone(),
             inbound.clone(),
+            noop_errors(),
         )
         .await
         .expect("spawn LAN Sync server");
@@ -619,6 +667,7 @@ mod tests {
                 client_base_url: "https://127.0.0.1:60000".to_string(),
                 client_spki_sha256: "client-spki".to_string(),
             },
+            TEST_USER_AGENT,
         )
         .await
         .expect("complete pair");
@@ -684,6 +733,7 @@ mod tests {
             sync_root.clone(),
             store,
             noop_inbound(),
+            noop_errors(),
         )
         .await
         .expect("spawn LAN Sync server");
@@ -691,11 +741,11 @@ mod tests {
         let api = LanSyncClient::new(
             format!("https://127.0.0.1:{}", handle.addr.port()),
             handle.spki_sha256.clone(),
+            TEST_USER_AGENT,
         )
         .expect("pinned api");
         let status = api.status().await.expect("status");
-        crate::infrastructure::sync::http_client::ensure_dataset_scope_v1(&status, "LAN Sync peer")
-            .expect("dataset scope feature");
+        ensure_dataset_scope_v1(&status, "LAN Sync peer").expect("dataset scope feature");
         let session = api
             .open_session(&peer_device_id, &peer_seed)
             .await
@@ -703,6 +753,7 @@ mod tests {
         let client = new_sync_client(
             format!("https://127.0.0.1:{}", handle.addr.port()),
             handle.spki_sha256.clone(),
+            TEST_USER_AGENT,
         )
         .expect("shared client");
         let pull_request_url = client

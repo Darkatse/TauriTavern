@@ -8,13 +8,13 @@ use ttsync_client::{
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::sync::SyncMode;
 
-use crate::infrastructure::sync::http_client::{new_sync_client, sync_error_to_domain};
-use crate::infrastructure::sync::lan::client::request_peer_pull as request_lan_peer_pull;
-use crate::infrastructure::sync::lan::store::LanPeerStore;
-use crate::infrastructure::sync::observer::SyncJobProgressObserver;
-use crate::infrastructure::sync::workspace::TauriTavernSyncWorkspace;
-use crate::infrastructure::sync_transfer;
-use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
+use crate::sync::http_client::{new_sync_client, sync_error_to_domain};
+use crate::sync::lan::client::request_peer_pull as request_lan_peer_pull;
+use crate::sync::lan::store::LanPeerStore;
+use crate::sync::observer::SyncJobProgressObserver;
+use crate::sync::workspace::TauriTavernSyncWorkspace;
+use crate::sync_transfer;
+use crate::tt_sync::runtime::TtSyncRuntime;
 use tt_contracts::sync::{
     LocalAppliedChangeSummary, ResolvedSyncPolicy, SyncEndpointRef, SyncExecutionFailure,
     SyncExecutionKind, SyncExecutionReport, SyncJob, SyncJobSummary, SyncOperationOptions,
@@ -27,6 +27,7 @@ pub struct InfrastructureSyncJobExecutor {
     events: Arc<dyn SyncJobEventPublisher>,
     lan_peer_store: LanPeerStore,
     tt_runtime: Arc<TtSyncRuntime>,
+    product_user_agent: String,
 }
 
 impl InfrastructureSyncJobExecutor {
@@ -35,12 +36,20 @@ impl InfrastructureSyncJobExecutor {
         events: Arc<dyn SyncJobEventPublisher>,
         lan_peer_store: LanPeerStore,
         tt_runtime: Arc<TtSyncRuntime>,
+        product_user_agent: impl Into<String>,
     ) -> Self {
+        let product_user_agent = product_user_agent.into();
+        assert!(
+            !product_user_agent.trim().is_empty(),
+            "sync product user agent must not be empty"
+        );
+
         Self {
             lan_sync_root,
             events,
             lan_peer_store,
             tt_runtime,
+            product_user_agent,
         }
     }
 
@@ -53,7 +62,11 @@ impl InfrastructureSyncJobExecutor {
     ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
         let peer = self.lan_peer_store.get_paired_device(&device_id).await?;
         let identity = self.lan_peer_store.load_or_create_identity().await?;
-        let client = new_sync_client(peer.base_url.clone(), peer.spki_sha256.clone())?;
+        let client = new_sync_client(
+            peer.base_url.clone(),
+            peer.spki_sha256.clone(),
+            &self.product_user_agent,
+        )?;
         let workspace = Arc::new(TauriTavernSyncWorkspace::new(self.lan_sync_root.clone()));
         let engine = ClientSyncEngine::new(
             client,
@@ -110,7 +123,11 @@ impl InfrastructureSyncJobExecutor {
     ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
         let mut server = self.tt_runtime.get_paired_server(&server_device_id).await?;
         let identity = self.tt_runtime.store.load_or_create_identity().await?;
-        let client = new_sync_client(server.base_url.clone(), server.spki_sha256.clone())?;
+        let client = new_sync_client(
+            server.base_url.clone(),
+            server.spki_sha256.clone(),
+            &self.product_user_agent,
+        )?;
         let workspace = Arc::new(TauriTavernSyncWorkspace::new(
             self.tt_runtime.sync_root.clone(),
         ));
@@ -165,7 +182,11 @@ impl InfrastructureSyncJobExecutor {
     ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
         let mut server = self.tt_runtime.get_paired_server(&server_device_id).await?;
         let identity = self.tt_runtime.store.load_or_create_identity().await?;
-        let client = new_sync_client(server.base_url.clone(), server.spki_sha256.clone())?;
+        let client = new_sync_client(
+            server.base_url.clone(),
+            server.spki_sha256.clone(),
+            &self.product_user_agent,
+        )?;
         let workspace = Arc::new(TauriTavernSyncWorkspace::new(
             self.tt_runtime.sync_root.clone(),
         ));
@@ -229,8 +250,13 @@ impl SyncJobExecutor for InfrastructureSyncJobExecutor {
                 SyncExecutionKind::RequestRemotePull,
                 ResolvedSyncPolicy::RemotePullRequest { options },
             ) => {
-                request_lan_peer_pull(self.lan_peer_store.clone(), device_id, options.clone())
-                    .await?;
+                request_lan_peer_pull(
+                    self.lan_peer_store.clone(),
+                    device_id,
+                    options.clone(),
+                    &self.product_user_agent,
+                )
+                .await?;
                 Ok(SyncExecutionReport::remote_request_accepted())
             }
             (

@@ -10,7 +10,6 @@ pub mod http_error;
 pub mod ios_policy_cache;
 #[cfg(target_os = "ios")]
 pub mod ios_webview;
-pub mod lan_sync;
 pub mod logging;
 #[cfg(target_os = "macos")]
 pub mod macos_webview;
@@ -21,12 +20,7 @@ pub mod repositories;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 pub mod runtime_paths_config_store;
 pub mod sillytavern_sorting;
-pub mod sync;
-pub mod sync_automation_store;
-pub mod sync_fs;
-pub mod sync_transfer;
 pub mod thumbnails;
-pub mod tt_sync;
 pub mod user_media_store;
 pub mod zipkit;
 

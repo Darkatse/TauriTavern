@@ -6,7 +6,7 @@ use ttsync_contract::peer::{DeviceId, PeerGrant};
 use ttsync_core::crypto::random_base64url;
 use uuid::Uuid;
 
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
+use crate::json_file::{read_json_file, write_json_file};
 use tt_domain::errors::DomainError;
 use tt_domain::models::lan_sync::{LanSyncIdentity, LanSyncPairedDevice};
 use tt_ports::lan_sync::LanPeerRepository;

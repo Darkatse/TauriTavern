@@ -16,6 +16,7 @@ members = [
     "crates/tt-application",
     "crates/tt-adapter-http",
     "crates/tt-adapter-tokenization",
+    "crates/tt-adapter-sync",
 ]
 default-members = ["."]
 resolver = "3"
@@ -29,6 +30,8 @@ serde_json = "1"
 thiserror = "2"
 ttsync-contract = "2"
 ttsync-core = { version = "2", default-features = false }
+ttsync-http = "2"
+ttsync-client = "2"
 uuid = { version = "1.4", default-features = false, features = ["serde", "std", "v4"] }
 
 [lib]
@@ -83,9 +86,6 @@ mime_guess = "2.0.5"
 flate2 = "1.1.9"
 crc32fast = "1"
 filetime = "0.2"
-axum = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "multipart", "query", "tokio"] }
-axum-server = { version = "0.8", features = ["tls-rustls"] }
-local-ip-address = "0.6"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 rustls = "0.23"
 webpki-roots = "1"
@@ -95,12 +95,11 @@ tt-contracts = { path = "crates/tt-contracts" }
 tt-ports = { path = "crates/tt-ports" }
 tt-adapter-http = { path = "crates/tt-adapter-http" }
 tt-adapter-tokenization = { path = "crates/tt-adapter-tokenization" }
+tt-adapter-sync = { path = "crates/tt-adapter-sync" }
 
 # TT-Sync v2 shared protocol crates. (crates.io)
 ttsync-contract = { workspace = true }
 ttsync-core = { workspace = true }
-ttsync-http = "2"
-ttsync-client = "2"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-dialog = "2.7.0"
@@ -129,9 +128,6 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 portable = []
-
-[dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
 
 [profile.dev]
 incremental = true

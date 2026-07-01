@@ -5,11 +5,11 @@ use ttsync_contract::peer::DeviceId;
 use ttsync_contract::session::{SessionOpenResponse, SessionToken};
 use ttsync_contract::status::StatusResponse;
 
-use crate::infrastructure::sync::http_client::{
+use crate::sync::http_client::{
     SyncHttpClient, bearer_auth_value, ensure_dataset_scope_v1, ensure_success,
 };
-use crate::infrastructure::sync::lan::server::LAN_PULL_REQUEST_SELECTION_FEATURE_V1;
-use crate::infrastructure::sync::lan::store::LanPeerStore;
+use crate::sync::lan::server::LAN_PULL_REQUEST_SELECTION_FEATURE_V1;
+use crate::sync::lan::store::LanPeerStore;
 use tt_contracts::sync::SyncOperationOptions;
 use tt_domain::errors::DomainError;
 use tt_domain::models::lan_sync::{LanPairCompleteRequest, LanPairCompleteResponse};
@@ -21,9 +21,13 @@ pub struct LanSyncClient {
 }
 
 impl LanSyncClient {
-    pub fn new(base_url: String, spki_sha256: String) -> Result<Self, DomainError> {
+    pub fn new(
+        base_url: String,
+        spki_sha256: String,
+        product_user_agent: &str,
+    ) -> Result<Self, DomainError> {
         Ok(Self {
-            inner: SyncHttpClient::new(base_url, spki_sha256)?,
+            inner: SyncHttpClient::new(base_url, spki_sha256, product_user_agent)?,
         })
     }
 
@@ -134,13 +138,31 @@ pub async fn complete_pairing(
     spki_sha256: &str,
     token: &str,
     request: &LanPairCompleteRequest,
+    product_user_agent: &str,
 ) -> Result<LanPairCompleteResponse, DomainError> {
-    LanSyncClient::new(base_url.to_string(), spki_sha256.to_string())?
-        .pair_complete(token, request)
-        .await
+    LanSyncClient::new(
+        base_url.to_string(),
+        spki_sha256.to_string(),
+        product_user_agent,
+    )?
+    .pair_complete(token, request)
+    .await
 }
 
-pub struct HttpLanPairingClient;
+pub struct HttpLanPairingClient {
+    product_user_agent: String,
+}
+
+impl HttpLanPairingClient {
+    pub fn new(product_user_agent: impl Into<String>) -> Self {
+        let product_user_agent = product_user_agent.into();
+        assert!(
+            !product_user_agent.trim().is_empty(),
+            "sync product user agent must not be empty"
+        );
+        Self { product_user_agent }
+    }
+}
 
 #[async_trait]
 impl LanPairingClient for HttpLanPairingClient {
@@ -151,7 +173,14 @@ impl LanPairingClient for HttpLanPairingClient {
         token: &str,
         request: &LanPairCompleteRequest,
     ) -> Result<LanPairCompleteResponse, DomainError> {
-        complete_pairing(base_url, spki_sha256, token, request).await
+        complete_pairing(
+            base_url,
+            spki_sha256,
+            token,
+            request,
+            &self.product_user_agent,
+        )
+        .await
     }
 }
 
@@ -159,11 +188,16 @@ pub async fn request_peer_pull(
     store: LanPeerStore,
     device_id: &DeviceId,
     options: SyncOperationOptions,
+    product_user_agent: &str,
 ) -> Result<(), DomainError> {
     let peer = store.get_paired_device(device_id).await?;
     let identity = store.load_or_create_identity().await?;
 
-    let api = LanSyncClient::new(peer.base_url.clone(), peer.spki_sha256.clone())?;
+    let api = LanSyncClient::new(
+        peer.base_url.clone(),
+        peer.spki_sha256.clone(),
+        product_user_agent,
+    )?;
     let status = api.status().await?;
     ensure_dataset_scope_v1(&status, "LAN Sync peer")?;
     if !status

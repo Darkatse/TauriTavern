@@ -46,6 +46,10 @@ pub trait LanServerControl: Send + Sync {
     async fn running_info(&self) -> Option<LanServerInfo>;
 }
 
+pub trait LanServerErrorReporter: Send + Sync {
+    fn report_lan_server_error(&self, message: String);
+}
+
 #[async_trait]
 pub trait LanAddressDiscovery: Send + Sync {
     fn list_available_addresses(&self, port: u16) -> Result<Vec<String>, DomainError>;

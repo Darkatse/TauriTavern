@@ -5,15 +5,18 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::infrastructure::sync::lan::server::{LanSyncServerHandle, spawn_lan_sync_server};
-use crate::infrastructure::sync::lan::store::LanPeerStore;
+use crate::sync::lan::server::{LanSyncServerHandle, spawn_lan_sync_server};
+use crate::sync::lan::store::LanPeerStore;
 use tt_domain::errors::DomainError;
-use tt_ports::lan_sync::{LanInboundRequestHandler, LanServerControl, LanServerInfo};
+use tt_ports::lan_sync::{
+    LanInboundRequestHandler, LanServerControl, LanServerErrorReporter, LanServerInfo,
+};
 
 pub struct AxumLanServerControl {
     sync_root: PathBuf,
     store: LanPeerStore,
     inbound: Arc<dyn LanInboundRequestHandler>,
+    errors: Arc<dyn LanServerErrorReporter>,
     server: Mutex<Option<LanSyncServerHandle>>,
 }
 
@@ -22,11 +25,13 @@ impl AxumLanServerControl {
         sync_root: PathBuf,
         store: LanPeerStore,
         inbound: Arc<dyn LanInboundRequestHandler>,
+        errors: Arc<dyn LanServerErrorReporter>,
     ) -> Self {
         Self {
             sync_root,
             store,
             inbound,
+            errors,
             server: Mutex::new(None),
         }
     }
@@ -46,6 +51,7 @@ impl LanServerControl for AxumLanServerControl {
             self.sync_root.clone(),
             self.store.clone(),
             self.inbound.clone(),
+            self.errors.clone(),
         )
         .await?;
         let info = handle.info();

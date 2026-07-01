@@ -15,7 +15,7 @@ use tt_contracts::sync::SyncJobEvent;
 use tt_contracts::sync_automation::{
     SyncAutomationStatus, SyncAutomationTarget, SyncAutomationToastEvent,
 };
-use tt_ports::lan_sync::{LanPairingApprovalRequest, PairingApproval};
+use tt_ports::lan_sync::{LanPairingApprovalRequest, LanServerErrorReporter, PairingApproval};
 use tt_ports::sync::SyncJobEventPublisher;
 use tt_ports::sync_automation::{
     SyncAutomationEndpointCatalog, SyncAutomationEventPublisher, SyncAutomationLanServerControl,
@@ -41,6 +41,10 @@ pub(in crate::app::composition) fn pairing_approval(
     app_handle: &AppHandle,
 ) -> Arc<dyn PairingApproval> {
     Arc::new(TauriPairingApproval::new(app_handle.clone()))
+}
+
+pub(in crate::app::composition) fn lan_server_errors() -> Arc<dyn LanServerErrorReporter> {
+    Arc::new(TauriLanServerErrorReporter)
 }
 
 pub(in crate::app::composition) fn sync_automation_lan_server(
@@ -92,6 +96,17 @@ impl SyncJobEventPublisher for TauriSyncJobEventPublisher {
         if let Err(error) = self.app_handle.emit("sync:job", event) {
             tracing::warn!("Failed to emit Sync job event: {}", error);
         }
+    }
+}
+
+struct TauriLanServerErrorReporter;
+
+impl LanServerErrorReporter for TauriLanServerErrorReporter {
+    fn report_lan_server_error(&self, message: String) {
+        tracing::error!(
+            target: crate::observability_targets::USER_VISIBLE_ERROR,
+            "{message}"
+        );
     }
 }
 

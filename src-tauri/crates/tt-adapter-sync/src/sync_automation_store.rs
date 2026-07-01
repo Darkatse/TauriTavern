@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use ttsync_core::dataset::tauri_tavern_default_selection;
 
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
+use crate::json_file::{read_json_file, write_json_file};
 use tt_contracts::sync_automation::{ScheduledSyncRule, SyncAutomationConfig};
 use tt_domain::errors::DomainError;
 use tt_ports::sync_automation::{LoadedScheduledSyncRule, SyncAutomationRuleRepository};

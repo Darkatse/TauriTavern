@@ -5,7 +5,7 @@ use rand::Rng;
 use serde::Deserialize;
 use ttsync_contract::sync::SyncMode;
 
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
+use crate::json_file::{read_json_file, write_json_file};
 use tt_domain::errors::DomainError;
 use tt_domain::models::lan_sync::{LanServerSettings, SyncPreferences};
 use tt_ports::lan_sync::LanSyncSettingsRepository;

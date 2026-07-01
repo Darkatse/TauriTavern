@@ -1,8 +1,6 @@
 use std::ffi::OsStr;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use base64::Engine;
@@ -18,7 +16,9 @@ use crate::infrastructure::apis::workers_ai_endpoint::workers_ai_run_url;
 use crate::infrastructure::apis::workers_ai_models::{
     fetch_workers_ai_models, workers_ai_model_name,
 };
-use crate::infrastructure::sync_fs;
+use crate::infrastructure::persistence::file_system::{
+    replace_file_with_fallback, unique_temp_path,
+};
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
@@ -177,13 +177,6 @@ fn ensure_json_extension(name: &str) -> bool {
         .extension()
         .and_then(OsStr::to_str)
         .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }
 
 async fn read_workflow_names(dir: &Path) -> Result<Vec<String>, DomainError> {
@@ -1140,8 +1133,16 @@ async fn comfy_save_workflow(dir: &Path, body: &Value) -> Result<SdRouteResponse
         .to_string();
 
     let dest = dir.join(&sanitized);
-    let mut reader = Cursor::new(workflow.into_bytes());
-    sync_fs::write_file_atomic(&dest, &mut reader, now_ms()).await?;
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    }
+    let temp_path = unique_temp_path(&dest, "workflow.json");
+    fs::write(&temp_path, workflow.as_bytes())
+        .await
+        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    replace_file_with_fallback(&temp_path, &dest).await?;
 
     let names = read_workflow_names(dir).await?;
     Ok(json_response(200, json!(names)))

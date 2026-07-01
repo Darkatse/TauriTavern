@@ -129,12 +129,35 @@ const ADAPTER_TOKENIZATION_FORBIDDEN_SOURCE_PATTERNS = [
     ['zip', /\bzip::/],
 ];
 
+const ADAPTER_SYNC_FORBIDDEN_PACKAGES = new Set([
+    'image',
+    'miktik',
+    'qrcode',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'tt-adapter-http',
+    'tt-adapter-tokenization',
+    'tt-application',
+    'zip',
+]);
+
+const ADAPTER_SYNC_FORBIDDEN_SOURCE_PATTERNS = [
+    ...ADAPTER_FORBIDDEN_SOURCE_PATTERNS,
+    ['image', /\bimage::/],
+    ['qrcode', /\bqrcode::/],
+    ['tt-adapter-http', /\btt_adapter_http::/],
+    ['tt-adapter-tokenization', /\btt_adapter_tokenization::/],
+    ['zip', /\bzip::/],
+];
+
 const CRATES = [
     crateConfig('tt-domain', DOMAIN_FORBIDDEN_PACKAGES, DOMAIN_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-contracts', CONTRACTS_FORBIDDEN_PACKAGES, CONTRACTS_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-ports', PORTS_FORBIDDEN_PACKAGES, PORTS_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-http', ADAPTER_HTTP_FORBIDDEN_PACKAGES, ADAPTER_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-tokenization', ADAPTER_TOKENIZATION_FORBIDDEN_PACKAGES, ADAPTER_TOKENIZATION_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-sync', ADAPTER_SYNC_FORBIDDEN_PACKAGES, ADAPTER_SYNC_FORBIDDEN_SOURCE_PATTERNS),
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [

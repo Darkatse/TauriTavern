@@ -9,16 +9,11 @@ use crate::application::services::sync_automation_service::SyncAutomationService
 use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
 use crate::application::services::tt_sync_service::TtSyncService;
 use crate::domain::ios_policy::IosPolicyActivationReport;
-use crate::infrastructure::lan_sync::store::LanSyncStore;
 use crate::infrastructure::persistence::file_system::DataDirectory;
-use crate::infrastructure::sync::http_client::HttpTtPairingClient;
-use crate::infrastructure::sync::job_executor::InfrastructureSyncJobExecutor;
-use crate::infrastructure::sync::lan::client::HttpLanPairingClient;
-use crate::infrastructure::sync::lan::control::AxumLanServerControl;
-use crate::infrastructure::sync::lan::discovery::LocalLanAddressDiscovery;
-use crate::infrastructure::sync::lan::store::LanPeerStore;
-use crate::infrastructure::sync_automation_store::SyncAutomationStore;
-use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
+use tt_adapter_sync::{
+    AxumLanServerControl, HttpLanPairingClient, HttpTtPairingClient, InfrastructureSyncJobExecutor,
+    LanPeerStore, LanSyncStore, LocalLanAddressDiscovery, SyncAutomationStore, TtSyncRuntime,
+};
 use tt_ports::lan_sync::{LanPeerRepository, LanServerControl, LanSyncSettingsRepository};
 use tt_ports::sync::DataChangeReconciler;
 
@@ -36,6 +31,7 @@ pub(super) fn build(
     data_change_reconciler: Arc<dyn DataChangeReconciler>,
     ios_policy: &IosPolicyActivationReport,
 ) -> SyncServices {
+    let product_user_agent = crate::product::USER_AGENT;
     let lan_runtime_state = Arc::new(LanSyncRuntimeState::new());
     let lan_settings_store = Arc::new(LanSyncStore::new(
         data_directory.default_user().to_path_buf(),
@@ -54,6 +50,7 @@ pub(super) fn build(
         sync_job_events.clone(),
         lan_peer_store.clone(),
         tt_runtime.clone(),
+        product_user_agent,
     ));
     let sync_job_coordinator = Arc::new(SyncJobCoordinator::new(
         sync_job_executor,
@@ -71,6 +68,7 @@ pub(super) fn build(
         data_directory.root().to_path_buf(),
         lan_peer_store.clone(),
         lan_inbound_service.clone(),
+        adapters::lan_server_errors(),
     ));
     let lan_sync_service = Arc::new(LanSyncService::new(
         lan_runtime_state,
@@ -78,13 +76,13 @@ pub(super) fn build(
         lan_peer_repository,
         lan_server_control,
         Arc::new(LocalLanAddressDiscovery),
-        Arc::new(HttpLanPairingClient),
+        Arc::new(HttpLanPairingClient::new(product_user_agent)),
         pairing_approval,
         sync_job_coordinator.clone(),
     ));
     let tt_sync_service = Arc::new(TtSyncService::new(
         tt_runtime.clone(),
-        Arc::new(HttpTtPairingClient),
+        Arc::new(HttpTtPairingClient::new(product_user_agent)),
         sync_job_coordinator.clone(),
     ));
     let lan_sync_allowed = ios_policy.capabilities.sync.lan;
