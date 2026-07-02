@@ -3,10 +3,17 @@ use std::path::{Path, PathBuf};
 
 #[test]
 fn platform_boundary_stays_out_of_inner_layers() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let crates_root = manifest_dir.join("crates");
 
-    assert_no_layer_refs(&root.join("domain"), "platform");
-    assert_no_layer_refs(&root.join("application"), "platform");
+    for inner_layer in [
+        crates_root.join("tt-domain/src"),
+        crates_root.join("tt-contracts/src"),
+        crates_root.join("tt-ports/src"),
+        crates_root.join("tt-application/src"),
+    ] {
+        assert_no_layer_refs(&inner_layer, "platform");
+    }
 }
 
 #[test]

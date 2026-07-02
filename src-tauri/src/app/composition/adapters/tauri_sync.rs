@@ -7,8 +7,8 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, oneshot};
 use ttsync_contract::sync::SyncMode;
 
-use crate::application::services::lan_sync_service::LanSyncService;
-use crate::application::services::tt_sync_service::TtSyncService;
+use tt_application::services::lan_sync_service::LanSyncService;
+use tt_application::services::tt_sync_service::TtSyncService;
 use tt_contracts::sync::SyncJobEvent;
 use tt_contracts::sync_automation::{
     SyncAutomationStatus, SyncAutomationTarget, SyncAutomationToastEvent,

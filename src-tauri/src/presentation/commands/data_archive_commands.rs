@@ -3,9 +3,9 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::application::dto::data_archive_dto::{DataArchiveJobStatus, UserBackupArchiveResult};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_application::dto::data_archive_dto::{DataArchiveJobStatus, UserBackupArchiveResult};
 
 #[tauri::command]
 pub fn start_import_data_archive(

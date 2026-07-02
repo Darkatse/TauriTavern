@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::application::services::user_media_service::{
-    ListUserImagesInput, UploadUserImageInput, UserImageUploadResult, UserMediaService,
-};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_application::services::user_media_service::{
+    ListUserImagesInput, UploadUserImageInput, UserImageUploadResult, UserMediaService,
+};
 
 #[tauri::command]
 pub async fn upload_user_image(

@@ -3,14 +3,14 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::application::dto::tokenization_dto::{
+use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::errors::CommandError;
+use tt_application::dto::tokenization_dto::{
     OpenAiDecodeRequestDto, OpenAiDecodeResponseDto, OpenAiEncodeRequestDto,
     OpenAiEncodeResponseDto, OpenAiLogitBiasRequestDto, OpenAiLogitBiasResponseDto,
     OpenAiTokenCountBatchRequestDto, OpenAiTokenCountBatchResponseDto, OpenAiTokenCountRequestDto,
     OpenAiTokenCountResponseDto,
 };
-use crate::presentation::commands::helpers::{log_command, map_command_error};
-use crate::presentation::errors::CommandError;
 
 #[tauri::command]
 pub async fn count_openai_tokens(

@@ -254,7 +254,7 @@ group chat 保存：
 
 实现位置：
 
-- `src-tauri/src/application/services/chat_service.rs`
+- `src-tauri/crates/tt-application/src/services/chat_service.rs`
 
 职责：
 

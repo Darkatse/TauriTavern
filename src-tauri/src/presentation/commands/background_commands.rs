@@ -6,10 +6,10 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::application::dto::background_dto::{DeleteBackgroundDto, RenameBackgroundDto};
-use crate::application::services::host_resource_service::HostResourceService;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_application::dto::background_dto::{DeleteBackgroundDto, RenameBackgroundDto};
+use tt_application::services::host_resource_service::HostResourceService;
 use tt_domain::models::background::BackgroundListEntry;
 use tt_domain::models::image_metadata::ImageMetadataIndex;
 

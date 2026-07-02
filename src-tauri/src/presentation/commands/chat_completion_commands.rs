@@ -5,12 +5,12 @@ use serde_json::Value;
 use tauri::{State, ipc::Channel};
 
 use crate::app::AppState;
-use crate::application::dto::chat_completion_dto::{
-    ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
-};
-use crate::application::services::chat_completion_service::ChatCompletionService;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_application::dto::chat_completion_dto::{
+    ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
+};
+use tt_application::services::chat_completion_service::ChatCompletionService;
 use tt_domain::models::upstream_failure::UpstreamFailure;
 
 #[tauri::command]
@@ -141,7 +141,7 @@ async fn run_stream_generation(
 
     let generation_result = match generation_task.await {
         Ok(result) => result,
-        Err(error) => Err(crate::application::errors::ApplicationError::InternalError(
+        Err(error) => Err(tt_application::errors::ApplicationError::InternalError(
             format!("Streaming task join failed: {error}"),
         )),
     };

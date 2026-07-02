@@ -40,10 +40,7 @@ function collectLineViolations(relPath, line, lineNumber) {
         violations.push('logger facade call');
     }
     if (
-        (
-            relPath.startsWith('src-tauri/src/application/')
-            || relPath.startsWith('src-tauri/crates/tt-application/src/')
-        )
+        relPath.startsWith('src-tauri/crates/tt-application/src/')
         && stripped.includes('crate::infrastructure::logging')
     ) {
         violations.push('application -> infrastructure logging');

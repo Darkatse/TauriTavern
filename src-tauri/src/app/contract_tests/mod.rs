@@ -12,32 +12,6 @@ use tokio::fs;
 use tokio::sync::{Mutex, watch};
 use uuid::Uuid;
 
-use crate::application::dto::agent_dto::{
-    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
-};
-use crate::application::dto::character_dto::{
-    BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataFilterDto,
-    CharacterLorebookConflictResolution, CheckCharacterLorebookConflictDto, CreateCharacterDto,
-    ExportCharacterContentDto, ExportCharacterDto, ImportCharacterDto, MergeCharacterCardDataDto,
-    ResolveCharacterLorebookConflictDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
-    UpdateCharacterDto,
-};
-use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
-use crate::application::errors::ApplicationError;
-use crate::application::services::agent_model_gateway::{
-    AgentModelExchange, AgentModelGateway, decode_chat_completion_response,
-};
-use crate::application::services::agent_profile_service::{
-    AgentProfileResolveInput, AgentProfileService,
-};
-use crate::application::services::agent_runtime_service::AgentRuntimeService;
-use crate::application::services::agent_tools::BuiltinAgentToolRegistry;
-use crate::application::services::agent_workspace_lifecycle_service::{
-    AgentRunActivity, AgentWorkspaceLifecycleService,
-};
-use crate::application::services::character_service::CharacterService;
-use crate::application::services::llm_connection_service::LlmConnectionService;
-use crate::application::services::skill_service::SkillService;
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
@@ -49,6 +23,32 @@ use crate::infrastructure::repositories::file_world_info_repository::FileWorldIn
 use tt_adapter_storage_core::FileChatRepository;
 use tt_adapter_storage_core::FileLlmConnectionRepository;
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use tt_application::dto::agent_dto::{
+    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
+};
+use tt_application::dto::character_dto::{
+    BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataFilterDto,
+    CharacterLorebookConflictResolution, CheckCharacterLorebookConflictDto, CreateCharacterDto,
+    ExportCharacterContentDto, ExportCharacterDto, ImportCharacterDto, MergeCharacterCardDataDto,
+    ResolveCharacterLorebookConflictDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
+    UpdateCharacterDto,
+};
+use tt_application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
+use tt_application::errors::ApplicationError;
+use tt_application::services::agent_model_gateway::{
+    AgentModelExchange, AgentModelGateway, decode_chat_completion_response,
+};
+use tt_application::services::agent_profile_service::{
+    AgentProfileResolveInput, AgentProfileService,
+};
+use tt_application::services::agent_runtime_service::AgentRuntimeService;
+use tt_application::services::agent_tools::BuiltinAgentToolRegistry;
+use tt_application::services::agent_workspace_lifecycle_service::{
+    AgentRunActivity, AgentWorkspaceLifecycleService,
+};
+use tt_application::services::character_service::CharacterService;
+use tt_application::services::llm_connection_service::LlmConnectionService;
+use tt_application::services::skill_service::SkillService;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::{AgentDelegationPolicy, AgentProfileId};
 use tt_domain::models::agent::{

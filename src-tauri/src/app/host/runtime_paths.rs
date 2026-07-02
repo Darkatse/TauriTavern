@@ -7,14 +7,14 @@
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use std::sync::Arc;
 
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-use crate::application::services::runtime_paths_service::{
-    RuntimeModeInfo, RuntimePathsService, RuntimePathsSnapshot,
-};
 use crate::infrastructure::paths::{RuntimePaths, resolve_runtime_paths};
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use crate::infrastructure::runtime_paths_config_store::FilesystemRuntimePathConfigStore;
 use tauri::Manager;
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+use tt_application::services::runtime_paths_service::{
+    RuntimeModeInfo, RuntimePathsService, RuntimePathsSnapshot,
+};
 
 pub(super) fn install(
     app: &mut tauri::App,

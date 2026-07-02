@@ -9,7 +9,7 @@
 当前后端 LLM 事实：
 
 - Provider source 定义在 `ChatCompletionSource`。见 `src-tauri/crates/tt-domain/src/models/chat_completion_source.rs`；旧的 repository 路径仍 re-export 以保持兼容。
-- Payload builder 由 `application/services/chat_completion_service/payload/mod.rs` 按 provider 分发。
+- Payload builder 由 `crates/tt-application/src/services/chat_completion_service/payload/mod.rs` 按 provider 分发。
 - `ChatCompletionService` 负责 source 解析、iOS policy、endpoint override、feature policy、settings、secret、prompt caching、payload build、generate/generate_stream/cancel。
 - LLM API 日志依赖 `LoggingChatCompletionRepository` wrapper。
 - Custom Native API 文档强调 tool call id 透明性与 native metadata 保真。见 `docs/CurrentState/NativeApiFormats.md`。

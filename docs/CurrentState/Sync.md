@@ -71,7 +71,7 @@ Agent run retention 复用同一套 run storage class 词汇来描述 `run_journ
   - pairing 请求事件：`lan_sync:pair_request`
   - 进度/完成/错误：`sync:job`
   - 手动作业完成/错误：命令返回 `SyncJobReport`；后台 inbound pull-request 由 `sync:job` final event 驱动提示和 reload。
-  - 应用边界：`src-tauri/src/application/services/lan_sync_service.rs`
+  - 应用边界：`src-tauri/crates/tt-application/src/services/lan_sync_service.rs`
   - Tauri event / pairing approval adapter：`src-tauri/src/app/composition/adapters.rs`
   - Axum server lifecycle adapter：`src-tauri/src/infrastructure/sync/lan/control.rs`
 - TT-Sync：
@@ -129,7 +129,7 @@ LAN Sync 与 TT-Sync v2 共享 `/v2/*` 协议族：
 
 ### 5.1 TT-Sync v2 Pair（绑定远端服务端）
 
-入口：`tt_sync_pair`（`src-tauri/src/presentation/commands/tt_sync_commands.rs`）→ `TtSyncService::pair`（`src-tauri/src/application/services/tt_sync_service.rs`）。
+入口：`tt_sync_pair`（`src-tauri/src/presentation/commands/tt_sync_commands.rs`）→ `TtSyncService::pair`（`src-tauri/crates/tt-application/src/services/tt_sync_service.rs`）。
 
 链路要点：
 

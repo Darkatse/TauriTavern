@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
-use crate::application::services::host_resource_service::HostResourceService;
 use crate::presentation::web_resources::tauri_resource_adapter::handle_tauri_web_resource_request;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use tauri_plugin_opener::OpenerExt;
+use tt_application::services::host_resource_service::HostResourceService;
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn desktop_window_state_flags() -> tauri_plugin_window_state::StateFlags {

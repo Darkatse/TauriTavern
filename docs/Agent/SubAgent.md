@@ -108,7 +108,7 @@ summaries/<workspace-key>-result.md
 
 ## 4. Tool Surface
 
-当前模型可见工具位于 `src-tauri/src/application/services/agent_tools/agent/specs.rs`：
+当前模型可见工具位于 `src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs`：
 
 | Canonical | Model alias | 可见范围 | 语义 |
 | --- | --- | --- | --- |
@@ -153,9 +153,9 @@ return-mode child Agent 必须遵守更窄的执行契约：
 实现入口：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation/policy.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/child_runtime.rs
-src-tauri/src/application/services/agent_runtime_service.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/policy.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/child_runtime.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service.rs
 ```
 
 子 Agent 如果调用 `workspace.finish`，runtime 会返回 recoverable tool error；如果在最大轮数内没有调用 `task.return`，child invocation 失败并把 task 标记为 failed。
@@ -174,7 +174,7 @@ child invocation 的 Skill 可见性同样按 invocation 解析：`skills.visibl
 task prompt 渲染在：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation/rendering.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/rendering.rs
 ```
 
 渲染原则：
@@ -201,7 +201,7 @@ return-mode child Agent 看到的 path 与请求它的 Agent 看到的 path 是�
 实现位置：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation/workspace_policy.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/workspace_policy.rs
 ```
 
 关键规则：
@@ -243,34 +243,34 @@ src-tauri/src/application/services/agent_runtime_service/delegation/workspace_po
 SubAgent 主干入口：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/list_tool.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/delegate_tool.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/handoff_tool.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/await_tool.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/task_return_tool.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/child_runtime.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/policy.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/rendering.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/workspace_policy.rs
-src-tauri/src/application/services/agent_runtime_service/scheduler.rs
-src-tauri/src/application/services/agent_runtime_service/invocation.rs
-src-tauri/src/application/services/agent_runtime_service/tool_execution.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/list_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/delegate_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/handoff_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/await_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/task_return_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/child_runtime.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/policy.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/rendering.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/workspace_policy.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/scheduler.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/invocation.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_execution.rs
 ```
 
 Tool registry / dispatcher：
 
 ```text
-src-tauri/src/application/services/agent_tools/agent/specs.rs
-src-tauri/src/application/services/agent_tools/registry.rs
-src-tauri/src/application/services/agent_tools/dispatcher.rs
+src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs
+src-tauri/crates/tt-application/src/services/agent_tools/registry.rs
+src-tauri/crates/tt-application/src/services/agent_tools/dispatcher.rs
 ```
 
 Profile / policy：
 
 ```text
 src-tauri/crates/tt-domain/src/models/agent/profile.rs
-src-tauri/src/application/services/agent_profile_service.rs
+src-tauri/crates/tt-application/src/services/agent_profile_service.rs
 src-tauri/src/infrastructure/repositories/file_agent_profile_repository/mod.rs
 ```
 
@@ -284,7 +284,7 @@ src-tauri/src/infrastructure/repositories/file_agent_repository/invocation_store
 Tests：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/tests.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/tests.rs
 src-tauri/src/infrastructure/repositories/file_agent_repository/tests.rs
 ```
 

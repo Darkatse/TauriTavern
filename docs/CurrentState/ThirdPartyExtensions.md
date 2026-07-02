@@ -74,15 +74,15 @@
 生产/打包运行时：
 
 - `src-tauri/src/lib.rs` 在主窗口安装 `on_web_resource_request`
-- `src-tauri/src/application/services/host_resource_service/user_css.rs` 处理 `/css/user.css`
-- `src-tauri/src/application/services/host_resource_service/third_party.rs` 处理 `/scripts/extensions/third-party/*`
-- `src-tauri/src/application/services/host_resource_service/thumbnail.rs` 处理 `/thumbnail`
-- `src-tauri/src/application/services/host_resource_service/user_data.rs` 处理用户数据静态资源：`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`
+- `src-tauri/crates/tt-application/src/services/host_resource_service/user_css.rs` 处理 `/css/user.css`
+- `src-tauri/crates/tt-application/src/services/host_resource_service/third_party.rs` 处理 `/scripts/extensions/third-party/*`
+- `src-tauri/crates/tt-application/src/services/host_resource_service/thumbnail.rs` 处理 `/thumbnail`
+- `src-tauri/crates/tt-application/src/services/host_resource_service/user_data.rs` 处理用户数据静态资源：`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`
 
 请求处理步骤：
 
 1. 校验请求方法，只接受 `GET` / `HEAD` / `OPTIONS`
-2. 通过 `src-tauri/src/application/client_asset_paths.rs` 解析并校验路径，再由 `src-tauri/src/application/services/host_resource_service/route_classifier.rs` 分类到具体资源处理器
+2. 通过 `src-tauri/crates/tt-application/src/client_asset_paths.rs` 解析并校验路径，再由 `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs` 分类到具体资源处理器
 3. 通过 `src-tauri/src/infrastructure/host_resources.rs` 定位文件并推断 MIME
 4. 返回真实 bytes、正确 `Content-Type`、`Cache-Control: no-store`
    - 对用户静态资源端点（如 `/backgrounds/*`）若请求携带 `Range`，支持单范围并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
@@ -159,9 +159,9 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 - 新兼容修复优先做成“最小能力补丁”，不要重新引入广泛源码扫描或 eager 预取
 - 若调整路径规则，至少同步检查：
   - `src/scripts/extensions/runtime/resource-paths.js`
-  - `src-tauri/src/application/client_asset_paths.rs`
-  - `src-tauri/src/application/services/host_resource_service/route_classifier.rs`
-  - `src-tauri/src/application/services/host_resource_service/third_party.rs`
+  - `src-tauri/crates/tt-application/src/client_asset_paths.rs`
+  - `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs`
+  - `src-tauri/crates/tt-application/src/services/host_resource_service/third_party.rs`
   - 相关测试
 - 若改动开发态代理链路，也必须同步验证 `src/init.js` 与 `src/tt-ext-sw.js`
 

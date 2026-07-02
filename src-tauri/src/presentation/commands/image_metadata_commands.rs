@@ -3,12 +3,12 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::application::dto::image_metadata_dto::{
+use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::errors::CommandError;
+use tt_application::dto::image_metadata_dto::{
     CreateImageMetadataFolderDto, DeleteImageMetadataFolderDto, ImageMetadataFolderAssignmentDto,
     SetImageMetadataFolderThumbnailsDto, UpdateImageMetadataFolderDto,
 };
-use crate::presentation::commands::helpers::{log_command, map_command_error};
-use crate::presentation::errors::CommandError;
 use tt_domain::models::image_metadata::{BackgroundFoldersPayload, ImageMetadataFolder};
 
 #[tauri::command]

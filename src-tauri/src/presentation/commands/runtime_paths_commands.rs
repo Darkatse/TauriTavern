@@ -3,11 +3,11 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::State;
 
-use crate::application::services::runtime_paths_service::{
-    RuntimeModeInfo, RuntimePathsInfo, RuntimePathsService,
-};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_application::services::runtime_paths_service::{
+    RuntimeModeInfo, RuntimePathsInfo, RuntimePathsService,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]

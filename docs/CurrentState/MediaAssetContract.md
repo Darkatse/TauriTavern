@@ -2,7 +2,7 @@
 
 本文档记录当前**已经落地**的“浏览器原生媒体加载契约”：`<video>` / `<audio>` 在桌面与移动端对用户静态资源端点（尤其是 `/backgrounds/*`）的请求方式，以及宿主目前承诺的响应语义。
 
-> 实现位置：`src-tauri/src/application/services/host_resource_service/user_data.rs`
+> 实现位置：`src-tauri/crates/tt-application/src/services/host_resource_service/user_data.rs`
 
 ---
 

@@ -2,17 +2,17 @@ use std::sync::Arc;
 
 use tauri::AppHandle;
 
-use crate::application::services::lan_sync_service::{
-    LanInboundService, LanSyncRuntimeState, LanSyncService,
-};
-use crate::application::services::sync_automation_service::SyncAutomationService;
-use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
-use crate::application::services::tt_sync_service::TtSyncService;
 use tt_adapter_storage_core::file_system::DataDirectory;
 use tt_adapter_sync::{
     AxumLanServerControl, HttpLanPairingClient, HttpTtPairingClient, InfrastructureSyncJobExecutor,
     LanPeerStore, LanSyncStore, LocalLanAddressDiscovery, SyncAutomationStore, TtSyncRuntime,
 };
+use tt_application::services::lan_sync_service::{
+    LanInboundService, LanSyncRuntimeState, LanSyncService,
+};
+use tt_application::services::sync_automation_service::SyncAutomationService;
+use tt_application::services::sync_job_coordinator::SyncJobCoordinator;
+use tt_application::services::tt_sync_service::TtSyncService;
 use tt_domain::ios_policy::IosPolicyActivationReport;
 use tt_ports::lan_sync::{LanPeerRepository, LanServerControl, LanSyncSettingsRepository};
 use tt_ports::sync::DataChangeReconciler;

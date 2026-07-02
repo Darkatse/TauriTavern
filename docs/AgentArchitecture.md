@@ -47,7 +47,7 @@ MCP / Tool Direct Call
 
 - 后端已经采用 Clean Architecture，依赖方向是外层依赖内层、内层定义接口、外层实现接口。见 `docs/BackendStructure.md:7`、`docs/BackendStructure.md:40`。
 - 应用服务由 `AppState` 管理并在 `composition::build_services()` 装配。见 `src-tauri/src/app.rs`、`src-tauri/src/app/composition.rs`。
-- 当前 LLM 请求经过 `ChatCompletionService`，该服务负责 provider 解析、iOS policy、endpoint override policy、payload build、prompt caching 和取消注册。见 `src-tauri/src/application/services/chat_completion_service/mod.rs:32`、`src-tauri/src/application/services/chat_completion_service/mod.rs:302`、`src-tauri/src/application/services/chat_completion_service/mod.rs:358`。
+- 当前 LLM 请求经过 `ChatCompletionService`，该服务负责 provider 解析、iOS policy、endpoint override policy、payload build、prompt caching 和取消注册。见 `src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:32`、`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:302`、`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:358`。
 - 当前 LLM API 日志依赖 composition root 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、secret 或 policy。Responses WebSocket 建连已复用 `HttpClientPool` 的 ChatCompletion WebSocket profile，不应扩散成第二套 LLM 调用链。见 `src-tauri/src/app/composition/repositories.rs`。
 - 当前 chat payload 分片读写由 `ChatService` 和 `ChatRepository` 承担，windowed save/patch 是正式契约。见 `src-tauri/crates/tt-application/src/services/chat_service.rs`、`src-tauri/crates/tt-ports/src/repositories/chat_repository.rs`。
 - 前端 Public ABI 的统一入口是 `window.__TAURITAVERN__`，应保持小而稳定。见 `docs/FrontendHostContract.md` 第 3.6 节、`src/tauri/main/bootstrap.js:139`。
@@ -178,9 +178,9 @@ chatRef       当前可定位引用，用于读取/commit guard
 建议模块边界：
 
 ```text
-src-tauri/src/
-  domain/
-    models/agent/
+src-tauri/
+  crates/
+    tt-domain/src/models/agent/
       run.rs
       event.rs
       workspace.rs
@@ -191,53 +191,55 @@ src-tauri/src/
       policy.rs
       tool.rs
       model.rs
-    repositories/
+
+    tt-ports/src/repositories/
       agent_run_repository.rs
       workspace_repository.rs
       checkpoint_repository.rs
       skill_repository.rs
       mcp_repository.rs
 
-  application/
-    dto/
-      agent_dto.rs
-      mcp_dto.rs
-    services/
-      agent_runtime/
-        mod.rs
-        run_state_machine.rs
-        context_assembly.rs
-        artifact_assembly.rs
-        commit.rs
-        profile_router.rs
-        plan.rs
-      workspace_service/
-      tool_registry_service/
-      tool_dispatch_service/
-      llm_gateway_service/
-      mcp_client_service/
-      skill_service/
+    tt-application/src/
+      dto/
+        agent_dto.rs
+        mcp_dto.rs
+      services/
+        agent_runtime/
+          mod.rs
+          run_state_machine.rs
+          context_assembly.rs
+          artifact_assembly.rs
+          commit.rs
+          profile_router.rs
+          plan.rs
+        workspace_service/
+        tool_registry_service/
+        tool_dispatch_service/
+        llm_gateway_service/
+        mcp_client_service/
+        skill_service/
 
-  infrastructure/
-    repositories/
-      file_agent_run_repository/
-      file_workspace_repository/
-      file_checkpoint_repository/
-      file_skill_repository/
-    apis/
-      mcp/
-    diff/
+  src/
+    infrastructure/
+      repositories/
+        file_agent_run_repository/
+        file_workspace_repository/
+        file_checkpoint_repository/
+        file_skill_repository/
+      apis/
+        mcp/
+      diff/
 
-  presentation/
-    commands/
-      agent_commands.rs
-      mcp_commands.rs
+    presentation/
+      commands/
+        agent_commands.rs
+        mcp_commands.rs
 ```
 
 关键规则：
 
 - `presentation` 只做 DTO 校验、权限/通道参数拆解、调用 application service、错误映射。
-- `application/services/agent_runtime` 是编排中心，但它不直接操作文件系统、不直接发 HTTP、不直接管理 MCP subprocess。
+- `crates/tt-application/src/services/agent_runtime` 是编排中心，但它不直接操作文件系统、不直接发 HTTP、不直接管理 MCP subprocess。
 - `domain` 定义纯模型与 repository/tool/gateway trait，不依赖 Tauri、tokio process、WebView、HTTP client。
 - `infrastructure` 实现文件存储、MCP client、diff、外部 API 适配。
 - 新服务必须在 `composition::build_services()` 装配，并挂入 `AppState`，与现有服务生命周期一致。

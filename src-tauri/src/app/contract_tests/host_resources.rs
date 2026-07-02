@@ -8,7 +8,7 @@ use tt_contracts::host_resource::{
 };
 
 use super::temp_root;
-use crate::application::services::host_resource_service::HostResourceService;
+use tt_application::services::host_resource_service::HostResourceService;
 
 fn response_header<'a>(response: &'a HostResourceResponse, name: &str) -> Option<&'a str> {
     response

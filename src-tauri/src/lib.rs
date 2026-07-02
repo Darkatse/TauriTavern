@@ -1,5 +1,4 @@
 mod app;
-mod application;
 mod infrastructure;
 mod observability_targets;
 mod platform;

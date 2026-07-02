@@ -6,7 +6,9 @@ use serde_json::Value;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::application::dto::agent_dto::{
+use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::errors::CommandError;
+use tt_application::dto::agent_dto::{
     AgentApplyCurrentModelConnectionSnapshotDto, AgentApplyCurrentModelConnectionSnapshotResultDto,
     AgentApplyRunPruneDto, AgentBuildCurrentModelConnectionSnapshotDto,
     AgentBuildCurrentModelConnectionSnapshotResultDto, AgentCancelRunDto,
@@ -23,10 +25,8 @@ use crate::application::dto::agent_dto::{
     AgentRunPrunePlanDto, AgentSaveProfileDto, AgentStartRunDto, AgentSubmitGuidanceDto,
     AgentSubmitGuidanceResultDto, AgentWorkspaceFileDto,
 };
-use crate::application::errors::ApplicationError;
-use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
-use crate::presentation::commands::helpers::{log_command, map_command_error};
-use crate::presentation::errors::CommandError;
+use tt_application::errors::ApplicationError;
+use tt_application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
 use tt_domain::models::agent::AgentChatRef;
 use tt_domain::models::agent::profile_diagnostic::AgentProfileHealth;
 use tt_ports::repositories::agent_workspace_lifecycle_repository::AgentPersistentStatePruneRequest;

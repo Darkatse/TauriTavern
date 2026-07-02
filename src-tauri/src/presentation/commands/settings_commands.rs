@@ -4,15 +4,15 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::app::dev_observability::DevObservabilityHub;
-use crate::application::dto::settings_dto::{
-    SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
-    UpdateTauriTavernSettingsDto, UserSettingsDto,
-};
-use crate::application::services::host_resource_service::HostResourceService;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
+use tt_application::dto::settings_dto::{
+    SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
+    UpdateTauriTavernSettingsDto, UserSettingsDto,
+};
+use tt_application::services::host_resource_service::HostResourceService;
 
 #[tauri::command]
 pub async fn get_tauritavern_settings(

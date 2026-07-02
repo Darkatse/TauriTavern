@@ -355,26 +355,21 @@ const CRATES = [
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [
-    sourceRule('main crate domain shim', path.join(REPO_ROOT, 'src-tauri', 'src'), [
+    sourceRule('main crate removed layer shims', path.join(REPO_ROOT, 'src-tauri', 'src'), [
         ['domain module declaration', /^\s*(pub\s+)?mod\s+domain\s*;/],
         ['domain shim path', /\bcrate::domain::/],
+        ['application module declaration', /^\s*(pub\s+)?mod\s+application\s*;/],
+        ['application shim path', /\bcrate::application::/],
     ]),
     sourceRule('infrastructure', path.join(REPO_ROOT, 'src-tauri', 'src', 'infrastructure'), [
-        ['application facade', /\bcrate::application::/],
         ['tt-application crate', /\btt_application::/],
     ]),
     sourceRule('platform', path.join(REPO_ROOT, 'src-tauri', 'src', 'platform'), [
-        ['application facade', /\bcrate::application::/],
         ['tt-application crate', /\btt_application::/],
     ]),
     sourceRule('app composition', path.join(REPO_ROOT, 'src-tauri', 'src', 'app', 'composition'), [
         ['repository facade', /\bcrate::domain::repositories::/],
         ['sync contract facade', /\bcrate::domain::models::sync(_automation)?::/],
-        ['data-change port facade', /\bcrate::application::services::data_change_reconciler::/],
-    ]),
-    sourceRule('web resource adapter', path.join(REPO_ROOT, 'src-tauri', 'src', 'presentation', 'web_resources'), [
-        ['client asset contract facade', /\bcrate::application::client_asset_paths::/],
-        ['host resource facade', /\bcrate::application::services::host_resource_service::(contract|ports|range)::/],
     ]),
     sourceRule('application provider auth boundary', path.join(REPO_ROOT, 'src-tauri', 'crates', 'tt-application', 'src'), [
         ['provider oauth client', /\byup_oauth2::/],

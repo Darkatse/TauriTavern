@@ -8,13 +8,13 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::app::AppState;
-use crate::application::host_contract::IOS_EXPORT_STAGING_ROOT_NAME;
 use crate::platform::ios_document_picker::{
     PickDocumentResult, copy_picked_url_to_path, pick_data_archive, pick_skill_import_archive,
 };
 use crate::platform::ios_share_sheet::share_file;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_contracts::host::IOS_EXPORT_STAGING_ROOT_NAME;
 use tt_domain::errors::DomainError;
 
 const IOS_SKILL_IMPORT_STAGING_ROOT_NAME: &str = "tauritavern-skill-import-staging";

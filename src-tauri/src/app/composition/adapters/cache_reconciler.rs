@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::application::services::character_service::CharacterService;
-use crate::application::services::chat_service::ChatService;
-use crate::application::services::group_chat_service::GroupChatService;
-use crate::application::services::group_service::GroupService;
-use crate::application::services::secret_service::SecretService;
+use tt_application::services::character_service::CharacterService;
+use tt_application::services::chat_service::ChatService;
+use tt_application::services::group_chat_service::GroupChatService;
+use tt_application::services::group_service::GroupService;
+use tt_application::services::secret_service::SecretService;
 use tt_domain::errors::DomainError;
 use tt_ports::sync::DataChangeReconciler;
 

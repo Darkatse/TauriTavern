@@ -45,7 +45,7 @@ finalizer verifies, commits, finish
 当前 `agent.handoff` ToolSpec 位于：
 
 ```text
-src-tauri/src/application/services/agent_tools/agent/specs.rs
+src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs
 ```
 
 模型看到的是调用 Agent 视角的工具：
@@ -152,7 +152,7 @@ Handoff task 形态：
 入口：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation/handoff_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/handoff_tool.rs
 ```
 
 流程：
@@ -189,7 +189,7 @@ return AgentLoopExit::Transferred { task_id, new_invocation_id }
 实现位置：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/loop_runner.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/loop_runner.rs
 ```
 
 ### 5.3 Executor 串接
@@ -216,8 +216,8 @@ continue loop with:
 实现位置：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/executor.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/child_runtime.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/executor.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/child_runtime.rs
 ```
 
 当最终 handoff owner 调用 `workspace.finish` 并成功收尾时，executor 会把它的 incoming handoff task 标记为 `Completed`。如果 handoff owner 再次 handoff，旧 incoming handoff task 也会先标记为 `Completed`，然后继续下一段 handoff invocation。
@@ -267,7 +267,7 @@ The draft has been written and committed once. Keep the existing plot beats, but
 渲染入口：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation/rendering.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/rendering.rs
 ```
 
 Prompt assembly 路径：
@@ -353,34 +353,34 @@ Timeline UI 不应只依赖当前分页内的 journal 事件推断 active chain�
 模型可见工具：
 
 ```text
-src-tauri/src/application/services/agent_tools/agent/specs.rs
-src-tauri/src/application/services/agent_tools/agent/mod.rs
-src-tauri/src/application/services/agent_tools/registry.rs
-src-tauri/src/application/services/agent_tools/dispatcher.rs
+src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs
+src-tauri/crates/tt-application/src/services/agent_tools/agent/mod.rs
+src-tauri/crates/tt-application/src/services/agent_tools/registry.rs
+src-tauri/crates/tt-application/src/services/agent_tools/dispatcher.rs
 ```
 
 Handoff dispatch / policy / rendering：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation/handoff_tool.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/policy.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/rendering.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/child_runtime.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/handoff_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/policy.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/rendering.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/child_runtime.rs
 ```
 
 Invocation / executor / loop：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/invocation.rs
-src-tauri/src/application/services/agent_runtime_service/loop_runner.rs
-src-tauri/src/application/services/agent_runtime_service/executor.rs
-src-tauri/src/application/services/agent_runtime_service/tool_execution.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/invocation.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/loop_runner.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/executor.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_execution.rs
 ```
 
 Prompt assembly：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/prompt_assembly.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/prompt_assembly.rs
 src/tauri/main/api/agent-prompt-assembly-bridge.js
 src/tauri/main/api/agent-prompt-assembly.js
 ```
@@ -388,16 +388,16 @@ src/tauri/main/api/agent-prompt-assembly.js
 Profile validation：
 
 ```text
-src-tauri/src/application/services/agent_profile_service/validation.rs
+src-tauri/crates/tt-application/src/services/agent_profile_service/validation.rs
 src-tauri/crates/tt-domain/src/models/agent/profile.rs
 ```
 
 Tests：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/tests.rs
-src-tauri/src/application/services/agent_profile_service/tests.rs
-src-tauri/src/application/services/agent_tools/registry.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/tests.rs
+src-tauri/crates/tt-application/src/services/agent_profile_service/tests.rs
+src-tauri/crates/tt-application/src/services/agent_tools/registry.rs
 ```
 
 重点测试名：

@@ -1,18 +1,18 @@
 use std::sync::Arc;
 
-use crate::application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
-use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
-use crate::application::services::agent_profile_service::AgentProfileService;
-use crate::application::services::agent_run_history_service::AgentRunHistoryService;
-use crate::application::services::agent_run_retention_automation_service::AgentRunRetentionAutomationService;
-use crate::application::services::agent_runtime_service::AgentRuntimeService;
-use crate::application::services::agent_workspace_lifecycle_service::{
+use tt_application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
+use tt_application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
+use tt_application::services::agent_profile_service::AgentProfileService;
+use tt_application::services::agent_run_history_service::AgentRunHistoryService;
+use tt_application::services::agent_run_retention_automation_service::AgentRunRetentionAutomationService;
+use tt_application::services::agent_runtime_service::AgentRuntimeService;
+use tt_application::services::agent_workspace_lifecycle_service::{
     AgentRunActivity, AgentWorkspaceLifecycleService,
 };
-use crate::application::services::chat_completion_service::ChatCompletionService;
-use crate::application::services::llm_connection_service::LlmConnectionService;
-use crate::application::services::prompt_assembly_service::PromptAssemblyService;
-use crate::application::services::skill_service::SkillService;
+use tt_application::services::chat_completion_service::ChatCompletionService;
+use tt_application::services::llm_connection_service::LlmConnectionService;
+use tt_application::services::prompt_assembly_service::PromptAssemblyService;
+use tt_application::services::skill_service::SkillService;
 
 use super::super::repositories::AppRepositories;
 

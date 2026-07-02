@@ -4,11 +4,11 @@ use serde_json::Value;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::application::dto::stable_diffusion_dto::SdRouteResponseDto;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
+use tt_application::dto::stable_diffusion_dto::SdRouteResponseDto;
 
 #[tauri::command]
 pub async fn sd_handle(

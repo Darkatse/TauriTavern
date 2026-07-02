@@ -1,6 +1,6 @@
-use crate::application::errors::ApplicationError;
 use serde::Serialize;
 use thiserror::Error;
+use tt_application::errors::ApplicationError;
 use tt_domain::errors::DomainError;
 use tt_domain::models::upstream_failure::UpstreamFailure;
 

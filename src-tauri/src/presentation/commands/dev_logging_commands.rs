@@ -3,13 +3,13 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::dev_observability::DevObservabilityHub;
-use crate::application::dto::dev_observability_dto::{
-    BackendLogEntryDto, DevBundleVersionDto, FrontendLogEntryDto, FrontendLogEntrySnapshotDto,
-    LlmApiLogIndexEntryDto, LlmApiLogPreviewDto, LlmApiLogRawDto,
-};
 use crate::presentation::commands::bridge::{VersionInfo, get_client_version};
 use crate::presentation::commands::helpers::log_command;
 use crate::presentation::errors::CommandError;
+use tt_application::dto::dev_observability_dto::{
+    BackendLogEntryDto, DevBundleVersionDto, FrontendLogEntryDto, FrontendLogEntrySnapshotDto,
+    LlmApiLogIndexEntryDto, LlmApiLogPreviewDto, LlmApiLogRawDto,
+};
 
 #[tauri::command]
 pub async fn devlog_append_frontend_logs(

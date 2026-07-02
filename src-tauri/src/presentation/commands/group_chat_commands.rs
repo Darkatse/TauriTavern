@@ -3,14 +3,14 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::application::dto::chat_dto::{
+use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::errors::CommandError;
+use tt_application::dto::chat_dto::{
     ChatSearchResultDto, DeleteGroupChatDto, HideGroupChatBeforeCursorDto, ImportGroupChatDto,
     PatchGroupChatWindowedDto, PinnedGroupChatDto, RenameGroupChatDto, SaveGroupChatFromFileDto,
     SaveGroupChatWindowedDto,
 };
-use crate::application::errors::ApplicationError;
-use crate::presentation::commands::helpers::{log_command, map_command_error};
-use crate::presentation::errors::CommandError;
+use tt_application::errors::ApplicationError;
 use tt_ports::repositories::chat_types::{ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail};
 
 #[tauri::command]

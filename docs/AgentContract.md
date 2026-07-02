@@ -89,7 +89,7 @@ Provider adapter 只能把已经编译好的 `AgentModelRequest` / `ModelRequest
 
 禁止在 provider payload builder 中硬编码 TauriTavern Agent 的 prompt 结构。
 
-当前 Agent Gateway provider-specific 规则必须收敛在 `application/services/agent_model_gateway/providers/*` 与对应的 encode/decode/schema/provider_state 模块内，不能扩散到 runtime tool loop。
+当前 Agent Gateway provider-specific 规则必须收敛在 `crates/tt-application/src/services/agent_model_gateway/providers/*` 与对应的 encode/decode/schema/provider_state 模块内，不能扩散到 runtime tool loop。
 
 当前已落地的额外要求：
 

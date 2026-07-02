@@ -5,16 +5,16 @@ use chrono::TimeZone;
 use serde::Serialize;
 use tauri::AppHandle;
 
-use crate::application::dto::dev_observability_dto::{
-    BackendLogEntryDto, DevBundleVersionDto, FrontendLogEntrySnapshotDto, LlmApiLogIndexEntryDto,
-    LlmApiLogPreviewDto, LlmApiLogRawDto, LlmApiRawKindDto,
-};
 use crate::infrastructure::logging::dev_bundle::{DevLogBundleInput, export_dev_log_bundle};
 use crate::infrastructure::logging::devtools::{BackendLogEntry, BackendLogStore};
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogEntryPreview, LlmApiLogEntryRaw, LlmApiLogIndexEntry, LlmApiLogStore, LlmApiRawKind,
 };
 use crate::infrastructure::paths::RuntimePaths;
+use tt_application::dto::dev_observability_dto::{
+    BackendLogEntryDto, DevBundleVersionDto, FrontendLogEntrySnapshotDto, LlmApiLogIndexEntryDto,
+    LlmApiLogPreviewDto, LlmApiLogRawDto, LlmApiRawKindDto,
+};
 use tt_domain::errors::DomainError;
 
 pub struct DevObservabilityHub {

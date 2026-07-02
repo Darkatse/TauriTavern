@@ -178,12 +178,12 @@ iOS 构建可通过 `TAURITAVERN_IOS_POLICY_PROFILE` 注入默认 profile，用�
 - `updates.manual_check`
   - Rust commands：`src-tauri/src/presentation/commands/update_commands.rs:check_for_update`
 - `llm.chat_completion_sources.allowlist`
-  - Service：`src-tauri/src/application/services/chat_completion_service/mod.rs`
+  - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
 - `llm.endpoint_overrides`
-  - Service：`src-tauri/src/application/services/chat_completion_service/mod.rs`
+  - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
   - 行为：禁用时禁止 `custom` source；并拒绝任何非空 override 字段（reverse_proxy/custom_url/custom_include_headers/proxy_password）
 - `llm.chat_completion_features.web_search` / `llm.chat_completion_features.request_images`
-  - Service：`src-tauri/src/application/services/chat_completion_service/mod.rs`
+  - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
   - 行为：payload 中出现 enable_web_search/request_images 或 request_image_* 即拒绝
 - `network.request_proxy`
   - 启动期：`src-tauri/src/lib.rs` 若 settings 中 request_proxy.enabled=true 但 capability 禁用 → 直接启动失败

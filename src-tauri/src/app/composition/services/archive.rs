@@ -2,13 +2,11 @@ use std::sync::Arc;
 
 use tauri::AppHandle;
 
-use crate::application::services::data_archive_service::{
-    DataArchiveJobRegistry, DataArchiveService,
-};
 use crate::infrastructure::persistence::data_archive_adapters::{
     DataDirectoryDataRootInitializer, TauriDataArchiveFileGateway,
 };
 use tt_adapter_archive::FileDataArchiveExecutor;
+use tt_application::services::data_archive_service::{DataArchiveJobRegistry, DataArchiveService};
 use tt_ports::sync::DataChangeReconciler;
 
 pub(super) fn build(

@@ -163,12 +163,12 @@ runtime-time `prompt_assembly_requested` event 不携带完整 request，只包�
 - `src/tauri/main/api/agent-prompt-assembly.js`：Frontend PromptAssemblyBroker。
 - `src/tauri/main/api/agent-prompt-assembly-bridge.js`：runtime-time child / handoff invocation prompt assembly host bridge，按 `assemblyId` 读取 pending broker request。
 - `src/scripts/openai.js`：headless PromptManager、settings normalization、真实 OpenAI/chat-completion prompt assembly。
-- `src-tauri/src/application/services/prompt_assembly_service.rs`：Rust PromptAssemblyService、preset 加载、broker request、组装阶段 model overlay。
-- `src-tauri/src/application/services/agent_runtime_service/prompt_assembly.rs`：invocation-scoped prompt assembly request/resolve、snapshot 持久化。
-- `src-tauri/src/application/services/llm_connection_service.rs`：runtime payload 连接覆盖。
-- `src-tauri/src/application/services/agent_runtime_service/lifecycle.rs`：`start_agent_run` 输入校验与 run 创建。
-- `src-tauri/src/application/services/agent_runtime_service/executor.rs`：runtime model binding、tool request 准备。
-- `src-tauri/src/application/services/agent_model_gateway/`：Agent canonical IR 与 ChatCompletion DTO 转换。
+- `src-tauri/crates/tt-application/src/services/prompt_assembly_service.rs`：Rust PromptAssemblyService、preset 加载、broker request、组装阶段 model overlay。
+- `src-tauri/crates/tt-application/src/services/agent_runtime_service/prompt_assembly.rs`：invocation-scoped prompt assembly request/resolve、snapshot 持久化。
+- `src-tauri/crates/tt-application/src/services/llm_connection_service.rs`：runtime payload 连接覆盖。
+- `src-tauri/crates/tt-application/src/services/agent_runtime_service/lifecycle.rs`：`start_agent_run` 输入校验与 run 创建。
+- `src-tauri/crates/tt-application/src/services/agent_runtime_service/executor.rs`：runtime model binding、tool request 准备。
+- `src-tauri/crates/tt-application/src/services/agent_model_gateway/`：Agent canonical IR 与 ChatCompletion DTO 转换。
 
 ## 兼容边界
 

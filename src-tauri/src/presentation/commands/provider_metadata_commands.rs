@@ -4,12 +4,12 @@ use serde_json::Value;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::application::dto::provider_metadata_dto::{
+use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::errors::CommandError;
+use tt_application::dto::provider_metadata_dto::{
     ProviderModelProvidersRequestDto, SiliconFlowEmbeddingModelsRequestDto,
     WorkersAiModelsRequestDto,
 };
-use crate::presentation::commands::helpers::{log_command, map_command_error};
-use crate::presentation::errors::CommandError;
 use tt_ports::repositories::provider_metadata_repository::{
     NanoGptCredits, NanoGptModelProviders, OpenRouterCredits,
 };

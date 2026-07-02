@@ -4,10 +4,10 @@ use tauri::State;
 
 use crate::app::backend_errors::BackendErrorHub;
 use crate::app::{AppState, BackendReadiness};
-use crate::application::dto::bootstrap_dto::BootstrapSnapshotDto;
-use crate::application::dto::group_dto::GroupDto;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_application::dto::bootstrap_dto::BootstrapSnapshotDto;
+use tt_application::dto::group_dto::GroupDto;
 
 #[tauri::command]
 pub async fn get_bootstrap_snapshot(

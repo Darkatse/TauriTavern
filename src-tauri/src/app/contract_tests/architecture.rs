@@ -8,7 +8,7 @@ fn outer_layers_do_not_depend_on_application() {
         manifest_dir.join("src").join("infrastructure"),
         manifest_dir.join("src").join("platform"),
     ];
-    let forbidden = ["crate::application::", "tt_application::"];
+    let forbidden = ["tt_application::"];
     let mut offenders = Vec::new();
 
     for root in roots {

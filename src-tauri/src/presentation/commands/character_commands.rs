@@ -3,7 +3,9 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::application::dto::character_dto::{
+use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::errors::CommandError;
+use tt_application::dto::character_dto::{
     BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto, CharacterChatDto,
     CharacterDto, CharacterLorebookConflictDto, CheckCharacterLorebookConflictDto,
     CreateCharacterDto, CreateCharacterWithAvatarResultDto, CreateWithAvatarDto,
@@ -13,8 +15,6 @@ use crate::application::dto::character_dto::{
     ResolveCharacterLorebookConflictResultDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
     UpdateCharacterDto,
 };
-use crate::presentation::commands::helpers::{log_command, map_command_error};
-use crate::presentation::errors::CommandError;
 use tt_domain::models::skill::{SkillScope, SkillScopeRetargetRequest};
 
 const SKILL_SOURCE_KIND_CHARACTER: &str = "character";

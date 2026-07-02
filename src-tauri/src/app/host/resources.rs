@@ -8,13 +8,13 @@
 use std::sync::Arc;
 
 use crate::app::StartupProfile;
-use crate::application::services::bundled_template_service::BundledTemplateService;
-use crate::application::services::host_resource_service::HostResourceService;
-use crate::application::services::user_media_service::UserMediaService;
 use crate::infrastructure::bundled_resources::BundledResourceStore;
 use crate::infrastructure::paths::RuntimePaths;
 use tauri::Manager;
 use tt_adapter_media::{FilesystemHostResourceStore, FilesystemUserMediaStore};
+use tt_application::services::bundled_template_service::BundledTemplateService;
+use tt_application::services::host_resource_service::HostResourceService;
+use tt_application::services::user_media_service::UserMediaService;
 
 pub(super) fn install_bundled_templates(app: &mut tauri::App, app_handle: &tauri::AppHandle) {
     // Template reads are command-driven and independent of user data root, so the

@@ -3,11 +3,9 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::application::dto::group_dto::{
-    CreateGroupDto, DeleteGroupDto, GroupDto, UpdateGroupDto,
-};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_application::dto::group_dto::{CreateGroupDto, DeleteGroupDto, GroupDto, UpdateGroupDto};
 
 #[tauri::command]
 pub async fn get_all_groups(

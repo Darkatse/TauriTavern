@@ -61,10 +61,8 @@ src-tauri/
 │   │   ├── tt-domain/         # 领域模型、领域错误与纯逻辑
 │   │   ├── tt-ports/          # 仓库接口与出站端口
 │   │   ├── tt-contracts/      # 跨 crate DTO / 事件契约
-│   │   └── tt-application/    # 应用服务与用例编排
-│   ├── application/           # 应用层
-│   │   ├── services/          # 业务服务
-│   │   └── dto/               # 数据传输对象
+│   │   ├── tt-application/    # 应用服务与用例编排
+│   │   └── tt-adapter-*/      # Tauri-free 具体适配器 crate
 │   ├── infrastructure/        # 基础设施层
 │   │   ├── persistence/       # 持久化实现
 │   │   ├── repositories/      # 仓库实现
@@ -161,15 +159,15 @@ pub enum DomainError {
 
 `ChatCompletionService` 已按 provider 能力拆分为模块目录：
 
-- `application/services/chat_completion_service/config.rs`：provider 配置与密钥解析（含 custom base URL / header 解析）。
-- `application/services/chat_completion_service/payload/*`：按 provider 构建上游请求体。
-- `application/services/chat_completion_service/custom_parameters.rs`：custom body/header 参数解析。
+- `crates/tt-application/src/services/chat_completion_service/config.rs`：provider 配置与密钥解析（含 custom base URL / header 解析）。
+- `crates/tt-application/src/services/chat_completion_service/payload/*`：按 provider 构建上游请求体。
+- `crates/tt-application/src/services/chat_completion_service/custom_parameters.rs`：custom body/header 参数解析。
 
 `AgentModelGateway` 已拆为模块目录：
 
-- `application/services/agent_model_gateway/mod.rs`：gateway trait 与 `ChatCompletionAgentModelGateway` wrapper。
-- `application/services/agent_model_gateway/encode.rs` / `decode.rs`：canonical IR 与 normalized ChatCompletion exchange 转换。
-- `application/services/agent_model_gateway/schema.rs` / `provider_state.rs` / `providers/*`：tool schema sanitizer、run-scoped continuation 与 provider-specific adapter 规则。
+- `crates/tt-application/src/services/agent_model_gateway/mod.rs`：gateway trait 与 `ChatCompletionAgentModelGateway` wrapper。
+- `crates/tt-application/src/services/agent_model_gateway/encode.rs` / `decode.rs`：canonical IR 与 normalized ChatCompletion exchange 转换。
+- `crates/tt-application/src/services/agent_model_gateway/schema.rs` / `provider_state.rs` / `providers/*`：tool schema sanitizer、run-scoped continuation 与 provider-specific adapter 规则。
 
 ```rust
 // 示例: 角色服务
@@ -411,7 +409,7 @@ tauri::Builder::default()
 - 入口安装位置：`src-tauri/src/lib.rs`
   - 主窗口在 `create_main_window()` 中挂载 `on_web_resource_request`
   - 覆盖 `/css/user.css`、`/scripts/extensions/third-party/*`、`/thumbnail`、`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`
-- 应用层实现：`src-tauri/src/application/services/host_resource_service/`
+- 应用层实现：`src-tauri/crates/tt-application/src/services/host_resource_service/`
   - 负责方法门禁、路径解析、状态码、`Content-Type`、`Cache-Control`
   - 仅允许 `GET` / `HEAD` / `OPTIONS`
   - 未命中返回真正 `404`，不回退 `index.html`
@@ -443,7 +441,7 @@ tauri::Builder::default()
   - 保留 typed API（`get_chat` / `save` / `search_chats` 等）用于领域操作。
   - payload API：path/from-file（大文件，data plane）+ windowed（tail/before/windowed-save，小窗口，control plane）。
   - windowed 数据结构：`ChatPayloadCursor` / `ChatPayloadTail` / `ChatPayloadChunk`。
-- `application/services/chat_service.rs`
+- `crates/tt-application/src/services/chat_service.rs`
   - path/from-file（导入/全量保存）+ windowed（tail/before/windowed-save）。
 - `presentation/commands/chat_commands.rs`
   - 大 payload：仅读取 payload path、保存 from-file（避免整文件通过 IPC）。
@@ -807,8 +805,8 @@ service
 1. 在`crates/tt-domain/src/models`中定义模型结构
 2. 在`crates/tt-ports/src/repositories`中定义仓库接口
 3. 在`infrastructure/repositories`中实现仓库接口
-4. 在`application/services`中创建服务
-5. 在`application/dto`中定义数据传输对象
+4. 在`crates/tt-application/src/services`中创建服务
+5. 在`crates/tt-application/src/dto`中定义数据传输对象
 6. 在`presentation/commands`中添加命令
 7. 在`app/composition/`中注册仓库和服务构建逻辑，并在`app.rs`的`AppState`中挂载
 
@@ -816,7 +814,7 @@ service
 
 添加新API时，应遵循以下步骤：
 
-1. 在`application/dto`中定义请求和响应DTO
+1. 在`crates/tt-application/src/dto`中定义请求和响应DTO
 2. 在`presentation/commands`中添加命令函数
 3. 在`presentation/commands/registry.rs`中注册命令
 4. 更新前端`tauri-bridge.js`和相关API文件
@@ -826,7 +824,7 @@ service
 集成外部服务时，应遵循以下步骤：
 
 1. 在`infrastructure/apis`中创建服务客户端
-2. 在`application/services`中创建服务适配器
+2. 在`crates/tt-application/src/services`中创建用例服务或端口消费逻辑
 3. 在`app/composition/`中初始化服务装配
 4. 在`presentation/commands`中暴露API
 

@@ -13,7 +13,7 @@ use tt_contracts::host_resource::{
     HostResourceResponse,
 };
 
-use crate::application::services::host_resource_service::HostResourceService;
+use tt_application::services::host_resource_service::HostResourceService;
 
 pub(crate) fn handle_tauri_web_resource_request(
     host_resources: &HostResourceService,

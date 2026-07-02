@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::application::services::bundled_template_service::BundledTemplateService;
 use crate::presentation::errors::CommandError;
+use tt_application::services::bundled_template_service::BundledTemplateService;
 
 /// Read a frontend template file from bundled resources.
 #[tauri::command]

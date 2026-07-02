@@ -3,11 +3,11 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::application::services::content_service::ExternalImportDownloadResult;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
+use tt_application::services::content_service::ExternalImportDownloadResult;
 
 #[tauri::command]
 pub async fn initialize_default_content(
