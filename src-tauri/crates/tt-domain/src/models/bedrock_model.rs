@@ -1,6 +1,7 @@
 use serde::Serialize;
 
-const INFERENCE_PROFILE_PREFIXES: &[&str] = &["us.", "eu.", "apac.", "global.", "us-gov."];
+const INFERENCE_PROFILE_PREFIXES: &[&str] =
+    &["us.", "eu.", "jp.", "au.", "apac.", "global.", "us-gov."];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BedrockModelFamily {
@@ -220,14 +221,14 @@ fn is_deepseek_text_completion_id(lower_id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{BedrockModelFamily, BedrockModelSpec, extract_provider};
+    use super::{extract_provider, BedrockModelFamily, BedrockModelSpec};
 
     #[test]
     fn strips_inference_profile_prefix_before_classification() {
-        let spec = BedrockModelSpec::classify("us.anthropic.claude-opus-4-7");
+        let spec = BedrockModelSpec::classify("jp.anthropic.claude-opus-4-8");
 
         assert_eq!(spec.provider(), "anthropic");
-        assert_eq!(spec.normalized_id(), "anthropic.claude-opus-4-7");
+        assert_eq!(spec.normalized_id(), "anthropic.claude-opus-4-8");
         assert_eq!(spec.family(), BedrockModelFamily::AnthropicClaude);
     }
 
@@ -308,6 +309,10 @@ mod tests {
         assert_eq!(extract_provider("anthropic.claude-3-haiku"), "anthropic");
         assert_eq!(
             extract_provider("us.anthropic.claude-opus-4-7"),
+            "anthropic"
+        );
+        assert_eq!(
+            extract_provider("au.anthropic.claude-opus-4-8"),
             "anthropic"
         );
         assert_eq!(extract_provider("amazon.nova-pro-v1:0"), "amazon");

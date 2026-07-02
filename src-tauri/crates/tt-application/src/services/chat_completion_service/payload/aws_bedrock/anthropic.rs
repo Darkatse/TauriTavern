@@ -7,7 +7,7 @@
 //!   (Bedrock infers streaming from `/invoke-with-response-stream`).
 //! - The body must include `anthropic_version: "bedrock-2023-05-31"`.
 //! - Bedrock model ids carry an inference-profile prefix (`us.` / `eu.` /
-//!   `apac.` / `global.` / `us-gov.`), a provider segment (`anthropic.`)
+//!   `jp.` / `au.` / `apac.` / `global.` / `us-gov.`), a provider segment (`anthropic.`)
 //!   and an optional version suffix (`-v1`, `:0`). The Anthropic-direct
 //!   [`crate::services::chat_completion_service::payload::claude::contract::ClaudeModelContract`]
 //!   resolver expects the bare form (`claude-opus-4-7`,
@@ -94,7 +94,7 @@ pub(super) fn normalize_bedrock_model_id(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     use super::super::build;
     use super::normalize_bedrock_model_id;
@@ -173,10 +173,18 @@ mod tests {
             normalize_bedrock_model_id("anthropic.claude-fable-5"),
             "claude-fable-5"
         );
+        assert_eq!(
+            normalize_bedrock_model_id("anthropic.claude-sonnet-5"),
+            "claude-sonnet-5"
+        );
         // Cross-region inference profile ids.
         assert_eq!(
             normalize_bedrock_model_id("us.anthropic.claude-opus-4-7"),
             "claude-opus-4-7"
+        );
+        assert_eq!(
+            normalize_bedrock_model_id("jp.anthropic.claude-opus-4-8"),
+            "claude-opus-4-8"
         );
         assert_eq!(
             normalize_bedrock_model_id("global.anthropic.claude-fable-5"),
@@ -237,6 +245,35 @@ mod tests {
         assert!(body.get("temperature").is_none());
         assert!(body.get("top_p").is_none());
         assert!(body.get("top_k").is_none());
+    }
+
+    #[test]
+    fn bedrock_unlocks_sonnet_5_adaptive_thinking_via_normalization() {
+        let payload = json!({
+            "chat_completion_source": "aws_bedrock",
+            "model": "us.anthropic.claude-sonnet-5",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "max_tokens": 4096,
+            "reasoning_effort": "xhigh",
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be object");
+
+        let (endpoint_path, body) = build(payload).expect("payload should build");
+        assert_eq!(
+            endpoint_path, "/model/us.anthropic.claude-sonnet-5/invoke",
+            "URL path must retain the raw Bedrock id"
+        );
+        assert_eq!(
+            body.pointer("/thinking/type").and_then(Value::as_str),
+            Some("adaptive")
+        );
+        assert_eq!(
+            body.pointer("/output_config/effort")
+                .and_then(Value::as_str),
+            Some("xhigh")
+        );
     }
 
     #[test]

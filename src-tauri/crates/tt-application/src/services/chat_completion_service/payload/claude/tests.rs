@@ -97,6 +97,7 @@ fn claude_rejects_assistant_prefill_for_models_that_removed_it() {
     for model in [
         "claude-fable-5",
         "claude-mythos-5",
+        "claude-sonnet-5",
         "claude-opus-4-7",
         "claude-opus-4-6",
         "claude-sonnet-4-6",
@@ -515,7 +516,12 @@ fn claude_full_sampling_models_keep_temperature_top_p_and_top_k() {
 
 #[test]
 fn claude_sampling_free_models_drop_non_default_sampling_params() {
-    for model in ["claude-fable-5", "claude-mythos-5", "claude-opus-4-7"] {
+    for model in [
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-sonnet-5",
+        "claude-opus-4-7",
+    ] {
         let mut payload = claude_payload(model);
         payload.insert("temperature".to_string(), json!(0.7));
         payload.insert("top_p".to_string(), json!(0.9));
@@ -532,7 +538,12 @@ fn claude_sampling_free_models_drop_non_default_sampling_params() {
 
 #[test]
 fn claude_sampling_free_models_ignore_default_sampling_params() {
-    for model in ["claude-fable-5", "claude-mythos-5", "claude-opus-4-7"] {
+    for model in [
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-sonnet-5",
+        "claude-opus-4-7",
+    ] {
         let mut payload = claude_payload(model);
         payload.insert("temperature".to_string(), json!(1.0));
         payload.insert("top_p".to_string(), json!(1.0));
@@ -589,6 +600,7 @@ fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
     for model in [
         "claude-fable-5",
         "claude-mythos-5",
+        "claude-sonnet-5",
         "claude-opus-4-7",
         "claude-opus-4-8",
     ] {
@@ -641,6 +653,7 @@ fn claude_adaptive_reasoning_supports_xhigh_on_new_adaptive_models() {
     for model in [
         "claude-fable-5",
         "claude-mythos-5",
+        "claude-sonnet-5",
         "claude-opus-4-7",
         "claude-opus-4-8",
     ] {
@@ -706,6 +719,22 @@ fn claude_validation_rejects_passthrough_xhigh_on_non_xhigh_models() {
             .to_string()
             .contains("does not support `output_config.effort=xhigh`")
     );
+}
+
+#[test]
+fn claude_sonnet_5_validation_rejects_legacy_thinking_overrides() {
+    let request = json!({
+        "model": "claude-sonnet-5",
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+        "thinking": {
+            "type": "enabled",
+            "budget_tokens": 2048
+        },
+        "max_tokens": 4096
+    });
+
+    let error = super::validate_request(&request).expect_err("legacy thinking should fail");
+    assert!(error.to_string().contains("requires adaptive thinking"));
 }
 
 #[test]

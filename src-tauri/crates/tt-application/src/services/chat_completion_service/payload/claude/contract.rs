@@ -27,12 +27,14 @@ const CLAUDE_MANUAL_OR_ADAPTIVE_THINKING_MODEL_PREFIXES: &[&str] =
 const CLAUDE_ADAPTIVE_ONLY_THINKING_MODEL_PREFIXES: &[&str] = &[
     "claude-fable-5",
     "claude-mythos-5",
+    "claude-sonnet-5",
     "claude-opus-4-8",
     "claude-opus-4-7",
 ];
 const CLAUDE_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &[
     "claude-fable-5",
     "claude-mythos-5",
+    "claude-sonnet-5",
     "claude-opus-4-8",
     "claude-opus-4-7",
     "claude-opus-4-6",
@@ -42,6 +44,7 @@ const CLAUDE_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &[
 const CLAUDE_XHIGH_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &[
     "claude-fable-5",
     "claude-mythos-5",
+    "claude-sonnet-5",
     "claude-opus-4-8",
     "claude-opus-4-7",
 ];
