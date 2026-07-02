@@ -9,11 +9,11 @@ use tauri::State;
 use tokio::fs;
 
 use crate::app::AppState;
-use crate::domain::models::avatar::{AvatarUploadResult, CropInfo};
 use crate::presentation::commands::helpers::{
     log_command, log_user_visible_error, map_command_error,
 };
 use crate::presentation::errors::CommandError;
+use tt_domain::models::avatar::{AvatarUploadResult, CropInfo};
 
 const MAX_MOBILE_INLINE_AVATAR_BYTES: u64 = 8 * 1024 * 1024;
 

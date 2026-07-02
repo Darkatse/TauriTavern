@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use crate::domain::errors::DomainError;
-use crate::domain::ios_policy::{
-    IosPolicyActivationReport, IosPolicyScope, resolve_ios_policy_activation_report,
-};
-use crate::domain::models::settings::TauriTavernSettings;
 use crate::infrastructure::ios_policy_cache::resolve_effective_raw_policy_sync;
 use tt_adapter_storage_core::FileSettingsRepository;
+use tt_domain::errors::DomainError;
+use tt_domain::ios_policy::{
+    IosPolicyActivationReport, IosPolicyScope, resolve_ios_policy_activation_report,
+};
+use tt_domain::models::settings::TauriTavernSettings;
 
 #[derive(Debug, Clone)]
 pub(crate) struct StartupProfile {

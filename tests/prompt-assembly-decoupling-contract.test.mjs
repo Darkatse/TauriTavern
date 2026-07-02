@@ -11,7 +11,7 @@ function readProjectFile(relativePath) {
 }
 
 test('connectionRef prompt assembly overlays model binding instead of validating preset source', async () => {
-    const source = await readProjectFile('src-tauri/src/application/services/prompt_assembly_service.rs');
+    const source = await readProjectFile('src-tauri/crates/tt-application/src/services/prompt_assembly_service.rs');
 
     assert.match(source, /apply_model_binding_to_prompt_settings/);
     assert.match(source, /"deepseek"\s*=>\s*Ok\("deepseek_model"\)/);
@@ -20,7 +20,7 @@ test('connectionRef prompt assembly overlays model binding instead of validating
 });
 
 test('currentPromptSnapshot prompt assembly overlays frozen current model connection', async () => {
-    const source = await readProjectFile('src-tauri/src/application/services/prompt_assembly_service.rs');
+    const source = await readProjectFile('src-tauri/crates/tt-application/src/services/prompt_assembly_service.rs');
     const frontendSource = await readProjectFile('src/scripts/tauritavern/agent/frozen-run-input-snapshot.js');
     const agentApiSource = await readProjectFile('src/tauri/main/api/agent-prompt-assembly-run.js');
 
@@ -35,7 +35,7 @@ test('currentPromptSnapshot prompt assembly overlays frozen current model connec
 });
 
 test('requiresConfiguration prompt assembly fails fast before frontend broker handoff', async () => {
-    const source = await readProjectFile('src-tauri/src/application/services/prompt_assembly_service.rs');
+    const source = await readProjectFile('src-tauri/crates/tt-application/src/services/prompt_assembly_service.rs');
     const guardIndex = source.indexOf('ensure_profile_model_configured(&profile)?;');
     const brokerIndex = source.indexOf('AgentPromptAssemblyModeDto::FrontendPromptAssembly');
 

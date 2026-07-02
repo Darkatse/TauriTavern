@@ -8,10 +8,10 @@ use tauri::State;
 use crate::app::AppState;
 use crate::application::dto::background_dto::{DeleteBackgroundDto, RenameBackgroundDto};
 use crate::application::services::host_resource_service::HostResourceService;
-use crate::domain::models::background::BackgroundListEntry;
-use crate::domain::models::image_metadata::ImageMetadataIndex;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_domain::models::background::BackgroundListEntry;
+use tt_domain::models::image_metadata::ImageMetadataIndex;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ThumbnailAssetPayload {

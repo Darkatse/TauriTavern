@@ -13,9 +13,9 @@ use crate::application::dto::character_dto::{
     ResolveCharacterLorebookConflictResultDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
     UpdateCharacterDto,
 };
-use crate::domain::models::skill::{SkillScope, SkillScopeRetargetRequest};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_domain::models::skill::{SkillScope, SkillScopeRetargetRequest};
 
 const SKILL_SOURCE_KIND_CHARACTER: &str = "character";
 

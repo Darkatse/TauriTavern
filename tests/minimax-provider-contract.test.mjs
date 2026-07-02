@@ -6,8 +6,8 @@ const openaiSource = await readFile(new URL('../src/scripts/openai.js', import.m
 const secretsSource = await readFile(new URL('../src/scripts/secrets.js', import.meta.url), 'utf8');
 const aiRoutesSource = await readFile(new URL('../src/tauri/main/routes/ai-routes.js', import.meta.url), 'utf8');
 const rustSource = await readFile(new URL('../src-tauri/crates/tt-domain/src/models/chat_completion_source.rs', import.meta.url), 'utf8');
-const rustConfigSource = await readFile(new URL('../src-tauri/src/application/services/chat_completion_service/config.rs', import.meta.url), 'utf8');
-const rustPayloadSource = await readFile(new URL('../src-tauri/src/application/services/chat_completion_service/payload/minimax.rs', import.meta.url), 'utf8');
+const rustConfigSource = await readFile(new URL('../src-tauri/crates/tt-application/src/services/chat_completion_service/config.rs', import.meta.url), 'utf8');
+const rustPayloadSource = await readFile(new URL('../src-tauri/crates/tt-application/src/services/chat_completion_service/payload/minimax.rs', import.meta.url), 'utf8');
 const rustRepositorySource = await readRustSources(new URL('../src-tauri/crates/tt-adapter-provider-http/src/http_chat_completion_repository/', import.meta.url));
 const rossAscendsSource = await readFile(new URL('../src/scripts/RossAscends-mods.js', import.meta.url), 'utf8');
 

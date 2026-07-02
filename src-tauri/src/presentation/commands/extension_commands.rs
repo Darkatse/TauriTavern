@@ -3,14 +3,14 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::domain::ios_policy::IosPolicyScope;
-use crate::domain::models::extension::{
-    Extension, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
-};
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
+use tt_domain::ios_policy::IosPolicyScope;
+use tt_domain::models::extension::{
+    Extension, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
+};
 
 #[tauri::command]
 pub async fn get_extensions(
@@ -39,11 +39,11 @@ pub async fn get_extensions(
 
         let before = extensions.len();
         extensions.retain(|extension| match extension.extension_type {
-            crate::domain::models::extension::ExtensionType::System => {
+            tt_domain::models::extension::ExtensionType::System => {
                 system_allowlist.allows(&extension.name)
             }
-            crate::domain::models::extension::ExtensionType::Local
-            | crate::domain::models::extension::ExtensionType::Global => allow_third_party,
+            tt_domain::models::extension::ExtensionType::Local
+            | tt_domain::models::extension::ExtensionType::Global => allow_third_party,
         });
 
         let filtered = before.saturating_sub(extensions.len());

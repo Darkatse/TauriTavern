@@ -3,11 +3,11 @@ use std::fmt::Display;
 use crate::presentation::errors::CommandError;
 
 pub fn ensure_ios_policy_allows(
-    ios_policy: &crate::domain::ios_policy::IosPolicyActivationReport,
+    ios_policy: &tt_domain::ios_policy::IosPolicyActivationReport,
     allowed: bool,
     capability: &'static str,
 ) -> Result<(), CommandError> {
-    if ios_policy.scope == crate::domain::ios_policy::IosPolicyScope::Ios && !allowed {
+    if ios_policy.scope == tt_domain::ios_policy::IosPolicyScope::Ios && !allowed {
         return Err(CommandError::Unauthorized(format!(
             "iOS policy disabled capability: {capability}"
         )));
@@ -67,7 +67,7 @@ pub fn log_user_visible_error(message: impl AsRef<str>) {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::errors::GENERATION_CANCELLED_BY_USER_MESSAGE;
+    use tt_domain::errors::GENERATION_CANCELLED_BY_USER_MESSAGE;
 
     use super::*;
 

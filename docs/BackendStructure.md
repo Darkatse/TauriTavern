@@ -57,10 +57,11 @@ src-tauri/
 │   │   ├── composition/       # 仓库/服务/适配器装配子模块
 │   │   ├── host/              # Tauri host shell（插件、setup、窗口、资源、shutdown）
 │   │   ├── startup_profile.rs # 启动期 settings / iOS policy 快照
-│   ├── domain/                # 领域层
-│   │   ├── models/            # 领域模型
-│   │   ├── repositories/      # 仓库接口
-│   │   └── errors.rs          # 领域错误
+│   ├── crates/
+│   │   ├── tt-domain/         # 领域模型、领域错误与纯逻辑
+│   │   ├── tt-ports/          # 仓库接口与出站端口
+│   │   ├── tt-contracts/      # 跨 crate DTO / 事件契约
+│   │   └── tt-application/    # 应用服务与用例编排
 │   ├── application/           # 应用层
 │   │   ├── services/          # 业务服务
 │   │   └── dto/               # 数据传输对象
@@ -438,7 +439,7 @@ tauri::Builder::default()
 
 #### 3.5.2 分层职责
 
-- `domain/repositories/chat_repository.rs`
+- `crates/tt-ports/src/repositories/chat_repository.rs`
   - 保留 typed API（`get_chat` / `save` / `search_chats` 等）用于领域操作。
   - payload API：path/from-file（大文件，data plane）+ windowed（tail/before/windowed-save，小窗口，control plane）。
   - windowed 数据结构：`ChatPayloadCursor` / `ChatPayloadTail` / `ChatPayloadChunk`。
@@ -803,8 +804,8 @@ service
 
 添加新模型时，应遵循以下步骤：
 
-1. 在`domain/models`中定义模型结构
-2. 在`domain/repositories`中定义仓库接口
+1. 在`crates/tt-domain/src/models`中定义模型结构
+2. 在`crates/tt-ports/src/repositories`中定义仓库接口
 3. 在`infrastructure/repositories`中实现仓库接口
 4. 在`application/services`中创建服务
 5. 在`application/dto`中定义数据传输对象

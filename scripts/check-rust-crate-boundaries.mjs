@@ -355,6 +355,10 @@ const CRATES = [
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [
+    sourceRule('main crate domain shim', path.join(REPO_ROOT, 'src-tauri', 'src'), [
+        ['domain module declaration', /^\s*(pub\s+)?mod\s+domain\s*;/],
+        ['domain shim path', /\bcrate::domain::/],
+    ]),
     sourceRule('infrastructure', path.join(REPO_ROOT, 'src-tauri', 'src', 'infrastructure'), [
         ['application facade', /\bcrate::application::/],
         ['tt-application crate', /\btt_application::/],

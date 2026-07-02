@@ -7,7 +7,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
 use objc2_foundation::NSArray;
 
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 
 use objc2_ui_kit::{UIViewController, UIWindow};
 

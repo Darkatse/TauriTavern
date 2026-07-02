@@ -91,7 +91,7 @@ AgentTaskRecord {
 Invocation 与 task 文件由 `AgentInvocationRepository` 管理，当前文件实现位于：
 
 ```text
-src-tauri/src/domain/repositories/agent_invocation_repository.rs
+src-tauri/crates/tt-ports/src/repositories/agent_invocation_repository.rs
 src-tauri/src/infrastructure/repositories/file_agent_repository/invocation_store.rs
 ```
 
@@ -277,7 +277,7 @@ src-tauri/src/infrastructure/repositories/file_agent_profile_repository/mod.rs
 Persistence：
 
 ```text
-src-tauri/src/domain/repositories/agent_invocation_repository.rs
+src-tauri/crates/tt-ports/src/repositories/agent_invocation_repository.rs
 src-tauri/src/infrastructure/repositories/file_agent_repository/invocation_store.rs
 ```
 

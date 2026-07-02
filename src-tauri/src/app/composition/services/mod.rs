@@ -37,10 +37,10 @@ use crate::application::services::update_service::UpdateService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
-use crate::domain::errors::DomainError;
 use crate::infrastructure::apis::http_external_import_downloader::HttpExternalImportDownloader;
 use tt_adapter_http::HttpClientPool;
 use tt_adapter_storage_core::file_system::DataDirectory;
+use tt_domain::errors::DomainError;
 
 use super::{adapters, repositories};
 

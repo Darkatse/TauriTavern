@@ -8,12 +8,12 @@ use crate::application::services::lan_sync_service::{
 use crate::application::services::sync_automation_service::SyncAutomationService;
 use crate::application::services::sync_job_coordinator::SyncJobCoordinator;
 use crate::application::services::tt_sync_service::TtSyncService;
-use crate::domain::ios_policy::IosPolicyActivationReport;
 use tt_adapter_storage_core::file_system::DataDirectory;
 use tt_adapter_sync::{
     AxumLanServerControl, HttpLanPairingClient, HttpTtPairingClient, InfrastructureSyncJobExecutor,
     LanPeerStore, LanSyncStore, LocalLanAddressDiscovery, SyncAutomationStore, TtSyncRuntime,
 };
+use tt_domain::ios_policy::IosPolicyActivationReport;
 use tt_ports::lan_sync::{LanPeerRepository, LanServerControl, LanSyncSettingsRepository};
 use tt_ports::sync::DataChangeReconciler;
 

@@ -5,11 +5,11 @@ use serde_json::Value;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::domain::json_merge::merge_json_value;
 use crate::infrastructure::persistence::png_utils::{
     process_avatar_image, read_character_data_from_png, write_character_data_to_png,
 };
 use tt_domain::errors::DomainError;
+use tt_domain::json_merge::merge_json_value;
 use tt_domain::models::character::Character;
 use tt_domain::models::chat::parse_message_timestamp_value;
 use tt_ports::repositories::character_repository::{

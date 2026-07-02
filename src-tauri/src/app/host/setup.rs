@@ -7,11 +7,11 @@
 use std::sync::Arc;
 
 use crate::app::{BackendReadiness, StartupProfile, spawn_initialization};
-use crate::domain::errors::DomainError;
-use crate::domain::ios_policy::IosPolicyScope;
 use crate::infrastructure::logging::llm_api_logs::LlmApiLogStore;
 use tauri::Manager;
 use tt_adapter_http::HttpClientPool;
+use tt_domain::errors::DomainError;
+use tt_domain::ios_policy::IosPolicyScope;
 
 pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let app_handle = app.handle().clone();

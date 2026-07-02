@@ -3,11 +3,11 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::domain::models::update::UpdateCheckResult;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
+use tt_domain::models::update::UpdateCheckResult;
 
 #[tauri::command]
 pub async fn check_for_update(

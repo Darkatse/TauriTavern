@@ -37,7 +37,7 @@ windowed payload 的底层存储是 JSONL 文件：
 
 Rust 侧定义：`ChatPayloadCursor { offset, size, modified_millis }`（序列化为 camelCase）。见：
 
-- `src-tauri/src/domain/repositories/chat_repository.rs`
+- `src-tauri/crates/tt-ports/src/repositories/chat_repository.rs`
 
 含义：
 

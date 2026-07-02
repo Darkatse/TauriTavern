@@ -9,9 +9,9 @@ use crate::application::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
 };
 use crate::application::services::chat_completion_service::ChatCompletionService;
-use crate::domain::models::upstream_failure::UpstreamFailure;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_domain::models::upstream_failure::UpstreamFailure;
 
 #[tauri::command]
 pub async fn get_chat_completions_status(

@@ -7,11 +7,11 @@ use crate::application::dto::preset_dto::{
     DeleteOpenAIPresetDto, DeleteOpenAIPresetResponseDto, DeletePresetDto, RestorePresetDto,
     RestorePresetResponseDto, SaveOpenAIPresetDto, SavePresetDto, SavePresetResponseDto,
 };
-use crate::domain::models::preset::PresetType;
 use crate::presentation::commands::helpers::{
     log_command, log_user_visible_error, map_command_error,
 };
 use crate::presentation::errors::CommandError;
+use tt_domain::models::preset::PresetType;
 
 const SKILL_SOURCE_KIND_PRESET: &str = "preset";
 

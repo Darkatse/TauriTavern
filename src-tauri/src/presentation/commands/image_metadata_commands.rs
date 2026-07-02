@@ -7,9 +7,9 @@ use crate::application::dto::image_metadata_dto::{
     CreateImageMetadataFolderDto, DeleteImageMetadataFolderDto, ImageMetadataFolderAssignmentDto,
     SetImageMetadataFolderThumbnailsDto, UpdateImageMetadataFolderDto,
 };
-use crate::domain::models::image_metadata::{BackgroundFoldersPayload, ImageMetadataFolder};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_domain::models::image_metadata::{BackgroundFoldersPayload, ImageMetadataFolder};
 
 #[tauri::command]
 pub async fn get_background_folders(

@@ -1,8 +1,8 @@
 use crate::application::errors::ApplicationError;
-use crate::domain::errors::DomainError;
-use crate::domain::models::upstream_failure::UpstreamFailure;
 use serde::Serialize;
 use thiserror::Error;
+use tt_domain::errors::DomainError;
+use tt_domain::models::upstream_failure::UpstreamFailure;
 
 #[derive(Error, Debug, Serialize)]
 pub enum CommandError {
@@ -82,7 +82,7 @@ impl CommandError {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::errors::GENERATION_CANCELLED_BY_USER_MESSAGE;
+    use tt_domain::errors::GENERATION_CANCELLED_BY_USER_MESSAGE;
 
     use super::*;
 

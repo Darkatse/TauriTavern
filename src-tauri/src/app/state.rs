@@ -42,9 +42,9 @@ use crate::application::services::update_service::UpdateService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
-use crate::domain::errors::DomainError;
-use crate::domain::ios_policy::IosPolicyActivationReport;
 use crate::infrastructure::paths::RuntimePaths;
+use tt_domain::errors::DomainError;
+use tt_domain::ios_policy::IosPolicyActivationReport;
 
 use super::{StartupProfile, composition};
 

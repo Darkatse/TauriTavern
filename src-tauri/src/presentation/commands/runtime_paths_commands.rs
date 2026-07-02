@@ -64,7 +64,7 @@ fn runtime_paths_dto(info: RuntimePathsInfo) -> RuntimePathsDto {
     }
 }
 
-fn map_set_data_root_error(error: crate::domain::errors::DomainError) -> CommandError {
+fn map_set_data_root_error(error: tt_domain::errors::DomainError) -> CommandError {
     let command_error = CommandError::from(error);
     if matches!(&command_error, CommandError::InternalServerError(_)) {
         map_command_error("Failed to set data root")(command_error)

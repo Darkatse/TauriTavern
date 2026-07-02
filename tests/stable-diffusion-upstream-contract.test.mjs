@@ -49,7 +49,7 @@ test('Stable Diffusion backend request uses explicit credentials instead of prov
         'utf8',
     );
     const serviceSource = await readFile(
-        path.join(REPO_ROOT, 'src-tauri', 'src', 'application', 'services', 'stable_diffusion_service.rs'),
+        path.join(REPO_ROOT, 'src-tauri', 'crates', 'tt-application', 'src', 'services', 'stable_diffusion_service.rs'),
         'utf8',
     );
 

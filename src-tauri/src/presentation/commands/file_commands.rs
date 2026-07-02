@@ -10,9 +10,9 @@ use tokio::fs;
 use url::Url;
 
 use crate::app::AppState;
-use crate::domain::models::filename::sanitize_filename as sanitize_filename_contract;
 use crate::presentation::commands::helpers::log_command;
 use crate::presentation::errors::CommandError;
+use tt_domain::models::filename::sanitize_filename as sanitize_filename_contract;
 
 const UNSAFE_EXTENSIONS: &[&str] = &[
     ".php",

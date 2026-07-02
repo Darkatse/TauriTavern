@@ -38,13 +38,6 @@ use crate::application::services::agent_workspace_lifecycle_service::{
 use crate::application::services::character_service::CharacterService;
 use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::skill_service::SkillService;
-use crate::domain::errors::DomainError;
-use crate::domain::models::agent::profile::{AgentDelegationPolicy, AgentProfileId};
-use crate::domain::models::agent::{
-    AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentRun, AgentRunEventLevel,
-    AgentRunPresentation, AgentRunStatus, WorkspacePath,
-};
-use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
@@ -56,6 +49,13 @@ use crate::infrastructure::repositories::file_world_info_repository::FileWorldIn
 use tt_adapter_storage_core::FileChatRepository;
 use tt_adapter_storage_core::FileLlmConnectionRepository;
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use tt_domain::errors::DomainError;
+use tt_domain::models::agent::profile::{AgentDelegationPolicy, AgentProfileId};
+use tt_domain::models::agent::{
+    AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentRun, AgentRunEventLevel,
+    AgentRunPresentation, AgentRunStatus, WorkspacePath,
+};
+use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
@@ -250,7 +250,7 @@ fn default_agent_responses() -> Vec<Value> {
 
 async fn resolve_contract_profile(
     fixture: &AgentRuntimeFixture,
-) -> crate::domain::models::agent::profile::ResolvedAgentProfile {
+) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
     let registry = BuiltinAgentToolRegistry::phase2c();
     fixture
         .profile_service
@@ -265,7 +265,7 @@ async fn resolve_contract_profile(
 fn contract_run(
     id: &str,
     presentation: AgentRunPresentation,
-    profile: &crate::domain::models::agent::profile::ResolvedAgentProfile,
+    profile: &tt_domain::models::agent::profile::ResolvedAgentProfile,
 ) -> AgentRun {
     AgentRun {
         id: id.to_string(),
@@ -417,7 +417,7 @@ async fn execute_agent_loop_with_host_resolver<R>(
     run_id: String,
     prompt_snapshot: Value,
     request: ChatCompletionGenerateRequestDto,
-    profile: crate::domain::models::agent::profile::ResolvedAgentProfile,
+    profile: tt_domain::models::agent::profile::ResolvedAgentProfile,
     cancel_receiver: &mut watch::Receiver<bool>,
     resolver: R,
 ) -> Result<(), ApplicationError>
@@ -502,7 +502,7 @@ async fn wait_for_event_field(
 async fn read_agent_events(
     repository: &FileAgentRepository,
     run_id: &str,
-) -> Vec<crate::domain::models::agent::AgentRunEvent> {
+) -> Vec<tt_domain::models::agent::AgentRunEvent> {
     repository
         .read_events(
             run_id,

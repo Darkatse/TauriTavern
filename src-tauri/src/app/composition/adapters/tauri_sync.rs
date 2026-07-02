@@ -9,12 +9,12 @@ use ttsync_contract::sync::SyncMode;
 
 use crate::application::services::lan_sync_service::LanSyncService;
 use crate::application::services::tt_sync_service::TtSyncService;
-use crate::domain::errors::DomainError;
-use crate::domain::models::lan_sync::LanSyncPairRequestEvent;
 use tt_contracts::sync::SyncJobEvent;
 use tt_contracts::sync_automation::{
     SyncAutomationStatus, SyncAutomationTarget, SyncAutomationToastEvent,
 };
+use tt_domain::errors::DomainError;
+use tt_domain::models::lan_sync::LanSyncPairRequestEvent;
 use tt_ports::lan_sync::{LanPairingApprovalRequest, LanServerErrorReporter, PairingApproval};
 use tt_ports::sync::SyncJobEventPublisher;
 use tt_ports::sync_automation::{

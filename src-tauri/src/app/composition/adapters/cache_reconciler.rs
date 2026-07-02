@@ -7,7 +7,7 @@ use crate::application::services::chat_service::ChatService;
 use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::secret_service::SecretService;
-use crate::domain::errors::DomainError;
+use tt_domain::errors::DomainError;
 use tt_ports::sync::DataChangeReconciler;
 
 pub(in crate::app::composition) fn data_change_reconciler(

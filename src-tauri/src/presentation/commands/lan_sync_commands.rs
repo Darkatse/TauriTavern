@@ -6,12 +6,12 @@ use tauri::State;
 use ttsync_contract::sync::SyncMode;
 
 use crate::app::AppState;
-use crate::domain::models::lan_sync::{LanSyncPairedDeviceSummary, LanSyncStatus};
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
 use tt_contracts::sync::{SyncJobReport, SyncOperationOptions};
+use tt_domain::models::lan_sync::{LanSyncPairedDeviceSummary, LanSyncStatus};
 
 fn ensure_lan_sync_allowed(app_state: &AppState) -> Result<(), CommandError> {
     ensure_ios_policy_allows(
@@ -280,9 +280,9 @@ pub async fn lan_sync_clear_sync_mode_override(
     Ok(())
 }
 
-fn generate_qr_svg(text: &str) -> Result<String, crate::domain::errors::DomainError> {
+fn generate_qr_svg(text: &str) -> Result<String, tt_domain::errors::DomainError> {
     let code = QrCode::new(text.as_bytes())
-        .map_err(|error| crate::domain::errors::DomainError::InternalError(error.to_string()))?;
+        .map_err(|error| tt_domain::errors::DomainError::InternalError(error.to_string()))?;
     Ok(code
         .render::<qrcode::render::svg::Color>()
         .min_dimensions(200, 200)

@@ -4,11 +4,11 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::services::asset_service::AssetDownloadResult;
-use crate::domain::models::asset::AssetCatalog;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
+use tt_domain::models::asset::AssetCatalog;
 
 #[tauri::command]
 pub async fn get_assets_library(

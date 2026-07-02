@@ -16,7 +16,7 @@ test('native regex batching shares the same runnable-script gate as sync regex e
 });
 
 test('native regex DTO remains an execution payload, not SillyTavern extension state', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src-tauri', 'src', 'application', 'dto', 'native_regex_dto.rs'), 'utf8');
+    const source = await readFile(path.join(REPO_ROOT, 'src-tauri', 'crates', 'tt-application', 'src', 'dto', 'native_regex_dto.rs'), 'utf8');
 
     assert.doesNotMatch(source, /\bpub\s+disabled\b/);
 });

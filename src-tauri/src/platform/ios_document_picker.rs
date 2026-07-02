@@ -14,8 +14,8 @@ use objc2_uniform_type_identifiers::UTType;
 use tauri::WebviewWindow;
 use tokio::sync::oneshot;
 
-use crate::domain::errors::DomainError;
 use crate::platform::ios_ui::resolve_presenting_view_controller;
+use tt_domain::errors::DomainError;
 
 const DATA_ARCHIVE_CONTENT_TYPES: &[&str] = &[
     "public.zip-archive",
