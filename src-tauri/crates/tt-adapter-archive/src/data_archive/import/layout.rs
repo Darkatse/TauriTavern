@@ -87,7 +87,10 @@ impl ArchiveLayoutScan {
         Ok(())
     }
 
-    pub fn finish(self, scanned_archive: ScannedArchive) -> Result<DetectedArchiveLayout, DomainError> {
+    pub fn finish(
+        self,
+        scanned_archive: ScannedArchive,
+    ) -> Result<DetectedArchiveLayout, DomainError> {
         let scanned_entries = scanned_archive.scanned_entries;
 
         if scanned_entries == 0 {
@@ -391,9 +394,8 @@ mod tests {
 
     #[test]
     fn detects_user_handle_root_layout_with_macos_resource_forks() {
-        let layout =
-            detect_layout(&["__MACOSX/._junk", "default-user/characters/a.json"])
-                .expect("scan layout");
+        let layout = detect_layout(&["__MACOSX/._junk", "default-user/characters/a.json"])
+            .expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
         assert!(layout.archive_root_prefix.as_os_str().is_empty());
     }
@@ -447,9 +449,8 @@ mod tests {
 
     #[test]
     fn detects_wrapped_data_layout() {
-        let layout =
-            detect_layout(&["BackupRoot/data/default-user/chats/hello.jsonl"])
-                .expect("scan layout");
+        let layout = detect_layout(&["BackupRoot/data/default-user/chats/hello.jsonl"])
+            .expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::DataRoot);
         assert_eq!(
             layout.archive_root_prefix,

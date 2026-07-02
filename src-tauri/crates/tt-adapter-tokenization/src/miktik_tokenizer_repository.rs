@@ -200,9 +200,7 @@ impl MiktikTokenizerRepository {
     ) -> Result<(), DomainError> {
         self.registry
             .register_model_file(canonical, model_path)
-            .map_err(|error| {
-                Self::map_tokenizer_error("register model resource", canonical, error)
-            })
+            .map_err(|error| Self::map_tokenizer_error("register model resource", canonical, error))
     }
 
     async fn warm_model(&self, canonical: &'static str) -> Result<(), DomainError> {
@@ -365,11 +363,7 @@ impl MiktikTokenizerRepository {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_nanos())
             .unwrap_or_default();
-        path.with_file_name(format!(
-            ".{file_name}.{}.{}.tmp",
-            std::process::id(),
-            nonce
-        ))
+        path.with_file_name(format!(".{file_name}.{}.{}.tmp", std::process::id(), nonce))
     }
 
     async fn remove_model_file(&self, path: &Path) -> Result<(), DomainError> {
@@ -849,8 +843,8 @@ mod tests {
             .await
             .expect("corrupt bundled cache should be rebuilt");
 
-        let cached = std::fs::read(cache_dir.join("claude.json"))
-            .expect("rebuilt cache should be readable");
+        let cached =
+            std::fs::read(cache_dir.join("claude.json")).expect("rebuilt cache should be readable");
         assert_eq!(cached, bundled_model_bytes("claude"));
 
         let _ = std::fs::remove_dir_all(cache_dir);

@@ -169,9 +169,10 @@ mod tests {
     #[tokio::test]
     async fn replace_file_with_fallback_rejects_missing_temp() {
         let root = temp_root("missing");
-        let error = replace_file_with_fallback(&root.join("missing.tmp"), &root.join("target.json"))
-            .await
-            .unwrap_err();
+        let error =
+            replace_file_with_fallback(&root.join("missing.tmp"), &root.join("target.json"))
+                .await
+                .unwrap_err();
 
         assert!(matches!(error, DomainError::NotFound(_)));
     }

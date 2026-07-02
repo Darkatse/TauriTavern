@@ -4,9 +4,7 @@ use async_trait::async_trait;
 use tokio::fs;
 use uuid::Uuid;
 
-use crate::file_system::{
-    list_files_with_extension, read_json_file, replace_file_with_fallback,
-};
+use crate::file_system::{list_files_with_extension, read_json_file, replace_file_with_fallback};
 use tt_domain::errors::DomainError;
 use tt_domain::models::llm_connection::{
     LLM_CONNECTION_KIND, LLM_CONNECTION_SCHEMA_VERSION, LlmConnectionDefinition, LlmConnectionId,
@@ -237,9 +235,14 @@ mod tests {
     }
 
     async fn write_connection_file(dir: &TestDir, file_id: &str, value: serde_json::Value) {
-        let path = dir.path().join("connections").join(format!("{file_id}.json"));
+        let path = dir
+            .path()
+            .join("connections")
+            .join(format!("{file_id}.json"));
         let json = serde_json::to_vec_pretty(&value).expect("serialize connection json");
-        tokio::fs::write(path, json).await.expect("write connection");
+        tokio::fs::write(path, json)
+            .await
+            .expect("write connection");
     }
 
     fn assert_invalid_data_contains(error: DomainError, expected: &str) {
@@ -298,7 +301,11 @@ mod tests {
         write_connection_file(
             &dir,
             "expected",
-            connection_json("expected", LLM_CONNECTION_KIND, LLM_CONNECTION_SCHEMA_VERSION + 1),
+            connection_json(
+                "expected",
+                LLM_CONNECTION_KIND,
+                LLM_CONNECTION_SCHEMA_VERSION + 1,
+            ),
         )
         .await;
         let repository = FileLlmConnectionRepository::new(dir.path().to_path_buf());

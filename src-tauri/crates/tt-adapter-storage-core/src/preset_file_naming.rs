@@ -26,11 +26,7 @@ pub struct PresetFilePaths {
 }
 
 impl PresetFilePaths {
-    pub fn new(
-        logical_name: &str,
-        directory: &Path,
-        extension: &str,
-    ) -> Result<Self, DomainError> {
+    pub fn new(logical_name: &str, directory: &Path, extension: &str) -> Result<Self, DomainError> {
         let canonical_stem = canonical_preset_file_stem(logical_name)?;
         #[allow(deprecated)]
         let legacy_stem = legacy_preset_file_stem(logical_name);

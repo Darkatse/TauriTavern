@@ -94,7 +94,7 @@ pub(super) fn normalize_bedrock_model_id(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::super::build;
     use super::normalize_bedrock_model_id;

@@ -4,9 +4,7 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::file_system::{
-    delete_file, list_files_with_extension, read_json_file, write_json_file,
-};
+use crate::file_system::{delete_file, list_files_with_extension, read_json_file, write_json_file};
 use tt_domain::errors::DomainError;
 use tt_domain::models::user::User;
 use tt_ports::repositories::user_repository::UserRepository;

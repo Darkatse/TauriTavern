@@ -809,7 +809,10 @@ mod tests {
         .expect_err("malformed zip should be rejected");
         assert!(matches!(error.error, DomainError::InvalidData(_)));
         assert!(
-            error.error.to_string().contains("Failed to parse zip archive"),
+            error
+                .error
+                .to_string()
+                .contains("Failed to parse zip archive"),
             "PK-prefixed malformed archive should not fall back to tar, got: {}",
             error.error
         );

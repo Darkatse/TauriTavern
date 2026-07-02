@@ -8,9 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::file_system::{
-    list_files_with_extension, read_json_file, write_json_file,
-};
+use crate::file_system::{list_files_with_extension, read_json_file, write_json_file};
 use tt_domain::errors::DomainError;
 use tt_domain::models::group::Group;
 use tt_ports::repositories::group_repository::GroupRepository;

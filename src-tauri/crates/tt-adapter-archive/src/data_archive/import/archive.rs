@@ -208,9 +208,7 @@ fn scan_zip_archive<R: Read + Seek>(
         visit(&sanitized_path)?;
     }
 
-    Ok(ScannedArchive {
-        scanned_entries,
-    })
+    Ok(ScannedArchive { scanned_entries })
 }
 
 fn read_zip_entries<R: Read + Seek>(
@@ -352,7 +350,11 @@ fn stage_tar_reader<R: Read>(
             if entry_type.is_file() {
                 drain_entry_data_with_cancel(&mut entry, &mut copy_buffer, is_cancelled)?;
             }
-            maybe_report_staging_progress(scanned_entries, &mut last_reported_percent, report_progress);
+            maybe_report_staging_progress(
+                scanned_entries,
+                &mut last_reported_percent,
+                report_progress,
+            );
             continue;
         }
 
@@ -362,12 +364,7 @@ fn stage_tar_reader<R: Read>(
             });
         } else {
             let payload_path = payload_root.join(staged_entries.len().to_string());
-            stage_archive_file(
-                &payload_path,
-                &mut entry,
-                &mut copy_buffer,
-                is_cancelled,
-            )?;
+            stage_archive_file(&payload_path, &mut entry, &mut copy_buffer, is_cancelled)?;
             staged_entries.push(StagedEntry::File {
                 path: sanitized_path,
                 payload_path,
@@ -390,8 +387,9 @@ fn stage_archive_file(
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<(), DomainError> {
     if let Some(parent) = payload_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| internal_error("Failed to create raw archive parent directory", error))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            internal_error("Failed to create raw archive parent directory", error)
+        })?;
     }
 
     let mut output_file = File::create(payload_path)
@@ -419,7 +417,12 @@ fn maybe_report_staging_progress(
     last_reported_percent: &mut f32,
     report_progress: &mut dyn FnMut(&str, f32, &str),
 ) {
-    let percent = progress_percent(processed_entries as u64, MAX_ARCHIVE_ENTRIES as u64, 15.0, 89.0);
+    let percent = progress_percent(
+        processed_entries as u64,
+        MAX_ARCHIVE_ENTRIES as u64,
+        15.0,
+        89.0,
+    );
     let should_report =
         processed_entries == 1 || percent - *last_reported_percent >= PROGRESS_REPORT_MIN_DELTA;
     if !should_report {

@@ -178,10 +178,7 @@ fn map_archive_entry_to_data_root_path(
     }
 }
 
-fn move_staged_file_into_place(
-    source_path: &Path,
-    target_path: &Path,
-) -> Result<(), DomainError> {
+fn move_staged_file_into_place(source_path: &Path, target_path: &Path) -> Result<(), DomainError> {
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             internal_error("Failed to create normalized parent directory", error)
@@ -196,9 +193,8 @@ fn move_staged_file_into_place(
             )
         })?;
     } else if target_path.exists() {
-        fs::remove_file(target_path).map_err(|error| {
-            internal_error("Failed to replace staged archive file", error)
-        })?;
+        fs::remove_file(target_path)
+            .map_err(|error| internal_error("Failed to replace staged archive file", error))?;
     }
 
     fs::rename(source_path, target_path)

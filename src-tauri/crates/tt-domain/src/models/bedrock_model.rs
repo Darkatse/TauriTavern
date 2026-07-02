@@ -221,7 +221,7 @@ fn is_deepseek_text_completion_id(lower_id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_provider, BedrockModelFamily, BedrockModelSpec};
+    use super::{BedrockModelFamily, BedrockModelSpec, extract_provider};
 
     #[test]
     fn strips_inference_profile_prefix_before_classification() {
