@@ -129,7 +129,10 @@ pub(super) async fn build(
     let world_info_service = Arc::new(WorldInfoService::new(
         repositories.world_info_repository.clone(),
     ));
-    let update_service = Arc::new(UpdateService::new(repositories.update_repository.clone()));
+    let update_service = Arc::new(UpdateService::new(
+        repositories.update_repository.clone(),
+        crate::product::VERSION,
+    ));
 
     let group_service = Arc::new(GroupService::new(
         repositories.group_repository.clone(),

@@ -59,7 +59,7 @@ pub struct VersionInfo {
 
 #[tauri::command]
 pub fn get_version() -> Result<String, CommandError> {
-    Ok(env!("CARGO_PKG_VERSION").to_string())
+    Ok(crate::product::VERSION.to_string())
 }
 
 #[tauri::command]
@@ -72,7 +72,7 @@ pub fn get_client_version() -> Result<VersionInfo, CommandError> {
         // Most upstream extensions parse pkgVersion as the SillyTavern SemVer.
         // Keep it aligned with the embedded frontend baseline to preserve plugin behavior.
         pkg_version: SILLYTAVERN_COMPAT_VERSION.to_string(),
-        tauri_version: env!("CARGO_PKG_VERSION").to_string(),
+        tauri_version: crate::product::VERSION.to_string(),
         git_revision: normalize_optional_build_value(BUILD_GIT_REVISION),
         git_branch: normalize_optional_build_value(BUILD_GIT_BRANCH),
     };

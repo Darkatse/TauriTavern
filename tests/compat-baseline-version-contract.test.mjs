@@ -21,3 +21,15 @@ test('SillyTavern compatibility baseline stays aligned across frontend and backe
     assert.equal(frontendVersion, EXPECTED_COMPAT_VERSION);
     assert.equal(backendVersion, EXPECTED_COMPAT_VERSION);
 });
+
+test('TauriTavern product version stays aligned across release manifests', async () => {
+    const packageJson = JSON.parse(await readText('package.json'));
+    const appCargoToml = await readText('src-tauri/crates/tauritavern/Cargo.toml');
+    const tauriConfig = JSON.parse(await readText('src-tauri/crates/tauritavern/tauri.conf.json'));
+
+    const appCargoVersion = appCargoToml.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+
+    assert.ok(appCargoVersion);
+    assert.equal(appCargoVersion, packageJson.version);
+    assert.equal(tauriConfig.version, packageJson.version);
+});
