@@ -228,7 +228,7 @@ group chat 保存：
 
 实现位置：
 
-- `src-tauri/src/presentation/commands/chat_commands.rs`
+- `src-tauri/crates/tauritavern/src/presentation/commands/chat_commands.rs`
 
 读取：
 
@@ -265,9 +265,9 @@ group chat 保存：
 
 实现位置：
 
-- 读取：`src-tauri/src/infrastructure/repositories/file_chat_repository/windowed_payload.rs`
-- 写入 patch：`src-tauri/src/infrastructure/repositories/file_chat_repository/windowed_patch.rs`
-- cursor/IO 辅助：`src-tauri/src/infrastructure/repositories/file_chat_repository/windowed_payload_io.rs`
+- 读取：`src-tauri/crates/tt-adapter-storage-core/src/repositories/file_chat_repository/windowed_payload.rs`
+- 写入 patch：`src-tauri/crates/tt-adapter-storage-core/src/repositories/file_chat_repository/windowed_patch.rs`
+- cursor/IO 辅助：`src-tauri/crates/tt-adapter-storage-core/src/repositories/file_chat_repository/windowed_payload_io.rs`
 
 读语义要点：
 

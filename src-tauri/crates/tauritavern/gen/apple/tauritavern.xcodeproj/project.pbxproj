@@ -895,7 +895,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"${SRCROOT}/../../../scripts/tauri-ios-xcode-script.sh\"";
+			shellScript = "\"${SRCROOT}/../../../../../scripts/tauri-ios-xcode-script.sh\"";
 		};
 /* End PBXShellScriptBuildPhase section */
 

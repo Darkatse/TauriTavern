@@ -43,7 +43,9 @@ ensure_node_on_path() {
 
 run_tauri_ios_xcode_script() {
   cd "$REPO_ROOT"
-  "$@" tauri ios xcode-script \
+  TAURI_APP_PATH="$REPO_ROOT/src-tauri/crates/tauritavern" \
+  TAURI_FRONTEND_PATH="$REPO_ROOT" \
+    "$@" tauri ios xcode-script \
     -v \
     --platform "${PLATFORM_DISPLAY_NAME:?}" \
     --sdk-root "${SDKROOT:?}" \
@@ -56,7 +58,7 @@ run_tauri_ios_xcode_script() {
 }
 
 normalize_ios_app_icons() {
-  local app_icon_set="$REPO_ROOT/src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset"
+  local app_icon_set="$REPO_ROOT/src-tauri/crates/tauritavern/gen/apple/Assets.xcassets/AppIcon.appiconset"
   xcrun --sdk macosx swift "$SCRIPT_DIR/ios-opaque-app-icons.swift" "$app_icon_set"
 }
 

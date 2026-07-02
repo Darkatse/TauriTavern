@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SRC_ROOT = path.join(REPO_ROOT, 'src-tauri', 'src');
+const SRC_ROOT = path.join(REPO_ROOT, 'src-tauri', 'crates', 'tauritavern', 'src');
 const APPLICATION_SRC_ROOT = path.join(REPO_ROOT, 'src-tauri', 'crates', 'tt-application', 'src');
 const SCAN_ROOTS = [SRC_ROOT, APPLICATION_SRC_ROOT];
 
@@ -45,13 +45,13 @@ function collectLineViolations(relPath, line, lineNumber) {
     ) {
         violations.push('application -> infrastructure logging');
     }
-    if (relPath.startsWith('src-tauri/src/presentation/') && stripped.includes('crate::infrastructure::logging')) {
+    if (relPath.startsWith('src-tauri/crates/tauritavern/src/presentation/') && stripped.includes('crate::infrastructure::logging')) {
         violations.push('presentation -> infrastructure logging');
     }
-    if (relPath === 'src-tauri/src/presentation/commands/dev_logging_commands.rs' && stripped.includes('crate::infrastructure::')) {
+    if (relPath === 'src-tauri/crates/tauritavern/src/presentation/commands/dev_logging_commands.rs' && stripped.includes('crate::infrastructure::')) {
         violations.push('dev_logging_commands -> infrastructure');
     }
-    if (relPath === 'src-tauri/src/presentation/commands/settings_commands.rs' && stripped.includes('LlmApiLogStore')) {
+    if (relPath === 'src-tauri/crates/tauritavern/src/presentation/commands/settings_commands.rs' && stripped.includes('LlmApiLogStore')) {
         violations.push('settings_commands -> LlmApiLogStore');
     }
 

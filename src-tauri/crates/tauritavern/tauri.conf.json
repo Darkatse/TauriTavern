@@ -6,10 +6,10 @@
   "build": {
     "beforeDevCommand": {
       "script": "node scripts/tauri-dev-server.mjs",
-      "cwd": ".."
+      "cwd": "../../.."
     },
     "devUrl": "http://localhost:1430",
-    "frontendDist": "../src",
+    "frontendDist": "../../../src",
     "removeUnusedCommands": true
   },
   "app": {
@@ -59,8 +59,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../default/": "default/",
-      "../src/scripts/templates/": "frontend-templates/"
+      "../../../default/": "default/",
+      "../../../src/scripts/templates/": "frontend-templates/"
     },
     "linux": {
       "appimage": {

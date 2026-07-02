@@ -4,7 +4,7 @@
 
 ## 1. 普通日志链路
 
-Rust 普通日志统一使用 `tracing::{debug, info, warn, error}` 宏，不再经过 `infrastructure::logging::logger` facade。启动期在 `src-tauri/src/infrastructure/logging/tracing_runtime.rs` 安装全局 subscriber：
+Rust 普通日志统一使用 `tracing::{debug, info, warn, error}` 宏，不再经过 `infrastructure::logging::logger` facade。启动期在 `src-tauri/crates/tauritavern/src/infrastructure/logging/tracing_runtime.rs` 安装全局 subscriber：
 
 - 全局 `EnvFilter` 控制所有 tracing event；
 - stdout 与 rolling file 记录普通日志；

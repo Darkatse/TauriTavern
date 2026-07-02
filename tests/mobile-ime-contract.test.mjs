@@ -258,7 +258,7 @@ function createFocusHarness({ android = true } = {}) {
 test('Android insets bridge readiness gate: about:blank + #sheld', async () => {
     const bridgePath = path.join(
         REPO_ROOT,
-        'src-tauri/gen/android/app/src/main/java/com/tauritavern/client/AndroidInsetsBridge.kt',
+        'src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/AndroidInsetsBridge.kt',
     );
     const source = await readFile(bridgePath, 'utf8');
 
@@ -269,7 +269,7 @@ test('Android insets bridge readiness gate: about:blank + #sheld', async () => {
 test('Android insets helper exposes routing APIs and clears old IME target residue', async () => {
     const helperPath = path.join(
         REPO_ROOT,
-        'src-tauri/gen/android/app/src/main/java/com/tauritavern/client/WebViewInsetsStyleApplier.kt',
+        'src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/WebViewInsetsStyleApplier.kt',
     );
     const source = await readFile(helperPath, 'utf8');
 
@@ -284,7 +284,7 @@ test('Android insets helper exposes routing APIs and clears old IME target resid
 test('Android insets injection resets on main-frame navigation', async () => {
     const clientPath = path.join(
         REPO_ROOT,
-        'src-tauri/gen/android/app/src/main/java/com/tauritavern/client/RustWebViewClient.kt',
+        'src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/RustWebViewClient.kt',
     );
     const clientSource = await readFile(clientPath, 'utf8');
 
@@ -294,7 +294,7 @@ test('Android insets injection resets on main-frame navigation', async () => {
 
     const activityPath = path.join(
         REPO_ROOT,
-        'src-tauri/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt',
+        'src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt',
     );
     const activitySource = await readFile(activityPath, 'utf8');
 
@@ -305,7 +305,7 @@ test('Android insets injection resets on main-frame navigation', async () => {
 
     const bridgePath = path.join(
         REPO_ROOT,
-        'src-tauri/gen/android/app/src/main/java/com/tauritavern/client/AndroidInsetsBridge.kt',
+        'src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/AndroidInsetsBridge.kt',
     );
     const bridgeSource = await readFile(bridgePath, 'utf8');
 

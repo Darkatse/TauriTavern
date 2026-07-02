@@ -41,8 +41,8 @@ WKWebView 内部是 `UIScrollView` 承载 Web 内容；在默认行为下，iOS 
 
 实现位置：
 
-- iOS 配置入口：`src-tauri/src/infrastructure/ios_webview.rs` 的 `configure_main_wkwebview()`
-- 调用时机：`src-tauri/src/lib.rs`（主窗口 build 后立刻调用）
+- iOS 配置入口：`src-tauri/crates/tauritavern/src/infrastructure/ios_webview.rs` 的 `configure_main_wkwebview()`
+- 调用时机：`src-tauri/crates/tauritavern/src/lib.rs`（主窗口 build 后立刻调用）
 
 ### 1.5 验收建议
 
@@ -90,11 +90,11 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 
 - 前端扩展入口：`src/scripts/extensions/data-migration/index.js`
 - Host Kernel 路由：`src/tauri/main/routes/extensions-routes.js`
-- iOS-only Tauri commands：`src-tauri/src/presentation/commands/ios_file_bridge_commands.rs`
+- iOS-only Tauri commands：`src-tauri/crates/tauritavern/src/presentation/commands/ios_file_bridge_commands.rs`
 - iOS UIKit / picker / share host adapter：
-  - `src-tauri/src/platform/ios_ui.rs`
-  - `src-tauri/src/platform/ios_document_picker.rs`
-  - `src-tauri/src/platform/ios_share_sheet.rs`
+  - `src-tauri/crates/tauritavern/src/platform/ios_ui.rs`
+  - `src-tauri/crates/tauritavern/src/platform/ios_document_picker.rs`
+  - `src-tauri/crates/tauritavern/src/platform/ios_share_sheet.rs`
 - Data Archive import staging 只暴露 `prepare_data_archive_import_target_path`；不要恢复旧的 `get_data_archive_imports_root`，避免把 staging root 交给前端自行拼路径。
 
 ### 2.5 macOS 元数据导致的“布局歧义”问题
@@ -105,8 +105,8 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 
 当前实现会在 **布局扫描** 与 **解压归一化** 两阶段一致忽略 `__MACOSX` 条目，保证这类 zip 可正常导入：
 
-- `src-tauri/src/infrastructure/persistence/data_archive/import/layout.rs`
-- `src-tauri/src/infrastructure/persistence/data_archive/import/extract.rs`
+- `src-tauri/crates/tt-adapter-archive/src/data_archive/import/layout.rs`
+- `src-tauri/crates/tt-adapter-archive/src/data_archive/import/extract.rs`
 
 ## 3. 通用 iOS 导出桥（聊天 / WorldInfo / 角色卡等）
 
@@ -150,7 +150,7 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 - 前端导出基础设施：`src/scripts/file-export.js`
 - 下载桥：`src/tauri/main/download-bridge.js`
 - 导出反馈：`src/scripts/download-feedback.js`
-- iOS share 命令：`src-tauri/src/presentation/commands/ios_file_bridge_commands.rs`
+- iOS share 命令：`src-tauri/crates/tauritavern/src/presentation/commands/ios_file_bridge_commands.rs`
 
 ### 3.6 iOS Skill 导入
 
@@ -174,7 +174,7 @@ Skill 导入使用独立命令 `ios_pick_skill_import_archive`：
 
 ### 4.3 已落地方案
 
-- 继续复用 `src-tauri/src/infrastructure/ios_webview.rs` 的主 WebView 配置入口，在 `configure_main_wkwebview()` 内统一完成两类 native 配置：
+- 继续复用 `src-tauri/crates/tauritavern/src/infrastructure/ios_webview.rs` 的主 WebView 配置入口，在 `configure_main_wkwebview()` 内统一完成两类 native 配置：
   - 关闭 `scrollView` 的 safe-area 自动 inset 调整；
   - 开启 `WKPreferences.setElementFullscreenEnabled(true)`。
 - 这样角色卡、JS-Slash-Runner、同源 iframe 的 fullscreen 事件、退出语义和上游契约保持一致，宿主只补齐平台能力，不改前端行为。
@@ -211,14 +211,14 @@ iOS 18+ 支持 Home Screen 图标的 `Any` / `Dark` / `Tinted` 外观。若 AppI
 
 - 生成脚本：`scripts/generate-ios-app-icon-variants.swift`
 - 构建期校验/展平：`scripts/ios-opaque-app-icons.swift`
-- 资产目录：`src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset`
+- 资产目录：`src-tauri/crates/tauritavern/gen/apple/Assets.xcassets/AppIcon.appiconset`
 
 重新生成：
 
 ```sh
 xcrun --sdk macosx swift scripts/generate-ios-app-icon-variants.swift \
-  src-tauri/icons/icon.png \
-  src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset
+  src-tauri/crates/tauritavern/icons/icon.png \
+  src-tauri/crates/tauritavern/gen/apple/Assets.xcassets/AppIcon.appiconset
 ```
 
 回归验证：
@@ -229,7 +229,7 @@ xcrun actool --compile /tmp/tt-appicon \
   --minimum-deployment-target 16.0 \
   --app-icon AppIcon \
   --output-partial-info-plist /tmp/tt-appicon/partial.plist \
-  src-tauri/gen/apple/Assets.xcassets
+  src-tauri/crates/tauritavern/gen/apple/Assets.xcassets
 
 xcrun assetutil --info /tmp/tt-appicon/Assets.car
 ```

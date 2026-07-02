@@ -73,7 +73,7 @@
 
 生产/打包运行时：
 
-- `src-tauri/src/lib.rs` 在主窗口安装 `on_web_resource_request`
+- `src-tauri/crates/tauritavern/src/lib.rs` 在主窗口安装 `on_web_resource_request`
 - `src-tauri/crates/tt-application/src/services/host_resource_service/user_css.rs` 处理 `/css/user.css`
 - `src-tauri/crates/tt-application/src/services/host_resource_service/third_party.rs` 处理 `/scripts/extensions/third-party/*`
 - `src-tauri/crates/tt-application/src/services/host_resource_service/thumbnail.rs` 处理 `/thumbnail`
@@ -83,7 +83,7 @@
 
 1. 校验请求方法，只接受 `GET` / `HEAD` / `OPTIONS`
 2. 通过 `src-tauri/crates/tt-application/src/client_asset_paths.rs` 解析并校验路径，再由 `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs` 分类到具体资源处理器
-3. 通过 `src-tauri/src/infrastructure/host_resources.rs` 定位文件并推断 MIME
+3. 通过 `src-tauri/crates/tt-adapter-media/src/host_resources.rs` 定位文件并推断 MIME
 4. 返回真实 bytes、正确 `Content-Type`、`Cache-Control: no-store`
    - 对用户静态资源端点（如 `/backgrounds/*`）若请求携带 `Range`，支持单范围并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
 5. 未命中时返回真正 `404`，不回退到 `index.html`

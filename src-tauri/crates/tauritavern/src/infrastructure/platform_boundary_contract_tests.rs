@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 #[test]
 fn platform_boundary_stays_out_of_inner_layers() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let crates_root = manifest_dir.join("crates");
+    let crates_root = manifest_dir
+        .parent()
+        .expect("tauritavern crate should be inside workspace crates/")
+        .to_path_buf();
 
     for inner_layer in [
         crates_root.join("tt-domain/src"),

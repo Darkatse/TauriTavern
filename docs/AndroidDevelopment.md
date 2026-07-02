@@ -23,7 +23,7 @@ https://github.com/tauri-apps/tauri/issues/14240
 
 ### 1.3 当前实现
 
-核心入口仍是 `src-tauri/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`，但职责已拆分为：
+核心入口仍是 `src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`，但职责已拆分为：
 
 - `AndroidInsetsBridge.kt`：系统栏/IME inset 监听与 CSS 变量注入；
 - `WebViewReadinessPoller.kt`：页面就绪轮询；
@@ -90,7 +90,7 @@ https://v2.tauri.app/develop/resources/#android
 
 #### A. 构建期生成资源索引与嵌入映射
 
-`src-tauri/build.rs` 现在会：
+`src-tauri/crates/tauritavern/build.rs` 现在会：
 
 - 扫描 `../default/content` 和 `../src/scripts/templates`；
 - 生成 `default_content_manifest.json`（默认内容清单）；
@@ -98,7 +98,7 @@ https://v2.tauri.app/develop/resources/#android
 
 #### B. 运行时统一资源访问入口
 
-`src-tauri/src/infrastructure/assets.rs` 提供统一 API：
+`src-tauri/crates/tauritavern/src/infrastructure/assets.rs` 提供统一 API：
 
 - `read_resource_bytes`
 - `read_resource_text`
@@ -114,13 +114,13 @@ https://v2.tauri.app/develop/resources/#android
 #### C. 前后端模板读取解耦
 
 - 后端新增命令：`read_frontend_template`  
-  文件：`src-tauri/src/presentation/commands/bridge.rs`
+  文件：`src-tauri/crates/tauritavern/src/presentation/commands/bridge.rs`
 - 前端模板加载改为 Tauri 环境下优先 invoke：  
   文件：`src/scripts/templates.js`
 
 #### D. 默认内容初始化改为“资源 -> 真实文件”复制流程
 
-`src-tauri/src/infrastructure/repositories/file_content_repository.rs` 不再依赖资源目录的直接文件路径语义，改用统一资源接口复制到用户目录。
+`src-tauri/crates/tauritavern/src/infrastructure/repositories/file_content_repository.rs` 不再依赖资源目录的直接文件路径语义，改用统一资源接口复制到用户目录。
 
 ---
 
@@ -134,7 +134,7 @@ https://v2.tauri.app/develop/resources/#android
 ### 3.2 当前方案：单点路径解析抽象
 
 新增单点路径解析模块：  
-`src-tauri/src/infrastructure/paths.rs`
+`src-tauri/crates/tauritavern/src/infrastructure/paths.rs`
 
 统一入口：
 
@@ -187,11 +187,11 @@ https://v2.tauri.app/develop/resources/#android
 
 ### 4.2 应用初始化与数据根目录
 
-- `src-tauri/src/app.rs` 的 `resolve_data_root` / `resolve_log_root` 已改为依赖 `resolve_app_data_dir`
+- `src-tauri/crates/tauritavern/src/app.rs` 的 `resolve_data_root` / `resolve_log_root` 已改为依赖 `resolve_app_data_dir`
 
 ### 4.3 资源协议访问权限
 
-- `src-tauri/src/lib.rs` 在 setup 阶段对 `data_root` 执行：
+- `src-tauri/crates/tauritavern/src/lib.rs` 在 setup 阶段对 `data_root` 执行：
   - `asset_protocol_scope().allow_directory(&data_root, true)`
 - 目的：允许 WebView 通过 asset 协议访问用户数据文件，避免前端资源加载 403。
 
@@ -306,8 +306,8 @@ https://v2.tauri.app/develop/resources/#android
 当前方案（Native→JS Back Bridge）：
 
 - `MainActivity` 在 `onCreate()` 里向 `onBackPressedDispatcher` 注册回调，并把 Back 交给 `AndroidBackNavigationController`：
-  - `src-tauri/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`
-  - `src-tauri/gen/android/app/src/main/java/com/tauritavern/client/AndroidBackNavigationController.kt`
+  - `src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`
+  - `src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/AndroidBackNavigationController.kt`
 - controller 通过 `WebView.evaluateJavascript` 调用前端全局函数：`window.__TAURITAVERN_HANDLE_BACK__()`。
   - JS 返回 `true`：表示已消费 Back（关闭了一层 UI），原生不退出。
   - JS 返回 `false`：表示前端未消费，原生执行 `finish()` 退出。
@@ -320,7 +320,7 @@ https://v2.tauri.app/develop/resources/#android
 
 维护原则：
 
-- 不修改 auto-generated 的 `src-tauri/gen/android/.../generated/*`，避免升级冲突。
+- 不修改 auto-generated 的 `src-tauri/crates/tauritavern/gen/android/.../generated/*`，避免升级冲突。
 - UI 分层判断与关闭动作只写在 JS；Kotlin 不写 DOM/UI 规则，只做拦截/转发/退出决策。
 - 若未来新增/变更 UI 层级，只在 `back-navigation.js` 增加一个分支即可；更详细设计见 `docs/AndroidBackNavigation.md`。
 
@@ -357,7 +357,7 @@ https://v2.tauri.app/develop/resources/#android
 上面的 fullscreen 逻辑本身没有问题，真正的问题是挂载位置：
 
 - `RustWebChromeClient.kt` 来自 Wry Android 生成链；
-- 直接改 `src-tauri/gen/android/.../generated/RustWebChromeClient.kt` 会在重新生成 Android 工程时被覆盖；
+- 直接改 `src-tauri/crates/tauritavern/gen/android/.../generated/RustWebChromeClient.kt` 会在重新生成 Android 工程时被覆盖；
 - `MainActivity.onWebViewCreate()` 又不是一个可靠的运行时替换点，因为 Wry 后续仍会再次调用 `setWebChromeClient(...)`。
 
 因此，fullscreen 的正式方案不应继续依赖“修改 generated 文件”，而应改为：

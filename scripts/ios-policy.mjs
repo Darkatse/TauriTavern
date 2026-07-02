@@ -118,6 +118,8 @@ function main() {
 
     const env = {
         ...process.env,
+        TAURI_APP_PATH: path.join(repoRoot, 'src-tauri', 'crates', 'tauritavern'),
+        TAURI_FRONTEND_PATH: repoRoot,
         TAURITAVERN_IOS_POLICY_PROFILE: profile,
     };
 

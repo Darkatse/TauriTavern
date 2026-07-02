@@ -122,7 +122,7 @@
 
 ### 4.3 Rust 命令（并发采样）
 
-- `src-tauri/src/presentation/commands/bootstrap_commands.rs:get_bootstrap_snapshot`
+- `src-tauri/crates/tauritavern/src/presentation/commands/bootstrap_commands.rs:get_bootstrap_snapshot`
   - 使用 `tokio::try_join!` 并发获取：settings / characters / groups / avatars / secret_state
   - 目的：减少启动关键路径的串行 I/O 等待。
 

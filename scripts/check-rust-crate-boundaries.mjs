@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUST_CRATES_ROOT = path.join(REPO_ROOT, 'src-tauri', 'crates');
+const HOST_CRATE_ROOT = path.join(RUST_CRATES_ROOT, 'tauritavern');
+const HOST_SRC_ROOT = path.join(HOST_CRATE_ROOT, 'src');
 const WORKSPACE_MANIFEST = path.join(REPO_ROOT, 'src-tauri', 'Cargo.toml');
 const DEPENDENCY_TREE_CHECKS = [
     ['no-default-features', ['--no-default-features']],
@@ -355,19 +357,19 @@ const CRATES = [
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [
-    sourceRule('main crate removed layer shims', path.join(REPO_ROOT, 'src-tauri', 'src'), [
+    sourceRule('main crate removed layer shims', HOST_SRC_ROOT, [
         ['domain module declaration', /^\s*(pub\s+)?mod\s+domain\s*;/],
         ['domain shim path', /\bcrate::domain::/],
         ['application module declaration', /^\s*(pub\s+)?mod\s+application\s*;/],
         ['application shim path', /\bcrate::application::/],
     ]),
-    sourceRule('infrastructure', path.join(REPO_ROOT, 'src-tauri', 'src', 'infrastructure'), [
+    sourceRule('infrastructure', path.join(HOST_SRC_ROOT, 'infrastructure'), [
         ['tt-application crate', /\btt_application::/],
     ]),
-    sourceRule('platform', path.join(REPO_ROOT, 'src-tauri', 'src', 'platform'), [
+    sourceRule('platform', path.join(HOST_SRC_ROOT, 'platform'), [
         ['tt-application crate', /\btt_application::/],
     ]),
-    sourceRule('app composition', path.join(REPO_ROOT, 'src-tauri', 'src', 'app', 'composition'), [
+    sourceRule('app composition', path.join(HOST_SRC_ROOT, 'app', 'composition'), [
         ['repository facade', /\bcrate::domain::repositories::/],
         ['sync contract facade', /\bcrate::domain::models::sync(_automation)?::/],
     ]),

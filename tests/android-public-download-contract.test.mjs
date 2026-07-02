@@ -23,7 +23,7 @@ test('Android Blob exports use the native public Downloads bridge', async () => 
 test('Android native public download bridge writes through MediaStore Downloads', async () => {
     const bridgePath = path.join(
         REPO_ROOT,
-        'src-tauri/gen/android/app/src/main/java/com/tauritavern/client/AndroidPublicDownloadJsBridge.kt',
+        'src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/AndroidPublicDownloadJsBridge.kt',
     );
     const source = await readFile(bridgePath, 'utf8');
 
@@ -37,7 +37,7 @@ test('Android native public download bridge writes through MediaStore Downloads'
 });
 
 test('Android public Downloads are not exposed as raw Tauri fs write scopes', async () => {
-    const capabilityPath = path.join(REPO_ROOT, 'src-tauri/capabilities/default.json');
+    const capabilityPath = path.join(REPO_ROOT, 'src-tauri/crates/tauritavern/capabilities/default.json');
     const source = await readFile(capabilityPath, 'utf8');
 
     assert.doesNotMatch(source, /\/storage\/emulated\/0\/Download\/\*\*/);
@@ -48,7 +48,7 @@ test('Android public download staging root stays aligned across JS and Kotlin', 
     const jsPath = path.join(REPO_ROOT, 'src/scripts/file-export.js');
     const bridgePath = path.join(
         REPO_ROOT,
-        'src-tauri/gen/android/app/src/main/java/com/tauritavern/client/AndroidPublicDownloadJsBridge.kt',
+        'src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/AndroidPublicDownloadJsBridge.kt',
     );
 
     const [jsSource, bridgeSource] = await Promise.all([

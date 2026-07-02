@@ -81,8 +81,8 @@ test('chat rename events use backend-committed normalized file names', async () 
         readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8'),
         readFile(path.join(REPO_ROOT, 'src/scripts/welcome-screen.js'), 'utf8'),
         readFile(path.join(REPO_ROOT, 'src/tauri/main/routes/chat-routes.js'), 'utf8'),
-        readFile(path.join(REPO_ROOT, 'src-tauri/src/presentation/commands/chat_commands.rs'), 'utf8'),
-        readFile(path.join(REPO_ROOT, 'src-tauri/src/presentation/commands/group_chat_commands.rs'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src-tauri/crates/tauritavern/src/presentation/commands/chat_commands.rs'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src-tauri/crates/tauritavern/src/presentation/commands/group_chat_commands.rs'), 'utf8'),
         readFile(path.join(REPO_ROOT, 'src-tauri/crates/tt-application/src/services/chat_service.rs'), 'utf8'),
         readFile(path.join(REPO_ROOT, 'src-tauri/crates/tt-application/src/services/group_chat_service.rs'), 'utf8'),
     ]);

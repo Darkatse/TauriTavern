@@ -15,7 +15,7 @@ function count(source, needle) {
 }
 
 test('Rust composition keeps repository sharing explicit', async () => {
-    const source = await readRepoFile('src-tauri/src/app/composition/repositories.rs');
+    const source = await readRepoFile('src-tauri/crates/tauritavern/src/app/composition/repositories.rs');
 
     assert.match(
         source,
@@ -32,7 +32,7 @@ test('Rust composition keeps repository sharing explicit', async () => {
 });
 
 test('Rust sync composition keeps one shared coordinator and pairing approval', async () => {
-    const source = await readRepoFile('src-tauri/src/app/composition/services/sync.rs');
+    const source = await readRepoFile('src-tauri/crates/tauritavern/src/app/composition/services/sync.rs');
 
     assert.equal(count(source, 'let sync_job_coordinator ='), 1);
     assert.equal(count(source, 'SyncJobCoordinator::new('), 1);
@@ -57,7 +57,7 @@ test('Rust sync composition keeps one shared coordinator and pairing approval', 
 });
 
 test('Rust agent composition keeps Agent behind the chat completion service gateway', async () => {
-    const source = await readRepoFile('src-tauri/src/app/composition/services/agent.rs');
+    const source = await readRepoFile('src-tauri/crates/tauritavern/src/app/composition/services/agent.rs');
 
     assert.match(source, /AgentRuntimeService::new_with_prompt_assembly_service\(/);
     assert.match(

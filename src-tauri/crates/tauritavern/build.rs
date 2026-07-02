@@ -7,13 +7,13 @@ fn main() {
     let needs_embedded_resources = needs_embedded_resources();
 
     // These are the frontend/resource directories that feed generated Rust artifacts.
-    println!("cargo:rerun-if-changed=../default/content");
+    println!("cargo:rerun-if-changed=../../../default/content");
     if needs_embedded_resources {
-        println!("cargo:rerun-if-changed=../src/scripts/templates");
-        println!("cargo:rerun-if-changed=../src/scripts/extensions");
+        println!("cargo:rerun-if-changed=../../../src/scripts/templates");
+        println!("cargo:rerun-if-changed=../../../src/scripts/extensions");
     }
-    println!("cargo:rerun-if-changed=../.git/HEAD");
-    println!("cargo:rerun-if-changed=../.git/refs");
+    println!("cargo:rerun-if-changed=../../../.git/HEAD");
+    println!("cargo:rerun-if-changed=../../../.git/refs");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
     println!("cargo:rerun-if-env-changed=GITHUB_SHA");
 
@@ -95,7 +95,7 @@ struct ResourceEntry {
 }
 
 fn generate_resource_artifacts(needs_embedded_resources: bool) -> Result<(), Box<dyn Error>> {
-    let content_root = PathBuf::from("../default/content");
+    let content_root = PathBuf::from("../../../default/content");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
 
     let mut content_files = collect_relative_files(&content_root, &content_root)?;
@@ -111,8 +111,8 @@ fn generate_resource_artifacts(needs_embedded_resources: bool) -> Result<(), Box
         return Ok(());
     }
 
-    let template_root = PathBuf::from("../src/scripts/templates");
-    let extension_root = PathBuf::from("../src/scripts/extensions");
+    let template_root = PathBuf::from("../../../src/scripts/templates");
+    let extension_root = PathBuf::from("../../../src/scripts/extensions");
     let mut embedded_resources = Vec::new();
     embedded_resources.extend(
         content_files

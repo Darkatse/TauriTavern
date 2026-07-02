@@ -48,34 +48,31 @@ TauriTavern的后端采用Clean Architecture架构，将代码组织为多个层
 
 ```
 src-tauri/
-├── src/
-│   ├── main.rs                # 应用入口点
-│   ├── lib.rs                 # 库入口点（薄入口）
-│   ├── app.rs                 # 应用状态与运行时启动编排
-│   ├── app/
-│   │   ├── composition.rs     # 应用对象图装配 facade
-│   │   ├── composition/       # 仓库/服务/适配器装配子模块
-│   │   ├── host/              # Tauri host shell（插件、setup、窗口、资源、shutdown）
-│   │   ├── startup_profile.rs # 启动期 settings / iOS policy 快照
-│   ├── crates/
-│   │   ├── tt-domain/         # 领域模型、领域错误与纯逻辑
-│   │   ├── tt-ports/          # 仓库接口与出站端口
-│   │   ├── tt-contracts/      # 跨 crate DTO / 事件契约
-│   │   ├── tt-application/    # 应用服务与用例编排
-│   │   └── tt-adapter-*/      # Tauri-free 具体适配器 crate
-│   ├── infrastructure/        # 基础设施层
-│   │   ├── persistence/       # 持久化实现
-│   │   ├── repositories/      # 仓库实现
-│   │   ├── apis/              # 外部API集成
-│   │   └── logging/           # 日志系统
-│   ├── platform/              # 宿主平台适配（UIKit/WebView/native UI）
-│   └── presentation/          # 表示层
-│       ├── commands/          # Tauri命令
-│       │   ├── helpers.rs     # 命令日志/错误映射公共工具
-│       │   └── registry.rs    # 命令注册清单（invoke handler）
-│       └── errors.rs          # 命令错误
-├── Cargo.toml                 # Rust依赖配置
-└── tauri.conf.json            # Tauri配置
+├── Cargo.toml                 # virtual workspace root（不再是宿主 crate）
+├── Cargo.lock
+├── resources/                 # workspace-level 静态资源（如 tokenizers）
+└── crates/
+    ├── tauritavern/           # Tauri app / host crate
+    │   ├── Cargo.toml
+    │   ├── tauri.conf.json
+    │   ├── build.rs
+    │   ├── icons/
+    │   ├── capabilities/
+    │   ├── bundle/
+    │   ├── gen/              # Android/iOS 生成工程；包含本项目覆盖改动
+    │   └── src/
+    │       ├── main.rs        # 桌面入口
+    │       ├── lib.rs         # mobile entry / host lib 入口
+    │       ├── app.rs         # 应用状态与运行时启动编排
+    │       ├── app/           # composition root、host shell、startup profile
+    │       ├── infrastructure/# Tauri-bound 基础设施与平台 glue
+    │       ├── platform/      # UIKit/WebView/native UI 适配
+    │       └── presentation/  # Tauri commands 与 WebView resource adapter
+    ├── tt-domain/             # 领域模型、领域错误与纯逻辑
+    ├── tt-ports/              # 仓库接口与出站端口
+    ├── tt-contracts/          # 跨 crate DTO / 事件契约
+    ├── tt-application/        # 应用服务与用例编排
+    └── tt-adapter-*/          # Tauri-free 具体适配器 crate
 ```
 
 ## 3. 核心组件
@@ -406,7 +403,7 @@ tauri::Builder::default()
 
 浏览器可见的 host-owned 资源当前不再通过 Tauri 命令走 IPC/base64，而是通过 WebView 资源请求钩子直接提供：
 
-- 入口安装位置：`src-tauri/src/lib.rs`
+- 入口安装位置：`src-tauri/crates/tauritavern/src/lib.rs`
   - 主窗口在 `create_main_window()` 中挂载 `on_web_resource_request`
   - 覆盖 `/css/user.css`、`/scripts/extensions/third-party/*`、`/thumbnail`、`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`
 - 应用层实现：`src-tauri/crates/tt-application/src/services/host_resource_service/`
@@ -414,7 +411,7 @@ tauri::Builder::default()
   - 仅允许 `GET` / `HEAD` / `OPTIONS`
   - 未命中返回真正 `404`，不回退 `index.html`
 - 基础设施支撑：
-  - `src-tauri/src/infrastructure/host_resources.rs`：local/global 目录查找、MIME 推断与文件读取
+  - `src-tauri/crates/tt-adapter-media/src/host_resources.rs`：local/global 目录查找、MIME 推断与文件读取
 - third-party 目录语义：
   - local：`data/default-user/extensions/<folder>`
   - global：`data/extensions/third-party/<folder>`
@@ -476,7 +473,7 @@ tauri::Builder::default()
 - Tail：`get_chat_payload_tail` / `get_group_chat_payload_tail` -> `{ header, lines, cursor, hasMoreBefore }`。
 - Before：`get_chat_payload_before` / `get_group_chat_payload_before`（不含 header，向前分页）。
 - Windowed Save：保留 prefix + 覆写 tail；header 变化则 tmp 重写 header + copy prefix + append -> rename。
-- 代码入口：`infrastructure/repositories/file_chat_repository/windowed_payload.rs` + `presentation/commands/chat_commands.rs`。
+- 代码入口：`src-tauri/crates/tt-adapter-storage-core/src/repositories/file_chat_repository/windowed_payload.rs` + `src-tauri/crates/tauritavern/src/presentation/commands/chat_commands.rs`。
 
 #### 3.5.5 文件系统与备份语义
 

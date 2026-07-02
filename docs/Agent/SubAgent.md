@@ -92,7 +92,7 @@ Invocation 与 task 文件由 `AgentInvocationRepository` 管理，当前文件�
 
 ```text
 src-tauri/crates/tt-ports/src/repositories/agent_invocation_repository.rs
-src-tauri/src/infrastructure/repositories/file_agent_repository/invocation_store.rs
+src-tauri/crates/tauritavern/src/infrastructure/repositories/file_agent_repository/invocation_store.rs
 ```
 
 物理存储位于 run workspace：
@@ -271,21 +271,21 @@ Profile / policy：
 ```text
 src-tauri/crates/tt-domain/src/models/agent/profile.rs
 src-tauri/crates/tt-application/src/services/agent_profile_service.rs
-src-tauri/src/infrastructure/repositories/file_agent_profile_repository/mod.rs
+src-tauri/crates/tauritavern/src/infrastructure/repositories/file_agent_profile_repository/mod.rs
 ```
 
 Persistence：
 
 ```text
 src-tauri/crates/tt-ports/src/repositories/agent_invocation_repository.rs
-src-tauri/src/infrastructure/repositories/file_agent_repository/invocation_store.rs
+src-tauri/crates/tauritavern/src/infrastructure/repositories/file_agent_repository/invocation_store.rs
 ```
 
 Tests：
 
 ```text
 src-tauri/crates/tt-application/src/services/agent_runtime_service/tests.rs
-src-tauri/src/infrastructure/repositories/file_agent_repository/tests.rs
+src-tauri/crates/tauritavern/src/infrastructure/repositories/file_agent_repository/tests.rs
 ```
 
 ## 10. 验证入口

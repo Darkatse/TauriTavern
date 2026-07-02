@@ -79,7 +79,7 @@ targets:
       - sdk: UIKit.framework
       - sdk: WebKit.framework
     preBuildScripts:
-      - script: "${SRCROOT}/../../../scripts/tauri-ios-xcode-script.sh"
+      - script: "${SRCROOT}/../../../../../scripts/tauri-ios-xcode-script.sh"
         name: Build Rust Code
         basedOnDependencyAnalysis: false
         outputFiles:

@@ -239,6 +239,8 @@ jobs:
           APPLE_API_ISSUER: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_API_ISSUER || '' }}
           APPLE_API_KEY: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_API_KEY || '' }}
         with:
+          projectPath: src-tauri/crates/tauritavern
+          tauriScript: node ../../../scripts/tauri-app.mjs
           releaseId: ${{ needs.prepare-release.outputs.release_id }}
           tagName: ${{ needs.prepare-release.outputs.tag_name }}
           prerelease: true
@@ -317,6 +319,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          projectPath: src-tauri/crates/tauritavern
+          tauriScript: node ../../../scripts/tauri-app.mjs
           releaseId: ${{ needs.prepare-release.outputs.release_id }}
           tagName: ${{ needs.prepare-release.outputs.tag_name }}
           prerelease: true

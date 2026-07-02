@@ -167,14 +167,14 @@ function main() {
         run("pnpm", ["run", "web:build"], repoRoot);
     }
 
-    const tauriArgs = ["exec", "tauri", "build", "--no-bundle", "--features", "portable"];
+    const tauriArgs = ["scripts/tauri-app.mjs", "build", "--no-bundle", "--features", "portable"];
     if (options.target) {
         tauriArgs.push("--target", options.target);
     }
     if (options.extraTauriArgs.length > 0) {
         tauriArgs.push(...options.extraTauriArgs);
     }
-    run("pnpm", tauriArgs, repoRoot);
+    run("node", tauriArgs, repoRoot);
 
     const releaseDirectory = resolveReleaseDirectory(repoRoot, options.target);
     const binaryPath = resolvePortableBinary(releaseDirectory);

@@ -1,0 +1,9 @@
+xcuserdata/
+build/
+Externals/
+assets/
+*.xcworkspace
+!tauritavern.xcodeproj/project.xcworkspace/
+!tauritavern.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+!tauritavern.xcodeproj/project.xcworkspace/xcshareddata/
+!tauritavern.xcodeproj/project.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings

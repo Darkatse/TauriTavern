@@ -231,7 +231,7 @@ jobs:
         if: matrix.mobile == 'android'
         shell: bash
         run: |
-          cd src-tauri/gen/android
+          cd src-tauri/crates/tauritavern/gen/android
           echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
           echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
           base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
@@ -261,6 +261,8 @@ jobs:
           APPLE_API_ISSUER: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_ISSUER || '' }}
           APPLE_API_KEY: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_KEY || '' }}
         with:
+          projectPath: src-tauri/crates/tauritavern
+          tauriScript: node ../../../scripts/tauri-app.mjs
           releaseId: ${{ needs.prepare-release.outputs.release_id }}
           tagName: ${{ needs.prepare-release.outputs.tag_name }}
           prerelease: true

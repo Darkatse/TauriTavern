@@ -27,7 +27,7 @@
 
 ### 2.1 Edge‑to‑edge 与系统栏编排（native）
 
-入口：`src-tauri/gen/android/app/src/main/java/com/tauritavern/client/AndroidInsetsBridge.kt`
+入口：`src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/AndroidInsetsBridge.kt`
 
 已落地行为：
 
@@ -154,7 +154,7 @@ Android 说明：
 实现：
 
 - JS focus 路由：`src/tauri/main/compat/mobile/mobile-ime-surface-controller.js`
-- bridge target：`src-tauri/gen/android/app/src/main/java/com/tauritavern/client/WebViewInsetsStyleApplier.kt`
+- bridge target：`src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/WebViewInsetsStyleApplier.kt`
 - fixed-shell 消费：`src/tauri/main/compat/mobile/mobile-geometry-firewall.js`
 
 当前策略（Android）：
@@ -180,7 +180,7 @@ Android 说明：
   - `setImmersiveFullscreenEnabled(boolean)`
   - `isImmersiveFullscreenEnabled()`
 
-native 侧实现：`src-tauri/gen/android/app/src/main/java/com/tauritavern/client/AndroidSystemUiJsBridge.kt`
+native 侧实现：`src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/AndroidSystemUiJsBridge.kt`
 
 重要约束：
 

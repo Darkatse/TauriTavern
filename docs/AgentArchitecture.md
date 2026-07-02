@@ -46,9 +46,9 @@ MCP / Tool Direct Call
 本架构以当前仓库代码和文档为准：
 
 - 后端已经采用 Clean Architecture，依赖方向是外层依赖内层、内层定义接口、外层实现接口。见 `docs/BackendStructure.md:7`、`docs/BackendStructure.md:40`。
-- 应用服务由 `AppState` 管理并在 `composition::build_services()` 装配。见 `src-tauri/src/app.rs`、`src-tauri/src/app/composition.rs`。
+- 应用服务由 `AppState` 管理并在 `composition::build_services()` 装配。见 `src-tauri/crates/tauritavern/src/app.rs`、`src-tauri/crates/tauritavern/src/app/composition.rs`。
 - 当前 LLM 请求经过 `ChatCompletionService`，该服务负责 provider 解析、iOS policy、endpoint override policy、payload build、prompt caching 和取消注册。见 `src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:32`、`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:302`、`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:358`。
-- 当前 LLM API 日志依赖 composition root 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、secret 或 policy。Responses WebSocket 建连已复用 `HttpClientPool` 的 ChatCompletion WebSocket profile，不应扩散成第二套 LLM 调用链。见 `src-tauri/src/app/composition/repositories.rs`。
+- 当前 LLM API 日志依赖 composition root 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、secret 或 policy。Responses WebSocket 建连已复用 `HttpClientPool` 的 ChatCompletion WebSocket profile，不应扩散成第二套 LLM 调用链。见 `src-tauri/crates/tauritavern/src/app/composition/repositories.rs`。
 - 当前 chat payload 分片读写由 `ChatService` 和 `ChatRepository` 承担，windowed save/patch 是正式契约。见 `src-tauri/crates/tt-application/src/services/chat_service.rs`、`src-tauri/crates/tt-ports/src/repositories/chat_repository.rs`。
 - 前端 Public ABI 的统一入口是 `window.__TAURITAVERN__`，应保持小而稳定。见 `docs/FrontendHostContract.md` 第 3.6 节、`src/tauri/main/bootstrap.js:139`。
 - 当前 `Generate()` 支持 dryRun，并在 `GENERATE_AFTER_DATA` 提供生成请求数据。见 `src/script.js:4660`、`src/script.js:5743`。

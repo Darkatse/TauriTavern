@@ -1122,11 +1122,10 @@ fn show_debug_menu() -> Result<()> {
 fn inspect_config() -> Result<()> {
     log_info("正在读取 Tauri 配置文件...");
 
-    // Check paths
-    let config_path = if Path::new("src-tauri/tauri.conf.json").exists() {
-        Path::new("src-tauri/tauri.conf.json").to_path_buf()
-    } else if Path::new("../src-tauri/tauri.conf.json").exists() {
-        Path::new("../src-tauri/tauri.conf.json").to_path_buf()
+    let config_path = if Path::new("src-tauri/crates/tauritavern/tauri.conf.json").exists() {
+        Path::new("src-tauri/crates/tauritavern/tauri.conf.json").to_path_buf()
+    } else if Path::new("../src-tauri/crates/tauritavern/tauri.conf.json").exists() {
+        Path::new("../src-tauri/crates/tauritavern/tauri.conf.json").to_path_buf()
     } else {
         log_warn("未找到 tauri.conf.json 配置文件。");
         pause();

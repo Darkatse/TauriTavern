@@ -1,15 +1,6 @@
-[package]
-name = "tauritavern"
-version = "2.1.1"
-description = "SillyTavern backend rebuilt with Tauri and Rust"
-authors = ["TauriTavern Team"]
-edition = "2024"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [workspace]
 members = [
-    ".",
+    "crates/tauritavern",
     "crates/tt-domain",
     "crates/tt-contracts",
     "crates/tt-ports",
@@ -22,7 +13,7 @@ members = [
     "crates/tt-adapter-storage-core",
     "crates/tt-adapter-media",
 ]
-default-members = ["."]
+default-members = ["crates/tauritavern"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -37,100 +28,6 @@ ttsync-core = { version = "2", default-features = false }
 ttsync-http = "2"
 ttsync-client = "2"
 uuid = { version = "1.4", default-features = false, features = ["serde", "std", "v4"] }
-
-[lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "tauritavern_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
-[build-dependencies]
-tauri-build = { version = "2.5.5", features = [] }
-serde_json = { workspace = true }
-
-[dependencies]
-tauri = { version = "2.10.2", features = ["macos-private-api", "protocol-asset", "tray-icon"] }
-tauri-plugin-opener = "2.5.3"
-tauri-plugin-fs = "2.4.5"
-tauri-plugin-notification = "2.3.1"
-serde = { workspace = true }
-serde_json = { workspace = true }
-serde_yaml = "0.9"
-thiserror = { workspace = true }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "std"] }
-tracing-appender = "0.2"
-chrono = { workspace = true }
-tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
-tokio-util = { version = "0.7", default-features = false, features = ["io", "rt"] }
-futures-util = "0.3"
-reqwest = { workspace = true, features = ["http2", "json", "rustls", "socks", "stream"] }
-bytes = "1"
-async-compression = { version = "0.4", features = ["tokio", "zstd"] }
-base64 = "0.22"
-sha2 = "0.10"
-rand = { workspace = true }
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-uuid = { workspace = true }
-async-trait = "0.1"
-url = "2.4"
-percent-encoding = "2"
-regress = "0.11.1"
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-typed-path = "0.12"
-image = { version = "0.24", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
-mime_guess = "2.0.5"
-flate2 = "1.1.9"
-crc32fast = "1"
-filetime = "0.2"
-qrcode = { version = "0.14", default-features = false, features = ["svg"] }
-dunce = "1"
-tt-domain = { path = "crates/tt-domain" }
-tt-contracts = { path = "crates/tt-contracts" }
-tt-ports = { path = "crates/tt-ports" }
-tt-application = { path = "crates/tt-application" }
-tt-adapter-http = { path = "crates/tt-adapter-http" }
-tt-adapter-tokenization = { path = "crates/tt-adapter-tokenization" }
-tt-adapter-sync = { path = "crates/tt-adapter-sync" }
-tt-adapter-archive = { path = "crates/tt-adapter-archive" }
-tt-adapter-provider-http = { path = "crates/tt-adapter-provider-http" }
-tt-adapter-storage-core = { path = "crates/tt-adapter-storage-core" }
-tt-adapter-media = { path = "crates/tt-adapter-media" }
-
-# TT-Sync v2 shared protocol crates. (crates.io)
-ttsync-contract = { workspace = true }
-ttsync-core = { workspace = true }
-
-[dev-dependencies]
-tt-application = { path = "crates/tt-application", features = ["test-support"] }
-
-[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
-tauri-plugin-dialog = "2.7.0"
-tauri-plugin-window-state = "2.4.1"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-tauri-winrt-notification = "0.7.2"
-
-[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
-tauri-plugin-barcode-scanner = "2.4.4"
-
-[target.'cfg(target_os = "ios")'.dependencies]
-objc2 = "0.6.4"
-block2 = "0.6.2"
-objc2-uniform-type-identifiers = { version = "0.3.2", default-features = false, features = ["std", "UTType"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSError", "NSFileManager", "NSString", "NSURL"] }
-objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "UIActivity", "UIActivityViewController", "UIAlertController", "UIControl", "UIDocumentPickerViewController", "UIPopoverPresentationController", "UIPresentationController", "UIResponder", "UIScrollView", "UITextField", "UIView", "UIViewController", "UIWindow", "UIGeometry"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6.4"
-block2 = "0.6.2"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSError", "NSString", "NSGeometry", "objc2-core-foundation"] }
-
-[features]
-default = ["custom-protocol"]
-custom-protocol = ["tauri/custom-protocol"]
-portable = []
 
 [profile.dev]
 incremental = true

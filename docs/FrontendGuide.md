@@ -294,7 +294,7 @@ src/
 
 ## 9. 如何新增一个 Tauri 注入接口
 
-1. 在 Rust 后端新增/确认命令（`src-tauri/src/presentation/commands/*`）。
+1. 在 Rust 后端新增/确认命令（`src-tauri/crates/tauritavern/src/presentation/commands/*`）。
 2. 若宿主层会调用该命令，将命令名加入 `src/tauri/main/kernel/invokes/tauri-commands.js`（`TauriInvokeCommand`，避免字符串拼写漂移）。
 3. 若该命令为高频/可合并写入的调用，按需在 `src/tauri/main/kernel/invokes/invoke-policies.js` 增加/调整策略（dedupe / write-behind）。
 4. 在 `src/tauri/main/routes/` 对应业务域中新增路由：路由层禁止直接引用 `window`，需要浏览器能力时下沉到 `adapters/` 或 `services/`。

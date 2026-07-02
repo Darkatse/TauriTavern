@@ -9,7 +9,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 test('dev bundle exports to iOS share staging root (not downloads)', async () => {
     const devBundlePath = path.join(
         REPO_ROOT,
-        'src-tauri/src/infrastructure/logging/dev_bundle.rs',
+        'src-tauri/crates/tauritavern/src/infrastructure/logging/dev_bundle.rs',
     );
     const source = await readFile(devBundlePath, 'utf8');
 

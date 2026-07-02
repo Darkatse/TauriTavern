@@ -13,7 +13,7 @@ async function readText(relativePath) {
 
 test('SillyTavern compatibility baseline stays aligned across frontend and backend', async () => {
     const frontendSource = await readText('src/compat-version.js');
-    const backendSource = await readText('src-tauri/src/presentation/commands/bridge.rs');
+    const backendSource = await readText('src-tauri/crates/tauritavern/src/presentation/commands/bridge.rs');
 
     const frontendVersion = frontendSource.match(/SILLYTAVERN_COMPAT_VERSION\s*=\s*['"]([^'"]+)['"]/)?.[1];
     const backendVersion = backendSource.match(/SILLYTAVERN_COMPAT_VERSION:\s*&str\s*=\s*"([^"]+)"/)?.[1];
