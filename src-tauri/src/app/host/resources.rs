@@ -12,10 +12,9 @@ use crate::application::services::bundled_template_service::BundledTemplateServi
 use crate::application::services::host_resource_service::HostResourceService;
 use crate::application::services::user_media_service::UserMediaService;
 use crate::infrastructure::bundled_resources::BundledResourceStore;
-use crate::infrastructure::host_resources::FilesystemHostResourceStore;
 use crate::infrastructure::paths::RuntimePaths;
-use crate::infrastructure::user_media_store::FilesystemUserMediaStore;
 use tauri::Manager;
+use tt_adapter_media::{FilesystemHostResourceStore, FilesystemUserMediaStore};
 
 pub(super) fn install_bundled_templates(app: &mut tauri::App, app_handle: &tauri::AppHandle) {
     // Template reads are command-driven and independent of user data root, so the

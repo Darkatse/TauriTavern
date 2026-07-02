@@ -8,16 +8,16 @@ use crate::infrastructure::logging::llm_api_logs::{
 };
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
-use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
-use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
 use crate::infrastructure::repositories::file_content_repository::FileContentRepository;
 use crate::infrastructure::repositories::file_extension_repository::FileExtensionRepository;
-use crate::infrastructure::repositories::file_image_metadata_repository::FileImageMetadataRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
 use crate::infrastructure::repositories::file_skill_repository::FileSkillRepository;
 use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
 use tt_adapter_http::HttpClientPool;
+use tt_adapter_media::{
+    FileAvatarRepository, FileBackgroundRepository, FileImageMetadataRepository,
+};
 use tt_adapter_provider_http::{
     HttpChatCompletionRepository, HttpProviderMetadataRepository, HttpStableDiffusionRepository,
     HttpTranslateRepository, HttpTtsRepository,

@@ -1,4 +1,4 @@
-use crate::infrastructure::persistence::thumbnail_cache::{ThumbnailConfig, ThumbnailResizeMode};
+use crate::persistence::thumbnail_cache::{ThumbnailConfig, ThumbnailResizeMode};
 
 pub const AVATAR_THUMBNAIL_WIDTH: u32 = 96;
 pub const AVATAR_THUMBNAIL_HEIGHT: u32 = 144;

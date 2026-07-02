@@ -5468,6 +5468,7 @@ dependencies = [
  "tracing-subscriber",
  "tt-adapter-archive",
  "tt-adapter-http",
+ "tt-adapter-media",
  "tt-adapter-provider-http",
  "tt-adapter-storage-core",
  "tt-adapter-sync",
@@ -5982,6 +5983,25 @@ dependencies = [
  "tt-domain",
  "tt-ports",
  "webpki-roots",
+]
+
+[[package]]
+name = "tt-adapter-media"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "image",
+ "mime_guess",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tt-adapter-storage-core",
+ "tt-contracts",
+ "tt-domain",
+ "tt-ports",
+ "uuid",
 ]
 
 [[package]]

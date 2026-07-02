@@ -2,10 +2,8 @@ use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use crate::infrastructure::persistence::thumbnail_cache::{
-    ThumbnailConfig, read_thumbnail_or_original_sync,
-};
-use crate::infrastructure::thumbnails::{avatar_thumbnail_config, background_thumbnail_config};
+use crate::persistence::thumbnail_cache::{ThumbnailConfig, read_thumbnail_or_original_sync};
+use crate::thumbnails::{avatar_thumbnail_config, background_thumbnail_config};
 use tt_contracts::client_asset_paths::UserDataAssetKind;
 use tt_contracts::range::ByteRange;
 use tt_domain::errors::DomainError;
@@ -54,7 +52,7 @@ impl HostResourceRoots {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct FilesystemHostResourceStore {
+pub struct FilesystemHostResourceStore {
     roots: HostResourceRoots,
 }
 
@@ -69,7 +67,7 @@ struct OpenHostResourceFile {
 }
 
 impl FilesystemHostResourceStore {
-    pub(crate) fn from_data_root(data_root: impl AsRef<Path>) -> Self {
+    pub fn from_data_root(data_root: impl AsRef<Path>) -> Self {
         Self {
             roots: HostResourceRoots::from_data_root(data_root),
         }

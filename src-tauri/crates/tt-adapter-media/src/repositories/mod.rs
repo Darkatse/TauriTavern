@@ -1,0 +1,7 @@
+mod file_avatar_repository;
+mod file_background_repository;
+mod file_image_metadata_repository;
+
+pub use file_avatar_repository::FileAvatarRepository;
+pub use file_background_repository::FileBackgroundRepository;
+pub use file_image_metadata_repository::FileImageMetadataRepository;

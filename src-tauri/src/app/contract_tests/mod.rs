@@ -75,6 +75,7 @@ const AGENT_CONTRACT_ASYNC_TIMEOUT: Duration = Duration::from_secs(5);
 mod agent_runtime;
 mod architecture;
 mod character;
+mod host_resources;
 
 struct AgentRuntimeFixture {
     service: Arc<AgentRuntimeService>,

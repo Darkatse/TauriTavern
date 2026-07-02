@@ -20,6 +20,7 @@ members = [
     "crates/tt-adapter-archive",
     "crates/tt-adapter-provider-http",
     "crates/tt-adapter-storage-core",
+    "crates/tt-adapter-media",
 ]
 default-members = ["."]
 resolver = "3"
@@ -94,6 +95,7 @@ tt-adapter-sync = { path = "crates/tt-adapter-sync" }
 tt-adapter-archive = { path = "crates/tt-adapter-archive" }
 tt-adapter-provider-http = { path = "crates/tt-adapter-provider-http" }
 tt-adapter-storage-core = { path = "crates/tt-adapter-storage-core" }
+tt-adapter-media = { path = "crates/tt-adapter-media" }
 
 # TT-Sync v2 shared protocol crates. (crates.io)
 ttsync-contract = { workspace = true }

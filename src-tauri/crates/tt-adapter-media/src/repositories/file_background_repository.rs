@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::infrastructure::persistence::thumbnail_cache::invalidate_thumbnail_cache;
+use crate::persistence::thumbnail_cache::invalidate_thumbnail_cache;
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
 use tt_ports::repositories::background_repository::BackgroundRepository;

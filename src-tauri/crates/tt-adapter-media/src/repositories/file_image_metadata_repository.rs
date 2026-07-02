@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::infrastructure::persistence::thumbnail_cache::is_animated_image;
-use crate::infrastructure::thumbnails::{BACKGROUND_THUMBNAIL_HEIGHT, BACKGROUND_THUMBNAIL_WIDTH};
+use crate::persistence::thumbnail_cache::is_animated_image;
+use crate::thumbnails::{BACKGROUND_THUMBNAIL_HEIGHT, BACKGROUND_THUMBNAIL_WIDTH};
 use tt_adapter_storage_core::file_system::write_json_file;
 use tt_domain::errors::DomainError;
 use tt_domain::models::background::BackgroundListEntry;

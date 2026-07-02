@@ -9,7 +9,6 @@ use crate::domain::json_merge::merge_json_value;
 use crate::infrastructure::persistence::png_utils::{
     process_avatar_image, read_character_data_from_png, write_character_data_to_png,
 };
-use crate::infrastructure::persistence::thumbnail_cache::invalidate_thumbnail_cache;
 use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
 use tt_domain::models::chat::parse_message_timestamp_value;
@@ -56,7 +55,15 @@ impl FileCharacterRepository {
         let thumbnail_path = self
             .thumbnails_avatar_dir
             .join(format!("{}.png", file_name));
-        invalidate_thumbnail_cache(&thumbnail_path).await
+        match fs::remove_file(&thumbnail_path).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(DomainError::InternalError(format!(
+                "Failed to remove thumbnail cache '{}': {}",
+                thumbnail_path.display(),
+                error
+            ))),
+        }
     }
 
     async fn default_create_avatar_carrier(&self) -> Result<CreateAvatarCarrier, DomainError> {

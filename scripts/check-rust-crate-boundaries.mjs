@@ -247,6 +247,41 @@ const ADAPTER_STORAGE_CORE_FORBIDDEN_SOURCE_PATTERNS = [
     ['network IO', /\bstd::net::/],
 ];
 
+const ADAPTER_MEDIA_FORBIDDEN_PACKAGES = new Set([
+    'axum',
+    'miktik',
+    'qrcode',
+    'reqwest',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'tt-adapter-archive',
+    'tt-adapter-http',
+    'tt-adapter-provider-http',
+    'tt-adapter-sync',
+    'tt-adapter-tokenization',
+    'tt-application',
+    'ttsync-core',
+    'zip',
+]);
+
+const ADAPTER_MEDIA_FORBIDDEN_SOURCE_PATTERNS = [
+    ...ADAPTER_FORBIDDEN_SOURCE_PATTERNS,
+    ['axum', /\baxum::/],
+    ['miktik', /\bmiktik::/],
+    ['qrcode', /\bqrcode::/],
+    ['reqwest', /\breqwest::/],
+    ['tar', /\btar::/],
+    ['tt-adapter-archive', /\btt_adapter_archive::/],
+    ['tt-adapter-http', /\btt_adapter_http::/],
+    ['tt-adapter-provider-http', /\btt_adapter_provider_http::/],
+    ['tt-adapter-sync', /\btt_adapter_sync::/],
+    ['tt-adapter-tokenization', /\btt_adapter_tokenization::/],
+    ['ttsync-core', /\bttsync_core::/],
+    ['zip', /\bzip::/],
+    ['network IO', /\bstd::net::/],
+];
+
 const CRATES = [
     crateConfig('tt-domain', DOMAIN_FORBIDDEN_PACKAGES, DOMAIN_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-contracts', CONTRACTS_FORBIDDEN_PACKAGES, CONTRACTS_FORBIDDEN_SOURCE_PATTERNS),
@@ -257,6 +292,7 @@ const CRATES = [
     crateConfig('tt-adapter-archive', ADAPTER_ARCHIVE_FORBIDDEN_PACKAGES, ADAPTER_ARCHIVE_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-provider-http', ADAPTER_PROVIDER_HTTP_FORBIDDEN_PACKAGES, ADAPTER_PROVIDER_HTTP_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-storage-core', ADAPTER_STORAGE_CORE_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_CORE_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-media', ADAPTER_MEDIA_FORBIDDEN_PACKAGES, ADAPTER_MEDIA_FORBIDDEN_SOURCE_PATTERNS),
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [
