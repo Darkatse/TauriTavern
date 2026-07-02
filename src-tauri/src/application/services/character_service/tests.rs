@@ -90,3 +90,11 @@ fn invalid_bulk_merge_avatar_filename_fails_fast() {
 
     assert!(error.to_string().contains("Invalid avatar filename"));
 }
+
+#[test]
+fn normalize_merge_avatar_filename_preserves_exact_identity() {
+    assert_eq!(
+        CharacterService::normalize_merge_avatar_filename(" Alice.png").unwrap(),
+        " Alice.png"
+    );
+}

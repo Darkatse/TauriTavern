@@ -9,7 +9,7 @@ use tokio::fs;
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
-use crate::infrastructure::repositories::chat_directory_identity;
+use tt_adapter_storage_core::chat_directory_identity;
 use tt_adapter_storage_core::file_system::{
     list_files_with_extension, replace_file_with_fallback, unique_temp_path,
 };

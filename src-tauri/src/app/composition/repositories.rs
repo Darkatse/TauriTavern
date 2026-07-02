@@ -6,13 +6,11 @@ use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepositor
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
-use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
-use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
 use crate::infrastructure::repositories::file_content_repository::FileContentRepository;
 use crate::infrastructure::repositories::file_extension_repository::FileExtensionRepository;
 use crate::infrastructure::repositories::file_image_metadata_repository::FileImageMetadataRepository;
@@ -25,10 +23,11 @@ use tt_adapter_provider_http::{
     HttpTranslateRepository, HttpTtsRepository,
 };
 use tt_adapter_storage_core::{
-    DataDirectory, FileAssetRepository, FileExtensionStoreRepository, FileGroupRepository,
-    FileLlmConnectionRepository, FilePromptCacheRepository, FileQuickReplyRepository,
-    FileSecretRepository, FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository,
-    FileUserRepository,
+    DataDirectory, FileAssetRepository, FileChatRepository, FileExtensionStoreRepository,
+    FileGroupRepository, FileLlmConnectionRepository, FilePromptCacheRepository,
+    FileQuickReplyRepository, FileSecretRepository, FileSettingsRepository, FileThemeRepository,
+    FileUserDirectoryRepository, FileUserRepository,
+    chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
 };
 use tt_adapter_tokenization::MiktikTokenizerRepository;
 use tt_domain::errors::DomainError;

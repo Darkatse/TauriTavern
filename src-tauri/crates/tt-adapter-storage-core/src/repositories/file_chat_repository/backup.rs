@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::fs;
 
-use tt_adapter_storage_core::file_system::list_files_with_extension;
+use crate::file_system::list_files_with_extension;
 use tt_domain::errors::DomainError;
 
 use super::FileChatRepository;

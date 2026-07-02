@@ -6018,6 +6018,7 @@ dependencies = [
  "chrono",
  "icu_collator",
  "icu_locale_core",
+ "percent-encoding",
  "rand 0.9.2",
  "serde",
  "serde_json",

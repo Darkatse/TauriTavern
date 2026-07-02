@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 use self::cache::MemoryCache;
-use crate::infrastructure::repositories::chat_directory_identity::{
+use tt_adapter_storage_core::chat_directory_identity::{
     SharedChatAliasStore, chat_alias_path_for_user_dir, new_shared_chat_alias_store,
 };
 

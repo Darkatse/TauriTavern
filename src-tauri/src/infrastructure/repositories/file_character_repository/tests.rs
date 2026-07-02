@@ -11,7 +11,7 @@ use tokio::fs;
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, read_text_chunks_from_png, write_character_data_to_png,
 };
-use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_domain::models::character::Character;
 use tt_ports::repositories::character_repository::{
     CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterRepository,

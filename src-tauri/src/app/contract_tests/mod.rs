@@ -61,14 +61,14 @@ use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
-use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
-use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
 use crate::infrastructure::repositories::file_skill_repository::FileSkillRepository;
 use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
+use tt_adapter_storage_core::FileChatRepository;
 use tt_adapter_storage_core::FileLlmConnectionRepository;
+use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 
 const AGENT_CONTRACT_ASYNC_TIMEOUT: Duration = Duration::from_secs(5);
 

@@ -632,7 +632,7 @@ impl CharacterService {
     }
 
     fn normalize_merge_avatar_filename(avatar: &str) -> Result<String, ApplicationError> {
-        let value = avatar.trim();
+        let value = avatar;
         let is_png = value
             .get(value.len().saturating_sub(4)..)
             .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".png"));

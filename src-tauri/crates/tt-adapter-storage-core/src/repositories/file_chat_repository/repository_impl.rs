@@ -5,14 +5,12 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::fs;
 
-use crate::infrastructure::persistence::chat_format_importers::{
-    export_payload_to_plain_text, import_chat_payloads_from_json, import_chat_payloads_from_jsonl,
+use crate::chat_format_importers::{
+    export_payload_to_plain_text, import_chat_jsonl_bytes, import_chat_payloads_from_json,
 };
-use crate::infrastructure::persistence::jsonl_utils::{
-    parse_jsonl_bytes, read_jsonl_file, write_jsonl_file,
-};
-use tt_adapter_storage_core::file_system::{
-    list_files_with_extension, move_file_no_replace_with_fallback,
+use crate::file_system::{list_files_with_extension, move_file_no_replace_with_fallback};
+use crate::jsonl_utils::{
+    parse_jsonl_bytes, read_jsonl_file, write_jsonl_bytes_file, write_jsonl_file,
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
@@ -717,18 +715,23 @@ impl ChatRepository for FileChatRepository {
             DomainError::InternalError(format!("Failed to read chat import file: {}", e))
         })?;
 
+        enum ImportedPayload {
+            Jsonl(Vec<u8>),
+            Json(Vec<Vec<Value>>),
+        }
+
         let normalized_format = format.trim().to_lowercase();
-        let payloads = match normalized_format.as_str() {
-            "jsonl" => vec![import_chat_payloads_from_jsonl(
-                &file_text,
-                user_name,
-                character_display_name,
-            )?],
+        let imported_payload = match normalized_format.as_str() {
+            "jsonl" => ImportedPayload::Jsonl(import_chat_jsonl_bytes(&file_text)?),
             "json" => {
                 let value: Value = serde_json::from_str(&file_text).map_err(|e| {
                     DomainError::InvalidData(format!("Failed to parse chat import JSON: {}", e))
                 })?;
-                import_chat_payloads_from_json(&value, user_name, character_display_name)?
+                ImportedPayload::Json(import_chat_payloads_from_json(
+                    &value,
+                    user_name,
+                    character_display_name,
+                )?)
             }
             other => {
                 return Err(DomainError::InvalidData(format!(
@@ -748,8 +751,20 @@ impl ChatRepository for FileChatRepository {
             })?;
         }
 
-        let mut created_files = Vec::with_capacity(payloads.len());
         let dir_key = self.resolve_character_chat_dir_key(character_name).await?;
+        let payloads = match imported_payload {
+            ImportedPayload::Jsonl(payload_bytes) => {
+                let file_stem =
+                    self.next_import_chat_file_stem_in_dir(&dir_key, character_display_name, 0)?;
+                let path = self.get_chat_path_for_dir_key(&dir_key, &file_stem)?;
+                write_jsonl_bytes_file(&path, &payload_bytes).await?;
+                self.remove_summary_cache_for_path(&path).await;
+                return Ok(vec![Self::normalize_jsonl_file_name(&file_stem)?]);
+            }
+            ImportedPayload::Json(payloads) => payloads,
+        };
+
+        let mut created_files = Vec::with_capacity(payloads.len());
         for (index, payload) in payloads.iter().enumerate() {
             let file_stem =
                 self.next_import_chat_file_stem_in_dir(&dir_key, character_display_name, index)?;

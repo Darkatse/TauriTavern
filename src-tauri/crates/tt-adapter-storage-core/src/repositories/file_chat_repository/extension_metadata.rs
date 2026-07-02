@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 use tokio::fs::File;
 use tokio::io::{self, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
-use tt_adapter_storage_core::file_system::replace_file_with_fallback;
+use crate::file_system::replace_file_with_fallback;
 use tt_domain::errors::DomainError;
 
 use super::FileChatRepository;

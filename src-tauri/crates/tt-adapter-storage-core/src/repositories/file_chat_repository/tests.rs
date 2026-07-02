@@ -5,7 +5,7 @@ use rand::random;
 use serde_json::{Value, json};
 use tokio::fs;
 
-use crate::infrastructure::repositories::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use crate::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
 use tt_ports::repositories::chat_repository::{
@@ -963,8 +963,7 @@ async fn group_chat_payload_roundtrip_and_delete() {
     let bytes = fs::read(&payload_path)
         .await
         .expect("read group payload bytes");
-    let saved = crate::infrastructure::persistence::jsonl_utils::parse_jsonl_bytes(&bytes)
-        .expect("parse group payload");
+    let saved = crate::jsonl_utils::parse_jsonl_bytes(&bytes).expect("parse group payload");
     assert_eq!(saved.len(), payload.len());
 
     repository
@@ -1004,6 +1003,67 @@ async fn import_chat_payload_creates_unique_files() {
     assert_ne!(first[0], second[0]);
     assert!(root.join("chats").join("alice").join(&first[0]).exists());
     assert!(root.join("chats").join("alice").join(&second[0]).exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_chat_payload_preserves_unchanged_jsonl_bytes() {
+    let (repository, root) = setup_repository().await;
+
+    let import_path = root.join("raw-import.jsonl");
+    let import_content = concat!(
+        "{ \"chat_metadata\" : { \"integrity\" : \"raw-import\" } }\r\n",
+        "{ \"name\" : \"Alice\", \"is_user\" : false, \"mes\" : \"kept\", \"extra\" : { \"note\" : true } }\n",
+        "not-json but SillyTavern keeps it\n"
+    );
+    fs::write(&import_path, import_content.as_bytes())
+        .await
+        .expect("write raw import file");
+
+    let files = repository
+        .import_chat_payload("alice", "Alice", "User", &import_path, "jsonl")
+        .await
+        .expect("import raw JSONL");
+
+    let saved = fs::read(root.join("chats").join("alice").join(&files[0]))
+        .await
+        .expect("read imported raw JSONL");
+    assert_eq!(saved, import_content.as_bytes());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_chat_payload_flattens_chub_jsonl_without_normalizing_messages() {
+    let (repository, root) = setup_repository().await;
+
+    let import_path = root.join("chub-import.jsonl");
+    let import_content = [
+        r#"{"chat_metadata":{"integrity":"chub-import"}}"#,
+        r#"{"is_user":false,"mes":{"message":"hello"},"swipes":[{"message":"alt"},{"message":""},{"other":"kept"}]}"#,
+    ]
+    .join("\n");
+    fs::write(&import_path, import_content)
+        .await
+        .expect("write Chub import file");
+
+    let files = repository
+        .import_chat_payload("alice", "Alice", "User", &import_path, "jsonl")
+        .await
+        .expect("import Chub JSONL");
+
+    let saved_bytes = fs::read(root.join("chats").join("alice").join(&files[0]))
+        .await
+        .expect("read imported Chub JSONL");
+    let saved = crate::jsonl_utils::parse_jsonl_bytes(&saved_bytes).expect("parse Chub import");
+
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[1].get("mes"), Some(&json!("hello")));
+    assert_eq!(saved[1].pointer("/swipes/0"), Some(&json!("alt")));
+    assert_eq!(saved[1].pointer("/swipes/1"), Some(&json!({"message": ""})));
+    assert!(saved[1].get("name").is_none());
+    assert!(saved[1].get("extra").is_none());
 
     let _ = fs::remove_dir_all(&root).await;
 }

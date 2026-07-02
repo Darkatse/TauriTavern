@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use tt_adapter_storage_core::file_system::{replace_file_with_fallback, unique_temp_path};
+use crate::file_system::{replace_file_with_fallback, unique_temp_path};
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
 
@@ -37,16 +37,16 @@ impl Default for ChatAliasFile {
     }
 }
 
-pub(crate) struct ChatAliasStore {
+pub struct ChatAliasStore {
     path: PathBuf,
     loaded: bool,
     aliases: HashMap<String, ChatAliasEntry>,
 }
 
-pub(crate) type SharedChatAliasStore = Arc<Mutex<ChatAliasStore>>;
+pub type SharedChatAliasStore = Arc<Mutex<ChatAliasStore>>;
 
 impl ChatAliasStore {
-    pub(crate) fn new(path: PathBuf) -> Self {
+    fn new(path: PathBuf) -> Self {
         Self {
             path,
             loaded: false,
@@ -176,20 +176,18 @@ impl ChatAliasStore {
     }
 }
 
-pub(crate) fn chat_alias_path_for_user_dir(default_user_dir: &Path) -> PathBuf {
+pub fn chat_alias_path_for_user_dir(default_user_dir: &Path) -> PathBuf {
     default_user_dir
         .join("user")
         .join("cache")
         .join("chat_aliases_v1.json")
 }
 
-pub(crate) fn new_shared_chat_alias_store(path: PathBuf) -> SharedChatAliasStore {
+pub fn new_shared_chat_alias_store(path: PathBuf) -> SharedChatAliasStore {
     Arc::new(Mutex::new(ChatAliasStore::new(path)))
 }
 
-pub(crate) fn new_shared_chat_alias_store_for_user_dir(
-    default_user_dir: &Path,
-) -> SharedChatAliasStore {
+pub fn new_shared_chat_alias_store_for_user_dir(default_user_dir: &Path) -> SharedChatAliasStore {
     new_shared_chat_alias_store(chat_alias_path_for_user_dir(default_user_dir))
 }
 
@@ -209,7 +207,7 @@ pub(crate) fn sanitize_chat_dir_key(value: &str, fallback: &str) -> String {
 /// their internal key. Do not trim, URL-decode, strip query/hash, or take a
 /// basename here; those transformations are only reproduced below to locate
 /// directories created by the former broken normalizer.
-pub(crate) async fn resolve_character_chat_dir_key(
+pub async fn resolve_character_chat_dir_key(
     characters_dir: &Path,
     chats_dir: &Path,
     aliases: &SharedChatAliasStore,

@@ -31,7 +31,7 @@ mod tests;
 
 use self::cache::{MemoryCache, ThrottledBackup};
 use self::summary::SummaryCache;
-use crate::infrastructure::repositories::chat_directory_identity::{
+use crate::chat_directory_identity::{
     SharedChatAliasStore, chat_alias_path_for_user_dir, new_shared_chat_alias_store,
 };
 
@@ -85,7 +85,7 @@ impl FileChatRepository {
     /// Character and chat repositories must share this store in production so
     /// lazy legacy-dir aliases are serialized through one cache. Prefer this
     /// constructor whenever both repositories are created for the same runtime.
-    pub(crate) fn with_chat_aliases(
+    pub fn with_chat_aliases(
         characters_dir: PathBuf,
         chats_dir: PathBuf,
         group_chats_dir: PathBuf,

@@ -1,4 +1,5 @@
 mod file_asset_repository;
+mod file_chat_repository;
 mod file_extension_store_repository;
 mod file_group_repository;
 mod file_llm_connection_repository;
@@ -11,6 +12,7 @@ mod file_user_directory_repository;
 mod file_user_repository;
 
 pub use file_asset_repository::FileAssetRepository;
+pub use file_chat_repository::FileChatRepository;
 pub use file_extension_store_repository::FileExtensionStoreRepository;
 pub use file_group_repository::FileGroupRepository;
 pub use file_llm_connection_repository::FileLlmConnectionRepository;

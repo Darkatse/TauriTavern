@@ -63,8 +63,8 @@ Rust chat repository 当前接收的是 character stem，而不是 avatar filena
 
 核心实现位置：
 
-- `src-tauri/src/infrastructure/repositories/chat_directory_identity.rs`
-- `src-tauri/src/infrastructure/repositories/file_chat_repository/chat_dir_resolver.rs`
+- `src-tauri/crates/tt-adapter-storage-core/src/chat_directory_identity.rs`
+- `src-tauri/crates/tt-adapter-storage-core/src/repositories/file_chat_repository/chat_dir_resolver.rs`
 - `src-tauri/src/infrastructure/repositories/file_character_repository/helpers.rs`
 
 持续开发约束：

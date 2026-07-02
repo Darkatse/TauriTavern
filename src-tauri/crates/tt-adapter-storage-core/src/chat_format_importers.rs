@@ -31,57 +31,65 @@ fn is_js_truthy(value: Option<&Value>) -> bool {
     }
 }
 
-fn flatten_chub_payload(payload: &mut [Value], user_name: &str, character_name: &str) {
-    for (index, line) in payload.iter_mut().enumerate() {
-        let Some(object) = line.as_object_mut() else {
-            continue;
-        };
+fn flatten_chub_line(line: &str) -> Result<(String, bool), DomainError> {
+    let Ok(mut value) = serde_json::from_str::<Value>(line) else {
+        return Ok((line.to_string(), false));
+    };
 
+    if value.is_null() {
+        return Err(DomainError::InvalidData(
+            "Failed to flatten Chub chat data".to_string(),
+        ));
+    }
+
+    let mut changed = false;
+    if let Some(object) = value.as_object_mut() {
         if let Some(mes_value) = object.get_mut("mes") {
-            if let Some(message_object) = mes_value.as_object() {
-                if let Some(message_text) = message_object.get("message").and_then(Value::as_str) {
-                    *mes_value = Value::String(message_text.to_string());
-                }
+            let message_value = mes_value
+                .as_object()
+                .and_then(|message| message.get("message"))
+                .filter(|message| is_js_truthy(Some(message)))
+                .cloned();
+            if let Some(message_value) = message_value {
+                *mes_value = message_value;
+                changed = true;
             }
         }
 
-        if let Some(swipes_value) = object.get_mut("swipes") {
-            if let Some(swipes) = swipes_value.as_array_mut() {
-                for swipe in swipes {
-                    if let Some(message_text) = swipe
-                        .as_object()
-                        .and_then(|entry| entry.get("message"))
-                        .and_then(Value::as_str)
-                    {
-                        *swipe = Value::String(message_text.to_string());
-                    }
+        if let Some(swipes_value) = object.get_mut("swipes")
+            && let Some(swipes) = swipes_value.as_array_mut()
+        {
+            for swipe in swipes {
+                let message_value = swipe
+                    .as_object()
+                    .and_then(|entry| entry.get("message"))
+                    .filter(|message| is_js_truthy(Some(message)))
+                    .cloned();
+                if let Some(message_value) = message_value {
+                    *swipe = message_value;
+                    changed = true;
                 }
             }
-        }
-
-        if index == 0 {
-            continue;
-        }
-
-        if !object.contains_key("name") {
-            let is_user = object
-                .get("is_user")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            object.insert(
-                "name".to_string(),
-                Value::String(if is_user {
-                    user_name.to_string()
-                } else {
-                    character_name.to_string()
-                }),
-            );
-        }
-
-        if !object.contains_key("extra") {
-            object.insert("extra".to_string(), json!({}));
         }
     }
+
+    let serialized = serde_json::to_string(&value).map_err(|e| {
+        DomainError::InternalError(format!("Failed to serialize flattened chat line: {}", e))
+    })?;
+    Ok((serialized, changed))
+}
+
+fn flatten_chub_jsonl(data: &str) -> Result<(String, bool), DomainError> {
+    let mut changed = false;
+    let mut lines = Vec::new();
+
+    for line in data.split('\n') {
+        let (flattened, line_changed) = flatten_chub_line(line)?;
+        changed |= line_changed;
+        lines.push(flattened);
+    }
+
+    Ok((lines.join("\n"), changed))
 }
 
 fn import_ooba_payload(
@@ -323,42 +331,11 @@ pub fn import_chat_payloads_from_json(
 }
 
 /// Import a SillyTavern JSONL payload (with Chub flattening compatibility).
-pub fn import_chat_payloads_from_jsonl(
-    data: &str,
-    user_name: &str,
-    character_name: &str,
-) -> Result<Vec<Value>, DomainError> {
-    let mut payload: Vec<Value> = Vec::new();
-    for line in data.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        match serde_json::from_str::<Value>(trimmed) {
-            Ok(value) => payload.push(value),
-            Err(error) => {
-                if payload.is_empty() {
-                    return Err(DomainError::InvalidData(format!(
-                        "Unsupported chat import JSONL format: {}",
-                        error
-                    )));
-                }
-            }
-        }
-    }
-
-    if payload.is_empty() {
-        return Err(DomainError::InvalidData(
-            "Chat import JSONL file is empty".to_string(),
-        ));
-    }
-
-    flatten_chub_payload(&mut payload, user_name, character_name);
-
-    let header = payload
-        .first()
-        .ok_or_else(|| DomainError::InvalidData("Chat import JSONL file is empty".to_string()))?;
+pub fn import_chat_jsonl_bytes(data: &str) -> Result<Vec<u8>, DomainError> {
+    let header_line = data.split('\n').next().unwrap_or_default();
+    let header: Value = serde_json::from_str(header_line).map_err(|e| {
+        DomainError::InvalidData(format!("Unsupported chat import JSONL format: {}", e))
+    })?;
     let is_valid_header = header
         .get("user_name")
         .or_else(|| header.get("name"))
@@ -370,7 +347,15 @@ pub fn import_chat_payloads_from_jsonl(
         ));
     }
 
-    Ok(payload)
+    let Ok((flattened, changed)) = flatten_chub_jsonl(data) else {
+        return Ok(data.as_bytes().to_vec());
+    };
+
+    if changed {
+        Ok(flattened.into_bytes())
+    } else {
+        Ok(data.as_bytes().to_vec())
+    }
 }
 
 /// Export a JSONL chat payload to plain text.
