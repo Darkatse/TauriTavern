@@ -8,11 +8,11 @@ use crate::application::dto::provider_metadata_dto::{
     ProviderModelProvidersRequestDto, SiliconFlowEmbeddingModelsRequestDto,
     WorkersAiModelsRequestDto,
 };
-use crate::domain::repositories::provider_metadata_repository::{
-    NanoGptCredits, NanoGptModelProviders, OpenRouterCredits,
-};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_ports::repositories::provider_metadata_repository::{
+    NanoGptCredits, NanoGptModelProviders, OpenRouterCredits,
+};
 
 #[tauri::command]
 pub async fn get_openrouter_model_providers(

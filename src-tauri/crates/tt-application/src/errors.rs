@@ -1,0 +1,72 @@
+use thiserror::Error;
+
+use tt_domain::errors::DomainError;
+use tt_domain::models::upstream_failure::UpstreamFailure;
+
+#[derive(Error, Debug)]
+pub enum ApplicationError {
+    #[error("{0}")]
+    RateLimited(String),
+
+    #[error("{0}")]
+    Transient(String),
+
+    #[error("{0}")]
+    UpstreamFailure(UpstreamFailure),
+
+    #[error("{0}")]
+    Cancelled(String),
+
+    #[error("Internal error: {0}")]
+    InternalError(String),
+
+    #[error("Validation error: {0}")]
+    ValidationError(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+}
+
+impl From<DomainError> for ApplicationError {
+    fn from(error: DomainError) -> Self {
+        match error {
+            DomainError::NotFound(msg) => ApplicationError::NotFound(msg),
+            DomainError::InvalidData(msg) => ApplicationError::ValidationError(msg),
+            DomainError::AuthenticationError(msg) => ApplicationError::Unauthorized(msg),
+            DomainError::Cancelled(msg) => ApplicationError::Cancelled(msg),
+            DomainError::InternalError(msg) => ApplicationError::InternalError(msg),
+            DomainError::RateLimited { message } => ApplicationError::RateLimited(message),
+            DomainError::Transient(msg) => ApplicationError::Transient(msg),
+            DomainError::UpstreamFailure(failure) => ApplicationError::UpstreamFailure(failure),
+            DomainError::WorkspacePathIsDirectory { path } => {
+                ApplicationError::ValidationError(format!("Workspace path is a directory: {path}"))
+            }
+            DomainError::WorkspaceWriteConflict { kind, .. } => {
+                ApplicationError::ValidationError(format!("Workspace write conflict: {kind}"))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tt_domain::errors::GENERATION_CANCELLED_BY_USER_MESSAGE;
+
+    use super::*;
+
+    #[test]
+    fn domain_cancelled_maps_to_application_cancelled() {
+        let error: ApplicationError = DomainError::generation_cancelled_by_user().into();
+
+        assert!(matches!(
+            &error,
+            ApplicationError::Cancelled(message) if message == GENERATION_CANCELLED_BY_USER_MESSAGE
+        ));
+    }
+}

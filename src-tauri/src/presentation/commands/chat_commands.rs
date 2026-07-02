@@ -10,11 +10,11 @@ use crate::application::dto::chat_dto::{
     PinnedCharacterChatDto, RenameChatDto, SaveChatFromFileDto, SaveChatWindowedDto,
 };
 use crate::application::errors::ApplicationError;
-use crate::domain::repositories::chat_repository::{
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
-};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_ports::repositories::chat_repository::{
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
+};
 
 #[tauri::command]
 pub async fn get_all_chats(

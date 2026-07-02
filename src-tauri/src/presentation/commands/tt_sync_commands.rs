@@ -5,10 +5,10 @@ use tauri::State;
 use ttsync_contract::sync::SyncMode;
 
 use crate::app::AppState;
-use crate::domain::models::sync::{SyncJobReport, SyncOperationOptions};
 use crate::domain::models::tt_sync::TtSyncPairedServer;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_contracts::sync::{SyncJobReport, SyncOperationOptions};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TtSyncPermissionsDto {

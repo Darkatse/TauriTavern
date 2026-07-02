@@ -45,19 +45,6 @@ use crate::domain::models::agent::{
     AgentRunPresentation, AgentRunStatus, WorkspacePath,
 };
 use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
-use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
-use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
-use crate::domain::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
-use crate::domain::repositories::agent_run_repository::{
-    AgentRunEventReadQuery, AgentRunRepository,
-};
-use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
-use crate::domain::repositories::chat_repository::ChatRepository;
-use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
-use crate::domain::repositories::group_chat_repository::GroupChatRepository;
-use crate::domain::repositories::preset_repository::PresetRepository;
-use crate::domain::repositories::workspace_repository::WorkspaceRepository;
-use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
@@ -69,6 +56,17 @@ use crate::infrastructure::repositories::file_world_info_repository::FileWorldIn
 use tt_adapter_storage_core::FileChatRepository;
 use tt_adapter_storage_core::FileLlmConnectionRepository;
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
+use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
+use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
+use tt_ports::repositories::agent_run_repository::{AgentRunEventReadQuery, AgentRunRepository};
+use tt_ports::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
+use tt_ports::repositories::chat_repository::ChatRepository;
+use tt_ports::repositories::checkpoint_repository::CheckpointRepository;
+use tt_ports::repositories::group_chat_repository::GroupChatRepository;
+use tt_ports::repositories::preset_repository::PresetRepository;
+use tt_ports::repositories::workspace_repository::WorkspaceRepository;
+use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 
 const AGENT_CONTRACT_ASYNC_TIMEOUT: Duration = Duration::from_secs(5);
 

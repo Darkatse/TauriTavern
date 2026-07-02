@@ -7,11 +7,11 @@ use ttsync_contract::sync::SyncMode;
 
 use crate::app::AppState;
 use crate::domain::models::lan_sync::{LanSyncPairedDeviceSummary, LanSyncStatus};
-use crate::domain::models::sync::{SyncJobReport, SyncOperationOptions};
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
+use tt_contracts::sync::{SyncJobReport, SyncOperationOptions};
 
 fn ensure_lan_sync_allowed(app_state: &AppState) -> Result<(), CommandError> {
     ensure_ios_policy_allows(

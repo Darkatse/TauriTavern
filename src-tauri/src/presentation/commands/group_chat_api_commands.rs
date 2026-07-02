@@ -5,11 +5,11 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::chat_dto::ChatSearchResultDto;
-use crate::domain::repositories::chat_types::{
-    ChatMessageSearchHit, ChatMessageSearchQuery, FindLastMessageQuery, LocatedChatMessage,
-};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_ports::repositories::chat_types::{
+    ChatMessageSearchHit, ChatMessageSearchQuery, FindLastMessageQuery, LocatedChatMessage,
+};
 
 #[tauri::command]
 pub async fn get_group_chat_summary(

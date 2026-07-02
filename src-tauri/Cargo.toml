@@ -89,6 +89,7 @@ dunce = "1"
 tt-domain = { path = "crates/tt-domain" }
 tt-contracts = { path = "crates/tt-contracts" }
 tt-ports = { path = "crates/tt-ports" }
+tt-application = { path = "crates/tt-application" }
 tt-adapter-http = { path = "crates/tt-adapter-http" }
 tt-adapter-tokenization = { path = "crates/tt-adapter-tokenization" }
 tt-adapter-sync = { path = "crates/tt-adapter-sync" }
@@ -100,6 +101,9 @@ tt-adapter-media = { path = "crates/tt-adapter-media" }
 # TT-Sync v2 shared protocol crates. (crates.io)
 ttsync-contract = { workspace = true }
 ttsync-core = { workspace = true }
+
+[dev-dependencies]
+tt-application = { path = "crates/tt-application", features = ["test-support"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-dialog = "2.7.0"

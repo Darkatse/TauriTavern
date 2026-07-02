@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC_ROOT = path.join(REPO_ROOT, 'src-tauri', 'src');
+const APPLICATION_SRC_ROOT = path.join(REPO_ROOT, 'src-tauri', 'crates', 'tt-application', 'src');
+const SCAN_ROOTS = [SRC_ROOT, APPLICATION_SRC_ROOT];
 
 function toPosixPath(value) {
     return String(value).replace(/\\/g, '/');
@@ -37,7 +39,13 @@ function collectLineViolations(relPath, line, lineNumber) {
     if (/logger::(debug|info|warn|error)\s*\(/.test(stripped)) {
         violations.push('logger facade call');
     }
-    if (relPath.startsWith('src-tauri/src/application/') && stripped.includes('crate::infrastructure::logging')) {
+    if (
+        (
+            relPath.startsWith('src-tauri/src/application/')
+            || relPath.startsWith('src-tauri/crates/tt-application/src/')
+        )
+        && stripped.includes('crate::infrastructure::logging')
+    ) {
         violations.push('application -> infrastructure logging');
     }
     if (relPath.startsWith('src-tauri/src/presentation/') && stripped.includes('crate::infrastructure::logging')) {
@@ -60,21 +68,25 @@ function collectLineViolations(relPath, line, lineNumber) {
 
 async function main() {
     try {
-        await fs.access(SRC_ROOT);
+        for (const root of SCAN_ROOTS) {
+            await fs.access(root);
+        }
     } catch {
-        console.error('[logging-boundaries] src-tauri/src not found; run from repository root.');
+        console.error('[logging-boundaries] Rust source roots not found; run from repository root.');
         process.exit(2);
     }
 
     const violations = [];
-    for (const filePath of await listRustFiles(SRC_ROOT)) {
-        const relPath = toPosixPath(path.relative(REPO_ROOT, filePath));
-        const text = await fs.readFile(filePath, 'utf8');
-        const lines = text.split(/\r?\n/);
+    for (const root of SCAN_ROOTS) {
+        for (const filePath of await listRustFiles(root)) {
+            const relPath = toPosixPath(path.relative(REPO_ROOT, filePath));
+            const text = await fs.readFile(filePath, 'utf8');
+            const lines = text.split(/\r?\n/);
 
-        lines.forEach((line, index) => {
-            violations.push(...collectLineViolations(relPath, line, index + 1));
-        });
+            lines.forEach((line, index) => {
+                violations.push(...collectLineViolations(relPath, line, index + 1));
+            });
+        }
     }
 
     if (violations.length > 0) {

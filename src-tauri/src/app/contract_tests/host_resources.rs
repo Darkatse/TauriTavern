@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use tokio::fs;
 use tt_adapter_media::FilesystemHostResourceStore;
-
-use super::temp_root;
-use crate::application::services::host_resource_service::HostResourceService;
-use crate::application::services::host_resource_service::contract::{
+use tt_contracts::host_resource::{
     HostResourceHeader, HostResourceHeaders, HostResourceMethod, HostResourceRequest,
     HostResourceResponse, header, status,
 };
+
+use super::temp_root;
+use crate::application::services::host_resource_service::HostResourceService;
 
 fn response_header<'a>(response: &'a HostResourceResponse, name: &str) -> Option<&'a str> {
     response

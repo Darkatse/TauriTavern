@@ -27,9 +27,9 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
 use crate::domain::models::agent::AgentChatRef;
 use crate::domain::models::agent::profile_diagnostic::AgentProfileHealth;
-use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentPersistentStatePruneRequest;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_ports::repositories::agent_workspace_lifecycle_repository::AgentPersistentStatePruneRequest;
 
 #[tauri::command]
 pub async fn start_agent_run(

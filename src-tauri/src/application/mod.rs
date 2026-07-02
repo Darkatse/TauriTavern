@@ -1,7 +1,4 @@
-// Application layer - contains use cases and business logic
-pub(crate) mod client_asset_paths;
-pub mod dto;
-pub mod errors;
+pub use tt_application::{dto, errors, services};
+
 #[cfg(target_os = "ios")]
-pub mod host_contract;
-pub mod services;
+pub use tt_application::host_contract;

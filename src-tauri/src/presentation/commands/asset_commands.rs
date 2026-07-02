@@ -78,22 +78,3 @@ pub async fn get_character_assets(
         .await
         .map_err(map_command_error("Failed to list character assets"))
 }
-
-#[cfg(test)]
-fn is_import_host_whitelisted(host: &str) -> bool {
-    crate::application::services::asset_service::is_import_host_whitelisted(host)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_import_host_whitelisted;
-
-    #[test]
-    fn import_host_whitelist_matches_default_content_sources() {
-        assert!(is_import_host_whitelisted("localhost"));
-        assert!(is_import_host_whitelisted("raw.githubusercontent.com"));
-        assert!(is_import_host_whitelisted("cdn.discordapp.com"));
-        assert!(is_import_host_whitelisted("files.catbox.moe"));
-        assert!(!is_import_host_whitelisted("example.com"));
-    }
-}

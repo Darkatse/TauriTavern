@@ -3,9 +3,9 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::domain::models::sync_automation::{SyncAutomationConfig, SyncAutomationStatus};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use tt_contracts::sync_automation::{SyncAutomationConfig, SyncAutomationStatus};
 
 #[tauri::command]
 pub async fn sync_automation_get_config(

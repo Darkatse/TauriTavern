@@ -1,0 +1,756 @@
+use std::path::Path;
+use std::sync::Arc;
+
+use serde_json::Value;
+
+use crate::dto::chat_dto::{
+    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
+    ImportCharacterChatsDto, ImportChatDto, RenameChatDto, SaveChatFromFileDto,
+};
+use crate::errors::ApplicationError;
+use crate::services::agent_workspace_lifecycle_service::{
+    AgentChatWorkspaceTarget, AgentWorkspaceLifecycleService,
+};
+use crate::services::chat_file_validation::{
+    validate_character_path_component, validate_chat_file_name,
+};
+use tt_domain::errors::DomainError;
+use tt_domain::models::chat::{Chat, ChatMessage, MessageExtra};
+use tt_ports::repositories::agent_workspace_lifecycle_repository::{
+    AgentPersistentStatePrune, AgentPersistentStatePruneRequest,
+};
+use tt_ports::repositories::character_repository::CharacterRepository;
+use tt_ports::repositories::chat_repository::{ChatExportFormat, ChatImportFormat, ChatRepository};
+use tt_ports::repositories::chat_types::{
+    ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
+    ChatPayloadPatchOp, ChatPayloadTail, FindLastMessageQuery, LocatedChatMessage,
+    PinnedCharacterChat,
+};
+
+/// Service for managing chats
+pub struct ChatService {
+    chat_repository: Arc<dyn ChatRepository>,
+    character_repository: Arc<dyn CharacterRepository>,
+    agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+}
+
+impl ChatService {
+    /// Create a new ChatService
+    pub fn new(
+        chat_repository: Arc<dyn ChatRepository>,
+        character_repository: Arc<dyn CharacterRepository>,
+        agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+    ) -> Self {
+        Self {
+            chat_repository,
+            character_repository,
+            agent_workspace_lifecycle_service,
+        }
+    }
+
+    /// Create a new chat
+    pub async fn create_chat(&self, dto: CreateChatDto) -> Result<ChatDto, ApplicationError> {
+        tracing::info!("Creating chat for character: {}", dto.character_name);
+
+        // Verify that the character exists
+        self.character_repository
+            .find_by_name(&dto.character_name)
+            .await?;
+
+        // Create a new chat
+        let mut chat = Chat::new(&dto.user_name, &dto.character_name);
+
+        // Add the first message if provided
+        if let Some(first_message) = dto.first_message {
+            let message = ChatMessage::character(&dto.character_name, &first_message);
+            chat.add_message(message);
+        }
+
+        // Save the chat
+        self.chat_repository.save(&chat).await?;
+
+        Ok(ChatDto::from(chat))
+    }
+
+    /// Get a chat by character name and file name
+    pub async fn get_chat(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<ChatDto, ApplicationError> {
+        tracing::info!("Getting chat: {}/{}", character_name, file_name);
+
+        let chat = self
+            .chat_repository
+            .get_chat(character_name, file_name)
+            .await?;
+
+        Ok(ChatDto::from(chat))
+    }
+
+    /// Get all chats for a character
+    pub async fn get_character_chats(
+        &self,
+        character_name: &str,
+    ) -> Result<Vec<ChatDto>, ApplicationError> {
+        tracing::info!("Getting chats for character: {}", character_name);
+
+        // Verify that the character exists
+        self.character_repository
+            .find_by_name(character_name)
+            .await?;
+
+        let chats = self
+            .chat_repository
+            .get_character_chats(character_name)
+            .await?;
+
+        Ok(chats.into_iter().map(ChatDto::from).collect())
+    }
+
+    /// Get all chats
+    pub async fn get_all_chats(&self) -> Result<Vec<ChatDto>, ApplicationError> {
+        tracing::info!("Getting all chats");
+
+        let chats = self.chat_repository.get_all_chats().await?;
+
+        Ok(chats.into_iter().map(ChatDto::from).collect())
+    }
+
+    /// Add a message to a chat
+    pub async fn add_message(&self, dto: AddMessageDto) -> Result<ChatDto, ApplicationError> {
+        tracing::info!(
+            "Adding message to chat: {}/{}",
+            dto.character_name,
+            dto.file_name
+        );
+
+        // Create the message
+        let message = if dto.is_user {
+            // Get the chat to get the user name
+            let chat = self
+                .chat_repository
+                .get_chat(&dto.character_name, &dto.file_name)
+                .await?;
+            ChatMessage::user(&chat.user_name, &dto.content)
+        } else {
+            ChatMessage::character(&dto.character_name, &dto.content)
+        };
+
+        // Add extra data if provided
+        let message = if let Some(extra) = dto.extra {
+            ChatMessage {
+                extra: MessageExtra::from(extra),
+                ..message
+            }
+        } else {
+            message
+        };
+
+        // Add the message to the chat
+        let chat = self
+            .chat_repository
+            .add_message(&dto.character_name, &dto.file_name, message)
+            .await?;
+
+        Ok(ChatDto::from(chat))
+    }
+
+    /// Rename a chat
+    pub async fn rename_chat(&self, dto: RenameChatDto) -> Result<String, ApplicationError> {
+        validate_character_path_component(&dto.character_name)?;
+        validate_chat_file_name(&dto.old_file_name, "Old chat file name")?;
+        validate_chat_file_name(&dto.new_file_name, "New chat file name")?;
+
+        tracing::info!(
+            "Renaming chat: {}/{} -> {}/{}",
+            dto.character_name,
+            dto.old_file_name,
+            dto.character_name,
+            dto.new_file_name
+        );
+
+        let committed_file_name = self
+            .chat_repository
+            .rename_chat(&dto.character_name, &dto.old_file_name, &dto.new_file_name)
+            .await?;
+
+        Ok(committed_file_name)
+    }
+
+    /// Delete a chat
+    pub async fn delete_chat(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<(), ApplicationError> {
+        tracing::info!("Deleting chat: {}/{}", character_name, file_name);
+
+        let summary = self
+            .chat_repository
+            .get_character_chat_summary(character_name, file_name, true)
+            .await?;
+        let target = match summary.chat_metadata.as_ref() {
+            Some(metadata) => AgentWorkspaceLifecycleService::character_target_from_metadata(
+                character_name,
+                file_name,
+                metadata,
+            )?,
+            None => None,
+        };
+        if let Some(target) = target.as_ref() {
+            self.agent_workspace_lifecycle_service
+                .ensure_chat_workspace_inactive(target)
+                .await?;
+        }
+
+        self.chat_repository
+            .delete_chat(character_name, file_name)
+            .await?;
+
+        if let Some(target) = target {
+            self.agent_workspace_lifecycle_service
+                .delete_chat_workspace(&target)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Search for chats
+    pub async fn search_chats(
+        &self,
+        query: &str,
+        character_filter: Option<&str>,
+    ) -> Result<Vec<ChatSearchResultDto>, ApplicationError> {
+        tracing::info!("Searching chats for: {}", query);
+
+        let results = self
+            .chat_repository
+            .search_chats(query, character_filter)
+            .await?;
+
+        Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
+    }
+
+    /// List chat summaries without loading full chat payloads.
+    pub async fn list_chat_summaries(
+        &self,
+        character_filter: Option<&str>,
+        include_metadata: bool,
+    ) -> Result<Vec<ChatSearchResultDto>, ApplicationError> {
+        tracing::info!("Listing chat summaries");
+
+        let results = self
+            .chat_repository
+            .list_chat_summaries(character_filter, include_metadata)
+            .await?;
+
+        Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
+    }
+
+    /// List recent character chat summaries without full summary scan.
+    pub async fn list_recent_chat_summaries(
+        &self,
+        character_filter: Option<&str>,
+        include_metadata: bool,
+        max_entries: usize,
+        pinned: &[PinnedCharacterChat],
+    ) -> Result<Vec<ChatSearchResultDto>, ApplicationError> {
+        tracing::info!("Listing recent character chat summaries");
+
+        let results = self
+            .chat_repository
+            .list_recent_chat_summaries(character_filter, include_metadata, max_entries, pinned)
+            .await?;
+
+        Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
+    }
+
+    /// Import a chat
+    pub async fn import_chat(&self, dto: ImportChatDto) -> Result<ChatDto, ApplicationError> {
+        tracing::info!(
+            "Importing chat for character {} from {}",
+            dto.character_name,
+            dto.file_path
+        );
+
+        // Verify that the character exists
+        self.character_repository
+            .find_by_name(&dto.character_name)
+            .await?;
+
+        // Convert the format string to enum
+        let format = ChatImportFormat::from(dto.format);
+
+        // Import the chat
+        let chat = self
+            .chat_repository
+            .import_chat(&dto.character_name, Path::new(&dto.file_path), format)
+            .await?;
+
+        Ok(ChatDto::from(chat))
+    }
+
+    /// Export a chat
+    pub async fn export_chat(&self, dto: ExportChatDto) -> Result<(), ApplicationError> {
+        tracing::info!(
+            "Exporting chat: {}/{} to {}",
+            dto.character_name,
+            dto.file_name,
+            dto.target_path
+        );
+
+        // Convert the format string to enum
+        let format = ChatExportFormat::from(dto.format);
+
+        // Export the chat
+        self.chat_repository
+            .export_chat(
+                &dto.character_name,
+                &dto.file_name,
+                Path::new(&dto.target_path),
+                format,
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Backup a chat
+    pub async fn backup_chat(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<(), ApplicationError> {
+        tracing::info!("Backing up chat: {}/{}", character_name, file_name);
+
+        self.chat_repository
+            .backup_chat(character_name, file_name)
+            .await?;
+
+        Ok(())
+    }
+
+    /// List chat backups.
+    pub async fn list_chat_backups(&self) -> Result<Vec<ChatSearchResultDto>, ApplicationError> {
+        tracing::info!("Listing chat backups");
+
+        let results = self.chat_repository.list_chat_backups().await?;
+        Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
+    }
+
+    /// Get raw bytes of a chat backup file.
+    pub async fn get_chat_backup_bytes(
+        &self,
+        backup_file_name: &str,
+    ) -> Result<Vec<u8>, ApplicationError> {
+        if backup_file_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Backup file name cannot be empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .get_chat_backup_bytes(backup_file_name)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Delete a chat backup file.
+    pub async fn delete_chat_backup(&self, backup_file_name: &str) -> Result<(), ApplicationError> {
+        if backup_file_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Backup file name cannot be empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .delete_chat_backup(backup_file_name)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn get_character_chat_summary(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        include_metadata: bool,
+    ) -> Result<ChatSearchResultDto, ApplicationError> {
+        let summary = self
+            .chat_repository
+            .get_character_chat_summary(character_name, file_name, include_metadata)
+            .await?;
+        Ok(ChatSearchResultDto::from(summary))
+    }
+
+    pub async fn get_character_chat_metadata(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Value, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .get_character_chat_metadata(character_name, file_name)
+            .await?)
+    }
+
+    pub async fn set_character_chat_metadata_extension(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        value: Value,
+    ) -> Result<(), ApplicationError> {
+        self.chat_repository
+            .set_character_chat_metadata_extension(character_name, file_name, namespace, value)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Value, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .get_character_chat_store_json(character_name, file_name, namespace, key)
+            .await?)
+    }
+
+    pub async fn set_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), ApplicationError> {
+        self.chat_repository
+            .set_character_chat_store_json(character_name, file_name, namespace, key, value)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), ApplicationError> {
+        self.chat_repository
+            .update_character_chat_store_json(character_name, file_name, namespace, key, value)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn rename_character_chat_store_key(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+        new_key: &str,
+    ) -> Result<(), ApplicationError> {
+        self.chat_repository
+            .rename_character_chat_store_key(character_name, file_name, namespace, key, new_key)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<(), ApplicationError> {
+        self.chat_repository
+            .delete_character_chat_store_json(character_name, file_name, namespace, key)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_character_chat_store_keys(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+    ) -> Result<Vec<String>, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .list_character_chat_store_keys(character_name, file_name, namespace)
+            .await?)
+    }
+
+    pub async fn find_last_character_chat_message(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        query: FindLastMessageQuery,
+    ) -> Result<Option<LocatedChatMessage>, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .find_last_character_chat_message(character_name, file_name, query)
+            .await?)
+    }
+
+    pub async fn search_character_chat_messages(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        query: ChatMessageSearchQuery,
+    ) -> Result<Vec<ChatMessageSearchHit>, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .search_character_chat_messages(character_name, file_name, query)
+            .await?)
+    }
+
+    /// Clear the chat cache
+    pub async fn clear_cache(&self) -> Result<(), DomainError> {
+        tracing::info!("Clearing chat cache");
+        self.chat_repository.clear_cache().await
+    }
+
+    /// Get the absolute path to a character chat payload file.
+    pub async fn get_chat_payload_path(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<String, ApplicationError> {
+        let path = self
+            .chat_repository
+            .get_chat_payload_path(character_name, file_name)
+            .await?;
+        Ok(path.to_string_lossy().to_string())
+    }
+
+    pub async fn get_chat_payload(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Vec<Value>, ApplicationError> {
+        self.chat_repository
+            .get_chat_payload(character_name, file_name)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn prune_agent_persistent_states(
+        &self,
+        target: &AgentChatWorkspaceTarget,
+        request: AgentPersistentStatePruneRequest,
+    ) -> Result<AgentPersistentStatePrune, ApplicationError> {
+        self.agent_workspace_lifecycle_service
+            .prune_persistent_states(target, request)
+            .await
+    }
+
+    /// Get the tail window for a character chat JSONL payload.
+    pub async fn get_chat_payload_tail_lines(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        max_lines: usize,
+    ) -> Result<ChatPayloadTail, ApplicationError> {
+        self.chat_repository
+            .get_chat_payload_tail_lines(character_name, file_name, max_lines)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Get JSONL lines before the current character chat window cursor.
+    pub async fn get_chat_payload_before_lines(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        max_lines: usize,
+    ) -> Result<ChatPayloadChunk, ApplicationError> {
+        self.chat_repository
+            .get_chat_payload_before_lines(character_name, file_name, cursor, max_lines)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Get multiple windows of JSONL lines before the current character chat window cursor.
+    ///
+    /// This is equivalent to calling `get_chat_payload_before_lines` repeatedly, but returns
+    /// multiple pages in one IPC round-trip.
+    pub async fn get_chat_payload_before_pages_lines(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        max_lines: usize,
+        max_pages: usize,
+    ) -> Result<Vec<ChatPayloadChunk>, ApplicationError> {
+        if max_lines == 0 || max_pages == 0 {
+            return Err(ApplicationError::ValidationError(
+                "max_lines and max_pages must be greater than 0".to_string(),
+            ));
+        }
+
+        let mut pages = Vec::with_capacity(max_pages);
+        let mut next_cursor = cursor;
+
+        for _ in 0..max_pages {
+            let page = self
+                .chat_repository
+                .get_chat_payload_before_lines(character_name, file_name, next_cursor, max_lines)
+                .await?;
+
+            next_cursor = page.cursor;
+            let done = page.lines.is_empty() || !page.has_more_before;
+            pages.push(page);
+
+            if done {
+                break;
+            }
+        }
+
+        Ok(pages)
+    }
+
+    /// Save a windowed character chat payload by preserving bytes before cursor.offset and
+    /// overwriting from cursor.offset using the provided JSONL lines.
+    pub async fn save_chat_payload_windowed(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        lines: Vec<String>,
+        expected_window_line_count: usize,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_character_path_component(character_name)?;
+        validate_chat_file_name(file_name, "Chat file name")?;
+
+        self.chat_repository
+            .save_chat_payload_windowed(
+                character_name,
+                file_name,
+                cursor,
+                header,
+                lines,
+                expected_window_line_count,
+                force,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Patch a windowed character chat payload.
+    pub async fn patch_chat_payload_windowed(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        op: ChatPayloadPatchOp,
+        expected_window_line_count: usize,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_character_path_component(character_name)?;
+        validate_chat_file_name(file_name, "Chat file name")?;
+
+        self.chat_repository
+            .patch_chat_payload_windowed(
+                character_name,
+                file_name,
+                cursor,
+                header,
+                op,
+                expected_window_line_count,
+                force,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Set the hidden flag on all messages stored before the window cursor.
+    pub async fn hide_chat_payload_before_cursor(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        hide: bool,
+        name_filter: Option<String>,
+        expected_window_line_count: usize,
+    ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_character_path_component(character_name)?;
+        validate_chat_file_name(file_name, "Chat file name")?;
+
+        self.chat_repository
+            .hide_chat_payload_before_cursor(
+                character_name,
+                file_name,
+                cursor,
+                hide,
+                name_filter,
+                expected_window_line_count,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Save a character chat payload from a JSONL file path.
+    pub async fn save_chat_from_file(
+        &self,
+        dto: SaveChatFromFileDto,
+    ) -> Result<(), ApplicationError> {
+        validate_character_path_component(&dto.character_name)?;
+        validate_chat_file_name(&dto.file_name, "Chat file name")?;
+
+        self.chat_repository
+            .save_chat_payload_from_path(
+                &dto.character_name,
+                &dto.file_name,
+                Path::new(&dto.file_path),
+                dto.force.unwrap_or(false),
+            )
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Import one or more character chats from an uploaded file.
+    pub async fn import_character_chats(
+        &self,
+        dto: ImportCharacterChatsDto,
+    ) -> Result<Vec<String>, ApplicationError> {
+        if dto.character_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Character name cannot be empty".to_string(),
+            ));
+        }
+
+        let character_display_name = dto
+            .character_display_name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(&dto.character_name);
+        let user_name = dto
+            .user_name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("User");
+
+        self.chat_repository
+            .import_chat_payload(
+                &dto.character_name,
+                character_display_name,
+                user_name,
+                Path::new(&dto.file_path),
+                &dto.file_type,
+            )
+            .await
+            .map_err(Into::into)
+    }
+}

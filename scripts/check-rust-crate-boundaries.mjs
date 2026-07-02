@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUST_CRATES_ROOT = path.join(REPO_ROOT, 'src-tauri', 'crates');
 const WORKSPACE_MANIFEST = path.join(REPO_ROOT, 'src-tauri', 'Cargo.toml');
+const DEPENDENCY_TREE_CHECKS = [
+    ['no-default-features', ['--no-default-features']],
+    ['all-features/all-targets', ['--all-features', '--target', 'all', '-e', 'normal,build,dev']],
+];
 
 const DOMAIN_FORBIDDEN_PACKAGES = new Set([
     'async-trait',
@@ -85,6 +89,60 @@ const PORTS_FORBIDDEN_SOURCE_PATTERNS = [
     ['ttsync-core', /\bttsync_core::/],
     ['filesystem IO', /\bstd::fs::/],
     ['network IO', /\bstd::net::/],
+];
+
+const APPLICATION_FORBIDDEN_PACKAGES = new Set([
+    'async-compression',
+    'axum',
+    'image',
+    'miktik',
+    'qrcode',
+    'reqwest',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'tokio-tungstenite',
+    'tt-adapter-archive',
+    'tt-adapter-http',
+    'tt-adapter-media',
+    'tt-adapter-provider-http',
+    'tt-adapter-storage-core',
+    'tt-adapter-sync',
+    'tt-adapter-tokenization',
+    'yup-oauth2',
+    'zip',
+]);
+
+const APPLICATION_FORBIDDEN_SOURCE_PATTERNS = [
+    ['domain facade path', /\bcrate::domain::/],
+    ['app host path', /\bcrate::app::/],
+    ['infrastructure path', /\bcrate::infrastructure::/],
+    ['presentation path', /\bcrate::presentation::/],
+    ['platform path', /\bcrate::platform::/],
+    ['axum', /\baxum::/],
+    ['image', /\bimage::/],
+    ['miktik', /\bmiktik::/],
+    ['qrcode', /\bqrcode::/],
+    ['reqwest', /\breqwest::/],
+    ['tauri', /\btauri::/],
+    ['tar', /\btar::/],
+    ['tt-adapter-archive', /\btt_adapter_archive::/],
+    ['tt-adapter-http', /\btt_adapter_http::/],
+    ['tt-adapter-media', /\btt_adapter_media::/],
+    ['tt-adapter-provider-http', /\btt_adapter_provider_http::/],
+    ['tt-adapter-storage-core', /\btt_adapter_storage_core::/],
+    ['tt-adapter-sync', /\btt_adapter_sync::/],
+    ['tt-adapter-tokenization', /\btt_adapter_tokenization::/],
+    ['main crate', /\btauritavern(_lib)?::/],
+    ['provider oauth client', /\byup_oauth2::/],
+    ['concrete hyper client', /\bhyper_util::/],
+    ['concrete rustls client', /\brustls::/],
+    ['tls root store', /\bwebpki_roots::/],
+    ['tokio-tungstenite', /\btokio_tungstenite::/],
+    ['sys-locale', /\bsys_locale::/],
+    ['icu collator', /\bicu_collator::/],
+    ['icu locale', /\bicu_locale_core::/],
+    ['zip', /\bzip::/],
 ];
 
 const ADAPTER_HTTP_FORBIDDEN_PACKAGES = new Set([
@@ -286,6 +344,7 @@ const CRATES = [
     crateConfig('tt-domain', DOMAIN_FORBIDDEN_PACKAGES, DOMAIN_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-contracts', CONTRACTS_FORBIDDEN_PACKAGES, CONTRACTS_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-ports', PORTS_FORBIDDEN_PACKAGES, PORTS_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-application', APPLICATION_FORBIDDEN_PACKAGES, APPLICATION_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-http', ADAPTER_HTTP_FORBIDDEN_PACKAGES, ADAPTER_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-tokenization', ADAPTER_TOKENIZATION_FORBIDDEN_PACKAGES, ADAPTER_TOKENIZATION_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-sync', ADAPTER_SYNC_FORBIDDEN_PACKAGES, ADAPTER_SYNC_FORBIDDEN_SOURCE_PATTERNS),
@@ -296,6 +355,14 @@ const CRATES = [
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [
+    sourceRule('infrastructure', path.join(REPO_ROOT, 'src-tauri', 'src', 'infrastructure'), [
+        ['application facade', /\bcrate::application::/],
+        ['tt-application crate', /\btt_application::/],
+    ]),
+    sourceRule('platform', path.join(REPO_ROOT, 'src-tauri', 'src', 'platform'), [
+        ['application facade', /\bcrate::application::/],
+        ['tt-application crate', /\btt_application::/],
+    ]),
     sourceRule('app composition', path.join(REPO_ROOT, 'src-tauri', 'src', 'app', 'composition'), [
         ['repository facade', /\bcrate::domain::repositories::/],
         ['sync contract facade', /\bcrate::domain::models::sync(_automation)?::/],
@@ -305,7 +372,7 @@ const MAIN_CRATE_SOURCE_RULES = [
         ['client asset contract facade', /\bcrate::application::client_asset_paths::/],
         ['host resource facade', /\bcrate::application::services::host_resource_service::(contract|ports|range)::/],
     ]),
-    sourceRule('application provider auth boundary', path.join(REPO_ROOT, 'src-tauri', 'src', 'application'), [
+    sourceRule('application provider auth boundary', path.join(REPO_ROOT, 'src-tauri', 'crates', 'tt-application', 'src'), [
         ['provider oauth client', /\byup_oauth2::/],
         ['concrete hyper client', /\bhyper_util::/],
         ['concrete rustls client', /\brustls::/],
@@ -335,6 +402,26 @@ function sourceRule(name, root, forbiddenSourcePatterns) {
 
 function toPosixPath(value) {
     return String(value).replace(/\\/g, '/');
+}
+
+function loadWorkspaceMetadata() {
+    const result = spawnSync('cargo', [
+        'metadata',
+        '--manifest-path',
+        WORKSPACE_MANIFEST,
+        '--no-deps',
+        '--format-version',
+        '1',
+    ], {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+    });
+
+    if (result.status !== 0) {
+        throw new Error(`cargo metadata failed:\n${result.stderr || result.stdout}`);
+    }
+
+    return JSON.parse(result.stdout);
 }
 
 async function listFiles(dir) {
@@ -419,40 +506,70 @@ async function checkMainCrateSourceRule(config) {
 }
 
 function checkDependencyTree(config) {
-    const result = spawnSync('cargo', [
-        'tree',
-        '--manifest-path',
-        WORKSPACE_MANIFEST,
-        '-p',
-        config.name,
-        '--no-default-features',
-        '--prefix',
-        'none',
-    ], {
-        cwd: REPO_ROOT,
-        encoding: 'utf8',
-    });
+    const violations = [];
 
-    if (result.status !== 0) {
-        return [`${config.name} cargo tree failed:\n${result.stderr || result.stdout}`];
+    for (const [label, featureArgs] of DEPENDENCY_TREE_CHECKS) {
+        const result = spawnSync('cargo', [
+            'tree',
+            '--manifest-path',
+            WORKSPACE_MANIFEST,
+            '-p',
+            config.name,
+            ...featureArgs,
+            '--prefix',
+            'none',
+        ], {
+            cwd: REPO_ROOT,
+            encoding: 'utf8',
+        });
+
+        if (result.status !== 0) {
+            violations.push(`${config.name} cargo tree (${label}) failed:\n${result.stderr || result.stdout}`);
+            continue;
+        }
+
+        const packages = new Set(
+            result.stdout
+                .split(/\r?\n/)
+                .map((line) => line.trim().split(/\s+/)[0])
+                .filter(Boolean),
+        );
+
+        for (const name of config.forbiddenPackages) {
+            if (packages.has(name)) {
+                violations.push(`${config.name} ${label} dependency tree includes forbidden package: ${name}`);
+            }
+        }
     }
 
-    const packages = new Set(
-        result.stdout
-            .split(/\r?\n/)
-            .map((line) => line.trim().split(/\s+/)[0])
-            .filter(Boolean),
-    );
+    return violations;
+}
 
-    return [...config.forbiddenPackages]
-        .filter((name) => packages.has(name))
-        .map((name) => `${config.name} dependency tree includes forbidden package: ${name}`);
+function checkDirectDependencies(config, metadata) {
+    const rustPackage = metadata.packages.find((entry) => entry.name === config.name);
+    if (!rustPackage) {
+        return [`${config.name} package missing from cargo metadata`];
+    }
+
+    return rustPackage.dependencies
+        .filter((dependency) => config.forbiddenPackages.has(dependency.name))
+        .map((dependency) => {
+            const qualifiers = [
+                dependency.kind,
+                dependency.optional ? 'optional' : null,
+                dependency.target,
+            ].filter(Boolean);
+            const suffix = qualifiers.length > 0 ? ` (${qualifiers.join(', ')})` : '';
+            return `${config.name} Cargo.toml declares forbidden dependency: ${dependency.name}${suffix}`;
+        });
 }
 
 async function main() {
+    const metadata = loadWorkspaceMetadata();
     const violations = [];
     for (const config of CRATES) {
         violations.push(
+            ...checkDirectDependencies(config, metadata),
             ...(await checkSourceBoundaries(config)),
             ...checkDependencyTree(config),
         );

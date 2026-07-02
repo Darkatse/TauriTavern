@@ -2,23 +2,30 @@ use std::fs;
 use std::path::Path;
 
 #[test]
-fn infrastructure_does_not_depend_on_application() {
-    let infrastructure = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("infrastructure");
+fn outer_layers_do_not_depend_on_application() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let roots = [
+        manifest_dir.join("src").join("infrastructure"),
+        manifest_dir.join("src").join("platform"),
+    ];
+    let forbidden = ["crate::application::", "tt_application::"];
     let mut offenders = Vec::new();
 
-    scan_rs_files(&infrastructure, &mut |path, content| {
-        for (index, line) in content.lines().enumerate() {
-            if line.contains("crate::application::") {
-                offenders.push(format!("{}:{}", path.display(), index + 1));
+    for root in roots {
+        scan_rs_files(&root, &mut |path, content| {
+            for (index, line) in content.lines().enumerate() {
+                for pattern in forbidden {
+                    if line.contains(pattern) {
+                        offenders.push(format!("{}:{}: {}", path.display(), index + 1, pattern));
+                    }
+                }
             }
-        }
-    });
+        });
+    }
 
     assert!(
         offenders.is_empty(),
-        "infrastructure must depend on tt-contracts/tt-ports/tt-domain, not application:\n{}",
+        "outer layers must depend on tt-contracts/tt-ports/tt-domain, not application:\n{}",
         offenders.join("\n")
     );
 }

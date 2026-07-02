@@ -42,7 +42,7 @@ pub(crate) fn serve_dev_web_resource_from_app<R: tauri::Runtime>(
     let host_resources = app_handle.state::<Arc<HostResourceService>>();
     let headers = host_headers_from_tauri_request(request);
     let host_request = host_request_from_tauri(request, &headers);
-    host_resources.serve_dev_resource(&host_request)
+    host_resources.serve(&host_request)
 }
 
 fn host_headers_from_tauri_request<'a>(

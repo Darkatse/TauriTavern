@@ -3,3 +3,33 @@ name = "tt-application"
 version = "0.1.0"
 edition = "2024"
 publish = false
+
+[features]
+test-support = []
+
+[dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+chrono = { workspace = true }
+mime_guess = "2.0.5"
+percent-encoding = "2"
+rand = { workspace = true }
+regress = "0.11.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+sha2 = "0.10"
+thiserror = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
+tracing = "0.1"
+tt-contracts = { path = "../tt-contracts" }
+tt-domain = { path = "../tt-domain" }
+tt-ports = { path = "../tt-ports" }
+ttsync-contract = { workspace = true }
+ttsync-core = { workspace = true }
+url = "2.4"
+uuid = { workspace = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(mobile)'] }
