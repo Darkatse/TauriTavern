@@ -2177,8 +2177,8 @@
                                             <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
                                                 Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
                                             </strong>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock" data-i18n="Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on Claude Opus 4.7/4.8; otherwise it behaves like Maximum. Auto does not request thinking.">
-                                                Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on Claude Opus 4.7/4.8; otherwise it behaves like Maximum. Auto does not request thinking.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock" data-i18n="Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on Claude Opus 4.7/4.8 and Claude Fable/Mythos 5; otherwise it behaves like Maximum. Auto does not request thinking.">
+                                                Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on Claude Opus 4.7/4.8 and Claude Fable/Mythos 5; otherwise it behaves like Maximum. Auto does not request thinking.
                                             </div>
                                             <div class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai">
                                                 <span data-i18n="Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.">
@@ -3182,6 +3182,8 @@
                                 <h4 data-i18n="Claude Model">Claude Model</h4>
                                 <select id="model_claude_select">
                                     <optgroup label="Versions">
+                                        <option value="claude-fable-5">claude-fable-5</option>
+                                        <option value="claude-mythos-5">claude-mythos-5</option>
                                         <option value="claude-opus-4-8">claude-opus-4-8</option>
                                         <option value="claude-opus-4-7">claude-opus-4-7</option>
                                         <option value="claude-opus-4-6">claude-opus-4-6</option>
@@ -3625,7 +3627,8 @@
                                 The list below is a fallback. After Connect succeeds, the live Bedrock catalog for your region replaces these options.
                             </small>
                             <select id="model_aws_bedrock_select">
-                                <optgroup label="Cross-region inference profiles — US (recommended for Claude 4.x)">
+                                <optgroup label="Cross-region inference profiles — US (recommended for Claude 4.x/5.x)">
+                                    <option value="us.anthropic.claude-fable-5">us.anthropic.claude-fable-5</option>
                                     <option value="us.anthropic.claude-opus-4-7">us.anthropic.claude-opus-4-7</option>
                                     <option value="us.anthropic.claude-opus-4-6-v1">us.anthropic.claude-opus-4-6-v1</option>
                                     <option value="us.anthropic.claude-opus-4-5-20251101-v1:0">us.anthropic.claude-opus-4-5-20251101-v1:0</option>
@@ -3637,12 +3640,16 @@
                                     <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">us.anthropic.claude-haiku-4-5-20251001-v1:0</option>
                                 </optgroup>
                                 <optgroup label="Cross-region inference profiles — Global">
+                                    <option value="global.anthropic.claude-fable-5">global.anthropic.claude-fable-5</option>
                                     <option value="global.anthropic.claude-opus-4-7">global.anthropic.claude-opus-4-7</option>
                                     <option value="global.anthropic.claude-opus-4-6-v1">global.anthropic.claude-opus-4-6-v1</option>
                                     <option value="global.anthropic.claude-opus-4-5-20251101-v1:0">global.anthropic.claude-opus-4-5-20251101-v1:0</option>
                                     <option value="global.anthropic.claude-sonnet-4-6">global.anthropic.claude-sonnet-4-6</option>
                                     <option value="global.anthropic.claude-sonnet-4-5-20250929-v1:0">global.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
                                     <option value="global.anthropic.claude-haiku-4-5-20251001-v1:0">global.anthropic.claude-haiku-4-5-20251001-v1:0</option>
+                                </optgroup>
+                                <optgroup label="Foundation models — Claude 5.x">
+                                    <option value="anthropic.claude-fable-5">anthropic.claude-fable-5</option>
                                 </optgroup>
                                 <optgroup label="Foundation models — Claude 3.x (ON_DEMAND)">
                                     <option value="anthropic.claude-3-7-sonnet-20250219-v1:0">anthropic.claude-3-7-sonnet-20250219-v1:0</option>

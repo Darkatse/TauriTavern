@@ -169,10 +169,18 @@ mod tests {
             normalize_bedrock_model_id("anthropic.claude-sonnet-4-5-20250929-v1:0"),
             "claude-sonnet-4-5-20250929"
         );
+        assert_eq!(
+            normalize_bedrock_model_id("anthropic.claude-fable-5"),
+            "claude-fable-5"
+        );
         // Cross-region inference profile ids.
         assert_eq!(
             normalize_bedrock_model_id("us.anthropic.claude-opus-4-7"),
             "claude-opus-4-7"
+        );
+        assert_eq!(
+            normalize_bedrock_model_id("global.anthropic.claude-fable-5"),
+            "claude-fable-5"
         );
         assert_eq!(
             normalize_bedrock_model_id("global.anthropic.claude-opus-4-6-v1"),
@@ -197,6 +205,38 @@ mod tests {
             "amazon.nova-pro",
             "us./global. + :0 + -v1 are stripped, provider `amazon.` is kept",
         );
+    }
+
+    #[test]
+    fn bedrock_unlocks_fable_5_adaptive_thinking_via_normalization() {
+        let payload = json!({
+            "chat_completion_source": "aws_bedrock",
+            "model": "us.anthropic.claude-fable-5",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "max_tokens": 4096,
+            "reasoning_effort": "xhigh",
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be object");
+
+        let (endpoint_path, body) = build(payload).expect("payload should build");
+        assert_eq!(
+            endpoint_path, "/model/us.anthropic.claude-fable-5/invoke",
+            "URL path must retain the raw Bedrock id"
+        );
+        assert_eq!(
+            body.pointer("/thinking/type").and_then(Value::as_str),
+            Some("adaptive")
+        );
+        assert_eq!(
+            body.pointer("/output_config/effort")
+                .and_then(Value::as_str),
+            Some("xhigh")
+        );
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("top_p").is_none());
+        assert!(body.get("top_k").is_none());
     }
 
     #[test]

@@ -94,7 +94,13 @@ fn claude_opus_4_5_uses_legacy_thinking_with_output_effort() {
 
 #[test]
 fn claude_rejects_assistant_prefill_for_models_that_removed_it() {
-    for model in ["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6"] {
+    for model in [
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+    ] {
         let mut payload = claude_payload(model);
         payload.insert("assistant_prefill".to_string(), json!("prefill"));
 
@@ -509,32 +515,36 @@ fn claude_full_sampling_models_keep_temperature_top_p_and_top_k() {
 
 #[test]
 fn claude_sampling_free_models_drop_non_default_sampling_params() {
-    let mut payload = claude_payload("claude-opus-4-7");
-    payload.insert("temperature".to_string(), json!(0.7));
-    payload.insert("top_p".to_string(), json!(0.9));
-    payload.insert("top_k".to_string(), json!(40));
+    for model in ["claude-fable-5", "claude-mythos-5", "claude-opus-4-7"] {
+        let mut payload = claude_payload(model);
+        payload.insert("temperature".to_string(), json!(0.7));
+        payload.insert("top_p".to_string(), json!(0.9));
+        payload.insert("top_k".to_string(), json!(40));
 
-    let (_, upstream) = build(payload).expect("build should succeed");
-    let body = upstream.as_object().expect("body must be object");
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
 
-    assert!(body.get("temperature").is_none());
-    assert!(body.get("top_p").is_none());
-    assert!(body.get("top_k").is_none());
+        assert!(body.get("temperature").is_none(), "{model}");
+        assert!(body.get("top_p").is_none(), "{model}");
+        assert!(body.get("top_k").is_none(), "{model}");
+    }
 }
 
 #[test]
 fn claude_sampling_free_models_ignore_default_sampling_params() {
-    let mut payload = claude_payload("claude-opus-4-7");
-    payload.insert("temperature".to_string(), json!(1.0));
-    payload.insert("top_p".to_string(), json!(1.0));
-    payload.insert("top_k".to_string(), json!(0));
+    for model in ["claude-fable-5", "claude-mythos-5", "claude-opus-4-7"] {
+        let mut payload = claude_payload(model);
+        payload.insert("temperature".to_string(), json!(1.0));
+        payload.insert("top_p".to_string(), json!(1.0));
+        payload.insert("top_k".to_string(), json!(0));
 
-    let (_, upstream) = build(payload).expect("build should succeed");
-    let body = upstream.as_object().expect("body must be object");
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
 
-    assert!(body.get("temperature").is_none());
-    assert!(body.get("top_p").is_none());
-    assert!(body.get("top_k").is_none());
+        assert!(body.get("temperature").is_none(), "{model}");
+        assert!(body.get("top_p").is_none(), "{model}");
+        assert!(body.get("top_k").is_none(), "{model}");
+    }
 }
 
 #[test]
@@ -576,7 +586,12 @@ fn claude_unknown_models_do_not_inherit_reasoning_support() {
 
 #[test]
 fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
-    for model in ["claude-opus-4-7", "claude-opus-4-8"] {
+    for model in [
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+    ] {
         let mut payload = claude_payload(model);
         payload.insert("reasoning_effort".to_string(), json!("high"));
         payload.insert("include_reasoning".to_string(), json!(true));
@@ -622,8 +637,13 @@ fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
 }
 
 #[test]
-fn claude_adaptive_reasoning_supports_xhigh_only_on_opus_4_7_and_4_8() {
-    for model in ["claude-opus-4-7", "claude-opus-4-8"] {
+fn claude_adaptive_reasoning_supports_xhigh_on_new_adaptive_models() {
+    for model in [
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+    ] {
         let mut payload = claude_payload(model);
         payload.insert("reasoning_effort".to_string(), json!("xhigh"));
 

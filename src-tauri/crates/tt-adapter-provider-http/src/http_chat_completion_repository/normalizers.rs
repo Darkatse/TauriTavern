@@ -15,6 +15,14 @@ pub(super) fn normalize_claude_response(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let stop_reason = response
+        .get("stop_reason")
+        .cloned()
+        .filter(|v| !v.is_null());
+    let stop_details = response
+        .get("stop_details")
+        .cloned()
+        .filter(|v| !v.is_null());
 
     let mut text_parts = Vec::new();
     let mut reasoning_parts = Vec::new();
@@ -82,15 +90,22 @@ pub(super) fn normalize_claude_response(
     if !tool_calls.is_empty() {
         message.insert("tool_calls".to_string(), Value::Array(tool_calls));
     }
+    let mut native_claude = Map::new();
     if !content_blocks.is_empty() {
-        message.insert(
-            "native".to_string(),
-            json!({ "claude": { "content": content_blocks.clone() } }),
-        );
+        native_claude.insert("content".to_string(), Value::Array(content_blocks.clone()));
+    }
+    if let Some(value) = stop_reason.clone() {
+        native_claude.insert("stop_reason".to_string(), value);
+    }
+    if let Some(value) = stop_details.clone() {
+        native_claude.insert("stop_details".to_string(), value);
+    }
+    if !native_claude.is_empty() {
+        message.insert("native".to_string(), json!({ "claude": native_claude }));
     }
 
     let finish_reason = map_claude_finish_reason(
-        response.get("stop_reason").and_then(Value::as_str),
+        stop_reason.as_ref().and_then(Value::as_str),
         message.contains_key("tool_calls"),
     );
 
@@ -139,6 +154,12 @@ pub(super) fn normalize_claude_response(
 
     if !content_blocks.is_empty() {
         normalized.insert("content".to_string(), Value::Array(content_blocks));
+    }
+    if let Some(value) = stop_reason {
+        normalized.insert("stop_reason".to_string(), value);
+    }
+    if let Some(value) = stop_details {
+        normalized.insert("stop_details".to_string(), value);
     }
 
     ChatCompletionRepositoryGenerateResponse::new(Value::Object(normalized), report)
@@ -899,6 +920,44 @@ mod tests {
                 .pointer("/choices/0/message/native/claude/content/0/type")
                 .and_then(Value::as_str),
             Some("thinking")
+        );
+    }
+
+    #[test]
+    fn normalize_claude_refusal_preserves_stop_details() {
+        let response = json!({
+            "id": "claude-response",
+            "model": "claude-fable-5",
+            "content": [],
+            "stop_reason": "refusal",
+            "stop_details": {
+                "category": "safety_classifier"
+            }
+        });
+
+        let normalized = normalize_claude_response(response).body;
+
+        assert_eq!(
+            normalized
+                .pointer("/choices/0/finish_reason")
+                .and_then(Value::as_str),
+            Some("refusal")
+        );
+        assert_eq!(
+            normalized.get("stop_reason").and_then(Value::as_str),
+            Some("refusal")
+        );
+        assert_eq!(
+            normalized
+                .pointer("/stop_details/category")
+                .and_then(Value::as_str),
+            Some("safety_classifier")
+        );
+        assert_eq!(
+            normalized
+                .pointer("/choices/0/message/native/claude/stop_details/category")
+                .and_then(Value::as_str),
+            Some("safety_classifier")
         );
     }
 

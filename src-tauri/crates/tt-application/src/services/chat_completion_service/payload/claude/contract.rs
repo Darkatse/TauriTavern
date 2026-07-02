@@ -24,16 +24,27 @@ const CLAUDE_MANUAL_ONLY_THINKING_MODEL_PREFIXES: &[&str] = &[
 ];
 const CLAUDE_MANUAL_OR_ADAPTIVE_THINKING_MODEL_PREFIXES: &[&str] =
     &["claude-opus-4-6", "claude-sonnet-4-6"];
-const CLAUDE_ADAPTIVE_ONLY_THINKING_MODEL_PREFIXES: &[&str] =
-    &["claude-opus-4-8", "claude-opus-4-7"];
+const CLAUDE_ADAPTIVE_ONLY_THINKING_MODEL_PREFIXES: &[&str] = &[
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+];
 const CLAUDE_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &[
+    "claude-fable-5",
+    "claude-mythos-5",
     "claude-opus-4-8",
     "claude-opus-4-7",
     "claude-opus-4-6",
     "claude-sonnet-4-6",
     "claude-opus-4-5",
 ];
-const CLAUDE_XHIGH_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &["claude-opus-4-8", "claude-opus-4-7"];
+const CLAUDE_XHIGH_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &[
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+];
 const CLAUDE_ASSISTANT_PREFILL_EXACT_MODELS: &[&str] = &["claude-opus-4", "claude-sonnet-4"];
 const CLAUDE_ASSISTANT_PREFILL_MODEL_PREFIXES: &[&str] = &[
     "claude-3-7",
