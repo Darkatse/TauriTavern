@@ -86,12 +86,11 @@ fn validate_claude_thinking_request(
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
+                && !matches!(display, "summarized" | "omitted")
             {
-                if !matches!(display, "summarized" | "omitted") {
-                    return Err(ApplicationError::ValidationError(format!(
-                        "Unsupported Claude adaptive thinking display: {display}"
-                    )));
-                }
+                return Err(ApplicationError::ValidationError(format!(
+                    "Unsupported Claude adaptive thinking display: {display}"
+                )));
             }
 
             ClaudeRequestThinkingMode::Adaptive

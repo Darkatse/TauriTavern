@@ -63,13 +63,13 @@ fn build_gemini_interactions_payload(
         );
     }
 
-    if let Some(tools) = payload.get("tools").and_then(Value::as_array) {
-        if !tools.is_empty() {
-            request.insert(
-                "tools".to_string(),
-                Value::Array(map_openai_tools_to_interactions(tools)),
-            );
-        }
+    if let Some(tools) = payload.get("tools").and_then(Value::as_array)
+        && !tools.is_empty()
+    {
+        request.insert(
+            "tools".to_string(),
+            Value::Array(map_openai_tools_to_interactions(tools)),
+        );
     }
 
     if let Some(schema_value) = payload
@@ -355,13 +355,13 @@ fn build_function_call_output(tool_call: &OpenAiToolCall) -> Value {
         "arguments": tool_call.arguments.clone(),
     });
 
-    if let Some(signature) = tool_call.signature.as_deref() {
-        if let Some(object) = output.as_object_mut() {
-            object.insert(
-                "signature".to_string(),
-                Value::String(signature.to_string()),
-            );
-        }
+    if let Some(signature) = tool_call.signature.as_deref()
+        && let Some(object) = output.as_object_mut()
+    {
+        object.insert(
+            "signature".to_string(),
+            Value::String(signature.to_string()),
+        );
     }
 
     output
@@ -433,14 +433,12 @@ fn render_unknown_block(ty: Option<&str>, value: &Value) -> Result<Value, Applic
 }
 
 fn blocks_to_interactions_content_value(blocks: Vec<Value>) -> Value {
-    if blocks.len() == 1 {
-        if let Some(block_object) = blocks[0].as_object() {
-            if block_object.get("type").and_then(Value::as_str) == Some("text") {
-                if let Some(text) = block_object.get("text").and_then(Value::as_str) {
-                    return Value::String(text.to_string());
-                }
-            }
-        }
+    if blocks.len() == 1
+        && let Some(block_object) = blocks[0].as_object()
+        && block_object.get("type").and_then(Value::as_str) == Some("text")
+        && let Some(text) = block_object.get("text").and_then(Value::as_str)
+    {
+        return Value::String(text.to_string());
     }
 
     Value::Array(blocks)

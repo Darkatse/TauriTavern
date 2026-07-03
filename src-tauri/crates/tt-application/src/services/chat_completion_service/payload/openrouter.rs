@@ -164,11 +164,10 @@ mod tests {
         assert_eq!(endpoint, "/chat/completions");
 
         let body = upstream.as_object().expect("payload must be object");
-        assert_eq!(
+        assert!(
             body.get("include_reasoning")
                 .and_then(Value::as_bool)
-                .unwrap_or(false),
-            true
+                .unwrap_or(false)
         );
         assert_eq!(
             body.get("route")

@@ -61,15 +61,15 @@ fn build_text_completion_body(payload: Map<String, Value>) -> Result<Value, Appl
             Value::Number(Number::from(max_tokens)),
         );
     }
-    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(temperature) {
-            body.insert("temperature".to_string(), Value::Number(number));
-        }
+    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(temperature)
+    {
+        body.insert("temperature".to_string(), Value::Number(number));
     }
-    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(top_p) {
-            body.insert("top_p".to_string(), Value::Number(number));
-        }
+    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(top_p)
+    {
+        body.insert("top_p".to_string(), Value::Number(number));
     }
     if let Some(top_k) = value_to_positive_i64(payload.get("top_k")) {
         body.insert("top_k".to_string(), Value::Number(Number::from(top_k)));
@@ -90,15 +90,15 @@ fn build_chat_completion_body(payload: Map<String, Value>) -> Result<Value, Appl
             Value::Number(Number::from(max_tokens)),
         );
     }
-    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(temperature) {
-            body.insert("temperature".to_string(), Value::Number(number));
-        }
+    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(temperature)
+    {
+        body.insert("temperature".to_string(), Value::Number(number));
     }
-    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(top_p) {
-            body.insert("top_p".to_string(), Value::Number(number));
-        }
+    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(top_p)
+    {
+        body.insert("top_p".to_string(), Value::Number(number));
     }
     if let Some(tools) = payload
         .get("tools")
@@ -149,13 +149,13 @@ pub(super) fn format_instruct_prompt(system: Option<&str>, turns: &[FlatMessage]
         prompt.push_str(&turn.text);
         prompt.push_str(" [/INST]");
 
-        if let Some(next) = iter.peek() {
-            if next.role == "assistant" {
-                let assistant = iter.next().expect("peek confirmed Some");
-                prompt.push(' ');
-                prompt.push_str(&assistant.text);
-                prompt.push_str("</s>");
-            }
+        if let Some(next) = iter.peek()
+            && next.role == "assistant"
+        {
+            let assistant = iter.next().expect("peek confirmed Some");
+            prompt.push(' ');
+            prompt.push_str(&assistant.text);
+            prompt.push_str("</s>");
         }
     }
 

@@ -87,16 +87,16 @@ pub(super) fn build(
             Value::Number(Number::from(max_tokens)),
         );
     }
-    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(temperature) {
-            body.insert("temperature".to_string(), Value::Number(number));
-        }
+    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(temperature)
+    {
+        body.insert("temperature".to_string(), Value::Number(number));
     }
     // Cohere uses `p` / `k` instead of `top_p` / `top_k`.
-    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(top_p) {
-            body.insert("p".to_string(), Value::Number(number));
-        }
+    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(top_p)
+    {
+        body.insert("p".to_string(), Value::Number(number));
     }
     if let Some(top_k) = value_to_positive_i64(payload.get("top_k")) {
         body.insert("k".to_string(), Value::Number(Number::from(top_k)));
@@ -117,15 +117,15 @@ pub(super) fn build(
     {
         body.insert("stop_sequences".to_string(), stop);
     }
-    if let Some(frequency_penalty) = payload.get("frequency_penalty").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(frequency_penalty) {
-            body.insert("frequency_penalty".to_string(), Value::Number(number));
-        }
+    if let Some(frequency_penalty) = payload.get("frequency_penalty").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(frequency_penalty)
+    {
+        body.insert("frequency_penalty".to_string(), Value::Number(number));
     }
-    if let Some(presence_penalty) = payload.get("presence_penalty").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(presence_penalty) {
-            body.insert("presence_penalty".to_string(), Value::Number(number));
-        }
+    if let Some(presence_penalty) = payload.get("presence_penalty").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(presence_penalty)
+    {
+        body.insert("presence_penalty".to_string(), Value::Number(number));
     }
 
     Ok((endpoint_path, Value::Object(body)))

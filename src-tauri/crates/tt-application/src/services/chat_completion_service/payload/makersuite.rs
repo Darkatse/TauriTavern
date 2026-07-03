@@ -98,10 +98,7 @@ fn build_google_payload(
     let is_gemma = model.contains("gemma");
     let is_learnlm = model.contains("learnlm");
 
-    let enable_image_modality = request_images
-        && GOOGLE_IMAGE_GENERATION_MODELS
-            .iter()
-            .any(|entry| *entry == model);
+    let enable_image_modality = request_images && GOOGLE_IMAGE_GENERATION_MODELS.contains(&model);
 
     let use_system_prompt = payload
         .get("use_sysprompt")
@@ -263,7 +260,7 @@ fn build_google_payload(
 
         if enable_web_search
             && !is_learnlm
-            && !GOOGLE_NO_SEARCH_MODELS.iter().any(|entry| *entry == model)
+            && !GOOGLE_NO_SEARCH_MODELS.contains(&model)
             && !tools
                 .iter()
                 .any(|tool| tool.get("function_declarations").is_some())
@@ -424,14 +421,14 @@ fn convert_messages(
 
                 let is_text_part = part_object.get("text").and_then(Value::as_str).is_some();
 
-                if let Some(text_signature) = text_signature {
-                    if is_text_part {
-                        part_object.insert(
-                            "thoughtSignature".to_string(),
-                            Value::String(text_signature.to_string()),
-                        );
-                        continue;
-                    }
+                if let Some(text_signature) = text_signature
+                    && is_text_part
+                {
+                    part_object.insert(
+                        "thoughtSignature".to_string(),
+                        Value::String(text_signature.to_string()),
+                    );
+                    continue;
                 }
 
                 if is_gemini3 {
@@ -444,13 +441,14 @@ fn convert_messages(
                         );
                     }
 
-                    if is_image_model && target_role == "model" {
-                        if is_text_part || part_object.get("inlineData").is_some() {
-                            part_object.insert(
-                                "thoughtSignature".to_string(),
-                                Value::String(skip_signature_magic.to_string()),
-                            );
-                        }
+                    if is_image_model
+                        && target_role == "model"
+                        && (is_text_part || part_object.get("inlineData").is_some())
+                    {
+                        part_object.insert(
+                            "thoughtSignature".to_string(),
+                            Value::String(skip_signature_magic.to_string()),
+                        );
                     }
                 }
             }
@@ -657,13 +655,13 @@ fn convert_openai_tool_calls_to_parts(tool_calls: &[OpenAiToolCall]) -> Vec<Valu
                 }
             });
 
-            if let Some(signature) = tool_call.signature.as_ref() {
-                if let Some(part_object) = part.as_object_mut() {
-                    part_object.insert(
-                        "thoughtSignature".to_string(),
-                        Value::String(signature.clone()),
-                    );
-                }
+            if let Some(signature) = tool_call.signature.as_ref()
+                && let Some(part_object) = part.as_object_mut()
+            {
+                part_object.insert(
+                    "thoughtSignature".to_string(),
+                    Value::String(signature.clone()),
+                );
             }
 
             part
@@ -929,12 +927,11 @@ mod tests {
                 .unwrap_or_default(),
             1000
         );
-        assert_eq!(
+        assert!(
             thinking
                 .get("includeThoughts")
                 .and_then(Value::as_bool)
-                .unwrap_or(false),
-            true
+                .unwrap_or(false)
         );
     }
 

@@ -144,34 +144,33 @@ fn build_claude_payload_inner(
         .unwrap_or_default();
 
     let mut forced_tool_choice: Option<Value> = None;
-    if let Some(json_schema) = payload.get("json_schema").and_then(Value::as_object) {
-        if let Some(schema_value) = json_schema
+    if let Some(json_schema) = payload.get("json_schema").and_then(Value::as_object)
+        && let Some(schema_value) = json_schema
             .get("value")
             .cloned()
             .filter(|value| !value.is_null())
-        {
-            let schema_name = json_schema
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("response")
-                .to_string();
+    {
+        let schema_name = json_schema
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("response")
+            .to_string();
 
-            let mut schema_tool = Map::new();
-            schema_tool.insert("name".to_string(), Value::String(schema_name.clone()));
-            schema_tool.insert(
-                "description".to_string(),
-                Value::String("Well-formed JSON object".to_string()),
-            );
-            schema_tool.insert("input_schema".to_string(), schema_value);
-            claude_tools.push(Value::Object(schema_tool));
+        let mut schema_tool = Map::new();
+        schema_tool.insert("name".to_string(), Value::String(schema_name.clone()));
+        schema_tool.insert(
+            "description".to_string(),
+            Value::String("Well-formed JSON object".to_string()),
+        );
+        schema_tool.insert("input_schema".to_string(), schema_value);
+        claude_tools.push(Value::Object(schema_tool));
 
-            forced_tool_choice = Some(json!({
-                "type": "tool",
-                "name": schema_name,
-            }));
-        }
+        forced_tool_choice = Some(json!({
+            "type": "tool",
+            "name": schema_name,
+        }));
     }
 
     if !claude_tools.is_empty() {

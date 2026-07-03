@@ -49,18 +49,14 @@ fn apply_nanogpt_overrides(
         .get("enable_web_search")
         .and_then(Value::as_bool)
         .unwrap_or(false)
+        && let Some(model_value) = body.get_mut("model")
+        && let Some(model) = model_value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        && !model.ends_with(ONLINE_SUFFIX)
     {
-        if let Some(model_value) = body.get_mut("model") {
-            if let Some(model) = model_value
-                .as_str()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                if !model.ends_with(ONLINE_SUFFIX) {
-                    *model_value = Value::String(format!("{model}{ONLINE_SUFFIX}"));
-                }
-            }
-        }
+        *model_value = Value::String(format!("{model}{ONLINE_SUFFIX}"));
     }
 
     if let Some(reasoning_effort) = source_payload
@@ -68,15 +64,14 @@ fn apply_nanogpt_overrides(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        && !reasoning_effort.eq_ignore_ascii_case("auto")
     {
-        if !reasoning_effort.eq_ignore_ascii_case("auto") {
-            body.insert(
-                "reasoning".to_string(),
-                json!({
-                    "effort": map_reasoning_effort(reasoning_effort)?,
-                }),
-            );
-        }
+        body.insert(
+            "reasoning".to_string(),
+            json!({
+                "effort": map_reasoning_effort(reasoning_effort)?,
+            }),
+        );
     }
 
     Ok(())

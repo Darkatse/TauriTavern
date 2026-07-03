@@ -53,10 +53,10 @@ pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), 
     strip_empty_required_arrays_from_tools(&mut payload);
 
     let (endpoint, mut upstream_payload) = openai::build(payload)?;
-    if endpoint == "/chat/completions" {
-        if let (Some(mode), Some(body)) = (thinking_mode, upstream_payload.as_object_mut()) {
-            apply_thinking_mode(body, mode, reasoning_effort);
-        }
+    if endpoint == "/chat/completions"
+        && let (Some(mode), Some(body)) = (thinking_mode, upstream_payload.as_object_mut())
+    {
+        apply_thinking_mode(body, mode, reasoning_effort);
     }
 
     Ok((endpoint, upstream_payload))

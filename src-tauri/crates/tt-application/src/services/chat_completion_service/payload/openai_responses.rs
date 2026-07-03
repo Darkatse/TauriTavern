@@ -106,19 +106,19 @@ fn build_openai_responses_payload(
         );
     }
 
-    if let Some(tools) = payload.get("tools").and_then(Value::as_array) {
-        if !tools.is_empty() {
-            request.insert(
-                "tools".to_string(),
-                Value::Array(map_openai_tools_to_responses(tools)),
-            );
+    if let Some(tools) = payload.get("tools").and_then(Value::as_array)
+        && !tools.is_empty()
+    {
+        request.insert(
+            "tools".to_string(),
+            Value::Array(map_openai_tools_to_responses(tools)),
+        );
 
-            if let Some(tool_choice) = payload.get("tool_choice") {
-                request.insert(
-                    "tool_choice".to_string(),
-                    map_openai_tool_choice_to_responses(tool_choice.clone()),
-                );
-            }
+        if let Some(tool_choice) = payload.get("tool_choice") {
+            request.insert(
+                "tool_choice".to_string(),
+                map_openai_tool_choice_to_responses(tool_choice.clone()),
+            );
         }
     }
 
@@ -551,12 +551,12 @@ fn validate_openai_responses_payload(object: &Map<String, Value>) -> Result<(), 
         ));
     }
 
-    if let Some(store) = object.get("store") {
-        if !store.is_boolean() {
-            return Err(ApplicationError::ValidationError(
-                "OpenAI Responses store must be a boolean".to_string(),
-            ));
-        }
+    if let Some(store) = object.get("store")
+        && !store.is_boolean()
+    {
+        return Err(ApplicationError::ValidationError(
+            "OpenAI Responses store must be a boolean".to_string(),
+        ));
     }
 
     if let Some(include) = object.get("include") {
@@ -677,13 +677,13 @@ fn map_openai_tool_choice_to_responses(tool_choice: Value) -> Value {
         .unwrap_or_default();
 
     if tool_type == "function" {
-        if let Some(function) = object.get("function").and_then(Value::as_object) {
-            if let Some(name) = function.get("name").and_then(Value::as_str) {
-                return json!({
-                    "type": "function",
-                    "name": name,
-                });
-            }
+        if let Some(function) = object.get("function").and_then(Value::as_object)
+            && let Some(name) = function.get("name").and_then(Value::as_str)
+        {
+            return json!({
+                "type": "function",
+                "name": name,
+            });
         }
 
         if object.get("name").and_then(Value::as_str).is_some() {
@@ -704,10 +704,10 @@ fn map_openai_tool_choice_to_responses(tool_choice: Value) -> Value {
                 if tool_object.get("name").and_then(Value::as_str).is_some() {
                     continue;
                 }
-                if let Some(function) = tool_object.get("function").and_then(Value::as_object) {
-                    if let Some(name) = function.get("name").and_then(Value::as_str) {
-                        tool_object.insert("name".to_string(), Value::String(name.to_string()));
-                    }
+                if let Some(function) = tool_object.get("function").and_then(Value::as_object)
+                    && let Some(name) = function.get("name").and_then(Value::as_str)
+                {
+                    tool_object.insert("name".to_string(), Value::String(name.to_string()));
                 }
                 tool_object.remove("function");
             }

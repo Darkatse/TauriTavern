@@ -123,10 +123,10 @@ fn build_text_completion_payload(
         return Ok(request);
     }
 
-    if let Some(messages) = payload.get("messages") {
-        if let Some(prompt) = convert_text_completion_prompt(messages)? {
-            request.insert("prompt".to_string(), Value::String(prompt));
-        }
+    if let Some(messages) = payload.get("messages")
+        && let Some(prompt) = convert_text_completion_prompt(messages)?
+    {
+        request.insert("prompt".to_string(), Value::String(prompt));
     }
 
     Ok(request)
@@ -159,31 +159,29 @@ fn build_chat_completion_payload(
     }
 
     if let Some(model) = payload.get("model").and_then(Value::as_str) {
-        if should_forward_openai_reasoning_effort(source, model) {
-            if let Some(reasoning_effort) = payload
+        if should_forward_openai_reasoning_effort(source, model)
+            && let Some(reasoning_effort) = payload
                 .get("reasoning_effort")
                 .and_then(Value::as_str)
                 .and_then(|value| normalize_openai_reasoning_effort(value, model))
-            {
-                request.insert(
-                    "reasoning_effort".to_string(),
-                    Value::String(reasoning_effort.into_owned()),
-                );
-            }
+        {
+            request.insert(
+                "reasoning_effort".to_string(),
+                Value::String(reasoning_effort.into_owned()),
+            );
         }
 
-        if should_forward_openai_verbosity(source, model) {
-            if let Some(verbosity) = payload
+        if should_forward_openai_verbosity(source, model)
+            && let Some(verbosity) = payload
                 .get("verbosity")
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-            {
-                request.insert(
-                    "verbosity".to_string(),
-                    Value::String(verbosity.to_string()),
-                );
-            }
+        {
+            request.insert(
+                "verbosity".to_string(),
+                Value::String(verbosity.to_string()),
+            );
         }
     }
 

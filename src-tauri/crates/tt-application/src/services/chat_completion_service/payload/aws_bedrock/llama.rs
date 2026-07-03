@@ -53,15 +53,15 @@ pub(super) fn build(
             Value::Number(Number::from(max_tokens)),
         );
     }
-    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(temperature) {
-            body.insert("temperature".to_string(), Value::Number(number));
-        }
+    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(temperature)
+    {
+        body.insert("temperature".to_string(), Value::Number(number));
     }
-    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(top_p) {
-            body.insert("top_p".to_string(), Value::Number(number));
-        }
+    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(top_p)
+    {
+        body.insert("top_p".to_string(), Value::Number(number));
     }
 
     Ok((

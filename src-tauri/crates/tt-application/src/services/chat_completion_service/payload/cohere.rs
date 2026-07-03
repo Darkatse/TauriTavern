@@ -384,13 +384,13 @@ fn prefix_content(content: &mut Value, prefix: &str) {
             *content = Value::String(prefix.to_string());
         }
         Value::Object(object) => {
-            if object.get("type").and_then(Value::as_str) == Some("text") {
-                if let Some(Value::String(fragment)) = object.get_mut("text") {
-                    if !fragment.starts_with(prefix) {
-                        *fragment = format!("{prefix}{fragment}");
-                    }
-                    return;
+            if object.get("type").and_then(Value::as_str) == Some("text")
+                && let Some(Value::String(fragment)) = object.get_mut("text")
+            {
+                if !fragment.starts_with(prefix) {
+                    *fragment = format!("{prefix}{fragment}");
                 }
+                return;
             }
 
             let original = Value::Object(std::mem::take(object));

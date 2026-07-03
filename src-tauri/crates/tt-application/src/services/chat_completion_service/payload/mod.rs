@@ -37,7 +37,7 @@ pub(super) fn build_payload(
         prompt_post_processing::apply_custom_prompt_post_processing(&mut payload);
     }
 
-    let result = match source {
+    match source {
         ChatCompletionSource::OpenAi
         | ChatCompletionSource::Groq
         | ChatCompletionSource::SiliconFlow => openai::build(payload),
@@ -55,9 +55,7 @@ pub(super) fn build_payload(
         ChatCompletionSource::AwsBedrock => Ok(aws_bedrock::build(payload)?),
         ChatCompletionSource::Makersuite => Ok(makersuite::build(payload)?),
         ChatCompletionSource::VertexAi => Ok(vertexai::build(payload)?),
-    };
-
-    result
+    }
 }
 
 pub(super) fn validate_upstream_tool_transcript(

@@ -61,15 +61,15 @@ pub(super) fn build(
             Value::Number(Number::from(max_tokens)),
         );
     }
-    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(temperature) {
-            body.insert("temperature".to_string(), Value::Number(number));
-        }
+    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(temperature)
+    {
+        body.insert("temperature".to_string(), Value::Number(number));
     }
-    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(top_p) {
-            body.insert("top_p".to_string(), Value::Number(number));
-        }
+    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(top_p)
+    {
+        body.insert("top_p".to_string(), Value::Number(number));
     }
     if let Some(stop) = payload
         .get("stop")
@@ -78,15 +78,15 @@ pub(super) fn build(
     {
         body.insert("stop".to_string(), stop);
     }
-    if let Some(frequency_penalty) = payload.get("frequency_penalty").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(frequency_penalty) {
-            body.insert("frequency_penalty".to_string(), Value::Number(number));
-        }
+    if let Some(frequency_penalty) = payload.get("frequency_penalty").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(frequency_penalty)
+    {
+        body.insert("frequency_penalty".to_string(), Value::Number(number));
     }
-    if let Some(presence_penalty) = payload.get("presence_penalty").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(presence_penalty) {
-            body.insert("presence_penalty".to_string(), Value::Number(number));
-        }
+    if let Some(presence_penalty) = payload.get("presence_penalty").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(presence_penalty)
+    {
+        body.insert("presence_penalty".to_string(), Value::Number(number));
     }
 
     // Streaming forbids n > 1; clamp streaming requests to the single-choice

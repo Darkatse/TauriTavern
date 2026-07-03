@@ -78,10 +78,10 @@ fn cap_m2_her_max_tokens(payload: &mut Map<String, Value>) {
         return;
     };
 
-    if let Some(value) = max_tokens.as_u64() {
-        if value > M2_HER_MAX_TOKENS {
-            *max_tokens = Value::Number(Number::from(M2_HER_MAX_TOKENS));
-        }
+    if let Some(value) = max_tokens.as_u64()
+        && value > M2_HER_MAX_TOKENS
+    {
+        *max_tokens = Value::Number(Number::from(M2_HER_MAX_TOKENS));
     }
 }
 

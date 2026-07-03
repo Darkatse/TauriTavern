@@ -90,15 +90,15 @@ fn build_inference_config(payload: &Map<String, Value>) -> Map<String, Value> {
             Value::Number(Number::from(max_tokens)),
         );
     }
-    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(temperature) {
-            config.insert("temperature".to_string(), Value::Number(number));
-        }
+    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(temperature)
+    {
+        config.insert("temperature".to_string(), Value::Number(number));
     }
-    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64) {
-        if let Some(number) = Number::from_f64(top_p) {
-            config.insert("topP".to_string(), Value::Number(number));
-        }
+    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64)
+        && let Some(number) = Number::from_f64(top_p)
+    {
+        config.insert("topP".to_string(), Value::Number(number));
     }
     if let Some(top_k) = value_to_positive_i64(payload.get("top_k")) {
         config.insert("topK".to_string(), Value::Number(Number::from(top_k)));

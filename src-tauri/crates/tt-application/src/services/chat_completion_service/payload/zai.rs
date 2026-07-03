@@ -27,21 +27,21 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
 
     let (endpoint, mut upstream_payload) = openai::build(payload)?;
 
-    if endpoint == "/chat/completions" {
-        if let Some(body) = upstream_payload.as_object_mut() {
-            body.insert(
-                "thinking".to_string(),
-                serde_json::json!({
-                    "type": if include_reasoning { "enabled" } else { "disabled" },
-                }),
-            );
+    if endpoint == "/chat/completions"
+        && let Some(body) = upstream_payload.as_object_mut()
+    {
+        body.insert(
+            "thinking".to_string(),
+            serde_json::json!({
+                "type": if include_reasoning { "enabled" } else { "disabled" },
+            }),
+        );
 
-            if let Some(reasoning_effort) = reasoning_effort {
-                body.insert(
-                    "reasoning_effort".to_string(),
-                    Value::String(reasoning_effort.to_string()),
-                );
-            }
+        if let Some(reasoning_effort) = reasoning_effort {
+            body.insert(
+                "reasoning_effort".to_string(),
+                Value::String(reasoning_effort.to_string()),
+            );
         }
     }
 

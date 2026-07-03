@@ -58,10 +58,10 @@ pub(super) fn apply_claude_prompt_caching(
     }
 
     let pre_history_location = find_claude_pre_history_break_location(payload);
-    if let Some(location) = pre_history_location {
-        if Some(location) != last_message_location {
-            insert_cache_control_claude(payload, location, ttl);
-        }
+    if let Some(location) = pre_history_location
+        && Some(location) != last_message_location
+    {
+        insert_cache_control_claude(payload, location, ttl);
     }
 
     if let Some(previous) = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION) {
@@ -106,18 +106,18 @@ pub(super) fn apply_openrouter_claude_prompt_caching(
 
     let system_location = find_openrouter_system_break_location(messages);
     let last_location = last_openrouter_message_location(messages);
-    if let Some(location) = system_location {
-        if Some(location) != last_location {
-            insert_cache_control_openrouter(messages, location, ttl);
-        }
+    if let Some(location) = system_location
+        && Some(location) != last_location
+    {
+        insert_cache_control_openrouter(messages, location, ttl);
     }
 
     let pre_history_location =
         find_openrouter_pre_history_break_location(messages, system_location);
-    if let Some(location) = pre_history_location {
-        if Some(location) != last_location {
-            insert_cache_control_openrouter(messages, location, ttl);
-        }
+    if let Some(location) = pre_history_location
+        && Some(location) != last_location
+    {
+        insert_cache_control_openrouter(messages, location, ttl);
     }
 
     if let Some(previous) = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION) {

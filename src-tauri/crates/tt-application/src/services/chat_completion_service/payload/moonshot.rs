@@ -12,15 +12,15 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
 
     let (endpoint, mut upstream_payload) = openai::build(payload)?;
 
-    if endpoint == "/chat/completions" {
-        if let Some(body) = upstream_payload.as_object_mut() {
-            body.insert(
-                "thinking".to_string(),
-                serde_json::json!({
-                    "type": if include_reasoning { "enabled" } else { "disabled" },
-                }),
-            );
-        }
+    if endpoint == "/chat/completions"
+        && let Some(body) = upstream_payload.as_object_mut()
+    {
+        body.insert(
+            "thinking".to_string(),
+            serde_json::json!({
+                "type": if include_reasoning { "enabled" } else { "disabled" },
+            }),
+        );
     }
 
     Ok((endpoint, upstream_payload))

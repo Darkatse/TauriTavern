@@ -146,12 +146,11 @@ mod tests {
                 .unwrap_or_default(),
             "abc"
         );
-        assert_eq!(
+        assert!(
             result
                 .get("x-enabled")
                 .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-            true
+                .unwrap_or(false)
         );
     }
 
