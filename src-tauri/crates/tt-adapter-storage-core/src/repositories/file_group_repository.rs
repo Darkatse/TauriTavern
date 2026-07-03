@@ -558,8 +558,8 @@ mod tests {
     #[test]
     fn group_manifest_compat_truncates_legacy_float_timestamps() {
         let mut manifest = base_group_manifest();
-        manifest["date_added"] = json!(1_752_578_685_443.4028_f64);
-        manifest["date_last_chat"] = json!(1_752_578_685_999.9875_f64);
+        manifest["date_added"] = json!(1_752_578_685_443.402_8_f64);
+        manifest["date_last_chat"] = json!(1_752_578_685_999.987_5_f64);
 
         let group = decode_test_group(manifest).expect("decode legacy float timestamps");
 
@@ -619,8 +619,8 @@ mod tests {
 
         let mut manifest = base_group_manifest();
         manifest["activation_strategy"] = json!(false);
-        manifest["date_added"] = json!(1_752_578_685_443.4028_f64);
-        manifest["date_last_chat"] = json!(1_752_578_685_999.9875_f64);
+        manifest["date_added"] = json!(1_752_578_685_443.402_8_f64);
+        manifest["date_last_chat"] = json!(1_752_578_685_999.987_5_f64);
         manifest["vendor_extra"] = json!("kept");
         tokio::fs::write(
             &group_path,

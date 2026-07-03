@@ -151,7 +151,7 @@ fn build_query_tokens(query: &str) -> Vec<String> {
 }
 
 fn token_weight(token: &str) -> usize {
-    token.chars().count().min(8).max(1)
+    token.chars().count().clamp(1, 8)
 }
 
 fn needs_ascii_lowercase(tokens: &[String]) -> bool {

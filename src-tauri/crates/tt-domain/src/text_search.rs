@@ -147,7 +147,7 @@ fn score_text(text: &str, tokens: &[String], needs_lowercase: bool) -> (f32, boo
     let mut total_weight = 0_usize;
     let mut matched_weight = 0_usize;
     for token in tokens {
-        let weight = token.chars().count().min(8).max(1);
+        let weight = token.chars().count().clamp(1, 8);
         total_weight += weight;
         if haystack.contains(token) {
             matched_weight += weight;
