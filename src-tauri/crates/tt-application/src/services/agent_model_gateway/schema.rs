@@ -58,10 +58,10 @@ fn normalize_gemini_schema(value: &mut Value, depth: usize) {
 
     if depth > 0
         && object.get("type").and_then(Value::as_str) == Some("object")
-        && !object
+        && object
             .get("properties")
             .and_then(Value::as_object)
-            .is_some_and(|properties| !properties.is_empty())
+            .is_none_or(|properties| properties.is_empty())
     {
         object.insert("type".to_string(), Value::String("string".to_string()));
         object.remove("properties");

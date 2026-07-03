@@ -501,7 +501,7 @@ fn validate_source_specific(
                 }
             }
             SourceSpecificValueKind::NonEmptyString => {
-                if !value.as_str().is_some_and(|text| !text.trim().is_empty()) {
+                if value.as_str().is_none_or(|text| text.trim().is_empty()) {
                     return Err(ApplicationError::ValidationError(format!(
                         "llm_connection.source_specific_type_invalid: sourceSpecific.{key} must be a non-empty string"
                     )));
@@ -552,12 +552,12 @@ fn validate_aws_bedrock_source_specific(
         "aws_bedrock_custom_template",
         "aws_bedrock_custom_response_path",
     ] {
-        if !connection
+        if connection
             .endpoint
             .source_specific
             .get(key)
             .and_then(Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty())
+            .is_none_or(|value| value.trim().is_empty())
         {
             return Err(ApplicationError::ValidationError(format!(
                 "llm_connection.aws_bedrock_custom_template_incomplete: sourceSpecific.{key} is required when sourceSpecific.aws_bedrock_use_custom_template is true"

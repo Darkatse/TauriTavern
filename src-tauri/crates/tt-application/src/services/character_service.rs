@@ -268,7 +268,7 @@ impl CharacterService {
             character.fav = character.data.extensions.fav;
         }
 
-        let mut updated_value = serde_json::to_value(&character.to_v2()).map_err(|error| {
+        let mut updated_value = serde_json::to_value(character.to_v2()).map_err(|error| {
             ApplicationError::InternalError(format!(
                 "Failed to serialize updated character payload: {}",
                 error
@@ -696,10 +696,10 @@ impl CharacterService {
         let raw_json = self.repository.read_character_card_json(name).await?;
         let mut card_value = card_contract::parse_character_card_json(&raw_json)?;
 
-        if let Some(filter_path) = filter_path {
-            if Self::value_at_path(&card_value, filter_path).is_none() {
-                return Ok(false);
-            }
+        if let Some(filter_path) = filter_path
+            && Self::value_at_path(&card_value, filter_path).is_none()
+        {
+            return Ok(false);
         }
 
         merge_json_value_with_unset(&mut card_value, update);
@@ -1027,10 +1027,10 @@ impl CharacterService {
             return character.data.extensions.world.clone();
         }
 
-        if let Some(book_name) = character_book.get("name").and_then(Value::as_str) {
-            if !book_name.is_empty() {
-                return book_name.to_string();
-            }
+        if let Some(book_name) = character_book.get("name").and_then(Value::as_str)
+            && !book_name.is_empty()
+        {
+            return book_name.to_string();
         }
 
         format!("{}'s Lorebook", character.name)

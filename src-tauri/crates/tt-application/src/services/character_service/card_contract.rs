@@ -421,6 +421,22 @@ fn validate_v3_character_card(card_value: &Value) -> Result<(), DomainError> {
     Ok(())
 }
 
+fn character_card_spec_version(value: &Value) -> Option<f64> {
+    match value {
+        Value::Number(number) => number.as_f64(),
+        Value::String(string) => string.parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+fn missing_character_card_field(field: &str) -> DomainError {
+    DomainError::InvalidData(format!("Character card field {} is required", field))
+}
+
+fn invalid_character_card_field(field: &str) -> DomainError {
+    DomainError::InvalidData(format!("Character card field {} is invalid", field))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -522,20 +538,4 @@ mod tests {
                 .contains("embedded Agent Profile item.profile must be an object")
         );
     }
-}
-
-fn character_card_spec_version(value: &Value) -> Option<f64> {
-    match value {
-        Value::Number(number) => number.as_f64(),
-        Value::String(string) => string.parse::<f64>().ok(),
-        _ => None,
-    }
-}
-
-fn missing_character_card_field(field: &str) -> DomainError {
-    DomainError::InvalidData(format!("Character card field {} is required", field))
-}
-
-fn invalid_character_card_field(field: &str) -> DomainError {
-    DomainError::InvalidData(format!("Character card field {} is invalid", field))
 }

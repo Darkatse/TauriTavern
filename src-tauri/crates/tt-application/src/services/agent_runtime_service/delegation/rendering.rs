@@ -240,11 +240,11 @@ pub(super) fn render_await_content(
         if let Some(error) = task.get("error").and_then(Value::as_str) {
             lines.push(format!("Error: {error}"));
         }
-        if let Some(summary) = task.get("summary").and_then(Value::as_str) {
-            if !summary.trim().is_empty() {
-                lines.push(String::new());
-                lines.push(summary.trim().to_string());
-            }
+        if let Some(summary) = task.get("summary").and_then(Value::as_str)
+            && !summary.trim().is_empty()
+        {
+            lines.push(String::new());
+            lines.push(summary.trim().to_string());
         }
         push_optional_result_section(&mut lines, task, "Findings", "findings");
         push_optional_result_section(&mut lines, task, "Warnings", "warnings");

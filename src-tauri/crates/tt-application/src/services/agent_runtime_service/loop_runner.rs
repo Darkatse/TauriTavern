@@ -346,8 +346,8 @@ impl AgentRuntimeService {
 
             remember_seen_child_results_from_await(&tool_results, &mut seen_child_result_task_ids);
             append_tool_turn_to_request(&mut request, assistant_message, &tool_results)?;
-            if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed {
-                if let Some(message) = self
+            if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed
+                && let Some(message) = self
                     .completed_child_results_message(
                         run_id,
                         invocation_id,
@@ -356,13 +356,12 @@ impl AgentRuntimeService {
                         commit_count,
                     )
                     .await?
-                {
-                    request.messages.push(AgentModelMessage {
-                        role: AgentModelRole::User,
-                        parts: vec![AgentModelContentPart::Text { text: message }],
-                        provider_metadata: Value::Null,
-                    });
-                }
+            {
+                request.messages.push(AgentModelMessage {
+                    role: AgentModelRole::User,
+                    parts: vec![AgentModelContentPart::Text { text: message }],
+                    provider_metadata: Value::Null,
+                });
             }
             self.ensure_not_cancelled(cancel)?;
         }

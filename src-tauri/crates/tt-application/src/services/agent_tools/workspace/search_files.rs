@@ -90,10 +90,10 @@ pub(in crate::services::agent_tools) async fn search_files(
             ));
         }
     };
-    if let Some(path) = &path {
-        if let Err(result) = ensure_visible_workspace_path(call, &policy, path) {
-            return Ok((result, AgentToolEffect::None));
-        }
+    if let Some(path) = &path
+        && let Err(result) = ensure_visible_workspace_path(call, &policy, path)
+    {
+        return Ok((result, AgentToolEffect::None));
     }
 
     let limit = match optional_usize_arg(args, "limit") {

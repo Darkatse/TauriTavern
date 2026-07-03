@@ -280,7 +280,7 @@ pub fn validate_asset_file_name(input: &str) -> Result<String, DomainError> {
         ));
     }
 
-    if input.as_bytes().len() > 255 || is_reserved_windows_name(input) {
+    if input.len() > 255 || is_reserved_windows_name(input) {
         return Err(DomainError::InvalidData(
             "Reserved or long filename.".to_string(),
         ));

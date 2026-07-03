@@ -197,10 +197,10 @@ fn copy_native_continuation(
 
     let mut native = Map::new();
     for part in parts {
-        if let AgentModelContentPart::Native { provider, value } = part {
-            if provider == native_provider {
-                native.insert(provider.clone(), value.clone());
-            }
+        if let AgentModelContentPart::Native { provider, value } = part
+            && provider == native_provider
+        {
+            native.insert(provider.clone(), value.clone());
         }
     }
 

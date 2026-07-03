@@ -98,23 +98,22 @@ pub(in crate::services::agent_tools) async fn read_messages(
     } else {
         None
     };
-    if let Some(visible_total) = run_visible_total {
-        if let Some(request) = requests
+    if let Some(visible_total) = run_visible_total
+        && let Some(request) = requests
             .iter()
             .find(|request| request.index >= visible_total)
-        {
-            return Ok((
-                tool_error(
-                    call,
-                    "chat.message_not_found",
-                    &format!(
-                        "message index {} does not exist in this chat; total messages: {}",
-                        request.index, visible_total
-                    ),
+    {
+        return Ok((
+            tool_error(
+                call,
+                "chat.message_not_found",
+                &format!(
+                    "message index {} does not exist in this chat; total messages: {}",
+                    request.index, visible_total
                 ),
-                AgentToolEffect::None,
-            ));
-        }
+            ),
+            AgentToolEffect::None,
+        ));
     }
     let indices = requests
         .iter()

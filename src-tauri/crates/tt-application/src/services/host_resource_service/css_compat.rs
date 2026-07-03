@@ -280,19 +280,19 @@ pub fn flatten_css_layers(source: &[u8]) -> Vec<u8> {
                     continue;
                 }
 
-                if byte == b'@' {
-                    if let Some(end) = try_parse_layer_at_rule(source, index) {
-                        match end {
-                            LayerAtRuleEnd::StatementEnd(end_index) => {
-                                index = end_index + 1;
-                                continue;
-                            }
-                            LayerAtRuleEnd::BlockStart(block_index) => {
-                                brace_depth = brace_depth.saturating_add(1);
-                                skip_closing_brace_at_depth.push(brace_depth);
-                                index = block_index + 1;
-                                continue;
-                            }
+                if byte == b'@'
+                    && let Some(end) = try_parse_layer_at_rule(source, index)
+                {
+                    match end {
+                        LayerAtRuleEnd::StatementEnd(end_index) => {
+                            index = end_index + 1;
+                            continue;
+                        }
+                        LayerAtRuleEnd::BlockStart(block_index) => {
+                            brace_depth = brace_depth.saturating_add(1);
+                            skip_closing_brace_at_depth.push(brace_depth);
+                            index = block_index + 1;
+                            continue;
                         }
                     }
                 }

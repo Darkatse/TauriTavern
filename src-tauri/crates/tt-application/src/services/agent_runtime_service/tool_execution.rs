@@ -113,21 +113,21 @@ impl AgentRuntimeService {
             return Ok(outcome);
         }
 
-        if let Some(max_calls) = profile.tools.max_calls_per_tool.get(&call.name) {
-            if session.calls_for_tool(&call.name) >= *max_calls {
-                let outcome = recoverable_tool_error(
-                    call,
-                    "agent.tool_budget_exhausted",
-                    &format!(
-                        "Agent profile tool call budget for `{}` is exhausted (max {}).",
-                        call.name, max_calls
-                    ),
-                    started.elapsed().as_millis(),
-                );
-                self.record_tool_outcome(run_id, invocation_id, round, &outcome)
-                    .await?;
-                return Ok(outcome);
-            }
+        if let Some(max_calls) = profile.tools.max_calls_per_tool.get(&call.name)
+            && session.calls_for_tool(&call.name) >= *max_calls
+        {
+            let outcome = recoverable_tool_error(
+                call,
+                "agent.tool_budget_exhausted",
+                &format!(
+                    "Agent profile tool call budget for `{}` is exhausted (max {}).",
+                    call.name, max_calls
+                ),
+                started.elapsed().as_millis(),
+            );
+            self.record_tool_outcome(run_id, invocation_id, round, &outcome)
+                .await?;
+            return Ok(outcome);
         }
 
         session.remember_tool_call(&call.name);

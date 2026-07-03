@@ -253,7 +253,7 @@ impl<'a> AgentRunRetentionPlanner<'a> {
                     .iter()
                     .filter(|event| is_terminal_run_event(&event.event_type))
                     .map(|event| event.timestamp)
-                    .last(),
+                    .next_back(),
                 terminal_event_error: None,
             },
             Err(error) => RankedTerminalRun {

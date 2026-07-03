@@ -57,13 +57,13 @@ impl AgentRuntimeService {
                 dto.round, document.round
             )));
         }
-        if let Some(stored_invocation_id) = document.invocation_id.as_deref() {
-            if stored_invocation_id != invocation_id {
-                return Err(ApplicationError::ValidationError(format!(
-                    "agent.model_response_invocation_mismatch: requested invocation {}, stored invocation {}",
-                    invocation_id, stored_invocation_id
-                )));
-            }
+        if let Some(stored_invocation_id) = document.invocation_id.as_deref()
+            && stored_invocation_id != invocation_id
+        {
+            return Err(ApplicationError::ValidationError(format!(
+                "agent.model_response_invocation_mismatch: requested invocation {}, stored invocation {}",
+                invocation_id, stored_invocation_id
+            )));
         }
 
         Ok(project_model_turn(

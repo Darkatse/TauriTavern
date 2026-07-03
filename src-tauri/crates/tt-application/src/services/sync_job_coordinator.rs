@@ -214,29 +214,29 @@ async fn finalize_success(
     report: SyncExecutionReport,
     reconciler: &dyn DataChangeReconciler,
 ) -> SyncJobReportResultWithError {
-    if report.local_applied.changed() {
-        if let Err(error) = reconciler.reconcile(reconcile_reason(job)).await {
-            tracing::warn!(
-                job_id = job.id,
-                error = %error,
-                "Sync completed but data reconciliation failed"
-            );
-            let message = match report.outcome {
-                SyncJobOutcome::Completed { .. } => {
-                    format!("Sync completed but failed to refresh runtime caches: {error}")
-                }
-                SyncJobOutcome::RemoteRequestAccepted => error.to_string(),
-            };
-            return SyncJobReportResultWithError {
-                report: SyncJobReport::failed_after_partial_local_mutation(
-                    job.clone(),
-                    message,
-                    report.local_applied,
-                    Some(error.to_string()),
-                ),
-                error: Some(error),
-            };
-        }
+    if report.local_applied.changed()
+        && let Err(error) = reconciler.reconcile(reconcile_reason(job)).await
+    {
+        tracing::warn!(
+            job_id = job.id,
+            error = %error,
+            "Sync completed but data reconciliation failed"
+        );
+        let message = match report.outcome {
+            SyncJobOutcome::Completed { .. } => {
+                format!("Sync completed but failed to refresh runtime caches: {error}")
+            }
+            SyncJobOutcome::RemoteRequestAccepted => error.to_string(),
+        };
+        return SyncJobReportResultWithError {
+            report: SyncJobReport::failed_after_partial_local_mutation(
+                job.clone(),
+                message,
+                report.local_applied,
+                Some(error.to_string()),
+            ),
+            error: Some(error),
+        };
     }
 
     SyncJobReportResultWithError {

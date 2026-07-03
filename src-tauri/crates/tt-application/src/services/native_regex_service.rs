@@ -265,10 +265,10 @@ impl RegexCache {
             return;
         }
 
-        if self.entries.len() >= self.limit {
-            if let Some(oldest) = self.order.pop_front() {
-                self.entries.remove(&oldest);
-            }
+        if self.entries.len() >= self.limit
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.entries.remove(&oldest);
         }
 
         self.order.push_back(key.clone());
@@ -276,10 +276,10 @@ impl RegexCache {
     }
 
     fn touch(&mut self, key: &str) {
-        if let Some(index) = self.order.iter().position(|candidate| candidate == key) {
-            if let Some(key) = self.order.remove(index) {
-                self.order.push_back(key);
-            }
+        if let Some(index) = self.order.iter().position(|candidate| candidate == key)
+            && let Some(key) = self.order.remove(index)
+        {
+            self.order.push_back(key);
         }
     }
 }

@@ -26,13 +26,13 @@ pub(super) fn resolve_run_skill_scope_refs(
             )
         })?;
         let profile_preset = clone_valid_preset_ref(profile_preset)?;
-        if let Some(explicit) = explicit_preset.as_ref() {
-            if explicit != &profile_preset {
-                return Err(ApplicationError::ValidationError(format!(
-                    "agent.skill_scope_preset_mismatch: skillScopeRefs.preset `{}/{}` does not match profile preset `{}/{}`",
-                    explicit.api_id, explicit.name, profile_preset.api_id, profile_preset.name
-                )));
-            }
+        if let Some(explicit) = explicit_preset.as_ref()
+            && explicit != &profile_preset
+        {
+            return Err(ApplicationError::ValidationError(format!(
+                "agent.skill_scope_preset_mismatch: skillScopeRefs.preset `{}/{}` does not match profile preset `{}/{}`",
+                explicit.api_id, explicit.name, profile_preset.api_id, profile_preset.name
+            )));
         }
         Some(profile_preset)
     } else {
@@ -47,12 +47,12 @@ pub(super) fn resolve_run_skill_scope_refs(
         dto.skill_scope_refs.character_id.as_deref(),
         "agent.skill_scope_character_id_empty: skillScopeRefs.characterId cannot be empty",
     )?;
-    if let (Some(explicit), Some(chat)) = (explicit_character_id.as_deref(), chat_character_id) {
-        if explicit != chat {
-            return Err(ApplicationError::ValidationError(format!(
-                "agent.skill_scope_character_mismatch: skillScopeRefs.characterId `{explicit}` does not match chat character `{chat}`"
-            )));
-        }
+    if let (Some(explicit), Some(chat)) = (explicit_character_id.as_deref(), chat_character_id)
+        && explicit != chat
+    {
+        return Err(ApplicationError::ValidationError(format!(
+            "agent.skill_scope_character_mismatch: skillScopeRefs.characterId `{explicit}` does not match chat character `{chat}`"
+        )));
     }
 
     Ok(AgentRunSkillScopeRefs {

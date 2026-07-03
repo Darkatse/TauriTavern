@@ -39,10 +39,10 @@ impl AgentProviderAdapter {
         }
     }
 
-    pub(super) fn messages_for_request<'a>(
+    pub(super) fn messages_for_request(
         self,
-        request: &'a AgentModelRequest,
-    ) -> Result<Vec<&'a tt_domain::models::agent::AgentModelMessage>, ApplicationError> {
+        request: &AgentModelRequest,
+    ) -> Result<Vec<&tt_domain::models::agent::AgentModelMessage>, ApplicationError> {
         match self {
             Self::OpenAiResponses => responses::messages_for_request(request),
             _ => Ok(request.messages.iter().collect()),

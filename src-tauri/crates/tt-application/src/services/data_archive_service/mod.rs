@@ -96,21 +96,20 @@ impl DataArchiveService {
 
             match blocking_result {
                 Ok(Ok(result)) => {
-                    if result.local_applied.changed() {
-                        if let Err(error) = reconcile_import_data_change(
+                    if result.local_applied.changed()
+                        && let Err(error) = reconcile_import_data_change(
                             &data_root_initializer,
                             &reconciler,
                             &data_root,
                         )
                         .await
-                        {
-                            let _ = job.mark_failed_after_local_mutation(
-                                &format!("Import completed but {}", error),
-                                result.local_applied,
-                                Some(error),
-                            );
-                            return;
-                        }
+                    {
+                        let _ = job.mark_failed_after_local_mutation(
+                            &format!("Import completed but {}", error),
+                            result.local_applied,
+                            Some(error),
+                        );
+                        return;
                     }
                     let _ = job.mark_completed_import(result.source_users, result.target_user);
                 }

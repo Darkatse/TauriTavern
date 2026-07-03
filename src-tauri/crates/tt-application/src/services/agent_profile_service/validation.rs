@@ -94,8 +94,7 @@ pub(super) fn validate_model_binding(binding: &AgentModelBinding) -> Result<(), 
         AgentModelBindingMode::ConnectionRef => {
             if binding
                 .connection_ref
-                .as_ref()
-                .map(String::as_str)
+                .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .is_none()
@@ -107,8 +106,7 @@ pub(super) fn validate_model_binding(binding: &AgentModelBinding) -> Result<(), 
             }
             if binding
                 .model_id
-                .as_ref()
-                .map(String::as_str)
+                .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .is_none()
@@ -470,13 +468,13 @@ fn validate_tool_description_override(
     spec: &AgentToolSpec,
     override_: &AgentToolDescriptionOverride,
 ) -> Result<(), ApplicationError> {
-    if let Some(description) = override_.description.as_ref() {
-        if description.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_tool_description_empty: description for `{}` cannot be empty",
-                spec.name
-            )));
-        }
+    if let Some(description) = override_.description.as_ref()
+        && description.trim().is_empty()
+    {
+        return Err(ApplicationError::ValidationError(format!(
+            "agent.profile_tool_description_empty: description for `{}` cannot be empty",
+            spec.name
+        )));
     }
     if override_.properties.is_empty() {
         return Ok(());
