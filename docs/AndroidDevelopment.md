@@ -215,11 +215,36 @@ https://v2.tauri.app/develop/resources/#android
 
 ---
 
-## 6. 插件系统（前端）移动端兼容补丁
+## 6. AI 生成通知生命周期
+
+Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyTavern 语义上的“生成开始/进度/结束”事件。
+
+当前通知槽位：
+
+- `42000`：前台服务保活通知，只维持 Android 后台执行契约；
+- `42001`：生成完成通知，表示需要用户知晓的一次完成/失败结果。
+
+生命周期契约：
+
+- 应用前台可交互态定义为 `Activity resumed && window focused`；
+- 应用进入前台可交互态、冷启动、或收到新的 launch intent 时，只清除 `42001`；
+- 生成结束时，如果应用已经前台可交互，则不再发布完成通知；
+- 发布新的完成通知前先清除旧的 `42001`，避免 fixed notification id 上的静默复用；
+- 完成通知不使用 `onlyAlertOnce`；保活/进度通知仍可使用，避免 token 进度频繁打扰。
+
+维护原则：
+
+- 不要用 `cancelAll()` 清通知，避免误伤系统或未来扩展通知；
+- 不要把 native completion 能力绑定到 Android 16+ `ProgressStyle`，旧版 Android 也需要完成通知生命周期；
+- 不要让前端承担 Android 通知栏清理职责，前端应继续保持上游 SillyTavern 的事件语义。
+
+---
+
+## 7. 插件系统（前端）移动端兼容补丁
 
 以下问题仅在 Android 旧 WebView 上高概率出现，桌面端通常不复现。
 
-### 6.1 `*.at is not a function`
+### 7.1 `*.at is not a function`
 
 现象：
 
@@ -237,7 +262,7 @@ https://v2.tauri.app/develop/resources/#android
   - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
   - 行为：仅补齐缺失 API，且只执行一次；桌面端/移动端 Web 不启用。
 
-### 6.2 插件面板样式大面积失效（如 `TH-custom-tailwind` 布局错乱）
+### 7.2 插件面板样式大面积失效（如 `TH-custom-tailwind` 布局错乱）
 
 现象：
 

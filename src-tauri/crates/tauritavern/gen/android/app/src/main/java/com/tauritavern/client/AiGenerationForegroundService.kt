@@ -94,20 +94,8 @@ class AiGenerationForegroundService : Service() {
 
     isGenerating = false
 
-    if (!supportsLiveUpdates()) {
-      startForegroundCompat(buildKeepAliveNotification())
-      return
-    }
-
     if (showCompletionNotification) {
-      notificationManager.notify(
-        COMPLETION_NOTIFICATION_ID,
-        if (success) {
-          buildLiveUpdateSuccessNotification()
-        } else {
-          buildLiveUpdateFailureNotification(statusCode)
-        },
-      )
+      notifyCompletionNotification(success, statusCode)
     }
 
     startForegroundCompat(buildKeepAliveNotification())
@@ -119,6 +107,22 @@ class AiGenerationForegroundService : Service() {
     outputTokens = 0L
 
     startForegroundCompat(buildKeepAliveNotification())
+  }
+
+  private fun notifyCompletionNotification(success: Boolean, statusCode: Int) {
+    if (AndroidAppPresence.isForegroundInteractive()) {
+      return
+    }
+
+    notificationManager.cancel(COMPLETION_NOTIFICATION_ID)
+    notificationManager.notify(
+      COMPLETION_NOTIFICATION_ID,
+      if (success) {
+        buildCompletionSuccessNotification()
+      } else {
+        buildCompletionFailureNotification(statusCode)
+      },
+    )
   }
 
   private fun startForegroundCompat(notification: Notification) {
@@ -195,46 +199,27 @@ class AiGenerationForegroundService : Service() {
       .build()
   }
 
-  private fun buildLiveUpdateSuccessNotification(): Notification {
-    val pointColor = 0xFFECB7FF.toInt()
-    val segmentColor = 0xFF86F7FA.toInt()
-
-    val progressStyle =
-      ProgressStyle()
-        .setProgressTrackerIcon(IconCompat.createWithResource(this, R.drawable.ic_launcher_foreground))
-        .setProgressPoints(
-          listOf(
-            ProgressStyle.Point(25).setColor(pointColor),
-            ProgressStyle.Point(50).setColor(pointColor),
-            ProgressStyle.Point(75).setColor(pointColor),
-            ProgressStyle.Point(100).setColor(pointColor),
-          ),
-        )
-        .setProgressSegments(
-          listOf(
-            ProgressStyle.Segment(25).setColor(segmentColor),
-            ProgressStyle.Segment(25).setColor(segmentColor),
-            ProgressStyle.Segment(25).setColor(segmentColor),
-            ProgressStyle.Segment(25).setColor(segmentColor),
-          ),
-        )
-        .setProgress(100)
-
-    return NotificationCompat.Builder(this, AndroidAiGenerationNotifier.LIVE_UPDATE_CHANNEL_ID)
+  private fun buildCompletionSuccessNotification(): Notification {
+    val builder = NotificationCompat.Builder(this, AndroidAiGenerationNotifier.LIVE_UPDATE_CHANNEL_ID)
       .setSmallIcon(R.mipmap.ic_launcher)
       .setContentTitle(getString(R.string.notification_ai_done_title))
       .setContentText(getString(R.string.notification_ai_done_body))
-      .setShortCriticalText(getString(R.string.notification_ai_done_short))
-      .setStyle(progressStyle)
       .setCategory(NotificationCompat.CATEGORY_STATUS)
       .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-      .setOnlyAlertOnce(true)
       .setAutoCancel(true)
       .setContentIntent(AndroidAiGenerationNotifier.buildLaunchIntent(this))
+
+    if (supportsLiveUpdates()) {
+      builder
+        .setShortCriticalText(getString(R.string.notification_ai_done_short))
+        .setStyle(buildCompletedProgressStyle())
+    }
+
+    return builder
       .build()
   }
 
-  private fun buildLiveUpdateFailureNotification(statusCode: Int): Notification {
+  private fun buildCompletionFailureNotification(statusCode: Int): Notification {
     val title = getString(R.string.notification_ai_failed_title)
     val body =
       if (statusCode > 0) {
@@ -257,10 +242,34 @@ class AiGenerationForegroundService : Service() {
       .setShortCriticalText(shortText)
       .setCategory(NotificationCompat.CATEGORY_ERROR)
       .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-      .setOnlyAlertOnce(true)
       .setAutoCancel(true)
       .setContentIntent(AndroidAiGenerationNotifier.buildLaunchIntent(this))
       .build()
+  }
+
+  private fun buildCompletedProgressStyle(): ProgressStyle {
+    val pointColor = 0xFFECB7FF.toInt()
+    val segmentColor = 0xFF86F7FA.toInt()
+
+    return ProgressStyle()
+      .setProgressTrackerIcon(IconCompat.createWithResource(this, R.drawable.ic_launcher_foreground))
+      .setProgressPoints(
+        listOf(
+          ProgressStyle.Point(25).setColor(pointColor),
+          ProgressStyle.Point(50).setColor(pointColor),
+          ProgressStyle.Point(75).setColor(pointColor),
+          ProgressStyle.Point(100).setColor(pointColor),
+        ),
+      )
+      .setProgressSegments(
+        listOf(
+          ProgressStyle.Segment(25).setColor(segmentColor),
+          ProgressStyle.Segment(25).setColor(segmentColor),
+          ProgressStyle.Segment(25).setColor(segmentColor),
+          ProgressStyle.Segment(25).setColor(segmentColor),
+        ),
+      )
+      .setProgress(100)
   }
 
   companion object {

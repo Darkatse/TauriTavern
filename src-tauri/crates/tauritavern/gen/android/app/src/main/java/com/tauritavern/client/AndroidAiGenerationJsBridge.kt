@@ -47,6 +47,11 @@ class AndroidAiGenerationJsBridge(
     return Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA
   }
 
+  @JavascriptInterface
+  fun supportsNativeCompletion(): Boolean {
+    return true
+  }
+
   companion object {
     const val INTERFACE_NAME = "TauriTavernAndroidAiBridge"
   }

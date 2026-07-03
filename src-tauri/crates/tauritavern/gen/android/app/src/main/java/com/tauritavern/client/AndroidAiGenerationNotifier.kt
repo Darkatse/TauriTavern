@@ -20,6 +20,12 @@ class AndroidAiGenerationNotifier(
     )
   }
 
+  fun acknowledgeCompletionNotification() {
+    val notificationManager =
+      context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    notificationManager.cancel(AiGenerationForegroundService.COMPLETION_NOTIFICATION_ID)
+  }
+
   fun onGenerationStart() {
     ContextCompat.startForegroundService(
       context,

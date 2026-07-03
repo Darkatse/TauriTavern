@@ -114,6 +114,7 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
     backNavigationController.register(onBackPressedDispatcher, this)
     // Keep a foreground service for the whole app session to reduce OEM background kills.
     aiGenerationNotifier.ensureKeepAliveService()
+    aiGenerationNotifier.acknowledgeCompletionNotification()
     insetsBridge.onCreate()
     captureShareIntent(intent)
   }
@@ -121,6 +122,7 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
+    aiGenerationNotifier.acknowledgeCompletionNotification()
     captureShareIntent(intent)
   }
 
@@ -147,8 +149,23 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
 
   override fun onResume() {
     super.onResume()
+    acknowledgeCompletionNotificationIfForeground(
+      AndroidAppPresence.setActivityResumed(true),
+    )
     insetsBridge.onResume()
     sharePayloadDispatcher.requestDispatch()
+  }
+
+  override fun onPause() {
+    AndroidAppPresence.setActivityResumed(false)
+    super.onPause()
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    acknowledgeCompletionNotificationIfForeground(
+      AndroidAppPresence.setWindowFocused(hasFocus),
+    )
   }
 
   override fun showWebFullscreenView(
@@ -177,6 +194,12 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
           insetsBridge.onMainFrameNavigationStarted()
         }
       }
+  }
+
+  private fun acknowledgeCompletionNotificationIfForeground(enteredForegroundInteractive: Boolean) {
+    if (enteredForegroundInteractive) {
+      aiGenerationNotifier.acknowledgeCompletionNotification()
+    }
   }
 
   private fun captureShareIntent(intent: Intent?) {
