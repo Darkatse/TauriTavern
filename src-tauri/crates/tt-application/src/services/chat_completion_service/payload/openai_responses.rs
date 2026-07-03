@@ -5,6 +5,7 @@ use serde_json::{Map, Number, Value, json};
 use crate::errors::ApplicationError;
 use tt_ports::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
+use super::content_parts::{InputPart, MediaPart, MediaSource, parse_openai_chat_content};
 use super::openai_reasoning::normalize_openai_reasoning_effort;
 use super::shared::message_content_to_text;
 use super::tool_calls::message_tool_call_id;
@@ -296,27 +297,26 @@ fn responses_input_message_content(
     content: Option<&Value>,
     allow_images: bool,
 ) -> Result<Value, ApplicationError> {
-    let Some(content) = content else {
-        return Ok(Value::String(String::new()));
-    };
+    let parts = parse_openai_chat_content(content)?;
 
-    let Some(parts) = content.as_array() else {
-        return Ok(Value::String(message_content_to_text(Some(content))));
-    };
-
-    let mut converted = Vec::with_capacity(parts.len());
     let mut text = String::new();
+    let mut blocks = Vec::with_capacity(parts.len());
     let mut has_blocks = false;
 
-    for part in parts {
+    for part in &parts {
         match responses_input_content_part(part, allow_images)? {
             ResponsesInputContentPart::Text(fragment) => {
                 text.push_str(&fragment);
-                converted.push(ResponsesInputContentPart::Text(fragment));
+                if !fragment.is_empty() {
+                    blocks.push(json!({
+                        "type": "input_text",
+                        "text": fragment,
+                    }));
+                }
             }
-            block @ ResponsesInputContentPart::Block(_) => {
+            ResponsesInputContentPart::Block(block) => {
                 has_blocks = true;
-                converted.push(block);
+                blocks.push(block);
             }
         }
     }
@@ -325,128 +325,70 @@ fn responses_input_message_content(
         return Ok(Value::String(text));
     }
 
-    let blocks = converted
-        .into_iter()
-        .filter_map(|part| match part {
-            ResponsesInputContentPart::Text(text) if text.is_empty() => None,
-            ResponsesInputContentPart::Text(text) => Some(json!({
-                "type": "input_text",
-                "text": text,
-            })),
-            ResponsesInputContentPart::Block(block) => Some(block),
-        })
-        .collect();
-
     Ok(Value::Array(blocks))
 }
 
 fn responses_input_content_part(
-    part: &Value,
+    part: &InputPart,
     allow_images: bool,
 ) -> Result<ResponsesInputContentPart, ApplicationError> {
     match part {
-        Value::String(fragment) => Ok(ResponsesInputContentPart::Text(fragment.clone())),
-        Value::Object(object) => responses_input_object_content_part(object, allow_images),
-        _ => Ok(ResponsesInputContentPart::Text(String::new())),
-    }
-}
-
-fn responses_input_object_content_part(
-    object: &Map<String, Value>,
-    allow_images: bool,
-) -> Result<ResponsesInputContentPart, ApplicationError> {
-    match object.get("type").and_then(Value::as_str) {
-        Some("text") | Some("input_text") => {
-            let text = object
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            Ok(ResponsesInputContentPart::Text(text.to_string()))
-        }
-        Some("image_url") => responses_input_image_from_openai_image_url(object, allow_images),
-        Some("input_image") => responses_input_native_image(object, allow_images),
-        Some("audio_url") | Some("video_url") | Some("audio") | Some("video")
-        | Some("input_audio") | Some("input_video") => Err(ApplicationError::ValidationError(
+        InputPart::Text(fragment) => Ok(ResponsesInputContentPart::Text(fragment.clone())),
+        InputPart::Image(media) => Ok(ResponsesInputContentPart::Block(responses_input_image(
+            media,
+            allow_images,
+        )?)),
+        InputPart::Audio(_) | InputPart::Video(_) => Err(ApplicationError::ValidationError(
             "OpenAI Responses translator does not support audio or video content parts".to_string(),
         )),
-        Some(ty) => object
-            .get("text")
-            .or_else(|| object.get("content"))
-            .and_then(Value::as_str)
-            .map(|text| ResponsesInputContentPart::Text(text.to_string()))
-            .ok_or_else(|| {
-                ApplicationError::ValidationError(format!(
-                    "OpenAI Responses content part type is unsupported: {ty}"
-                ))
-            }),
-        None => Ok(ResponsesInputContentPart::Text(
-            object
-                .get("text")
-                .or_else(|| object.get("content"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        )),
+        InputPart::Unknown { ty, value } => responses_unknown_input_content_part(ty, value),
     }
 }
 
-fn responses_input_image_from_openai_image_url(
-    object: &Map<String, Value>,
-    allow_images: bool,
-) -> Result<ResponsesInputContentPart, ApplicationError> {
+fn responses_input_image(media: &MediaPart, allow_images: bool) -> Result<Value, ApplicationError> {
     ensure_user_image_content_allowed(allow_images)?;
-    let image_url = object.get("image_url").and_then(Value::as_object);
-    let url = image_url
-        .and_then(|entry| entry.get("url"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "OpenAI Responses image_url block is missing url".to_string(),
-            )
-        })?;
 
-    let mut block = json!({
-        "type": "input_image",
-        "image_url": url,
-    });
-    if let Some(detail) = image_url.and_then(|entry| entry.get("detail")) {
-        copy_optional_string_field(&mut block, "detail", detail)?;
+    let mut block = Map::new();
+    block.insert("type".to_string(), Value::String("input_image".to_string()));
+    match &media.source {
+        MediaSource::DataUrl { mime_type, data } => {
+            block.insert(
+                "image_url".to_string(),
+                Value::String(format!("data:{mime_type};base64,{data}")),
+            );
+        }
+        MediaSource::Url(url) => {
+            block.insert("image_url".to_string(), Value::String(url.clone()));
+        }
+        MediaSource::FileId(file_id) => {
+            block.insert("file_id".to_string(), Value::String(file_id.clone()));
+        }
+    }
+    if let Some(detail) = &media.detail {
+        block.insert("detail".to_string(), Value::String(detail.clone()));
     }
 
-    Ok(ResponsesInputContentPart::Block(block))
+    Ok(Value::Object(block))
 }
 
-fn responses_input_native_image(
-    object: &Map<String, Value>,
-    allow_images: bool,
+fn responses_unknown_input_content_part(
+    ty: &Option<String>,
+    value: &Value,
 ) -> Result<ResponsesInputContentPart, ApplicationError> {
-    ensure_user_image_content_allowed(allow_images)?;
-    let has_image_url = object
-        .get("image_url")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty());
-    let has_file_id = object
-        .get("file_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty());
-
-    if !has_image_url && !has_file_id {
+    if matches!(ty.as_deref(), Some("input_file" | "file")) {
         return Err(ApplicationError::ValidationError(
-            "OpenAI Responses input_image block is missing image_url or file_id".to_string(),
+            "OpenAI Responses translator does not support file content parts yet".to_string(),
         ));
     }
 
-    if let Some(detail) = object.get("detail") {
-        ensure_optional_string_field("detail", detail)?;
-    }
-
-    Ok(ResponsesInputContentPart::Block(Value::Object(
-        object.clone(),
-    )))
+    unknown_text(value)
+        .map(|text| ResponsesInputContentPart::Text(text.to_string()))
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(match ty.as_deref() {
+                Some(ty) => format!("OpenAI Responses content part type is unsupported: {ty}"),
+                None => "OpenAI Responses content part is unsupported".to_string(),
+            })
+        })
 }
 
 fn ensure_user_image_content_allowed(allow_images: bool) -> Result<(), ApplicationError> {
@@ -459,30 +401,13 @@ fn ensure_user_image_content_allowed(allow_images: bool) -> Result<(), Applicati
     ))
 }
 
-fn copy_optional_string_field(
-    target: &mut Value,
-    key: &str,
-    value: &Value,
-) -> Result<(), ApplicationError> {
-    ensure_optional_string_field(key, value)?;
-    let text = value
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if let (Some(text), Some(object)) = (text, target.as_object_mut()) {
-        object.insert(key.to_string(), Value::String(text.to_string()));
-    }
-    Ok(())
-}
-
-fn ensure_optional_string_field(key: &str, value: &Value) -> Result<(), ApplicationError> {
-    if value.is_string() || value.is_null() {
-        return Ok(());
-    }
-
-    Err(ApplicationError::ValidationError(format!(
-        "OpenAI Responses {key} must be a string"
-    )))
+fn unknown_text(value: &Value) -> Option<&str> {
+    value.as_object().and_then(|object| {
+        object
+            .get("text")
+            .or_else(|| object.get("content"))
+            .and_then(Value::as_str)
+    })
 }
 
 fn copy_internal_provider_state(
@@ -905,6 +830,46 @@ mod tests {
                         "image_url": "data:image/png;base64,AAAA",
                         "detail": "high"
                     }
+                ]
+            }])
+        );
+    }
+
+    #[test]
+    fn openai_responses_payload_preserves_text_around_image() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "openai_responses",
+            "model": "gpt-5.5",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "before" },
+                    {
+                        "type": "image_url",
+                        "image_url": { "url": "data:image/png;base64,AAAA" }
+                    },
+                    { "type": "text", "text": "after" }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+
+        assert_eq!(
+            upstream["input"],
+            json!([{
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "before" },
+                    {
+                        "type": "input_image",
+                        "image_url": "data:image/png;base64,AAAA"
+                    },
+                    { "type": "input_text", "text": "after" }
                 ]
             }])
         );
