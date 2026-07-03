@@ -1,4 +1,4 @@
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::errors::ApplicationError;
 
@@ -31,6 +31,18 @@ enum MediaKind {
     Image,
     Audio,
     Video,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AudioInputFormatSet {
+    OpenAi,
+    OpenRouter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AudioRewriteFallbackPolicy {
+    Reject,
+    Preserve,
 }
 
 impl MediaKind {
@@ -106,6 +118,63 @@ pub(super) fn reject_media_for_text_only_content(
         return Err(ApplicationError::ValidationError(format!(
             "{provider_name} cannot preserve {kind} input in this text-only provider format. Use a multimodal provider format or disable {kind} inlining."
         )));
+    }
+
+    Ok(())
+}
+
+pub(super) fn reject_video_for_provider(
+    provider_name: &str,
+    messages: Option<&Value>,
+) -> Result<(), ApplicationError> {
+    let Some(messages) = messages else {
+        return Ok(());
+    };
+
+    let Some(entries) = messages.as_array() else {
+        return Ok(());
+    };
+
+    for entry in entries {
+        let Some(message) = entry.as_object() else {
+            continue;
+        };
+
+        if contains_media_kind(message.get("content"), "video") {
+            return Err(ApplicationError::ValidationError(format!(
+                "{provider_name} cannot preserve video input in this provider format. Use a provider that supports video input or disable video inlining."
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+pub(super) fn rewrite_audio_url_parts_to_input_audio(
+    provider_name: &str,
+    messages: Option<&mut Value>,
+    formats: AudioInputFormatSet,
+    fallback_policy: AudioRewriteFallbackPolicy,
+) -> Result<(), ApplicationError> {
+    let Some(messages) = messages else {
+        return Ok(());
+    };
+
+    let Some(entries) = messages.as_array_mut() else {
+        return Ok(());
+    };
+
+    for entry in entries {
+        let Some(message) = entry.as_object_mut() else {
+            continue;
+        };
+
+        rewrite_audio_url_content_parts(
+            provider_name,
+            message.get_mut("content"),
+            formats,
+            fallback_policy,
+        )?;
     }
 
     Ok(())
@@ -254,11 +323,152 @@ fn first_media_kind_in_content(content: Option<&Value>) -> Option<&'static str> 
     }
 }
 
-fn media_kind_in_value(value: &Value) -> Option<&'static str> {
+pub(super) fn media_kind_in_value(value: &Value) -> Option<&'static str> {
     value.as_object().and_then(media_kind_in_object)
 }
 
+fn contains_media_kind(content: Option<&Value>, rejected_kind: &str) -> bool {
+    match content {
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(media_kind_in_value)
+            .any(|kind| kind == rejected_kind),
+        Some(Value::Object(object)) => media_kind_in_object(object) == Some(rejected_kind),
+        _ => false,
+    }
+}
+
+fn rewrite_audio_url_content_parts(
+    provider_name: &str,
+    content: Option<&mut Value>,
+    formats: AudioInputFormatSet,
+    fallback_policy: AudioRewriteFallbackPolicy,
+) -> Result<(), ApplicationError> {
+    match content {
+        Some(Value::Array(parts)) => {
+            for part in parts {
+                rewrite_audio_url_part(provider_name, part, formats, fallback_policy)?;
+            }
+        }
+        Some(part @ Value::Object(_)) => {
+            if fallback_policy == AudioRewriteFallbackPolicy::Reject
+                && media_kind_in_value(part) == Some("audio")
+            {
+                return Err(ApplicationError::ValidationError(format!(
+                    "{provider_name} audio content parts must be inside a content array."
+                )));
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn rewrite_audio_url_part(
+    provider_name: &str,
+    part: &mut Value,
+    formats: AudioInputFormatSet,
+    fallback_policy: AudioRewriteFallbackPolicy,
+) -> Result<(), ApplicationError> {
+    let Some(object) = part.as_object_mut() else {
+        return Ok(());
+    };
+
+    if object.get("type").and_then(Value::as_str).map(str::trim) != Some("audio_url") {
+        return Ok(());
+    }
+
+    let Some(url) = object
+        .get("audio_url")
+        .and_then(Value::as_object)
+        .and_then(|entry| non_empty_string(entry.get("url")))
+    else {
+        if fallback_policy == AudioRewriteFallbackPolicy::Preserve {
+            return Ok(());
+        }
+
+        return Err(ApplicationError::ValidationError(
+            "audio content part is missing url".to_string(),
+        ));
+    };
+
+    let Some((mime_type, data)) = parse_data_url(&url) else {
+        if fallback_policy == AudioRewriteFallbackPolicy::Preserve {
+            return Ok(());
+        }
+
+        let message = if url.starts_with("data:") {
+            "audio content part has invalid data URL".to_string()
+        } else {
+            format!(
+                "{provider_name} audio content part must be a base64 data URL; remote audio URLs are not supported."
+            )
+        };
+        return Err(ApplicationError::ValidationError(message));
+    };
+
+    let Some(format) = audio_input_format(formats, &mime_type) else {
+        if fallback_policy == AudioRewriteFallbackPolicy::Preserve {
+            return Ok(());
+        }
+
+        return Err(ApplicationError::ValidationError(format!(
+            "{provider_name} audio content part uses unsupported audio data URL MIME type: {mime_type}. Supported by this app mapping: {}.",
+            supported_audio_formats(formats)
+        )));
+    };
+
+    object.remove("audio_url");
+    object.insert("type".to_string(), Value::String("input_audio".to_string()));
+    object.insert(
+        "input_audio".to_string(),
+        json!({
+            "format": format,
+            "data": data,
+        }),
+    );
+
+    Ok(())
+}
+
+fn audio_input_format(formats: AudioInputFormatSet, mime_type: &str) -> Option<&'static str> {
+    let normalized = mime_type.trim().to_ascii_lowercase();
+
+    match formats {
+        AudioInputFormatSet::OpenAi => match normalized.as_str() {
+            "audio/wav" | "audio/x-wav" | "audio/wave" | "audio/vnd.wave" => Some("wav"),
+            "audio/mpeg" | "audio/mp3" => Some("mp3"),
+            _ => None,
+        },
+        AudioInputFormatSet::OpenRouter => match normalized.as_str() {
+            "audio/wav" | "audio/x-wav" | "audio/wave" | "audio/vnd.wave" => Some("wav"),
+            "audio/mpeg" | "audio/mp3" => Some("mp3"),
+            "audio/aiff" | "audio/x-aiff" => Some("aiff"),
+            "audio/aac" => Some("aac"),
+            "audio/ogg" | "application/ogg" => Some("ogg"),
+            "audio/flac" | "audio/x-flac" => Some("flac"),
+            "audio/mp4" | "audio/m4a" | "audio/x-m4a" => Some("m4a"),
+            _ => None,
+        },
+    }
+}
+
+fn supported_audio_formats(formats: AudioInputFormatSet) -> &'static str {
+    match formats {
+        AudioInputFormatSet::OpenAi => "wav, mp3",
+        AudioInputFormatSet::OpenRouter => "wav, mp3, aiff, aac, ogg, flac, m4a",
+    }
+}
+
 fn media_kind_in_object(object: &Map<String, Value>) -> Option<&'static str> {
+    if let Some(kind) = native_media_kind(
+        object
+            .get("inlineData")
+            .or_else(|| object.get("inline_data")),
+    ) {
+        return Some(kind);
+    }
     if object.get("inlineData").is_some() || object.get("inline_data").is_some() {
         return Some("media");
     }
@@ -274,6 +484,24 @@ fn media_kind_in_object(object: &Map<String, Value>) -> Option<&'static str> {
         "video_url" | "input_video" | "video" => Some("video"),
         "input_file" | "file" => Some("file"),
         _ => None,
+    }
+}
+
+fn native_media_kind(value: Option<&Value>) -> Option<&'static str> {
+    let mime_type = value
+        .and_then(Value::as_object)
+        .and_then(|object| object.get("mimeType").or_else(|| object.get("mime_type")))
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_ascii_lowercase())?;
+
+    if mime_type.starts_with("image/") {
+        Some("image")
+    } else if mime_type.starts_with("audio/") {
+        Some("audio")
+    } else if mime_type.starts_with("video/") {
+        Some("video")
+    } else {
+        None
     }
 }
 
@@ -569,11 +797,15 @@ mod tests {
             ),
             (
                 json!({ "inlineData": { "mimeType": "image/png", "data": "AAAA" } }),
-                "media",
+                "image",
             ),
             (
-                json!({ "inline_data": { "mime_type": "image/png", "data": "AAAA" } }),
-                "media",
+                json!({ "inline_data": { "mime_type": "audio/wav", "data": "AAAA" } }),
+                "audio",
+            ),
+            (
+                json!({ "inlineData": { "mimeType": "Video/MP4", "data": "AAAA" } }),
+                "video",
             ),
             (
                 json!({ "fileData": { "mimeType": "image/png", "fileUri": "gs://bucket/cat.png" } }),

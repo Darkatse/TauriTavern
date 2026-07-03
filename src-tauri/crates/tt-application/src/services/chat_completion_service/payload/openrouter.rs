@@ -3,6 +3,9 @@ use serde_json::{Map, Value, json};
 use crate::errors::ApplicationError;
 
 use super::super::model_capabilities::map_openrouter_reasoning_effort;
+use super::content_parts::{
+    AudioInputFormatSet, AudioRewriteFallbackPolicy, rewrite_audio_url_parts_to_input_audio,
+};
 use super::openai;
 use super::shared::insert_if_present;
 
@@ -11,6 +14,12 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
     let (_, mut upstream_payload) = openai::build(payload)?;
 
     if let Some(body) = upstream_payload.as_object_mut() {
+        rewrite_audio_url_parts_to_input_audio(
+            "OpenRouter",
+            body.get_mut("messages"),
+            AudioInputFormatSet::OpenRouter,
+            AudioRewriteFallbackPolicy::Preserve,
+        )?;
         apply_openrouter_overrides(body, &source_payload)?;
     }
 
@@ -348,5 +357,162 @@ mod tests {
             .unwrap_or_default();
 
         assert_eq!(quantizations, vec!["int8", "fp16"]);
+    }
+
+    #[test]
+    fn openrouter_rewrites_audio_url_data_url_to_input_audio() {
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-4o-audio-preview",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "transcribe" },
+                    {
+                        "type": "audio_url",
+                        "audio_url": { "url": "data:audio/mpeg;base64,BBBB" },
+                        "cache_control": { "type": "ephemeral" },
+                        "provider_magic": true
+                    }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("payload should build");
+
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/type"),
+            Some(&json!("input_audio"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/input_audio/format"),
+            Some(&json!("mp3"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/input_audio/data"),
+            Some(&json!("BBBB"))
+        );
+        assert!(
+            upstream
+                .pointer("/messages/0/content/1/audio_url")
+                .is_none()
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/cache_control/type"),
+            Some(&json!("ephemeral"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/provider_magic"),
+            Some(&json!(true))
+        );
+    }
+
+    #[test]
+    fn openrouter_preserves_video_and_unknown_content_parts() {
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "google/gemini-pro-vision",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "video_url", "video_url": { "url": "data:video/mp4;base64,CCCC" } },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.test/cat.png",
+                            "detail": "high"
+                        }
+                    },
+                    { "type": "provider_magic", "payload": { "x": true } }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("payload should build");
+
+        assert_eq!(
+            upstream.pointer("/messages/0/content/0/type"),
+            Some(&json!("video_url"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/image_url/detail"),
+            Some(&json!("high"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/2/type"),
+            Some(&json!("provider_magic"))
+        );
+    }
+
+    #[test]
+    fn openrouter_preserves_remote_audio_url() {
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-4o-audio-preview",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "audio_url", "audio_url": { "url": "https://example.test/audio.mp3" } }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("remote audio should pass through");
+
+        assert_eq!(
+            upstream.pointer("/messages/0/content/0/type"),
+            Some(&json!("audio_url"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/0/audio_url/url"),
+            Some(&json!("https://example.test/audio.mp3"))
+        );
+    }
+
+    #[test]
+    fn openrouter_preserves_unrewritable_audio_url_parts() {
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-4o-audio-preview",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "audio_url", "audio_url": { "url": "data:audio/webm;base64,AAAA" } },
+                    { "type": "audio_url", "audio_url": { "url": "data:audio/mpeg;base64" } },
+                    { "type": "audio_url", "audio_url": {} }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("unrewritable audio should pass through");
+
+        assert_eq!(
+            upstream.pointer("/messages/0/content/0/type"),
+            Some(&json!("audio_url"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/0/audio_url/url"),
+            Some(&json!("data:audio/webm;base64,AAAA"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/audio_url/url"),
+            Some(&json!("data:audio/mpeg;base64"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/2/audio_url"),
+            Some(&json!({}))
+        );
     }
 }

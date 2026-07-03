@@ -2,7 +2,10 @@ use serde_json::{Map, Value};
 
 use crate::errors::ApplicationError;
 
-use super::content_parts::reject_media_for_text_only_provider;
+use super::content_parts::{
+    AudioInputFormatSet, AudioRewriteFallbackPolicy, reject_media_for_text_only_provider,
+    reject_video_for_provider, rewrite_audio_url_parts_to_input_audio,
+};
 use super::openai_reasoning::{
     normalize_openai_reasoning_effort, should_forward_openai_reasoning_effort,
 };
@@ -84,7 +87,7 @@ fn build_clean(
     } else {
         Ok((
             "/chat/completions".to_string(),
-            Value::Object(build_chat_completion_payload(&payload, source)),
+            Value::Object(build_chat_completion_payload(&payload, source)?),
         ))
     }
 }
@@ -129,7 +132,10 @@ fn build_text_completion_payload(
     Ok(request)
 }
 
-fn build_chat_completion_payload(payload: &Map<String, Value>, source: &str) -> Map<String, Value> {
+fn build_chat_completion_payload(
+    payload: &Map<String, Value>,
+    source: &str,
+) -> Result<Map<String, Value>, ApplicationError> {
     let mut request = Map::new();
 
     for key in [
@@ -192,7 +198,17 @@ fn build_chat_completion_payload(payload: &Map<String, Value>, source: &str) -> 
         request.insert("response_format".to_string(), response_format);
     }
 
-    request
+    if source == "openai" {
+        rewrite_audio_url_parts_to_input_audio(
+            "OpenAI Chat Completions",
+            request.get_mut("messages"),
+            AudioInputFormatSet::OpenAi,
+            AudioRewriteFallbackPolicy::Reject,
+        )?;
+        reject_video_for_provider("OpenAI Chat Completions", request.get("messages"))?;
+    }
+
+    Ok(request)
 }
 
 fn should_forward_openai_verbosity(source: &str, model: &str) -> bool {
@@ -544,5 +560,259 @@ mod tests {
 
         let error = build(payload).expect_err("text completions should reject media");
         assert!(error.to_string().contains("cannot preserve image input"));
+    }
+
+    #[test]
+    fn openai_chat_rewrites_audio_url_data_url_to_input_audio() {
+        let payload = json!({
+            "chat_completion_source": "openai",
+            "model": "gpt-4o-audio-preview",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "transcribe" },
+                    { "type": "audio_url", "audio_url": { "url": "data:audio/wave;base64,AAAA" } }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/type"),
+            Some(&json!("input_audio"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/input_audio/format"),
+            Some(&json!("wav"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/input_audio/data"),
+            Some(&json!("AAAA"))
+        );
+        assert!(
+            upstream
+                .pointer("/messages/0/content/1/audio_url")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn openai_chat_rejects_single_object_audio_url() {
+        let payload = json!({
+            "chat_completion_source": "openai",
+            "model": "gpt-4o-audio-preview",
+            "messages": [{
+                "role": "user",
+                "content": { "type": "audio_url", "audio_url": { "url": "data:audio/mpeg;base64,BBBB" } }
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("single object audio should fail fast");
+
+        assert!(error.to_string().contains("content array"));
+    }
+
+    #[test]
+    fn openai_chat_preserves_preformatted_input_audio() {
+        let payload = json!({
+            "chat_completion_source": "openai",
+            "model": "gpt-4o-audio-preview",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_audio", "input_audio": { "format": "wav", "data": "AAAA" } }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+
+        assert_eq!(
+            upstream.pointer("/messages/0/content/0/type"),
+            Some(&json!("input_audio"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/0/input_audio/data"),
+            Some(&json!("AAAA"))
+        );
+    }
+
+    #[test]
+    fn openai_chat_preserves_image_url_parts() {
+        let payload = json!({
+            "chat_completion_source": "openai",
+            "model": "gpt-4.1-mini",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "describe" },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.test/cat.png",
+                            "detail": "high"
+                        }
+                    }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/image_url/url"),
+            Some(&json!("https://example.test/cat.png"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/image_url/detail"),
+            Some(&json!("high"))
+        );
+    }
+
+    #[test]
+    fn openai_chat_rejects_remote_audio_url() {
+        let payload = json!({
+            "chat_completion_source": "openai",
+            "model": "gpt-4o-audio-preview",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "audio_url", "audio_url": { "url": "https://example.test/audio.wav" } },
+                    { "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("remote audio should fail fast");
+
+        assert!(
+            error
+                .to_string()
+                .contains("remote audio URLs are not supported")
+        );
+    }
+
+    #[test]
+    fn openai_chat_rejects_unsupported_audio_data_url_mime() {
+        let payload = json!({
+            "chat_completion_source": "openai",
+            "model": "gpt-4o-audio-preview",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "audio_url", "audio_url": { "url": "data:audio/webm;base64,AAAA" } }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("unsupported MIME should fail fast");
+
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported audio data URL MIME type")
+        );
+    }
+
+    #[test]
+    fn openai_chat_rejects_video_parts() {
+        for content in [
+            json!([
+                { "type": "video_url", "video_url": { "url": "data:video/mp4;base64,AAAA" } }
+            ]),
+            json!([
+                { "type": "video_url", "video_url": { "url": "https://example.test/video.mp4" } }
+            ]),
+            json!([
+                { "inlineData": { "mimeType": "video/mp4", "data": "AAAA" } }
+            ]),
+            json!({ "type": "video_url", "video_url": { "url": "data:video/mp4;base64,AAAA" } }),
+        ] {
+            let payload = json!({
+                "chat_completion_source": "openai",
+                "model": "gpt-4.1-mini",
+                "messages": [{
+                    "role": "user",
+                    "content": content
+                }]
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let error = build(payload).expect_err("video should fail fast");
+
+            assert!(error.to_string().contains("cannot preserve video input"));
+        }
+    }
+
+    #[test]
+    fn openai_compatible_sources_preserve_media_parts() {
+        for source in ["custom", "groq", "siliconflow"] {
+            let payload = json!({
+                "chat_completion_source": source,
+                "model": "provider-model",
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        { "type": "audio_url", "audio_url": { "url": "https://example.test/audio.wav" } },
+                        { "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } },
+                        { "type": "video_url", "video_url": { "url": "data:video/mp4;base64,BBBB" } },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.test/cat.png",
+                                "detail": "high"
+                            }
+                        }
+                    ]
+                }]
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let (_endpoint, upstream) = build(payload).expect("payload should pass through");
+
+            assert_eq!(
+                upstream.pointer("/messages/0/content/0/type"),
+                Some(&json!("audio_url"))
+            );
+            assert_eq!(
+                upstream.pointer("/messages/0/content/1/type"),
+                Some(&json!("audio_url"))
+            );
+            assert_eq!(
+                upstream.pointer("/messages/0/content/1/audio_url/url"),
+                Some(&json!("data:audio/wav;base64,AAAA"))
+            );
+            assert_eq!(
+                upstream.pointer("/messages/0/content/2/type"),
+                Some(&json!("video_url"))
+            );
+            assert_eq!(
+                upstream.pointer("/messages/0/content/3/image_url/detail"),
+                Some(&json!("high"))
+            );
+        }
     }
 }

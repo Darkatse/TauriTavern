@@ -2,6 +2,9 @@ use serde_json::{Map, Value, json};
 
 use crate::errors::ApplicationError;
 
+use super::content_parts::{
+    InputPart, MediaSource, media_kind_in_value, parse_openai_chat_content,
+};
 use super::prompt_post_processing::PromptNames;
 use super::shared::insert_if_present;
 use super::shared::message_content_to_text;
@@ -105,10 +108,89 @@ fn convert_messages(
         }));
     }
 
+    validate_multimodal_content(&messages)?;
     apply_tool_call_primer(&mut messages);
     strip_unsupported_names(&mut messages, names);
 
     Ok(messages)
+}
+
+fn validate_multimodal_content(messages: &[Value]) -> Result<(), ApplicationError> {
+    for message in messages {
+        let Some(message_object) = message.as_object() else {
+            continue;
+        };
+
+        validate_raw_content_part_types(message_object.get("content"))?;
+
+        for part in parse_openai_chat_content(message_object.get("content"))? {
+            validate_cohere_content_part(&part)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_cohere_content_part(part: &InputPart) -> Result<(), ApplicationError> {
+    match part {
+        InputPart::Text(_) => Ok(()),
+        InputPart::Image(media) => match &media.source {
+            MediaSource::DataUrl { .. } | MediaSource::Url(_) => Ok(()),
+            MediaSource::FileId(_) => reject_cohere_image_shape(),
+        },
+        InputPart::Audio(_) => reject_cohere_media("audio"),
+        InputPart::Video(_) => reject_cohere_media("video"),
+        InputPart::Unknown { .. } => Ok(()),
+    }
+}
+
+fn validate_raw_content_part_types(content: Option<&Value>) -> Result<(), ApplicationError> {
+    match content {
+        Some(Value::Array(parts)) => {
+            for part in parts {
+                validate_raw_content_part_type(part)?;
+            }
+        }
+        Some(part @ Value::Object(_)) => {
+            validate_raw_content_part_type(part)?;
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn validate_raw_content_part_type(part: &Value) -> Result<(), ApplicationError> {
+    let Some(kind) = media_kind_in_value(part) else {
+        return Ok(());
+    };
+
+    match kind {
+        "image" if is_image_url_part(part) => Ok(()),
+        "image" => reject_cohere_image_shape(),
+        "audio" | "video" | "file" | "media" => reject_cohere_media(kind),
+        _ => Ok(()),
+    }
+}
+
+fn is_image_url_part(part: &Value) -> bool {
+    part.as_object()
+        .and_then(|object| object.get("type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        == Some("image_url")
+}
+
+fn reject_cohere_image_shape() -> Result<(), ApplicationError> {
+    Err(ApplicationError::ValidationError(
+        "Cohere Chat only supports image_url image content parts".to_string(),
+    ))
+}
+
+fn reject_cohere_media(kind: &str) -> Result<(), ApplicationError> {
+    Err(ApplicationError::ValidationError(format!(
+        "Cohere Chat cannot preserve {kind} input in this provider format. Use a provider that supports {kind} input or disable {kind} inlining."
+    )))
 }
 
 fn apply_tool_call_primer(messages: &mut Vec<Value>) {
@@ -301,6 +383,25 @@ fn prefix_content(content: &mut Value, prefix: &str) {
         Value::Null => {
             *content = Value::String(prefix.to_string());
         }
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str) == Some("text") {
+                if let Some(Value::String(fragment)) = object.get_mut("text") {
+                    if !fragment.starts_with(prefix) {
+                        *fragment = format!("{prefix}{fragment}");
+                    }
+                    return;
+                }
+            }
+
+            let original = Value::Object(std::mem::take(object));
+            *content = json!([
+                {
+                    "type": "text",
+                    "text": prefix,
+                },
+                original,
+            ]);
+        }
         _ => {
             let text = content.to_string();
             *content = Value::String(format!("{prefix}{text}"));
@@ -463,5 +564,206 @@ mod tests {
             .unwrap_or("");
         assert!(content.contains("call a tool"));
         assert!(content.contains("weather"));
+    }
+
+    #[test]
+    fn cohere_tool_call_primer_rejects_media_before_replacing_content() {
+        let payload = json!({
+            "model": "command-r-plus",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    { "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } }
+                ],
+                "tool_calls": [{ "function": { "name": "weather" } }]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("media should fail before primer replacement");
+
+        assert!(error.to_string().contains("cannot preserve audio input"));
+    }
+
+    #[test]
+    fn cohere_preserves_image_url_content_parts() {
+        let payload = json!({
+            "model": "command-a-vision-07-2025",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "describe" },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;base64,AAAA",
+                            "detail": "high"
+                        }
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.test/cat.png",
+                            "detail": "low"
+                        }
+                    }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/type"),
+            Some(&json!("image_url"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/image_url/url"),
+            Some(&json!("data:image/png;base64,AAAA"))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/2/image_url/detail"),
+            Some(&json!("low"))
+        );
+    }
+
+    #[test]
+    fn cohere_prefixes_named_single_object_image_without_flattening_it() {
+        let payload = json!({
+            "model": "command-a-vision-07-2025",
+            "messages": [{
+                "role": "user",
+                "name": "Narrator",
+                "content": {
+                    "type": "image_url",
+                    "image_url": { "url": "data:image/png;base64,AAAA" }
+                }
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+
+        assert_eq!(
+            upstream.pointer("/messages/0/content/0/text"),
+            Some(&json!("Narrator: "))
+        );
+        assert_eq!(
+            upstream.pointer("/messages/0/content/1/type"),
+            Some(&json!("image_url"))
+        );
+    }
+
+    #[test]
+    fn cohere_rejects_audio_and_video_content_parts() {
+        for (part, expected) in [
+            (
+                json!({ "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } }),
+                "audio",
+            ),
+            (
+                json!({ "inlineData": { "mimeType": "audio/wav", "data": "AAAA" } }),
+                "audio",
+            ),
+            (
+                json!({ "type": "video_url", "video_url": { "url": "data:video/mp4;base64,BBBB" } }),
+                "video",
+            ),
+            (
+                json!({ "inlineData": { "mimeType": "video/mp4", "data": "BBBB" } }),
+                "video",
+            ),
+            (json!({ "type": "input_audio", "input_audio": {} }), "audio"),
+            (json!({ "type": "input_video", "input_video": {} }), "video"),
+        ] {
+            let payload = json!({
+                "model": "command-a-vision-07-2025",
+                "messages": [{
+                    "role": "user",
+                    "content": [part]
+                }]
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let error = build(payload).expect_err("unsupported media should fail fast");
+
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("cannot preserve {expected} input"))
+            );
+        }
+    }
+
+    #[test]
+    fn cohere_rejects_named_single_object_audio_before_prefixing() {
+        let payload = json!({
+            "model": "command-a-vision-07-2025",
+            "messages": [{
+                "role": "user",
+                "name": "Narrator",
+                "content": {
+                    "type": "audio_url",
+                    "audio_url": { "url": "data:audio/wav;base64,AAAA" }
+                }
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("unsupported media should fail fast");
+
+        assert!(error.to_string().contains("cannot preserve audio input"));
+    }
+
+    #[test]
+    fn cohere_rejects_file_and_native_image_parts() {
+        for (part, expected) in [
+            (
+                json!({ "type": "input_file", "file_id": "file_123" }),
+                "cannot preserve file input",
+            ),
+            (
+                json!({ "fileData": { "mimeType": "image/png", "fileUri": "gs://bucket/cat.png" } }),
+                "cannot preserve file input",
+            ),
+            (
+                json!({ "inlineData": { "mimeType": "image/png", "data": "AAAA" } }),
+                "only supports image_url image content parts",
+            ),
+            (
+                json!({ "type": "input_image", "file_id": "file_123" }),
+                "only supports image_url image content parts",
+            ),
+            (
+                json!({ "type": "image", "source": {} }),
+                "only supports image_url image content parts",
+            ),
+        ] {
+            let payload = json!({
+                "model": "command-a-vision-07-2025",
+                "messages": [{
+                    "role": "user",
+                    "content": [part]
+                }]
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let error = build(payload).expect_err("unsupported media should fail fast");
+
+            assert!(error.to_string().contains(expected));
+        }
     }
 }
