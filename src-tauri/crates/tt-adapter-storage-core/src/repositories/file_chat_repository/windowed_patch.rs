@@ -223,7 +223,7 @@ async fn patch_payload_windowed_internal(
         replace_file(&temp_path, path).await?;
 
         let metadata = read_existing_payload_metadata(path).await?;
-        let header_end_offset = (header.as_bytes().len() + 1) as u64;
+        let header_end_offset = (header.len() + 1) as u64;
         return cursor_from_metadata(header_end_offset, &metadata);
     }
 
@@ -514,7 +514,7 @@ async fn patch_payload_windowed_internal(
 
     let metadata = read_existing_payload_metadata(path).await?;
     let new_cursor_offset = if header_changed {
-        let new_header_end_offset = (header.as_bytes().len() + 1) as u64;
+        let new_header_end_offset = (header.len() + 1) as u64;
         let preserved_prefix_bytes = cursor.offset.saturating_sub(existing_header_end_offset);
         new_header_end_offset + preserved_prefix_bytes
     } else {

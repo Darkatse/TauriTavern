@@ -210,10 +210,7 @@ fn write_text_chunk(output: &mut Vec<u8>, keyword: &str, text: &str) {
     write_chunk(output, CHUNK_TYPE_TEXT, &data);
 }
 
-fn text_chunk_keyword<'a>(
-    chunk_type: [u8; 4],
-    data: &'a [u8],
-) -> Result<Option<&'a [u8]>, DomainError> {
+fn text_chunk_keyword(chunk_type: [u8; 4], data: &[u8]) -> Result<Option<&[u8]>, DomainError> {
     let keyword = match chunk_type {
         CHUNK_TYPE_TEXT => split_keyword(data, "tEXt")?.0,
         CHUNK_TYPE_ZTXT => split_keyword(data, "zTXt")?.0,

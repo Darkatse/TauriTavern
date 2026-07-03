@@ -130,12 +130,12 @@ impl FileGroupRepository {
         })?;
 
         // Set creation time
-        if let Ok(created) = metadata.created() {
-            if let Ok(timestamp) = created.duration_since(UNIX_EPOCH) {
-                let timestamp_millis = timestamp.as_millis() as i64;
-                group.date_added = Some(timestamp_millis);
-                group.create_date = Some(self.format_timestamp(timestamp_millis));
-            }
+        if let Ok(created) = metadata.created()
+            && let Ok(timestamp) = created.duration_since(UNIX_EPOCH)
+        {
+            let timestamp_millis = timestamp.as_millis() as i64;
+            group.date_added = Some(timestamp_millis);
+            group.create_date = Some(self.format_timestamp(timestamp_millis));
         }
 
         // Calculate chat size and last chat date
@@ -146,16 +146,16 @@ impl FileGroupRepository {
         for chat_file in chat_files {
             let file_name = chat_file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
-            if group.chats.contains(&file_name.to_string()) {
-                if let Ok(chat_metadata) = fs::metadata(chat_file).await {
-                    chat_size += chat_metadata.len();
+            if group.chats.contains(&file_name.to_string())
+                && let Ok(chat_metadata) = fs::metadata(chat_file).await
+            {
+                chat_size += chat_metadata.len();
 
-                    if let Ok(modified) = chat_metadata.modified() {
-                        if let Ok(timestamp) = modified.duration_since(UNIX_EPOCH) {
-                            let timestamp_millis = timestamp.as_millis() as i64;
-                            date_last_chat = date_last_chat.max(timestamp_millis);
-                        }
-                    }
+                if let Ok(modified) = chat_metadata.modified()
+                    && let Ok(timestamp) = modified.duration_since(UNIX_EPOCH)
+                {
+                    let timestamp_millis = timestamp.as_millis() as i64;
+                    date_last_chat = date_last_chat.max(timestamp_millis);
                 }
             }
         }

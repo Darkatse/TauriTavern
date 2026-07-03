@@ -22,10 +22,10 @@ impl MemoryCache {
 
     /// Get a chat from the cache
     pub(super) fn get(&self, key: &str) -> Option<Chat> {
-        if let Some((chat, timestamp)) = self.chats.get(key) {
-            if timestamp.elapsed() < self.ttl {
-                return Some(chat.clone());
-            }
+        if let Some((chat, timestamp)) = self.chats.get(key)
+            && timestamp.elapsed() < self.ttl
+        {
+            return Some(chat.clone());
         }
         None
     }
@@ -33,15 +33,15 @@ impl MemoryCache {
     /// Set a chat in the cache
     pub(super) fn set(&mut self, key: String, chat: Chat) {
         // If we're at capacity, remove the oldest entry
-        if self.chats.len() >= self.capacity && !self.chats.contains_key(&key) {
-            if let Some((oldest_key, _)) = self
+        if self.chats.len() >= self.capacity
+            && !self.chats.contains_key(&key)
+            && let Some((oldest_key, _)) = self
                 .chats
                 .iter()
                 .max_by_key(|(_, (_, timestamp))| timestamp.elapsed())
-            {
-                let oldest_key = oldest_key.clone();
-                self.chats.remove(&oldest_key);
-            }
+        {
+            let oldest_key = oldest_key.clone();
+            self.chats.remove(&oldest_key);
         }
 
         self.chats.insert(key, (chat, Instant::now()));

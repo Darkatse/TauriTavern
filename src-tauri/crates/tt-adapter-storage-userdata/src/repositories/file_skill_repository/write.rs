@@ -37,7 +37,7 @@ async fn write_skill_file_inner(
     let name = validate_skill_name(&request.name)?;
     validate_skill_scope(&request.scope)?;
     let path = normalize_skill_path(&request.path)?;
-    validate_write_size(&path, request.content.as_bytes().len() as u64)?;
+    validate_write_size(&path, request.content.len() as u64)?;
 
     let target_root = repository
         .installed_skill_root(&request.scope, &name)

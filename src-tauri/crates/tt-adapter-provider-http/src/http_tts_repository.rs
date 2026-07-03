@@ -433,10 +433,10 @@ fn response_content_type(response: &Response, fallback: &str) -> String {
 }
 
 fn parse_upstream_error_message(body: &[u8], fallback: &str) -> String {
-    if let Ok(payload) = serde_json::from_slice::<Value>(body) {
-        if let Some(message) = parse_json_error_message(&payload) {
-            return message;
-        }
+    if let Ok(payload) = serde_json::from_slice::<Value>(body)
+        && let Some(message) = parse_json_error_message(&payload)
+    {
+        return message;
     }
 
     let text = String::from_utf8_lossy(body).trim().to_string();
@@ -448,10 +448,10 @@ fn parse_upstream_error_message(body: &[u8], fallback: &str) -> String {
 }
 
 fn parse_minimax_upstream_error_message(body: &[u8], fallback: &str) -> String {
-    if let Ok(payload) = serde_json::from_slice::<Value>(body) {
-        if let Some(message) = parse_minimax_json_error_message(&payload) {
-            return message;
-        }
+    if let Ok(payload) = serde_json::from_slice::<Value>(body)
+        && let Some(message) = parse_minimax_json_error_message(&payload)
+    {
+        return message;
     }
 
     let text = String::from_utf8_lossy(body).trim().to_string();

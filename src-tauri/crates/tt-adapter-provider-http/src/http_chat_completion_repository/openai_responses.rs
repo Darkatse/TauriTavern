@@ -48,10 +48,10 @@ impl ResponsesWsSessionPool {
     ) -> Result<Arc<Mutex<ResponsesWsSession>>, DomainError> {
         let (client, transport_revision) = repository.websocket_client()?;
         let connection_key = ws_connection_key(config, endpoint_path, transport_revision)?;
-        if let Some(session) = self.sessions.lock().await.get(session_id).cloned() {
-            if session.lock().await.connection_key == connection_key {
-                return Ok(session);
-            }
+        if let Some(session) = self.sessions.lock().await.get(session_id).cloned()
+            && session.lock().await.connection_key == connection_key
+        {
+            return Ok(session);
         }
 
         let socket = connect_responses_ws(client, config, endpoint_path).await?;
@@ -133,19 +133,19 @@ impl ResponsesStreamState {
         if let Some(event_type) = event.get("type").and_then(Value::as_str) {
             match event_type {
                 "response.output_text.delta" | "response.text.delta" => {
-                    if let Some(delta) = event.get("delta").and_then(Value::as_str) {
-                        if !delta.is_empty() {
-                            self.send_delta(sender, json!({ "content": delta }), None);
-                        }
+                    if let Some(delta) = event.get("delta").and_then(Value::as_str)
+                        && !delta.is_empty()
+                    {
+                        self.send_delta(sender, json!({ "content": delta }), None);
                     }
                 }
                 "response.reasoning_text.delta"
                 | "response.reasoning_summary_text.delta"
                 | "response.reasoning.delta" => {
-                    if let Some(delta) = event.get("delta").and_then(Value::as_str) {
-                        if !delta.is_empty() {
-                            self.send_delta(sender, json!({ "reasoning_content": delta }), None);
-                        }
+                    if let Some(delta) = event.get("delta").and_then(Value::as_str)
+                        && !delta.is_empty()
+                    {
+                        self.send_delta(sender, json!({ "reasoning_content": delta }), None);
                     }
                 }
                 "response.output_item.added" => {

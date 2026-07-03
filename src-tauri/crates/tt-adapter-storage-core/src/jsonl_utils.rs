@@ -105,13 +105,13 @@ pub async fn write_jsonl_file(path: &Path, objects: &[Value]) -> Result<(), Doma
 pub async fn write_jsonl_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
     let temp_path = unique_temp_path(path, "data.jsonl");
 
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).await.map_err(|e| {
-                tracing::error!("Failed to create directory: {}", e);
-                DomainError::InternalError(format!("Failed to create directory: {}", e))
-            })?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent).await.map_err(|e| {
+            tracing::error!("Failed to create directory: {}", e);
+            DomainError::InternalError(format!("Failed to create directory: {}", e))
+        })?;
     }
 
     let file = File::create(&temp_path).await.map_err(|e| {

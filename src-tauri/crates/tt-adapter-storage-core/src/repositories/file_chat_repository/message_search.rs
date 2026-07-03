@@ -64,7 +64,7 @@ fn bigram_tokens(value: &str, limit: usize) -> Vec<String> {
     }
 
     let total = chars.len() - 1;
-    let step = (total + limit - 1) / limit;
+    let step = total.div_ceil(limit);
     let mut seen = HashSet::new();
     let mut tokens = Vec::new();
 
@@ -127,7 +127,7 @@ fn dedup_and_limit_tokens(tokens: Vec<String>) -> Vec<String> {
         return unique;
     }
 
-    let step = (unique.len() + MAX_QUERY_TOKENS - 1) / MAX_QUERY_TOKENS;
+    let step = unique.len().div_ceil(MAX_QUERY_TOKENS);
     unique
         .into_iter()
         .step_by(step)
@@ -518,10 +518,10 @@ impl FileChatRepository {
             })?;
 
             let role = role_from_message(&message);
-            if let Some(filter) = role_filter {
-                if role != filter {
-                    continue;
-                }
+            if let Some(filter) = role_filter
+                && role != filter
+            {
+                continue;
             }
 
             let (score, match_byte) = score_text(&message.mes, tokens, needs_lowercase);

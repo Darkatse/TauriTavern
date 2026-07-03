@@ -376,10 +376,10 @@ impl FileImageMetadataRepository {
             .and_then(Self::system_time_to_mtime_millis)
             .unwrap_or(0.0);
 
-        if let Some(cached) = cached {
-            if Self::is_metadata_fresh(cached, mtime) {
-                return Ok(cached.clone());
-            }
+        if let Some(cached) = cached
+            && Self::is_metadata_fresh(cached, mtime)
+        {
+            return Ok(cached.clone());
         }
 
         let dimensions_path = path.to_path_buf();
@@ -668,11 +668,11 @@ impl ImageMetadataRepository for FileImageMetadataRepository {
         let _guard = self.lock.lock().await;
         let mut index = self.read_index().await?;
 
-        if let Some(thumbnail_file) = thumbnail_file {
-            if !thumbnail_file.is_empty() {
-                let relative_path = Self::existing_background_asset_relative_path(thumbnail_file)?;
-                self.ensure_background_file_exists(&relative_path).await?;
-            }
+        if let Some(thumbnail_file) = thumbnail_file
+            && !thumbnail_file.is_empty()
+        {
+            let relative_path = Self::existing_background_asset_relative_path(thumbnail_file)?;
+            self.ensure_background_file_exists(&relative_path).await?;
         }
 
         let folder = Self::require_folder(&mut index, id)?;
@@ -688,11 +688,11 @@ impl ImageMetadataRepository for FileImageMetadataRepository {
                 modified = true;
             }
         }
-        if let Some(thumbnail_file) = thumbnail_file {
-            if folder.thumbnail_file != thumbnail_file {
-                folder.thumbnail_file = thumbnail_file.to_string();
-                modified = true;
-            }
+        if let Some(thumbnail_file) = thumbnail_file
+            && folder.thumbnail_file != thumbnail_file
+        {
+            folder.thumbnail_file = thumbnail_file.to_string();
+            modified = true;
         }
 
         let updated = folder.clone();

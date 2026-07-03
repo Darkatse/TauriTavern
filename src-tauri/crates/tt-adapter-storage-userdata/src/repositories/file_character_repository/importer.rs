@@ -52,47 +52,44 @@ impl FileCharacterRepository {
                 && bytes[index] == b'\\'
                 && bytes[index + 1] == b'u'
                 && Self::is_unescaped_backslash(bytes, index)
+                && let Some(code) = Self::parse_hex_escape(&bytes[index + 2..index + 6])
             {
-                if let Some(code) = Self::parse_hex_escape(&bytes[index + 2..index + 6]) {
-                    let is_high_surrogate = (0xD800..=0xDBFF).contains(&code);
-                    let is_low_surrogate = (0xDC00..=0xDFFF).contains(&code);
+                let is_high_surrogate = (0xD800..=0xDBFF).contains(&code);
+                let is_low_surrogate = (0xDC00..=0xDFFF).contains(&code);
 
-                    if is_high_surrogate {
-                        let has_valid_low_pair = if index + 12 <= bytes.len()
-                            && bytes[index + 6] == b'\\'
-                            && bytes[index + 7] == b'u'
-                        {
-                            match Self::parse_hex_escape(&bytes[index + 8..index + 12]) {
-                                Some(next) => (0xDC00..=0xDFFF).contains(&next),
-                                None => false,
-                            }
-                        } else {
-                            false
-                        };
-
-                        if has_valid_low_pair {
-                            index += 12;
-                            continue;
+                if is_high_surrogate {
+                    let has_valid_low_pair = if index + 12 <= bytes.len()
+                        && bytes[index + 6] == b'\\'
+                        && bytes[index + 7] == b'u'
+                    {
+                        match Self::parse_hex_escape(&bytes[index + 8..index + 12]) {
+                            Some(next) => (0xDC00..=0xDFFF).contains(&next),
+                            None => false,
                         }
+                    } else {
+                        false
+                    };
 
-                        let out =
-                            output.get_or_insert_with(|| String::with_capacity(json_data.len()));
-                        out.push_str(&json_data[copy_start..index]);
-                        out.push_str("\\uFFFD");
-                        index += 6;
-                        copy_start = index;
+                    if has_valid_low_pair {
+                        index += 12;
                         continue;
                     }
 
-                    if is_low_surrogate {
-                        let out =
-                            output.get_or_insert_with(|| String::with_capacity(json_data.len()));
-                        out.push_str(&json_data[copy_start..index]);
-                        out.push_str("\\uFFFD");
-                        index += 6;
-                        copy_start = index;
-                        continue;
-                    }
+                    let out = output.get_or_insert_with(|| String::with_capacity(json_data.len()));
+                    out.push_str(&json_data[copy_start..index]);
+                    out.push_str("\\uFFFD");
+                    index += 6;
+                    copy_start = index;
+                    continue;
+                }
+
+                if is_low_surrogate {
+                    let out = output.get_or_insert_with(|| String::with_capacity(json_data.len()));
+                    out.push_str(&json_data[copy_start..index]);
+                    out.push_str("\\uFFFD");
+                    index += 6;
+                    copy_start = index;
+                    continue;
                 }
             }
 
@@ -119,7 +116,7 @@ impl FileCharacterRepository {
             preceding += 1;
         }
 
-        preceding % 2 == 0
+        preceding.is_multiple_of(2)
     }
 
     fn parse_alternate_greetings(value: Option<&Value>) -> Vec<String> {
@@ -236,40 +233,40 @@ impl FileCharacterRepository {
     }
 
     pub(crate) fn apply_legacy_aliases(&self, character: &mut Character, raw_value: &Value) {
-        if character.creator_notes.trim().is_empty() {
-            if let Some(value) = raw_value.get("creatorcomment").and_then(Value::as_str) {
-                character.creator_notes = value.to_string();
-            }
+        if character.creator_notes.trim().is_empty()
+            && let Some(value) = raw_value.get("creatorcomment").and_then(Value::as_str)
+        {
+            character.creator_notes = value.to_string();
         }
 
-        if character.name.trim().is_empty() {
-            if let Some(value) = raw_value.get("char_name").and_then(Value::as_str) {
-                character.name = value.to_string();
-            }
+        if character.name.trim().is_empty()
+            && let Some(value) = raw_value.get("char_name").and_then(Value::as_str)
+        {
+            character.name = value.to_string();
         }
 
-        if character.description.trim().is_empty() {
-            if let Some(value) = raw_value.get("char_persona").and_then(Value::as_str) {
-                character.description = value.to_string();
-            }
+        if character.description.trim().is_empty()
+            && let Some(value) = raw_value.get("char_persona").and_then(Value::as_str)
+        {
+            character.description = value.to_string();
         }
 
-        if character.first_mes.trim().is_empty() {
-            if let Some(value) = raw_value.get("char_greeting").and_then(Value::as_str) {
-                character.first_mes = value.to_string();
-            }
+        if character.first_mes.trim().is_empty()
+            && let Some(value) = raw_value.get("char_greeting").and_then(Value::as_str)
+        {
+            character.first_mes = value.to_string();
         }
 
-        if character.mes_example.trim().is_empty() {
-            if let Some(value) = raw_value.get("example_dialogue").and_then(Value::as_str) {
-                character.mes_example = value.to_string();
-            }
+        if character.mes_example.trim().is_empty()
+            && let Some(value) = raw_value.get("example_dialogue").and_then(Value::as_str)
+        {
+            character.mes_example = value.to_string();
         }
 
-        if character.scenario.trim().is_empty() {
-            if let Some(value) = raw_value.get("world_scenario").and_then(Value::as_str) {
-                character.scenario = value.to_string();
-            }
+        if character.scenario.trim().is_empty()
+            && let Some(value) = raw_value.get("world_scenario").and_then(Value::as_str)
+        {
+            character.scenario = value.to_string();
         }
 
         if character.tags.is_empty() {
@@ -440,10 +437,10 @@ impl FileCharacterRepository {
     }
 
     fn normalize_chat_file_stem(chat_name: &str, character_name: &str) -> String {
-        if !chat_name.trim().is_empty() {
-            if let Some(normalized) = normalize_domain_chat_file_stem(chat_name) {
-                return normalized;
-            }
+        if !chat_name.trim().is_empty()
+            && let Some(normalized) = normalize_domain_chat_file_stem(chat_name)
+        {
+            return normalized;
         }
 
         Self::default_chat_file_stem(character_name)

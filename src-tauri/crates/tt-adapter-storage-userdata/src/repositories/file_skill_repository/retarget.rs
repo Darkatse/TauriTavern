@@ -188,13 +188,12 @@ fn preflight_target_conflicts(
         if let Some(target) = skills
             .iter()
             .find(|candidate| candidate.scope == *to_scope && candidate.name == skill.name)
+            && target.installed_hash != skill.installed_hash
         {
-            if target.installed_hash != skill.installed_hash {
-                return Err(DomainError::InvalidData(format!(
-                    "Skill '{}' already exists in target scope with different content",
-                    skill.name
-                )));
-            }
+            return Err(DomainError::InvalidData(format!(
+                "Skill '{}' already exists in target scope with different content",
+                skill.name
+            )));
         }
     }
     Ok(())

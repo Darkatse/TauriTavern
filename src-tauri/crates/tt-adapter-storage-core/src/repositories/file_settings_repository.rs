@@ -81,17 +81,14 @@ impl FileSettingsRepository {
     }
 
     async fn ensure_directory_exists(&self) -> Result<(), DomainError> {
-        if let Some(parent) = self.tauritavern_settings_file.parent() {
-            if !parent.exists() {
-                tracing::debug!("Creating settings directory: {:?}", parent);
-                fs::create_dir_all(parent).await.map_err(|e| {
-                    tracing::error!("Failed to create settings directory: {}", e);
-                    DomainError::InternalError(format!(
-                        "Failed to create settings directory: {}",
-                        e
-                    ))
-                })?;
-            }
+        if let Some(parent) = self.tauritavern_settings_file.parent()
+            && !parent.exists()
+        {
+            tracing::debug!("Creating settings directory: {:?}", parent);
+            fs::create_dir_all(parent).await.map_err(|e| {
+                tracing::error!("Failed to create settings directory: {}", e);
+                DomainError::InternalError(format!("Failed to create settings directory: {}", e))
+            })?;
         }
         Ok(())
     }
@@ -265,21 +262,18 @@ impl SettingsRepository for FileSettingsRepository {
                     .and_then(|s| s.to_str())
                     .unwrap_or_default();
 
-                if let Some(timestamp_str) = file_name.strip_prefix("settings_") {
-                    if let Ok(timestamp) = timestamp_str.parse::<i64>() {
-                        let metadata = fs::metadata(&path).await.map_err(|e| {
-                            DomainError::InternalError(format!(
-                                "Failed to get file metadata: {}",
-                                e
-                            ))
-                        })?;
+                if let Some(timestamp_str) = file_name.strip_prefix("settings_")
+                    && let Ok(timestamp) = timestamp_str.parse::<i64>()
+                {
+                    let metadata = fs::metadata(&path).await.map_err(|e| {
+                        DomainError::InternalError(format!("Failed to get file metadata: {}", e))
+                    })?;
 
-                        snapshots.push(SettingsSnapshot {
-                            date: timestamp,
-                            name: file_name.to_string(),
-                            size: metadata.len(),
-                        });
-                    }
+                    snapshots.push(SettingsSnapshot {
+                        date: timestamp,
+                        name: file_name.to_string(),
+                        size: metadata.len(),
+                    });
                 }
             }
         }

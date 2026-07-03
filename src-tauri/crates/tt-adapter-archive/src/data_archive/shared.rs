@@ -87,16 +87,15 @@ pub fn validate_archive_entry_limits(
         )));
     }
 
-    if let Some(compressed_size) = compressed_size {
-        if compressed_size > 0
-            && uncompressed_size > COMPRESSION_RATIO_MIN_BYTES
-            && uncompressed_size / compressed_size > MAX_COMPRESSION_RATIO
-        {
-            return Err(DomainError::InvalidData(format!(
-                "Archive entry compression ratio is suspicious: {}",
-                entry_name
-            )));
-        }
+    if let Some(compressed_size) = compressed_size
+        && compressed_size > 0
+        && uncompressed_size > COMPRESSION_RATIO_MIN_BYTES
+        && uncompressed_size / compressed_size > MAX_COMPRESSION_RATIO
+    {
+        return Err(DomainError::InvalidData(format!(
+            "Archive entry compression ratio is suspicious: {}",
+            entry_name
+        )));
     }
 
     *total_uncompressed_bytes = total_uncompressed_bytes.saturating_add(uncompressed_size);
@@ -251,10 +250,10 @@ pub fn create_output_file_replacing_directory(path: &Path) -> Result<File, Domai
 }
 
 pub fn cleanup_directory_sync(path: &Path) {
-    if let Err(error) = fs::remove_dir_all(path) {
-        if error.kind() != io::ErrorKind::NotFound {
-            tracing::warn!("Failed to clean up directory {}: {}", path.display(), error);
-        }
+    if let Err(error) = fs::remove_dir_all(path)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        tracing::warn!("Failed to clean up directory {}: {}", path.display(), error);
     }
 }
 

@@ -632,14 +632,13 @@ async fn webui_generate(
             .send()
             .await;
 
-        if let Ok(response) = options_result {
-            if response.status().is_success() {
-                if let Ok(value) = response.json::<Value>().await {
-                    let is_forge = value.get("forge_preset").is_some();
-                    if !is_forge {
-                        unset_override_settings_forge_additional_modules(&mut body);
-                    }
-                }
+        if let Ok(response) = options_result
+            && response.status().is_success()
+            && let Ok(value) = response.json::<Value>().await
+        {
+            let is_forge = value.get("forge_preset").is_some();
+            if !is_forge {
+                unset_override_settings_forge_additional_modules(&mut body);
             }
         }
     }
@@ -1012,21 +1011,21 @@ async fn comfy_generate(
     let mut image_info = None;
 
     for output in outputs.values() {
-        if let Some(images) = output.get("images").and_then(Value::as_array) {
-            if let Some(first) = images.first() {
-                image_info = Some(first.clone());
-                break;
-            }
+        if let Some(images) = output.get("images").and_then(Value::as_array)
+            && let Some(first) = images.first()
+        {
+            image_info = Some(first.clone());
+            break;
         }
     }
 
     if image_info.is_none() {
         for output in outputs.values() {
-            if let Some(gifs) = output.get("gifs").and_then(Value::as_array) {
-                if let Some(first) = gifs.first() {
-                    image_info = Some(first.clone());
-                    break;
-                }
+            if let Some(gifs) = output.get("gifs").and_then(Value::as_array)
+                && let Some(first) = gifs.first()
+            {
+                image_info = Some(first.clone());
+                break;
             }
         }
     }
@@ -1288,10 +1287,10 @@ async fn sdcpp_generate(
     ] {
         maybe_insert(&mut payload, key, body.get(key));
     }
-    if let Some(clip_skip) = optional_number_value(body, "clip_skip")? {
-        if clip_skip.as_f64().is_some_and(|clip_skip| clip_skip > 1.0) {
-            payload.insert("clip_skip".to_string(), clip_skip);
-        }
+    if let Some(clip_skip) = optional_number_value(body, "clip_skip")?
+        && clip_skip.as_f64().is_some_and(|clip_skip| clip_skip > 1.0)
+    {
+        payload.insert("clip_skip".to_string(), clip_skip);
     }
 
     let client = http_client(http_clients)?;

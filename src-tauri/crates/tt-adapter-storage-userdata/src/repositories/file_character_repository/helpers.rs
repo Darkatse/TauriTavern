@@ -22,7 +22,7 @@ fn file_ctime_millis(metadata: &std::fs::Metadata) -> Option<i64> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        return Some(metadata.ctime() * 1000 + metadata.ctime_nsec() / 1_000_000);
+        Some(metadata.ctime() * 1000 + metadata.ctime_nsec() / 1_000_000)
     }
 
     #[cfg(windows)]
@@ -102,10 +102,10 @@ impl FileCharacterRepository {
             return Some(migrated);
         }
 
-        if let Some(timestamp_millis) = fallback_timestamp_millis {
-            if let Some(formatted) = Self::format_timestamp_millis(timestamp_millis) {
-                return Some(formatted);
-            }
+        if let Some(timestamp_millis) = fallback_timestamp_millis
+            && let Some(formatted) = Self::format_timestamp_millis(timestamp_millis)
+        {
+            return Some(formatted);
         }
 
         Some(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true))
@@ -215,12 +215,12 @@ impl FileCharacterRepository {
             if metadata.is_file() {
                 total_size += metadata.len();
 
-                if let Ok(modified) = metadata.modified() {
-                    if let Ok(modified_time) = modified.duration_since(std::time::UNIX_EPOCH) {
-                        let modified_ms = modified_time.as_millis() as i64;
-                        if modified_ms > latest_modified {
-                            latest_modified = modified_ms;
-                        }
+                if let Ok(modified) = metadata.modified()
+                    && let Ok(modified_time) = modified.duration_since(std::time::UNIX_EPOCH)
+                {
+                    let modified_ms = modified_time.as_millis() as i64;
+                    if modified_ms > latest_modified {
+                        latest_modified = modified_ms;
                     }
                 }
             }

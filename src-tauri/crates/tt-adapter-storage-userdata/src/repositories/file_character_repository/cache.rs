@@ -20,25 +20,25 @@ impl MemoryCache {
     }
 
     pub(crate) fn get(&self, name: &str) -> Option<Character> {
-        if let Some((character, timestamp)) = self.characters.get(name) {
-            if timestamp.elapsed() < self.ttl {
-                return Some(character.clone());
-            }
+        if let Some((character, timestamp)) = self.characters.get(name)
+            && timestamp.elapsed() < self.ttl
+        {
+            return Some(character.clone());
         }
 
         None
     }
 
     pub(crate) fn set(&mut self, name: String, character: Character) {
-        if self.characters.len() >= self.capacity && !self.characters.contains_key(&name) {
-            if let Some((oldest_key, _)) = self
+        if self.characters.len() >= self.capacity
+            && !self.characters.contains_key(&name)
+            && let Some((oldest_key, _)) = self
                 .characters
                 .iter()
                 .min_by_key(|(_, (_, timestamp))| timestamp.elapsed())
-            {
-                let oldest_key = oldest_key.clone();
-                self.characters.remove(&oldest_key);
-            }
+        {
+            let oldest_key = oldest_key.clone();
+            self.characters.remove(&oldest_key);
         }
 
         self.characters.insert(name, (character, Instant::now()));

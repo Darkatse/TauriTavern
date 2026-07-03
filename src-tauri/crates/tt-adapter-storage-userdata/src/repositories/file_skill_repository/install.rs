@@ -106,15 +106,15 @@ impl FileSkillRepository {
                 return Err(error);
             }
         };
-        if let Some(parent) = target.parent() {
-            if let Err(error) = std::fs::create_dir_all(parent) {
-                cleanup_dir(&prepared.cleanup_root);
-                return Err(DomainError::InternalError(format!(
-                    "Failed to create Skill scope directory '{}': {}",
-                    parent.display(),
-                    error
-                )));
-            }
+        if let Some(parent) = target.parent()
+            && let Err(error) = std::fs::create_dir_all(parent)
+        {
+            cleanup_dir(&prepared.cleanup_root);
+            return Err(DomainError::InternalError(format!(
+                "Failed to create Skill scope directory '{}': {}",
+                parent.display(),
+                error
+            )));
         }
         match existing_position {
             Some(position) => index.skills[position] = validated.entry.clone(),

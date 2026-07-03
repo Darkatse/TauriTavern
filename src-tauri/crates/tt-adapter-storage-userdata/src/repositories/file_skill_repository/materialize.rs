@@ -107,13 +107,13 @@ impl FileSkillRepository {
                         file_name, MAX_TOTAL_BYTES
                     )));
                 }
-                if let Some(expected_hash) = sha256.as_deref() {
-                    if expected_hash.trim().to_ascii_lowercase() != sha256_hex(&bytes) {
-                        return Err(DomainError::InvalidData(format!(
-                            "Embedded Skill archive '{}' sha256 mismatch",
-                            file_name
-                        )));
-                    }
+                if let Some(expected_hash) = sha256.as_deref()
+                    && expected_hash.trim().to_ascii_lowercase() != sha256_hex(&bytes)
+                {
+                    return Err(DomainError::InvalidData(format!(
+                        "Embedded Skill archive '{}' sha256 mismatch",
+                        file_name
+                    )));
                 }
                 fs::write(&archive_path, bytes).map_err(|error| {
                     DomainError::InternalError(format!(
@@ -195,23 +195,23 @@ fn write_inline_files(files: &[SkillInlineFile], root: &Path) -> Result<(), Doma
                 )));
             }
         };
-        if let Some(expected_size) = file.size_bytes {
-            if expected_size != bytes.len() as u64 {
-                return Err(DomainError::InvalidData(format!(
-                    "Inline Skill file '{}' size mismatch: expected {}, got {}",
-                    path,
-                    expected_size,
-                    bytes.len()
-                )));
-            }
+        if let Some(expected_size) = file.size_bytes
+            && expected_size != bytes.len() as u64
+        {
+            return Err(DomainError::InvalidData(format!(
+                "Inline Skill file '{}' size mismatch: expected {}, got {}",
+                path,
+                expected_size,
+                bytes.len()
+            )));
         }
-        if let Some(expected_hash) = file.sha256.as_deref() {
-            if expected_hash.trim().to_ascii_lowercase() != sha256_hex(&bytes) {
-                return Err(DomainError::InvalidData(format!(
-                    "Inline Skill file '{}' sha256 mismatch",
-                    path
-                )));
-            }
+        if let Some(expected_hash) = file.sha256.as_deref()
+            && expected_hash.trim().to_ascii_lowercase() != sha256_hex(&bytes)
+        {
+            return Err(DomainError::InvalidData(format!(
+                "Inline Skill file '{}' sha256 mismatch",
+                path
+            )));
         }
         if bytes.len() as u64 > MAX_SINGLE_FILE_BYTES {
             return Err(DomainError::InvalidData(format!(

@@ -239,7 +239,7 @@ async fn hide_payload_before_cursor_internal(
                             error
                         ))
                     })?;
-                    new_cursor_offset += rewritten.as_bytes().len() as u64 + 1;
+                    new_cursor_offset += rewritten.len() as u64 + 1;
                 }
                 None => {
                     out.write_all(&line_bytes).await.map_err(|error| {

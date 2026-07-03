@@ -108,16 +108,16 @@ fn import_ooba_payload(
             continue;
         };
 
-        if let Some(user_message) = items.first().and_then(Value::as_str) {
-            if !user_message.is_empty() {
-                payload.push(make_message(user_name, true, user_message));
-            }
+        if let Some(user_message) = items.first().and_then(Value::as_str)
+            && !user_message.is_empty()
+        {
+            payload.push(make_message(user_name, true, user_message));
         }
 
-        if let Some(character_message) = items.get(1).and_then(Value::as_str) {
-            if !character_message.is_empty() {
-                payload.push(make_message(character_name, false, character_message));
-            }
+        if let Some(character_message) = items.get(1).and_then(Value::as_str)
+            && !character_message.is_empty()
+        {
+            payload.push(make_message(character_name, false, character_message));
         }
     }
 

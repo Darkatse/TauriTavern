@@ -1938,7 +1938,7 @@ async fn search_cache_is_invalidated_after_import_chat_payload() {
     assert!(cached_empty.is_empty());
 
     let import_path = root.join("import-phoenix.jsonl");
-    let import_content = payload_to_jsonl(&vec![
+    let import_content = payload_to_jsonl(&[
         json!({
             "chat_metadata": {
                 "chat_id_hash": 600,

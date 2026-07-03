@@ -241,14 +241,13 @@ impl FileCharacterRepository {
             projection_object.remove("spec_version");
         }
 
-        if preserve_existing_character_book_when_unbound && character.data.character_book.is_none()
-        {
-            if let Some(data_object) = projection
+        if preserve_existing_character_book_when_unbound
+            && character.data.character_book.is_none()
+            && let Some(data_object) = projection
                 .get_mut("data")
                 .and_then(serde_json::Value::as_object_mut)
-            {
-                data_object.remove("character_book");
-            }
+        {
+            data_object.remove("character_book");
         }
 
         Ok(projection)
@@ -363,10 +362,10 @@ impl CharacterRepository for FileCharacterRepository {
             cache.get(name)
         };
 
-        if let Some(character) = cached {
-            if !character.shallow {
-                return Ok(character);
-            }
+        if let Some(character) = cached
+            && !character.shallow
+        {
+            return Ok(character);
         }
 
         let file_path = self.get_character_path(name);

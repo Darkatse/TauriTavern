@@ -511,13 +511,12 @@ fn drain_eventstream_messages(
         match parse_next_message(buffer)? {
             ParseStep::Need => return Ok(()),
             ParseStep::Consumed { consumed, payload } => {
-                if !payload.is_empty() {
-                    if let Some(forwarded) = decode_eventstream_payload(&payload, mode)? {
-                        if sender.send(forwarded).is_err() {
-                            buffer.drain(..consumed);
-                            return Ok(());
-                        }
-                    }
+                if !payload.is_empty()
+                    && let Some(forwarded) = decode_eventstream_payload(&payload, mode)?
+                    && sender.send(forwarded).is_err()
+                {
+                    buffer.drain(..consumed);
+                    return Ok(());
                 }
                 buffer.drain(..consumed);
             }

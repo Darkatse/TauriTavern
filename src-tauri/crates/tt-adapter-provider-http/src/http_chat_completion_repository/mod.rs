@@ -454,10 +454,10 @@ fn log_prompt_cache_performance_if_present(
 }
 
 fn find_prompt_cache_performance_usage(value: &Value) -> Option<PromptCachePerformanceUsage> {
-    if let Some(usage) = value.get("usage").and_then(Value::as_object) {
-        if let Some(parsed) = parse_prompt_cache_performance_usage(usage) {
-            return Some(parsed);
-        }
+    if let Some(usage) = value.get("usage").and_then(Value::as_object)
+        && let Some(parsed) = parse_prompt_cache_performance_usage(usage)
+    {
+        return Some(parsed);
     }
 
     if let Some(message_usage) = value
@@ -465,10 +465,9 @@ fn find_prompt_cache_performance_usage(value: &Value) -> Option<PromptCachePerfo
         .and_then(Value::as_object)
         .and_then(|message| message.get("usage"))
         .and_then(Value::as_object)
+        && let Some(parsed) = parse_prompt_cache_performance_usage(message_usage)
     {
-        if let Some(parsed) = parse_prompt_cache_performance_usage(message_usage) {
-            return Some(parsed);
-        }
+        return Some(parsed);
     }
 
     None

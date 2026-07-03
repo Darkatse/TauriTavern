@@ -82,10 +82,10 @@ impl FileChatRepository {
         for (from_end, line) in lines.iter().rev().enumerate() {
             let message = parse_message_line(line)?;
 
-            if let Some(role) = query.role {
-                if !matches_role(&message, role) {
-                    continue;
-                }
+            if let Some(role) = query.role
+                && !matches_role(&message, role)
+            {
+                continue;
             }
 
             if !required_top_level.is_empty() && !has_top_level_keys(&message, &required_top_level)
@@ -130,10 +130,10 @@ impl FileChatRepository {
         for (from_end, line) in lines.iter().rev().enumerate() {
             let message = parse_message_line(line)?;
 
-            if let Some(role) = query.role {
-                if !matches_role(&message, role) {
-                    continue;
-                }
+            if let Some(role) = query.role
+                && !matches_role(&message, role)
+            {
+                continue;
             }
 
             if !required_top_level.is_empty() && !has_top_level_keys(&message, &required_top_level)

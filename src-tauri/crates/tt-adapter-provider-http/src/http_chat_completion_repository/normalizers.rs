@@ -399,15 +399,14 @@ pub(super) fn normalize_openai_responses_response(
     }
 
     let mut content = text_parts.join("\n\n");
-    if content.is_empty() {
-        if let Some(output_text) = response
+    if content.is_empty()
+        && let Some(output_text) = response
             .get("output_text")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-        {
-            content = output_text.to_string();
-        }
+    {
+        content = output_text.to_string();
     }
 
     let mut message = Map::new();
@@ -766,13 +765,13 @@ fn build_openai_tool_call(
         }
     });
 
-    if let Some(signature) = signature {
-        if let Some(object) = tool_call.as_object_mut() {
-            object.insert(
-                "signature".to_string(),
-                Value::String(signature.to_string()),
-            );
-        }
+    if let Some(signature) = signature
+        && let Some(object) = tool_call.as_object_mut()
+    {
+        object.insert(
+            "signature".to_string(),
+            Value::String(signature.to_string()),
+        );
     }
 
     tool_call

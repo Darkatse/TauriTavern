@@ -894,7 +894,7 @@ impl FileChatRepository {
                 break;
             }
 
-            let line_text = line.trim_end_matches(|ch| ch == '\r' || ch == '\n');
+            let line_text = line.trim_end_matches(['\r', '\n']);
             if line_text.trim().is_empty() {
                 continue;
             }

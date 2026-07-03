@@ -83,13 +83,13 @@ fn apply_directory_recursive(
             continue;
         }
 
-        if let Some(parent) = target_path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent).map_err(|error| {
-                    internal_error("Failed to create overlay parent directory", error)
-                })?;
-                local_applied.mark_target_changed();
-            }
+        if let Some(parent) = target_path.parent()
+            && !parent.exists()
+        {
+            fs::create_dir_all(parent).map_err(|error| {
+                internal_error("Failed to create overlay parent directory", error)
+            })?;
+            local_applied.mark_target_changed();
         }
 
         copy_file_into_place(
@@ -218,14 +218,14 @@ fn replace_temp_file(
 }
 
 fn cleanup_temp_file(temp_path: &Path) {
-    if let Err(error) = fs::remove_file(temp_path) {
-        if error.kind() != io::ErrorKind::NotFound {
-            tracing::warn!(
-                "Failed to clean up overlay temp file {}: {}",
-                temp_path.display(),
-                error
-            );
-        }
+    if let Err(error) = fs::remove_file(temp_path)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            "Failed to clean up overlay temp file {}: {}",
+            temp_path.display(),
+            error
+        );
     }
 }
 

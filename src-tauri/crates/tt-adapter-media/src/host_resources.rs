@@ -180,13 +180,13 @@ impl HostResourceAssetStore for FilesystemHostResourceStore {
     ) -> Result<HostResourceBinaryAsset, HostResourceStoreError> {
         let opened = self.open_third_party_asset(extension_folder, relative_path)?;
 
-        if let Some(limit_bytes) = max_len {
-            if opened.stat.len > limit_bytes {
-                return Err(HostResourceStoreError::payload_too_large(
-                    opened.stat.len,
-                    limit_bytes,
-                ));
-            }
+        if let Some(limit_bytes) = max_len
+            && opened.stat.len > limit_bytes
+        {
+            return Err(HostResourceStoreError::payload_too_large(
+                opened.stat.len,
+                limit_bytes,
+            ));
         }
 
         let bytes = read_open_file(opened.file, &opened.path, max_len)?;

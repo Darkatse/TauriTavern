@@ -33,16 +33,13 @@ impl FileSecretRepository {
             tracing::info!("Creating secrets file: {:?}", self.secrets_file);
 
             // 确保父目录存在
-            if let Some(parent) = self.secrets_file.parent() {
-                if !parent.exists() {
-                    fs::create_dir_all(parent).await.map_err(|e| {
-                        tracing::error!(
-                            "Failed to create parent directory for secrets file: {}",
-                            e
-                        );
-                        DomainError::InternalError(format!("Failed to create directory: {}", e))
-                    })?;
-                }
+            if let Some(parent) = self.secrets_file.parent()
+                && !parent.exists()
+            {
+                fs::create_dir_all(parent).await.map_err(|e| {
+                    tracing::error!("Failed to create parent directory for secrets file: {}", e);
+                    DomainError::InternalError(format!("Failed to create directory: {}", e))
+                })?;
             }
 
             // 创建空的secrets文件

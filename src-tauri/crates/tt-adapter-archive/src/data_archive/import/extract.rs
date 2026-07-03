@@ -159,14 +159,14 @@ fn map_archive_entry_to_data_root_path(
             target
         }
         ArchiveLayoutPolicy::DataRoot | ArchiveLayoutPolicy::UserHandleRoot => {
-            if let Some(first) = relative_components.first() {
-                if detected_user_handles.contains(first) {
-                    let mut target = PathBuf::from(IMPORT_TARGET_USER_HANDLE);
-                    for component in relative_components.iter().skip(1) {
-                        target.push(component);
-                    }
-                    return target;
+            if let Some(first) = relative_components.first()
+                && detected_user_handles.contains(first)
+            {
+                let mut target = PathBuf::from(IMPORT_TARGET_USER_HANDLE);
+                for component in relative_components.iter().skip(1) {
+                    target.push(component);
                 }
+                return target;
             }
 
             let mut target = PathBuf::new();

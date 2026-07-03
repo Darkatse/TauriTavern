@@ -212,12 +212,12 @@ impl FileChatRepository {
             .await?;
 
         let temp_path = Self::temp_payload_path(path);
-        if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent).await.map_err(|e| {
-                    DomainError::InternalError(format!("Failed to create directory: {}", e))
-                })?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.exists()
+        {
+            fs::create_dir_all(parent).await.map_err(|e| {
+                DomainError::InternalError(format!("Failed to create directory: {}", e))
+            })?;
         }
 
         fs::copy(source_path, &temp_path).await.map_err(|e| {

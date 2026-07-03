@@ -550,10 +550,7 @@ mod tests {
             messages: std::sync::Mutex::new(Vec::new()),
         };
 
-        report_server_task_failure(
-            std::io::Error::new(std::io::ErrorKind::Other, "listener failed"),
-            &errors,
-        );
+        report_server_task_failure(std::io::Error::other("listener failed"), &errors);
 
         let messages = errors.messages.lock().expect("error messages lock");
         assert_eq!(messages.len(), 1);

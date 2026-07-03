@@ -43,21 +43,20 @@ impl FileAvatarRepository {
             .map_err(|e| DomainError::InternalError(format!("Failed to load image: {}", e)))?;
 
         // Apply cropping if specified
-        if let Some(crop) = crop_info {
-            if crop.x >= 0
-                && crop.y >= 0
-                && crop.width > 0
-                && crop.height > 0
-                && (crop.x as u32) < img.width()
-                && (crop.y as u32) < img.height()
-            {
-                img = img.crop_imm(
-                    crop.x as u32,
-                    crop.y as u32,
-                    crop.width as u32,
-                    crop.height as u32,
-                );
-            }
+        if let Some(crop) = crop_info
+            && crop.x >= 0
+            && crop.y >= 0
+            && crop.width > 0
+            && crop.height > 0
+            && (crop.x as u32) < img.width()
+            && (crop.y as u32) < img.height()
+        {
+            img = img.crop_imm(
+                crop.x as u32,
+                crop.y as u32,
+                crop.width as u32,
+                crop.height as u32,
+            );
         }
 
         // Resize the image to the standard avatar dimensions
@@ -119,14 +118,15 @@ impl AvatarRepository for FileAvatarRepository {
             })?;
 
             let path = entry.path();
-            if path.is_file() && Self::is_supported_avatar_file(&path) {
-                if let Some(name) = path.file_name() {
-                    let name_str = name.to_string_lossy().to_string();
-                    avatars.push(Avatar {
-                        name: name_str,
-                        path: path.clone(),
-                    });
-                }
+            if path.is_file()
+                && Self::is_supported_avatar_file(&path)
+                && let Some(name) = path.file_name()
+            {
+                let name_str = name.to_string_lossy().to_string();
+                avatars.push(Avatar {
+                    name: name_str,
+                    path: path.clone(),
+                });
             }
         }
 

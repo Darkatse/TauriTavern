@@ -226,13 +226,13 @@ impl InteractionsStreamState {
                     }
                 });
 
-                if let Some(signature) = output.get("signature").and_then(Value::as_str) {
-                    if let Some(object) = tool_call.as_object_mut() {
-                        object.insert(
-                            "signature".to_string(),
-                            Value::String(signature.to_string()),
-                        );
-                    }
+                if let Some(signature) = output.get("signature").and_then(Value::as_str)
+                    && let Some(object) = tool_call.as_object_mut()
+                {
+                    object.insert(
+                        "signature".to_string(),
+                        Value::String(signature.to_string()),
+                    );
                 }
 
                 self.send_delta(

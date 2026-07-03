@@ -56,15 +56,13 @@ pub struct MiktikTokenizerRepository {
 
 impl MiktikTokenizerRepository {
     pub fn new(cache_dir: PathBuf, http_clients: Arc<HttpClientPool>) -> Self {
-        let repository = Self {
+        Self {
             registry: Arc::new(TokenizerRegistry::new()),
             cache_dir,
             http_clients,
             ready_hf_models: RwLock::new(HashSet::new()),
             registration_guard: Mutex::new(()),
-        };
-
-        repository
+        }
     }
 
     fn canonical_model(requested_model: &str) -> &'static str {
@@ -505,13 +503,12 @@ impl MiktikTokenizerRepository {
 
             prompt.push_str(prefix);
 
-            if message.role != "system" {
-                if let Some(name) = message.name.as_deref() {
-                    if !name.is_empty() {
-                        prompt.push_str(name);
-                        prompt.push_str(": ");
-                    }
-                }
+            if message.role != "system"
+                && let Some(name) = message.name.as_deref()
+                && !name.is_empty()
+            {
+                prompt.push_str(name);
+                prompt.push_str(": ");
             }
 
             prompt.push_str(&message.content);
@@ -566,6 +563,67 @@ impl MiktikTokenizerRepository {
         }
 
         Ok(total.max(0) as usize)
+    }
+}
+
+#[async_trait::async_trait]
+impl TokenizerRepository for MiktikTokenizerRepository {
+    async fn ensure_model_ready(&self, model: &str) -> Result<(), DomainError> {
+        let canonical = Self::canonical_model(model);
+        if TokenizerRegistry::is_huggingface_model(canonical) {
+            self.ensure_hf_model_ready(canonical).await?;
+        }
+        Ok(())
+    }
+
+    fn encode(&self, model: &str, text: &str) -> Result<Vec<u32>, DomainError> {
+        let canonical = Self::canonical_model(model);
+        let tokenizer = self
+            .registry
+            .get_canonical(canonical)
+            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
+
+        tokenizer
+            .encode(text)
+            .map_err(|error| Self::map_tokenizer_error("encode text", canonical, error))
+    }
+
+    fn decode(&self, model: &str, token_ids: &[u32]) -> Result<String, DomainError> {
+        let canonical = Self::canonical_model(model);
+        let tokenizer = self
+            .registry
+            .get_canonical(canonical)
+            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
+
+        tokenizer
+            .decode(token_ids)
+            .map_err(|error| Self::map_tokenizer_error("decode token ids", canonical, error))
+    }
+
+    fn count_messages(&self, model: &str, messages: &[Value]) -> Result<usize, DomainError> {
+        let canonical = Self::canonical_model(model);
+
+        if TokenizerRegistry::is_sentencepiece_model(canonical) {
+            let text = Self::to_sentencepiece_count_input(messages);
+            return self
+                .registry
+                .count_tokens_canonical(canonical, &text)
+                .map_err(|error| {
+                    Self::map_tokenizer_error("count sentencepiece messages", canonical, error)
+                });
+        }
+
+        if TokenizerRegistry::is_web_tokenizer_model(canonical) {
+            let prompt = Self::to_web_tokenizer_prompt(messages);
+            return self
+                .registry
+                .count_tokens_canonical(canonical, &prompt)
+                .map_err(|error| {
+                    Self::map_tokenizer_error("count web-tokenizer messages", canonical, error)
+                });
+        }
+
+        self.count_openai_messages(canonical, messages)
     }
 }
 
@@ -864,66 +922,5 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(cache_dir);
         assert_eq!(legacy, modern + 8);
-    }
-}
-
-#[async_trait::async_trait]
-impl TokenizerRepository for MiktikTokenizerRepository {
-    async fn ensure_model_ready(&self, model: &str) -> Result<(), DomainError> {
-        let canonical = Self::canonical_model(model);
-        if TokenizerRegistry::is_huggingface_model(canonical) {
-            self.ensure_hf_model_ready(canonical).await?;
-        }
-        Ok(())
-    }
-
-    fn encode(&self, model: &str, text: &str) -> Result<Vec<u32>, DomainError> {
-        let canonical = Self::canonical_model(model);
-        let tokenizer = self
-            .registry
-            .get_canonical(canonical)
-            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
-
-        tokenizer
-            .encode(text)
-            .map_err(|error| Self::map_tokenizer_error("encode text", canonical, error))
-    }
-
-    fn decode(&self, model: &str, token_ids: &[u32]) -> Result<String, DomainError> {
-        let canonical = Self::canonical_model(model);
-        let tokenizer = self
-            .registry
-            .get_canonical(canonical)
-            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
-
-        tokenizer
-            .decode(token_ids)
-            .map_err(|error| Self::map_tokenizer_error("decode token ids", canonical, error))
-    }
-
-    fn count_messages(&self, model: &str, messages: &[Value]) -> Result<usize, DomainError> {
-        let canonical = Self::canonical_model(model);
-
-        if TokenizerRegistry::is_sentencepiece_model(canonical) {
-            let text = Self::to_sentencepiece_count_input(messages);
-            return self
-                .registry
-                .count_tokens_canonical(canonical, &text)
-                .map_err(|error| {
-                    Self::map_tokenizer_error("count sentencepiece messages", canonical, error)
-                });
-        }
-
-        if TokenizerRegistry::is_web_tokenizer_model(canonical) {
-            let prompt = Self::to_web_tokenizer_prompt(messages);
-            return self
-                .registry
-                .count_tokens_canonical(canonical, &prompt)
-                .map_err(|error| {
-                    Self::map_tokenizer_error("count web-tokenizer messages", canonical, error)
-                });
-        }
-
-        self.count_openai_messages(canonical, messages)
     }
 }
