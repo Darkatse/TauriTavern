@@ -1,1008 +1,359 @@
 # TauriTavern 后端结构
 
-本文档详细描述TauriTavern的Rust后端架构，包括模块组织、数据流和扩展指南。
+本文档说明 TauriTavern Rust 后端的 **Clean Architecture 原则、workspace crate 边界、依赖方向和代码落点**。
 
-## 1. 架构概述
+它不是 API 命令清单，也不是专题实现百科。具体 API 参考 `docs/API/`，当前实现快照参考 `docs/CurrentState/`，前端宿主契约参考 `docs/FrontendHostContract.md`。
 
-TauriTavern 后端现在以 Rust workspace crate 边界作为主要架构边界。保留 Clean Architecture 的依赖方向，但不再把所有实现塞进 host crate 的 `infrastructure` 目录。
+## 1. 最高约束：Clean Architecture
 
-### 1.1 架构层次
+Clean Architecture 是 TauriTavern 后端最重要的长期约束。它不是一组漂亮的目录名，而是一条依赖规则：
 
-```
-tauritavern host
-  ├─ presentation / Tauri commands
-  ├─ app composition root
-  ├─ Tauri-bound infrastructure / platform glue
-  ├─ tt-application
-  └─ tt-adapter-*
+> 越稳定、越靠近业务语义的代码越靠内；越依赖框架、文件系统、网络、平台 API 的代码越靠外；源码依赖只能从外层指向内层。
 
-tt-application -> tt-ports + tt-contracts + tt-domain
-tt-adapter-*   -> tt-ports + tt-domain (+ tt-contracts when needed)
-tt-ports       -> tt-contracts + tt-domain
-tt-contracts   -> tt-domain
-tt-domain      -> pure external deps only
-```
+在本项目里，这条规则有几个直接含义：
 
-### 1.2 依赖规则
+- 领域模型和纯规则不能知道 Tauri、文件系统、HTTP、async runtime 或 repository。
+- 用例可以表达“我需要某种外部能力”，但不能依赖具体实现。
+- 具体 IO、文件格式、网络请求、ZIP、PNG、tokenizer、sync runtime 都是外层细节。
+- host 可以知道所有实现，因为它负责启动和装配；但这种知识必须停留在 composition root 附近。
+- 浏览器可观察的 SillyTavern 兼容语义是外部契约，不能被 Rust 内部分层命名替代。
 
-- `tauritavern` host 负责 Tauri builder、plugin、commands、composition root、AppHandle/WebView/resource bridge、runtime path 与平台 glue。
-- `tt-application` 只依赖 `tt-ports`、`tt-contracts`、`tt-domain`，不得依赖任何 adapter 或 Tauri。
-- repository trait 与出站端口定义在 `tt-ports`，不放在 `tt-domain`。
-- concrete IO 实现在 `tt-adapter-*` crate；Tauri-free 的文件仓储不要放回 host。
-- `platform` 承载 iOS/UIKit、macOS/WebView 等 OS 级能力；`domain` 与 `application` 不得依赖它，`platform` 也不得依赖 `app`、`application`、`infrastructure` 或 `presentation`。
+因此，本项目的 Clean Architecture 不是靠约定俗成维护，而是被 Cargo workspace 和 `scripts/check-rust-crate-boundaries.mjs` 物理化、自动化地守住。
 
-## 2. 目录结构
+## 2. 从原则到 crate
 
-```
+当前 workspace crate 拆分，就是 Clean Architecture 的物理边界。理解这些 crate 时，不要先问“这个文件技术上用什么实现”，而要先问“这段代码属于哪一类变化原因”。
+
+| Clean Architecture 概念 | 当前落点 | 稳定职责 | 不应承担 |
+| --- | --- | --- | --- |
+| Entities / 领域核心 | `tt-domain` | 领域模型、值对象、领域错误、纯规则、纯文本/JSON 工具 | repository trait、async runtime、文件系统、网络、Tauri |
+| Cross-crate contracts | `tt-contracts` | 跨 crate DTO、事件、payload、observability、host resource 契约 | concrete IO、application service、Tauri |
+| Application ports | `tt-ports` | repository trait、gateway trait、event sink、runtime port | concrete adapter、reqwest/axum/tauri/image/zip 实现 |
+| Use cases | `tt-application` | service、use case、job coordinator、策略编排 | Tauri、adapter、reqwest、具体 tokenizer、文件格式实现 |
+| Interface adapters | `tt-adapter-*` | Tauri-free 的具体 IO、运行时、持久化、文件格式、外部系统访问 | application service、Tauri host glue |
+| Frameworks / Drivers | `tauritavern` | Tauri builder、plugins、setup、window、commands、composition root、platform glue | 领域规则、用例实现、Tauri-free repository |
+
+这里有两个容易混淆但很关键的点：
+
+- `tt-domain` 不定义 repository trait。repository 是用例对外部世界的需求，属于 port，不属于领域实体本身。
+- `tt-adapter-*` 不是“比 application 更核心”的代码。它们可能很复杂，但复杂不等于内层。只要依赖文件系统、网络、第三方格式或运行时细节，就属于外层。
+
+## 3. Workspace 总览
+
+workspace 根目录是 `src-tauri/Cargo.toml`，默认 member 是 `crates/tauritavern`。
+
+```text
 src-tauri/
-├── Cargo.toml                 # virtual workspace root（不再是宿主 crate）
+├── Cargo.toml
 ├── Cargo.lock
-├── resources/                 # workspace-level 静态资源（如 tokenizers）
+├── resources/
 └── crates/
-    ├── tauritavern/           # Tauri app / host crate
-    │   ├── Cargo.toml
-    │   ├── tauri.conf.json
-    │   ├── build.rs
-    │   ├── icons/
-    │   ├── capabilities/
-    │   ├── bundle/
-    │   ├── gen/              # Android/iOS 生成工程；包含本项目覆盖改动
-    │   └── src/
-    │       ├── main.rs        # 桌面入口
-    │       ├── lib.rs         # mobile entry / host lib 入口
-    │       ├── app.rs         # 应用状态与运行时启动编排
-    │       ├── app/           # composition root、host shell、startup profile
-    │       ├── infrastructure/# Tauri-bound 基础设施与平台 glue
-    │       ├── platform/      # UIKit/WebView/native UI 适配
-    │       └── presentation/  # Tauri commands 与 WebView resource adapter
-    ├── tt-domain/             # 领域模型、领域错误与纯逻辑
-    ├── tt-ports/              # 仓库接口与出站端口
-    ├── tt-contracts/          # 跨 crate DTO / 事件契约
-    ├── tt-application/        # 应用服务与用例编排
-    ├── tt-adapter-storage-core/# data root、基础本地仓储、chat/settings/user 等
-    ├── tt-adapter-storage-userdata/# character/world info/agent/profile/skill 文件仓储
-    ├── tt-adapter-media/      # avatar/background/user media/host resource 文件读取
-    └── tt-adapter-*/          # 其他 Tauri-free 具体适配器 crate
+    ├── tauritavern
+    ├── tt-domain
+    ├── tt-contracts
+    ├── tt-ports
+    ├── tt-application
+    ├── tt-adapter-http
+    ├── tt-adapter-provider-http
+    ├── tt-adapter-tokenization
+    ├── tt-adapter-storage-core
+    ├── tt-adapter-storage-userdata
+    ├── tt-adapter-media
+    ├── tt-adapter-extension
+    ├── tt-adapter-sync
+    └── tt-adapter-archive
 ```
 
-代码落点规则：
+当前 host 不再承载所有后端实现；用例、端口、契约、领域和具体 adapter 已经被拆成独立 Cargo crate。后续维护重点不是继续追求更多 crate，而是避免边界回流，确保每个新增能力都落在正确变化轴上。
 
-| 代码类型 | 放置位置 |
+| crate | 当前职责 |
 | --- | --- |
-| 领域模型、领域错误、纯规则 | `crates/tt-domain` |
-| DTO、跨 crate 事件/契约 | `crates/tt-contracts` |
-| repository trait / outbound port | `crates/tt-ports` |
-| 用例编排、服务、事务语义 | `crates/tt-application` |
-| Tauri-free concrete IO | 对应 `crates/tt-adapter-*` |
-| Tauri command / frontend ABI | `crates/tauritavern/src/presentation` |
-| AppHandle、WebView、bundled resources、platform glue | `crates/tauritavern/src/infrastructure` 或 `platform` |
+| `tauritavern` | Tauri host、presentation command、composition root、host-bound infrastructure、platform glue |
+| `tt-domain` | 领域模型、值对象、领域错误、纯规则 |
+| `tt-contracts` | DTO、事件、payload、host resource contract、observability contract |
+| `tt-ports` | repository / gateway / runtime trait |
+| `tt-application` | 用例服务、业务编排、任务协调、policy 执行 |
+| `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
+| `tt-adapter-provider-http` | LLM、SD、Translate、TTS、provider metadata 的 HTTP repository |
+| `tt-adapter-tokenization` | tokenizer concrete repository |
+| `tt-adapter-storage-core` | `DataDirectory`、基础文件系统 helper、chat/settings/user/theme/secret/quick reply/prompt cache/asset/llm connection/extension-store |
+| `tt-adapter-storage-userdata` | character、world info、agent workspace、agent profile、skill local package store、PNG card metadata |
+| `tt-adapter-media` | avatar/background/user media/image metadata、browser-visible host resource file store |
+| `tt-adapter-extension` | third-party extension discovery/install/update/delete/move、source providers、ZIP extraction safety |
+| `tt-adapter-sync` | LAN Sync、TT-Sync v2 runtime、stores、client/server、sync jobs |
+| `tt-adapter-archive` | data archive import/export executor、archive path safety |
 
-## 3. 核心组件
+## 4. 依赖方向
 
-### 3.1 领域层 (Domain)
+箭头表示 Rust crate 依赖方向。它们应当始终指向更内层、更稳定的策略或契约。
 
-领域层包含业务核心概念和规则，与技术实现细节无关。
+```mermaid
+flowchart TB
+    host["tauritavern<br/>Tauri host / commands / composition root"]
+    adapters["tt-adapter-*<br/>concrete IO / runtime / file formats"]
+    application["tt-application<br/>use cases / services / policies"]
+    ports["tt-ports<br/>ports required by use cases"]
+    contracts["tt-contracts<br/>DTO / events / payloads"]
+    domain["tt-domain<br/>models / errors / pure rules"]
 
-#### 3.1.1 模型 (Models)
-
-模型代表业务领域中的核心对象，如角色、聊天、用户等。
-
-```rust
-// 示例: 角色模型
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Character {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub personality: String,
-    pub first_message: Option<String>,
-    pub avatar_url: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
+    host --> application
+    host --> adapters
+    application --> ports
+    application -. may use .-> contracts
+    application -. may use .-> domain
+    adapters --> ports
+    adapters -. may use .-> contracts
+    adapters -. may use .-> domain
+    ports --> contracts
+    contracts --> domain
 ```
 
-#### 3.1.2 仓库接口 (Repository Interfaces)
+当前允许少量 adapter helper 关系：
 
-仓库接口定义实体持久化操作，但不指定具体实现。当前 repository trait 位于 `crates/tt-ports/src/repositories`，领域模型与错误类型来自 `tt-domain`。
-
-```rust
-// 示例: 角色仓库接口
-#[async_trait]
-pub trait CharacterRepository: Send + Sync {
-    async fn find_by_id(&self, id: &str) -> Result<Option<Character>, DomainError>;
-    async fn find_all(&self) -> Result<Vec<Character>, DomainError>;
-    async fn save(&self, character: &Character) -> Result<(), DomainError>;
-    async fn delete(&self, id: &str) -> Result<(), DomainError>;
-}
+```text
+tt-adapter-provider-http    -> tt-adapter-http
+tt-adapter-tokenization     -> tt-adapter-http
+tt-adapter-extension        -> tt-adapter-http + tt-adapter-storage-core
+tt-adapter-storage-userdata -> tt-adapter-storage-core
+tt-adapter-media            -> tt-adapter-storage-core
 ```
 
-#### 3.1.3 领域错误 (Domain Errors)
+禁止方向：
 
-定义领域操作可能遇到的错误类型。
+- `tt-domain` 不依赖 `tt-ports`、`tt-contracts`、adapter、Tauri、网络或文件系统。
+- `tt-contracts` 不依赖 `tt-ports`、`tt-application`、adapter 或 Tauri。
+- `tt-ports` 不依赖 adapter、Tauri、网络/文件系统具体实现。
+- `tt-application` 不依赖任何 `tt-adapter-*`、`tauritavern`、`reqwest`、`axum`、`tauri`、`zip`、`image`。
+- 任何 `tt-adapter-*` 不依赖 `tt-application` 或 `tauritavern`。
+- host 的 `infrastructure` 与 `platform` 不下沉为 application 或 adapter 的隐式依赖；具体服务装配集中在 `app/composition`。
 
-```rust
-// 示例: 领域错误
-#[derive(Error, Debug)]
-pub enum DomainError {
-    #[error("Entity not found: {0}")]
-    NotFound(String),
+如果新增代码需要违反这些方向，通常不是边界脚本太严格，而是抽象落点还没有想清楚。
 
-    #[error("Invalid data: {0}")]
-    InvalidData(String),
+## 5. 上游兼容契约
 
-    #[error("Operation not permitted: {0}")]
-    PermissionDenied(String),
+TauriTavern 不复刻 SillyTavern 1.18.0 的 Node/Express 实现细节。它复刻的是上游前端、扩展、脚本和角色卡能观察到的契约：
 
-    #[error("Authentication error: {0}")]
-    AuthenticationError(String),
+- 同源 URL、HTTP method、状态码、请求体解析、JSON/text/stream 响应形状。
+- 上传字段名和资源路径，例如 `/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`、`/scripts/extensions/third-party/*`。
+- 聊天 JSONL、角色卡 PNG metadata、世界书、预设、主题、用户目录等文件布局。
+- 上游 `eventSource` 事件语义，例如生成、World Info、stream token、tool call 相关事件。
 
-    #[error("Internal error: {0}")]
-    InternalError(String),
-}
+Rust command、Tauri Channel、repository/service 分层是内部实现，不能当成上游兼容 API 暴露给扩展作者。
+
+兼容流量的真实链路是：
+
+```text
+SillyTavern frontend / extension / script
+  -> same-origin fetch / jQuery.ajax
+  -> src/tauri/main/interceptors.js
+  -> src/tauri/main/routes/*
+  -> context.safeInvoke(...)
+  -> tauritavern presentation command
+  -> tt-application service
+  -> tt-ports trait
+  -> tt-adapter-* concrete implementation
 ```
 
-### 3.2 应用层 (Application)
+新的 TauriTavern 能力优先通过 `window.__TAURITAVERN__.api.*` 暴露。只有行为确实对齐上游 SillyTavern 路由时，才进入 `/api/*` 兼容层。
 
-应用层协调领域对象完成用户用例，实现业务流程。
+## 6. Host 边界
 
-#### 3.2.1 服务 (Services)
+`tauritavern` 是最外层 host crate。它可以知道所有 concrete implementation，但只应在明确边界处使用它们。
 
-服务封装特定用例的业务逻辑，协调多个领域对象。
+主要目录：
 
-当前与 AI 相关的新增服务包括：
-
-- `ChatCompletionService`：封装 Chat Completion 状态检查与生成流程（当前支持 OpenAI / Claude / Gemini(MakerSuite) / Custom OpenAI-compatible / Custom native formats）。
-- `ChatCompletionAgentModelGateway`：Agent runtime 的 LLM 边界，负责在 canonical `AgentModelRequest` / `AgentModelResponse` 与现有 `ChatCompletionService` exchange 之间转换，不直接调用 HTTP repository。
-- `TokenizationService`：统一 token 计数、编码/解码、logit bias token 映射（基于 `tiktoken-rs`，非 OpenAI 模型先 fallback）。
-
-`ChatCompletionService` 已按 provider 能力拆分为模块目录：
-
-- `crates/tt-application/src/services/chat_completion_service/config.rs`：provider 配置与密钥解析（含 custom base URL / header 解析）。
-- `crates/tt-application/src/services/chat_completion_service/payload/*`：按 provider 构建上游请求体。
-- `crates/tt-application/src/services/chat_completion_service/custom_parameters.rs`：custom body/header 参数解析。
-
-`AgentModelGateway` 已拆为模块目录：
-
-- `crates/tt-application/src/services/agent_model_gateway/mod.rs`：gateway trait 与 `ChatCompletionAgentModelGateway` wrapper。
-- `crates/tt-application/src/services/agent_model_gateway/encode.rs` / `decode.rs`：canonical IR 与 normalized ChatCompletion exchange 转换。
-- `crates/tt-application/src/services/agent_model_gateway/schema.rs` / `provider_state.rs` / `providers/*`：tool schema sanitizer、run-scoped continuation 与 provider-specific adapter 规则。
-
-```rust
-// 示例: 角色服务
-pub struct CharacterService {
-    repository: Arc<dyn CharacterRepository>,
-}
-
-impl CharacterService {
-    pub fn new(repository: Arc<dyn CharacterRepository>) -> Self {
-        Self { repository }
-    }
-
-    pub async fn get_character(&self, id: &str) -> Result<Option<Character>, DomainError> {
-        self.repository.find_by_id(id).await
-    }
-
-    pub async fn create_character(&self, character: Character) -> Result<Character, DomainError> {
-        // 验证角色数据
-        self.validate_character(&character)?;
-
-        // 保存角色
-        self.repository.save(&character).await?;
-
-        Ok(character)
-    }
-
-    // 其他方法...
-}
+```text
+src-tauri/crates/tauritavern/src/
+├── lib.rs                 # mobile entry / host lib entry，只转入 app::host::run()
+├── main.rs                # desktop entry
+├── app/
+│   ├── host/              # Tauri builder、plugin、setup、window、resources、shutdown
+│   ├── composition.rs     # composition root 入口
+│   ├── composition/       # repositories、services、host adapters 装配
+│   ├── state.rs           # AppState / AppServices / lifecycle handles
+│   └── startup_profile.rs # 启动期 settings / policy snapshot
+├── presentation/          # Tauri commands、CommandError、web resource adapter
+├── infrastructure/        # Tauri-bound infrastructure
+└── platform/              # iOS/UIKit、macOS/WebView、native UI glue
 ```
 
-#### 3.2.2 数据传输对象 (DTOs)
+### 6.1 Host shell
 
-DTOs用于在应用层和表示层之间传输数据，隔离领域模型。
+`app/host/*` 是 Tauri shell：
 
-```rust
-// 示例: 创建角色DTO
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateCharacterDto {
-    pub name: String,
-    pub description: String,
-    pub personality: String,
-    pub first_message: Option<String>,
-    pub avatar_url: Option<String>,
-}
+- 安装 plugin。
+- 决议 runtime paths。
+- 初始化 logging、HTTP pool、bundled templates、host resource service。
+- 创建窗口并挂载 web resource request hook。
+- 启动异步 AppState 初始化。
 
-// 示例: 角色响应DTO
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CharacterResponseDto {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub personality: String,
-    pub first_message: Option<String>,
-    pub avatar_url: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-```
+这里可以触碰 `tauri::AppHandle`、window、plugin、platform API。这里不写业务用例。
 
-### 3.3 适配器与 Host 基础设施
+### 6.2 Composition root
 
-具体 IO 实现优先放在 `tt-adapter-*` crate。`tauritavern/src/infrastructure` 只保留 Tauri-bound 能力、平台 glue、bundled resources、host logging、runtime path 等必须靠近 Tauri shell 的代码。
+`app/composition/*` 是唯一可以同时知道 application service 与 concrete adapter 的地方。
 
-当前主要 adapter：
+维护规则：
 
-- `tt-adapter-provider-http`：OpenAI / Claude / Gemini(MakerSuite) / Custom OpenAI-compatible 的 HTTP 调用与响应规范化。
-- `tt-adapter-tokenization`：tokenizer 计数与编解码实现。
-- `tt-adapter-extension`：third-party extension 安装、更新、发现与 GitHub/GitLab/Gitee source provider。
-- `tt-adapter-storage-core`：data root、基础文件 helper、chat/settings/user/theme/secret/quick reply 等核心本地仓储。
-- `tt-adapter-storage-userdata`：character PNG、world info、agent workspace、agent profile、skill store 等 Tauri-free 用户文件仓储。
-- `tt-adapter-media`：avatar/background/user media 与 host resource 文件读取。
+- command 不直接构造 repository。
+- service 不直接构造 concrete adapter。
+- adapter 不调用 application service。
+- `AppState` 只持有长期运行的 service 包、lifecycle handle 和启动期策略快照，不作为全局 service locator 下沉到 application 或 adapter。
 
-provider HTTP adapter 按 provider 拆分模块；storage adapter 按仓储 bounded context 拆分模块。
+### 6.3 Host-bound infrastructure
 
-#### 3.3.1 仓库实现 (Repository Implementations)
+只有确实依赖 `AppHandle`、WebView、Tauri plugin、bundled resources、runtime path、平台 API 或 host lifecycle 的代码才留在 `tauritavern/src/infrastructure` 或 `platform`。
 
-仓库实现 `tt-ports` 中的 repository trait，提供具体持久化逻辑。
+当前合理留在 host 的例子：
 
-| 仓储类型 | 当前位置 |
+- runtime path 和数据目录选择引导配置。
+- bundled resource 读取。
+- logging / Dev observability 中需要 Tauri event 或 AppHandle 的部分。
+- Data Archive 的 Tauri file picker/share glue。
+- `file_content_repository` 与 `file_preset_repository`，因为它们仍依赖 packaged default content / bundled resources。
+- 小型 host-bound API glue，例如更新检查和外部导入下载器。
+
+新的 Tauri-free repository 不应再放回 host infrastructure。
+
+## 7. Adapter 边界
+
+adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 adapter crate 应当对应一个清晰的 bounded context 或一组稳定变化原因。
+
+当前实践：
+
+- `tt-adapter-storage-core` 只承载基础 data root 能力和较底层的文件系统 helper。它不是“所有文件仓储”的新大桶。
+- `tt-adapter-storage-userdata` 承载长期用户数据仓储，例如角色卡、世界书、Agent workspace/profile、Skill package。它关心 data root / user data 语义，而不是泛泛的“文件”。
+- `tt-adapter-extension` 承载 third-party extension 安装、更新、发现和 ZIP 安全边界。扩展包不是普通 user data JSON。
+- `tt-adapter-media` 承载浏览器可见的 avatar/background/user media 资源契约。
+- `tt-adapter-provider-http` 和 `tt-adapter-tokenization` 可以复用 `tt-adapter-http`，但 provider 规则不能下沉到通用 HTTP helper。
+- `tt-adapter-sync` 与 `tt-adapter-archive` 是独立运行时/执行器边界，Tauri UI glue 仍留在 host。
+
+如果一个新 adapter 只是为了两个调用点提前抽象，先不要建 crate。等它有明确 bounded context、独立依赖成本或稳定变化原因时再拆。
+
+## 8. Presentation 边界
+
+`presentation` 是前端可调用的 Tauri command 与 WebView resource 边界。
+
+规则：
+
+- `#[tauri::command]` 只放在 `presentation/commands/*`。
+- command 做参数解析、policy gate、错误映射和 service 调用，不写复杂业务流程。
+- command registry 集中在 `presentation/commands/registry.rs`。
+- 对上游兼容的 `/api/*` 行为主要由前端 route shim 维持，Rust command 名不是第三方稳定 API。
+- 浏览器子资源必须通过真实可加载的 URL/Response 语义提供，不用 IPC/base64 假装资源加载。
+
+## 9. 代码落点决策表
+
+| 需求 | 放置位置 | 注意 |
+| --- | --- | --- |
+| 新领域模型、值对象、纯验证 | `tt-domain` | 不引入 async、IO、repository trait |
+| 新跨 crate payload/event/DTO | `tt-contracts` | 只放契约，不放 service |
+| 新 repository/gateway/runtime trait | `tt-ports` | trait 面向 application；具体实现不在这里 |
+| 新用例、业务编排、job coordinator | `tt-application` | 依赖 port，不依赖 adapter |
+| 新 Tauri command | `tauritavern/src/presentation/commands` | 调 service，不直接操作仓储细节 |
+| 新 service/adapter 装配 | `tauritavern/src/app/composition` | 显式构造，避免 DI 容器或自动注册魔法 |
+| 需要 AppHandle/WebView/plugin/platform API | `tauritavern/src/app`、`infrastructure` 或 `platform` | 不下沉到 adapter |
+| data root/default-user 的基础文件仓储 | `tt-adapter-storage-core` | chat/settings/user/theme/secret 等基础存储 |
+| 角色卡、世界书、Agent workspace/profile、Skill package | `tt-adapter-storage-userdata` | skill 是 local package store，不是普通 JSON repo |
+| 第三方扩展安装、更新、发现 | `tt-adapter-extension` | 不归入 storage-userdata |
+| avatar/background/user media/host resource 文件读取 | `tt-adapter-media` | 保持浏览器资源契约 |
+| LLM/SD/Translate/TTS/provider metadata HTTP | `tt-adapter-provider-http` | 复用 `tt-adapter-http` |
+| 通用 HTTP pool/profile/helper | `tt-adapter-http` | 不放 provider 业务规则 |
+| LAN/TT Sync runtime | `tt-adapter-sync` | Tauri event/UI adapter 留 host composition |
+| Data Archive import/export executor | `tt-adapter-archive` | Tauri picker/share 留 host infrastructure |
+
+## 10. 添加后端能力的最小流程
+
+新增能力时，先从契约和变化原因出发，再决定文件位置：
+
+1. 判断这是上游兼容行为，还是 TauriTavern 新能力。
+2. 上游兼容行为保持 `/api/*`、资源路径、stream 和事件语义。
+3. 新能力优先走 `window.__TAURITAVERN__.api.*`。
+4. 如有新业务概念，先放 `tt-domain`。
+5. 如有外部 IO 或持久化边界，在 `tt-ports` 定义最小 trait。
+6. 在 `tt-application` 写 service/use case。
+7. 在合适的 `tt-adapter-*` 写 concrete implementation。
+8. 在 `tauritavern/src/app/composition` 装配。
+9. 在 `tauritavern/src/presentation` 增加 command。
+10. 在前端 route 或 Host ABI 层接入。
+11. 更新相关文档和 guard/test。
+
+如果一个新抽象只有一个实现，先不要加。Rust 项目里显式构造通常比通用 DI、factory、inventory/linkme 更容易维护。
+
+## 11. 数据目录与文件布局
+
+数据目录布局是 SillyTavern 兼容契约的一部分。目录名大小写和空格不能随意改，例如：
+
+- `default-user`
+- `characters`
+- `chats`
+- `group chats`
+- `User Avatars`
+- `QuickReplies`
+- `OpenAI Settings`
+- `TextGen Settings`
+
+TauriTavern 私有状态放在 `_tauritavern` 下，例如 agent workspace、agent profiles、skills、prompt cache、extension source metadata、LLM connections。
+
+权威代码入口：
+
+- `src-tauri/crates/tt-adapter-storage-core/src/file_system.rs`
+- `src-tauri/crates/tt-domain/src/models/user_directory.rs`
+- 桌面数据目录选择现状见 `docs/CurrentState/DataDirectorySelection.md`
+
+## 12. 专题文档导航
+
+`BackendStructure.md` 只保留总边界。细节进入专题文档：
+
+| 主题 | 文档 |
 | --- | --- |
-| chat/settings/user/theme/secret/quick reply/prompt cache/asset/llm connection/extension store | `crates/tt-adapter-storage-core/src/repositories` |
-| character/world info/agent/agent profile/skill | `crates/tt-adapter-storage-userdata/src/repositories` |
-| avatar/background/image metadata | `crates/tt-adapter-media/src/repositories` |
-| extension install/update/source providers | `crates/tt-adapter-extension/src/repositories` |
-| default content / default preset restore | host infrastructure，因依赖 Tauri bundled resources |
-
-#### 3.3.2 持久化工具 (Persistence Utilities)
-
-通用文件 helper 位于 `tt-adapter-storage-core/src/file_system.rs`。格式专用 helper 留在拥有该格式的 adapter 内，例如 character/world info 的 PNG card metadata 在 `tt-adapter-storage-userdata/src/png_card_metadata.rs`。
-
-#### 3.3.3 日志系统 (Logging)
-
-普通日志直接使用 `tracing` 宏；全局 subscriber 在 host setup 阶段初始化，统一写入 stdout、rolling file 与 Dev 面板 backend log。不要在 application / presentation 层重新引入 `logger` facade。
-
-```rust
-tracing::debug!("Loading character index");
-tracing::warn!("Skipped invalid extension manifest: {}", path.display());
-tracing::error!("Failed to persist diagnostic log: {}", error);
-```
-
-用户可见 backend error 是显式产品事件，不是所有 `tracing::error!` 的副作用。需要弹窗的内部错误必须使用 `tauritavern::user_error` 观测 target：host crate 内使用 `crate::observability_targets::USER_VISIBLE_ERROR`，adapter crate 使用 `tt_contracts::observability::USER_VISIBLE_ERROR`。该 target 仍受全局 `EnvFilter` 控制。
-
-### 3.4 表示层 (Presentation)
-
-表示层负责处理用户交互，将请求转发给应用层，并将结果返回给用户。
-
-#### 3.4.1 Tauri命令 (Commands)
-
-Tauri命令是前端与后端通信的桥梁，通过IPC机制暴露给前端。
-
-```rust
-// 示例: 角色命令（使用公共 helper）
-use crate::presentation::commands::helpers::{log_command, map_command_error};
-
-#[tauri::command]
-pub async fn get_all_characters(
-    shallow: bool,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<CharacterDto>, CommandError> {
-    log_command(format!("get_all_characters (shallow: {})", shallow));
-
-    app_state
-        .character_service
-        .get_all_characters(shallow)
-        .await
-        .map_err(map_command_error("Failed to get all characters"))
-}
-
-#[tauri::command]
-pub async fn create_character(
-    dto: CreateCharacterDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<CharacterDto, CommandError> {
-    log_command(format!("create_character {}", dto.name));
-
-    app_state
-        .character_service
-        .create_character(dto)
-        .await
-        .map_err(map_command_error("Failed to create character"))
-}
-```
-
-#### 3.4.2 命令错误 (Command Errors)
-
-定义命令执行过程中可能遇到的错误，并提供适当的错误处理。
-
-```rust
-// 示例: 命令错误
-#[derive(Debug, Error, Serialize)]
-pub enum CommandError {
-    #[error("Bad request: {0}")]
-    BadRequest(String),
-
-    #[error("Not found: {0}")]
-    NotFound(String),
-
-    #[error("Unauthorized: {0}")]
-    Unauthorized(String),
-
-    #[error("Internal server error: {0}")]
-    InternalServerError(String),
-}
-
-// 从领域错误转换为命令错误
-impl From<DomainError> for CommandError {
-    fn from(error: DomainError) -> Self {
-        match error {
-            DomainError::NotFound(msg) => CommandError::NotFound(msg),
-            DomainError::InvalidData(msg) => CommandError::BadRequest(msg),
-            DomainError::PermissionDenied(msg) => CommandError::Unauthorized(msg),
-            DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
-            DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
-        }
-    }
-}
-```
-
-#### 3.4.3 命令注册与解耦
-
-当前实现将命令注册集中在 `presentation/commands/registry.rs`，由 `lib.rs` 统一挂载：
-
-```rust
-// lib.rs
-use presentation::commands::registry::invoke_handler;
-
-tauri::Builder::default()
-    // ...
-    .invoke_handler(invoke_handler())
-```
-
-这样可以避免在 `lib.rs` 中直接维护超长命令列表，命令增减时只需更新 `registry.rs`。
-
-#### 3.4.4 Host Resource 静态资源端点（2026-03）
-
-浏览器可见的 host-owned 资源当前不再通过 Tauri 命令走 IPC/base64，而是通过 WebView 资源请求钩子直接提供：
-
-- 入口安装位置：`src-tauri/crates/tauritavern/src/lib.rs`
-  - 主窗口在 `create_main_window()` 中挂载 `on_web_resource_request`
-  - 覆盖 `/css/user.css`、`/scripts/extensions/third-party/*`、`/thumbnail`、`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`
-- 应用层实现：`src-tauri/crates/tt-application/src/services/host_resource_service/`
-  - 负责方法门禁、路径解析、状态码、`Content-Type`、`Cache-Control`
-  - 仅允许 `GET` / `HEAD` / `OPTIONS`
-  - 未命中返回真正 `404`，不回退 `index.html`
-- 基础设施支撑：
-  - `src-tauri/crates/tt-adapter-media/src/host_resources.rs`：local/global 目录查找、MIME 推断与文件读取
-- third-party 目录语义：
-  - local：`data/default-user/extensions/<folder>`
-  - global：`data/extensions/third-party/<folder>`
-  - 资源读取与扩展发现都遵循 local 优先、global 兜底
-
-这条链路的意义是把资源兼容问题下沉为“真实静态资源端点”问题，而不是继续在前端 runtime 里模拟浏览器加载行为。当前 third-party 状态摘要见 `docs/CurrentState/ThirdPartyExtensions.md`。
-
-### 3.5 聊天后端链路（Payload-First + Path/From-File Transport，2026-02重构）
-
-本次聊天链路重构目标是对齐 SillyTavern 上游业务逻辑与文件系统语义，同时降低字段漂移/数据丢失风险。
-
-#### 3.5.1 设计原则
-
-- **Payload First**：聊天保存/读取优先以 JSONL 原始 payload 为边界，而非先强制转领域模型再落盘。
-- **Control/Data Plane 分离**：小参数走 JSON invoke（control plane），大 payload 走文件路径（data plane）。
-- **字段保真**：`ChatMetadata`、`ChatMessage`、`MessageExtra` 通过 `#[serde(flatten)] additional` 保留未知字段。
-- **完整性优先**：保存链路内置 `chat_metadata.integrity` 校验；冲突时返回 `integrity`，由前端决定是否 `force` 覆盖。
-- **兼容上游文件系统**：目录与命名策略对齐 SillyTavern，便于用户无损迁移。
-- **移动端优先规避峰值内存**：Android 读走 fs plugin 流式读（`open/read`），写走“前端临时文件 -> 后端按路径原子落盘”。
-
-#### 3.5.2 分层职责
-
-- `crates/tt-ports/src/repositories/chat_repository.rs`
-  - 保留 typed API（`get_chat` / `save` / `search_chats` 等）用于领域操作。
-  - payload API：path/from-file（大文件，data plane）+ windowed（tail/before/windowed-save，小窗口，control plane）。
-  - windowed 数据结构：`ChatPayloadCursor` / `ChatPayloadTail` / `ChatPayloadChunk`。
-- `crates/tt-application/src/services/chat_service.rs`
-  - path/from-file（导入/全量保存）+ windowed（tail/before/windowed-save）。
-- `presentation/commands/chat_commands.rs`
-  - 大 payload：仅读取 payload path、保存 from-file（避免整文件通过 IPC）。
-  - windowed：提供 tail/before/windowed-save 命令（传输有上限的 header/lines）。
-- `crates/tt-adapter-storage-core/src/repositories/file_chat_repository/`
-  - `repository_impl.rs`：统一编排 typed/payload/bytes/path 写入入口。
-  - `payload.rs`：完整性校验、字节写入、文件路径直通写入（原子替换 + 备份）。
-  - `windowed_payload.rs`：tail/before/windowed-save（保留 prefix + 覆写 tail）。
-  - `jsonl_utils.rs`：`parse_jsonl_bytes`、`write_jsonl_file`、`read_first_non_empty_jsonl_line` 等基础能力。
-  - 完整性校验改为“首个非空行”解析，避免为校验反序列化整个文件。
-
-#### 3.5.3 关键链路
-
-1. 角色聊天读取（Path-First）  
-前端 `invoke(get_chat_payload_path)` -> 获取绝对路径 ->（Android：fs plugin 流式读；其他平台：`convertFileSrc(..., 'asset')` + `fetch`）-> 前端 JSONL 流式解析。
-
-2. 角色聊天保存（From-File）  
-前端 payload 分块编码 -> 写入临时 JSONL 文件 -> `save_chat_payload_from_file` -> `ChatService::save_chat_from_file` -> `save_chat_payload_from_path`（原子替换 + 备份）。
-
-3. 群聊读写链路  
-与角色聊天对称：`get_group_chat_path` / `save_group_chat_from_file`。
-
-4. 完整性冲突  
-当现有文件的 `chat_metadata.integrity` 与待写入 payload 不一致且 `force=false` 时，仓库返回 `DomainError::InvalidData("integrity")`，前端映射为冲突提示并可二次 `force` 覆盖。
-
-5. 分段加载/保存（Windowed，Phase 2-C）  
-前端通过 `get_*_payload_tail` / `get_*_payload_before` 分页读取小窗口行；保存走 `save_*_payload_windowed`（保留 `cursor.offset` 前缀 + 覆写 tail，带签名校验）。
-
-#### 3.5.4 聊天分段加载/保存（Windowed Payload，2026-03）
-
-- Cursor：`{ offset, size, modifiedMillis }`；签名不匹配/offset 非行边界直接 `InvalidData`（不做隐式 fallback）。
-- Tail：`get_chat_payload_tail` / `get_group_chat_payload_tail` -> `{ header, lines, cursor, hasMoreBefore }`。
-- Before：`get_chat_payload_before` / `get_group_chat_payload_before`（不含 header，向前分页）。
-- Windowed Save：保留 prefix + 覆写 tail；header 变化则 tmp 重写 header + copy prefix + append -> rename。
-- 代码入口：`src-tauri/crates/tt-adapter-storage-core/src/repositories/file_chat_repository/windowed_payload.rs` + `src-tauri/crates/tauritavern/src/presentation/commands/chat_commands.rs`。
-
-#### 3.5.5 文件系统与备份语义
-
-- 角色聊天：`default-user/chats/<character_id>/*.jsonl`
-- 群聊：`default-user/group chats/*.jsonl`
-- 聊天备份：`default-user/backups/chat_<sanitized_name>_<timestamp>.jsonl`
-- 备份节流：10 秒（对齐上游默认）
-- 单会话备份上限：50（对齐上游默认）
-- 全局备份上限：无限（默认）
-
-## 4. 应用状态管理
-
-应用状态管理负责初始化和管理应用的全局状态，包括服务实例和配置。
-
-### 4.1 AppState
-
-`AppState` 只承载运行期需要长期挂载的状态：应用服务包、生命周期控制柄与启动期策略快照。数据目录由 composition root 在构建服务图时使用，不作为长期运行时状态挂载。
-
-```rust
-// app/state.rs（示意）
-mod composition;
-
-pub struct AppState {
-    services: AppServices,
-    lifecycle: AppLifecycle,
-    ios_policy: IosPolicyActivationReport,
-}
-
-pub struct AppLifecycle {
-    sync_automation_cancel: CancellationToken,
-    agent_run_retention_automation_cancel: CancellationToken,
-}
-
-pub struct AppServices {
-    character_service: Arc<CharacterService>,
-    chat_service: Arc<ChatService>,
-    settings_service: Arc<SettingsService>,
-    // 其他 application services 同样挂在服务包中。
-}
-
-impl AppState {
-    pub async fn new(
-        app_handle: AppHandle,
-        runtime_paths: RuntimePaths,
-        startup_profile: StartupProfile,
-    ) -> Result<Self, DomainError> {
-        // 初始化目录
-        let data_directory =
-            composition::initialize_data_directory(&runtime_paths.data_root).await?;
-        // 统一装配仓库与服务
-        let services =
-            composition::build_services(&app_handle, &data_directory, &startup_profile).await?;
-
-        Ok(Self {
-            services,
-            lifecycle: AppLifecycle::new(),
-            ios_policy: startup_profile.ios_policy,
-        })
-    }
-}
-```
-
-### 4.2 数据目录管理
-
-`DataDirectory`负责管理应用的数据目录结构。
-
-```rust
-// 示例: 数据目录管理
-pub struct DataDirectory {
-    root: PathBuf,
-    default_user: PathBuf,
-}
-
-impl DataDirectory {
-    pub fn new(root: &Path) -> Result<Self, DomainError> {
-        let default_user = root.join("default-user");
-
-        // 创建目录结构
-        Self::create_directory_structure(root, &default_user)?;
-
-        Ok(Self {
-            root: root.to_path_buf(),
-            default_user: default_user.to_path_buf(),
-        })
-    }
-
-    fn create_directory_structure(root: &Path, default_user: &Path) -> Result<(), DomainError> {
-        // 创建根目录
-        if !root.exists() {
-            fs::create_dir_all(root).map_err(|e| {
-                DomainError::InternalError(format!("Failed to create root directory: {}", e))
-            })?;
-        }
-
-        // 创建默认用户目录
-        if !default_user.exists() {
-            fs::create_dir_all(default_user).map_err(|e| {
-                DomainError::InternalError(format!("Failed to create default user directory: {}", e))
-            })?;
-        }
-
-        // 创建默认用户子目录
-        let default_user_dirs = [
-            "characters",
-            "chats",
-            "backups",
-            "User Avatars",
-            "backgrounds",
-            "thumbnails",
-            "thumbnails/bg",
-            "thumbnails/avatar",
-            "worlds",
-            "user",
-            "user/images",
-            "groups",
-            "group chats",
-            "NovelAI Settings",
-            "KoboldAI Settings",
-            "OpenAI Settings",
-            "TextGen Settings",
-            "themes",
-            "movingUI",
-            "extensions",
-            "instruct",
-            "context",
-            "QuickReplies",
-            "assets",
-            "user/workflows",
-            "user/files",
-            "vectors",
-            "sysprompt",
-            "reasoning",
-        ];
-
-        for dir in default_user_dirs.iter() {
-            let path = default_user.join(dir);
-            if !path.exists() {
-                fs::create_dir_all(&path).map_err(|e| {
-                    DomainError::InternalError(format!("Failed to create directory {}: {}", dir, e))
-                })?;
-            }
-        }
-
-        Ok(())
-    }
-
-    // 获取各目录路径
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    pub fn default_user(&self) -> &Path {
-        &self.default_user
-    }
-
-    pub fn characters(&self) -> PathBuf {
-        self.default_user.join("characters")
-    }
-
-    pub fn chats(&self) -> PathBuf {
-        self.default_user.join("chats")
-    }
-
-    pub fn backups(&self) -> PathBuf {
-        self.default_user.join("backups")
-    }
-
-    pub fn settings(&self) -> PathBuf {
-        self.default_user.clone()
-    }
-
-    pub fn users(&self) -> PathBuf {
-        self.default_user.join("user")
-    }
-
-    // 其他目录访问方法...
-}
-```
-
-## 5. 后端API
-
-TauriTavern的后端API通过Tauri命令暴露给前端。以下是主要API类别：
-
-### 5.1 角色管理API
-
-| 命令 | 描述 | 参数 | 返回值 |
-|------|------|------|--------|
-| `get_characters` | 获取所有角色 | `shallow: bool` | `Vec<CharacterDto>` |
-| `get_character` | 获取单个角色 | `name: String` | `CharacterDto` |
-| `create_character` | 创建新角色 | `CreateCharacterDto` | `CharacterDto` |
-| `update_character` | 更新角色 | `name: String, UpdateCharacterDto` | `CharacterDto` |
-| `delete_character` | 删除角色 | `DeleteCharacterDto` | `()` |
-| `import_character` | 导入角色 | `ImportCharacterDto` | `CharacterDto` |
-| `export_character` | 导出角色 | `ExportCharacterDto` | `()` |
-| `create_with_avatar` | 创建带头像的角色 | `CreateWithAvatarDto` | `CharacterDto` |
-| `update_avatar` | 更新角色头像 | `UpdateAvatarDto` | `()` |
-| `rename_character` | 重命名角色 | `RenameCharacterDto` | `CharacterDto` |
-
-### 5.2 聊天管理API
-
-| 命令 | 描述 | 参数 | 返回值 |
-|------|------|------|--------|
-| `get_all_chats` | 获取所有聊天 | 无 | `Vec<ChatDto>` |
-| `get_character_chats` | 获取角色的聊天 | `characterName: String` | `Vec<ChatDto>` |
-| `get_chat` | 获取单个聊天 | `characterName: String, fileName: String` | `ChatDto` |
-| `get_chat_payload_path` | 获取角色聊天文件绝对路径 | `characterName: String, fileName: String, allowNotFound?: bool` | `String` |
-| `get_chat_payload_tail` | 获取角色聊天尾部窗口（header+lines+cursor） | `characterName: String, fileName: String, maxLines: usize, allowNotFound?: bool` | `ChatPayloadTail` |
-| `get_chat_payload_before` | 获取 cursor 之前窗口（不含 header） | `characterName: String, fileName: String, cursor: ChatPayloadCursor, maxLines: usize` | `ChatPayloadChunk` |
-| `create_chat` | 创建新聊天 | `CreateChatDto` | `ChatDto` |
-| `delete_chat` | 删除聊天 | `characterName: String, fileName: String` | `()` |
-| `add_message` | 添加消息 | `AddMessageDto` | `ChatDto` |
-| `rename_chat` | 重命名聊天 | `RenameChatDto` | `()` |
-| `search_chats` | 搜索聊天 | `query: String, character_filter: Option<String>` | `Vec<ChatSearchResultDto>` |
-| `import_chat` | 导入聊天（legacy typed） | `ImportChatDto` | `ChatDto` |
-| `import_character_chats` | 导入角色聊天（payload链路） | `ImportCharacterChatsDto` | `Vec<String>` |
-| `export_chat` | 导出聊天 | `ExportChatDto` | `()` |
-| `save_chat_payload_from_file` | 从现有JSONL文件路径保存角色聊天 | `SaveChatFromFileDto` | `()` |
-| `save_chat_payload_windowed` | windowed 保存角色聊天（保留 prefix + 覆写 tail） | `SaveChatWindowedDto` | `ChatPayloadCursor` |
-| `backup_chat` | 触发聊天备份 | `characterName: String, fileName: String` | `()` |
-| `clear_chat_cache` | 清理聊天缓存 | 无 | `()` |
-
-### 5.2.1 群聊Payload命令
-
-| 命令 | 描述 | 参数 | 返回值 |
-|------|------|------|--------|
-| `get_group_chat_path` | 获取群聊文件绝对路径 | `id: String, allowNotFound?: bool` | `String` |
-| `get_group_chat_payload_tail` | 获取群聊尾部窗口（header+lines+cursor） | `id: String, maxLines: usize, allowNotFound?: bool` | `ChatPayloadTail` |
-| `get_group_chat_payload_before` | 获取 cursor 之前窗口（不含 header） | `id: String, cursor: ChatPayloadCursor, maxLines: usize` | `ChatPayloadChunk` |
-| `save_group_chat_from_file` | 从现有JSONL文件路径保存群聊 | `SaveGroupChatFromFileDto` | `()` |
-| `save_group_chat_payload_windowed` | windowed 保存群聊（保留 prefix + 覆写 tail） | `SaveGroupChatWindowedDto` | `ChatPayloadCursor` |
-| `delete_group_chat` | 删除群聊聊天文件 | `DeleteGroupChatDto` | `()` |
-| `rename_group_chat` | 重命名群聊聊天文件 | `RenameGroupChatDto` | `()` |
-| `import_group_chat_payload` | 导入群聊JSONL文件 | `ImportGroupChatDto` | `String` |
-
-### 5.3 群组管理API
-
-| 命令 | 描述 | 参数 | 返回值 |
-|------|------|------|--------|
-| `get_all_groups` | 获取所有群组 | 无 | `Vec<GroupDto>` |
-| `get_group` | 获取单个群组 | `id: String` | `GroupDto` |
-| `create_group` | 创建新群组 | `CreateGroupDto` | `GroupDto` |
-| `update_group` | 更新群组 | `id: String, UpdateGroupDto` | `GroupDto` |
-| `delete_group` | 删除群组 | `id: String` | `()` |
-
-### 5.4 背景壁纸API
-
-| 命令 | 描述 | 参数 | 返回值 |
-|------|------|------|--------|
-| `get_all_backgrounds` | 获取所有背景 | 无 | `Vec<String>` |
-| `delete_background` | 删除背景 | `DeleteBackgroundDto` | `()` |
-| `rename_background` | 重命名背景 | `RenameBackgroundDto` | `()` |
-| `upload_background` | 上传背景 | `filename: String, data: Vec<u8>` | `String` |
-
-### 5.5 主题管理API
-
-| 命令 | 描述 | 参数 | 返回值 |
-|------|------|------|--------|
-| `save_theme` | 保存主题 | `SaveThemeDto` | `()` |
-| `delete_theme` | 删除主题 | `DeleteThemeDto` | `()` |
-| `get_all_themes` | 获取所有主题 | 无 | `Vec<ThemeDto>` |
-| `get_theme` | 获取单个主题 | `name: String` | `ThemeDto` |
-
-### 5.6 设置API
-
-| 命令 | 描述 | 参数 | 返回值 |
-|------|------|------|--------|
-| `get_settings` | 获取设置 | 无 | `SettingsDto` |
-| `update_settings` | 更新设置 | `UpdateSettingsDto` | `SettingsDto` |
-| `reset_settings` | 重置设置 | 无 | `SettingsDto` |
-
-### 5.7 密钥管理API
-
-| 命令 | 描述 | 参数 | 返回值 |
-|------|------|------|--------|
-| `write_secret` | 写入密钥 | `WriteSecretDto` | `String` |
-| `read_secret_state` | 读取密钥状态 | 无 | `HashMap<String, bool>` |
-| `view_secrets` | 查看所有密钥 | 无 | `HashMap<String, String>` |
-| `find_secret` | 查找特定密钥 | `FindSecretDto` | `SecretValueDto` |
-
-### 5.8 系统API
-
-| 命令 | 描述 | 参数 | 返回值 |
-|------|------|------|--------|
-| `get_version` | 获取版本 | 无 | `String` |
-| `get_client_version` | 获取客户端版本 | 无 | `VersionInfo` |
-| `is_ready` | 检查系统就绪状态 | 无 | `bool` |
-| `emit_event` | 发送事件到前端 | `EmitEventDto` | `()` |
-
-## 6. 错误处理
-
-TauriTavern采用分层的错误处理策略，确保错误信息在传递过程中不丢失上下文。
-
-### 6.1 错误类型层次
-
-1. **领域错误 (DomainError)**: 业务规则违反、实体验证失败等
-2. **基础设施错误 (InfrastructureError)**: 文件系统错误、网络错误等
-3. **应用错误 (ApplicationError)**: 用例执行失败
-4. **命令错误 (CommandError)**: 前端请求处理失败
-
-### 6.2 错误转换
-
-错误在层与层之间传递时进行转换，保留原始错误信息但适应当前层的上下文。
-
-```rust
-// 示例: 错误转换链
-// 基础设施错误 -> 领域错误 -> 应用错误 -> 命令错误 -> 前端
-```
-
-### 6.3 错误日志
-
-错误应在拥有上下文的边界记录一次，避免 service、repository、command 多层重复打点。能通过 command `Result` 返回前端的失败，由 command boundary 统一转换并记录；预期失败可降为 warn，重要内部失败才触发用户可见 backend error。
-
-```rust
-service
-    .load_character(name)
-    .await
-    .map_err(map_command_error("Failed to load character"))?;
-```
-
-## 7. 扩展指南
-
-### 7.1 添加新模型
-
-添加新模型时，应遵循以下步骤：
-
-1. 在`crates/tt-domain/src/models`中定义模型结构
-2. 在`crates/tt-ports/src/repositories`中定义仓库接口
-3. 在合适的 `tt-adapter-*` crate 中实现仓库接口；只有依赖 `AppHandle`、WebView、bundled resources 或平台 API 的实现才放在 host `infrastructure`
-4. 在`crates/tt-application/src/services`中创建服务
-5. 在`crates/tt-application/src/dto`中定义数据传输对象
-6. 在`presentation/commands`中添加命令
-7. 在`app/composition/`中注册仓库和服务构建逻辑，并在`app.rs`的`AppState`中挂载
-
-### 7.2 添加新API
-
-添加新API时，应遵循以下步骤：
-
-1. 在`crates/tt-application/src/dto`中定义请求和响应DTO
-2. 在`presentation/commands`中添加命令函数
-3. 在`presentation/commands/registry.rs`中注册命令
-4. 更新前端`tauri-bridge.js`和相关API文件
-
-### 7.3 集成外部服务
-
-集成外部服务时，应遵循以下步骤：
-
-1. 在`infrastructure/apis`中创建服务客户端
-2. 在`crates/tt-application/src/services`中创建用例服务或端口消费逻辑
-3. 在`app/composition/`中初始化服务装配
-4. 在`presentation/commands`中暴露API
-
-### 7.4 使用Tauri资源系统
-
-在TauriTavern中，我们使用Tauri的资源系统进行文件访问，确保跨平台兼容性：
-
-1. 使用`resolveResource`解析资源路径
-2. 使用Tauri的文件系统API进行文件操作
-3. 在仓库实现中统一使用资源路径
-
-```rust
-// 示例: 使用Tauri资源系统访问文件
-pub async fn read_file(path: &str) -> Result<String, DomainError> {
-    // 解析资源路径
-    let resource_path = resolve_resource(path)
-        .await
-        .map_err(|e| DomainError::Repository(format!("Failed to resolve resource: {}", e)))?;
-
-    // 读取文件内容
-    let content = read_text_file(&resource_path)
-        .await
-        .map_err(|e| DomainError::Repository(format!("Failed to read file: {}", e)))?;
-
-    Ok(content)
-}
-```
-
-### 7.5 聊天链路持续维护约束
-
-为避免聊天文件腐化或字段丢失，后续维护需遵循以下约束：
-
-1. **新增聊天字段时优先走透传**  
-若字段仅用于前端/上游兼容且不参与领域规则，优先落在 `flatten additional`，避免硬编码映射。
-
-2. **写路径优先使用 payload API**  
-涉及文件级同步（导入、恢复、迁移、group chat、批量操作）时，优先调用 `save_chat_payload` / `save_group_chat_payload`，避免 typed -> payload 重建造成信息丢失。
-
-3. **不要绕过 integrity 逻辑**  
-所有写入链路必须通过仓库统一入口，保留 `force` 开关和冲突信号 `integrity`。
-
-4. **目录结构改动必须同步三处**  
-- `DataDirectory`  
-- `bootstrap` 仓库注入  
-- 文档与前端路由约定（`chat-routes.js`）
-
-5. **变更后至少覆盖以下测试面**  
-- payload 字段保真（metadata/message/extra）  
-- integrity 冲突与 force 覆盖  
-- group chat 读写删改  
-- 导入命名冲突去重
-
-6. **角色导入不应提前写入初始 chat 文件**  
-角色卡导入阶段只负责角色资产与角色数据落盘；首条消息与 swipe 结构由聊天链路在“首次打开会话”时生成，避免把 `alternate_greetings` 折损成单条 `mes`。
-
-7. **raw 命令 header 必须保持 ASCII 安全**  
-若 header 携带角色名/会话名/群聊 ID，前端必须先 URI 编码；后端统一解码，避免 WebView `Headers` 非 Latin-1 异常。
-
-8. **移动端大文件写入优先走 from-file**  
-Android 及低内存场景下，避免把大 JSONL 一次性塞入 IPC body，优先走临时文件 + `save_*_from_file`。
-
-## 8. 测试策略
-
-### 8.1 单元测试
-
-每个模块应有对应的单元测试，特别是领域和应用层。
-
-服务单元测试只依赖 `tt-ports` trait；需要替身时在测试模块内定义最小 fake。文件仓储行为由对应 adapter crate 的 focused tests 覆盖，不从 host infrastructure 引用 mock repository。
-
-### 8.2 集成测试
-
-集成测试验证多个组件的协作，特别是基础设施和应用层的交互。
-
-仓储集成测试放在对应 adapter crate 中；跨服务 contract tests 放在 host 的 `app/contract_tests`。例如 userdata 文件仓储使用：
+| 前端 Host ABI、请求拦截、资源契约 | `docs/FrontendHostContract.md` |
+| 前端集成结构 | `docs/FrontendGuide.md` |
+| 扩展作者 API | `docs/API/README.md` |
+| Chat windowed payload | `docs/CurrentState/WindowedPayload.md` |
+| Third-party extension 资源和发现 | `docs/CurrentState/ThirdPartyExtensions.md` |
+| 媒体 Range / browser resource contract | `docs/CurrentState/MediaAssetContract.md` |
+| Logging / Dev observability | `docs/CurrentState/LoggingObservability.md` |
+| Native provider API formats | `docs/CurrentState/NativeApiFormats.md` |
+| Sync | `docs/CurrentState/Sync.md` |
+| Agent 总览 | `docs/AgentArchitecture.md` |
+| Agent 细节 | `docs/Agent/README.md` |
+| iOS policy | `docs/CurrentState/iOSPolicy.md` |
+
+## 13. 验证
+
+架构边界变更至少运行：
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata
+pnpm run check:rust-boundaries
 ```
 
-### 8.3 端到端测试
+按影响面追加：
 
-端到端测试验证整个系统的功能，从前端到后端。
-
-```rust
-// 示例: 端到端测试框架
-#[cfg(test)]
-mod e2e_tests {
-    use tauri::test::{mock_builder, mock_context};
-
-    #[test]
-    fn test_character_creation() {
-        // 创建测试应用
-        let app = mock_builder()
-            .build()
-            .expect("Failed to build mock app");
-
-        // 执行命令
-        let result: Result<CharacterResponseDto, CommandError> = app
-            .invoke_handler(tauri::generate_handler![create_character])
-            .invoke("create_character", &CreateCharacterDto {
-                name: "Test Character".to_string(),
-                description: "Description".to_string(),
-                personality: "Personality".to_string(),
-                first_message: None,
-                avatar_url: None,
-            })
-            .expect("Failed to invoke command");
-
-        // 验证结果
-        assert!(result.is_ok());
-        let character = result.unwrap();
-        assert_eq!(character.name, "Test Character");
-    }
-}
+```bash
+pnpm run test:rust:split-crates
+pnpm run test:rust:host-resources
+pnpm run check:rust:dev
+cargo test --manifest-path src-tauri/Cargo.toml -p <affected-crate> <focused-test>
 ```
 
-## 9. 性能考虑
+涉及前端 route shim、Host ABI 或资源端点时，还要运行前端 contract/guard：
 
-### 9.1 异步处理
-
-TauriTavern使用Tokio异步运行时，确保IO操作不阻塞主线程。
-
-```rust
-// 示例: 异步处理
-#[tauri::command]
-pub async fn process_large_file(
-    app_state: State<'_, Arc<AppState>>,
-    path: String,
-) -> Result<ProcessingResultDto, CommandError> {
-    // 异步处理文件
-    app_state.file_service.process_file(&path).await
-        .map(|result| ProcessingResultDto::from(result))
-        .map_err(|e| CommandError::from(e))
-}
+```bash
+pnpm run check:frontend
+pnpm run check:types
+pnpm run check:contracts
 ```
 
-### 9.2 异步初始化
+## 14. 常见误区
 
-在Tauri应用中，避免在setup钩子中使用block_on，因为它会阻塞主线程。相反，使用tauri::async_runtime::spawn进行异步初始化。
-
-```rust
-// 示例: 异步初始化
-.setup(move |app| {
-    let runtime_paths = runtime_paths::install_runtime_paths(app)?;
-    let startup_profile = StartupProfile::load(&runtime_paths.data_root)?;
-    let app_handle = app.handle().clone();
-
-    // AppState 初始化进入后台任务；成功后 manage AppState 并 emit app-ready。
-    spawn_initialization(app_handle, runtime_paths, startup_profile);
-
-    Ok(())
-})
-```
-
-### 9.3 资源管理
-
-合理管理内存和文件句柄，避免资源泄漏。
-
-```rust
-// 示例: 资源管理
-pub async fn read_large_file(path: &Path) -> Result<String, DomainError> {
-    // 使用作用域确保文件自动关闭
-    let content = {
-        let file = File::open(path)
-            .map_err(|e| DomainError::Repository(e.to_string()))?;
-
-        let mut reader = BufReader::new(file);
-        let mut content = String::new();
-        reader.read_to_string(&mut content)
-            .map_err(|e| DomainError::Repository(e.to_string()))?;
-
-        content
-    }; // 文件在这里自动关闭
-
-    Ok(content)
-}
-```
-
-### 9.3 缓存策略
-
-适当使用缓存减少重复计算和IO操作。
-
-```rust
-// 示例: 简单缓存
-pub struct CachedRepository<T> {
-    inner: Arc<dyn Repository<T>>,
-    cache: Mutex<HashMap<String, (T, Instant)>>,
-    ttl: Duration,
-}
-
-impl<T: Clone> CachedRepository<T> {
-    pub fn new(inner: Arc<dyn Repository<T>>, ttl: Duration) -> Self {
-        Self {
-            inner,
-            cache: Mutex::new(HashMap::new()),
-            ttl,
-        }
-    }
-
-    pub async fn get(&self, id: &str) -> Result<Option<T>, DomainError> {
-        // 检查缓存
-        {
-            let cache = self.cache.lock().await;
-            if let Some((value, timestamp)) = cache.get(id) {
-                if timestamp.elapsed() < self.ttl {
-                    return Ok(Some(value.clone()));
-                }
-            }
-        }
-
-        // 缓存未命中，从底层仓库获取
-        let result = self.inner.get(id).await?;
-
-        // 更新缓存
-        if let Some(value) = &result {
-            let mut cache = self.cache.lock().await;
-            cache.insert(id.to_string(), (value.clone(), Instant::now()));
-        }
-
-        Ok(result)
-    }
-}
-```
+- 不要把 Clean Architecture 理解成“多建几层目录”。真正的边界是依赖方向和变化原因。
+- 不要把 repository trait 放回 `tt-domain`。
+- 不要让 `tt-application` 依赖 concrete adapter。
+- 不要让 adapter 依赖 `tauritavern`、`AppState` 或 presentation command。
+- 不要把 Tauri-free 文件仓储塞回 host infrastructure。
+- 不要把 `tt-adapter-storage-core` 变成新的 common 大桶。
+- 不要为了两个 ZIP 调用提前抽一个泛化 `common-archive` crate；等第三个真实 bounded context 出现再说。
+- 不要把 Tauri command 名当作扩展公共 API。
+- 不要用 IPC/base64 替代浏览器原生子资源语义。
+- 不要静默降级上游契约。字段无法保真、provider metadata 无法表达、目录状态不可恢复时，应显式失败。

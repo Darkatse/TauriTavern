@@ -11,22 +11,28 @@ TauriTavern 将 SillyTavern 移植为基于 Tauri v2 + Rust 后端的原生应�
 ## 特性亮点
 
 - 基于 Tauri v2 的原生桌面运行时，支持 Windows、macOS、Linux
-- Rust 后端采用整洁架构分层设计
+- Rust 后端以 Clean Architecture 为最高约束，并通过 `src-tauri` workspace crate 物理化边界
 - 前端兼容 SillyTavern 1.18.0
 - 支持多种 Chat Completion 提供商：OpenAI、Claude、Gemini（MakerSuite）以及自定义 OpenAI 兼容端点
 - 模块化请求注入管线（`src/tauri/main/*`），并收敛为可维护的 Host Kernel 分层（`context/kernel/services/adapters/routes`）
 - 平台 ABI：`window.__TAURITAVERN__`（小而稳定的宿主对外接口）+ 请求追踪 header：`x-tauritavern-trace-id`
-- 工程守护：严格类型检查（`tsc -p tsconfig.host.json`）+ guardrails（依赖边界/行数预算/路由禁止引用 `window`）
+- 工程守护：严格类型检查、前端 guardrails、Rust crate 边界检查与 focused Rust tests
 - 统一的前端引导管线，无需运行时加载器间接层
 
 ## 架构概览
 
 ### 后端（`src-tauri`）
 
-- `presentation`：Tauri 命令与 API 边界层
-- `application`：用例/服务与 DTO 编排层
-- `domain`：核心模型、契约、错误定义
-- `infrastructure`：文件持久化、仓储实现、日志
+Rust 后端是 Cargo workspace，不再是单体 host crate。Clean Architecture 的依赖方向是外层细节指向内层策略：
+
+- `tauritavern`：Tauri host、commands、composition root、platform glue
+- `tt-application`：use case、service、job coordinator、policy 编排
+- `tt-ports`：repository / gateway / runtime trait
+- `tt-contracts`：跨 crate DTO、事件、payload、host resource 契约
+- `tt-domain`：领域模型、值对象、领域错误、纯规则
+- `tt-adapter-*`：Tauri-free 的具体 IO、文件格式、provider HTTP、tokenization、storage、media、extension、sync、archive 实现
+
+具体边界以 `docs/BackendStructure.md` 为准。
 
 ### 前端（`src`）
 
@@ -74,8 +80,8 @@ src/
 
 前置要求：
 
-- Rust stable
-- Node.js 22.12+
+- Rust stable（需支持 edition 2024）
+- Node.js 20.19.x 或 22.12+
 - pnpm
 - Tauri CLI
 
@@ -130,9 +136,8 @@ cargo run --manifest-path fastools/Cargo.toml
 
 - `docs/FrontendGuide.md`：前端架构与扩展指南
 - `docs/FrontendHostContract.md`：宿主层对外契约（重构时优先保障不回归）
-- `docs/BackendStructure.md`：后端架构详解
-- `docs/TechStack.md`：技术栈与集成选型
-- `docs/ImplementationPlan.md`：路线图与里程碑
+- `docs/BackendStructure.md`：后端 Clean Architecture 与 crate 边界
+- `docs/TechStack.md`：技术栈、架构约束与工程守护
 - `docs/CurrentState/README.md`：已落地模块的当前实现状态说明
 
 ## 许可协议

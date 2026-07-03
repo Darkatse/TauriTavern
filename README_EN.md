@@ -9,22 +9,28 @@ TauriTavern ports SillyTavern into a native desktop app with Tauri v2 + Rust bac
 ## Highlights
 
 - Native desktop runtime on Windows, macOS, Linux (Tauri v2)
-- Rust backend with clean architecture layering
+- Rust backend governed by Clean Architecture, with boundaries enforced through the `src-tauri` workspace crates
 - Frontend compatibility with SillyTavern 1.18.0
 - Chat Completion providers: OpenAI, Claude, Gemini(MakerSuite), and Custom OpenAI-compatible endpoint
 - Modular request injection pipeline (`src/tauri/main/*`), organized as a maintainable Host Kernel layering (`context/kernel/services/adapters/routes`)
 - Stable platform ABI: `window.__TAURITAVERN__` + request tracing header: `x-tauritavern-trace-id`
-- Engineering guardrails: strict type checks (`tsc -p tsconfig.host.json`) + dependency/line-budget rules (routes must not reference `window`)
+- Engineering guardrails: strict type checks, frontend guardrails, Rust crate-boundary checks, and focused Rust tests
 - Unified frontend bootstrap pipeline without runtime loader indirection
 
 ## Architecture
 
 ### Backend (`src-tauri`)
 
-- `presentation`: Tauri commands and API boundary
-- `application`: use cases/services and DTO orchestration
-- `domain`: core models, contracts, errors
-- `infrastructure`: file persistence, repositories, logging
+The Rust backend is a Cargo workspace, not a monolithic host crate. Clean Architecture keeps dependencies flowing from outer details toward inner policy:
+
+- `tauritavern`: Tauri host, commands, composition root, platform glue
+- `tt-application`: use cases, services, job coordinators, policy orchestration
+- `tt-ports`: repository / gateway / runtime traits
+- `tt-contracts`: cross-crate DTOs, events, payloads, host resource contracts
+- `tt-domain`: domain models, value objects, domain errors, pure rules
+- `tt-adapter-*`: Tauri-free concrete IO, file formats, provider HTTP, tokenization, storage, media, extension, sync, and archive implementations
+
+See `docs/BackendStructure.md` for the authoritative boundaries.
 
 ### Frontend (`src`)
 
@@ -72,8 +78,8 @@ src/
 
 Prerequisites:
 
-- Rust stable
-- Node.js 22.12+
+- Rust stable with edition 2024 support
+- Node.js 20.19.x or 22.12+
 - pnpm
 - Tauri CLI
 
@@ -105,7 +111,7 @@ Portable build notes:
 
 ## FasTools (Debug Utility)
 
-`fastools` is an useful toolkit that facilitates debugging during development and desktop deployment.
+`fastools` is a useful toolkit that facilitates debugging during development and desktop deployment.
 
 Build:
 
@@ -128,9 +134,8 @@ cargo run --manifest-path fastools/Cargo.toml
 
 - `docs/FrontendGuide.md`: frontend architecture and extension guide
 - `docs/FrontendHostContract.md`: public host-kernel contract (keep stable during refactors)
-- `docs/BackendStructure.md`: backend architecture details
-- `docs/TechStack.md`: stack and integration choices
-- `docs/ImplementationPlan.md`: roadmap and milestones
+- `docs/BackendStructure.md`: backend Clean Architecture and crate boundaries
+- `docs/TechStack.md`: stack, architecture constraints, and guardrails
 
 ## License
 
