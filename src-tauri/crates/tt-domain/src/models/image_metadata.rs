@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct ImageMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
@@ -23,22 +24,6 @@ pub struct ImageMetadata {
     pub mtime: Option<f64>,
     #[serde(default, flatten)]
     pub extra: HashMap<String, serde_json::Value>,
-}
-
-impl Default for ImageMetadata {
-    fn default() -> Self {
-        Self {
-            hash: None,
-            aspect_ratio: None,
-            is_animated: None,
-            dominant_color: None,
-            folder_ids: Vec::new(),
-            added_timestamp: None,
-            thumbnail_resolution: None,
-            mtime: None,
-            extra: HashMap::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

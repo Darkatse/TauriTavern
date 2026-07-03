@@ -122,6 +122,6 @@ mod tests {
         let long_cjk = "中".repeat(200);
         let sanitized = sanitize_filename(&long_cjk);
         assert_eq!(sanitized, "中".repeat(85));
-        assert_eq!(sanitized.as_bytes().len(), 255);
+        assert_eq!(sanitized.len(), 255);
     }
 }

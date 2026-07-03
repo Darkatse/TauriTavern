@@ -10,17 +10,20 @@ pub const DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS: usize = 80_000;
     rename_all_fields = "camelCase",
     tag = "kind"
 )]
+#[derive(Default)]
 pub enum SkillScope {
+    #[default]
     Global,
-    Preset { api_id: String, name: String },
-    Profile { profile_id: String },
-    Character { character_id: String },
-}
-
-impl Default for SkillScope {
-    fn default() -> Self {
-        Self::Global
-    }
+    Preset {
+        api_id: String,
+        name: String,
+    },
+    Profile {
+        profile_id: String,
+    },
+    Character {
+        character_id: String,
+    },
 }
 
 impl SkillScope {
@@ -49,18 +52,21 @@ impl SkillScope {
     rename_all_fields = "camelCase",
     tag = "kind"
 )]
+#[derive(Default)]
 pub enum SkillScopeFilter {
     All,
+    #[default]
     Global,
-    Preset { api_id: String, name: String },
-    Profile { profile_id: String },
-    Character { character_id: String },
-}
-
-impl Default for SkillScopeFilter {
-    fn default() -> Self {
-        Self::Global
-    }
+    Preset {
+        api_id: String,
+        name: String,
+    },
+    Profile {
+        profile_id: String,
+    },
+    Character {
+        character_id: String,
+    },
 }
 
 impl SkillScopeFilter {

@@ -326,10 +326,10 @@ pub fn parse_message_timestamp(send_date: &str) -> i64 {
     ];
 
     for fmt in local_formats {
-        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(raw, fmt) {
-            if let Some(local_dt) = Local.from_local_datetime(&dt).single() {
-                return local_dt.timestamp_millis();
-            }
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(raw, fmt)
+            && let Some(local_dt) = Local.from_local_datetime(&dt).single()
+        {
+            return local_dt.timestamp_millis();
         }
     }
 

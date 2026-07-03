@@ -62,20 +62,15 @@ fn default_agent_retention_keep_full_recent_runs() -> u32 {
     DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum PromptCacheTtl {
     #[serde(rename = "off")]
+    #[default]
     Off,
     #[serde(rename = "5m")]
     FiveMinutes,
     #[serde(rename = "1h")]
     OneHour,
-}
-
-impl Default for PromptCacheTtl {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,21 +87,13 @@ impl Default for ClaudeModelSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelSettings {
     #[serde(default)]
     pub claude: ClaudeModelSettings,
 }
 
-impl Default for ModelSettings {
-    fn default() -> Self {
-        Self {
-            claude: ClaudeModelSettings::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DynamicThemeSettings {
     #[serde(default)]
     pub enabled: bool,
@@ -120,19 +107,6 @@ pub struct DynamicThemeSettings {
     pub day_wallpaper: String,
     #[serde(default)]
     pub night_wallpaper: String,
-}
-
-impl Default for DynamicThemeSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            day_theme: String::new(),
-            night_theme: String::new(),
-            wallpaper_enabled: false,
-            day_wallpaper: String::new(),
-            night_wallpaper: String::new(),
-        }
-    }
 }
 
 fn default_close_to_tray_on_close() -> bool {
@@ -206,18 +180,10 @@ impl DevLoggingSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentSettings {
     #[serde(default)]
     pub retention: AgentRunRetentionSettings,
-}
-
-impl Default for AgentSettings {
-    fn default() -> Self {
-        Self {
-            retention: AgentRunRetentionSettings::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

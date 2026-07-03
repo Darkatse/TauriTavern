@@ -45,11 +45,7 @@ pub fn parse_single_range_header(
             return Err(RangeHeaderError::Unsatisfiable);
         }
 
-        let start = if suffix_len >= total_size {
-            0
-        } else {
-            total_size - suffix_len
-        };
+        let start = total_size.saturating_sub(suffix_len);
 
         return Ok(ByteRange { start, end: last });
     }
