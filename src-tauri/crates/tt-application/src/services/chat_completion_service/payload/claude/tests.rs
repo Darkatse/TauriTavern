@@ -439,6 +439,58 @@ fn claude_converts_openai_image_url_blocks() {
 }
 
 #[test]
+fn claude_rejects_audio_video_content_parts() {
+    for part in [
+        json!({ "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } }),
+        json!({ "type": "video_url", "video_url": { "url": "data:video/mp4;base64,AAAA" } }),
+    ] {
+        for content in [json!([part.clone()]), part.clone()] {
+            let payload = json!({
+                "model": "claude-3-5-sonnet-latest",
+                "messages": [{
+                    "role": "user",
+                    "content": content
+                }]
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let error = build(payload).expect_err("unsupported media should fail");
+            assert!(
+                error
+                    .to_string()
+                    .contains("does not support audio or video content parts"),
+                "{part}"
+            );
+        }
+    }
+}
+
+#[test]
+fn claude_rejects_media_in_system_prompt() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "use_sysprompt": true,
+        "messages": [
+            {
+                "role": "system",
+                "content": [
+                    { "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } }
+                ]
+            },
+            { "role": "user", "content": "ok" }
+        ]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let error = build(payload).expect_err("system media should fail");
+    assert!(error.to_string().contains("cannot preserve audio input"));
+}
+
+#[test]
 fn claude_moves_images_out_of_assistant_messages() {
     let payload = json!({
         "model": "claude-3-5-sonnet-latest",

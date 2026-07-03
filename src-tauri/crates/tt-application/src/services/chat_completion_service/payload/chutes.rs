@@ -9,7 +9,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
     let repetition_penalty = payload.get("repetition_penalty").cloned();
     let reasoning_effort = payload.get("reasoning_effort").cloned();
 
-    let (endpoint_path, mut upstream_payload) = openai::build(payload);
+    let (endpoint_path, mut upstream_payload) = openai::build(payload)?;
 
     if let Value::Object(object) = &mut upstream_payload {
         insert_value_if_present(object, "min_p", min_p);

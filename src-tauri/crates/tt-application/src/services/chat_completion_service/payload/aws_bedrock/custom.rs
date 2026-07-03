@@ -62,7 +62,7 @@ pub(super) fn build(
         require_non_empty_path(&payload, "aws_bedrock_custom_stream_path")?;
     }
 
-    let messages_json = render_messages(payload.get("messages"));
+    let messages_json = render_messages(payload.get("messages"))?;
     let system_json = render_system(payload.get("messages"));
     let max_tokens_json = render_max_tokens(payload.get("max_tokens"));
     let temperature_json = render_temperature(payload.get("temperature"));
@@ -89,13 +89,13 @@ pub(super) fn build(
     Ok((endpoint, body))
 }
 
-fn render_messages(messages: Option<&Value>) -> String {
-    let (_, turns) = flatten_openai_messages(messages);
+fn render_messages(messages: Option<&Value>) -> Result<String, ApplicationError> {
+    let (_, turns) = flatten_openai_messages(messages)?;
     let payload: Vec<Value> = turns
         .into_iter()
         .map(|FlatMessage { role, text }| json!({ "role": role, "content": text }))
         .collect();
-    serde_json::to_string(&payload).expect("flattened messages are always JSON-serializable")
+    Ok(serde_json::to_string(&payload).expect("flattened messages are always JSON-serializable"))
 }
 
 fn require_non_empty_path(payload: &Map<String, Value>, key: &str) -> Result<(), ApplicationError> {

@@ -50,7 +50,7 @@ pub(super) fn build(
 ) -> Result<(String, Value), ApplicationError> {
     let endpoint_path = format!("/model/{model_id}/{BEDROCK_INVOKE_SUFFIX}");
 
-    let messages = passthrough_chat_messages(payload.get("messages"));
+    let messages = passthrough_chat_messages(payload.get("messages"))?;
 
     let mut body = Map::new();
     body.insert("messages".to_string(), Value::Array(messages));

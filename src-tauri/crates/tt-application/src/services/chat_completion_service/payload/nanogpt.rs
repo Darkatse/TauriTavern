@@ -9,7 +9,7 @@ const ONLINE_SUFFIX: &str = ":online";
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let source_payload = payload.clone();
-    let (endpoint, mut upstream_payload) = openai::build(payload);
+    let (endpoint, mut upstream_payload) = openai::build(payload)?;
 
     if endpoint != "/chat/completions" {
         return Err(ApplicationError::ValidationError(

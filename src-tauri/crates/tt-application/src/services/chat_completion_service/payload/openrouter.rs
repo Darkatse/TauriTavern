@@ -8,7 +8,7 @@ use super::shared::insert_if_present;
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let source_payload = payload.clone();
-    let (_, mut upstream_payload) = openai::build(payload);
+    let (_, mut upstream_payload) = openai::build(payload)?;
 
     if let Some(body) = upstream_payload.as_object_mut() {
         apply_openrouter_overrides(body, &source_payload)?;

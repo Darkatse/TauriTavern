@@ -3,6 +3,7 @@ use serde_json::json;
 
 use crate::errors::ApplicationError;
 
+use super::super::content_parts::reject_media_for_text_only_content;
 use super::super::shared::{message_content_to_text, parse_data_url};
 use super::super::tool_calls::{
     extract_openai_tool_calls, message_tool_call_id, message_tool_result_text,
@@ -53,6 +54,10 @@ pub(super) fn convert_messages(
                 break;
             }
 
+            reject_media_for_text_only_content(
+                "Claude Messages system prompt",
+                message.get("content"),
+            )?;
             let content_text = message_content_to_text(message.get("content"));
             if !content_text.is_empty() {
                 system_parts.push(json!({
@@ -212,50 +217,8 @@ fn convert_message_content_to_claude_blocks(
             let mut blocks = Vec::with_capacity(parts.len());
 
             for part in parts {
-                match part {
-                    Value::String(fragment) => {
-                        blocks.push(normalize_claude_text_block(&prefix_name(fragment, name)));
-                    }
-                    Value::Object(object) => match object.get("type").and_then(Value::as_str) {
-                        Some("text") => {
-                            let text = object
-                                .get("text")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default();
-                            blocks.push(normalize_claude_text_block(&prefix_name(text, name)));
-                        }
-                        Some("image_url") => {
-                            let data_url = object
-                                .get("image_url")
-                                .and_then(Value::as_object)
-                                .and_then(|image_url| image_url.get("url"))
-                                .and_then(Value::as_str)
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())
-                                .ok_or_else(|| {
-                                    ApplicationError::ValidationError(
-                                        "Claude image_url block is missing url".to_string(),
-                                    )
-                                })?;
-
-                            let Some((mime_type, data)) = parse_data_url(data_url) else {
-                                return Err(ApplicationError::ValidationError(
-                                    "Claude expects image_url as a data URL".to_string(),
-                                ));
-                            };
-
-                            blocks.push(json!({
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": mime_type,
-                                    "data": data,
-                                },
-                            }));
-                        }
-                        _ => blocks.push(part.clone()),
-                    },
-                    _ => {}
+                if let Some(block) = convert_content_part_to_claude_block(part, name)? {
+                    blocks.push(block);
                 }
             }
 
@@ -265,10 +228,79 @@ fn convert_message_content_to_claude_blocks(
 
             blocks
         }
+        Some(part @ Value::Object(object)) => {
+            if object.get("type").and_then(Value::as_str).is_none() {
+                vec![normalize_claude_text_block(&part.to_string())]
+            } else {
+                let mut blocks = Vec::new();
+                if let Some(block) = convert_content_part_to_claude_block(part, name)? {
+                    blocks.push(block);
+                }
+                if blocks.is_empty() {
+                    blocks.push(normalize_claude_text_block(""));
+                }
+                blocks
+            }
+        }
         Some(other) => vec![normalize_claude_text_block(&other.to_string())],
     };
 
     Ok(blocks)
+}
+
+fn convert_content_part_to_claude_block(
+    part: &Value,
+    name: Option<&str>,
+) -> Result<Option<Value>, ApplicationError> {
+    match part {
+        Value::String(fragment) => Ok(Some(normalize_claude_text_block(&prefix_name(
+            fragment, name,
+        )))),
+        Value::Object(object) => match object.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                let text = object
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                Ok(Some(normalize_claude_text_block(&prefix_name(text, name))))
+            }
+            Some("image_url") => {
+                let data_url = object
+                    .get("image_url")
+                    .and_then(Value::as_object)
+                    .and_then(|image_url| image_url.get("url"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        ApplicationError::ValidationError(
+                            "Claude image_url block is missing url".to_string(),
+                        )
+                    })?;
+
+                let Some((mime_type, data)) = parse_data_url(data_url) else {
+                    return Err(ApplicationError::ValidationError(
+                        "Claude expects image_url as a data URL".to_string(),
+                    ));
+                };
+
+                Ok(Some(json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime_type,
+                        "data": data,
+                    },
+                })))
+            }
+            Some("audio_url") | Some("video_url") => Err(ApplicationError::ValidationError(
+                "Claude Messages translator does not support audio or video content parts"
+                    .to_string(),
+            )),
+            _ => Ok(Some(part.clone())),
+        },
+        _ => Ok(None),
+    }
 }
 
 fn is_claude_image_block(value: &Value) -> bool {

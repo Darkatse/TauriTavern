@@ -25,7 +25,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
         .transpose()?
         .flatten();
 
-    let (endpoint, mut upstream_payload) = openai::build(payload);
+    let (endpoint, mut upstream_payload) = openai::build(payload)?;
 
     if endpoint == "/chat/completions" {
         if let Some(body) = upstream_payload.as_object_mut() {

@@ -55,7 +55,7 @@ pub(super) fn build(
 ) -> Result<(String, Value), ApplicationError> {
     let endpoint_path = format!("/model/{model_id}/{BEDROCK_INVOKE_SUFFIX}");
 
-    let (system_text, mut conversation) = flatten_openai_messages(payload.get("messages"));
+    let (system_text, mut conversation) = flatten_openai_messages(payload.get("messages"))?;
 
     // Cohere's chat API requires the latest user turn in `message`. If the
     // conversation ends with an assistant turn (rare — usually a re-roll path)

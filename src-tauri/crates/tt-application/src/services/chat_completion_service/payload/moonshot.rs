@@ -1,14 +1,16 @@
 use serde_json::{Map, Value};
 
+use crate::errors::ApplicationError;
+
 use super::openai;
 
-pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
+pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let include_reasoning = payload
         .get("include_reasoning")
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    let (endpoint, mut upstream_payload) = openai::build(payload);
+    let (endpoint, mut upstream_payload) = openai::build(payload)?;
 
     if endpoint == "/chat/completions" {
         if let Some(body) = upstream_payload.as_object_mut() {
@@ -21,7 +23,7 @@ pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
         }
     }
 
-    (endpoint, upstream_payload)
+    Ok((endpoint, upstream_payload))
 }
 
 #[cfg(test)]
@@ -42,7 +44,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (endpoint, upstream) = build(payload);
+        let (endpoint, upstream) = build(payload).expect("build should succeed");
 
         assert_eq!(endpoint, "/chat/completions");
 

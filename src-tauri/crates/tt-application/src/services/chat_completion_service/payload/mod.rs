@@ -8,6 +8,7 @@ mod chutes;
 mod claude;
 mod claude_messages;
 mod cohere;
+mod content_parts;
 mod custom;
 mod deepseek;
 mod gemini_interactions;
@@ -39,10 +40,10 @@ pub(super) fn build_payload(
     let result = match source {
         ChatCompletionSource::OpenAi
         | ChatCompletionSource::Groq
-        | ChatCompletionSource::SiliconFlow => Ok(openai::build(payload)),
+        | ChatCompletionSource::SiliconFlow => openai::build(payload),
         ChatCompletionSource::DeepSeek => deepseek::build(payload),
         ChatCompletionSource::Cohere => Ok(cohere::build(payload)?),
-        ChatCompletionSource::Moonshot => Ok(moonshot::build(payload)),
+        ChatCompletionSource::Moonshot => moonshot::build(payload),
         ChatCompletionSource::NanoGpt => nanogpt::build(payload),
         ChatCompletionSource::Chutes => chutes::build(payload),
         ChatCompletionSource::WorkersAi => workers_ai::build(payload),

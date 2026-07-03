@@ -17,6 +17,9 @@
 
 use serde_json::{Value, json};
 
+use crate::errors::ApplicationError;
+
+use super::super::content_parts::reject_media_for_text_only_provider;
 use super::super::shared::message_content_to_text;
 
 /// Bedrock invoke path suffix — the body posts to
@@ -44,12 +47,14 @@ pub(super) struct FlatMessage {
 /// initial multi-provider release we focus on plain chat.
 pub(super) fn flatten_openai_messages(
     messages: Option<&Value>,
-) -> (Option<String>, Vec<FlatMessage>) {
+) -> Result<(Option<String>, Vec<FlatMessage>), ApplicationError> {
+    reject_media_for_text_only_provider("AWS Bedrock text-only invoke", messages)?;
+
     let mut system_parts: Vec<String> = Vec::new();
     let mut turns: Vec<FlatMessage> = Vec::new();
 
     let Some(messages) = messages else {
-        return (None, turns);
+        return Ok((None, turns));
     };
 
     if let Some(prompt) = messages.as_str() {
@@ -57,11 +62,11 @@ pub(super) fn flatten_openai_messages(
             role: "user".to_string(),
             text: prompt.to_string(),
         });
-        return (None, turns);
+        return Ok((None, turns));
     }
 
     let Some(entries) = messages.as_array() else {
-        return (None, turns);
+        return Ok((None, turns));
     };
 
     for entry in entries {
@@ -103,7 +108,7 @@ pub(super) fn flatten_openai_messages(
         Some(system_parts.join("\n\n"))
     };
 
-    (system_text, turns)
+    Ok((system_text, turns))
 }
 
 /// Pass an OpenAI-shape messages array through to a chat-completion endpoint
@@ -114,17 +119,23 @@ pub(super) fn flatten_openai_messages(
 /// Roles are folded to the OpenAI core set (`system`/`user`/`assistant`);
 /// `tool`/`function` are demoted to `user` so providers that don't grok the
 /// `tool` role (Mistral, AI21 Jamba on Bedrock, ...) don't reject the call.
-pub(super) fn passthrough_chat_messages(messages: Option<&Value>) -> Vec<Value> {
+pub(super) fn passthrough_chat_messages(
+    messages: Option<&Value>,
+) -> Result<Vec<Value>, ApplicationError> {
+    reject_media_for_text_only_provider("AWS Bedrock text-only invoke", messages)?;
+
     let mut out = Vec::new();
-    let Some(messages) = messages else { return out };
+    let Some(messages) = messages else {
+        return Ok(out);
+    };
 
     if let Some(prompt) = messages.as_str() {
         out.push(json!({ "role": "user", "content": prompt }));
-        return out;
+        return Ok(out);
     }
 
     let Some(entries) = messages.as_array() else {
-        return out;
+        return Ok(out);
     };
 
     for entry in entries {
@@ -150,7 +161,7 @@ pub(super) fn passthrough_chat_messages(messages: Option<&Value>) -> Vec<Value> 
         out.push(json!({ "role": role, "content": text }));
     }
 
-    out
+    Ok(out)
 }
 
 /// Coerce an optional JSON value to a strictly positive `i64`, dropping
@@ -175,7 +186,8 @@ mod tests {
             { "role": "tool", "content": "tool result" }
         ]);
 
-        let (system, turns) = flatten_openai_messages(Some(&messages));
+        let (system, turns) =
+            flatten_openai_messages(Some(&messages)).expect("messages should flatten");
         assert_eq!(system.as_deref(), Some("rules apply\n\nextra system"));
         assert_eq!(
             turns,
@@ -203,11 +215,25 @@ mod tests {
             { "role": "tool", "content": "tool output" },
             { "role": "assistant", "content": "ack" }
         ]);
-        let projected = passthrough_chat_messages(Some(&messages));
+        let projected = passthrough_chat_messages(Some(&messages)).expect("messages should pass");
         assert_eq!(projected.len(), 3);
         assert_eq!(projected[0]["role"], "system");
         assert_eq!(projected[1]["role"], "user");
         assert_eq!(projected[1]["content"], "tool output");
         assert_eq!(projected[2]["role"], "assistant");
+    }
+
+    #[test]
+    fn text_only_bedrock_helpers_reject_media_parts() {
+        let messages = json!([{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "describe" },
+                { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+            ]
+        }]);
+
+        let error = flatten_openai_messages(Some(&messages)).expect_err("media should fail fast");
+        assert!(error.to_string().contains("cannot preserve image input"));
     }
 }

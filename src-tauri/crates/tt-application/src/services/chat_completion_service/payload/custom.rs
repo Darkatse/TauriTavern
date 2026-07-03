@@ -23,7 +23,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
         CustomApiFormat::ClaudeMessages => return claude_messages::build(payload),
     }
 
-    Ok(openai::build(payload))
+    openai::build(payload)
 }
 
 #[cfg(test)]

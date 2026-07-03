@@ -38,18 +38,18 @@ pub(super) fn build(
     let endpoint_path = format!("/model/{model_id}/{BEDROCK_INVOKE_SUFFIX}");
 
     if is_legacy_text_completion(model_id) {
-        return Ok((endpoint_path, build_text_completion_body(payload)));
+        return Ok((endpoint_path, build_text_completion_body(payload)?));
     }
 
-    Ok((endpoint_path, build_chat_completion_body(payload)))
+    Ok((endpoint_path, build_chat_completion_body(payload)?))
 }
 
 pub(super) fn is_legacy_text_completion(model_id: &str) -> bool {
     is_mistral_text_completion_model(model_id)
 }
 
-fn build_text_completion_body(payload: Map<String, Value>) -> Value {
-    let (system_text, conversation) = flatten_openai_messages(payload.get("messages"));
+fn build_text_completion_body(payload: Map<String, Value>) -> Result<Value, ApplicationError> {
+    let (system_text, conversation) = flatten_openai_messages(payload.get("messages"))?;
     let prompt = format_instruct_prompt(system_text.as_deref(), &conversation);
 
     let mut body = Map::new();
@@ -75,11 +75,11 @@ fn build_text_completion_body(payload: Map<String, Value>) -> Value {
         body.insert("top_k".to_string(), Value::Number(Number::from(top_k)));
     }
 
-    Value::Object(body)
+    Ok(Value::Object(body))
 }
 
-fn build_chat_completion_body(payload: Map<String, Value>) -> Value {
-    let messages = passthrough_chat_messages(payload.get("messages"));
+fn build_chat_completion_body(payload: Map<String, Value>) -> Result<Value, ApplicationError> {
+    let messages = passthrough_chat_messages(payload.get("messages"))?;
 
     let mut body = Map::new();
     body.insert("messages".to_string(), Value::Array(messages));
@@ -115,7 +115,7 @@ fn build_chat_completion_body(payload: Map<String, Value>) -> Value {
         body.insert("tool_choice".to_string(), tool_choice);
     }
 
-    Value::Object(body)
+    Ok(Value::Object(body))
 }
 
 /// Render a flat (system, [turns]) conversation as the `<s>[INST] ... [/INST]`

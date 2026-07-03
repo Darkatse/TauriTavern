@@ -41,7 +41,7 @@ pub(super) fn build(
     payload: Map<String, Value>,
     model_id: &str,
 ) -> Result<(String, Value), ApplicationError> {
-    let (system_text, conversation) = flatten_openai_messages(payload.get("messages"));
+    let (system_text, conversation) = flatten_openai_messages(payload.get("messages"))?;
     let prompt = format_llama3_chat_prompt(system_text.as_deref(), &conversation);
 
     let mut body = Map::new();

@@ -1,5 +1,8 @@
 use serde_json::{Map, Value};
 
+use crate::errors::ApplicationError;
+
+use super::content_parts::reject_media_for_text_only_provider;
 use super::openai_reasoning::{
     normalize_openai_reasoning_effort, should_forward_openai_reasoning_effort,
 };
@@ -33,7 +36,7 @@ const TEXT_COMPLETION_MODELS: &[&str] = &[
     "code-search-ada-code-001",
 ];
 
-pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
+pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let mut payload = payload;
     let source = payload
         .get("chat_completion_source")
@@ -69,21 +72,26 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
     }
 }
 
-fn build_clean(payload: Map<String, Value>, source: &str) -> (String, Value) {
+fn build_clean(
+    payload: Map<String, Value>,
+    source: &str,
+) -> Result<(String, Value), ApplicationError> {
     if is_text_completion(&payload) {
-        (
+        Ok((
             "/completions".to_string(),
-            Value::Object(build_text_completion_payload(&payload)),
-        )
+            Value::Object(build_text_completion_payload(&payload)?),
+        ))
     } else {
-        (
+        Ok((
             "/chat/completions".to_string(),
             Value::Object(build_chat_completion_payload(&payload, source)),
-        )
+        ))
     }
 }
 
-fn build_text_completion_payload(payload: &Map<String, Value>) -> Map<String, Value> {
+fn build_text_completion_payload(
+    payload: &Map<String, Value>,
+) -> Result<Map<String, Value>, ApplicationError> {
     let mut request = Map::new();
 
     for key in [
@@ -109,16 +117,16 @@ fn build_text_completion_payload(payload: &Map<String, Value>) -> Map<String, Va
         .filter(|value| !value.is_null())
     {
         request.insert("prompt".to_string(), prompt);
-        return request;
+        return Ok(request);
     }
 
     if let Some(messages) = payload.get("messages") {
-        if let Some(prompt) = convert_text_completion_prompt(messages) {
+        if let Some(prompt) = convert_text_completion_prompt(messages)? {
             request.insert("prompt".to_string(), Value::String(prompt));
         }
     }
 
-    request
+    Ok(request)
 }
 
 fn build_chat_completion_payload(payload: &Map<String, Value>, source: &str) -> Map<String, Value> {
@@ -275,14 +283,18 @@ fn build_response_format_from_json_schema(payload: &Map<String, Value>) -> Optio
     Some(Value::Object(response_format))
 }
 
-fn convert_text_completion_prompt(messages: &Value) -> Option<String> {
+fn convert_text_completion_prompt(messages: &Value) -> Result<Option<String>, ApplicationError> {
+    reject_media_for_text_only_provider("OpenAI-compatible text completions", Some(messages))?;
+
     if let Some(prompt) = messages.as_str() {
-        return Some(prompt.to_string());
+        return Ok(Some(prompt.to_string()));
     }
 
-    let entries = messages.as_array()?;
+    let Some(entries) = messages.as_array() else {
+        return Ok(None);
+    };
     if entries.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     let mut lines = Vec::with_capacity(entries.len());
@@ -314,9 +326,9 @@ fn convert_text_completion_prompt(messages: &Value) -> Option<String> {
     }
 
     if lines.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(format!("{}\nassistant:", lines.join("\n")))
+        Ok(Some(format!("{}\nassistant:", lines.join("\n"))))
     }
 }
 
@@ -370,7 +382,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (endpoint, upstream) = build(payload);
+        let (endpoint, upstream) = build(payload).expect("build should succeed");
         assert_eq!(endpoint, "/chat/completions");
 
         let body = upstream.as_object().expect("payload must be object");
@@ -390,7 +402,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_endpoint, upstream) = build(payload);
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
         let body = upstream.as_object().expect("payload must be object");
         assert_eq!(
             body.get("reasoning_effort")
@@ -411,7 +423,7 @@ mod tests {
         .as_object()
         .cloned()
         .expect("payload must be object");
-        let (_endpoint, upstream) = build(supported);
+        let (_endpoint, upstream) = build(supported).expect("build should succeed");
         let body = upstream.as_object().expect("payload must be object");
         assert_eq!(
             body.get("reasoning_effort").and_then(Value::as_str),
@@ -427,7 +439,7 @@ mod tests {
         .as_object()
         .cloned()
         .expect("payload must be object");
-        let (_endpoint, upstream) = build(unsupported);
+        let (_endpoint, upstream) = build(unsupported).expect("build should succeed");
         let body = upstream.as_object().expect("payload must be object");
         assert_eq!(
             body.get("reasoning_effort").and_then(Value::as_str),
@@ -447,7 +459,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_endpoint, upstream) = build(payload);
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
         let body = upstream.as_object().expect("payload must be object");
         assert_eq!(
             body.get("reasoning_effort").and_then(Value::as_str),
@@ -467,7 +479,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_endpoint, upstream) = build(payload);
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
         let body = upstream.as_object().expect("payload must be object");
         assert!(body.get("reasoning_effort").is_none());
     }
@@ -484,7 +496,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_endpoint, upstream) = build(payload);
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
         let body = upstream.as_object().expect("payload must be object");
         assert_eq!(
             body.get("verbosity")
@@ -507,9 +519,30 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_endpoint, upstream) = build(payload);
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
         let body = upstream.as_object().expect("payload must be object");
         assert!(body.get("reasoning_effort").is_none());
         assert!(body.get("verbosity").is_none());
+    }
+
+    #[test]
+    fn text_completion_rejects_media_parts() {
+        let payload = json!({
+            "chat_completion_source": "openai",
+            "model": "gpt-3.5-turbo-instruct",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "describe" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("text completions should reject media");
+        assert!(error.to_string().contains("cannot preserve image input"));
     }
 }

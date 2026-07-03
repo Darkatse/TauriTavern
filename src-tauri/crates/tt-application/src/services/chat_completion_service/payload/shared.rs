@@ -1,5 +1,7 @@
 use serde_json::{Map, Value};
 
+use super::content_parts::openai_chat_content_to_lossy_text;
+
 pub(super) fn insert_if_present(dst: &mut Map<String, Value>, src: &Map<String, Value>, key: &str) {
     if let Some(value) = src.get(key).filter(|value| !value.is_null()) {
         dst.insert(key.to_string(), value.clone());
@@ -7,33 +9,7 @@ pub(super) fn insert_if_present(dst: &mut Map<String, Value>, src: &Map<String, 
 }
 
 pub(super) fn message_content_to_text(content: Option<&Value>) -> String {
-    let Some(content) = content else {
-        return String::new();
-    };
-
-    match content {
-        Value::String(text) => text.clone(),
-        Value::Array(parts) => {
-            let mut text = String::new();
-            for part in parts {
-                match part {
-                    Value::String(fragment) => text.push_str(fragment),
-                    Value::Object(object) => {
-                        if let Some(fragment) = object.get("text").and_then(Value::as_str) {
-                            text.push_str(fragment);
-                        } else if let Some(fragment) = object.get("content").and_then(Value::as_str)
-                        {
-                            text.push_str(fragment);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            text
-        }
-        Value::Null => String::new(),
-        other => other.to_string(),
-    }
+    openai_chat_content_to_lossy_text(content)
 }
 
 pub(super) fn parse_data_url(value: &str) -> Option<(String, String)> {

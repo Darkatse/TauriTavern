@@ -40,7 +40,7 @@ pub(super) fn build(
     payload: Map<String, Value>,
     model_id: &str,
 ) -> Result<(String, Value), ApplicationError> {
-    let (system_text, conversation) = flatten_openai_messages(payload.get("messages"));
+    let (system_text, conversation) = flatten_openai_messages(payload.get("messages"))?;
 
     let nova_messages: Vec<Value> = conversation
         .into_iter()
