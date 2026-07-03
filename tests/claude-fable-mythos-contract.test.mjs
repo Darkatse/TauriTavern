@@ -18,5 +18,9 @@ test('AWS Bedrock static fallback exposes Fable without advertising Mythos runti
     assert.match(indexHtml, /<option value="global\.anthropic\.claude-fable-5">/);
     assert.match(indexHtml, /<option value="anthropic\.claude-fable-5">/);
     assert.doesNotMatch(indexHtml, /\banthropic\.claude-mythos-5\b/);
-    assert.match(openaiSource, /claude-\(\?:fable-5\|opus-4-\(\?:7\|8\)\)/);
+
+    const bedrockXHighGate = openaiSource.match(/chat_completion_sources\.AWS_BEDROCK\) \{\s*return \/(.*?)\/\.test\(model\);/s);
+    assert.ok(bedrockXHighGate, 'AWS Bedrock xhigh gate should exist');
+    assert.match(bedrockXHighGate[1], /fable-5/);
+    assert.doesNotMatch(bedrockXHighGate[1], /mythos-5/);
 });
