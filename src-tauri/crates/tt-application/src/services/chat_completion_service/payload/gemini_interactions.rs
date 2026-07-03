@@ -4,7 +4,11 @@ use serde_json::{Map, Number, Value, json};
 
 use crate::errors::ApplicationError;
 
-use super::shared::{message_content_to_text, parse_data_url};
+use super::content_parts::{
+    InputPart, MediaPart, MediaSource, parse_openai_chat_content,
+    reject_media_for_text_only_content,
+};
+use super::shared::message_content_to_text;
 use super::tool_calls::{
     OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
     message_tool_name, message_tool_result_text, normalize_tool_result_payload,
@@ -189,6 +193,10 @@ fn build_input_and_system_instruction(
             .to_ascii_lowercase();
 
         if role == "system" {
+            reject_media_for_text_only_content(
+                "Gemini Interactions system instruction",
+                message.get("content"),
+            )?;
             let text = message_content_to_text(message.get("content"));
             if !text.trim().is_empty() {
                 system_parts.push(text);
@@ -271,7 +279,7 @@ fn build_input_and_system_instruction(
             continue;
         }
 
-        let content_blocks = convert_openai_content_to_interactions_blocks(message.get("content"));
+        let content_blocks = convert_openai_content_to_interactions_blocks(message.get("content"))?;
         let content = blocks_to_interactions_content_value(content_blocks);
         turns.push(json!({
             "role": "user",
@@ -359,108 +367,69 @@ fn build_function_call_output(tool_call: &OpenAiToolCall) -> Value {
     output
 }
 
-fn convert_openai_content_to_interactions_blocks(content: Option<&Value>) -> Vec<Value> {
-    let Some(content) = content else {
-        return Vec::new();
-    };
+fn convert_openai_content_to_interactions_blocks(
+    content: Option<&Value>,
+) -> Result<Vec<Value>, ApplicationError> {
+    let parts = parse_openai_chat_content(content)?;
+    let mut blocks = Vec::with_capacity(parts.len());
 
-    match content {
-        Value::String(text) => {
+    for part in &parts {
+        if let Some(block) = render_interactions_block(part)? {
+            blocks.push(block);
+        }
+    }
+
+    Ok(blocks)
+}
+
+fn render_interactions_block(part: &InputPart) -> Result<Option<Value>, ApplicationError> {
+    match part {
+        InputPart::Text(text) => {
             if text.trim().is_empty() {
-                Vec::new()
+                Ok(None)
             } else {
-                vec![json!({ "type": "text", "text": text })]
+                Ok(Some(json!({ "type": "text", "text": text })))
             }
         }
-        Value::Array(parts) => parts
-            .iter()
-            .filter_map(|part| match part {
-                Value::String(text) => Some(json!({ "type": "text", "text": text })),
-                Value::Object(object) => {
-                    if let Some(ty) = object.get("type").and_then(Value::as_str) {
-                        if ty == "text" {
-                            if let Some(text) = object.get("text").and_then(Value::as_str) {
-                                return Some(json!({ "type": "text", "text": text }));
-                            }
-                        }
-
-                        if ty == "image_url" {
-                            let url = object
-                                .get("image_url")
-                                .and_then(Value::as_object)
-                                .and_then(|entry| entry.get("url"))
-                                .and_then(Value::as_str)
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())?;
-
-                            if let Some((mime_type, data)) = parse_data_url(url) {
-                                return Some(json!({
-                                    "type": "image",
-                                    "mime_type": mime_type,
-                                    "data": data,
-                                }));
-                            }
-
-                            return Some(json!({ "type": "image", "uri": url }));
-                        }
-
-                        if ty == "audio_url" {
-                            let url = object
-                                .get("audio_url")
-                                .and_then(Value::as_object)
-                                .and_then(|entry| entry.get("url"))
-                                .and_then(Value::as_str)
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())?;
-
-                            if let Some((mime_type, data)) = parse_data_url(url) {
-                                return Some(json!({
-                                    "type": "audio",
-                                    "mime_type": mime_type,
-                                    "data": data,
-                                }));
-                            }
-
-                            return Some(json!({ "type": "audio", "uri": url }));
-                        }
-
-                        if ty == "video_url" {
-                            let url = object
-                                .get("video_url")
-                                .and_then(Value::as_object)
-                                .and_then(|entry| entry.get("url"))
-                                .and_then(Value::as_str)
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())?;
-
-                            if let Some((mime_type, data)) = parse_data_url(url) {
-                                return Some(json!({
-                                    "type": "video",
-                                    "mime_type": mime_type,
-                                    "data": data,
-                                }));
-                            }
-
-                            return Some(json!({ "type": "video", "uri": url }));
-                        }
-
-                        if matches!(ty, "image" | "audio" | "video" | "text") {
-                            return Some(Value::Object(object.clone()));
-                        }
-                    }
-
-                    if let Some(text) = object.get("text").and_then(Value::as_str) {
-                        return Some(json!({ "type": "text", "text": text }));
-                    }
-
-                    Some(Value::Object(object.clone()))
-                }
-                _ => None,
-            })
-            .collect(),
-        Value::Null => Vec::new(),
-        other => vec![json!({ "type": "text", "text": other.to_string() })],
+        InputPart::Image(media) => render_media_block("image", media).map(Some),
+        InputPart::Audio(media) => render_media_block("audio", media).map(Some),
+        InputPart::Video(media) => render_media_block("video", media).map(Some),
+        InputPart::Unknown { ty, value } => render_unknown_block(ty.as_deref(), value).map(Some),
     }
+}
+
+fn render_media_block(kind: &str, media: &MediaPart) -> Result<Value, ApplicationError> {
+    match &media.source {
+        MediaSource::DataUrl { mime_type, data } => Ok(json!({
+            "type": kind,
+            "mime_type": mime_type,
+            "data": data,
+        })),
+        MediaSource::Url(url) => Ok(json!({
+            "type": kind,
+            "uri": url,
+        })),
+        MediaSource::FileId(_) => Err(ApplicationError::ValidationError(
+            "Gemini Interactions translator does not support provider file_id media references"
+                .to_string(),
+        )),
+    }
+}
+
+fn render_unknown_block(ty: Option<&str>, value: &Value) -> Result<Value, ApplicationError> {
+    if let Some(ty @ ("input_audio" | "input_video" | "input_file" | "file")) = ty {
+        return Err(ApplicationError::ValidationError(format!(
+            "Gemini Interactions content part type is unsupported: {ty}"
+        )));
+    }
+
+    if value.is_object() {
+        return Ok(value.clone());
+    }
+
+    Err(ApplicationError::ValidationError(
+        "Gemini Interactions content part is unsupported".to_string(),
+    ))
 }
 
 fn blocks_to_interactions_content_value(blocks: Vec<Value>) -> Value {
@@ -479,9 +448,26 @@ fn blocks_to_interactions_content_value(blocks: Vec<Value>) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
     use serde_json::json;
 
     use super::build;
+
+    fn build_with_messages(messages: Value) -> Value {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "gemini_interactions",
+            "model": "gemini-3-flash-preview",
+            "messages": messages,
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (endpoint, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(endpoint, "/interactions");
+        upstream
+    }
 
     #[test]
     fn gemini_interactions_build_maps_tool_calls_and_results() {
@@ -564,5 +550,175 @@ mod tests {
             tool_turn[0].get("call_id").and_then(|v| v.as_str()),
             Some("call_1")
         );
+    }
+
+    #[test]
+    fn gemini_interactions_builds_multimodal_user_blocks() {
+        let upstream = build_with_messages(json!([{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "describe" },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,AAAA",
+                        "detail": "high"
+                    }
+                },
+                {
+                    "type": "audio_url",
+                    "audio_url": { "url": "data:audio/wav;base64,BBBB" }
+                },
+                {
+                    "type": "video_url",
+                    "video_url": {
+                        "url": "https://example.test/video.mp4",
+                        "detail": "low"
+                    }
+                }
+            ]
+        }]));
+
+        assert_eq!(
+            upstream.pointer("/input/0/content"),
+            Some(&json!([
+                { "type": "text", "text": "describe" },
+                { "type": "image", "mime_type": "image/png", "data": "AAAA" },
+                { "type": "audio", "mime_type": "audio/wav", "data": "BBBB" },
+                { "type": "video", "uri": "https://example.test/video.mp4" }
+            ]))
+        );
+    }
+
+    #[test]
+    fn gemini_interactions_preserves_native_input_blocks() {
+        let native_image = json!({
+            "type": "image",
+            "uri": "https://example.test/cat.png",
+            "mime_type": "image/png"
+        });
+        let custom_block = json!({
+            "type": "custom_block",
+            "payload": { "x": true }
+        });
+        let upstream = build_with_messages(json!([{
+            "role": "user",
+            "content": [native_image.clone(), custom_block.clone()]
+        }]));
+
+        assert_eq!(
+            upstream.pointer("/input/0/content"),
+            Some(&json!([native_image, custom_block]))
+        );
+    }
+
+    #[test]
+    fn gemini_interactions_rejects_malformed_media_parts() {
+        for (content, expected) in [
+            (
+                json!([{ "type": "image_url", "image_url": { "detail": "high" } }]),
+                "missing url",
+            ),
+            (
+                json!([{
+                    "type": "image_url",
+                    "image_url": { "url": "data:image/png;base64," }
+                }]),
+                "invalid data URL",
+            ),
+        ] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": "gemini_interactions",
+                "model": "gemini-3-flash-preview",
+                "messages": [{ "role": "user", "content": content }],
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let error = build(payload).expect_err("malformed media should fail");
+            assert!(error.to_string().contains(expected));
+        }
+    }
+
+    #[test]
+    fn gemini_interactions_rejects_foreign_file_references() {
+        for (content, expected) in [
+            (
+                json!([{ "type": "input_image", "file_id": "file_123" }]),
+                "file_id",
+            ),
+            (
+                json!([{ "type": "input_file", "file_id": "file_123" }]),
+                "input_file",
+            ),
+        ] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": "gemini_interactions",
+                "model": "gemini-3-flash-preview",
+                "messages": [{ "role": "user", "content": content }],
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let error = build(payload).expect_err("foreign file references should fail");
+            assert!(error.to_string().contains(expected));
+        }
+    }
+
+    #[test]
+    fn gemini_interactions_rejects_system_media() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "gemini_interactions",
+            "model": "gemini-3-flash-preview",
+            "messages": [{
+                "role": "system",
+                "content": [
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+                ]
+            }],
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("system media should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("system instruction cannot preserve image input")
+        );
+    }
+
+    #[test]
+    fn gemini_interactions_replays_native_outputs_before_synthetic_content() {
+        let native_outputs = json!([
+            { "type": "thought", "signature": "sig_native" },
+            { "type": "text", "text": "Native text" }
+        ]);
+        let upstream = build_with_messages(json!([{
+            "role": "assistant",
+            "content": "Synthetic text",
+            "signature": "sig_synthetic",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "arguments": "{}"
+                }
+            }],
+            "native": {
+                "gemini_interactions": {
+                    "outputs": native_outputs.clone()
+                }
+            }
+        }]));
+
+        assert_eq!(upstream.pointer("/input/0/content"), Some(&native_outputs));
     }
 }
