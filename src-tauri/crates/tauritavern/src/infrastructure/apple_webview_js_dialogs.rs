@@ -50,9 +50,7 @@ define_class!(
 
         #[unsafe(method(forwardingTargetForSelector:))]
         fn forwarding_target_for_selector(&self, selector: Sel) -> Option<&AnyObject> {
-            let Some(delegate) = self.ivars().original_delegate.as_ref() else {
-                return None;
-            };
+            let delegate = self.ivars().original_delegate.as_ref()?;
 
             let delegate: &AnyObject = delegate;
             let responds: bool = unsafe { msg_send![delegate, respondsToSelector: selector] };

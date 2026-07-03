@@ -584,7 +584,7 @@ mod tests {
         make_stale(&protected);
         make_stale(&stale);
 
-        cleanup_stale_exports(&root, &[protected.clone()]);
+        cleanup_stale_exports(&root, std::slice::from_ref(&protected));
 
         assert!(protected.is_file());
         assert!(!stale.exists());
