@@ -169,7 +169,9 @@ fn parse_object_content_part(object: &Map<String, Value>) -> Result<InputPart, A
             ty: Some(value.to_string()),
             value: Value::Object(object.clone()),
         }),
-        None => Ok(object_text_value(object)
+        None => Ok((!has_provider_native_part_key(object))
+            .then(|| object_text_value(object))
+            .flatten()
             .map(InputPart::Text)
             .unwrap_or_else(|| InputPart::Unknown {
                 ty: None,
@@ -257,6 +259,14 @@ fn media_kind_in_value(value: &Value) -> Option<&'static str> {
 }
 
 fn media_kind_in_object(object: &Map<String, Value>) -> Option<&'static str> {
+    if object.get("inlineData").is_some() || object.get("inline_data").is_some() {
+        return Some("media");
+    }
+
+    if object.get("fileData").is_some() || object.get("file_data").is_some() {
+        return Some("file");
+    }
+
     let ty = object.get("type").and_then(Value::as_str)?.trim();
     match ty {
         "image_url" | "input_image" | "image" => Some("image"),
@@ -265,6 +275,21 @@ fn media_kind_in_object(object: &Map<String, Value>) -> Option<&'static str> {
         "input_file" | "file" => Some("file"),
         _ => None,
     }
+}
+
+fn has_provider_native_part_key(object: &Map<String, Value>) -> bool {
+    [
+        "inlineData",
+        "inline_data",
+        "fileData",
+        "file_data",
+        "functionCall",
+        "function_call",
+        "functionResponse",
+        "function_response",
+    ]
+    .iter()
+    .any(|key| object.contains_key(*key))
 }
 
 fn non_empty_string(value: Option<&Value>) -> Option<String> {
@@ -478,6 +503,22 @@ mod tests {
     }
 
     #[test]
+    fn preserves_provider_native_parts_before_text_fallback() {
+        for value in [
+            json!({ "inlineData": "bad", "text": "fallback" }),
+            json!({ "file_data": "bad", "content": "fallback" }),
+            json!({ "function_call": "bad", "text": "fallback" }),
+            json!({ "functionResponse": "bad", "content": "fallback" }),
+        ] {
+            let parts = parse_openai_chat_content(Some(&json!([value.clone()])))
+                .expect("native marker should parse");
+
+            assert_eq!(parts, vec![InputPart::Unknown { ty: None, value }]);
+            assert_eq!(to_lossy_text(&parts), "fallback");
+        }
+    }
+
+    #[test]
     fn text_only_provider_rejects_media_parts() {
         let messages = json!([
             {
@@ -524,6 +565,18 @@ mod tests {
             (json!({ "type": "input_video", "input_video": {} }), "video"),
             (
                 json!({ "type": "input_file", "file_id": "file_123" }),
+                "file",
+            ),
+            (
+                json!({ "inlineData": { "mimeType": "image/png", "data": "AAAA" } }),
+                "media",
+            ),
+            (
+                json!({ "inline_data": { "mime_type": "image/png", "data": "AAAA" } }),
+                "media",
+            ),
+            (
+                json!({ "fileData": { "mimeType": "image/png", "fileUri": "gs://bucket/cat.png" } }),
                 "file",
             ),
         ] {

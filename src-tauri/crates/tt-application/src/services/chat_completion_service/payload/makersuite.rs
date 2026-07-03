@@ -8,7 +8,11 @@ use super::super::model_capabilities::{
     GeminiThinkingControl, RequestedReasoningEffort, is_gemini_thinking_config_model,
     map_gemini_thinking_control, parse_known_reasoning_effort,
 };
-use super::shared::{message_content_to_text, parse_data_url};
+use super::content_parts::{
+    InputPart, MediaPart, MediaSource, parse_openai_chat_content,
+    reject_media_for_text_only_content,
+};
+use super::shared::message_content_to_text;
 use super::tool_calls::{
     OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
     message_tool_name, message_tool_result_text, normalize_tool_result_payload,
@@ -107,7 +111,7 @@ fn build_google_payload(
         && !is_gemma;
 
     let (contents, system_prompt) =
-        convert_messages(payload.get("messages"), model, use_system_prompt);
+        convert_messages(payload.get("messages"), model, use_system_prompt)?;
 
     let mut generation_config = Map::new();
     generation_config.insert(
@@ -290,13 +294,13 @@ fn convert_messages(
     messages: Option<&Value>,
     model: &str,
     use_system_prompt: bool,
-) -> (Vec<Value>, String) {
+) -> Result<(Vec<Value>, String), ApplicationError> {
     let mut contents = Vec::new();
     let mut system_parts = Vec::new();
     let mut tool_name_by_id: HashMap<String, String> = HashMap::new();
 
     let Some(messages) = messages else {
-        return (contents, String::new());
+        return Ok((contents, String::new()));
     };
 
     if let Some(prompt) = messages.as_str() {
@@ -304,11 +308,11 @@ fn convert_messages(
             "role": "user",
             "parts": [{ "text": prompt }],
         }));
-        return (contents, String::new());
+        return Ok((contents, String::new()));
     }
 
     let Some(entries) = messages.as_array() else {
-        return (contents, String::new());
+        return Ok((contents, String::new()));
     };
 
     let model_lower = model.trim().to_ascii_lowercase();
@@ -336,6 +340,10 @@ fn convert_messages(
                 break;
             }
 
+            reject_media_for_text_only_content(
+                "Gemini system instruction",
+                message.get("content"),
+            )?;
             let content_text = message_content_to_text(message.get("content"));
             if !content_text.is_empty() {
                 system_parts.push(content_text);
@@ -357,30 +365,7 @@ fn convert_messages(
             .trim()
             .to_lowercase();
 
-        let native_gemini_parts = if role == "assistant" {
-            message_native_gemini_parts(message)
-        } else {
-            None
-        };
-        let mut parts = if let Some(native_parts) = native_gemini_parts.clone() {
-            native_parts
-        } else {
-            convert_message_content_to_parts(message.get("content"), is_gemini3)
-        };
-
-        if role == "assistant" {
-            let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
-            if !tool_calls.is_empty() {
-                for tool_call in &tool_calls {
-                    tool_name_by_id.insert(tool_call.id.clone(), tool_call.name.clone());
-                }
-                if native_gemini_parts.is_none() {
-                    parts.extend(convert_openai_tool_calls_to_parts(&tool_calls));
-                }
-            }
-        }
-
-        if role == "tool" {
+        let mut parts = if matches!(role.as_str(), "tool" | "function") {
             let tool_call_id = message_tool_call_id(message);
             let name = message_tool_name(message)
                 .or_else(|| {
@@ -391,8 +376,33 @@ fn convert_messages(
                 })
                 .unwrap_or_else(|| fallback_tool_name().to_string());
             let content = message_tool_result_text(message);
-            parts = vec![build_tool_response_part(&name, &content)];
-        }
+            vec![build_tool_response_part(&name, &content)]
+        } else {
+            let native_gemini_parts = if role == "assistant" {
+                message_native_gemini_parts(message)
+            } else {
+                None
+            };
+            let mut parts = if let Some(native_parts) = native_gemini_parts.clone() {
+                native_parts
+            } else {
+                convert_message_content_to_parts(message.get("content"), is_gemini3)?
+            };
+
+            if role == "assistant" {
+                let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
+                if !tool_calls.is_empty() {
+                    for tool_call in &tool_calls {
+                        tool_name_by_id.insert(tool_call.id.clone(), tool_call.name.clone());
+                    }
+                    if native_gemini_parts.is_none() {
+                        parts.extend(convert_openai_tool_calls_to_parts(&tool_calls));
+                    }
+                }
+            }
+
+            parts
+        };
 
         if parts.is_empty() {
             parts.push(json!({ "text": "" }));
@@ -452,170 +462,177 @@ fn convert_messages(
         }));
     }
 
-    (contents, system_parts.join("\n\n"))
+    Ok((contents, system_parts.join("\n\n")))
 }
 
-fn convert_message_content_to_parts(content: Option<&Value>, is_gemini3: bool) -> Vec<Value> {
-    let Some(content) = content else {
-        return Vec::new();
-    };
+fn convert_message_content_to_parts(
+    content: Option<&Value>,
+    is_gemini3: bool,
+) -> Result<Vec<Value>, ApplicationError> {
+    let parts = parse_openai_chat_content(content)?;
+    let mut rendered = Vec::with_capacity(parts.len());
 
-    match content {
-        Value::String(text) => {
-            if text.is_empty() {
-                Vec::new()
+    for part in &parts {
+        if let Some(part) = render_google_content_part(part, is_gemini3)? {
+            rendered.push(part);
+        }
+    }
+
+    Ok(rendered)
+}
+
+fn render_google_content_part(
+    part: &InputPart,
+    is_gemini3: bool,
+) -> Result<Option<Value>, ApplicationError> {
+    match part {
+        InputPart::Text(text) => {
+            if text.trim().is_empty() {
+                Ok(None)
             } else {
-                vec![json!({ "text": text })]
+                Ok(Some(json!({ "text": text })))
             }
         }
-        Value::Array(parts) => parts
-            .iter()
-            .filter_map(|part| match part {
-                Value::String(text) => Some(json!({ "text": text })),
-                Value::Object(object) => {
-                    if let Some(text) = object
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                    {
-                        return Some(json!({ "text": text }));
-                    }
+        InputPart::Image(media) => render_google_media_part("image", media, is_gemini3).map(Some),
+        InputPart::Audio(media) => render_google_media_part("audio", media, false).map(Some),
+        InputPart::Video(media) => render_google_media_part("video", media, is_gemini3).map(Some),
+        InputPart::Unknown { ty, value } => {
+            render_google_unknown_content_part(ty.as_deref(), value).map(Some)
+        }
+    }
+}
 
-                    if let Some(inline_data) =
-                        object.get("inlineData").filter(|value| value.is_object())
-                    {
-                        return Some(json!({ "inlineData": inline_data.clone() }));
-                    }
-
-                    if let Some(inline_data) =
-                        object.get("inline_data").filter(|value| value.is_object())
-                    {
-                        return Some(json!({ "inlineData": inline_data.clone() }));
-                    }
-
-                    if let Some(function_call) =
-                        object.get("functionCall").filter(|value| value.is_object())
-                    {
-                        return Some(json!({ "functionCall": function_call.clone() }));
-                    }
-
-                    if object
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .is_some_and(|value| value == "image_url")
-                    {
-                        let image_url = object.get("image_url").and_then(Value::as_object);
-                        let data_url = image_url
-                            .and_then(|entry| entry.get("url"))
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty());
-                        let detail = image_url
-                            .and_then(|entry| entry.get("detail"))
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty());
-
-                        if let Some(data_url) = data_url {
-                            if let Some((mime_type, data)) = parse_data_url(data_url) {
-                                let mut part = json!({
-                                    "inlineData": {
-                                        "mimeType": mime_type,
-                                        "data": data,
-                                    }
-                                });
-
-                                if is_gemini3 {
-                                    if let Some(level) = detail.and_then(gemini_media_resolution) {
-                                        if let Some(part_object) = part.as_object_mut() {
-                                            part_object.insert(
-                                                "mediaResolution".to_string(),
-                                                json!({ "level": level }),
-                                            );
-                                        }
-                                    }
-                                }
-
-                                return Some(part);
-                            }
-                        }
-                    }
-
-                    if object
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .is_some_and(|value| value == "video_url")
-                    {
-                        let video_url = object.get("video_url").and_then(Value::as_object);
-                        let data_url = video_url
-                            .and_then(|entry| entry.get("url"))
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty());
-                        let detail = video_url
-                            .and_then(|entry| entry.get("detail"))
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty());
-
-                        if let Some(data_url) = data_url {
-                            if let Some((mime_type, data)) = parse_data_url(data_url) {
-                                let mut part = json!({
-                                    "inlineData": {
-                                        "mimeType": mime_type,
-                                        "data": data,
-                                    }
-                                });
-
-                                if is_gemini3 {
-                                    if let Some(level) = detail.and_then(gemini_media_resolution) {
-                                        if let Some(part_object) = part.as_object_mut() {
-                                            part_object.insert(
-                                                "mediaResolution".to_string(),
-                                                json!({ "level": level }),
-                                            );
-                                        }
-                                    }
-                                }
-
-                                return Some(part);
-                            }
-                        }
-                    }
-
-                    if object
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .is_some_and(|value| value == "audio_url")
-                    {
-                        let data_url = object
-                            .get("audio_url")
-                            .and_then(Value::as_object)
-                            .and_then(|entry| entry.get("url"))
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty());
-
-                        if let Some(data_url) = data_url {
-                            if let Some((mime_type, data)) = parse_data_url(data_url) {
-                                return Some(json!({
-                                    "inlineData": {
-                                        "mimeType": mime_type,
-                                        "data": data,
-                                    }
-                                }));
-                            }
-                        }
-                    }
-
-                    None
+fn render_google_media_part(
+    kind: &str,
+    media: &MediaPart,
+    use_media_resolution: bool,
+) -> Result<Value, ApplicationError> {
+    match &media.source {
+        MediaSource::DataUrl { mime_type, data } => {
+            let mut part = json!({
+                "inlineData": {
+                    "mimeType": mime_type,
+                    "data": data,
                 }
-                _ => None,
-            })
-            .collect(),
-        Value::Null => Vec::new(),
-        other => vec![json!({ "text": other.to_string() })],
+            });
+
+            if use_media_resolution
+                && let Some(level) = media.detail.as_deref().and_then(gemini_media_resolution)
+                && let Some(part_object) = part.as_object_mut()
+            {
+                part_object.insert("mediaResolution".to_string(), json!({ "level": level }));
+            }
+
+            Ok(part)
+        }
+        MediaSource::Url(_) => Err(ApplicationError::ValidationError(format!(
+            "Gemini generateContent translator does not support remote {kind} URLs yet; send a data URL or use Gemini Interactions for URI media input."
+        ))),
+        MediaSource::FileId(_) => Err(ApplicationError::ValidationError(
+            "Gemini generateContent translator does not support provider file_id media references"
+                .to_string(),
+        )),
+    }
+}
+
+fn render_google_unknown_content_part(
+    ty: Option<&str>,
+    value: &Value,
+) -> Result<Value, ApplicationError> {
+    if let Some(object) = value.as_object() {
+        if ty.is_none()
+            && let Some(native_part) = render_google_native_content_part(object)?
+        {
+            return Ok(native_part);
+        }
+
+        if let Some(text) = object
+            .get("text")
+            .or_else(|| object.get("content"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(json!({ "text": text }));
+        }
+    }
+
+    Err(ApplicationError::ValidationError(match ty {
+        Some(ty) => format!("Gemini generateContent content part type is unsupported: {ty}"),
+        None => "Gemini generateContent content part is unsupported".to_string(),
+    }))
+}
+
+fn render_google_native_content_part(
+    object: &Map<String, Value>,
+) -> Result<Option<Value>, ApplicationError> {
+    let mut part = object.clone();
+
+    if normalize_google_part_object(
+        &mut part,
+        "inlineData",
+        "inline_data",
+        &[("mime_type", "mimeType")],
+    )? {
+        return Ok(Some(Value::Object(part)));
+    }
+
+    if normalize_google_part_object(
+        &mut part,
+        "fileData",
+        "file_data",
+        &[("mime_type", "mimeType"), ("file_uri", "fileUri")],
+    )? {
+        return Ok(Some(Value::Object(part)));
+    }
+
+    if normalize_google_part_object(&mut part, "functionCall", "function_call", &[])? {
+        return Ok(Some(Value::Object(part)));
+    }
+
+    if normalize_google_part_object(&mut part, "functionResponse", "function_response", &[])? {
+        return Ok(Some(Value::Object(part)));
+    }
+
+    Ok(None)
+}
+
+fn normalize_google_part_object(
+    part: &mut Map<String, Value>,
+    canonical: &str,
+    legacy: &str,
+    field_aliases: &[(&str, &str)],
+) -> Result<bool, ApplicationError> {
+    let key = if part.contains_key(canonical) {
+        canonical
+    } else if part.contains_key(legacy) {
+        legacy
+    } else {
+        return Ok(false);
+    };
+
+    let value = part
+        .remove(key)
+        .expect("Google native content part key must exist");
+    let Value::Object(mut object) = value else {
+        return Err(ApplicationError::ValidationError(format!(
+            "Gemini native content part {key} must be an object"
+        )));
+    };
+
+    for (legacy, canonical) in field_aliases {
+        normalize_google_part_field(&mut object, legacy, canonical);
+    }
+    part.remove(legacy);
+    part.insert(canonical.to_string(), Value::Object(object));
+    Ok(true)
+}
+
+fn normalize_google_part_field(object: &mut Map<String, Value>, legacy: &str, canonical: &str) {
+    if let Some(value) = object.remove(legacy)
+        && !object.contains_key(canonical)
+    {
+        object.insert(canonical.to_string(), value);
     }
 }
 
@@ -868,6 +885,18 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{build, build_vertexai};
+
+    fn build_with_messages(model: &str, messages: Value) -> Value {
+        let payload = json!({
+            "model": model,
+            "messages": messages
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        build(payload).expect("build should succeed").1
+    }
 
     #[test]
     fn makersuite_25_flash_sets_numeric_thinking_budget() {
@@ -1141,6 +1170,307 @@ mod tests {
     }
 
     #[test]
+    fn makersuite_builds_multimodal_inline_parts() {
+        let upstream = build_with_messages(
+            "gemini-3-pro",
+            json!([{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "describe" },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;base64,AAAA",
+                            "detail": "high"
+                        }
+                    },
+                    {
+                        "type": "video_url",
+                        "video_url": {
+                            "url": "data:video/mp4;base64,BBBB",
+                            "detail": "low"
+                        }
+                    },
+                    {
+                        "type": "audio_url",
+                        "audio_url": { "url": "data:audio/wav;base64,CCCC" }
+                    }
+                ]
+            }]),
+        );
+
+        assert_eq!(
+            upstream.pointer("/contents/0/parts"),
+            Some(&json!([
+                { "text": "describe" },
+                {
+                    "inlineData": {
+                        "mimeType": "image/png",
+                        "data": "AAAA"
+                    },
+                    "mediaResolution": { "level": "media_resolution_high" }
+                },
+                {
+                    "inlineData": {
+                        "mimeType": "video/mp4",
+                        "data": "BBBB"
+                    },
+                    "mediaResolution": { "level": "media_resolution_low" }
+                },
+                {
+                    "inlineData": {
+                        "mimeType": "audio/wav",
+                        "data": "CCCC"
+                    }
+                }
+            ]))
+        );
+    }
+
+    #[test]
+    fn makersuite_omits_auto_media_resolution() {
+        let upstream = build_with_messages(
+            "gemini-3-pro",
+            json!([{
+                "role": "user",
+                "content": [{
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,AAAA",
+                        "detail": "auto"
+                    }
+                }]
+            }]),
+        );
+
+        assert!(
+            upstream
+                .pointer("/contents/0/parts/0/mediaResolution")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn makersuite_preserves_native_google_parts() {
+        let function_call = json!({
+            "name": "lookup",
+            "args": { "query": "weather" }
+        });
+        let function_response = json!({
+            "name": "lookup",
+            "response": { "content": "sunny" }
+        });
+        let upstream = build_with_messages(
+            "gemini-2.5-flash",
+            json!([{
+                "role": "user",
+                "content": [
+                    {
+                        "inlineData": { "mimeType": "image/png", "data": "AAAA" },
+                        "mediaResolution": { "level": "media_resolution_low" }
+                    },
+                    {
+                        "inline_data": { "mime_type": "image/jpeg", "data": "BBBB" },
+                        "mediaResolution": { "level": "media_resolution_high" }
+                    },
+                    { "fileData": { "mimeType": "image/png", "fileUri": "gs://bucket/cat.png" } },
+                    { "file_data": { "mime_type": "image/jpeg", "file_uri": "https://example.test/cat.jpg" } },
+                    {
+                        "functionCall": function_call.clone(),
+                        "thoughtSignature": "sig_call"
+                    },
+                    { "function_call": function_call.clone() },
+                    { "functionResponse": function_response.clone() },
+                    { "function_response": function_response.clone() }
+                ]
+            }]),
+        );
+
+        assert_eq!(
+            upstream.pointer("/contents/0/parts"),
+            Some(&json!([
+                {
+                    "inlineData": { "mimeType": "image/png", "data": "AAAA" },
+                    "mediaResolution": { "level": "media_resolution_low" }
+                },
+                {
+                    "inlineData": { "mimeType": "image/jpeg", "data": "BBBB" },
+                    "mediaResolution": { "level": "media_resolution_high" }
+                },
+                { "fileData": { "mimeType": "image/png", "fileUri": "gs://bucket/cat.png" } },
+                { "fileData": { "mimeType": "image/jpeg", "fileUri": "https://example.test/cat.jpg" } },
+                {
+                    "functionCall": function_call.clone(),
+                    "thoughtSignature": "sig_call"
+                },
+                { "functionCall": function_call },
+                { "functionResponse": function_response.clone() },
+                { "functionResponse": function_response }
+            ]))
+        );
+    }
+
+    #[test]
+    fn makersuite_rejects_malformed_native_google_parts() {
+        for (part, expected) in [
+            (
+                json!({ "inlineData": "bad", "text": "fallback" }),
+                "inlineData",
+            ),
+            (
+                json!({ "inline_data": "bad", "text": "fallback" }),
+                "inline_data",
+            ),
+            (json!({ "fileData": "bad", "text": "fallback" }), "fileData"),
+            (
+                json!({ "functionCall": "bad", "text": "fallback" }),
+                "functionCall",
+            ),
+            (
+                json!({ "function_call": "bad", "text": "fallback" }),
+                "function_call",
+            ),
+            (
+                json!({ "functionResponse": "bad", "text": "fallback" }),
+                "functionResponse",
+            ),
+            (
+                json!({ "function_response": "bad", "text": "fallback" }),
+                "function_response",
+            ),
+        ] {
+            let payload = json!({
+                "model": "gemini-2.5-flash",
+                "messages": [{ "role": "user", "content": [part] }]
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let error = build(payload).expect_err("malformed native part should fail fast");
+            assert!(
+                error.to_string().contains(expected),
+                "expected {expected:?}, got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn makersuite_keeps_unknown_text_parts_as_text() {
+        let upstream = build_with_messages(
+            "gemini-2.5-flash",
+            json!([{
+                "role": "user",
+                "content": [
+                    { "type": "provider_text", "text": "hello" },
+                    { "type": "provider_content", "content": " world " }
+                ]
+            }]),
+        );
+
+        assert_eq!(
+            upstream.pointer("/contents/0/parts"),
+            Some(&json!([
+                { "text": "hello" },
+                { "text": "world" }
+            ]))
+        );
+    }
+
+    #[test]
+    fn makersuite_rejects_media_that_generate_content_cannot_preserve() {
+        for (content, expected) in [
+            (
+                json!([{ "type": "image_url", "image_url": { "detail": "high" } }]),
+                "missing url",
+            ),
+            (
+                json!([{
+                    "type": "audio_url",
+                    "audio_url": { "url": "data:audio/wav;base64," }
+                }]),
+                "invalid data URL",
+            ),
+            (
+                json!([{
+                    "type": "image_url",
+                    "image_url": { "url": "https://example.test/cat.png" }
+                }]),
+                "remote image URLs",
+            ),
+            (
+                json!([{ "type": "input_image", "file_id": "file_123" }]),
+                "file_id",
+            ),
+        ] {
+            let payload = json!({
+                "model": "gemini-2.5-flash",
+                "messages": [{ "role": "user", "content": content }]
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let error = build(payload).expect_err("unsupported media should fail fast");
+            assert!(
+                error.to_string().contains(expected),
+                "expected {expected:?}, got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn makersuite_rejects_system_media_when_hoisted() {
+        let payload = json!({
+            "model": "gemini-2.5-flash",
+            "use_sysprompt": true,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": [{
+                        "type": "image_url",
+                        "image_url": { "url": "data:image/png;base64,AAAA" }
+                    }]
+                },
+                { "role": "user", "content": "hello" }
+            ]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("system media should fail fast");
+        assert!(
+            error
+                .to_string()
+                .contains("Gemini system instruction cannot preserve image input")
+        );
+    }
+
+    #[test]
+    fn vertexai_uses_shared_multimodal_renderer() {
+        let payload = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "audio_url",
+                    "audio_url": { "url": "data:audio/wav;base64,AAAA" }
+                }]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build_vertexai(payload).expect("build should succeed");
+        assert_eq!(
+            upstream.pointer("/contents/0/parts/0/inlineData"),
+            Some(&json!({ "mimeType": "audio/wav", "data": "AAAA" }))
+        );
+    }
+
+    #[test]
     fn makersuite_tool_result_uses_previous_tool_call_name() {
         let payload = json!({
             "model": "gemini-2.5-flash",
@@ -1218,6 +1548,49 @@ mod tests {
                 .unwrap_or_default(),
             20
         );
+    }
+
+    #[test]
+    fn makersuite_tool_result_skips_user_content_part_renderer() {
+        for role in ["tool", "function"] {
+            let payload = json!({
+                "model": "gemini-2.5-flash",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "call_weather",
+                            "type": "function",
+                            "function": {
+                                "name": "weather",
+                                "arguments": "{\"city\":\"Paris\"}"
+                            }
+                        }]
+                    },
+                    {
+                        "role": role,
+                        "tool_call_id": "call_weather",
+                        "content": [
+                            { "type": "text", "text": "{\"temperature\":20}" },
+                            {
+                                "type": "image_url",
+                                "image_url": { "url": "https://example.test/tool-output.png" }
+                            }
+                        ]
+                    }
+                ]
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let (_, upstream) =
+                build(payload).expect("tool result should not render as user media");
+            assert_eq!(
+                upstream.pointer("/contents/1/parts/0/functionResponse/response/temperature"),
+                Some(&json!(20))
+            );
+        }
     }
 
     #[test]
