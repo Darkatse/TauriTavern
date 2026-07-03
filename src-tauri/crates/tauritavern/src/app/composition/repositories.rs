@@ -6,14 +6,9 @@ use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepositor
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
-use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
-use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
-use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
 use crate::infrastructure::repositories::file_content_repository::FileContentRepository;
 use crate::infrastructure::repositories::file_extension_repository::FileExtensionRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
-use crate::infrastructure::repositories::file_skill_repository::FileSkillRepository;
-use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
 use tt_adapter_http::HttpClientPool;
 use tt_adapter_media::{
     FileAvatarRepository, FileBackgroundRepository, FileImageMetadataRepository,
@@ -29,6 +24,11 @@ use tt_adapter_storage_core::{
     FileUserDirectoryRepository, FileUserRepository,
     chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
 };
+use tt_adapter_storage_userdata::FileAgentProfileRepository;
+use tt_adapter_storage_userdata::FileAgentRepository;
+use tt_adapter_storage_userdata::FileCharacterRepository;
+use tt_adapter_storage_userdata::FileSkillRepository;
+use tt_adapter_storage_userdata::FileWorldInfoRepository;
 use tt_adapter_tokenization::MiktikTokenizerRepository;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;

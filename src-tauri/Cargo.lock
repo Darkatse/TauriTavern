@@ -5430,11 +5430,9 @@ dependencies = [
  "block2",
  "bytes",
  "chrono",
- "crc32fast",
  "dunce",
  "ed25519-dalek",
  "filetime",
- "flate2",
  "futures-util",
  "image",
  "mime_guess",
@@ -5449,8 +5447,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "serde_yaml",
- "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-barcode-scanner",
@@ -5471,6 +5467,7 @@ dependencies = [
  "tt-adapter-media",
  "tt-adapter-provider-http",
  "tt-adapter-storage-core",
+ "tt-adapter-storage-userdata",
  "tt-adapter-sync",
  "tt-adapter-tokenization",
  "tt-application",
@@ -6050,6 +6047,33 @@ dependencies = [
  "tt-domain",
  "tt-ports",
  "uuid",
+]
+
+[[package]]
+name = "tt-adapter-storage-userdata"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "crc32fast",
+ "flate2",
+ "image",
+ "mime_guess",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tokio",
+ "tracing",
+ "tt-adapter-storage-core",
+ "tt-contracts",
+ "tt-domain",
+ "tt-ports",
+ "typed-path",
+ "uuid",
+ "zip",
 ]
 
 [[package]]

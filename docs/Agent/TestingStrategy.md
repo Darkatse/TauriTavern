@@ -7,7 +7,7 @@
 测试要守住：
 
 - Legacy Generate 兼容。
-- Clean Architecture 边界。
+- workspace crate 边界。
 - Workspace path 安全。
 - Journal 完整性。
 - Windowed payload 保存契约。
@@ -254,8 +254,9 @@ Golden fixtures 应尽量脱敏，不包含真实 API key 或私人聊天。
 
 - 后端 `cargo check --manifest-path src-tauri/Cargo.toml` 通过。
 - 后端 `cargo test --manifest-path src-tauri/Cargo.toml agent_runtime_service` 通过。
-- 后端 `cargo test --manifest-path src-tauri/Cargo.toml file_agent_repository` 通过。
-- 后端 `cargo test --manifest-path src-tauri/Cargo.toml file_agent_profile_repository` 通过。
+- 后端 `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_repository` 通过。
+- 后端 `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_profile_repository` 通过。
+- `node scripts/check-rust-crate-boundaries.mjs` 通过。
 - 涉及前端 ABI 时，前端 `pnpm run check:types`、`pnpm run check:contracts`、`pnpm run check:frontend` 通过。
 - 控制台 smoke 能通过 `startRunFromLegacyGenerate()` 启动 run。
 - 控制台 Agent smoke 能依次调用 `chat_search`、`chat_read_messages`、`worldinfo_read_activated`，写入 `output/main.md` 并进入 `awaiting_commit`。

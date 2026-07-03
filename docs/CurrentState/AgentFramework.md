@@ -483,8 +483,8 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - `cargo test --manifest-path src-tauri/Cargo.toml agent_runtime_service --lib`：53 passed
 - `cargo test --manifest-path src-tauri/Cargo.toml agent_delegate_await_runs_return_mode_subagent`
 - `cargo test --manifest-path src-tauri/Cargo.toml child_workspace_policy_scopes_manifest_roots_without_mapping --lib`：1 passed
-- `cargo test --manifest-path src-tauri/Cargo.toml file_agent_repository --lib`：10 passed
-- `cargo test --manifest-path src-tauri/Cargo.toml file_agent_profile_repository`：1 passed
+- `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_repository --lib`：23 passed
+- `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_profile_repository`：4 passed
 - `git diff --check`
 
 最近一次前端侧验证：

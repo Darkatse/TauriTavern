@@ -45,7 +45,7 @@ MCP / Tool Direct Call
 
 本架构以当前仓库代码和文档为准：
 
-- 后端已经采用 Clean Architecture，依赖方向是外层依赖内层、内层定义接口、外层实现接口。见 `docs/BackendStructure.md:7`、`docs/BackendStructure.md:40`。
+- 后端已经采用 workspace crate 边界：`tt-application` 依赖 `tt-ports/tt-contracts/tt-domain`，concrete IO 位于 `tt-adapter-*`，Tauri host 只负责 shell、composition、commands 与平台 glue。见 `docs/BackendStructure.md`。
 - 应用服务由 `AppState` 管理并在 `composition::build_services()` 装配。见 `src-tauri/crates/tauritavern/src/app.rs`、`src-tauri/crates/tauritavern/src/app/composition.rs`。
 - 当前 LLM 请求经过 `ChatCompletionService`，该服务负责 provider 解析、iOS policy、endpoint override policy、payload build、prompt caching 和取消注册。见 `src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:32`、`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:302`、`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:358`。
 - 当前 LLM API 日志依赖 composition root 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、secret 或 policy。Responses WebSocket 建连已复用 `HttpClientPool` 的 ChatCompletion WebSocket profile，不应扩散成第二套 LLM 调用链。见 `src-tauri/crates/tauritavern/src/app/composition/repositories.rs`。
@@ -219,18 +219,16 @@ src-tauri/
         mcp_client_service/
         skill_service/
 
-  src/
-    infrastructure/
-      repositories/
-        file_agent_run_repository/
-        file_workspace_repository/
-        file_checkpoint_repository/
-        file_skill_repository/
+    tt-adapter-storage-userdata/src/repositories/
+      file_agent_repository/
+      file_agent_profile_repository/
+      file_skill_repository/
+    tauritavern/src/infrastructure/
       apis/
-        mcp/
-      diff/
+      bundled_resources.rs
+      paths.rs
 
-    presentation/
+    tauritavern/src/presentation/
       commands/
         agent_commands.rs
         mcp_commands.rs

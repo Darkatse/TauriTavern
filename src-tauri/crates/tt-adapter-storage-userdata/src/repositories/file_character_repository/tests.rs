@@ -8,7 +8,7 @@ use rand::random;
 use serde_json::json;
 use tokio::fs;
 
-use crate::infrastructure::persistence::png_utils::{
+use crate::png_card_metadata::{
     read_character_data_from_png, read_text_chunks_from_png, write_character_data_to_png,
 };
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;

@@ -4,45 +4,32 @@
 
 ## 1. 架构概述
 
-TauriTavern的后端采用Clean Architecture架构，将代码组织为多个层次，每个层次有明确的职责和依赖方向。这种架构提供了良好的可测试性、可维护性和灵活性。
+TauriTavern 后端现在以 Rust workspace crate 边界作为主要架构边界。保留 Clean Architecture 的依赖方向，但不再把所有实现塞进 host crate 的 `infrastructure` 目录。
 
 ### 1.1 架构层次
 
 ```
-┌─────────────────────────────────────────┐
-│                                         │
-│  Presentation Layer (Tauri Commands)    │
-│                                         │
-└───────────────────┬─────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────┐
-│                                         │
-│  Application Layer (Services)           │
-│                                         │
-└───────────────────┬─────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────┐
-│                                         │
-│  Domain Layer (Models, Repositories)    │
-│                                         │
-└───────────────────┬─────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────┐
-│                                         │
-│  Infrastructure Layer (Implementations) │
-│                                         │
-└─────────────────────────────────────────┘
+tauritavern host
+  ├─ presentation / Tauri commands
+  ├─ app composition root
+  ├─ Tauri-bound infrastructure / platform glue
+  ├─ tt-application
+  └─ tt-adapter-*
+
+tt-application -> tt-ports + tt-contracts + tt-domain
+tt-adapter-*   -> tt-ports + tt-domain (+ tt-contracts when needed)
+tt-ports       -> tt-contracts + tt-domain
+tt-contracts   -> tt-domain
+tt-domain      -> pure external deps only
 ```
 
 ### 1.2 依赖规则
 
-- 外层可以依赖内层，但内层不能依赖外层
-- 内层定义接口，外层实现接口
-- 所有层次都可以使用领域模型和错误类型
-- `platform` 是宿主平台适配层，承载 iOS/UIKit、macOS/WebView 等 OS 级能力；`domain` 与 `application` 不得依赖它，`platform` 也不得依赖 `app`、`application`、`infrastructure` 或 `presentation`
+- `tauritavern` host 负责 Tauri builder、plugin、commands、composition root、AppHandle/WebView/resource bridge、runtime path 与平台 glue。
+- `tt-application` 只依赖 `tt-ports`、`tt-contracts`、`tt-domain`，不得依赖任何 adapter 或 Tauri。
+- repository trait 与出站端口定义在 `tt-ports`，不放在 `tt-domain`。
+- concrete IO 实现在 `tt-adapter-*` crate；Tauri-free 的文件仓储不要放回 host。
+- `platform` 承载 iOS/UIKit、macOS/WebView 等 OS 级能力；`domain` 与 `application` 不得依赖它，`platform` 也不得依赖 `app`、`application`、`infrastructure` 或 `presentation`。
 
 ## 2. 目录结构
 
@@ -72,8 +59,23 @@ src-tauri/
     ├── tt-ports/              # 仓库接口与出站端口
     ├── tt-contracts/          # 跨 crate DTO / 事件契约
     ├── tt-application/        # 应用服务与用例编排
-    └── tt-adapter-*/          # Tauri-free 具体适配器 crate
+    ├── tt-adapter-storage-core/# data root、基础本地仓储、chat/settings/user 等
+    ├── tt-adapter-storage-userdata/# character/world info/agent/profile/skill 文件仓储
+    ├── tt-adapter-media/      # avatar/background/user media/host resource 文件读取
+    └── tt-adapter-*/          # 其他 Tauri-free 具体适配器 crate
 ```
+
+代码落点规则：
+
+| 代码类型 | 放置位置 |
+| --- | --- |
+| 领域模型、领域错误、纯规则 | `crates/tt-domain` |
+| DTO、跨 crate 事件/契约 | `crates/tt-contracts` |
+| repository trait / outbound port | `crates/tt-ports` |
+| 用例编排、服务、事务语义 | `crates/tt-application` |
+| Tauri-free concrete IO | 对应 `crates/tt-adapter-*` |
+| Tauri command / frontend ABI | `crates/tauritavern/src/presentation` |
+| AppHandle、WebView、bundled resources、platform glue | `crates/tauritavern/src/infrastructure` 或 `platform` |
 
 ## 3. 核心组件
 
@@ -102,7 +104,7 @@ pub struct Character {
 
 #### 3.1.2 仓库接口 (Repository Interfaces)
 
-仓库接口定义了实体的持久化操作，但不指定具体实现。
+仓库接口定义实体持久化操作，但不指定具体实现。当前 repository trait 位于 `crates/tt-ports/src/repositories`，领域模型与错误类型来自 `tt-domain`。
 
 ```rust
 // 示例: 角色仓库接口
@@ -224,77 +226,35 @@ pub struct CharacterResponseDto {
 }
 ```
 
-### 3.3 基础设施层 (Infrastructure)
+### 3.3 适配器与 Host 基础设施
 
-基础设施层提供技术实现，如数据库访问、外部API集成等。
+具体 IO 实现优先放在 `tt-adapter-*` crate。`tauritavern/src/infrastructure` 只保留 Tauri-bound 能力、平台 glue、bundled resources、host logging、runtime path 等必须靠近 Tauri shell 的代码。
 
-在 AI 场景下，基础设施层新增了两类实现：
+当前主要 adapter：
 
-- `HttpChatCompletionRepository`：统一封装 OpenAI / Claude / Gemini(MakerSuite) / Custom OpenAI-compatible 的 HTTP 调用与响应规范化。
-- `TiktokenTokenizerRepository`：负责 tokenizer 计数与编解码的底层实现。
+- `tt-adapter-provider-http`：OpenAI / Claude / Gemini(MakerSuite) / Custom OpenAI-compatible 的 HTTP 调用与响应规范化。
+- `tt-adapter-tokenization`：tokenizer 计数与编解码实现。
+- `tt-adapter-storage-core`：data root、基础文件 helper、chat/settings/user/theme/secret/quick reply 等核心本地仓储。
+- `tt-adapter-storage-userdata`：character PNG、world info、agent workspace、agent profile、skill store 等 Tauri-free 用户文件仓储。
+- `tt-adapter-media`：avatar/background/user media 与 host resource 文件读取。
 
-`HttpChatCompletionRepository` 同样按 provider 拆分为模块目录：
-
-- `infrastructure/apis/http_chat_completion_repository/openai.rs`
-- `infrastructure/apis/http_chat_completion_repository/claude.rs`
-- `infrastructure/apis/http_chat_completion_repository/makersuite.rs`
-- `infrastructure/apis/http_chat_completion_repository/normalizers.rs`
+provider HTTP adapter 按 provider 拆分模块；storage adapter 按仓储 bounded context 拆分模块。
 
 #### 3.3.1 仓库实现 (Repository Implementations)
 
-实现领域层定义的仓库接口，提供具体的持久化逻辑。
+仓库实现 `tt-ports` 中的 repository trait，提供具体持久化逻辑。
 
-扩展仓库 `FileExtensionRepository` 已按职责拆分为子模块（如 Repo URL 解析、Provider（GitHub/GitLab/Gitee）快照下载、ZIP 解压与替换策略、source store 元数据迁移与推断），主仓储仅保留装配与用例编排逻辑，以降低单文件复杂度并提升可测试性。
-
-```rust
-// 示例: 文件系统角色仓库
-pub struct FileCharacterRepository {
-    directory: PathBuf,
-}
-
-#[async_trait]
-impl CharacterRepository for FileCharacterRepository {
-    async fn find_by_id(&self, id: &str) -> Result<Option<Character>, DomainError> {
-        let file_path = self.directory.join(format!("{}.json", id));
-
-        if !file_path.exists() {
-            return Ok(None);
-        }
-
-        match read_json_file::<Character>(&file_path) {
-            Ok(character) => Ok(Some(character)),
-            Err(e) => Err(DomainError::Repository(e.to_string())),
-        }
-    }
-
-    // 其他方法实现...
-}
-```
+| 仓储类型 | 当前位置 |
+| --- | --- |
+| chat/settings/user/theme/secret/quick reply/prompt cache/asset/llm connection/extension store | `crates/tt-adapter-storage-core/src/repositories` |
+| character/world info/agent/agent profile/skill | `crates/tt-adapter-storage-userdata/src/repositories` |
+| avatar/background/image metadata | `crates/tt-adapter-media/src/repositories` |
+| extension install/update/source providers | `crates/tauritavern/src/infrastructure/repositories/file_extension_repository`，未来可拆为 `tt-adapter-extension` |
+| default content / default preset restore | host infrastructure，因依赖 Tauri bundled resources |
 
 #### 3.3.2 持久化工具 (Persistence Utilities)
 
-提供通用的文件系统操作和数据序列化功能。
-
-```rust
-// 示例: 文件系统工具
-pub fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, DomainError> {
-    let file = File::open(path)
-        .map_err(|e| DomainError::Repository(format!("Failed to open file: {}", e)))?;
-
-    let reader = BufReader::new(file);
-    serde_json::from_reader(reader)
-        .map_err(|e| DomainError::Repository(format!("Failed to parse JSON: {}", e)))
-}
-
-pub fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), DomainError> {
-    let file = File::create(path)
-        .map_err(|e| DomainError::Repository(format!("Failed to create file: {}", e)))?;
-
-    let writer = BufWriter::new(file);
-    serde_json::to_writer_pretty(writer, data)
-        .map_err(|e| DomainError::Repository(format!("Failed to write JSON: {}", e)))
-}
-```
+通用文件 helper 位于 `tt-adapter-storage-core/src/file_system.rs`。格式专用 helper 留在拥有该格式的 adapter 内，例如 character/world info 的 PNG card metadata 在 `tt-adapter-storage-userdata/src/png_card_metadata.rs`。
 
 #### 3.3.3 日志系统 (Logging)
 
@@ -306,7 +266,7 @@ tracing::warn!("Skipped invalid extension manifest: {}", path.display());
 tracing::error!("Failed to persist diagnostic log: {}", error);
 ```
 
-用户可见 backend error 是显式产品事件，不是所有 `tracing::error!` 的副作用。需要弹窗的内部错误使用 `target: crate::observability_targets::USER_VISIBLE_ERROR`，并受全局 `EnvFilter` 控制。
+用户可见 backend error 是显式产品事件，不是所有 `tracing::error!` 的副作用。需要弹窗的内部错误必须使用 `tauritavern::user_error` 观测 target：host crate 内使用 `crate::observability_targets::USER_VISIBLE_ERROR`，adapter crate 使用 `tt_contracts::observability::USER_VISIBLE_ERROR`。该 target 仍受全局 `EnvFilter` 控制。
 
 ### 3.4 表示层 (Presentation)
 
@@ -443,7 +403,7 @@ tauri::Builder::default()
 - `presentation/commands/chat_commands.rs`
   - 大 payload：仅读取 payload path、保存 from-file（避免整文件通过 IPC）。
   - windowed：提供 tail/before/windowed-save 命令（传输有上限的 header/lines）。
-- `infrastructure/repositories/file_chat_repository/`
+- `crates/tt-adapter-storage-core/src/repositories/file_chat_repository/`
   - `repository_impl.rs`：统一编排 typed/payload/bytes/path 写入入口。
   - `payload.rs`：完整性校验、字节写入、文件路径直通写入（原子替换 + 备份）。
   - `windowed_payload.rs`：tail/before/windowed-save（保留 prefix + 覆写 tail）。
@@ -801,7 +761,7 @@ service
 
 1. 在`crates/tt-domain/src/models`中定义模型结构
 2. 在`crates/tt-ports/src/repositories`中定义仓库接口
-3. 在`infrastructure/repositories`中实现仓库接口
+3. 在合适的 `tt-adapter-*` crate 中实现仓库接口；只有依赖 `AppHandle`、WebView、bundled resources 或平台 API 的实现才放在 host `infrastructure`
 4. 在`crates/tt-application/src/services`中创建服务
 5. 在`crates/tt-application/src/dto`中定义数据传输对象
 6. 在`presentation/commands`中添加命令
@@ -889,81 +849,16 @@ Android 及低内存场景下，避免把大 JSONL 一次性塞入 IPC body，�
 
 每个模块应有对应的单元测试，特别是领域和应用层。
 
-```rust
-// 示例: 服务单元测试
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::infrastructure::repositories::mock_character_repository::MockCharacterRepository;
-
-    #[tokio::test]
-    async fn test_get_character_by_id() {
-        // 准备
-        let repository = Arc::new(MockCharacterRepository::new());
-        let service = CharacterService::new(repository.clone());
-
-        let character = Character::new(
-            "test-id".to_string(),
-            "Test Character".to_string(),
-            "Description".to_string(),
-            "Personality".to_string(),
-            None,
-            None,
-        );
-
-        repository.save(&character).await.unwrap();
-
-        // 执行
-        let result = service.get_character("test-id").await.unwrap();
-
-        // 验证
-        assert!(result.is_some());
-        let found = result.unwrap();
-        assert_eq!(found.id, "test-id");
-        assert_eq!(found.name, "Test Character");
-    }
-}
-```
+服务单元测试只依赖 `tt-ports` trait；需要替身时在测试模块内定义最小 fake。文件仓储行为由对应 adapter crate 的 focused tests 覆盖，不从 host infrastructure 引用 mock repository。
 
 ### 8.2 集成测试
 
 集成测试验证多个组件的协作，特别是基础设施和应用层的交互。
 
-```rust
-// 示例: 集成测试
-#[cfg(test)]
-mod integration_tests {
-    use super::*;
-    use tempfile::tempdir;
+仓储集成测试放在对应 adapter crate 中；跨服务 contract tests 放在 host 的 `app/contract_tests`。例如 userdata 文件仓储使用：
 
-    #[tokio::test]
-    async fn test_character_persistence() {
-        // 准备临时目录
-        let temp_dir = tempdir().unwrap();
-        let repo = FileCharacterRepository::new(temp_dir.path().to_path_buf());
-        let service = CharacterService::new(Arc::new(repo));
-
-        // 创建角色
-        let character = Character::new(
-            "test-id".to_string(),
-            "Test Character".to_string(),
-            "Description".to_string(),
-            "Personality".to_string(),
-            None,
-            None,
-        );
-
-        // 保存角色
-        service.create_character(character.clone()).await.unwrap();
-
-        // 读取角色
-        let found = service.get_character("test-id").await.unwrap().unwrap();
-
-        // 验证
-        assert_eq!(found.id, character.id);
-        assert_eq!(found.name, character.name);
-    }
-}
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata
 ```
 
 ### 8.3 端到端测试

@@ -5,7 +5,7 @@ use serde_json::Value;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::infrastructure::persistence::png_utils::{
+use crate::png_card_metadata::{
     process_avatar_image, read_character_data_from_png, write_character_data_to_png,
 };
 use tt_domain::errors::DomainError;

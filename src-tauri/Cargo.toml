@@ -11,6 +11,7 @@ members = [
     "crates/tt-adapter-archive",
     "crates/tt-adapter-provider-http",
     "crates/tt-adapter-storage-core",
+    "crates/tt-adapter-storage-userdata",
     "crates/tt-adapter-media",
 ]
 default-members = ["crates/tauritavern"]

@@ -19,7 +19,7 @@ backend error toast 不是普通 error 日志的副作用，而是显式产品�
 
 - command boundary 失败通过 `presentation/commands/helpers.rs::map_command_error()` 统一记录；
 - `Cancelled` / `TooManyRequests` 等预期失败只记录 command warn，不触发 toast；
-- 无法通过 `Result` 自然返回、但用户应立即感知的重要后台/宿主失败，显式使用 `target: crate::observability_targets::USER_VISIBLE_ERROR`；
+- 无法通过 `Result` 自然返回、但用户应立即感知的重要后台/宿主失败，显式使用 user-visible error target；host crate 使用 `target: crate::observability_targets::USER_VISIBLE_ERROR`，adapter crate 使用 `target: tt_contracts::observability::USER_VISIBLE_ERROR`；
 - 普通诊断 `tracing::error!` 只进入 stdout/file/backend log，不自动弹窗。
 
 应用遵循全局 `EnvFilter`。如果用户过滤掉 `tauritavern::user_error` target，对应 backend error toast 也会被过滤；这是用户对观测输出的合理控制。

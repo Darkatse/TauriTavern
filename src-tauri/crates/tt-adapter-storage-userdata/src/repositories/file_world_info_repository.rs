@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::infrastructure::persistence::png_utils::read_text_chunks_from_png;
+use crate::png_card_metadata::read_text_chunks_from_png;
 use tt_adapter_storage_core::file_system::{
     delete_file, list_files_with_extension, read_json_file, write_json_file,
 };

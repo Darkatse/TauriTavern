@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::fs;
 
-use crate::infrastructure::persistence::png_utils::{
-    read_character_data_from_png, write_character_data_to_png,
-};
+use crate::png_card_metadata::{read_character_data_from_png, write_character_data_to_png};
 use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
 use tt_domain::models::chat::{
