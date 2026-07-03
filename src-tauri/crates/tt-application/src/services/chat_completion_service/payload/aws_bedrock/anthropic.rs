@@ -49,6 +49,8 @@ pub(super) fn build(
         }
     };
 
+    reject_non_base64_image_sources(&request_object)?;
+
     request_object.remove("model");
     // Bedrock infers streaming from the URL path, not from a body field.
     request_object.remove("stream");
@@ -63,6 +65,48 @@ pub(super) fn build(
     let endpoint_path = format!("/model/{model_id}/{BEDROCK_INVOKE_SUFFIX}");
 
     Ok((endpoint_path, Value::Object(request_object)))
+}
+
+fn reject_non_base64_image_sources(request: &Map<String, Value>) -> Result<(), ApplicationError> {
+    let Some(messages) = request.get("messages").and_then(Value::as_array) else {
+        return Ok(());
+    };
+
+    for message in messages {
+        let Some(content) = message.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+
+        for block in content {
+            if !is_claude_image_block(block) {
+                continue;
+            }
+
+            let source_type = block
+                .get("source")
+                .and_then(Value::as_object)
+                .and_then(|source| source.get("type"))
+                .and_then(Value::as_str)
+                .map(str::trim);
+
+            if source_type != Some("base64") {
+                return Err(ApplicationError::ValidationError(
+                    "AWS Bedrock Claude only supports base64 image sources; send a data URL instead of a remote URL or provider file reference."
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn is_claude_image_block(value: &Value) -> bool {
+    value
+        .as_object()
+        .and_then(|object| object.get("type"))
+        .and_then(Value::as_str)
+        .is_some_and(|entry| entry.trim() == "image")
 }
 
 /// Convert a Bedrock model id into the Anthropic-direct form that
@@ -152,6 +196,77 @@ mod tests {
             endpoint_path,
             "/model/us.anthropic.claude-sonnet-4-5-20250929-v1:0/invoke"
         );
+    }
+
+    #[test]
+    fn bedrock_claude_allows_base64_image_sources() {
+        let payload = json!({
+            "chat_completion_source": "aws_bedrock",
+            "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "image_url",
+                    "image_url": { "url": "data:image/png;base64,AAAA" }
+                }]
+            }],
+            "max_tokens": 1024,
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be object");
+
+        let (_, body) = build(payload).expect("payload should build");
+        assert_eq!(
+            body.pointer("/messages/0/content/0/source/type")
+                .and_then(Value::as_str),
+            Some("base64")
+        );
+    }
+
+    #[test]
+    fn bedrock_claude_rejects_non_base64_image_sources() {
+        for content in [
+            json!([{
+                "type": "image_url",
+                "image_url": { "url": "https://example.test/cat.png" }
+            }]),
+            json!([{
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": "https://example.test/native.png"
+                }
+            }]),
+            json!([{
+                "type": "image",
+                "source": {
+                    "type": "file",
+                    "file_id": "file_123"
+                }
+            }]),
+        ] {
+            let payload = json!({
+                "chat_completion_source": "aws_bedrock",
+                "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+                "messages": [{
+                    "role": "user",
+                    "content": content
+                }],
+                "max_tokens": 1024,
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be object");
+
+            let error = build(payload).expect_err("non-base64 image source should fail");
+            assert!(
+                error
+                    .to_string()
+                    .contains("AWS Bedrock Claude only supports base64 image sources"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

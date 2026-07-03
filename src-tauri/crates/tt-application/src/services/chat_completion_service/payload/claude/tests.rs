@@ -439,6 +439,106 @@ fn claude_converts_openai_image_url_blocks() {
 }
 
 #[test]
+fn claude_direct_accepts_remote_image_url_blocks() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "describe" },
+                { "type": "image_url", "image_url": { "url": "https://example.test/cat.png" } }
+            ]
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    assert_eq!(
+        upstream
+            .pointer("/messages/0/content/1/source/type")
+            .and_then(Value::as_str),
+        Some("url")
+    );
+    assert_eq!(
+        upstream
+            .pointer("/messages/0/content/1/source/url")
+            .and_then(Value::as_str),
+        Some("https://example.test/cat.png")
+    );
+}
+
+#[test]
+fn claude_direct_rejects_non_remote_image_urls() {
+    for url in ["/user/images/cat.png", "file:///tmp/cat.png"] {
+        let payload = json!({
+            "model": "claude-3-5-sonnet-latest",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "image_url", "image_url": { "url": url } }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("local image URL should fail");
+        assert!(
+            error.to_string().contains("remote http(s) image URLs"),
+            "{url}: {error}"
+        );
+    }
+}
+
+#[test]
+fn claude_rejects_input_image_file_id_until_file_resolver_exists() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [{
+            "role": "user",
+            "content": [{ "type": "input_image", "file_id": "file_123" }]
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let error = build(payload).expect_err("file_id image references need a resolver");
+    assert!(error.to_string().contains("file_id image references"));
+}
+
+#[test]
+fn claude_direct_preserves_native_image_url_blocks() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": "https://example.test/native.png"
+                }
+            }]
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    assert_eq!(
+        upstream
+            .pointer("/messages/0/content/0/source/url")
+            .and_then(Value::as_str),
+        Some("https://example.test/native.png")
+    );
+}
+
+#[test]
 fn claude_rejects_audio_video_content_parts() {
     for part in [
         json!({ "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } }),

@@ -1,10 +1,14 @@
 use serde_json::Value;
 use serde_json::json;
+use url::Url;
 
 use crate::errors::ApplicationError;
 
-use super::super::content_parts::reject_media_for_text_only_content;
-use super::super::shared::{message_content_to_text, parse_data_url};
+use super::super::content_parts::{
+    InputPart, MediaPart, MediaSource, parse_openai_chat_content,
+    reject_media_for_text_only_content,
+};
+use super::super::shared::message_content_to_text;
 use super::super::tool_calls::{
     extract_openai_tool_calls, message_tool_call_id, message_tool_result_text,
 };
@@ -92,7 +96,7 @@ pub(super) fn convert_messages(
             "assistant" => {
                 let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
                 let content_blocks = if let Some(native_content) =
-                    message_native_claude_content(message)
+                    message_native_claude_content(message)?
                 {
                     native_content
                 } else if !tool_calls.is_empty() {
@@ -166,13 +170,23 @@ pub(super) fn convert_messages(
     Ok((converted, system_parts))
 }
 
-fn message_native_claude_content(message: &serde_json::Map<String, Value>) -> Option<Vec<Value>> {
-    message
-        .get("native")?
-        .get("claude")?
-        .get("content")?
-        .as_array()
-        .cloned()
+fn message_native_claude_content(
+    message: &serde_json::Map<String, Value>,
+) -> Result<Option<Vec<Value>>, ApplicationError> {
+    let Some(blocks) = message
+        .get("native")
+        .and_then(|native| native.get("claude"))
+        .and_then(|claude| claude.get("content"))
+        .and_then(Value::as_array)
+    else {
+        return Ok(None);
+    };
+
+    for block in blocks {
+        validate_native_claude_image_block(block)?;
+    }
+
+    Ok(Some(blocks.clone()))
 }
 
 fn prefix_name(text: &str, name: Option<&str>) -> String {
@@ -210,96 +224,133 @@ fn convert_message_content_to_claude_blocks(
     content: Option<&Value>,
     name: Option<&str>,
 ) -> Result<Vec<Value>, ApplicationError> {
-    let blocks = match content {
-        None | Some(Value::Null) => Vec::new(),
-        Some(Value::String(text)) => vec![normalize_claude_text_block(&prefix_name(text, name))],
-        Some(Value::Array(parts)) => {
-            let mut blocks = Vec::with_capacity(parts.len());
+    if let Some(part @ Value::Object(object)) = content
+        && object.get("type").and_then(Value::as_str).is_none()
+    {
+        return Ok(vec![normalize_claude_text_block(&part.to_string())]);
+    }
 
-            for part in parts {
-                if let Some(block) = convert_content_part_to_claude_block(part, name)? {
-                    blocks.push(block);
-                }
-            }
+    let parts = parse_openai_chat_content(content)?;
+    let mut blocks = Vec::with_capacity(parts.len());
 
-            if blocks.is_empty() {
-                blocks.push(normalize_claude_text_block(""));
-            }
-
-            blocks
+    for part in &parts {
+        if let Some(block) = render_claude_content_part(part, name)? {
+            blocks.push(block);
         }
-        Some(part @ Value::Object(object)) => {
-            if object.get("type").and_then(Value::as_str).is_none() {
-                vec![normalize_claude_text_block(&part.to_string())]
-            } else {
-                let mut blocks = Vec::new();
-                if let Some(block) = convert_content_part_to_claude_block(part, name)? {
-                    blocks.push(block);
-                }
-                if blocks.is_empty() {
-                    blocks.push(normalize_claude_text_block(""));
-                }
-                blocks
-            }
-        }
-        Some(other) => vec![normalize_claude_text_block(&other.to_string())],
-    };
+    }
+
+    if content.is_some() && blocks.is_empty() {
+        blocks.push(normalize_claude_text_block(""));
+    }
 
     Ok(blocks)
 }
 
-fn convert_content_part_to_claude_block(
-    part: &Value,
+fn render_claude_content_part(
+    part: &InputPart,
     name: Option<&str>,
 ) -> Result<Option<Value>, ApplicationError> {
     match part {
-        Value::String(fragment) => Ok(Some(normalize_claude_text_block(&prefix_name(
-            fragment, name,
-        )))),
-        Value::Object(object) => match object.get("type").and_then(Value::as_str) {
-            Some("text") => {
-                let text = object
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                Ok(Some(normalize_claude_text_block(&prefix_name(text, name))))
-            }
-            Some("image_url") => {
-                let data_url = object
-                    .get("image_url")
-                    .and_then(Value::as_object)
-                    .and_then(|image_url| image_url.get("url"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| {
-                        ApplicationError::ValidationError(
-                            "Claude image_url block is missing url".to_string(),
-                        )
-                    })?;
+        InputPart::Text(text) => Ok(Some(normalize_claude_text_block(&prefix_name(text, name)))),
+        InputPart::Image(media) => render_claude_image_block(media).map(Some),
+        InputPart::Audio(_) | InputPart::Video(_) => Err(ApplicationError::ValidationError(
+            "Claude Messages translator does not support audio or video content parts".to_string(),
+        )),
+        InputPart::Unknown { ty, value } => {
+            render_unknown_claude_content_part(ty.as_deref(), value)
+        }
+    }
+}
 
-                let Some((mime_type, data)) = parse_data_url(data_url) else {
-                    return Err(ApplicationError::ValidationError(
-                        "Claude expects image_url as a data URL".to_string(),
-                    ));
-                };
+fn render_claude_image_block(media: &MediaPart) -> Result<Value, ApplicationError> {
+    match &media.source {
+        MediaSource::DataUrl { mime_type, data } => Ok(json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime_type,
+                "data": data,
+            },
+        })),
+        MediaSource::Url(url) => {
+            validate_remote_http_image_url(url)?;
+            Ok(json!({
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": url,
+                },
+            }))
+        }
+        MediaSource::FileId(_) => Err(ApplicationError::ValidationError(
+            "Claude Messages translator does not support provider file_id image references yet"
+                .to_string(),
+        )),
+    }
+}
 
-                Ok(Some(json!({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": mime_type,
-                        "data": data,
-                    },
-                })))
-            }
-            Some("audio_url") | Some("video_url") => Err(ApplicationError::ValidationError(
+fn render_unknown_claude_content_part(
+    ty: Option<&str>,
+    value: &Value,
+) -> Result<Option<Value>, ApplicationError> {
+    match ty {
+        Some("input_audio" | "audio" | "input_video" | "video") => {
+            Err(ApplicationError::ValidationError(
                 "Claude Messages translator does not support audio or video content parts"
                     .to_string(),
-            )),
-            _ => Ok(Some(part.clone())),
-        },
-        _ => Ok(None),
+            ))
+        }
+        Some("input_file" | "file") => Err(ApplicationError::ValidationError(
+            "Claude Messages translator does not support file content parts yet".to_string(),
+        )),
+        Some("image") => {
+            validate_native_claude_image_block(value)?;
+            Ok(Some(value.clone()))
+        }
+        Some(_) => Ok(Some(value.clone())),
+        None if value.is_object() => Ok(Some(value.clone())),
+        None => Ok(None),
+    }
+}
+
+fn validate_native_claude_image_block(value: &Value) -> Result<(), ApplicationError> {
+    if !is_claude_image_block(value) {
+        return Ok(());
+    }
+
+    let source_type = value
+        .get("source")
+        .and_then(Value::as_object)
+        .and_then(|source| source.get("type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if source_type != Some("url") {
+        return Ok(());
+    }
+
+    let url = value
+        .get("source")
+        .and_then(Value::as_object)
+        .and_then(|source| source.get("url"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError("Claude image URL source is missing url".to_string())
+        })?;
+    validate_remote_http_image_url(url)
+}
+
+fn validate_remote_http_image_url(url: &str) -> Result<(), ApplicationError> {
+    if Url::parse(url).is_ok_and(|parsed| matches!(parsed.scheme(), "http" | "https")) {
+        Ok(())
+    } else {
+        Err(ApplicationError::ValidationError(
+            "Claude Messages translator only supports remote http(s) image URLs; send a data URL for local images."
+                .to_string(),
+        ))
     }
 }
 
@@ -308,7 +359,7 @@ fn is_claude_image_block(value: &Value) -> bool {
         .as_object()
         .and_then(|object| object.get("type"))
         .and_then(Value::as_str)
-        .is_some_and(|entry| entry == "image")
+        .is_some_and(|entry| entry.trim() == "image")
 }
 
 pub(super) fn move_assistant_images_to_next_user_message(messages: &mut Vec<Value>) {

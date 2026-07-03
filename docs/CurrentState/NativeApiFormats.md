@@ -152,6 +152,11 @@ header 策略（关键契约）：
   - 为请求自动补充 prompt caching 所需的 `anthropic-beta` caching header
 - 未勾选时，仍保持“仅透传用户自定义 headers”的兼容策略。
 
+image 输入：
+- Claude Messages 复用 shared `content_parts` parser：`image_url` data URL 转成 `source.type=base64`，direct/custom Claude Messages 的远端 `http(s)` URL 转成 `source.type=url`。
+- AWS Bedrock Claude 复用 Claude renderer，但执行 base64-only source policy；远端 URL、provider file reference 等不能保真的输入会 fail-fast。
+- OpenAI-style `input_image.file_id` 暂不自动转成 Claude Files API 引用；Claude-native file source 只按 native block 保真回放，调用方需自行负责 beta/header/file 生命周期。
+
 streaming 语义：
 - 后端沿用 Claude 的 SSE `data:` JSON 事件透传（不做 chunk 归一化）
 - 前端对 `custom_api_format=claude_messages` 走 Claude streaming 分支解析（提取 `delta.text`/`delta.thinking`）
