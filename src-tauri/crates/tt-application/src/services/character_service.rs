@@ -749,6 +749,7 @@ impl CharacterService {
         if lorebook_mode == CharacterCardLorebookMaterializationMode::MaterializePrimary {
             self.materialize_primary_lorebook_value(card_value).await?;
         }
+        card_contract::normalize_v2_creator_metadata_projection(card_value)?;
         card_contract::normalize_v2_character_book_extensions(card_value)?;
         self.validate_character_card_for_write(card_value, validation_mode)?;
 
@@ -1120,6 +1121,7 @@ impl CharacterService {
 
         self.materialize_primary_lorebook_value(&mut export_value)
             .await?;
+        card_contract::normalize_v2_creator_metadata_projection(&mut export_value)?;
         card_contract::normalize_v2_character_book_extensions(&mut export_value)?;
         card_contract::unset_private_fields(&mut export_value)?;
         card_contract::sanitize_agent_profiles_for_export(&mut export_value)?;

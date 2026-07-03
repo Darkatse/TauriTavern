@@ -64,6 +64,79 @@ pub(super) fn normalize_v2_character_book_extensions(
     }
 }
 
+pub(super) fn normalize_v2_creator_metadata_projection(
+    card_value: &mut Value,
+) -> Result<(), DomainError> {
+    if !matches!(
+        card_value.get("spec").and_then(Value::as_str),
+        Some("chara_card_v2" | "chara_card_v3")
+    ) {
+        return Ok(());
+    }
+
+    let Some(root_object) = card_value.as_object() else {
+        return Err(DomainError::InvalidData(
+            "Character payload must be a JSON object".to_string(),
+        ));
+    };
+    let Some(data_value) = root_object.get("data") else {
+        return Err(missing_character_card_field("data"));
+    };
+    let Some(data_object) = data_value.as_object() else {
+        return Err(invalid_character_card_field("data"));
+    };
+
+    let creator = creator_metadata_value(data_object, root_object, "creator");
+    let creator_notes = data_object
+        .get("creator_notes")
+        .or_else(|| root_object.get("creator_notes"))
+        .or_else(|| root_object.get("creatorcomment"))
+        .cloned();
+    let character_version = creator_metadata_value(data_object, root_object, "character_version");
+
+    let Some(root_object) = card_value.as_object_mut() else {
+        return Err(DomainError::InvalidData(
+            "Character payload must be a JSON object".to_string(),
+        ));
+    };
+
+    {
+        let data_object = root_object
+            .get_mut("data")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| invalid_character_card_field("data"))?;
+
+        if let Some(value) = creator.as_ref() {
+            data_object
+                .entry("creator".to_string())
+                .or_insert_with(|| value.clone());
+        }
+        if let Some(value) = creator_notes.as_ref() {
+            data_object
+                .entry("creator_notes".to_string())
+                .or_insert_with(|| value.clone());
+        }
+        if let Some(value) = character_version.as_ref() {
+            data_object
+                .entry("character_version".to_string())
+                .or_insert_with(|| value.clone());
+        }
+    }
+
+    if let Some(value) = creator {
+        root_object.insert("creator".to_string(), value);
+    }
+    if let Some(value) = creator_notes {
+        root_object.insert("creator_notes".to_string(), value.clone());
+        root_object.insert("creatorcomment".to_string(), value);
+    }
+    if let Some(value) = character_version {
+        root_object.insert("character_version".to_string(), value);
+    }
+
+    Ok(())
+}
+
 pub(super) fn validate_character_card_schema(card_value: &Value) -> Result<(), DomainError> {
     match card_value.get("spec").and_then(Value::as_str) {
         Some("chara_card_v2") => validate_v2_character_card(card_value)?,
@@ -170,6 +243,17 @@ fn object_at_path_mut<'a>(
             path.join(".")
         ))
     })
+}
+
+fn creator_metadata_value(
+    data_object: &serde_json::Map<String, Value>,
+    root_object: &serde_json::Map<String, Value>,
+    field: &str,
+) -> Option<Value> {
+    data_object
+        .get(field)
+        .or_else(|| root_object.get(field))
+        .cloned()
 }
 
 fn sanitize_agent_profile_package(package: &mut Value) -> Result<(), DomainError> {

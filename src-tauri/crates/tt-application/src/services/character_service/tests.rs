@@ -63,6 +63,33 @@ fn normalize_v2_character_book_adds_empty_extensions() {
 }
 
 #[test]
+fn normalize_v2_creator_metadata_projection_uses_data_as_canonical() {
+    let mut value = json!({
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "creator": "stale root creator",
+        "creator_notes": "stale root notes",
+        "character_version": "stale root version",
+        "creatorcomment": "stale legacy notes",
+        "data": {
+            "creator": "",
+            "creator_notes": "data notes",
+            "character_version": "data version"
+        }
+    });
+
+    card_contract::normalize_v2_creator_metadata_projection(&mut value).unwrap();
+
+    assert_eq!(value.pointer("/creator"), Some(&json!("")));
+    assert_eq!(value.pointer("/creator_notes"), Some(&json!("data notes")));
+    assert_eq!(value.pointer("/creatorcomment"), Some(&json!("data notes")));
+    assert_eq!(
+        value.pointer("/character_version"),
+        Some(&json!("data version"))
+    );
+}
+
+#[test]
 fn value_at_path_supports_bulk_filter_paths() {
     let value = json!({
         "data": {

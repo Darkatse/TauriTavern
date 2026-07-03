@@ -76,6 +76,85 @@ async fn character_service_returns_raw_json_and_v2_data_metadata_from_real_png()
 }
 
 #[tokio::test]
+async fn character_service_update_card_data_syncs_creator_metadata_projection() {
+    let root = temp_root("character-creator-metadata-update");
+    let service = character_service(&root).await;
+    service
+        .create_character(create_character("Alice", None))
+        .await
+        .expect("create character");
+
+    let mut card = character_card("Alice", json!({}));
+    card["creator"] = json!("stale root creator");
+    card["creator_notes"] = json!("stale root notes");
+    card["character_version"] = json!("stale root version");
+    card["creatorcomment"] = json!("stale legacy notes");
+    card["data"]["creator"] = json!("data creator");
+    card["data"]["creator_notes"] = json!("data notes");
+    card["data"]["character_version"] = json!("data version");
+
+    service
+        .update_character_card_data(
+            "Alice",
+            UpdateCharacterCardDataDto {
+                card_json: serde_json::to_string(&card).expect("serialize card"),
+                avatar_path: None,
+                crop: None,
+            },
+        )
+        .await
+        .expect("update character card data");
+
+    let stored_card = read_stored_card(&root, "Alice").await;
+    assert_creator_metadata_projection(&stored_card, "data creator", "data notes", "data version");
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn character_service_export_syncs_stale_creator_metadata_projection() {
+    let root = temp_root("character-creator-metadata-export");
+    let service = character_service(&root).await;
+    let mut card = character_card("Alice", json!({}));
+    card["creator"] = json!("stale root creator");
+    card["creator_notes"] = json!("stale root notes");
+    card["character_version"] = json!("stale root version");
+    card["creatorcomment"] = json!("stale legacy notes");
+    card["data"]["creator"] = json!("data creator");
+    card["data"]["creator_notes"] = json!("data notes");
+    card["data"]["character_version"] = json!("data version");
+    fs::write(
+        root.join("default-user/characters/Alice.png"),
+        character_png(&card),
+    )
+    .await
+    .expect("write stale character card");
+
+    let exported = service
+        .export_character_content(ExportCharacterContentDto {
+            name: "Alice".to_string(),
+            format: "png".to_string(),
+        })
+        .await
+        .expect("export png content");
+    let exported_card = read_card_json(&exported.data);
+    assert_creator_metadata_projection(
+        &exported_card,
+        "data creator",
+        "data notes",
+        "data version",
+    );
+
+    let source_card = read_stored_card(&root, "Alice").await;
+    assert_eq!(
+        source_card.pointer("/creator"),
+        Some(&json!("stale root creator"))
+    );
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn character_service_embeds_create_time_primary_lorebook_into_real_card_png() {
     let root = temp_root("character-lorebook");
     let (service, world_repository) = character_service_with_world_repository(&root).await;
@@ -590,4 +669,28 @@ async fn character_service_bulk_merge_filters_and_unsets_with_real_card_writes()
     assert_ne!(bob.pointer("/data/extensions/fav"), Some(&json!(true)));
 
     let _ = fs::remove_dir_all(root).await;
+}
+
+fn assert_creator_metadata_projection(
+    card: &Value,
+    creator: &str,
+    creator_notes: &str,
+    character_version: &str,
+) {
+    assert_eq!(card.pointer("/creator"), Some(&json!(creator)));
+    assert_eq!(card.pointer("/creator_notes"), Some(&json!(creator_notes)));
+    assert_eq!(card.pointer("/creatorcomment"), Some(&json!(creator_notes)));
+    assert_eq!(
+        card.pointer("/character_version"),
+        Some(&json!(character_version))
+    );
+    assert_eq!(card.pointer("/data/creator"), Some(&json!(creator)));
+    assert_eq!(
+        card.pointer("/data/creator_notes"),
+        Some(&json!(creator_notes))
+    );
+    assert_eq!(
+        card.pointer("/data/character_version"),
+        Some(&json!(character_version))
+    );
 }
