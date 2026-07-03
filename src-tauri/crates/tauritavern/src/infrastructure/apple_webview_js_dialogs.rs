@@ -431,13 +431,11 @@ mod platform {
     }
 
     fn nsalert_class() -> Result<&'static AnyClass, String> {
-        AnyClass::get(unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(b"NSAlert\0") })
-            .ok_or_else(|| "NSAlert class is unavailable".to_string())
+        AnyClass::get(c"NSAlert").ok_or_else(|| "NSAlert class is unavailable".to_string())
     }
 
     fn nstextfield_class() -> Result<&'static AnyClass, String> {
-        AnyClass::get(unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(b"NSTextField\0") })
-            .ok_or_else(|| "NSTextField class is unavailable".to_string())
+        AnyClass::get(c"NSTextField").ok_or_else(|| "NSTextField class is unavailable".to_string())
     }
 
     fn make_alert(informative_text: &NSString) -> Result<Retained<AnyObject>, String> {

@@ -120,29 +120,29 @@ impl FilePresetRepository {
                 _ => None,
             };
 
-            if let Some(item_type) = item_preset_type {
-                if item_type == *preset_type {
-                    // Extract name from filename (remove extension)
-                    let item_name = Path::new(&item.filename)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or(&item.filename);
+            if let Some(item_type) = item_preset_type
+                && item_type == *preset_type
+            {
+                // Extract name from filename (remove extension)
+                let item_name = Path::new(&item.filename)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&item.filename);
 
-                    if item_name == name {
-                        // Found matching preset, load it
-                        let data: Value = read_resource_json(
-                            &self.app_handle,
-                            &format!("default/content/{}", item.filename),
-                        )?;
+                if item_name == name {
+                    // Found matching preset, load it
+                    let data: Value = read_resource_json(
+                        &self.app_handle,
+                        &format!("default/content/{}", item.filename),
+                    )?;
 
-                        return Ok(Some(DefaultPreset {
-                            filename: item.filename,
-                            name: name.to_string(),
-                            preset_type: preset_type.clone(),
-                            is_default: true,
-                            data,
-                        }));
-                    }
+                    return Ok(Some(DefaultPreset {
+                        filename: item.filename,
+                        name: name.to_string(),
+                        preset_type: preset_type.clone(),
+                        is_default: true,
+                        data,
+                    }));
                 }
             }
         }

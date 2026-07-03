@@ -28,7 +28,7 @@ pub fn handle_dev_protocol_request<R: tauri::Runtime>(
         .headers_mut()
         .insert(ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("*"));
 
-    let host_response = serve_dev_web_resource_from_app(&ctx.app_handle(), &request);
+    let host_response = serve_dev_web_resource_from_app(ctx.app_handle(), &request);
     apply_host_resource_response(&mut response, host_response);
     response
 }

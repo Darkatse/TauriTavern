@@ -53,15 +53,15 @@ pub(super) async fn persist_raw_files(
         tokio::fs::write(request_raw_path(log_root, id), content).await?;
     }
 
-    if let Some(kind) = response_raw_kind {
-        if let Some(content) = response_raw_inline {
-            match kind {
-                LlmApiRawKind::Json => {
-                    tokio::fs::write(response_raw_json_path(log_root, id), content).await?;
-                }
-                LlmApiRawKind::Sse => {
-                    tokio::fs::write(response_raw_sse_path(log_root, id), content).await?;
-                }
+    if let Some(kind) = response_raw_kind
+        && let Some(content) = response_raw_inline
+    {
+        match kind {
+            LlmApiRawKind::Json => {
+                tokio::fs::write(response_raw_json_path(log_root, id), content).await?;
+            }
+            LlmApiRawKind::Sse => {
+                tokio::fs::write(response_raw_sse_path(log_root, id), content).await?;
             }
         }
     }

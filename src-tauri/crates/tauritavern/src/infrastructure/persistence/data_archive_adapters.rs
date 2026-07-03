@@ -475,32 +475,32 @@ fn prepare_import_archive_path(
         ))
     })?;
 
-    if let Err(remove_error) = fs::remove_file(source_archive_path) {
-        if remove_error.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!(
-                "Failed to remove temporary source archive {}: {}",
-                source_archive_path.display(),
-                remove_error
-            );
-        }
+    if let Err(remove_error) = fs::remove_file(source_archive_path)
+        && remove_error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            "Failed to remove temporary source archive {}: {}",
+            source_archive_path.display(),
+            remove_error
+        );
     }
 
     Ok(staged_archive_path)
 }
 
 fn cleanup_directory(path: &Path) {
-    if let Err(error) = fs::remove_dir_all(path) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!("Failed to cleanup directory {}: {}", path.display(), error);
-        }
+    if let Err(error) = fs::remove_dir_all(path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!("Failed to cleanup directory {}: {}", path.display(), error);
     }
 }
 
 fn remove_file_if_exists(path: &Path, operation: &str) {
-    if let Err(error) = fs::remove_file(path) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!("Failed to {} {}: {}", operation, path.display(), error);
-        }
+    if let Err(error) = fs::remove_file(path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!("Failed to {} {}: {}", operation, path.display(), error);
     }
 }
 
@@ -536,14 +536,14 @@ fn cleanup_stale_exports(export_root: &Path, protected_paths: &[PathBuf]) {
             continue;
         }
 
-        if let Err(error) = fs::remove_file(&path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!(
-                    "Failed to remove stale export {}: {}",
-                    path.display(),
-                    error
-                );
-            }
+        if let Err(error) = fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                "Failed to remove stale export {}: {}",
+                path.display(),
+                error
+            );
         }
     }
 }

@@ -603,13 +603,13 @@ pub(crate) fn load_runtime_config(
         )));
     }
 
-    if let Some(migration) = config.migration.as_ref() {
-        if !migration.from.is_absolute() {
-            return Err(Box::new(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Runtime config migration.from must be an absolute path",
-            )));
-        }
+    if let Some(migration) = config.migration.as_ref()
+        && !migration.from.is_absolute()
+    {
+        return Err(Box::new(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Runtime config migration.from must be an absolute path",
+        )));
     }
 
     Ok(Some(config))

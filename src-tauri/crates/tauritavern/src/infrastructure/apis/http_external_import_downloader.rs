@@ -38,13 +38,12 @@ impl ExternalImportDownloader for HttpExternalImportDownloader {
             )));
         }
 
-        if let Some(limit) = limit {
-            if response
+        if let Some(limit) = limit
+            && response
                 .content_length()
                 .is_some_and(|length| length > limit.max_bytes as u64)
-            {
-                return Err(limit_error(limit));
-            }
+        {
+            return Err(limit_error(limit));
         }
 
         let headers = response.headers().clone();

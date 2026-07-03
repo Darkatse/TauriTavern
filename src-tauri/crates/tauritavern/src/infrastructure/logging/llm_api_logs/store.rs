@@ -30,12 +30,12 @@ impl LlmApiLogStore {
         let mut index = VecDeque::new();
         let mut next_id = 1_u64;
 
-        if let Ok(content) = std::fs::read_to_string(index_path(&log_root)) {
-            if let Ok(entries) = serde_json::from_str::<Vec<LlmApiLogIndexEntry>>(&content) {
-                for entry in entries {
-                    next_id = next_id.max(entry.id.saturating_add(1));
-                    index.push_back(entry);
-                }
+        if let Ok(content) = std::fs::read_to_string(index_path(&log_root))
+            && let Ok(entries) = serde_json::from_str::<Vec<LlmApiLogIndexEntry>>(&content)
+        {
+            for entry in entries {
+                next_id = next_id.max(entry.id.saturating_add(1));
+                index.push_back(entry);
             }
         }
 

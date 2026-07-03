@@ -167,16 +167,15 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
                 let _ = sender.send(chunk.clone());
                 readable.push(&chunk);
 
-                if let Some(writer_ref) = writer.as_mut() {
-                    if tokio::io::AsyncWriteExt::write_all(writer_ref, chunk.as_bytes())
+                if let Some(writer_ref) = writer.as_mut()
+                    && (tokio::io::AsyncWriteExt::write_all(writer_ref, chunk.as_bytes())
                         .await
                         .is_err()
                         || tokio::io::AsyncWriteExt::write_all(writer_ref, b"\n")
                             .await
-                            .is_err()
-                    {
-                        writer = None;
-                    }
+                            .is_err())
+                {
+                    writer = None;
                 }
             }
 
