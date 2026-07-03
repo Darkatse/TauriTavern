@@ -176,7 +176,12 @@ impl AgentRuntimeService {
             .await?;
         let checkpoint = self
             .checkpoint_repository
-            .create_checkpoint(run_id, "chat_commit", started.seq, &[path.clone()])
+            .create_checkpoint(
+                run_id,
+                "chat_commit",
+                started.seq,
+                std::slice::from_ref(&path),
+            )
             .await?;
         self.event(
             run_id,

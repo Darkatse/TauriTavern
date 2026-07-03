@@ -802,13 +802,15 @@ mod tests {
         let run_repository = TestAgentRunRepository::new();
         let settings_repository = TestSettingsRepository::new();
 
-        let mut settings = TauriTavernSettings::default();
-        settings.agent = AgentSettings {
-            retention: AgentRunRetentionSettings {
-                auto_prune_enabled: false,
-                keep_recent_terminal_runs: 2,
-                keep_full_recent_runs: 1,
+        let settings = TauriTavernSettings {
+            agent: AgentSettings {
+                retention: AgentRunRetentionSettings {
+                    auto_prune_enabled: false,
+                    keep_recent_terminal_runs: 2,
+                    keep_full_recent_runs: 1,
+                },
             },
+            ..Default::default()
         };
         settings_repository
             .store_tauritavern_settings(settings)
