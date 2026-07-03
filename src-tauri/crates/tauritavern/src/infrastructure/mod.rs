@@ -4,7 +4,6 @@ pub mod apis;
 pub mod apple_webview_js_dialogs;
 pub mod assets;
 pub mod bundled_resources;
-pub mod github;
 pub mod ios_policy_cache;
 #[cfg(target_os = "ios")]
 pub mod ios_webview;

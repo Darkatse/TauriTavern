@@ -125,6 +125,7 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
             author: result?.author || 'Unknown',
             version: result?.version || '0.0.0',
             extensionPath: result?.extension_path || '',
+            folderName: result?.folder_name || '',
         });
     });
 
@@ -156,10 +157,10 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
         });
 
         return jsonResponse({
-            currentBranchName: result?.current_branch_name || 'main',
-            currentCommitHash: result?.current_commit_hash || 'unknown',
+            currentBranchName: result?.current_branch_name ?? '',
+            currentCommitHash: result?.current_commit_hash ?? '',
             isUpToDate: Boolean(result?.is_up_to_date),
-            remoteUrl: result?.remote_url || '',
+            remoteUrl: result?.remote_url ?? '',
         });
     });
 

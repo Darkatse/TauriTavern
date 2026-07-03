@@ -6,8 +6,8 @@ use url::Url;
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 
+use super::super::repo_url::HOST_GITEE;
 use super::{ExtensionSourceProvider, parse_bytes_or_error, parse_json_or_error, split_owner_repo};
-use crate::infrastructure::repositories::file_extension_repository::repo_url::HOST_GITEE;
 
 #[derive(Debug, Deserialize)]
 struct GiteeRepoInfo {

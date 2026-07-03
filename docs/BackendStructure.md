@@ -234,6 +234,7 @@ pub struct CharacterResponseDto {
 
 - `tt-adapter-provider-http`：OpenAI / Claude / Gemini(MakerSuite) / Custom OpenAI-compatible 的 HTTP 调用与响应规范化。
 - `tt-adapter-tokenization`：tokenizer 计数与编解码实现。
+- `tt-adapter-extension`：third-party extension 安装、更新、发现与 GitHub/GitLab/Gitee source provider。
 - `tt-adapter-storage-core`：data root、基础文件 helper、chat/settings/user/theme/secret/quick reply 等核心本地仓储。
 - `tt-adapter-storage-userdata`：character PNG、world info、agent workspace、agent profile、skill store 等 Tauri-free 用户文件仓储。
 - `tt-adapter-media`：avatar/background/user media 与 host resource 文件读取。
@@ -249,7 +250,7 @@ provider HTTP adapter 按 provider 拆分模块；storage adapter 按仓储 boun
 | chat/settings/user/theme/secret/quick reply/prompt cache/asset/llm connection/extension store | `crates/tt-adapter-storage-core/src/repositories` |
 | character/world info/agent/agent profile/skill | `crates/tt-adapter-storage-userdata/src/repositories` |
 | avatar/background/image metadata | `crates/tt-adapter-media/src/repositories` |
-| extension install/update/source providers | `crates/tauritavern/src/infrastructure/repositories/file_extension_repository`，未来可拆为 `tt-adapter-extension` |
+| extension install/update/source providers | `crates/tt-adapter-extension/src/repositories` |
 | default content / default preset restore | host infrastructure，因依赖 Tauri bundled resources |
 
 #### 3.3.2 持久化工具 (Persistence Utilities)

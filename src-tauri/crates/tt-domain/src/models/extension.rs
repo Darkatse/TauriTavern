@@ -88,6 +88,8 @@ pub struct ExtensionInstallResult {
     pub display_name: String,
     /// Path to the extension
     pub extension_path: String,
+    /// Installed extension folder name
+    pub folder_name: String,
 }
 
 /// Extension update result

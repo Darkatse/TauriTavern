@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::infrastructure::github::classify_github_rate_limit;
+use tt_adapter_http::github::classify_github_rate_limit;
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_domain::models::update::ReleaseInfo;

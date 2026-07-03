@@ -214,13 +214,6 @@ impl ExtensionRepository for FileExtensionRepository {
         discovery::discover_extensions(self).await
     }
 
-    async fn get_manifest_metadata(
-        &self,
-        extension_path: &Path,
-    ) -> Result<Option<ExtensionManifestMetadata>, DomainError> {
-        self.read_manifest_metadata(extension_path).await
-    }
-
     async fn install_extension(
         &self,
         url: &str,

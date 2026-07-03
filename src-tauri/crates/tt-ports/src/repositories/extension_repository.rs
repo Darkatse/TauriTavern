@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use std::path::Path;
 
 use tt_domain::errors::DomainError;
 use tt_domain::models::extension::{
@@ -10,12 +9,6 @@ use tt_domain::models::extension::{
 pub trait ExtensionRepository: Send + Sync {
     /// Discover all available extensions
     async fn discover_extensions(&self) -> Result<Vec<Extension>, DomainError>;
-
-    /// Get extension manifest
-    async fn get_manifest_metadata(
-        &self,
-        extension_path: &Path,
-    ) -> Result<Option<tt_domain::models::extension::ExtensionManifestMetadata>, DomainError>;
 
     /// Install an extension from a URL
     async fn install_extension(

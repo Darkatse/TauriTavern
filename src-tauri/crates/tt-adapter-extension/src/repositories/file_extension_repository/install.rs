@@ -96,5 +96,6 @@ pub(super) async fn install_extension(
         author: manifest.author,
         display_name: manifest.display_name,
         extension_path: extension_path.to_string_lossy().to_string(),
+        folder_name: extension_folder_name,
     })
 }

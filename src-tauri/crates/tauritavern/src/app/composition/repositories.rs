@@ -7,8 +7,8 @@ use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
 use crate::infrastructure::repositories::file_content_repository::FileContentRepository;
-use crate::infrastructure::repositories::file_extension_repository::FileExtensionRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
+use tt_adapter_extension::FileExtensionRepository;
 use tt_adapter_http::HttpClientPool;
 use tt_adapter_media::{
     FileAvatarRepository, FileBackgroundRepository, FileImageMetadataRepository,

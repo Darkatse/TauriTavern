@@ -24,7 +24,7 @@
 
 1. `src/scripts/extensions.js` 中的 `startOfflineExtensionsDiscovery()` 在 Host Ready 后请求 `/api/extensions/discover`
 2. `src/tauri/main/routes/extensions-routes.js` 将请求转给 Rust 命令 `get_extensions`
-3. `ExtensionService -> FileExtensionRepository::discover_extensions()`
+3. `ExtensionService -> tt-adapter-extension::FileExtensionRepository::discover_extensions()`
 4. 返回扩展列表后，前端继续读取 manifest 并缓存激活计划
 5. 启动期先执行 `activateStartupSystemExtensions()`，只激活系统扩展
 6. 若存在启用中的 local/global third-party 扩展，则在 `APP_READY` 后执行 `activateDeferredThirdPartyExtensions()`

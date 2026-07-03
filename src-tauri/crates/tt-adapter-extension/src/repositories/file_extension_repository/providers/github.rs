@@ -4,15 +4,15 @@ use serde::Deserialize;
 use std::sync::Arc;
 use url::Url;
 
-use crate::infrastructure::github::classify_github_rate_limit;
+use tt_adapter_http::github::classify_github_rate_limit;
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 
+use super::super::repo_url::HOST_GITHUB;
 use super::{
     ExtensionSourceProvider, parse_bytes_or_error, parse_json_or_error,
     provider_http_error_to_domain_error, read_provider_http_error, split_owner_repo,
 };
-use crate::infrastructure::repositories::file_extension_repository::repo_url::HOST_GITHUB;
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
 

@@ -5,10 +5,9 @@ use std::path::{Path, PathBuf};
 use tokio::fs as tokio_fs;
 use uuid::Uuid;
 
-use crate::infrastructure::zipkit;
+use crate::zipkit;
 use tt_domain::errors::DomainError;
 use tt_domain::models::extension::ExtensionManifestMetadata;
-use tt_ports::repositories::extension_repository::ExtensionRepository;
 
 use super::FileExtensionRepository;
 
@@ -127,12 +126,7 @@ impl FileExtensionRepository {
         &self,
         extension_path: &Path,
     ) -> Result<ExtensionManifestMetadata, DomainError> {
-        match <FileExtensionRepository as ExtensionRepository>::get_manifest_metadata(
-            self,
-            extension_path,
-        )
-        .await?
-        {
+        match self.read_manifest_metadata(extension_path).await? {
             Some(manifest) => Ok(manifest),
             None => Err(DomainError::InvalidData(
                 "Extension manifest not found".to_string(),
