@@ -27,6 +27,7 @@
     "web:build": "rspack build --config rspack.config.js",
     "web:dev": "rspack build --config rspack.config.js --watch",
     "tauri:dev": "node scripts/tauri-app.mjs dev",
+    "tauri:dev:pilot": "node scripts/tauri-app.mjs dev --features devtools-pilot --config src-tauri/crates/tauritavern/tauri.pilot.conf.json",
     "tauri:build": "node scripts/tauri-app.mjs build",
     "tauri:build:portable": "node scripts/build-portable.mjs",
     "tauri:build:portable:skip-web": "node scripts/build-portable.mjs --skip-web-build",

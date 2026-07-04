@@ -19,6 +19,12 @@ pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::B
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_dialog::init());
 
+    #[cfg(all(
+        feature = "devtools-pilot",
+        any(target_os = "macos", windows, target_os = "linux")
+    ))]
+    let builder = builder.plugin(tauri_plugin_pilot::init());
+
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
 
