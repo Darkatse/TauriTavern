@@ -10,8 +10,9 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::png_card_metadata::read_character_data_from_png_file;
-use tt_adapter_storage_core::file_system::{
-    list_files_with_extension, replace_file_with_fallback, unique_temp_path,
+use tt_adapter_storage_core::{
+    chat_directory_identity::SharedChatAliasStore,
+    file_system::{list_files_with_extension, replace_file_with_fallback, unique_temp_path},
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
@@ -275,12 +276,41 @@ impl FileCharacterRepository {
         &self,
     ) -> Result<(Vec<CharacterShallowIndexScanEntry>, bool), DomainError> {
         let character_files = list_files_with_extension(&self.characters_dir, "png").await?;
-        let mut entries = Vec::with_capacity(character_files.len());
+        let mut results: Vec<Option<CharacterShallowIndexScanEntry>> =
+            (0..character_files.len()).map(|_| None).collect();
         let mut complete = true;
+        let semaphore = Arc::new(Semaphore::new(Self::shallow_index_parallelism()));
+        let mut jobs = JoinSet::new();
 
-        for path in character_files {
-            match self.scan_shallow_index_entry(path).await {
-                Ok(entry) => entries.push(entry),
+        for (index, path) in character_files.into_iter().enumerate() {
+            let permit = semaphore.clone().acquire_owned().await.map_err(|_| {
+                DomainError::InternalError(
+                    "Shallow character index scanner gate closed".to_string(),
+                )
+            })?;
+            let characters_dir = self.characters_dir.clone();
+            let chats_dir = self.chats_dir.clone();
+            let chat_aliases = self.chat_aliases.clone();
+
+            jobs.spawn(async move {
+                let _permit = permit;
+                let result =
+                    Self::scan_shallow_index_entry(characters_dir, chats_dir, chat_aliases, path)
+                        .await;
+                (index, result)
+            });
+        }
+
+        while let Some(joined) = jobs.join_next().await {
+            let (index, result) = joined.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Shallow character index scanner failed: {}",
+                    error
+                ))
+            })?;
+
+            match result {
+                Ok(entry) => results[index] = Some(entry),
                 Err(error) => {
                     complete = false;
                     tracing::error!(
@@ -291,13 +321,16 @@ impl FileCharacterRepository {
                 }
             }
         }
+        let mut entries: Vec<_> = results.into_iter().flatten().collect();
         entries.sort_by(|left, right| left.signature.avatar.cmp(&right.signature.avatar));
 
         Ok((entries, complete))
     }
 
     async fn scan_shallow_index_entry(
-        &self,
+        characters_dir: PathBuf,
+        chats_dir: PathBuf,
+        chat_aliases: SharedChatAliasStore,
         path: PathBuf,
     ) -> Result<CharacterShallowIndexScanEntry, DomainError> {
         let metadata = fs::metadata(&path).await.map_err(|error| {
@@ -317,7 +350,9 @@ impl FileCharacterRepository {
             .and_then(|value| value.to_str())
             .unwrap_or("")
             .to_string();
-        let (chat_size, date_last_chat) = self.calculate_chat_stats(&file_stem).await?;
+        let (chat_size, date_last_chat) =
+            Self::calculate_chat_stats_for(&characters_dir, &chats_dir, &chat_aliases, &file_stem)
+                .await?;
         let modified_millis = file_modified_millis(&metadata);
 
         Ok(CharacterShallowIndexScanEntry {

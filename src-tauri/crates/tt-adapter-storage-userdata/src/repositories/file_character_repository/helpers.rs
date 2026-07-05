@@ -8,7 +8,7 @@ use std::time::UNIX_EPOCH;
 use tokio::fs;
 
 use crate::png_card_metadata::{read_character_data_from_png, write_character_data_to_png};
-use tt_adapter_storage_core::chat_directory_identity;
+use tt_adapter_storage_core::chat_directory_identity::{self, SharedChatAliasStore};
 use tt_adapter_storage_core::file_system::{
     list_files_with_extension, replace_file_with_fallback, unique_temp_path,
 };
@@ -217,23 +217,48 @@ impl FileCharacterRepository {
         self.characters_dir.join(format!("{}.png", name))
     }
 
+    pub(crate) fn chat_directory_for(chats_dir: &Path, name: &str) -> PathBuf {
+        chats_dir.join(name)
+    }
+
     pub(crate) fn get_chat_directory(&self, name: &str) -> PathBuf {
-        self.chats_dir.join(name)
+        Self::chat_directory_for(&self.chats_dir, name)
+    }
+
+    pub(crate) async fn resolve_chat_directory_for(
+        characters_dir: &Path,
+        chats_dir: &Path,
+        chat_aliases: &SharedChatAliasStore,
+        name: &str,
+    ) -> Result<PathBuf, DomainError> {
+        let dir_key = chat_directory_identity::resolve_character_chat_dir_key(
+            characters_dir,
+            chats_dir,
+            chat_aliases,
+            name,
+        )
+        .await?;
+        Ok(Self::chat_directory_for(chats_dir, &dir_key))
     }
 
     pub(crate) async fn resolve_chat_directory(&self, name: &str) -> Result<PathBuf, DomainError> {
-        let dir_key = chat_directory_identity::resolve_character_chat_dir_key(
+        Self::resolve_chat_directory_for(
             &self.characters_dir,
             &self.chats_dir,
             &self.chat_aliases,
             name,
         )
-        .await?;
-        Ok(self.get_chat_directory(&dir_key))
+        .await
     }
 
-    pub(crate) async fn calculate_chat_stats(&self, name: &str) -> Result<(u64, i64), DomainError> {
-        let chat_dir = self.resolve_chat_directory(name).await?;
+    pub(crate) async fn calculate_chat_stats_for(
+        characters_dir: &Path,
+        chats_dir: &Path,
+        chat_aliases: &SharedChatAliasStore,
+        name: &str,
+    ) -> Result<(u64, i64), DomainError> {
+        let chat_dir =
+            Self::resolve_chat_directory_for(characters_dir, chats_dir, chat_aliases, name).await?;
 
         if !chat_dir.exists() {
             return Ok((0, 0));
@@ -271,6 +296,16 @@ impl FileCharacterRepository {
         }
 
         Ok((total_size, latest_modified))
+    }
+
+    pub(crate) async fn calculate_chat_stats(&self, name: &str) -> Result<(u64, i64), DomainError> {
+        Self::calculate_chat_stats_for(
+            &self.characters_dir,
+            &self.chats_dir,
+            &self.chat_aliases,
+            name,
+        )
+        .await
     }
 
     pub(crate) async fn read_character_from_file(

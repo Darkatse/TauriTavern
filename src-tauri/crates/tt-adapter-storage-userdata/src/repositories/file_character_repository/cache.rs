@@ -63,7 +63,7 @@ impl MemoryCache {
             && let Some((oldest_key, _)) = self
                 .characters
                 .iter()
-                .min_by_key(|(_, (_, timestamp))| timestamp.elapsed())
+                .max_by_key(|(_, (_, timestamp))| timestamp.elapsed())
         {
             let oldest_key = oldest_key.clone();
             self.characters.remove(&oldest_key);
@@ -78,5 +78,44 @@ impl MemoryCache {
 
     pub(crate) fn clear(&mut self) {
         self.characters.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tt_domain::models::character::Character;
+
+    fn character(name: &str) -> Character {
+        Character::new(
+            name.to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+        )
+    }
+
+    #[test]
+    fn memory_cache_evicts_oldest_entry() {
+        let mut cache = MemoryCache::new(2, Duration::from_secs(60));
+        let now = Instant::now();
+
+        cache.characters.insert(
+            "old".to_string(),
+            (
+                character("old"),
+                now.checked_sub(Duration::from_secs(10))
+                    .expect("old timestamp should be representable"),
+            ),
+        );
+        cache
+            .characters
+            .insert("new".to_string(), (character("new"), now));
+
+        cache.set("third".to_string(), character("third"));
+
+        assert!(!cache.characters.contains_key("old"));
+        assert!(cache.characters.contains_key("new"));
+        assert!(cache.characters.contains_key("third"));
     }
 }
