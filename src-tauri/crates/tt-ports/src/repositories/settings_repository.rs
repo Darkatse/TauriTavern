@@ -2,6 +2,15 @@ use async_trait::async_trait;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SettingsAggregateSignature(String);
+
+impl SettingsAggregateSignature {
+    pub fn from_revision(revision: impl Into<String>) -> Self {
+        Self(revision.into())
+    }
+}
+
 #[async_trait]
 pub trait SettingsRepository: Send + Sync {
     async fn save_tauritavern_settings(
@@ -17,6 +26,10 @@ pub trait SettingsRepository: Send + Sync {
     async fn get_snapshots(&self) -> Result<Vec<SettingsSnapshot>, DomainError>;
     async fn load_snapshot(&self, name: &str) -> Result<UserSettings, DomainError>;
     async fn restore_snapshot(&self, name: &str) -> Result<(), DomainError>;
+
+    async fn get_sillytavern_settings_signature(
+        &self,
+    ) -> Result<SettingsAggregateSignature, DomainError>;
 
     async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError>;
     async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError>;

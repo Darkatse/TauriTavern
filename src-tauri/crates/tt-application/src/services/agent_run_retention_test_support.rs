@@ -15,7 +15,7 @@ use tt_ports::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunListCursor, AgentRunListQuery, AgentRunRepository,
     AgentRunStorageEntryStats, AgentRunStorageStats, event_belongs_to_invocation,
 };
-use tt_ports::repositories::settings_repository::SettingsRepository;
+use tt_ports::repositories::settings_repository::{SettingsAggregateSignature, SettingsRepository};
 
 pub(crate) struct TestSettingsRepository {
     tauritavern_settings: Mutex<TauriTavernSettings>,
@@ -69,6 +69,12 @@ impl SettingsRepository for TestSettingsRepository {
 
     async fn restore_snapshot(&self, _name: &str) -> Result<(), DomainError> {
         Err(unused_settings_method("restore_snapshot"))
+    }
+
+    async fn get_sillytavern_settings_signature(
+        &self,
+    ) -> Result<SettingsAggregateSignature, DomainError> {
+        Err(unused_settings_method("get_sillytavern_settings_signature"))
     }
 
     async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {

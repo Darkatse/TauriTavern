@@ -12,12 +12,34 @@ use crate::sillytavern_sorting::{
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
-use tt_ports::repositories::settings_repository::SettingsRepository;
+use tt_ports::repositories::settings_repository::{SettingsAggregateSignature, SettingsRepository};
 
 pub struct FileSettingsRepository {
     tauritavern_settings_file: PathBuf,
     user_settings_file: PathBuf,
     base_directory: PathBuf,
+}
+
+const SILLYTAVERN_SETTINGS_AGGREGATE_DIRECTORIES: &[&str] = &[
+    "KoboldAI Settings",
+    "NovelAI Settings",
+    "OpenAI Settings",
+    "TextGen Settings",
+    "worlds",
+    "themes",
+    "movingUI",
+    "QuickReplies",
+    "instruct",
+    "context",
+    "sysprompt",
+    "reasoning",
+];
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SettingsAggregateSignatureEntry {
+    label: String,
+    size: u64,
+    modified_nanos: u128,
 }
 
 fn map_tauritavern_settings_read_error(path: &Path, error: std::io::Error) -> DomainError {
@@ -160,6 +182,96 @@ impl FileSettingsRepository {
         }
 
         Ok((settings, names))
+    }
+
+    fn settings_signature_entry(
+        label: String,
+        metadata: std::fs::Metadata,
+    ) -> Result<SettingsAggregateSignatureEntry, DomainError> {
+        let modified_nanos = metadata
+            .modified()
+            .map_err(|error| {
+                DomainError::InternalError(format!("Failed to read file modified time: {}", error))
+            })?
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+
+        Ok(SettingsAggregateSignatureEntry {
+            label,
+            size: metadata.len(),
+            modified_nanos,
+        })
+    }
+
+    async fn push_file_signature(
+        entries: &mut Vec<SettingsAggregateSignatureEntry>,
+        label: String,
+        path: &Path,
+    ) -> Result<(), DomainError> {
+        match fs::metadata(path).await {
+            Ok(metadata) => {
+                if !metadata.is_file() {
+                    return Err(DomainError::InvalidData(format!(
+                        "Settings aggregate source is not a file: {}",
+                        path.display()
+                    )));
+                }
+                entries.push(Self::settings_signature_entry(label, metadata)?);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(DomainError::InternalError(format!(
+                    "Failed to read settings aggregate source metadata '{}': {}",
+                    path.display(),
+                    error
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn push_directory_signature(
+        &self,
+        entries: &mut Vec<SettingsAggregateSignatureEntry>,
+        dir_name: &str,
+    ) -> Result<(), DomainError> {
+        let dir = self.base_directory.join(dir_name);
+        let mut paths = list_files_with_extension(&dir, "json").await?;
+        paths.sort();
+
+        for path in paths {
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| {
+                    DomainError::InvalidData(format!(
+                        "Settings aggregate file name is not valid UTF-8: {}",
+                        path.display()
+                    ))
+                })?;
+            Self::push_file_signature(entries, format!("{dir_name}/{file_name}"), &path).await?;
+        }
+
+        Ok(())
+    }
+
+    fn settings_signature_from_entries(
+        entries: &[SettingsAggregateSignatureEntry],
+    ) -> SettingsAggregateSignature {
+        let mut revision = String::new();
+
+        for entry in entries {
+            revision.push_str(&entry.label);
+            revision.push('\0');
+            revision.push_str(&entry.size.to_string());
+            revision.push('\0');
+            revision.push_str(&entry.modified_nanos.to_string());
+            revision.push('\n');
+        }
+
+        SettingsAggregateSignature::from_revision(revision)
     }
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -307,6 +419,28 @@ impl SettingsRepository for FileSettingsRepository {
         Ok(())
     }
 
+    async fn get_sillytavern_settings_signature(
+        &self,
+    ) -> Result<SettingsAggregateSignature, DomainError> {
+        let mut entries = Vec::new();
+
+        Self::push_file_signature(
+            &mut entries,
+            "settings.json".to_string(),
+            &self.user_settings_file,
+        )
+        .await?;
+
+        for dir_name in SILLYTAVERN_SETTINGS_AGGREGATE_DIRECTORIES {
+            self.push_directory_signature(&mut entries, dir_name)
+                .await?;
+        }
+
+        entries.sort_by(|left, right| left.label.cmp(&right.label));
+
+        Ok(Self::settings_signature_from_entries(&entries))
+    }
+
     async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {
         let mut themes = self.read_presets_from_directory("themes").await?;
 
@@ -383,10 +517,10 @@ impl SettingsRepository for FileSettingsRepository {
 #[cfg(test)]
 mod tests {
     use super::FileSettingsRepository;
+    use rand::random;
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
     use tt_ports::repositories::settings_repository::SettingsRepository;
 
     struct TestDir {
@@ -395,14 +529,10 @@ mod tests {
 
     impl TestDir {
         fn new() -> Self {
-            let suffix = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos();
             let path = std::env::temp_dir().join(format!(
                 "tauritavern-settings-repo-test-{}-{}",
                 std::process::id(),
-                suffix
+                random::<u64>()
             ));
             fs::create_dir_all(&path).expect("failed to create temp dir");
 
@@ -469,6 +599,35 @@ mod tests {
                 .as_deref(),
             Some("token")
         );
+    }
+
+    #[tokio::test]
+    async fn sillytavern_settings_signature_changes_when_source_file_changes() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+
+        fs::write(dir.path().join("settings.json"), r#"{"a":1}"#).expect("write settings.json");
+        let first = repository
+            .get_sillytavern_settings_signature()
+            .await
+            .expect("read first signature");
+
+        let themes_dir = dir.path().join("themes");
+        fs::create_dir_all(&themes_dir).expect("create themes dir");
+        fs::write(themes_dir.join("theme.json"), r#"{"theme":"one"}"#).expect("write theme");
+        let second = repository
+            .get_sillytavern_settings_signature()
+            .await
+            .expect("read second signature");
+
+        fs::write(dir.path().join("settings.json"), r#"{"a":123}"#).expect("update settings.json");
+        let third = repository
+            .get_sillytavern_settings_signature()
+            .await
+            .expect("read third signature");
+
+        assert_ne!(first, second);
+        assert_ne!(second, third);
     }
 
     #[test]

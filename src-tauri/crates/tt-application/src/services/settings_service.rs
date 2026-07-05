@@ -4,6 +4,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 use super::settings_repair::repair_sillytavern_prompt_manager_settings;
 use crate::dto::settings_dto::{
@@ -13,14 +14,22 @@ use crate::dto::settings_dto::{
 use crate::errors::ApplicationError;
 use tt_domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, DevLoggingSettings, RequestProxySettings,
+    UserSettings,
 };
-use tt_ports::repositories::settings_repository::SettingsRepository;
+use tt_ports::repositories::settings_repository::{SettingsAggregateSignature, SettingsRepository};
 pub use tt_ports::settings::RequestProxyRuntime;
+
+#[derive(Clone)]
+struct SettingsAggregateCacheEntry {
+    signature: SettingsAggregateSignature,
+    response: SillyTavernSettingsResponseDto,
+}
 
 pub struct SettingsService {
     settings_repository: Arc<dyn SettingsRepository>,
     request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
     pending_user_settings_repair_writeback: Arc<AtomicBool>,
+    sillytavern_settings_cache: Arc<Mutex<Option<SettingsAggregateCacheEntry>>>,
 }
 
 impl SettingsService {
@@ -32,7 +41,12 @@ impl SettingsService {
             settings_repository,
             request_proxy_runtime,
             pending_user_settings_repair_writeback: Arc::new(AtomicBool::new(false)),
+            sillytavern_settings_cache: Arc::new(Mutex::new(None)),
         }
+    }
+
+    async fn clear_sillytavern_settings_cache(&self) {
+        *self.sillytavern_settings_cache.lock().await = None;
     }
 
     fn schedule_delayed_user_settings_repair_writeback(&self) {
@@ -48,32 +62,40 @@ impl SettingsService {
 
         let settings_repository = Arc::clone(&self.settings_repository);
         let pending = Arc::clone(&self.pending_user_settings_repair_writeback);
+        let settings_cache = Arc::clone(&self.sillytavern_settings_cache);
 
         tokio::spawn(async move {
             tokio::time::sleep(DELAY).await;
 
-            let result = async {
+            let result: Result<bool, tt_domain::errors::DomainError> = async {
                 let mut settings = settings_repository.load_user_settings().await?;
                 let repair_report = repair_sillytavern_prompt_manager_settings(&mut settings);
 
                 if !repair_report.changed() {
-                    return Ok(());
+                    return Ok(false);
                 }
 
                 tracing::warn!(
                     "Persisting delayed SillyTavern PromptManager settings repair: {}",
                     repair_report
                 );
-                settings_repository.save_user_settings(&settings).await
+                settings_repository.save_user_settings(&settings).await?;
+                Ok(true)
             }
             .await;
 
-            if let Err(error) = result {
-                tracing::error!(
-                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
-                    "Failed delayed SillyTavern PromptManager settings repair: {}",
-                    error
-                );
+            match result {
+                Ok(true) => {
+                    *settings_cache.lock().await = None;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::error!(
+                        target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                        "Failed delayed SillyTavern PromptManager settings repair: {}",
+                        error
+                    );
+                }
             }
 
             pending.store(false, Ordering::Release);
@@ -281,9 +303,16 @@ impl SettingsService {
             );
         }
 
+        let current_settings = self.settings_repository.load_user_settings().await?;
+        if current_settings.data == user_settings.data {
+            tracing::debug!("Skipping unchanged user settings save");
+            return Ok(());
+        }
+
         self.settings_repository
             .save_user_settings(&user_settings)
             .await?;
+        self.clear_sillytavern_settings_cache().await;
 
         Ok(())
     }
@@ -293,60 +322,117 @@ impl SettingsService {
     ) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
         tracing::info!("Getting SillyTavern settings");
 
-        let mut user_settings = self.settings_repository.load_user_settings().await?;
-        let repair_report = repair_sillytavern_prompt_manager_settings(&mut user_settings);
-        if repair_report.changed() {
-            tracing::warn!(
-                "Repaired SillyTavern PromptManager settings while loading: {}",
-                repair_report
-            );
-            self.schedule_delayed_user_settings_repair_writeback();
+        let signature = self
+            .settings_repository
+            .get_sillytavern_settings_signature()
+            .await?;
+        let mut cache = self.sillytavern_settings_cache.lock().await;
+        if let Some(entry) = cache.as_ref()
+            && entry.signature == signature
+        {
+            tracing::debug!("Using cached SillyTavern settings aggregate");
+            return Ok(entry.response.clone());
         }
 
-        let settings_json = serde_json::to_string(&user_settings.data).map_err(|e| {
-            ApplicationError::InternalError(format!("Failed to serialize settings: {}", e))
-        })?;
+        let response = self.build_sillytavern_settings_response().await?;
+        *cache = Some(SettingsAggregateCacheEntry {
+            signature,
+            response: response.clone(),
+        });
 
-        let (koboldai_settings, koboldai_setting_names) =
-            self.settings_repository.get_koboldai_settings().await?;
+        Ok(response)
+    }
 
-        let (novelai_settings, novelai_setting_names) =
-            self.settings_repository.get_novelai_settings().await?;
+    async fn build_sillytavern_settings_response(
+        &self,
+    ) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
+        let settings_json = async {
+            let mut user_settings = self.settings_repository.load_user_settings().await?;
+            let repair_report = repair_sillytavern_prompt_manager_settings(&mut user_settings);
+            if repair_report.changed() {
+                tracing::warn!(
+                    "Repaired SillyTavern PromptManager settings while loading: {}",
+                    repair_report
+                );
+                self.schedule_delayed_user_settings_repair_writeback();
+            }
 
-        let (openai_settings, openai_setting_names) =
-            self.settings_repository.get_openai_settings().await?;
+            serde_json::to_string(&user_settings.data).map_err(|error| {
+                ApplicationError::InternalError(format!("Failed to serialize settings: {}", error))
+            })
+        };
 
-        let (textgen_settings, textgen_setting_names) =
-            self.settings_repository.get_textgen_settings().await?;
+        let ai_settings = async {
+            let (koboldai, novelai, openai, textgen) = tokio::try_join!(
+                self.settings_repository.get_koboldai_settings(),
+                self.settings_repository.get_novelai_settings(),
+                self.settings_repository.get_openai_settings(),
+                self.settings_repository.get_textgen_settings(),
+            )?;
 
-        let world_names = self.settings_repository.get_world_names().await?;
+            Ok::<_, ApplicationError>((koboldai, novelai, openai, textgen))
+        };
 
-        let themes = self.settings_repository.get_themes().await?;
-        let themes_json: Vec<Value> = themes.into_iter().map(|t| t.data).collect();
+        let presets = async {
+            let (
+                themes,
+                moving_ui_presets,
+                quick_reply_presets,
+                instruct_presets,
+                context_presets,
+                sysprompt_presets,
+                reasoning_presets,
+            ) = tokio::try_join!(
+                self.settings_repository.get_themes(),
+                self.settings_repository.get_moving_ui_presets(),
+                self.settings_repository.get_quick_reply_presets(),
+                self.settings_repository.get_instruct_presets(),
+                self.settings_repository.get_context_presets(),
+                self.settings_repository.get_sysprompt_presets(),
+                self.settings_repository.get_reasoning_presets(),
+            )?;
 
-        let moving_ui_presets = self.settings_repository.get_moving_ui_presets().await?;
-        let moving_ui_presets_json: Vec<Value> =
-            moving_ui_presets.into_iter().map(|p| p.data).collect();
+            Ok::<_, ApplicationError>((
+                themes,
+                moving_ui_presets,
+                quick_reply_presets,
+                instruct_presets,
+                context_presets,
+                sysprompt_presets,
+                reasoning_presets,
+            ))
+        };
 
-        let quick_reply_presets = self.settings_repository.get_quick_reply_presets().await?;
-        let quick_reply_presets_json: Vec<Value> =
-            quick_reply_presets.into_iter().map(|p| p.data).collect();
+        let world_names =
+            async { Ok::<_, ApplicationError>(self.settings_repository.get_world_names().await?) };
 
-        let instruct_presets = self.settings_repository.get_instruct_presets().await?;
-        let instruct_presets_json: Vec<Value> =
-            instruct_presets.into_iter().map(|p| p.data).collect();
+        let (
+            settings_json,
+            (
+                (koboldai_settings, koboldai_setting_names),
+                (novelai_settings, novelai_setting_names),
+                (openai_settings, openai_setting_names),
+                (textgen_settings, textgen_setting_names),
+            ),
+            world_names,
+            (
+                themes,
+                moving_ui_presets,
+                quick_reply_presets,
+                instruct_presets,
+                context_presets,
+                sysprompt_presets,
+                reasoning_presets,
+            ),
+        ) = tokio::try_join!(settings_json, ai_settings, world_names, presets)?;
 
-        let context_presets = self.settings_repository.get_context_presets().await?;
-        let context_presets_json: Vec<Value> =
-            context_presets.into_iter().map(|p| p.data).collect();
-
-        let sysprompt_presets = self.settings_repository.get_sysprompt_presets().await?;
-        let sysprompt_presets_json: Vec<Value> =
-            sysprompt_presets.into_iter().map(|p| p.data).collect();
-
-        let reasoning_presets = self.settings_repository.get_reasoning_presets().await?;
-        let reasoning_presets_json: Vec<Value> =
-            reasoning_presets.into_iter().map(|p| p.data).collect();
+        let themes_json = Self::settings_values(themes);
+        let moving_ui_presets_json = Self::settings_values(moving_ui_presets);
+        let quick_reply_presets_json = Self::settings_values(quick_reply_presets);
+        let instruct_presets_json = Self::settings_values(instruct_presets);
+        let context_presets_json = Self::settings_values(context_presets);
+        let sysprompt_presets_json = Self::settings_values(sysprompt_presets);
+        let reasoning_presets_json = Self::settings_values(reasoning_presets);
 
         let response = SillyTavernSettingsResponseDto {
             settings: settings_json,
@@ -372,6 +458,10 @@ impl SettingsService {
         };
 
         Ok(response)
+    }
+
+    fn settings_values(settings: Vec<UserSettings>) -> Vec<Value> {
+        settings.into_iter().map(|settings| settings.data).collect()
     }
 
     pub async fn create_snapshot(&self) -> Result<(), ApplicationError> {
@@ -406,6 +496,7 @@ impl SettingsService {
         tracing::info!("Restoring settings snapshot: {}", name);
 
         self.settings_repository.restore_snapshot(name).await?;
+        self.clear_sillytavern_settings_cache().await;
 
         Ok(())
     }
@@ -424,6 +515,7 @@ mod tests {
     use super::*;
     use crate::dto::settings_dto::{RequestProxySettingsDto, UpdateAgentRunRetentionSettingsDto};
     use async_trait::async_trait;
+    use serde_json::{Value, json};
     use std::sync::Mutex as StdMutex;
     use tokio::sync::Mutex;
     use tt_domain::errors::DomainError;
@@ -549,9 +641,127 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn sillytavern_settings_aggregate_uses_cache_until_signature_changes() {
+        let repository = Arc::new(TestSettingsRepository::default());
+        repository
+            .store_user_settings(json!({"username": "one"}))
+            .await;
+        repository.store_signature(test_signature("one")).await;
+        let service = SettingsService::new(
+            repository.clone(),
+            Arc::new(TestRequestProxyRuntime::default()),
+        );
+
+        let first = service
+            .get_sillytavern_settings()
+            .await
+            .expect("load settings aggregate");
+        let second = service
+            .get_sillytavern_settings()
+            .await
+            .expect("load cached settings aggregate");
+
+        assert_eq!(repository.load_user_settings_count().await, 1);
+        assert_eq!(settings_value(&first), json!({"username": "one"}));
+        assert_eq!(settings_value(&second), json!({"username": "one"}));
+
+        repository
+            .store_user_settings(json!({"username": "two"}))
+            .await;
+        repository.store_signature(test_signature("two")).await;
+
+        let third = service
+            .get_sillytavern_settings()
+            .await
+            .expect("reload settings aggregate");
+
+        assert_eq!(repository.load_user_settings_count().await, 2);
+        assert_eq!(settings_value(&third), json!({"username": "two"}));
+    }
+
+    #[tokio::test]
+    async fn save_user_settings_skips_unchanged_payload() {
+        let repository = Arc::new(TestSettingsRepository::default());
+        repository
+            .store_user_settings(json!({"username": "same"}))
+            .await;
+        let service = SettingsService::new(
+            repository.clone(),
+            Arc::new(TestRequestProxyRuntime::default()),
+        );
+
+        service
+            .save_user_settings(UserSettingsDto {
+                data: json!({"username": "same"}),
+            })
+            .await
+            .expect("save unchanged settings");
+
+        assert_eq!(repository.save_user_settings_count().await, 0);
+        assert_eq!(repository.load_user_settings_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn save_user_settings_clears_settings_aggregate_cache_when_payload_changes() {
+        let repository = Arc::new(TestSettingsRepository::default());
+        repository
+            .store_user_settings(json!({"username": "old"}))
+            .await;
+        repository.store_signature(test_signature("stable")).await;
+        let service = SettingsService::new(
+            repository.clone(),
+            Arc::new(TestRequestProxyRuntime::default()),
+        );
+
+        let first = service
+            .get_sillytavern_settings()
+            .await
+            .expect("prime settings aggregate cache");
+        assert_eq!(settings_value(&first), json!({"username": "old"}));
+
+        service
+            .save_user_settings(UserSettingsDto {
+                data: json!({"username": "new"}),
+            })
+            .await
+            .expect("save changed settings");
+
+        let second = service
+            .get_sillytavern_settings()
+            .await
+            .expect("reload settings aggregate after save");
+
+        assert_eq!(repository.save_user_settings_count().await, 1);
+        assert_eq!(repository.load_user_settings_count().await, 3);
+        assert_eq!(settings_value(&second), json!({"username": "new"}));
+    }
+
     #[derive(Default)]
     struct TestSettingsRepository {
         settings: Mutex<TauriTavernSettings>,
+        user_settings: Mutex<UserSettings>,
+        settings_signature: Mutex<SettingsAggregateSignature>,
+        save_user_settings_count: Mutex<u32>,
+        load_user_settings_count: Mutex<u32>,
+    }
+
+    impl TestSettingsRepository {
+        async fn store_user_settings(&self, data: Value) {
+            *self.user_settings.lock().await = UserSettings { data };
+        }
+
+        async fn store_signature(&self, signature: SettingsAggregateSignature) {
+            *self.settings_signature.lock().await = signature;
+        }
+
+        async fn save_user_settings_count(&self) -> u32 {
+            *self.save_user_settings_count.lock().await
+        }
+
+        async fn load_user_settings_count(&self) -> u32 {
+            *self.load_user_settings_count.lock().await
+        }
     }
 
     #[async_trait]
@@ -568,12 +778,15 @@ mod tests {
             Ok(self.settings.lock().await.clone())
         }
 
-        async fn save_user_settings(&self, _settings: &UserSettings) -> Result<(), DomainError> {
-            unimplemented!("not used by these tests")
+        async fn save_user_settings(&self, settings: &UserSettings) -> Result<(), DomainError> {
+            *self.user_settings.lock().await = settings.clone();
+            *self.save_user_settings_count.lock().await += 1;
+            Ok(())
         }
 
         async fn load_user_settings(&self) -> Result<UserSettings, DomainError> {
-            unimplemented!("not used by these tests")
+            *self.load_user_settings_count.lock().await += 1;
+            Ok(self.user_settings.lock().await.clone())
         }
 
         async fn create_snapshot(&self) -> Result<(), DomainError> {
@@ -592,53 +805,67 @@ mod tests {
             unimplemented!("not used by these tests")
         }
 
+        async fn get_sillytavern_settings_signature(
+            &self,
+        ) -> Result<SettingsAggregateSignature, DomainError> {
+            Ok(self.settings_signature.lock().await.clone())
+        }
+
         async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {
-            unimplemented!("not used by these tests")
+            Ok(Vec::new())
         }
 
         async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
-            unimplemented!("not used by these tests")
+            Ok(Vec::new())
         }
 
         async fn get_quick_reply_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
-            unimplemented!("not used by these tests")
+            Ok(Vec::new())
         }
 
         async fn get_instruct_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
-            unimplemented!("not used by these tests")
+            Ok(Vec::new())
         }
 
         async fn get_context_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
-            unimplemented!("not used by these tests")
+            Ok(Vec::new())
         }
 
         async fn get_sysprompt_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
-            unimplemented!("not used by these tests")
+            Ok(Vec::new())
         }
 
         async fn get_reasoning_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
-            unimplemented!("not used by these tests")
+            Ok(Vec::new())
         }
 
         async fn get_koboldai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
-            unimplemented!("not used by these tests")
+            Ok((Vec::new(), Vec::new()))
         }
 
         async fn get_novelai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
-            unimplemented!("not used by these tests")
+            Ok((Vec::new(), Vec::new()))
         }
 
         async fn get_openai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
-            unimplemented!("not used by these tests")
+            Ok((Vec::new(), Vec::new()))
         }
 
         async fn get_textgen_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
-            unimplemented!("not used by these tests")
+            Ok((Vec::new(), Vec::new()))
         }
 
         async fn get_world_names(&self) -> Result<Vec<String>, DomainError> {
-            unimplemented!("not used by these tests")
+            Ok(Vec::new())
         }
+    }
+
+    fn test_signature(label: &str) -> SettingsAggregateSignature {
+        SettingsAggregateSignature::from_revision(label)
+    }
+
+    fn settings_value(response: &SillyTavernSettingsResponseDto) -> Value {
+        serde_json::from_str(&response.settings).expect("settings should be JSON")
     }
 
     #[derive(Default)]
