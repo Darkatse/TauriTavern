@@ -1,14 +1,18 @@
 use std::collections::HashMap;
+use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::fs;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::png_card_metadata::read_character_data_from_png_file;
-use tt_adapter_storage_core::file_system::list_files_with_extension;
+use tt_adapter_storage_core::file_system::{
+    list_files_with_extension, replace_file_with_fallback, unique_temp_path,
+};
 use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
 
@@ -20,6 +24,21 @@ use super::cache::{
 use super::helpers::{file_ctime_millis, file_modified_millis};
 
 const MAX_CONCURRENT_SHALLOW_READS: usize = 8;
+const PERSISTENT_SHALLOW_INDEX_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct PersistentShallowIndexSnapshot {
+    schema_version: u32,
+    entries: Vec<PersistentShallowIndexEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistentShallowIndexEntry {
+    signature: CharacterShallowIndexEntrySignature,
+    file_name: String,
+    data_size: u64,
+    character: Character,
+}
 
 #[derive(Debug)]
 struct CharacterShallowIndexScanEntry {
@@ -32,6 +51,17 @@ impl FileCharacterRepository {
     pub(crate) async fn clear_shallow_index_cache(&self) {
         let mut cache = self.shallow_index_cache.lock().await;
         *cache = None;
+        drop(cache);
+
+        if let Err(error) = fs::remove_file(&self.shallow_index_path).await
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                "Failed to remove character shallow index '{}': {}",
+                self.shallow_index_path.display(),
+                error
+            );
+        }
     }
 
     pub(crate) async fn load_shallow_character_index(&self) -> Result<Vec<Character>, DomainError> {
@@ -53,6 +83,13 @@ impl FileCharacterRepository {
             return Ok(Self::shallow_index_characters(cache));
         }
 
+        if scan_complete && let Some(cache) = self.load_persistent_shallow_index(&signature).await {
+            let characters = Self::shallow_index_characters(&cache);
+            let mut memory_cache = self.shallow_index_cache.lock().await;
+            *memory_cache = Some(cache);
+            return Ok(characters);
+        }
+
         let previous_by_avatar = cached
             .as_ref()
             .map(Self::shallow_index_by_avatar)
@@ -72,11 +109,15 @@ impl FileCharacterRepository {
             .collect();
 
         if scan_complete && build_complete {
-            let mut cache = self.shallow_index_cache.lock().await;
-            *cache = Some(CharacterShallowIndexCache {
+            let cache = CharacterShallowIndexCache {
                 signature,
                 characters: std::mem::take(&mut indexed_characters),
-            });
+            };
+            if let Err(error) = self.save_persistent_shallow_index(&cache).await {
+                tracing::warn!("Failed to persist character shallow index: {}", error);
+            }
+            let mut memory_cache = self.shallow_index_cache.lock().await;
+            *memory_cache = Some(cache);
         }
 
         Ok(characters)
@@ -99,6 +140,135 @@ impl FileCharacterRepository {
             .cloned()
             .map(|entry| (entry.signature.avatar.clone(), entry))
             .collect()
+    }
+
+    async fn load_persistent_shallow_index(
+        &self,
+        expected_signature: &CharacterShallowIndexSignature,
+    ) -> Option<CharacterShallowIndexCache> {
+        let bytes = match fs::read(&self.shallow_index_path).await {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+            Err(error) => {
+                tracing::warn!(
+                    "Ignoring unreadable character shallow index '{}': {}",
+                    self.shallow_index_path.display(),
+                    error
+                );
+                return None;
+            }
+        };
+
+        let snapshot = match serde_json::from_slice::<PersistentShallowIndexSnapshot>(&bytes) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                tracing::warn!(
+                    "Ignoring invalid character shallow index '{}': {}",
+                    self.shallow_index_path.display(),
+                    error
+                );
+                return None;
+            }
+        };
+
+        if snapshot.schema_version != PERSISTENT_SHALLOW_INDEX_SCHEMA_VERSION {
+            tracing::warn!(
+                "Ignoring character shallow index schema {} (expected {})",
+                snapshot.schema_version,
+                PERSISTENT_SHALLOW_INDEX_SCHEMA_VERSION
+            );
+            return None;
+        }
+
+        let snapshot_signature = CharacterShallowIndexSignature {
+            entries: snapshot
+                .entries
+                .iter()
+                .map(|entry| entry.signature.clone())
+                .collect(),
+        };
+        if &snapshot_signature != expected_signature {
+            return None;
+        }
+
+        let characters = snapshot
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let mut character = entry.character;
+                character.file_name = Some(entry.file_name);
+                character.avatar = entry.signature.avatar.clone();
+                character.chat_size = entry.signature.chat_size;
+                character.data_size = entry.data_size;
+                character.date_added = entry.signature.created_millis;
+                character.date_last_chat = entry.signature.date_last_chat;
+                character.shallow = true;
+                CharacterShallowIndexCachedCharacter {
+                    signature: entry.signature,
+                    character,
+                }
+            })
+            .collect();
+
+        Some(CharacterShallowIndexCache {
+            signature: expected_signature.clone(),
+            characters,
+        })
+    }
+
+    async fn save_persistent_shallow_index(
+        &self,
+        cache: &CharacterShallowIndexCache,
+    ) -> Result<(), DomainError> {
+        let snapshot = PersistentShallowIndexSnapshot {
+            schema_version: PERSISTENT_SHALLOW_INDEX_SCHEMA_VERSION,
+            entries: cache
+                .characters
+                .iter()
+                .map(|entry| {
+                    let file_name = entry.character.file_name.clone().ok_or_else(|| {
+                        DomainError::InternalError(format!(
+                            "Character shallow index entry '{}' is missing file_name",
+                            entry.signature.avatar
+                        ))
+                    })?;
+
+                    Ok(PersistentShallowIndexEntry {
+                        signature: entry.signature.clone(),
+                        file_name,
+                        data_size: entry.character.data_size,
+                        character: entry.character.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, DomainError>>()?,
+        };
+        let bytes = serde_json::to_vec(&snapshot).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to serialize character shallow index: {}",
+                error
+            ))
+        })?;
+
+        if let Some(parent) = self.shallow_index_path.parent() {
+            fs::create_dir_all(parent).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to create character shallow index directory '{}': {}",
+                    parent.display(),
+                    error
+                ))
+            })?;
+        }
+
+        let temp_path =
+            unique_temp_path(&self.shallow_index_path, "character_shallow_index_v1.json");
+        fs::write(&temp_path, bytes).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to write character shallow index temp file '{}': {}",
+                temp_path.display(),
+                error
+            ))
+        })?;
+        replace_file_with_fallback(&temp_path, &self.shallow_index_path).await
     }
 
     async fn scan_shallow_index_entries(

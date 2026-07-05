@@ -7,7 +7,7 @@ mod shallow_index;
 #[cfg(test)]
 mod tests;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,6 +24,7 @@ pub struct FileCharacterRepository {
     chats_dir: PathBuf,
     thumbnails_avatar_dir: PathBuf,
     default_avatar_path: PathBuf,
+    shallow_index_path: PathBuf,
     memory_cache: Arc<Mutex<MemoryCache>>,
     shallow_index_cache: Arc<Mutex<Option<CharacterShallowIndexCache>>>,
     chat_aliases: SharedChatAliasStore,
@@ -68,6 +69,7 @@ impl FileCharacterRepository {
         default_avatar_path: PathBuf,
         chat_aliases: SharedChatAliasStore,
     ) -> Self {
+        let shallow_index_path = character_shallow_index_path_for_characters_dir(&characters_dir);
         let memory_cache = Arc::new(Mutex::new(MemoryCache::new(
             100,
             Duration::from_secs(30 * 60),
@@ -79,9 +81,22 @@ impl FileCharacterRepository {
             chats_dir,
             thumbnails_avatar_dir,
             default_avatar_path,
+            shallow_index_path,
             memory_cache,
             shallow_index_cache,
             chat_aliases,
         }
     }
+}
+
+fn character_shallow_index_path_for_characters_dir(characters_dir: &Path) -> PathBuf {
+    characters_dir
+        .parent()
+        .map(|default_user_dir| {
+            default_user_dir
+                .join("user")
+                .join("cache")
+                .join("character_shallow_index_v1.json")
+        })
+        .unwrap_or_else(|| characters_dir.join("character_shallow_index_v1.json"))
 }

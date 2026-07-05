@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
 use tt_domain::models::character::Character;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CharacterShallowIndexEntrySignature {
     pub(crate) avatar: String,
     pub(crate) file_size: u64,

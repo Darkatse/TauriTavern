@@ -1,11 +1,11 @@
 use chrono::DateTime;
 use crc32fast::Hasher;
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use rand::random;
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::fs;
 
 use crate::png_card_metadata::{
@@ -78,8 +78,7 @@ fn insert_text_chunk_before_iend(mut png: Vec<u8>, keyword: &str, text: &str) ->
     png
 }
 
-async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
-    let root = unique_temp_root();
+async fn repository_for_root(root: &Path) -> FileCharacterRepository {
     let characters_dir = root.join("characters");
     let chats_dir = root.join("chats");
     let thumbnails_avatar_dir = root.join("thumbnails/avatar");
@@ -98,14 +97,25 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
         .await
         .expect("write default avatar");
 
-    let repository = FileCharacterRepository::with_chat_aliases(
+    FileCharacterRepository::with_chat_aliases(
         characters_dir,
         chats_dir,
         thumbnails_avatar_dir,
         default_avatar,
-        new_shared_chat_alias_store_for_user_dir(&root),
-    );
+        new_shared_chat_alias_store_for_user_dir(root),
+    )
+}
+
+async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
+    let root = unique_temp_root();
+    let repository = repository_for_root(&root).await;
     (repository, root)
+}
+
+fn shallow_index_path(root: &Path) -> PathBuf {
+    root.join("user")
+        .join("cache")
+        .join("character_shallow_index_v1.json")
 }
 
 #[test]
@@ -1552,6 +1562,182 @@ async fn shallow_index_signature_tracks_chat_stats_changes() {
     assert_eq!(second.len(), 1);
     assert!(second[0].chat_size > 0);
     assert!(second[0].date_last_chat > 0);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn persistent_shallow_index_is_used_after_repository_restart() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Indexed".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+
+    let first = repository
+        .find_all(true)
+        .await
+        .expect("create persistent shallow index");
+    assert_eq!(first.len(), 1);
+
+    let index_path = shallow_index_path(&root);
+    assert!(
+        index_path.is_file(),
+        "persistent shallow index should be stored under default-user/user/cache"
+    );
+
+    let mut index_json: Value = serde_json::from_slice(
+        &fs::read(&index_path)
+            .await
+            .expect("read persistent shallow index"),
+    )
+    .expect("parse persistent shallow index");
+    index_json["entries"][0]["character"]["name"] =
+        Value::String("From persistent index".to_string());
+    fs::write(
+        &index_path,
+        serde_json::to_vec(&index_json).expect("serialize patched index"),
+    )
+    .await
+    .expect("patch persistent shallow index");
+
+    let restarted = repository_for_root(&root).await;
+    let second = restarted
+        .find_all(true)
+        .await
+        .expect("load persistent shallow index");
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].name, "From persistent index");
+    assert!(second[0].shallow);
+    assert_eq!(second[0].data_size, first[0].data_size);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn persistent_shallow_index_rebuilds_when_chat_signature_changes() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Indexed".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+    repository
+        .find_all(true)
+        .await
+        .expect("create persistent shallow index");
+
+    let index_path = shallow_index_path(&root);
+    let mut index_json: Value = serde_json::from_slice(
+        &fs::read(&index_path)
+            .await
+            .expect("read persistent shallow index"),
+    )
+    .expect("parse persistent shallow index");
+    index_json["entries"][0]["character"]["name"] = Value::String("Stale".to_string());
+    fs::write(
+        &index_path,
+        serde_json::to_vec(&index_json).expect("serialize stale index"),
+    )
+    .await
+    .expect("write stale persistent shallow index");
+
+    let chat_dir = root.join("chats").join("Indexed");
+    fs::create_dir_all(&chat_dir)
+        .await
+        .expect("create chat dir");
+    fs::write(chat_dir.join("session.jsonl"), b"{}\n{\"mes\":\"hello\"}\n")
+        .await
+        .expect("write chat");
+
+    let restarted = repository_for_root(&root).await;
+    let rebuilt = restarted
+        .find_all(true)
+        .await
+        .expect("rebuild stale persistent shallow index");
+    assert_eq!(rebuilt.len(), 1);
+    assert_eq!(rebuilt[0].name, "Indexed");
+    assert!(rebuilt[0].chat_size > 0);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn invalid_persistent_shallow_index_is_ignored_and_rebuilt() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Indexed".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+    repository
+        .find_all(true)
+        .await
+        .expect("create persistent shallow index");
+
+    let index_path = shallow_index_path(&root);
+    fs::write(&index_path, b"{not json")
+        .await
+        .expect("corrupt persistent shallow index");
+
+    let restarted = repository_for_root(&root).await;
+    let rebuilt = restarted
+        .find_all(true)
+        .await
+        .expect("rebuild invalid persistent shallow index");
+    assert_eq!(rebuilt.len(), 1);
+    assert_eq!(rebuilt[0].name, "Indexed");
+
+    let repaired: Value = serde_json::from_slice(
+        &fs::read(&index_path)
+            .await
+            .expect("read rebuilt persistent shallow index"),
+    )
+    .expect("rebuilt persistent shallow index should be valid JSON");
+    assert_eq!(repaired["schema_version"], Value::from(1));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn persistent_shallow_index_io_errors_do_not_fail_character_operations() {
+    let (repository, root) = setup_repository().await;
+
+    let index_path = shallow_index_path(&root);
+    fs::create_dir_all(&index_path)
+        .await
+        .expect("create directory at persistent shallow index path");
+
+    let character = Character::new(
+        "Indexed".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository
+        .save(&character)
+        .await
+        .expect("save should ignore persistent shallow index remove failure");
+
+    let characters = repository
+        .find_all(true)
+        .await
+        .expect("shallow list should ignore persistent shallow index read/write failure");
+    assert_eq!(characters.len(), 1);
+    assert_eq!(characters[0].name, "Indexed");
+    assert!(characters[0].shallow);
+    assert!(repository.shallow_index_cache.lock().await.is_some());
+    assert!(index_path.is_dir());
 
     let _ = fs::remove_dir_all(&root).await;
 }
