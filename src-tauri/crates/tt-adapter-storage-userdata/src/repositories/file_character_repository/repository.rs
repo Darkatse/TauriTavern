@@ -48,6 +48,7 @@ impl FileCharacterRepository {
         stored.avatar = format!("{}.png", file_name);
         stored.json_data = json_data;
         stored.shallow = false;
+        stored.data_size = Self::calculate_data_size(&stored.to_v2().data);
         stored
     }
 
@@ -350,8 +351,11 @@ impl CharacterRepository for FileCharacterRepository {
         let cached_character =
             Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
 
-        let mut cache = self.memory_cache.lock().await;
-        cache.set(file_name, cached_character);
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.set(file_name, cached_character);
+        }
+        self.clear_shallow_index_cache().await;
 
         Ok(())
     }
@@ -416,8 +420,11 @@ impl CharacterRepository for FileCharacterRepository {
             }
         }
 
-        let mut cache = self.memory_cache.lock().await;
-        cache.remove(name);
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.remove(name);
+        }
+        self.clear_shallow_index_cache().await;
 
         Ok(())
     }
@@ -479,8 +486,11 @@ impl CharacterRepository for FileCharacterRepository {
         }
 
         let character = self.read_character_from_file(&file_path).await?;
-        let mut cache = self.memory_cache.lock().await;
-        cache.set(name.to_string(), character.clone());
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.set(name.to_string(), character.clone());
+        }
+        self.clear_shallow_index_cache().await;
 
         Ok(character)
     }
@@ -573,6 +583,7 @@ impl CharacterRepository for FileCharacterRepository {
                 cache.remove(old_name);
             }
         }
+        self.clear_shallow_index_cache().await;
 
         Ok(character)
     }
@@ -598,8 +609,11 @@ impl CharacterRepository for FileCharacterRepository {
         })?;
 
         let character = self.read_character_from_file(&target_path).await?;
-        let mut cache = self.memory_cache.lock().await;
-        cache.set(target_file_stem, character.clone());
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.set(target_file_stem, character.clone());
+        }
+        self.clear_shallow_index_cache().await;
 
         Ok(character)
     }
@@ -622,7 +636,7 @@ impl CharacterRepository for FileCharacterRepository {
             .unwrap_or("")
             .to_lowercase();
 
-        match extension.as_str() {
+        let character = match extension.as_str() {
             "png" => {
                 self.import_from_png_file(file_path, &file_data, preserve_file_name.as_deref())
                     .await
@@ -635,7 +649,10 @@ impl CharacterRepository for FileCharacterRepository {
                 "Unsupported file format: {}",
                 extension
             ))),
-        }
+        }?;
+
+        self.clear_shallow_index_cache().await;
+        Ok(character)
     }
 
     async fn export_character(
@@ -768,8 +785,11 @@ impl CharacterRepository for FileCharacterRepository {
         let stored_character =
             Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
 
-        let mut cache = self.memory_cache.lock().await;
-        cache.set(file_name, stored_character.clone());
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.set(file_name, stored_character.clone());
+        }
+        self.clear_shallow_index_cache().await;
 
         Ok(CharacterCreateResult {
             character: stored_character,
@@ -819,8 +839,11 @@ impl CharacterRepository for FileCharacterRepository {
 
         let cached_character =
             Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
-        let mut cache = self.memory_cache.lock().await;
-        cache.set(file_name, cached_character);
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.set(file_name, cached_character);
+        }
+        self.clear_shallow_index_cache().await;
 
         Ok(())
     }
@@ -935,8 +958,11 @@ impl CharacterRepository for FileCharacterRepository {
     }
 
     async fn clear_cache(&self) -> Result<(), DomainError> {
-        let mut cache = self.memory_cache.lock().await;
-        cache.clear();
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.clear();
+        }
+        self.clear_shallow_index_cache().await;
         Ok(())
     }
 }

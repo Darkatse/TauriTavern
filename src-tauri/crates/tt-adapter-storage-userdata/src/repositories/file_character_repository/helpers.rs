@@ -3,6 +3,7 @@ use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use serde_json::Value;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use tokio::fs;
 
@@ -12,13 +13,13 @@ use tt_adapter_storage_core::file_system::{
     list_files_with_extension, replace_file_with_fallback, unique_temp_path,
 };
 use tt_domain::errors::DomainError;
-use tt_domain::models::character::Character;
+use tt_domain::models::character::{Character, CharacterData};
 use tt_domain::models::chat::parse_message_timestamp;
 use tt_domain::models::filename::sanitize_filename;
 
 use super::FileCharacterRepository;
 
-fn file_ctime_millis(metadata: &std::fs::Metadata) -> Option<i64> {
+pub(crate) fn file_ctime_millis(metadata: &std::fs::Metadata) -> Option<i64> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -45,7 +46,50 @@ fn file_ctime_millis(metadata: &std::fs::Metadata) -> Option<i64> {
     }
 }
 
+pub(crate) fn file_modified_millis(metadata: &std::fs::Metadata) -> i64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 impl FileCharacterRepository {
+    pub(crate) fn calculate_data_size(data: &CharacterData) -> u64 {
+        fn js_string_len(value: &Value) -> u64 {
+            match value {
+                Value::Null => 4,
+                Value::Bool(value) => value.to_string().encode_utf16().count() as u64,
+                Value::Number(value) => value.to_string().encode_utf16().count() as u64,
+                Value::String(value) => value.encode_utf16().count() as u64,
+                Value::Array(values) => {
+                    values
+                        .iter()
+                        .map(|value| {
+                            if value.is_null() {
+                                0
+                            } else {
+                                js_string_len(value)
+                            }
+                        })
+                        .sum::<u64>()
+                        + values.len().saturating_sub(1) as u64
+                }
+                Value::Object(_) => "[object Object]".len() as u64,
+            }
+        }
+
+        let value =
+            serde_json::to_value(data).expect("CharacterData serialization should not fail");
+        value
+            .as_object()
+            .expect("CharacterData should serialize to a JSON object")
+            .values()
+            .map(js_string_len)
+            .sum()
+    }
+
     fn is_valid_character_create_date(value: &str) -> bool {
         let trimmed = value.trim();
         if trimmed.is_empty() {
@@ -85,7 +129,7 @@ impl FileCharacterRepository {
             .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true))
     }
 
-    fn repaired_character_create_date(
+    pub(crate) fn repaired_character_create_date(
         value: &str,
         fallback_timestamp_millis: Option<i64>,
     ) -> Option<String> {
@@ -244,7 +288,9 @@ impl FileCharacterRepository {
             tracing::error!("Failed to read file metadata: {}", e);
             DomainError::InternalError(format!("Failed to read file metadata: {}", e))
         })?;
-        let timestamp_millis = file_ctime_millis(&metadata);
+        let modified_millis = file_modified_millis(&metadata);
+        let timestamp_millis = file_ctime_millis(&metadata)
+            .or_else(|| (modified_millis > 0).then_some(modified_millis));
 
         let mut json_data = read_character_data_from_png(&file_data)?;
 
@@ -257,7 +303,8 @@ impl FileCharacterRepository {
             DomainError::InvalidData(format!("Failed to decode character data: {}", e))
         })?;
         Self::sync_canonical_data_fields(&mut character, &raw_value);
-        self.normalize_imported_character(&mut character)?;
+        Self::normalize_imported_character(&mut character)?;
+        let data_size = Self::calculate_data_size(&character.data);
         character.shallow = false;
 
         let file_name = path
@@ -325,6 +372,7 @@ impl FileCharacterRepository {
                 ))
             })?;
             replace_file_with_fallback(&temp_path, path).await?;
+            self.clear_shallow_index_cache().await;
 
             character.create_date = repaired_create_date;
             json_data = updated_json;
@@ -334,6 +382,7 @@ impl FileCharacterRepository {
 
         let (chat_size, date_last_chat) = self.calculate_chat_stats(&file_name).await?;
         character.chat_size = chat_size;
+        character.data_size = data_size;
         character.date_last_chat = date_last_chat;
 
         Ok(character)
@@ -386,6 +435,10 @@ impl FileCharacterRepository {
         &self,
         shallow: bool,
     ) -> Result<Vec<Character>, DomainError> {
+        if shallow {
+            return self.load_shallow_character_index().await;
+        }
+
         self.ensure_directory_exists().await?;
 
         let character_files = list_files_with_extension(&self.characters_dir, "png").await?;

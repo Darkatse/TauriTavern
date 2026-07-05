@@ -12,7 +12,7 @@ use crate::png_card_metadata::{
     read_character_data_from_png, read_text_chunks_from_png, write_character_data_to_png,
 };
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
-use tt_domain::models::character::Character;
+use tt_domain::models::character::{Character, CharacterData};
 use tt_ports::repositories::character_repository::{
     CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterRepository,
 };
@@ -108,6 +108,18 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
     (repository, root)
 }
 
+#[test]
+fn calculate_data_size_uses_js_string_length_semantics() {
+    let data = CharacterData {
+        name: "😀".to_string(),
+        description: "abc".to_string(),
+        tags: vec!["x".to_string(), "😀".to_string()],
+        ..Default::default()
+    };
+
+    assert_eq!(FileCharacterRepository::calculate_data_size(&data), 28);
+}
+
 #[tokio::test]
 async fn find_by_name_repairs_invalid_create_date_and_persists_patch() {
     let (repository, root) = setup_repository().await;
@@ -200,6 +212,73 @@ async fn find_by_name_repairs_legacy_utc_create_date_format() {
 
     assert_eq!(
         updated_value
+            .get("create_date")
+            .and_then(|value| value.as_str()),
+        Some("2026-03-16T12:34:56.000Z")
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn shallow_index_repairs_create_date_without_persisting_patch() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "name": "Shallow Legacy Date",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "hello",
+        "create_date": "2026-03-16 12:34:56 UTC",
+    });
+
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+
+    let character_path = root.join("characters").join("ShallowLegacyDate.png");
+    fs::write(&character_path, source_png)
+        .await
+        .expect("write character png");
+
+    let shallow = repository
+        .find_all(true)
+        .await
+        .expect("load shallow character list");
+    assert_eq!(shallow.len(), 1);
+    assert_eq!(shallow[0].create_date, "2026-03-16T12:34:56.000Z");
+
+    let png_after_shallow = fs::read(&character_path)
+        .await
+        .expect("read shallow character png");
+    let json_after_shallow =
+        read_character_data_from_png(&png_after_shallow).expect("extract shallow card json");
+    let value_after_shallow: serde_json::Value =
+        serde_json::from_str(&json_after_shallow).expect("parse shallow card json");
+    assert_eq!(
+        value_after_shallow
+            .get("create_date")
+            .and_then(|value| value.as_str()),
+        Some("2026-03-16 12:34:56 UTC")
+    );
+
+    let full = repository
+        .find_by_name("ShallowLegacyDate")
+        .await
+        .expect("load full character");
+    assert_eq!(full.create_date, "2026-03-16T12:34:56.000Z");
+
+    let png_after_full = fs::read(&character_path)
+        .await
+        .expect("read repaired character png");
+    let json_after_full =
+        read_character_data_from_png(&png_after_full).expect("extract repaired card json");
+    let value_after_full: serde_json::Value =
+        serde_json::from_str(&json_after_full).expect("parse repaired card json");
+    assert_eq!(
+        value_after_full
             .get("create_date")
             .and_then(|value| value.as_str()),
         Some("2026-03-16T12:34:56.000Z")
@@ -1249,6 +1328,7 @@ async fn find_all_shallow_preserves_runtime_fields_and_omits_character_book() {
     assert_eq!(shallow.tags, vec!["tag-a".to_string(), "tag-b".to_string()]);
     assert!(shallow.fav);
     assert_eq!(shallow.talkativeness, 0.7);
+    assert!(shallow.data_size > 0);
 
     assert!(shallow.description.is_empty());
     assert!(shallow.personality.is_empty());
@@ -1258,7 +1338,7 @@ async fn find_all_shallow_preserves_runtime_fields_and_omits_character_book() {
     assert!(shallow.data.system_prompt.is_empty());
     assert!(shallow.data.post_history_instructions.is_empty());
     assert!(shallow.data.alternate_greetings.is_empty());
-    assert!(shallow.data.extensions.world.is_empty());
+    assert_eq!(shallow.data.extensions.world, "world");
     assert!(shallow.data.extensions.additional.is_empty());
     assert!(shallow.data.character_book.is_none());
 
@@ -1358,6 +1438,42 @@ async fn v2_data_metadata_is_canonical_for_full_and_shallow_reads() {
 }
 
 #[tokio::test]
+async fn legacy_cards_get_data_size_after_normalization() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "name": "Legacy Size",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "hello",
+        "tags": ["x", "😀"],
+    });
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+    fs::write(root.join("characters").join("LegacySize.png"), source_png)
+        .await
+        .expect("write character png");
+
+    let full = repository
+        .find_by_name("LegacySize")
+        .await
+        .expect("load full character");
+    assert!(full.data_size > 0);
+
+    let shallow = repository
+        .find_all(true)
+        .await
+        .expect("load shallow character list");
+    assert_eq!(shallow.len(), 1);
+    assert_eq!(shallow[0].data_size, full.data_size);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn find_by_name_promotes_cached_shallow_character_to_full() {
     let (repository, root) = setup_repository().await;
 
@@ -1397,6 +1513,169 @@ async fn find_by_name_promotes_cached_shallow_character_to_full() {
     assert_eq!(full.data.system_prompt, "system");
     assert_eq!(full.data.alternate_greetings, vec!["alt".to_string()]);
     assert!(full.data.character_book.is_some());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn shallow_index_signature_tracks_chat_stats_changes() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Indexed".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+
+    let first = repository
+        .find_all(true)
+        .await
+        .expect("load initial shallow list");
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].chat_size, 0);
+    assert_eq!(first[0].date_last_chat, 0);
+
+    let chat_dir = root.join("chats").join("Indexed");
+    fs::create_dir_all(&chat_dir)
+        .await
+        .expect("create chat dir");
+    fs::write(chat_dir.join("session.jsonl"), b"{}\n{\"mes\":\"hello\"}\n")
+        .await
+        .expect("write chat");
+
+    let second = repository
+        .find_all(true)
+        .await
+        .expect("reload shallow list");
+    assert_eq!(second.len(), 1);
+    assert!(second[0].chat_size > 0);
+    assert!(second[0].date_last_chat > 0);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn shallow_index_does_not_cache_partial_failures() {
+    let (repository, root) = setup_repository().await;
+
+    let good = Character::new(
+        "Good".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&good).await.expect("save good character");
+
+    let broken_path = root.join("characters").join("Broken.png");
+    fs::write(&broken_path, b"not a png")
+        .await
+        .expect("write broken character");
+
+    let first = repository
+        .find_all(true)
+        .await
+        .expect("load shallow list with broken card");
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].name, "Good");
+    assert!(repository.shallow_index_cache.lock().await.is_none());
+
+    let fixed = Character::new(
+        "Broken".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    let fixed_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&fixed.to_v2()).expect("serialize fixed card"),
+    )
+    .expect("embed fixed card in png");
+    fs::write(&broken_path, fixed_png)
+        .await
+        .expect("replace broken character");
+
+    let mut names: Vec<String> = repository
+        .find_all(true)
+        .await
+        .expect("reload shallow list")
+        .into_iter()
+        .map(|character| character.name)
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["Broken".to_string(), "Good".to_string()]);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn shallow_index_returns_stale_cache_when_refresh_partially_fails() {
+    let (repository, root) = setup_repository().await;
+
+    let good = Character::new(
+        "Good".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&good).await.expect("save good character");
+
+    let cached = repository
+        .find_all(true)
+        .await
+        .expect("warm shallow index cache");
+    assert_eq!(cached.len(), 1);
+    assert_eq!(cached[0].name, "Good");
+    assert!(repository.shallow_index_cache.lock().await.is_some());
+
+    let broken_path = root.join("characters").join("Broken.png");
+    fs::write(&broken_path, b"not a png")
+        .await
+        .expect("write broken character");
+
+    let stale = repository
+        .find_all(true)
+        .await
+        .expect("load stale shallow index");
+    assert_eq!(stale.len(), 1);
+    assert_eq!(stale[0].name, "Good");
+    assert_eq!(
+        repository
+            .shallow_index_cache
+            .lock()
+            .await
+            .as_ref()
+            .expect("stale cache should remain")
+            .characters
+            .len(),
+        1
+    );
+
+    let fixed = Character::new(
+        "Broken".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    let fixed_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&fixed.to_v2()).expect("serialize fixed card"),
+    )
+    .expect("embed fixed card in png");
+    fs::write(&broken_path, fixed_png)
+        .await
+        .expect("replace broken character");
+
+    let mut names: Vec<String> = repository
+        .find_all(true)
+        .await
+        .expect("reload complete shallow index")
+        .into_iter()
+        .map(|character| character.name)
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["Broken".to_string(), "Good".to_string()]);
 
     let _ = fs::remove_dir_all(&root).await;
 }

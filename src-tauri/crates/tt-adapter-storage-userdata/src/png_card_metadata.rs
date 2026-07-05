@@ -2,7 +2,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use crc32fast::Hasher;
 use flate2::read::ZlibDecoder;
 use image::ImageFormat;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, SeekFrom};
+use std::path::Path;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::character_repository::ImageCrop;
 
@@ -230,6 +232,62 @@ fn is_character_text_chunk(chunk_type: [u8; 4], data: &[u8]) -> Result<bool, Dom
         || keyword.eq_ignore_ascii_case(CHUNK_NAME_V3.as_bytes()))
 }
 
+fn is_text_chunk_type(chunk_type: [u8; 4]) -> bool {
+    matches!(
+        chunk_type,
+        CHUNK_TYPE_TEXT | CHUNK_TYPE_ZTXT | CHUNK_TYPE_ITXT
+    )
+}
+
+fn select_character_text_chunk(
+    chunk_type: [u8; 4],
+    data: &[u8],
+    v2_payload: &mut Option<String>,
+) -> Result<Option<String>, DomainError> {
+    let Some(keyword) = text_chunk_keyword(chunk_type, data)? else {
+        return Ok(None);
+    };
+
+    if !keyword.eq_ignore_ascii_case(CHUNK_NAME_V3.as_bytes())
+        && !keyword.eq_ignore_ascii_case(CHUNK_NAME_V2.as_bytes())
+    {
+        return Ok(None);
+    }
+
+    let Some(text_chunk) = parse_text_chunk(chunk_type, data)? else {
+        return Ok(None);
+    };
+
+    if text_chunk.keyword.eq_ignore_ascii_case(CHUNK_NAME_V3) {
+        return decode_base64(&text_chunk.text).map(Some);
+    }
+
+    if text_chunk.keyword.eq_ignore_ascii_case(CHUNK_NAME_V2) && v2_payload.is_none() {
+        *v2_payload = Some(text_chunk.text);
+    }
+
+    Ok(None)
+}
+
+fn finish_character_metadata_read(
+    saw_text_chunk: bool,
+    v2_payload: Option<String>,
+) -> Result<String, DomainError> {
+    if let Some(payload) = v2_payload {
+        return decode_base64(&payload);
+    }
+
+    if !saw_text_chunk {
+        return Err(DomainError::InvalidData(
+            "PNG metadata does not contain any text chunks".to_string(),
+        ));
+    }
+
+    Err(DomainError::InvalidData(
+        "PNG metadata does not contain character data".to_string(),
+    ))
+}
+
 /// Reads all text metadata chunks from a PNG image.
 ///
 /// This includes `tEXt`, `zTXt`, and `iTXt` chunks.
@@ -269,83 +327,144 @@ pub fn read_character_data_from_png(image_data: &[u8]) -> Result<String, DomainE
             break;
         }
 
-        if chunk.chunk_type == CHUNK_TYPE_TEXT {
+        if is_text_chunk_type(chunk.chunk_type) {
             saw_text_chunk = true;
-            let (keyword, text) = split_keyword(chunk.data, "tEXt")?;
 
-            if keyword.eq_ignore_ascii_case(CHUNK_NAME_V3.as_bytes()) {
-                return decode_base64(&decode_latin1(text));
-            }
-
-            if keyword.eq_ignore_ascii_case(CHUNK_NAME_V2.as_bytes()) && v2_payload.is_none() {
-                v2_payload = Some(decode_latin1(text));
-            }
-
-            continue;
-        }
-
-        if chunk.chunk_type == CHUNK_TYPE_ZTXT {
-            saw_text_chunk = true;
-            let (keyword, _) = split_keyword(chunk.data, "zTXt")?;
-
-            if !keyword.eq_ignore_ascii_case(CHUNK_NAME_V3.as_bytes())
-                && !keyword.eq_ignore_ascii_case(CHUNK_NAME_V2.as_bytes())
+            if let Some(payload) =
+                select_character_text_chunk(chunk.chunk_type, chunk.data, &mut v2_payload)?
             {
-                continue;
-            }
-
-            let Some(text_chunk) = parse_text_chunk(chunk.chunk_type, chunk.data)? else {
-                continue;
-            };
-
-            if text_chunk.keyword.eq_ignore_ascii_case(CHUNK_NAME_V3) {
-                return decode_base64(&text_chunk.text);
-            }
-
-            if text_chunk.keyword.eq_ignore_ascii_case(CHUNK_NAME_V2) && v2_payload.is_none() {
-                v2_payload = Some(text_chunk.text);
-            }
-
-            continue;
-        }
-
-        if chunk.chunk_type == CHUNK_TYPE_ITXT {
-            saw_text_chunk = true;
-            let (keyword, _) = split_keyword(chunk.data, "iTXt")?;
-
-            if !keyword.eq_ignore_ascii_case(CHUNK_NAME_V3.as_bytes())
-                && !keyword.eq_ignore_ascii_case(CHUNK_NAME_V2.as_bytes())
-            {
-                continue;
-            }
-
-            let Some(text_chunk) = parse_text_chunk(chunk.chunk_type, chunk.data)? else {
-                continue;
-            };
-
-            if text_chunk.keyword.eq_ignore_ascii_case(CHUNK_NAME_V3) {
-                return decode_base64(&text_chunk.text);
-            }
-
-            if text_chunk.keyword.eq_ignore_ascii_case(CHUNK_NAME_V2) && v2_payload.is_none() {
-                v2_payload = Some(text_chunk.text);
+                return Ok(payload);
             }
         }
     }
 
-    if let Some(payload) = v2_payload {
-        return decode_base64(&payload);
-    }
+    finish_character_metadata_read(saw_text_chunk, v2_payload)
+}
 
-    if !saw_text_chunk {
+/// Reads character data from a PNG file without loading image chunks into memory.
+pub async fn read_character_data_from_png_file(path: &Path) -> Result<String, DomainError> {
+    tracing::debug!("Streaming character data from PNG: {}", path.display());
+
+    let mut file = tokio::fs::File::open(path).await.map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to open character PNG '{}': {}",
+            path.display(),
+            error
+        ))
+    })?;
+    let file_len = file
+        .metadata()
+        .await
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to inspect character PNG '{}': {}",
+                path.display(),
+                error
+            ))
+        })?
+        .len();
+
+    let mut signature = [0; PNG_SIGNATURE.len()];
+    file.read_exact(&mut signature).await.map_err(|error| {
+        DomainError::InvalidData(format!(
+            "Failed to read PNG header from '{}': {}",
+            path.display(),
+            error
+        ))
+    })?;
+
+    if signature != PNG_SIGNATURE {
         return Err(DomainError::InvalidData(
-            "PNG metadata does not contain any text chunks".to_string(),
+            "Failed to read PNG header: invalid PNG signature".to_string(),
         ));
     }
 
-    Err(DomainError::InvalidData(
-        "PNG metadata does not contain character data".to_string(),
-    ))
+    let mut saw_text_chunk = false;
+    let mut v2_payload: Option<String> = None;
+    let mut offset = PNG_SIGNATURE.len() as u64;
+
+    while let Some(header_end) = offset.checked_add(8) {
+        if header_end > file_len {
+            break;
+        }
+
+        let mut header = [0u8; 8];
+        file.read_exact(&mut header).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read PNG chunk header from '{}': {}",
+                path.display(),
+                error
+            ))
+        })?;
+
+        let length = u32::from_be_bytes(
+            header[..4]
+                .try_into()
+                .expect("slice has exactly four bytes"),
+        ) as u64;
+        let chunk_type: [u8; 4] = header[4..8]
+            .try_into()
+            .expect("slice has exactly four bytes");
+        let data_start = offset.checked_add(8).ok_or_else(|| {
+            DomainError::InvalidData("Failed to parse PNG metadata: chunk too large".to_string())
+        })?;
+        let data_end = data_start.checked_add(length).ok_or_else(|| {
+            DomainError::InvalidData("Failed to parse PNG metadata: chunk too large".to_string())
+        })?;
+        let chunk_end = data_end.checked_add(4).ok_or_else(|| {
+            DomainError::InvalidData("Failed to parse PNG metadata: chunk too large".to_string())
+        })?;
+
+        if chunk_end > file_len {
+            return Err(DomainError::InvalidData(
+                "Failed to parse PNG metadata: truncated PNG chunk".to_string(),
+            ));
+        }
+
+        if chunk_type == CHUNK_TYPE_IEND {
+            break;
+        }
+
+        if is_text_chunk_type(chunk_type) {
+            saw_text_chunk = true;
+            let mut data = vec![0u8; length as usize];
+            file.read_exact(&mut data).await.map_err(|error| {
+                DomainError::InvalidData(format!(
+                    "Failed to read PNG text metadata from '{}': {}",
+                    path.display(),
+                    error
+                ))
+            })?;
+            file.seek(SeekFrom::Start(chunk_end))
+                .await
+                .map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to skip PNG chunk CRC in '{}': {}",
+                        path.display(),
+                        error
+                    ))
+                })?;
+
+            if let Some(payload) = select_character_text_chunk(chunk_type, &data, &mut v2_payload)?
+            {
+                return Ok(payload);
+            }
+        } else {
+            file.seek(SeekFrom::Start(chunk_end))
+                .await
+                .map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to skip PNG chunk in '{}': {}",
+                        path.display(),
+                        error
+                    ))
+                })?;
+        }
+
+        offset = chunk_end;
+    }
+
+    finish_character_metadata_read(saw_text_chunk, v2_payload)
 }
 
 /// Writes character data to PNG metadata.
@@ -508,13 +627,16 @@ fn build_v3_payload(character_data: &str) -> Result<Option<String>, DomainError>
 mod tests {
     use super::{
         CHUNK_TYPE_IEND, CHUNK_TYPE_ITXT, CHUNK_TYPE_ZTXT, PNG_SIGNATURE, decode_base64,
-        encode_base64, read_character_data_from_png, read_next_png_chunk,
-        read_text_chunks_from_png, write_character_data_to_png, write_chunk, write_text_chunk,
+        encode_base64, read_character_data_from_png, read_character_data_from_png_file,
+        read_next_png_chunk, read_text_chunks_from_png, write_character_data_to_png, write_chunk,
+        write_text_chunk,
     };
     use flate2::{Compression, write::ZlibEncoder};
     use image::{DynamicImage, ImageFormat, RgbaImage};
+    use rand::random;
     use serde_json::Value;
     use std::io::{Cursor, Write};
+    use tokio::fs;
 
     fn build_minimal_png() -> Vec<u8> {
         let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 1));
@@ -524,6 +646,29 @@ mod tests {
             .write_to(&mut cursor, ImageFormat::Png)
             .expect("should build png");
         output
+    }
+
+    async fn read_streamed_temp(png: &[u8]) -> Result<String, tt_domain::errors::DomainError> {
+        let path =
+            std::env::temp_dir().join(format!("tauritavern-png-stream-{}.png", random::<u64>()));
+
+        fs::write(&path, png).await.expect("write png");
+        let result = read_character_data_from_png_file(&path).await;
+        let _ = fs::remove_file(&path).await;
+        result
+    }
+
+    #[tokio::test]
+    async fn streaming_read_matches_in_memory_png_reader() {
+        let base_png = build_minimal_png();
+        let json =
+            r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Streamed","chat":"room"}"#;
+        let png = write_character_data_to_png(&base_png, json).expect("write metadata");
+
+        let streamed = read_streamed_temp(&png).await.expect("stream metadata");
+        let in_memory = read_character_data_from_png(&png).expect("read in-memory metadata");
+
+        assert_eq!(streamed, in_memory);
     }
 
     fn inject_raw_chunks_before_iend(base_png: &[u8], raw_chunks: &[Vec<u8>]) -> Vec<u8> {
@@ -577,6 +722,35 @@ mod tests {
         let mut chunk = Vec::new();
         write_chunk(&mut chunk, CHUNK_TYPE_ITXT, &data);
         chunk
+    }
+
+    #[tokio::test]
+    async fn streaming_read_supports_compressed_text_metadata() {
+        let base_png = build_minimal_png();
+        let json = r#"{"spec":"chara_card_v3","spec_version":"3.0","name":"Streamed"}"#;
+        let encoded = encode_base64(json);
+
+        for chunk in [
+            build_ztxt_chunk("ccv3", &encoded),
+            build_itxt_chunk("ccv3", &encoded),
+        ] {
+            let png = inject_raw_chunks_before_iend(&base_png, &[chunk]);
+            let streamed = read_streamed_temp(&png).await.expect("stream metadata");
+            assert_eq!(streamed, json);
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_read_rejects_truncated_chunks() {
+        let mut png = PNG_SIGNATURE.to_vec();
+        png.extend_from_slice(&10u32.to_be_bytes());
+        png.extend_from_slice(b"IDAT");
+        png.extend_from_slice(&[1, 2]);
+
+        let error = read_streamed_temp(&png)
+            .await
+            .expect_err("truncated chunk should fail");
+        assert!(error.to_string().contains("truncated PNG chunk"), "{error}");
     }
 
     #[test]

@@ -3,6 +3,33 @@ use std::time::{Duration, Instant};
 
 use tt_domain::models::character::Character;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CharacterShallowIndexEntrySignature {
+    pub(crate) avatar: String,
+    pub(crate) file_size: u64,
+    pub(crate) modified_millis: i64,
+    pub(crate) created_millis: i64,
+    pub(crate) chat_size: u64,
+    pub(crate) date_last_chat: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CharacterShallowIndexSignature {
+    pub(crate) entries: Vec<CharacterShallowIndexEntrySignature>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CharacterShallowIndexCachedCharacter {
+    pub(crate) signature: CharacterShallowIndexEntrySignature,
+    pub(crate) character: Character,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CharacterShallowIndexCache {
+    pub(crate) signature: CharacterShallowIndexSignature,
+    pub(crate) characters: Vec<CharacterShallowIndexCachedCharacter>,
+}
+
 /// Memory cache for character data.
 pub(crate) struct MemoryCache {
     characters: HashMap<String, (Character, Instant)>,

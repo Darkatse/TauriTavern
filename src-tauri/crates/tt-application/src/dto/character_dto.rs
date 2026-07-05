@@ -27,6 +27,7 @@ pub struct CharacterDto {
     pub talkativeness: f64,
     pub fav: bool,
     pub chat_size: u64,
+    pub data_size: u64,
     pub date_added: i64,
     pub date_last_chat: i64,
     pub alternate_greetings: Vec<String>,
@@ -299,6 +300,7 @@ impl From<Character> for CharacterDto {
             talkativeness,
             fav,
             chat_size,
+            data_size,
             date_added,
             date_last_chat,
             data,
@@ -312,7 +314,11 @@ impl From<Character> for CharacterDto {
         };
 
         let extensions = if shallow {
-            None
+            Some(serde_json::json!({
+                "talkativeness": data.extensions.talkativeness,
+                "fav": data.extensions.fav,
+                "world": data.extensions.world,
+            }))
         } else {
             Some(serde_json::to_value(&data.extensions).unwrap_or(serde_json::Value::Null))
         };
@@ -335,6 +341,7 @@ impl From<Character> for CharacterDto {
             talkativeness,
             fav,
             chat_size,
+            data_size,
             date_added,
             date_last_chat,
             alternate_greetings: data.alternate_greetings,
@@ -628,5 +635,28 @@ mod tests {
 
         let dto = CharacterDto::from(character);
         assert_eq!(dto.create_date, "2026-03-18T12:34:56.789Z");
+    }
+
+    #[test]
+    fn shallow_character_dto_keeps_list_contract_fields() {
+        let mut character = Character::new(
+            "List".to_string(),
+            "desc".to_string(),
+            "persona".to_string(),
+            "hi".to_string(),
+        );
+        character.data_size = 42;
+        character.data.extensions.world = "book".to_string();
+
+        let dto = CharacterDto::from(character.into_shallow());
+
+        assert_eq!(dto.data_size, 42);
+        assert_eq!(
+            dto.extensions
+                .as_ref()
+                .and_then(|value| value.get("world"))
+                .and_then(serde_json::Value::as_str),
+            Some("book")
+        );
     }
 }

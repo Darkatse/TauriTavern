@@ -2,6 +2,7 @@ mod cache;
 mod helpers;
 mod importer;
 mod repository;
+mod shallow_index;
 
 #[cfg(test)]
 mod tests;
@@ -12,7 +13,7 @@ use std::time::Duration;
 
 use tokio::sync::Mutex;
 
-use self::cache::MemoryCache;
+use self::cache::{CharacterShallowIndexCache, MemoryCache};
 use tt_adapter_storage_core::chat_directory_identity::{
     SharedChatAliasStore, chat_alias_path_for_user_dir, new_shared_chat_alias_store,
 };
@@ -24,6 +25,7 @@ pub struct FileCharacterRepository {
     thumbnails_avatar_dir: PathBuf,
     default_avatar_path: PathBuf,
     memory_cache: Arc<Mutex<MemoryCache>>,
+    shallow_index_cache: Arc<Mutex<Option<CharacterShallowIndexCache>>>,
     chat_aliases: SharedChatAliasStore,
 }
 
@@ -70,6 +72,7 @@ impl FileCharacterRepository {
             100,
             Duration::from_secs(30 * 60),
         )));
+        let shallow_index_cache = Arc::new(Mutex::new(None));
 
         Self {
             characters_dir,
@@ -77,6 +80,7 @@ impl FileCharacterRepository {
             thumbnails_avatar_dir,
             default_avatar_path,
             memory_cache,
+            shallow_index_cache,
             chat_aliases,
         }
     }

@@ -217,7 +217,7 @@ impl FileCharacterRepository {
 
         self.apply_legacy_aliases(&mut character, &raw_value);
         Self::sync_canonical_data_fields(&mut character, &raw_value);
-        self.normalize_imported_character(&mut character)?;
+        Self::normalize_imported_character(&mut character)?;
         if !has_talkativeness
             && character.talkativeness == 0.0
             && character.data.extensions.talkativeness == 0.0
@@ -304,7 +304,6 @@ impl FileCharacterRepository {
     }
 
     pub(crate) fn normalize_imported_character(
-        &self,
         character: &mut Character,
     ) -> Result<(), DomainError> {
         Self::sync_string_field(&mut character.name, &mut character.data.name);

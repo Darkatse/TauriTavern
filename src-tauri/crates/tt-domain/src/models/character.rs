@@ -67,6 +67,8 @@ pub struct Character {
     #[serde(skip)]
     pub chat_size: u64,
     #[serde(skip)]
+    pub data_size: u64,
+    #[serde(skip)]
     pub date_added: i64,
     #[serde(skip)]
     pub date_last_chat: i64,
@@ -326,6 +328,7 @@ impl Character {
             },
             file_name: None,
             chat_size: 0,
+            data_size: 0,
             date_added: timestamp,
             date_last_chat: 0,
             json_data: None,
@@ -421,7 +424,6 @@ impl Character {
 
         self.data.extensions.talkativeness = self.talkativeness;
         self.data.extensions.fav = self.fav;
-        self.data.extensions.world.clear();
         self.data.extensions.depth_prompt = DepthPrompt::default();
         self.data.extensions.additional.clear();
 

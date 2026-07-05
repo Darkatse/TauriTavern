@@ -12,6 +12,54 @@ function registerGetRoute(context) {
     return router;
 }
 
+test('/api/characters/all refreshes backend shallow projection instead of reusing mixed JS cache', async () => {
+    let listReads = 0;
+    const service = createCharacterService({
+        safeInvoke: async (command, args) => {
+            if (command === 'get_all_characters') {
+                listReads += 1;
+                assert.deepEqual(args, { shallow: true });
+                return [{
+                    name: listReads === 1 ? 'Stale Alice' : 'Fresh Alice',
+                    avatar: 'Alice.png',
+                    shallow: true,
+                    data: { extensions: {} },
+                }];
+            }
+
+            assert.equal(command, 'get_character');
+            assert.deepEqual(args, { name: 'Alice' });
+            return {
+                name: 'Full Alice',
+                avatar: 'Alice.png',
+                shallow: false,
+                description: 'heavy',
+                data: { extensions: {} },
+            };
+        },
+    });
+
+    await service.getAllCharacters({ shallow: true, forceRefresh: true });
+    await service.getSingleCharacter({ avatar_url: 'Alice.png' });
+
+    const router = registerGetRoute(service);
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/all',
+        url: new URL('http://localhost/api/characters/all'),
+        body: {},
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body[0].name, 'Fresh Alice');
+    assert.equal(body[0].avatar, 'Alice.png');
+    assert.equal(body[0].shallow, true);
+    assert.equal(body[0].description, '');
+    assert.equal(listReads, 2);
+});
+
 test('/api/characters/get treats avatar_url as an exact avatar filename identity', async () => {
     const calls = [];
     const service = createCharacterService({
