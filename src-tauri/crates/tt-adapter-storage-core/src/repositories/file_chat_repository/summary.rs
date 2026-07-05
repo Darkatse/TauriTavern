@@ -354,12 +354,10 @@ impl SummaryCache {
     }
 
     fn set_stats(&mut self, key: String, entry: ChatStatsCacheEntry) {
-        match self.entries.get(&key) {
-            Some(summary) if summary.signature == entry.signature => return,
-            Some(_) => {
-                self.entries.remove(&key);
-            }
-            None => {}
+        if let Some(summary) = self.entries.get(&key)
+            && summary.signature == entry.signature
+        {
+            return;
         }
 
         self.stats_entries.insert(key, entry);
@@ -517,6 +515,15 @@ impl FileChatRepository {
         Ok((total_size, latest_chat_date))
     }
 
+    pub(super) async fn get_chat_stats_date(
+        summary_cache: &Arc<Mutex<SummaryCache>>,
+        descriptor: &ChatFileDescriptor,
+    ) -> Result<i64, DomainError> {
+        Ok(Self::get_chat_stats_entry(summary_cache, descriptor)
+            .await?
+            .date)
+    }
+
     async fn get_chat_stats_entry(
         summary_cache: &Arc<Mutex<SummaryCache>>,
         descriptor: &ChatFileDescriptor,
@@ -538,7 +545,28 @@ impl FileChatRepository {
             }
         }
 
-        let date = Self::scan_chat_stats_date(&descriptor.path, signature).await?;
+        let mut file = File::open(&descriptor.path).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to open chat file {:?}: {}",
+                descriptor.path, error
+            ))
+        })?;
+        let metadata = file.metadata().await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read chat metadata {:?}: {}",
+                descriptor.path, error
+            ))
+        })?;
+        let signature = Self::file_signature_from_metadata(&metadata);
+        {
+            let mut cache = summary_cache.lock().await;
+            cache.ensure_loaded()?;
+            if let Some(entry) = cache.get_stats(&cache_key, signature) {
+                return Ok(entry);
+            }
+        }
+
+        let date = Self::scan_chat_stats_date(&mut file, &descriptor.path, signature).await?;
         let entry = ChatStatsCacheEntry { signature, date };
 
         {
@@ -551,10 +579,11 @@ impl FileChatRepository {
     }
 
     async fn scan_chat_stats_date(
+        file: &mut File,
         path: &Path,
         signature: FileSignature,
     ) -> Result<i64, DomainError> {
-        let Some(line) = Self::read_last_non_empty_line(path, signature.size).await? else {
+        let Some(line) = Self::read_last_non_empty_line(file, path, signature.size).await? else {
             return Ok(signature.modified_millis);
         };
         let last_message = serde_json::from_slice::<Value>(&line).ok();
@@ -572,6 +601,7 @@ impl FileChatRepository {
     }
 
     async fn read_last_non_empty_line(
+        file: &mut File,
         path: &Path,
         file_size: u64,
     ) -> Result<Option<Vec<u8>>, DomainError> {
@@ -579,9 +609,6 @@ impl FileChatRepository {
             return Ok(None);
         }
 
-        let mut file = File::open(path).await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to open chat file {:?}: {}", path, error))
-        })?;
         let mut position = file_size;
         let mut reversed_line = Vec::new();
 
@@ -640,7 +667,7 @@ impl FileChatRepository {
         if is_empty { Ok(None) } else { Ok(Some(line)) }
     }
 
-    fn chat_stats_parallelism() -> usize {
+    pub(super) fn chat_stats_parallelism() -> usize {
         std::thread::available_parallelism()
             .map(|value| value.get())
             .unwrap_or(4)

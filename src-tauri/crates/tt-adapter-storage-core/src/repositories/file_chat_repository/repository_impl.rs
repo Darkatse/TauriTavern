@@ -353,7 +353,10 @@ impl ChatRepository for FileChatRepository {
         max_entries: usize,
         pinned: &[PinnedCharacterChat],
     ) -> Result<Vec<ChatSearchResult>, DomainError> {
-        let descriptors = self.list_character_chat_files(character_filter).await?;
+        let mut descriptors = self.list_character_chat_files(character_filter).await?;
+        if character_filter.is_none() {
+            descriptors.retain(|descriptor| !descriptor.character_name.trim().is_empty());
+        }
         let pinned_keys: HashSet<String> = pinned
             .iter()
             .filter_map(|entry| {

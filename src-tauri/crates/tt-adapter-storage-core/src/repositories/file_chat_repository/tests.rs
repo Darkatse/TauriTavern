@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::DateTime;
 use rand::random;
@@ -107,6 +108,17 @@ fn timestamp_millis(value: &str) -> i64 {
     DateTime::parse_from_rfc3339(value)
         .expect("parse timestamp")
         .timestamp_millis()
+}
+
+async fn modified_millis(path: &Path) -> i64 {
+    fs::metadata(path)
+        .await
+        .expect("read file metadata")
+        .modified()
+        .expect("read modified time")
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("modified time after UNIX_EPOCH")
+        .as_millis() as i64
 }
 
 #[test]
@@ -2174,6 +2186,187 @@ async fn list_chat_summaries_without_filter_keeps_character_directories_with_car
 }
 
 #[tokio::test]
+async fn list_recent_chat_summaries_ranks_by_last_message_date_not_file_mtime() {
+    let (repository, root) = setup_repository().await;
+    let characters_dir = root.join("characters");
+    fs::create_dir_all(&characters_dir)
+        .await
+        .expect("create characters directory");
+    fs::write(characters_dir.join("alice.png"), b"")
+        .await
+        .expect("create alice card");
+
+    let newer_payload = payload_with_message(
+        "recent-newer-date",
+        "2026-01-03T00:00:00.000Z",
+        "newer date",
+        "Alice",
+    );
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session-newer-date",
+        &newer_payload,
+        false,
+    )
+    .await
+    .expect("save newer-date chat");
+
+    let newer_path = root
+        .join("chats")
+        .join("alice")
+        .join("session-newer-date.jsonl");
+    let older_path = root
+        .join("chats")
+        .join("alice")
+        .join("session-newer-mtime.jsonl");
+    let older_payload = payload_with_message(
+        "recent-older-date",
+        "2026-01-01T00:00:00.000Z",
+        "older date",
+        "Alice",
+    );
+    for _ in 0..50 {
+        save_chat_payload_from_values(
+            &repository,
+            &root,
+            "alice",
+            "session-newer-mtime",
+            &older_payload,
+            false,
+        )
+        .await
+        .expect("save newer-mtime chat");
+
+        if modified_millis(&older_path).await > modified_millis(&newer_path).await {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        modified_millis(&older_path).await > modified_millis(&newer_path).await,
+        "test precondition: older send_date file must have newer mtime"
+    );
+
+    let results = repository
+        .list_recent_chat_summaries(None, false, 1, &[])
+        .await
+        .expect("list recent summaries");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].file_name, "session-newer-date.jsonl");
+
+    let index_path = root
+        .join("user")
+        .join("cache")
+        .join("chat_summary_index_v1.json");
+    let parsed: Value = serde_json::from_str(
+        &fs::read_to_string(&index_path)
+            .await
+            .expect("read summary index"),
+    )
+    .expect("parse summary index");
+    assert_eq!(
+        parsed
+            .get("entries")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        parsed
+            .get("stats_entries")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn list_recent_chat_summaries_ignores_root_chats_without_character_identity() {
+    let (repository, root) = setup_repository().await;
+    let characters_dir = root.join("characters");
+    fs::create_dir_all(&characters_dir)
+        .await
+        .expect("create characters directory");
+    fs::write(characters_dir.join("alice.png"), b"")
+        .await
+        .expect("create alice card");
+
+    let character_payload = payload_with_message(
+        "recent-character",
+        "2026-01-01T00:00:00.000Z",
+        "character",
+        "Alice",
+    );
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "character-session",
+        &character_payload,
+        false,
+    )
+    .await
+    .expect("save character chat");
+
+    let root_payload =
+        payload_with_message("recent-root", "2026-01-03T00:00:00.000Z", "root", "Root");
+    fs::write(
+        root.join("chats").join("root-session.jsonl"),
+        payload_to_jsonl(&root_payload),
+    )
+    .await
+    .expect("write root chat");
+
+    let results = repository
+        .list_recent_chat_summaries(None, false, 1, &[])
+        .await
+        .expect("list recent summaries");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].file_name, "character-session.jsonl");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn list_recent_chat_summaries_zero_limit_skips_unpinned_stats() {
+    let (repository, root) = setup_repository().await;
+    let characters_dir = root.join("characters");
+    fs::create_dir_all(&characters_dir)
+        .await
+        .expect("create characters directory");
+    fs::write(characters_dir.join("alice.png"), b"")
+        .await
+        .expect("create alice card");
+
+    let payload = payload_with_message("recent-zero", "2026-01-01T00:00:00.000Z", "zero", "Alice");
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
+        .await
+        .expect("save chat");
+
+    let results = repository
+        .list_recent_chat_summaries(None, false, 0, &[])
+        .await
+        .expect("list recent summaries");
+
+    assert!(results.is_empty());
+    assert!(
+        !root
+            .join("user")
+            .join("cache")
+            .join("chat_summary_index_v1.json")
+            .exists()
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn list_recent_chat_summaries_limits_results_and_keeps_pinned() {
     let (repository, root) = setup_repository().await;
     let characters_dir = root.join("characters");
@@ -2301,6 +2494,66 @@ async fn list_recent_chat_summaries_preserves_upstream_spacing_in_pinned_keys() 
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].file_name, " session.jsonl");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn list_recent_group_chat_summaries_ranks_by_last_message_date_not_file_mtime() {
+    let (repository, root) = setup_repository().await;
+
+    let newer_payload = payload_with_message(
+        "group-recent-newer-date",
+        "2026-01-03T00:00:00.000Z",
+        "newer date",
+        "Group",
+    );
+    save_group_chat_payload_from_values(
+        &repository,
+        &root,
+        "group-newer-date",
+        &newer_payload,
+        false,
+    )
+    .await
+    .expect("save newer-date group chat");
+
+    let newer_path = root.join("group chats").join("group-newer-date.jsonl");
+    let older_path = root.join("group chats").join("group-newer-mtime.jsonl");
+    let older_payload = payload_with_message(
+        "group-recent-older-date",
+        "2026-01-01T00:00:00.000Z",
+        "older date",
+        "Group",
+    );
+    for _ in 0..50 {
+        save_group_chat_payload_from_values(
+            &repository,
+            &root,
+            "group-newer-mtime",
+            &older_payload,
+            false,
+        )
+        .await
+        .expect("save newer-mtime group chat");
+
+        if modified_millis(&older_path).await > modified_millis(&newer_path).await {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        modified_millis(&older_path).await > modified_millis(&newer_path).await,
+        "test precondition: older send_date group file must have newer mtime"
+    );
+
+    let results = repository
+        .list_recent_group_chat_summaries(None, false, 1, &[])
+        .await
+        .expect("list recent group summaries");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].file_name, "group-newer-date.jsonl");
 
     let _ = fs::remove_dir_all(&root).await;
 }
