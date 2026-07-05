@@ -153,6 +153,7 @@ const TOKENIZER_URLS = {
 };
 
 const objectStore = localforage.createInstance({ name: 'SillyTavern_ChatCompletions' });
+const TAURI_WARM_TOKENIZER_MODEL = 'gpt-4o';
 
 let tokenCacheState = {
     chatId: 'undefined',
@@ -909,6 +910,25 @@ export function getTokenizerModel(settings = null) {
 
     // Default to Turbo 3.5
     return turboTokenizer;
+}
+
+export async function warmTokenizerCache() {
+    if (!globalThis.__TAURITAVERN__) {
+        return;
+    }
+
+    try {
+        await jQuery.ajax({
+            async: true,
+            type: 'POST',
+            url: `/api/tokenizers/openai/count-batch?model=${TAURI_WARM_TOKENIZER_MODEL}`,
+            data: '[]',
+            dataType: 'json',
+            contentType: 'application/json',
+        });
+    } catch (error) {
+        console.warn('TauriTavern tokenizer warm-up failed:', error);
+    }
 }
 
 function guesstimateOpenAiMessageTokenCount(message) {

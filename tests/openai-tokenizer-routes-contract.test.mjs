@@ -62,3 +62,30 @@ test('OpenAI token count batch route preserves all message fields', async () => 
     assert.deepEqual(await response.json(), { token_counts: [7] });
     assert.deepEqual(capturedDto.requests[0].messages[0], message);
 });
+
+test('OpenAI token count batch route still invokes backend for empty warm batch', async () => {
+    let capturedDto;
+    const router = createRouteRegistry();
+    registerOpenAiTokenizerRoutes(
+        router,
+        {
+            async safeInvoke(command, { dto }) {
+                assert.equal(command, 'count_openai_tokens_batch');
+                capturedDto = dto;
+                return { token_counts: [] };
+            },
+        },
+        { jsonResponse },
+    );
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/tokenizers/openai/count-batch',
+        url: new URL('http://tauri.local/api/tokenizers/openai/count-batch?model=gpt-4o'),
+        body: [],
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { token_counts: [] });
+    assert.deepEqual(capturedDto, { model: 'gpt-4o', requests: [] });
+});

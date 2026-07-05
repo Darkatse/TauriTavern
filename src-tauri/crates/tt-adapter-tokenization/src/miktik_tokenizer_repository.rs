@@ -50,7 +50,7 @@ pub struct MiktikTokenizerRepository {
     registry: Arc<TokenizerRegistry>,
     cache_dir: PathBuf,
     http_clients: Arc<HttpClientPool>,
-    ready_hf_models: RwLock<HashSet<&'static str>>,
+    ready_models: RwLock<HashSet<&'static str>>,
     registration_guard: Mutex<()>,
 }
 
@@ -60,7 +60,7 @@ impl MiktikTokenizerRepository {
             registry: Arc::new(TokenizerRegistry::new()),
             cache_dir,
             http_clients,
-            ready_hf_models: RwLock::new(HashSet::new()),
+            ready_models: RwLock::new(HashSet::new()),
             registration_guard: Mutex::new(()),
         }
     }
@@ -166,8 +166,17 @@ impl MiktikTokenizerRepository {
         }
     }
 
-    async fn ensure_hf_model_ready(&self, canonical: &'static str) -> Result<(), DomainError> {
+    async fn ensure_model_ready_canonical(
+        &self,
+        canonical: &'static str,
+    ) -> Result<(), DomainError> {
         if self.is_model_ready(canonical).await {
+            return Ok(());
+        }
+
+        if !TokenizerRegistry::is_huggingface_model(canonical) {
+            self.warm_model(canonical).await?;
+            self.mark_model_ready(canonical).await;
             return Ok(());
         }
 
@@ -377,11 +386,11 @@ impl MiktikTokenizerRepository {
     }
 
     async fn is_model_ready(&self, canonical: &'static str) -> bool {
-        self.ready_hf_models.read().await.contains(canonical)
+        self.ready_models.read().await.contains(canonical)
     }
 
     async fn mark_model_ready(&self, canonical: &'static str) {
-        self.ready_hf_models.write().await.insert(canonical);
+        self.ready_models.write().await.insert(canonical);
     }
 
     fn map_tokenizer_error(action: &str, model: &str, error: TokenizerError) -> DomainError {
@@ -570,10 +579,7 @@ impl MiktikTokenizerRepository {
 impl TokenizerRepository for MiktikTokenizerRepository {
     async fn ensure_model_ready(&self, model: &str) -> Result<(), DomainError> {
         let canonical = Self::canonical_model(model);
-        if TokenizerRegistry::is_huggingface_model(canonical) {
-            self.ensure_hf_model_ready(canonical).await?;
-        }
-        Ok(())
+        self.ensure_model_ready_canonical(canonical).await
     }
 
     fn encode(&self, model: &str, text: &str) -> Result<Vec<u32>, DomainError> {
@@ -755,6 +761,29 @@ mod tests {
                     .is_some_and(|name| name.ends_with(".tmp"))
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn openai_models_warm_without_resource_cache_files() {
+        let cache_dir = unique_temp_cache_dir();
+        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+        let messages = vec![json!({"role": "user", "content": "hello world"})];
+
+        TokenizerRepository::ensure_model_ready(&repository, "gpt-4o-mini")
+            .await
+            .expect("OpenAI tokenizer should warm");
+
+        let count = TokenizerRepository::count_messages(&repository, "gpt-4o-mini", &messages)
+            .expect("warmed OpenAI tokenizer should count");
+
+        assert!(repository.is_model_ready("gpt-4o").await);
+        assert!(count > 0);
+        assert!(
+            !cache_dir.exists(),
+            "tiktoken warm-up should not materialize resource cache files"
+        );
+
+        let _ = std::fs::remove_dir_all(cache_dir);
     }
 
     #[tokio::test]

@@ -299,7 +299,7 @@ import {
     getInstructStoppingSequences,
 } from './scripts/instruct-mode.js';
 import { initLocales, t, translate } from './scripts/i18n.js';
-import { captureTokenCacheSaveState, getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
+import { captureTokenCacheSaveState, getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache, warmTokenizerCache } from './scripts/tokenizers.js';
 import {
     user_avatar,
     primeUserAvatarsSnapshot,
@@ -1073,6 +1073,7 @@ async function firstLoadInit() {
             await nextPaint();
             await initTokenizers();
             await nextPaint();
+            void warmTokenizerCache();
             await initScrapers();
 
             if (extensionsEnabled && deferThirdPartyExtensions) {
