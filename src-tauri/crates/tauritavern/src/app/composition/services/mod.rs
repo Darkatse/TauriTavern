@@ -171,6 +171,7 @@ pub(super) async fn build(
         group_chat_service.clone(),
         group_service.clone(),
         secret_service.clone(),
+        settings_service.clone(),
     );
     let data_archive_service = archive::build(app_handle, data_change_reconciler.clone());
     let sync_services = sync::build(

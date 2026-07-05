@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tt_domain::errors::DomainError;
@@ -6,6 +7,7 @@ pub use tt_ports::bundled_template::BundledTemplateStore;
 #[derive(Clone)]
 pub struct BundledTemplateService {
     store: Arc<dyn BundledTemplateStore>,
+    cache: Arc<std::sync::Mutex<HashMap<String, String>>>,
 }
 
 impl BundledTemplateService {
@@ -14,15 +16,17 @@ impl BundledTemplateService {
         S: BundledTemplateStore + 'static,
     {
         let store: Arc<dyn BundledTemplateStore> = store;
-        Self { store }
+        Self {
+            store,
+            cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
     }
 
     pub fn read_frontend_template(&self, name: &str) -> Result<String, DomainError> {
         validate_resource_segment(name, "template name")?;
 
         let resource_path = format!("frontend-templates/{name}");
-        self.store
-            .read_text(&resource_path)
+        self.read_resource_text(&resource_path)
             .map_err(|error| wrap_template_read_error(name, error))
     }
 
@@ -35,9 +39,27 @@ impl BundledTemplateService {
         validate_resource_segment(name, "template name")?;
 
         let resource_path = format!("frontend-extensions/{extension}/{name}.html");
-        self.store
-            .read_text(&resource_path)
+        self.read_resource_text(&resource_path)
             .map_err(|error| wrap_extension_template_read_error(&resource_path, error))
+    }
+
+    fn read_resource_text(&self, resource_path: &str) -> Result<String, DomainError> {
+        if let Some(content) = self
+            .cache
+            .lock()
+            .expect("bundled template cache lock poisoned")
+            .get(resource_path)
+            .cloned()
+        {
+            return Ok(content);
+        }
+
+        let content = self.store.read_text(resource_path)?;
+        self.cache
+            .lock()
+            .expect("bundled template cache lock poisoned")
+            .insert(resource_path.to_string(), content.clone());
+        Ok(content)
     }
 }
 
@@ -120,6 +142,19 @@ mod tests {
         let content = service.read_frontend_template("drawer.html").unwrap();
 
         assert_eq!(content, "template");
+        assert_eq!(store.paths(), vec!["frontend-templates/drawer.html"]);
+    }
+
+    #[test]
+    fn caches_frontend_template_reads() {
+        let store = Store::new(StoreResult::Text("template"));
+        let service = BundledTemplateService::new(store.clone());
+
+        let first = service.read_frontend_template("drawer.html").unwrap();
+        let second = service.read_frontend_template("drawer.html").unwrap();
+
+        assert_eq!(first, "template");
+        assert_eq!(second, "template");
         assert_eq!(store.paths(), vec!["frontend-templates/drawer.html"]);
     }
 

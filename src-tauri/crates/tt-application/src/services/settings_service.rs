@@ -49,6 +49,10 @@ impl SettingsService {
         *self.sillytavern_settings_cache.lock().await = None;
     }
 
+    pub async fn clear_cache(&self) {
+        self.clear_sillytavern_settings_cache().await;
+    }
+
     fn schedule_delayed_user_settings_repair_writeback(&self) {
         const DELAY: Duration = Duration::from_secs(20);
 
@@ -678,6 +682,39 @@ mod tests {
 
         assert_eq!(repository.load_user_settings_count().await, 2);
         assert_eq!(settings_value(&third), json!({"username": "two"}));
+    }
+
+    #[tokio::test]
+    async fn clear_cache_drops_settings_aggregate_cache_even_when_signature_is_stable() {
+        let repository = Arc::new(TestSettingsRepository::default());
+        repository
+            .store_user_settings(json!({"username": "one"}))
+            .await;
+        repository.store_signature(test_signature("stable")).await;
+        let service = SettingsService::new(
+            repository.clone(),
+            Arc::new(TestRequestProxyRuntime::default()),
+        );
+
+        let first = service
+            .get_sillytavern_settings()
+            .await
+            .expect("prime settings aggregate cache");
+        assert_eq!(settings_value(&first), json!({"username": "one"}));
+
+        repository
+            .store_user_settings(json!({"username": "two"}))
+            .await;
+
+        service.clear_cache().await;
+
+        let second = service
+            .get_sillytavern_settings()
+            .await
+            .expect("reload settings aggregate after explicit clear");
+
+        assert_eq!(repository.load_user_settings_count().await, 2);
+        assert_eq!(settings_value(&second), json!({"username": "two"}));
     }
 
     #[tokio::test]

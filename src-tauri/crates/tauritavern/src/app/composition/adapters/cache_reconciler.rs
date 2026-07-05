@@ -7,6 +7,7 @@ use tt_application::services::chat_service::ChatService;
 use tt_application::services::group_chat_service::GroupChatService;
 use tt_application::services::group_service::GroupService;
 use tt_application::services::secret_service::SecretService;
+use tt_application::services::settings_service::SettingsService;
 use tt_domain::errors::DomainError;
 use tt_ports::sync::DataChangeReconciler;
 
@@ -16,6 +17,7 @@ pub(in crate::app::composition) fn data_change_reconciler(
     group_chat_service: Arc<GroupChatService>,
     group_service: Arc<GroupService>,
     secret_service: Arc<SecretService>,
+    settings_service: Arc<SettingsService>,
 ) -> Arc<dyn DataChangeReconciler> {
     Arc::new(ServiceCacheReconciler {
         character_service,
@@ -23,6 +25,7 @@ pub(in crate::app::composition) fn data_change_reconciler(
         group_chat_service,
         group_service,
         secret_service,
+        settings_service,
     })
 }
 
@@ -32,6 +35,7 @@ struct ServiceCacheReconciler {
     group_chat_service: Arc<GroupChatService>,
     group_service: Arc<GroupService>,
     secret_service: Arc<SecretService>,
+    settings_service: Arc<SettingsService>,
 }
 
 #[async_trait]
@@ -47,6 +51,7 @@ impl DataChangeReconciler for ServiceCacheReconciler {
         self.group_chat_service.clear_cache().await?;
         self.group_service.clear_cache().await?;
         self.secret_service.clear_cache().await?;
+        self.settings_service.clear_cache().await;
 
         Ok(())
     }
