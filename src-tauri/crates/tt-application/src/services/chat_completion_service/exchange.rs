@@ -1,6 +1,7 @@
 use serde_json::{Map, Value};
 
 use crate::errors::ApplicationError;
+use tt_domain::models::claude_model::is_vertex_ai_claude_model_id;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionNormalizationReport, ChatCompletionSource,
 };
@@ -38,6 +39,9 @@ impl ChatCompletionProviderFormat {
 
         Ok(match source {
             ChatCompletionSource::Claude => Self::ClaudeMessages,
+            ChatCompletionSource::VertexAi if is_vertexai_claude_payload(payload) => {
+                Self::ClaudeMessages
+            }
             ChatCompletionSource::Makersuite | ChatCompletionSource::VertexAi => Self::Gemini,
             _ => Self::OpenAiCompatible,
         })
@@ -52,6 +56,13 @@ impl ChatCompletionProviderFormat {
             Self::GeminiInteractions => "gemini_interactions",
         }
     }
+}
+
+fn is_vertexai_claude_payload(payload: &Map<String, Value>) -> bool {
+    payload
+        .get("model")
+        .and_then(Value::as_str)
+        .is_some_and(is_vertex_ai_claude_model_id)
 }
 
 #[derive(Debug, Clone)]

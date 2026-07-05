@@ -7,6 +7,7 @@ use tt_domain::errors::DomainError;
 pub enum PromptCacheKey {
     Claude,
     OpenRouterClaude,
+    VertexAiClaude { scope: String },
     CustomClaudeMessages { scope: String },
 }
 

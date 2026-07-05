@@ -2110,7 +2110,8 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     if (type === 'continue' && settings.continue_prefill && messages.length) {
         const chatMessage = messages.shift();
         const isAssistantRole = chatMessage.role === 'assistant';
-        const supportsAssistantPrefill = settings.chat_completion_source === chat_completion_sources.CLAUDE;
+        const supportsAssistantPrefill = settings.chat_completion_source === chat_completion_sources.CLAUDE
+            || (settings.chat_completion_source === chat_completion_sources.VERTEXAI && isVertexAiClaudeModelId(settings.vertexai_model));
         const namesInCompletion = settings.names_behavior === character_names_behavior.COMPLETION;
         const assistantPrefill = isAssistantRole && supportsAssistantPrefill ? substitutePromptParams(settings.assistant_prefill, {}, assemblyRuntime) : '';
         const messageContent = [assistantPrefill, chatMessage.content].filter(x => x).join('\n\n');
@@ -3881,6 +3882,33 @@ function getAimlapiModelTemplate(option) {
 }
 
 /**
+ * Checks whether a Vertex AI model id targets Anthropic Claude partner models.
+ * @param {string?} modelId Model id to check; defaults to current Vertex AI selection
+ * @returns {boolean} True when the model should use Anthropic Messages semantics over Vertex transport
+ */
+export function isVertexAiClaudeModelId(modelId = null) {
+    const value = String(modelId ?? oai_settings.vertexai_model ?? '').trim().toLowerCase();
+    return value.startsWith('claude-');
+}
+
+function getVertexAiClaudeMaxContext(modelId, unlocked = false) {
+    if (unlocked) {
+        return unlocked_max;
+    }
+
+    const value = String(modelId ?? '').trim().toLowerCase();
+    if (/^claude-(fable-5|sonnet-5|sonnet-4-6|opus-4-(?:6|7|8))/.test(value)) {
+        return max_1mil;
+    }
+
+    if (/^claude-/.test(value)) {
+        return max_200k;
+    }
+
+    return null;
+}
+
+/**
  * Check whether a Z.AI model supports reasoning_effort.
  * @param {string} model Model name
  * @returns {boolean}
@@ -3988,6 +4016,9 @@ function getReasoningEffort(settings = null, model = null) {
             }
             if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
                 return /(?:^|\.)claude-(?:fable-5|sonnet-5|opus-4-(?:7|8))(?:\b|-)/.test(model);
+            }
+            if (settings.chat_completion_source === chat_completion_sources.VERTEXAI && isVertexAiClaudeModelId(model)) {
+                return /^claude-(?:fable-5|sonnet-5|opus-4-(?:7|8))(?:\b|-)/.test(model);
             }
             return false;
         }
@@ -4140,6 +4171,7 @@ export async function createGenerationParameters(settings, model, type, messages
     const noMultiSwipeTypes = ['quiet', 'impersonate', 'continue'];
     const canMultiSwipe = !agentMode && settings.n > 1 && !noMultiSwipeTypes.includes(type) && multiswipeSources.includes(settings.chat_completion_source);
     const macroNames = macroContext?.names && typeof macroContext.names === 'object' ? macroContext.names : null;
+    const isVertexAiClaude = settings.chat_completion_source === chat_completion_sources.VERTEXAI && isVertexAiClaudeModelId(model);
 
     let logit_bias = {};
     if (settings.bias_preset_selected
@@ -4174,7 +4206,7 @@ export async function createGenerationParameters(settings, model, type, messages
         'include_reasoning': Boolean(settings.show_thoughts),
         'reasoning_effort': getReasoningEffort(settings, model),
         'enable_web_search': Boolean(settings.enable_web_search),
-        'request_images': Boolean(settings.request_images),
+        'request_images': Boolean(settings.request_images && !isVertexAiClaude),
         'request_image_resolution': String(settings.request_image_resolution),
         'request_image_aspect_ratio': String(settings.request_image_aspect_ratio),
         'custom_prompt_post_processing': settings.custom_prompt_post_processing,
@@ -4227,7 +4259,7 @@ export async function createGenerationParameters(settings, model, type, messages
         delete generate_data.logprobs;
     }
 
-    if (settings.chat_completion_source === chat_completion_sources.CLAUDE) {
+    if (settings.chat_completion_source === chat_completion_sources.CLAUDE || isVertexAiClaude) {
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.use_sysprompt = settings.use_sysprompt;
         generate_data.stop = getCustomStoppingStrings(); // Claude shouldn't have limits on stop strings.
@@ -4254,7 +4286,9 @@ export async function createGenerationParameters(settings, model, type, messages
     if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(settings.chat_completion_source)) {
         const stopStringsLimit = 5;
         generate_data.top_k = Number(settings.top_k_openai);
-        generate_data.stop = getCustomStoppingStrings(stopStringsLimit).slice(0, stopStringsLimit).filter(x => x.length >= 1 && x.length <= 16);
+        if (!isVertexAiClaude) {
+            generate_data.stop = getCustomStoppingStrings(stopStringsLimit).slice(0, stopStringsLimit).filter(x => x.length >= 1 && x.length <= 16);
+        }
         generate_data.use_sysprompt = settings.use_sysprompt;
         if (settings.chat_completion_source === chat_completion_sources.VERTEXAI) {
             generate_data.vertexai_auth_mode = settings.vertexai_auth_mode;
@@ -4510,6 +4544,8 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
             const swipes = [];
             const toolCalls = [];
             const state = { reasoning: '', images: [], signature: '', toolSignatures: {}, native: null };
+            const requestModel = generate_data.model ?? model;
+            const requestSource = generate_data.chat_completion_source ?? oai_settings.chat_completion_source;
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) return;
@@ -4526,9 +4562,9 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
                 if (canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
                     const swipeIndex = parsed.choices[0].index - 1;
                     // FIXME: state.reasoning should be an array to support multi-swipe
-                    swipes[swipeIndex] = (swipes[swipeIndex] || '') + getStreamingReply(parsed, state, { overrideShowThoughts: false });
+                    swipes[swipeIndex] = (swipes[swipeIndex] || '') + getStreamingReply(parsed, state, { chatCompletionSource: requestSource, model: requestModel, overrideShowThoughts: false });
                 } else {
-                    text += getStreamingReply(parsed, state);
+                    text += getStreamingReply(parsed, state, { chatCompletionSource: requestSource, model: requestModel });
                 }
 
                 ToolManager.parseToolCalls(toolCalls, parsed, state.toolSignatures);
@@ -4566,19 +4602,23 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
  * @param {object} state Additional state to keep track of
  * @param {object} [options] Additional options
  * @param {string?} [options.chatCompletionSource] Chat completion source
+ * @param {string?} [options.model] Chat completion model
  * @param {boolean?} [options.overrideShowThoughts] Override show thoughts
  * @returns {string} The reply extracted from the response data
  */
-export function getStreamingReply(data, state, { chatCompletionSource = null, overrideShowThoughts = null } = {}) {
+export function getStreamingReply(data, state, { chatCompletionSource = null, model = null, overrideShowThoughts = null } = {}) {
     const chat_completion_source = chatCompletionSource ?? oai_settings.chat_completion_source;
     const show_thoughts = overrideShowThoughts ?? oai_settings.show_thoughts;
 
     const isCustomClaudeMessages = chat_completion_source === chat_completion_sources.CUSTOM
         && oai_settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES;
+    const isVertexAiClaude = chat_completion_source === chat_completion_sources.VERTEXAI
+        && isVertexAiClaudeModelId(model);
 
     if (chat_completion_source === chat_completion_sources.CLAUDE
         || chat_completion_source === chat_completion_sources.AWS_BEDROCK
-        || isCustomClaudeMessages) {
+        || isCustomClaudeMessages
+        || isVertexAiClaude) {
         if (show_thoughts) {
             state.reasoning += data?.delta?.thinking || '';
         }
@@ -7246,7 +7286,13 @@ async function onModelChange() {
     }
 
     if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(oai_settings.chat_completion_source)) {
-        if (oai_settings.max_context_unlocked) {
+        const vertexClaudeMaxContext = oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI
+            ? getVertexAiClaudeMaxContext(value, oai_settings.max_context_unlocked)
+            : null;
+
+        if (vertexClaudeMaxContext) {
+            $('#openai_max_context').attr('max', vertexClaudeMaxContext);
+        } else if (oai_settings.max_context_unlocked) {
             $('#openai_max_context').attr('max', max_2mil);
         } else if (value.includes('gemini-2.5-flash-image')) {
             $('#openai_max_context').attr('max', max_32k);
@@ -7265,7 +7311,9 @@ async function onModelChange() {
         } else {
             $('#openai_max_context').attr('max', max_32k);
         }
-        let makersuite_max_temp = (value.includes('vision') || value.includes('ultra') || value.includes('gemma')) ? 1.0 : 2.0;
+        let makersuite_max_temp = vertexClaudeMaxContext
+            ? claude_max_temp
+            : ((value.includes('vision') || value.includes('ultra') || value.includes('gemma')) ? 1.0 : 2.0);
         oai_settings.temp_openai = Math.min(makersuite_max_temp, oai_settings.temp_openai);
         $('#temp_openai').attr('max', makersuite_max_temp).val(oai_settings.temp_openai).trigger('input');
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
@@ -7675,6 +7723,14 @@ async function onConnectButtonClick(e) {
     // Vertex AI Express version - use API key
     if (oai_settings.vertexai_auth_mode === 'express') {
         apiSourceConfig[chat_completion_sources.VERTEXAI] = { key: SECRET_KEYS.VERTEXAI, selector: '#api_key_vertexai', proxy: true };
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI
+        && oai_settings.vertexai_auth_mode === 'express'
+        && isVertexAiClaudeModelId()
+        && !oai_settings.reverse_proxy) {
+        toastr.error(t`Claude on Vertex AI requires Full mode service account authentication or a reverse proxy.`);
+        return;
     }
 
     // Vertex AI Full version - use service account
@@ -8108,8 +8164,9 @@ function getEffectiveToolReasoningMode(settings = oai_settings) {
  * @returns {boolean} True if reasoning signatures should be included in the request
  */
 export function isReasoningSignatureSupported(settings = oai_settings) {
-    // If it's Vertex AI or Makersuite, that's OK - convertGooglePrompt() will handle it later
-    const isGoogle = [chat_completion_sources.VERTEXAI, chat_completion_sources.MAKERSUITE].includes(settings.chat_completion_source);
+    // If it's Vertex AI Gemini or Makersuite, that's OK - convertGooglePrompt() will handle it later
+    const isGoogle = settings.chat_completion_source === chat_completion_sources.MAKERSUITE
+        || (settings.chat_completion_source === chat_completion_sources.VERTEXAI && !isVertexAiClaudeModelId(settings.vertexai_model ?? ''));
     // Need a more crunchy check for OpenRouter: look for Gemini models
     const isOpenRouterGemini = settings.chat_completion_source === chat_completion_sources.OPENROUTER && /google\/gemini/i.test(settings.openrouter_model);
     return isGoogle || isOpenRouterGemini;
@@ -8388,15 +8445,24 @@ function updateFeatureSupportFlags() {
     }
 
     updateReasoningEffortControlVisibility();
+    updateVertexAiClaudeControlVisibility();
 }
 
 function updateReasoningEffortControlVisibility() {
     const block = $('#openai_reasoning_effort_block');
-    if (!block.length || oai_settings.chat_completion_source !== chat_completion_sources.ZAI) {
+    if (!block.length) {
         return;
     }
 
-    block.toggle(isZaiReasoningEffortModel(oai_settings.zai_model));
+    block.toggle(oai_settings.chat_completion_source !== chat_completion_sources.ZAI || isZaiReasoningEffortModel(oai_settings.zai_model));
+}
+
+function updateVertexAiClaudeControlVisibility() {
+    const isVertexAi = oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI;
+    const isVertexAiClaude = isVertexAi && isVertexAiClaudeModelId();
+    $('#request_images_block').toggle([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(oai_settings.chat_completion_source) && !isVertexAiClaude);
+    $('#claude_reasoning_effort_description').toggle(!isVertexAi || isVertexAiClaude);
+    $('#gemini_reasoning_effort_description').toggle(!isVertexAi || !isVertexAiClaude);
 }
 
 export function initOpenAI() {

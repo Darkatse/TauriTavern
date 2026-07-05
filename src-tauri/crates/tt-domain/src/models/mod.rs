@@ -7,6 +7,7 @@ pub mod bedrock_model;
 pub mod character;
 pub mod chat;
 pub mod chat_completion_source;
+pub mod claude_model;
 pub mod data_archive;
 pub mod extension;
 pub mod filename;

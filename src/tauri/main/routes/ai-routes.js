@@ -213,6 +213,11 @@ function getCompletionModel(payload) {
     return DEFAULT_COMPLETION_MODEL;
 }
 
+function isVertexAiClaudePayload(payload) {
+    return getChatCompletionSource(payload) === 'vertexai'
+        && getCompletionModel(payload).toLowerCase().startsWith('claude-');
+}
+
 function buildErrorAssistantText(error) {
     const normalizedMessage = getUserFacingErrorMessage(error);
     const errorLabel = translateApiErrorLabel();
@@ -293,7 +298,7 @@ function buildErrorStreamChunk(error, payload) {
     const content = buildErrorAssistantText(error);
     const source = getChatCompletionSource(payload);
 
-    if (source === 'claude') {
+    if (source === 'claude' || isVertexAiClaudePayload(payload)) {
         return {
             delta: {
                 text: content,

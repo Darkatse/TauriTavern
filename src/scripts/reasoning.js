@@ -5,7 +5,7 @@ import { chat, closeMessageEditor, event_types, eventSource, main_api, messageFo
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { getCurrentLocale, t, translate } from './i18n.js';
 import { macros, MacroCategory } from './macros/macro-system.js';
-import { chat_completion_sources, getChatCompletionModel, oai_settings } from './openai.js';
+import { chat_completion_sources, getChatCompletionModel, isVertexAiClaudeModelId, oai_settings } from './openai.js';
 import { Popup } from './popup.js';
 import { performFuzzySearch, power_user } from './power-user.js';
 import { getPresetManager } from './preset-manager.js';
@@ -95,6 +95,7 @@ export function extractReasoningFromData(data, {
     ignoreShowThoughts = false,
     textGenType = null,
     chatCompletionSource = null,
+    model = null,
 } = {}) {
     switch (mainApi ?? main_api) {
         case 'textgenerationwebui':
@@ -118,8 +119,15 @@ export function extractReasoningFromData(data, {
                     return data?.choices?.[0]?.message?.reasoning
                         ?? data?.choices?.[0]?.message?.reasoning_content
                         ?? '';
-                case chat_completion_sources.MAKERSUITE:
                 case chat_completion_sources.VERTEXAI:
+                    if (isVertexAiClaudeModelId((model ?? data?.model) || null)) {
+                        return data?.choices?.[0]?.message?.reasoning_content
+                            ?? data?.choices?.[0]?.message?.reasoning
+                            ?? data?.content?.filter(part => part.type === 'thinking')?.map(part => part.thinking)?.join('\n\n')
+                            ?? '';
+                    }
+                    return data?.responseContent?.parts?.filter(part => part.thought)?.map(part => part.text)?.join('\n\n') ?? '';
+                case chat_completion_sources.MAKERSUITE:
                     return data?.responseContent?.parts?.filter(part => part.thought)?.map(part => part.text)?.join('\n\n') ?? '';
                 case chat_completion_sources.CLAUDE:
                     return data?.content?.filter(part => part.type === 'thinking')?.map(part => part.thinking)?.join('\n\n') ?? '';
@@ -154,11 +162,13 @@ export function extractReasoningFromData(data, {
  * @param {object} [options] Optional parameters
  * @param {string|null} [options.mainApi] Override for main API
  * @param {string|null} [options.chatCompletionSource] Override for chat completion source
+ * @param {string|null} [options.model] Override for chat completion model
  * @returns {string?} Encrypted signature of the reasoning text
  */
 export function extractReasoningSignatureFromData(data, {
     mainApi = null,
     chatCompletionSource = null,
+    model = null,
 } = {}) {
     // Only Gemini models use thought signatures (via MakerSuite/VertexAI or OpenRouter)
     if ((mainApi ?? main_api) !== 'openai') {
@@ -166,7 +176,10 @@ export function extractReasoningSignatureFromData(data, {
     }
 
     const source = chatCompletionSource ?? oai_settings.chat_completion_source;
-    const isGemini = source === chat_completion_sources.MAKERSUITE || source === chat_completion_sources.VERTEXAI;
+    const isVertexAiClaude = source === chat_completion_sources.VERTEXAI
+        && isVertexAiClaudeModelId((model ?? data?.model) || null);
+    const isGemini = source === chat_completion_sources.MAKERSUITE
+        || (source === chat_completion_sources.VERTEXAI && !isVertexAiClaude);
     const isOpenRouter = source === chat_completion_sources.OPENROUTER;
 
     if (!isGemini && !isOpenRouter) {

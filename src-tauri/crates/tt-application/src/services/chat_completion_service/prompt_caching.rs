@@ -35,6 +35,39 @@ pub(super) fn apply_claude_prompt_caching(
     previous: Option<&PromptDigestSnapshot>,
     ttl: &str,
 ) -> PromptDigestSnapshot {
+    apply_claude_prompt_caching_with_options(
+        payload,
+        previous,
+        ttl,
+        ClaudePromptCachingMode::AutomaticPlusExplicit,
+    )
+}
+
+pub(super) fn apply_claude_explicit_prompt_caching(
+    payload: &mut Value,
+    previous: Option<&PromptDigestSnapshot>,
+    ttl: &str,
+) -> PromptDigestSnapshot {
+    apply_claude_prompt_caching_with_options(
+        payload,
+        previous,
+        ttl,
+        ClaudePromptCachingMode::ExplicitOnly,
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaudePromptCachingMode {
+    AutomaticPlusExplicit,
+    ExplicitOnly,
+}
+
+fn apply_claude_prompt_caching_with_options(
+    payload: &mut Value,
+    previous: Option<&PromptDigestSnapshot>,
+    ttl: &str,
+    mode: ClaudePromptCachingMode,
+) -> PromptDigestSnapshot {
     let (locations, digests) = collect_claude_digests(payload);
     let last_message_location = last_claude_message_location(&locations);
     let snapshot = PromptDigestSnapshot {
@@ -50,18 +83,48 @@ pub(super) fn apply_claude_prompt_caching(
         return snapshot;
     };
 
-    object.insert("cache_control".to_string(), cache_control(ttl));
+    let automatic_root = mode == ClaudePromptCachingMode::AutomaticPlusExplicit;
+    if automatic_root {
+        object.insert("cache_control".to_string(), cache_control(ttl));
+    }
+
+    let max_explicit_breakpoints = if automatic_root { 3 } else { 4 };
+    let mut explicit_breakpoints = Vec::<ClaudeDigestLocation>::new();
+
+    if mode == ClaudePromptCachingMode::ExplicitOnly
+        && let Some(location) = last_claude_tool_location(&locations)
+    {
+        insert_unique_claude_breakpoint(
+            payload,
+            &mut explicit_breakpoints,
+            location,
+            ttl,
+            max_explicit_breakpoints,
+        );
+    }
 
     let system_location = find_claude_system_break_location(payload);
     if let Some(location) = system_location {
-        insert_cache_control_claude(payload, location, ttl);
+        insert_unique_claude_breakpoint(
+            payload,
+            &mut explicit_breakpoints,
+            location,
+            ttl,
+            max_explicit_breakpoints,
+        );
     }
 
     let pre_history_location = find_claude_pre_history_break_location(payload);
     if let Some(location) = pre_history_location
         && Some(location) != last_message_location
     {
-        insert_cache_control_claude(payload, location, ttl);
+        insert_unique_claude_breakpoint(
+            payload,
+            &mut explicit_breakpoints,
+            location,
+            ttl,
+            max_explicit_breakpoints,
+        );
     }
 
     if let Some(previous) = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION) {
@@ -69,19 +132,49 @@ pub(super) fn apply_claude_prompt_caching(
         if lcp_len > 0 {
             let candidate = locations.get(lcp_len - 1).copied();
             if let Some(candidate) = candidate {
-                let is_auto_last = Some(candidate) == last_message_location;
-                let is_duplicate = Some(candidate) == system_location
-                    || Some(candidate) == pre_history_location
-                    || is_auto_last;
+                let is_auto_last = automatic_root && Some(candidate) == last_message_location;
 
-                if !is_duplicate && matches!(candidate, ClaudeDigestLocation::Message { .. }) {
-                    insert_cache_control_claude(payload, candidate, ttl);
+                if !is_auto_last && matches!(candidate, ClaudeDigestLocation::Message { .. }) {
+                    insert_unique_claude_breakpoint(
+                        payload,
+                        &mut explicit_breakpoints,
+                        candidate,
+                        ttl,
+                        max_explicit_breakpoints,
+                    );
                 }
             }
         }
     }
 
+    if mode == ClaudePromptCachingMode::ExplicitOnly
+        && let Some(location) = last_message_location
+    {
+        insert_unique_claude_breakpoint(
+            payload,
+            &mut explicit_breakpoints,
+            location,
+            ttl,
+            max_explicit_breakpoints,
+        );
+    }
+
     snapshot
+}
+
+fn insert_unique_claude_breakpoint(
+    payload: &mut Value,
+    inserted: &mut Vec<ClaudeDigestLocation>,
+    location: ClaudeDigestLocation,
+    ttl: &str,
+    max_breakpoints: usize,
+) {
+    if inserted.contains(&location) || inserted.len() >= max_breakpoints {
+        return;
+    }
+
+    insert_cache_control_claude(payload, location, ttl);
+    inserted.push(location);
 }
 
 pub(super) fn apply_openrouter_claude_prompt_caching(
@@ -308,6 +401,14 @@ fn find_claude_system_break_location(payload: &Value) -> Option<ClaudeDigestLoca
     None
 }
 
+fn last_claude_tool_location(locations: &[ClaudeDigestLocation]) -> Option<ClaudeDigestLocation> {
+    locations
+        .iter()
+        .rev()
+        .copied()
+        .find(|location| matches!(location, ClaudeDigestLocation::Tool { .. }))
+}
+
 fn find_claude_pre_history_break_location(payload: &Value) -> Option<ClaudeDigestLocation> {
     let messages = payload
         .as_object()?
@@ -439,7 +540,18 @@ fn last_openrouter_message_location(messages: &[Value]) -> Option<OpenRouterDige
 
 fn insert_cache_control_claude(payload: &mut Value, location: ClaudeDigestLocation, ttl: &str) {
     match location {
-        ClaudeDigestLocation::Tool { .. } => {}
+        ClaudeDigestLocation::Tool { index } => {
+            let Some(tool) = payload
+                .as_object_mut()
+                .and_then(|object| object.get_mut("tools"))
+                .and_then(Value::as_array_mut)
+                .and_then(|tools| tools.get_mut(index))
+            else {
+                return;
+            };
+
+            insert_cache_control_on_block(tool, ttl);
+        }
         ClaudeDigestLocation::System { index } => {
             let Some(block) = payload
                 .as_object_mut()
@@ -623,7 +735,10 @@ fn cache_control(ttl: &str) -> Value {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{apply_claude_prompt_caching, apply_openrouter_claude_prompt_caching};
+    use super::{
+        apply_claude_explicit_prompt_caching, apply_claude_prompt_caching,
+        apply_openrouter_claude_prompt_caching,
+    };
 
     fn has_cache_control(value: &Value) -> bool {
         value
@@ -738,6 +853,135 @@ mod tests {
             .and_then(|blocks| blocks.last())
             .expect("last message block must exist");
         assert!(!has_cache_control(last_block));
+    }
+
+    #[test]
+    fn claude_explicit_prompt_caching_omits_root_and_marks_final_block() {
+        let mut payload = json!({
+            "model": "claude-sonnet-4-5@20250929",
+            "system": [
+                { "type": "text", "text": "sys1" },
+                { "type": "text", "text": "sys2" }
+            ],
+            "messages": [
+                { "role": "user", "content": [{ "type": "text", "text": "prehistory" }] },
+                { "role": "assistant", "content": [{ "type": "text", "text": "a1" }] },
+                { "role": "user", "content": [{ "type": "text", "text": "u1" }] }
+            ]
+        });
+
+        let _snapshot = apply_claude_explicit_prompt_caching(&mut payload, None, "5m");
+
+        let root = payload.as_object().expect("payload must be object");
+        assert!(
+            root.get("cache_control").is_none(),
+            "Vertex/Bedrock-style explicit caching must not use Anthropic automatic root cache_control",
+        );
+
+        let system = root
+            .get("system")
+            .and_then(Value::as_array)
+            .expect("system must be array");
+        assert!(has_cache_control(
+            system.last().expect("system must not be empty")
+        ));
+
+        let messages = root
+            .get("messages")
+            .and_then(Value::as_array)
+            .expect("messages must be array");
+
+        let pre_history_block = messages
+            .first()
+            .and_then(Value::as_object)
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_array)
+            .and_then(|blocks| blocks.last())
+            .expect("prehistory block must exist");
+        assert!(has_cache_control(pre_history_block));
+
+        let last_block = messages
+            .last()
+            .and_then(Value::as_object)
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_array)
+            .and_then(|blocks| blocks.last())
+            .expect("last message block must exist");
+        assert!(has_cache_control(last_block));
+    }
+
+    #[test]
+    fn claude_explicit_prompt_caching_marks_tool_definitions() {
+        let mut payload = json!({
+            "model": "claude-sonnet-4-5@20250929",
+            "tools": [
+                {
+                    "name": "lookup",
+                    "description": "lookup",
+                    "input_schema": { "type": "object" }
+                }
+            ],
+            "messages": [
+                { "role": "user", "content": [{ "type": "text", "text": "u1" }] }
+            ]
+        });
+
+        let _snapshot = apply_claude_explicit_prompt_caching(&mut payload, None, "5m");
+
+        let tool = payload
+            .pointer("/tools/0")
+            .expect("tool definition must exist");
+        assert!(has_cache_control(tool));
+    }
+
+    #[test]
+    fn claude_explicit_prompt_caching_marks_lcp_and_final_blocks() {
+        let mut payload1 = json!({
+            "model": "claude-sonnet-4-5@20250929",
+            "system": [{ "type": "text", "text": "sys" }],
+            "messages": [
+                { "role": "user", "content": [{ "type": "text", "text": "prehistory" }] },
+                { "role": "assistant", "content": [{ "type": "text", "text": "a1" }] },
+                { "role": "user", "content": [{ "type": "text", "text": "u1" }] }
+            ]
+        });
+        let snapshot = apply_claude_explicit_prompt_caching(&mut payload1, None, "5m");
+
+        let mut payload2 = json!({
+            "model": "claude-sonnet-4-5@20250929",
+            "system": [{ "type": "text", "text": "sys" }],
+            "messages": [
+                { "role": "user", "content": [{ "type": "text", "text": "prehistory" }] },
+                { "role": "assistant", "content": [{ "type": "text", "text": "a1" }] },
+                { "role": "user", "content": [{ "type": "text", "text": "u1 changed" }] }
+            ]
+        });
+
+        let _snapshot2 = apply_claude_explicit_prompt_caching(&mut payload2, Some(&snapshot), "5m");
+
+        let messages = payload2
+            .as_object()
+            .and_then(|root| root.get("messages"))
+            .and_then(Value::as_array)
+            .expect("messages must be array");
+
+        let last_common_block = messages
+            .get(1)
+            .and_then(Value::as_object)
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_array)
+            .and_then(|blocks| blocks.last())
+            .expect("assistant block must exist");
+        assert!(has_cache_control(last_common_block));
+
+        let last_block = messages
+            .last()
+            .and_then(Value::as_object)
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_array)
+            .and_then(|blocks| blocks.last())
+            .expect("last message block must exist");
+        assert!(has_cache_control(last_block));
     }
 
     #[test]

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use tokio::sync::{RwLock, watch};
 
 use crate::dto::chat_completion_dto::{
@@ -10,13 +11,14 @@ use crate::dto::chat_completion_dto::{
 use crate::errors::ApplicationError;
 use tt_domain::errors::DomainError;
 use tt_domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
+use tt_domain::models::claude_model::supports_one_hour_prompt_cache;
 use tt_domain::models::settings::{PromptCacheTtl, TauriTavernSettings};
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionNormalizationReport, ChatCompletionRepository, ChatCompletionSource,
     ChatCompletionStreamSender,
 };
-use tt_ports::repositories::prompt_cache_repository::PromptCacheRepository;
+use tt_ports::repositories::prompt_cache_repository::{PromptCacheKey, PromptCacheRepository};
 use tt_ports::repositories::secret_repository::SecretRepository;
 use tt_ports::repositories::settings_repository::SettingsRepository;
 
@@ -36,6 +38,7 @@ use self::exchange::{
 };
 
 const OPENAI_SOURCE: &str = ChatCompletionSource::OpenAi.key();
+const VERTEXAI_PROMPT_CACHE_SESSION_HEADER: &str = "X-Vertex-Ai-Session-Id";
 const AGENT_STRUCTURAL_BODY_OVERRIDE_KEYS: &[&str] = &[
     "messages",
     "input",
@@ -368,6 +371,7 @@ impl ChatCompletionService {
         .await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
+        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         self.apply_tauritavern_prompt_caching(
             source,
             &endpoint_path,
@@ -377,7 +381,6 @@ impl ChatCompletionService {
             prompt_caching_hints,
         )
         .await?;
-        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
 
         let response = self
@@ -480,6 +483,7 @@ impl ChatCompletionService {
         .await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
+        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         self.apply_tauritavern_prompt_caching(
             source,
             &endpoint_path,
@@ -489,7 +493,6 @@ impl ChatCompletionService {
             prompt_caching_hints,
         )
         .await?;
-        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
 
         self.chat_completion_repository
@@ -595,10 +598,11 @@ impl ChatCompletionService {
         };
 
         if prompt_caching::contains_cache_control(upstream_payload) {
-            return Err(ApplicationError::ValidationError(
-                "Claude prompt caching cannot be combined with manually supplied cache_control fields"
-                    .to_string(),
-            ));
+            // User-supplied cache_control wins over automatic prompt caching.
+            if let prompt_caching_plan::PromptCachingPlan::VertexClaude { key, .. } = &plan {
+                apply_vertexai_prompt_cache_session_header(config, key);
+            }
+            return Ok(());
         }
 
         match plan {
@@ -638,6 +642,24 @@ impl ChatCompletionService {
                     .await
                     .map_err(ApplicationError::from)?;
             }
+            prompt_caching_plan::PromptCachingPlan::VertexClaude { key, model } => {
+                ensure_vertexai_claude_prompt_cache_ttl(ttl, &model)?;
+                let previous = self
+                    .prompt_cache_repository
+                    .load_prompt_digests(key.clone())
+                    .await
+                    .map_err(ApplicationError::from)?;
+                let snapshot = prompt_caching::apply_claude_explicit_prompt_caching(
+                    upstream_payload,
+                    previous.as_ref(),
+                    ttl,
+                );
+                self.prompt_cache_repository
+                    .save_prompt_digests(key.clone(), snapshot)
+                    .await
+                    .map_err(ApplicationError::from)?;
+                apply_vertexai_prompt_cache_session_header(config, &key);
+            }
             prompt_caching_plan::PromptCachingPlan::NanoGptClaude => {
                 apply_nanogpt_claude_cache_control(upstream_payload, ttl);
             }
@@ -645,6 +667,60 @@ impl ChatCompletionService {
 
         Ok(())
     }
+}
+
+fn ensure_vertexai_claude_prompt_cache_ttl(ttl: &str, model: &str) -> Result<(), ApplicationError> {
+    if ttl == "1h" && !supports_one_hour_prompt_cache(model) {
+        return Err(ApplicationError::ValidationError(format!(
+            "Google Vertex AI Claude model {model} does not support 1h prompt cache TTL; use 5m or disable prompt caching."
+        )));
+    }
+
+    Ok(())
+}
+
+fn apply_vertexai_prompt_cache_session_header(
+    config: &mut ChatCompletionApiConfig,
+    key: &PromptCacheKey,
+) {
+    if !is_vertexai_global_location_base_url(&config.base_url)
+        || has_configured_header(config, VERTEXAI_PROMPT_CACHE_SESSION_HEADER)
+    {
+        return;
+    }
+
+    let digest_input = format!("{}|{:?}", config.base_url.trim(), key);
+    let digest = Sha256::digest(digest_input.as_bytes());
+    let session_id = format!("tt-pc-{}", &encode_hex(&digest)[..32]);
+    config
+        .extra_headers
+        .insert(VERTEXAI_PROMPT_CACHE_SESSION_HEADER.to_string(), session_id);
+}
+
+fn is_vertexai_global_location_base_url(base_url: &str) -> bool {
+    base_url
+        .trim()
+        .to_ascii_lowercase()
+        .contains("/locations/global")
+}
+
+fn has_configured_header(config: &ChatCompletionApiConfig, header_name: &str) -> bool {
+    config
+        .extra_headers
+        .keys()
+        .chain(config.additional_headers.keys())
+        .any(|key| key.eq_ignore_ascii_case(header_name))
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn resolve_status_model_list_source(
@@ -688,9 +764,14 @@ fn apply_nanogpt_claude_cache_control(payload: &mut Value, ttl: &str) -> bool {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::apply_nanogpt_claude_cache_control;
-    use super::resolve_status_model_list_source;
-    use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
+    use super::{
+        apply_nanogpt_claude_cache_control, apply_vertexai_prompt_cache_session_header,
+        ensure_vertexai_claude_prompt_cache_ttl, resolve_status_model_list_source,
+    };
+    use tt_ports::repositories::chat_completion_repository::{
+        AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
+    };
+    use tt_ports::repositories::prompt_cache_repository::PromptCacheKey;
 
     #[test]
     fn nanogpt_claude_cache_control_is_inserted_for_claude_models() {
@@ -728,6 +809,63 @@ mod tests {
 
         assert!(!apply_nanogpt_claude_cache_control(&mut payload, "5m"));
         assert!(payload.get("cache_control").is_none());
+    }
+
+    #[test]
+    fn vertexai_claude_rejects_one_hour_cache_for_old_models() {
+        let error = ensure_vertexai_claude_prompt_cache_ttl("1h", "claude-3-7-sonnet@20250219")
+            .expect_err("old model should reject 1h ttl");
+
+        assert!(error.to_string().contains("does not support 1h"));
+        ensure_vertexai_claude_prompt_cache_ttl("1h", "claude-sonnet-4-5@20250929")
+            .expect("modern model should allow 1h ttl");
+    }
+
+    #[test]
+    fn vertexai_global_prompt_cache_adds_session_header() {
+        let mut config = ChatCompletionApiConfig {
+            base_url: "https://aiplatform.googleapis.com/v1/projects/p/locations/global"
+                .to_string(),
+            api_key: String::new(),
+            authorization_header: None,
+            vertexai_service_account_json: None,
+            extra_headers: Default::default(),
+            additional_headers: Default::default(),
+            anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
+        };
+        let key = PromptCacheKey::VertexAiClaude {
+            scope: "scope".to_string(),
+        };
+
+        apply_vertexai_prompt_cache_session_header(&mut config, &key);
+
+        assert!(config.extra_headers.contains_key("X-Vertex-Ai-Session-Id"));
+    }
+
+    #[test]
+    fn vertexai_regional_prompt_cache_skips_session_header() {
+        let mut config = ChatCompletionApiConfig {
+            base_url:
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1"
+                    .to_string(),
+            api_key: String::new(),
+            authorization_header: None,
+            vertexai_service_account_json: None,
+            extra_headers: Default::default(),
+            additional_headers: Default::default(),
+            anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
+        };
+        let key = PromptCacheKey::VertexAiClaude {
+            scope: "scope".to_string(),
+        };
+
+        apply_vertexai_prompt_cache_session_header(&mut config, &key);
+
+        assert!(!config.extra_headers.contains_key("X-Vertex-Ai-Session-Id"));
     }
 
     #[test]

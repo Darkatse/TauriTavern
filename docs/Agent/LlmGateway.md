@@ -223,6 +223,10 @@ Gateway 必须遵守：
 
 Policy denied 必须 fail-fast 并写 journal，不允许静默降级为另一个 provider、另一个模型或空工具集。
 
+## 8.1 `custom_*` 参数优先级
+
+用户填写的 `custom_include_body`、`custom_exclude_body`、`custom_include_headers` 是明确的上游请求覆盖，优先级高于 TauriTavern 自动组装的 provider 参数。后端只负责解析并透传这些字段，不按 provider 语义二次裁决；若与 prompt caching 等自动功能冲突，自动功能必须退让，上游 provider 负责接受或拒绝最终请求。
+
 ## 9. Prompt Cache
 
 Prompt cache 是 provider 能力，不是 Agent 自己随意拼 header。

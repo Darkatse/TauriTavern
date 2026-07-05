@@ -46,6 +46,10 @@ pub(super) enum PromptCachingPlan {
     OpenRouterClaude {
         key: PromptCacheKey,
     },
+    VertexClaude {
+        key: PromptCacheKey,
+        model: String,
+    },
     NanoGptClaude,
 }
 
@@ -65,6 +69,16 @@ pub(super) fn resolve_prompt_caching_plan(
             .then_some(PromptCachingPlan::OpenRouterClaude {
                 key: PromptCacheKey::OpenRouterClaude,
             })),
+        ChatCompletionSource::VertexAi => {
+            Ok(vertexai_claude_model_id(endpoint_path).map(|model| {
+                PromptCachingPlan::VertexClaude {
+                    key: PromptCacheKey::VertexAiClaude {
+                        scope: vertexai_claude_prompt_cache_scope(config, endpoint_path),
+                    },
+                    model: model.to_string(),
+                }
+            }))
+        }
         ChatCompletionSource::NanoGpt => {
             Ok(is_nanogpt_claude_payload(upstream_payload)
                 .then_some(PromptCachingPlan::NanoGptClaude))
@@ -104,6 +118,28 @@ fn resolve_custom_claude_prompt_caching_plan(
         key: PromptCacheKey::CustomClaudeMessages { scope },
         anthropic_beta_header_mode: AnthropicBetaHeaderMode::PromptCachingOnly,
     }))
+}
+
+fn vertexai_claude_model_id(endpoint_path: &str) -> Option<&str> {
+    let endpoint = endpoint_path.trim().trim_matches('/');
+    let rest = endpoint.strip_prefix("publishers/anthropic/models/")?;
+    let (model, method) = rest.rsplit_once(':')?;
+    let method = method.to_ascii_lowercase();
+    if model.is_empty() || (method != "rawpredict" && method != "streamrawpredict") {
+        return None;
+    }
+
+    Some(model)
+}
+
+fn vertexai_claude_prompt_cache_scope(
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+) -> String {
+    let base_url = config.base_url.trim().trim_end_matches('/');
+    let endpoint_path = endpoint_path.trim();
+    let digest = Sha256::digest(format!("{base_url}|{endpoint_path}").as_bytes());
+    encode_hex(&digest)
 }
 
 fn is_openrouter_claude_model(payload: &Value) -> bool {
@@ -226,6 +262,52 @@ mod tests {
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::PromptCachingOnly,
             }
         );
+    }
+
+    #[test]
+    fn vertexai_claude_raw_predict_uses_vertex_strategy() {
+        let config = custom_config(
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1",
+        );
+
+        let plan = resolve_prompt_caching_plan(
+            ChatCompletionSource::VertexAi,
+            "/publishers/anthropic/models/claude-sonnet-4-5@20250929:rawPredict",
+            &config,
+            &json!({}),
+            PromptCachingRequestHints::default(),
+        )
+        .expect("resolution should succeed")
+        .expect("plan should exist");
+
+        match plan {
+            PromptCachingPlan::VertexClaude {
+                key: PromptCacheKey::VertexAiClaude { scope },
+                model,
+            } => {
+                assert_eq!(model, "claude-sonnet-4-5@20250929");
+                assert!(!scope.is_empty());
+            }
+            other => panic!("unexpected plan: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vertexai_gemini_generate_content_does_not_use_claude_strategy() {
+        let config = custom_config("https://us-central1-aiplatform.googleapis.com/v1");
+
+        let plan = resolve_prompt_caching_plan(
+            ChatCompletionSource::VertexAi,
+            "/generateContent",
+            &config,
+            &json!({
+                "model": "gemini-2.5-pro"
+            }),
+            PromptCachingRequestHints::default(),
+        )
+        .expect("resolution should succeed");
+
+        assert_eq!(plan, None);
     }
 
     #[test]

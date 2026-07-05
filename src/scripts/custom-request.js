@@ -481,13 +481,14 @@ export class ChatCompletionService {
                 content: extractMessageFromData(json, this.TYPE),
                 reasoning: extractReasoningFromData(json, {
                     mainApi: this.TYPE,
-                    textGenType: data.chat_completion_source,
+                    chatCompletionSource: data.chat_completion_source,
+                    model: data.model,
                     ignoreShowThoughts: true,
                 }),
             };
             // Try parse JSON
             if (data.json_schema) {
-                result.content = JSON.parse(extractJsonFromData(json, { mainApi: this.TYPE, chatCompletionSource: data.chat_completion_source }));
+                result.content = JSON.parse(extractJsonFromData(json, { mainApi: this.TYPE, chatCompletionSource: data.chat_completion_source, model: data.model }));
             }
             return result;
         }
@@ -516,6 +517,7 @@ export class ChatCompletionService {
 
                 const reply = getStreamingReply(parsed, state, {
                     chatCompletionSource: data.chat_completion_source,
+                    model: data.model,
                     overrideShowThoughts: true,
                 });
                 if (Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {

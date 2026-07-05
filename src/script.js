@@ -172,6 +172,7 @@ import {
     openai_messages_count,
     chat_completion_sources,
     getChatCompletionModel,
+    isVertexAiClaudeModelId,
     createGenerationParameters,
     proxies,
     loadProxyPresets,
@@ -4750,7 +4751,12 @@ export async function generateRawData({ prompt = '', api = null, instructOverrid
         }
 
         if (jsonSchema) {
-            return extractJsonFromData(data, { mainApi: api, returnInvalidJson: jsonSchema.returnInvalid });
+            return extractJsonFromData(data, {
+                mainApi: api,
+                chatCompletionSource: generateData?.chat_completion_source,
+                model: generateData?.model,
+                returnInvalidJson: jsonSchema.returnInvalid,
+            });
         }
 
         return data;
@@ -6280,16 +6286,32 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
         if (jsonSchema) {
             unblockGeneration(type);
-            return extractJsonFromData(data, { returnInvalidJson: jsonSchema.returnInvalid ?? false });
+            return extractJsonFromData(data, {
+                chatCompletionSource: generate_data?.prompt?.chat_completion_source,
+                model: generate_data?.prompt?.model,
+                returnInvalidJson: jsonSchema.returnInvalid ?? false,
+            });
         }
 
         //const getData = await response.json();
         let getMessage = extractMessageFromData(data);
         let title = extractTitleFromData(data);
-        let reasoning = extractReasoningFromData(data);
-        const toolReasoning = extractReasoningFromData(data, { ignoreShowThoughts: true });
-        let imageUrls = extractImagesFromData(data);
-        const reasoningSignature = extractReasoningSignatureFromData(data);
+        const requestChatCompletionSource = generate_data?.prompt?.chat_completion_source;
+        const requestModel = generate_data?.prompt?.model;
+        let reasoning = extractReasoningFromData(data, {
+            chatCompletionSource: requestChatCompletionSource,
+            model: requestModel,
+        });
+        const toolReasoning = extractReasoningFromData(data, {
+            chatCompletionSource: requestChatCompletionSource,
+            model: requestModel,
+            ignoreShowThoughts: true,
+        });
+        let imageUrls = extractImagesFromData(data, { chatCompletionSource: requestChatCompletionSource });
+        const reasoningSignature = extractReasoningSignatureFromData(data, {
+            chatCompletionSource: requestChatCompletionSource,
+            model: requestModel,
+        });
         const native = data?.choices?.[0]?.message?.native ?? null;
         kobold_horde_model = title;
 
@@ -7278,10 +7300,11 @@ export function extractMessageFromData(data, activeApi = null) {
  * @param {object} [options] Extraction options
  * @param {string} [options.mainApi] Main API to use
  * @param {string} [options.chatCompletionSource] Chat completion source
+ * @param {string} [options.model] Chat completion model
  * @param {boolean} [options.returnInvalidJson=false] Whether to return the raw JSON string even if it fails to parse
  * @returns {string} Extracted JSON string from the response data
  */
-export function extractJsonFromData(data, { mainApi = null, chatCompletionSource = null, returnInvalidJson = false } = {}) {
+export function extractJsonFromData(data, { mainApi = null, chatCompletionSource = null, model = null, returnInvalidJson = false } = {}) {
     mainApi = mainApi ?? main_api;
     chatCompletionSource = chatCompletionSource ?? oai_settings.chat_completion_source;
 
@@ -7309,6 +7332,13 @@ export function extractJsonFromData(data, { mainApi = null, chatCompletionSource
                     }
                     break;
                 case chat_completion_sources.VERTEXAI:
+                    if (isVertexAiClaudeModelId((model ?? data?.model) || null)) {
+                        result = tryParse(data?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments ?? '');
+                        if (result) {
+                            break;
+                        }
+                    }
+                    // fall through
                 case chat_completion_sources.MAKERSUITE:
                 case chat_completion_sources.DEEPSEEK:
                 case chat_completion_sources.AI21:

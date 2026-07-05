@@ -32,6 +32,8 @@ impl AdditionalParameters {
         })
     }
 
+    /// Parses user `custom_include_headers`; HTTP adapters apply them after
+    /// built-in headers so the user's values remain final.
     pub(super) fn headers(&self) -> Result<HashMap<String, String>, ApplicationError> {
         custom_parameters::parse_string_map(&self.include_headers)
     }
@@ -61,6 +63,8 @@ impl AdditionalParameters {
         Ok(())
     }
 
+    /// Applies user `custom_include_body` / `custom_exclude_body` after provider
+    /// payload construction; these overrides are final upstream intent.
     pub(super) fn apply_body_overrides(
         &self,
         upstream_payload: &mut Value,

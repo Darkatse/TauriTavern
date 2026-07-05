@@ -8,6 +8,7 @@ use crate::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
 };
 use crate::errors::ApplicationError;
+use tt_domain::models::claude_model::is_vertex_ai_claude_model_id;
 use tt_domain::models::secret::SecretKeys;
 use tt_ports::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
@@ -575,16 +576,23 @@ async fn resolve_vertexai_generate_api_config(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("us-central1");
+        .unwrap_or("us-central1")
+        .to_ascii_lowercase();
 
-    let project_override = payload
-        .get("vertexai_express_project_id")
+    let is_claude_model = payload
+        .get("model")
         .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
+        .is_some_and(is_vertex_ai_claude_model_id);
 
     match mode.as_str() {
         "express" => {
+            if is_claude_model {
+                return Err(ApplicationError::ValidationError(
+                    "Google Vertex AI Claude requires Full mode service account authentication or a reverse proxy with bearer authentication."
+                        .to_string(),
+                ));
+            }
+
             let api_key = read_required_secret(
                 secret_repository,
                 SecretKeys::VERTEXAI,
@@ -593,14 +601,8 @@ async fn resolve_vertexai_generate_api_config(
             )
             .await?;
 
-            let base_url = if let Some(project_id) = project_override {
-                format!("{VERTEXAI_GLOBAL_BASE}/v1/projects/{project_id}/locations/{region}",)
-            } else {
-                format!("{}/v1", vertexai_host(region))
-            };
-
             Ok(ChatCompletionApiConfig {
-                base_url,
+                base_url: format!("{VERTEXAI_GLOBAL_BASE}/v1"),
                 api_key,
                 authorization_header: None,
                 vertexai_service_account_json: None,
@@ -623,7 +625,7 @@ async fn resolve_vertexai_generate_api_config(
 
             let base_url = format!(
                 "{}/v1/projects/{project_id}/locations/{region}",
-                vertexai_host(region)
+                vertexai_host(&region)
             );
 
             Ok(ChatCompletionApiConfig {
@@ -645,10 +647,11 @@ async fn resolve_vertexai_generate_api_config(
 }
 
 fn vertexai_host(region: &str) -> String {
-    if region.trim().eq_ignore_ascii_case("global") {
-        VERTEXAI_GLOBAL_BASE.to_string()
-    } else {
-        format!("https://{}-aiplatform.googleapis.com", region.trim())
+    let region = region.trim().to_ascii_lowercase();
+    match region.as_str() {
+        "global" => VERTEXAI_GLOBAL_BASE.to_string(),
+        "us" | "eu" => format!("https://aiplatform.{region}.rep.googleapis.com"),
+        _ => format!("https://{region}-aiplatform.googleapis.com"),
     }
 }
 
@@ -743,7 +746,7 @@ mod tests {
         ApiConfigHints, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, MINIMAX_API_BASE,
         MINIMAX_API_BASE_CN, OPENROUTER_API_BASE, OPENROUTER_CATEGORIES, OPENROUTER_REFERER,
         OPENROUTER_TITLE, ZAI_API_BASE_CODING, default_base_url, resolve_generate_api_config,
-        resolve_status_api_config, source_extra_headers, supports_reverse_proxy,
+        resolve_status_api_config, source_extra_headers, supports_reverse_proxy, vertexai_host,
     };
 
     struct TestSecretRepository {
@@ -1323,6 +1326,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn vertexai_claude_express_requires_full_mode() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::VERTEXAI,
+            "vertex-key",
+        ));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "vertexai",
+                "model": "claude-sonnet-4-5@20250929",
+                "vertexai_auth_mode": "express",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let error =
+            resolve_generate_for_test(ChatCompletionSource::VertexAi, &dto, &secret_repository)
+                .await
+                .expect_err("Vertex Claude Express should fail early");
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires Full mode service account authentication"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn vertexai_gemini_express_uses_global_api_key_base_url() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::VERTEXAI,
+            "vertex-key",
+        ));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "vertexai",
+                "model": "gemini-2.5-pro",
+                "vertexai_auth_mode": "express",
+                "vertexai_region": "us-central1",
+                "vertexai_express_project_id": "vertex-project",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_for_test(ChatCompletionSource::VertexAi, &dto, &secret_repository)
+                .await
+                .expect("Vertex Gemini Express config should resolve with project id");
+
+        assert_eq!(config.base_url, "https://aiplatform.googleapis.com/v1");
+    }
+
+    #[test]
+    fn vertexai_host_supports_global_multi_region_and_regional_endpoints() {
+        assert_eq!(vertexai_host("global"), "https://aiplatform.googleapis.com");
+        assert_eq!(
+            vertexai_host("us"),
+            "https://aiplatform.us.rep.googleapis.com"
+        );
+        assert_eq!(
+            vertexai_host("eu"),
+            "https://aiplatform.eu.rep.googleapis.com"
+        );
+        assert_eq!(
+            vertexai_host("europe-west4"),
+            "https://europe-west4-aiplatform.googleapis.com"
+        );
+    }
+
+    #[tokio::test]
     async fn vertexai_full_mode_defers_service_account_auth_to_provider_adapter() {
         let service_account_json = r#"{
             "type": "service_account",
@@ -1344,7 +1421,7 @@ mod tests {
             payload: json!({
                 "chat_completion_source": "vertexai",
                 "vertexai_auth_mode": "full",
-                "vertexai_region": "europe-west4",
+                "vertexai_region": "Europe-West4",
                 "secret_id": "vertex-profile",
             })
             .as_object()

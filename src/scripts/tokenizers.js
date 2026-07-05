@@ -853,7 +853,9 @@ export function getTokenizerModel(settings = null) {
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.VERTEXAI) {
-        return gemmaTokenizer;
+        return String(oai_settings.vertexai_model ?? '').trim().toLowerCase().startsWith('claude-')
+            ? claudeTokenizer
+            : gemmaTokenizer;
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.AI21) {
