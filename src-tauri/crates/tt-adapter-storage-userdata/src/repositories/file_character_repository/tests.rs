@@ -2,6 +2,7 @@ use chrono::DateTime;
 use crc32fast::Hasher;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use rand::random;
@@ -11,7 +12,9 @@ use tokio::fs;
 use crate::png_card_metadata::{
     read_character_data_from_png, read_text_chunks_from_png, write_character_data_to_png,
 };
-use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use tt_adapter_storage_core::{
+    FileChatRepository, chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
+};
 use tt_domain::models::character::{Character, CharacterData};
 use tt_ports::repositories::character_repository::{
     CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterRepository,
@@ -97,12 +100,22 @@ async fn repository_for_root(root: &Path) -> FileCharacterRepository {
         .await
         .expect("write default avatar");
 
-    FileCharacterRepository::with_chat_aliases(
+    let chat_aliases = new_shared_chat_alias_store_for_user_dir(root);
+    let chat_repository = Arc::new(FileChatRepository::with_chat_aliases(
+        characters_dir.clone(),
+        chats_dir.clone(),
+        root.join("group chats"),
+        root.join("backups"),
+        chat_aliases.clone(),
+    ));
+
+    FileCharacterRepository::with_chat_repository(
         characters_dir,
         chats_dir,
         thumbnails_avatar_dir,
         default_avatar,
-        new_shared_chat_alias_store_for_user_dir(root),
+        chat_aliases,
+        chat_repository,
     )
 }
 
@@ -1551,17 +1564,23 @@ async fn shallow_index_signature_tracks_chat_stats_changes() {
     fs::create_dir_all(&chat_dir)
         .await
         .expect("create chat dir");
-    fs::write(chat_dir.join("session.jsonl"), b"{}\n{\"mes\":\"hello\"}\n")
-        .await
-        .expect("write chat");
+    fs::write(
+        chat_dir.join("session.jsonl"),
+        b"{}\n{\"mes\":\"hello\",\"send_date\":\"2026-01-02T03:04:05.000Z\"}\n",
+    )
+    .await
+    .expect("write chat");
 
+    let expected_chat_date = DateTime::parse_from_rfc3339("2026-01-02T03:04:05.000Z")
+        .expect("parse chat timestamp")
+        .timestamp_millis();
     let second = repository
         .find_all(true)
         .await
         .expect("reload shallow list");
     assert_eq!(second.len(), 1);
     assert!(second[0].chat_size > 0);
-    assert!(second[0].date_last_chat > 0);
+    assert_eq!(second[0].date_last_chat, expected_chat_date);
 
     let _ = fs::remove_dir_all(&root).await;
 }

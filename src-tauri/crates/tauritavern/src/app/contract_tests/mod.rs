@@ -113,20 +113,22 @@ async fn character_service_with_world_repository(
         .expect("write default avatar");
 
     let aliases = new_shared_chat_alias_store_for_user_dir(&default_user);
-    let character_repository = Arc::new(FileCharacterRepository::with_chat_aliases(
-        characters.clone(),
-        chats.clone(),
-        thumbnails,
-        default_avatar,
-        aliases.clone(),
-    ));
-    let chat_repository: Arc<dyn ChatRepository> = Arc::new(FileChatRepository::with_chat_aliases(
+    let file_chat_repository = Arc::new(FileChatRepository::with_chat_aliases(
         characters,
         chats,
         default_user.join("group chats"),
         default_user.join("backups"),
-        aliases,
+        aliases.clone(),
     ));
+    let character_repository = Arc::new(FileCharacterRepository::with_chat_repository(
+        default_user.join("characters"),
+        default_user.join("chats"),
+        thumbnails,
+        default_avatar,
+        aliases,
+        file_chat_repository.clone(),
+    ));
+    let chat_repository: Arc<dyn ChatRepository> = file_chat_repository;
     let world_repository = Arc::new(FileWorldInfoRepository::new(default_user.join("worlds")));
     let agent_repository = Arc::new(FileAgentRepository::new(
         root.join("_tauritavern/agent-workspaces"),

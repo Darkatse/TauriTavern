@@ -119,8 +119,15 @@ pub(super) fn build(
     let default_user_dir = data_directory.default_user().to_path_buf();
     let chat_aliases = new_shared_chat_alias_store_for_user_dir(data_directory.default_user());
 
+    let file_chat_repository = Arc::new(FileChatRepository::with_chat_aliases(
+        data_directory.characters().to_path_buf(),
+        data_directory.chats().to_path_buf(),
+        data_directory.group_chats().to_path_buf(),
+        data_directory.backups().to_path_buf(),
+        chat_aliases.clone(),
+    ));
     let character_repository: Arc<dyn CharacterRepository> =
-        Arc::new(FileCharacterRepository::with_chat_aliases(
+        Arc::new(FileCharacterRepository::with_chat_repository(
             data_directory.characters().to_path_buf(),
             data_directory.chats().to_path_buf(),
             data_directory
@@ -128,16 +135,9 @@ pub(super) fn build(
                 .join("thumbnails")
                 .join("avatar"),
             data_directory.default_avatar().to_path_buf(),
-            chat_aliases.clone(),
+            chat_aliases,
+            file_chat_repository.clone(),
         ));
-
-    let file_chat_repository = Arc::new(FileChatRepository::with_chat_aliases(
-        data_directory.characters().to_path_buf(),
-        data_directory.chats().to_path_buf(),
-        data_directory.group_chats().to_path_buf(),
-        data_directory.backups().to_path_buf(),
-        chat_aliases,
-    ));
     let chat_repository: Arc<dyn ChatRepository> = file_chat_repository.clone();
     let group_chat_repository: Arc<dyn GroupChatRepository> = file_chat_repository;
 

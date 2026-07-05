@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -10,9 +10,8 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::png_card_metadata::read_character_data_from_png_file;
-use tt_adapter_storage_core::{
-    chat_directory_identity::SharedChatAliasStore,
-    file_system::{list_files_with_extension, replace_file_with_fallback, unique_temp_path},
+use tt_adapter_storage_core::file_system::{
+    list_files_with_extension, replace_file_with_fallback, unique_temp_path,
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
@@ -276,6 +275,9 @@ impl FileCharacterRepository {
         &self,
     ) -> Result<(Vec<CharacterShallowIndexScanEntry>, bool), DomainError> {
         let character_files = list_files_with_extension(&self.characters_dir, "png").await?;
+        let mut chat_stats_by_name = self
+            .calculate_shallow_index_chat_stats(&character_files)
+            .await?;
         let mut results: Vec<Option<CharacterShallowIndexScanEntry>> =
             (0..character_files.len()).map(|_| None).collect();
         let mut complete = true;
@@ -288,15 +290,17 @@ impl FileCharacterRepository {
                     "Shallow character index scanner gate closed".to_string(),
                 )
             })?;
-            let characters_dir = self.characters_dir.clone();
-            let chats_dir = self.chats_dir.clone();
-            let chat_aliases = self.chat_aliases.clone();
+            let file_stem = Self::file_stem_from_path(&path);
+            let chat_stats = chat_stats_by_name.remove(&file_stem).unwrap_or_else(|| {
+                Err(DomainError::InternalError(format!(
+                    "Missing chat stats for character '{}'",
+                    file_stem
+                )))
+            });
 
             jobs.spawn(async move {
                 let _permit = permit;
-                let result =
-                    Self::scan_shallow_index_entry(characters_dir, chats_dir, chat_aliases, path)
-                        .await;
+                let result = Self::scan_shallow_index_entry(chat_stats, path).await;
                 (index, result)
             });
         }
@@ -327,10 +331,25 @@ impl FileCharacterRepository {
         Ok((entries, complete))
     }
 
+    async fn calculate_shallow_index_chat_stats(
+        &self,
+        character_files: &[PathBuf],
+    ) -> Result<HashMap<String, Result<(u64, i64), DomainError>>, DomainError> {
+        let character_names = character_files
+            .iter()
+            .map(|path| Self::file_stem_from_path(path))
+            .collect();
+
+        Ok(self
+            .chat_repository
+            .calculate_character_chat_stats_batch(character_names)
+            .await?
+            .into_iter()
+            .collect())
+    }
+
     async fn scan_shallow_index_entry(
-        characters_dir: PathBuf,
-        chats_dir: PathBuf,
-        chat_aliases: SharedChatAliasStore,
+        chat_stats: Result<(u64, i64), DomainError>,
         path: PathBuf,
     ) -> Result<CharacterShallowIndexScanEntry, DomainError> {
         let metadata = fs::metadata(&path).await.map_err(|error| {
@@ -340,19 +359,13 @@ impl FileCharacterRepository {
                 error
             ))
         })?;
-        let file_stem = path
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("")
-            .to_string();
+        let file_stem = Self::file_stem_from_path(&path);
         let avatar = path
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or("")
             .to_string();
-        let (chat_size, date_last_chat) =
-            Self::calculate_chat_stats_for(&characters_dir, &chats_dir, &chat_aliases, &file_stem)
-                .await?;
+        let (chat_size, date_last_chat) = chat_stats?;
         let modified_millis = file_modified_millis(&metadata);
 
         Ok(CharacterShallowIndexScanEntry {
@@ -367,6 +380,13 @@ impl FileCharacterRepository {
                 date_last_chat,
             },
         })
+    }
+
+    fn file_stem_from_path(path: &Path) -> String {
+        path.file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_string()
     }
 
     async fn build_shallow_index_characters(

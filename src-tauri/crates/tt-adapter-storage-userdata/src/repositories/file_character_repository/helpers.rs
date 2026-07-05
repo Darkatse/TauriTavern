@@ -251,61 +251,10 @@ impl FileCharacterRepository {
         .await
     }
 
-    pub(crate) async fn calculate_chat_stats_for(
-        characters_dir: &Path,
-        chats_dir: &Path,
-        chat_aliases: &SharedChatAliasStore,
-        name: &str,
-    ) -> Result<(u64, i64), DomainError> {
-        let chat_dir =
-            Self::resolve_chat_directory_for(characters_dir, chats_dir, chat_aliases, name).await?;
-
-        if !chat_dir.exists() {
-            return Ok((0, 0));
-        }
-
-        let mut entries = fs::read_dir(&chat_dir).await.map_err(|e| {
-            tracing::error!("Failed to read chat directory: {}", e);
-            DomainError::InternalError(format!("Failed to read chat directory: {}", e))
-        })?;
-
-        let mut total_size = 0;
-        let mut latest_modified = 0;
-
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            tracing::error!("Failed to read directory entry: {}", e);
-            DomainError::InternalError(format!("Failed to read directory entry: {}", e))
-        })? {
-            let metadata = entry.metadata().await.map_err(|e| {
-                tracing::error!("Failed to read file metadata: {}", e);
-                DomainError::InternalError(format!("Failed to read file metadata: {}", e))
-            })?;
-
-            if metadata.is_file() {
-                total_size += metadata.len();
-
-                if let Ok(modified) = metadata.modified()
-                    && let Ok(modified_time) = modified.duration_since(std::time::UNIX_EPOCH)
-                {
-                    let modified_ms = modified_time.as_millis() as i64;
-                    if modified_ms > latest_modified {
-                        latest_modified = modified_ms;
-                    }
-                }
-            }
-        }
-
-        Ok((total_size, latest_modified))
-    }
-
     pub(crate) async fn calculate_chat_stats(&self, name: &str) -> Result<(u64, i64), DomainError> {
-        Self::calculate_chat_stats_for(
-            &self.characters_dir,
-            &self.chats_dir,
-            &self.chat_aliases,
-            name,
-        )
-        .await
+        self.chat_repository
+            .calculate_character_chat_stats(name)
+            .await
     }
 
     pub(crate) async fn read_character_from_file(

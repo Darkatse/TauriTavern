@@ -1,12 +1,17 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::fs::{self, File};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
+use tokio::sync::{Mutex, Semaphore};
+use tokio::task::JoinSet;
 
+use crate::chat_directory_identity::{self, SharedChatAliasStore};
 use crate::file_system::list_files_with_extension;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{parse_message_timestamp_value, strip_jsonl_extension};
@@ -18,6 +23,7 @@ const INDEX_SCHEMA_VERSION: u32 = 1;
 const FINGERPRINT_WORDS: usize = 64; // 4096 bits
 const MAX_SEARCH_CACHE_ENTRIES: usize = 128;
 const SUMMARY_SCAN_BUFFER_BYTES: usize = 64 * 1024;
+const MAX_CONCURRENT_CHAT_STATS_READS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) struct FileSignature {
@@ -128,6 +134,12 @@ pub(super) struct SummaryCacheEntry {
     pub fingerprint: Option<SearchFingerprint>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ChatStatsCacheEntry {
+    signature: FileSignature,
+    date: i64,
+}
+
 struct SummaryFileScan {
     line_count: usize,
     first_non_empty: Option<String>,
@@ -150,6 +162,7 @@ struct SearchCacheEntry {
 
 pub(super) struct SummaryCache {
     entries: HashMap<String, SummaryCacheEntry>,
+    stats_entries: HashMap<String, ChatStatsCacheEntry>,
     search_cache: HashMap<String, SearchCacheEntry>,
     version: u64,
     index_path: PathBuf,
@@ -162,6 +175,8 @@ struct SummaryIndexSnapshot {
     schema_version: u32,
     version: u64,
     entries: Vec<SummaryIndexSnapshotEntry>,
+    #[serde(default)]
+    stats_entries: Vec<SummaryStatsSnapshotEntry>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -173,20 +188,24 @@ struct SummaryIndexSnapshotEntry {
     fingerprint: Option<SearchFingerprint>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SummaryStatsSnapshotEntry {
+    key: String,
+    signature: FileSignature,
+    date: i64,
+}
+
 impl SummaryCache {
     pub(super) fn new(index_path: PathBuf) -> Self {
         Self {
             entries: HashMap::new(),
+            stats_entries: HashMap::new(),
             search_cache: HashMap::new(),
             version: 0,
             index_path,
             loaded: false,
             dirty: false,
         }
-    }
-
-    pub(super) fn version(&self) -> u64 {
-        self.version
     }
 
     pub(super) fn index_path(&self) -> &Path {
@@ -264,6 +283,15 @@ impl SummaryCache {
                 },
             );
         }
+        for entry in snapshot.stats_entries {
+            self.stats_entries.insert(
+                entry.key,
+                ChatStatsCacheEntry {
+                    signature: entry.signature,
+                    date: entry.date,
+                },
+            );
+        }
 
         Ok(())
     }
@@ -282,6 +310,15 @@ impl SummaryCache {
                     fingerprint: entry.fingerprint.clone(),
                 })
                 .collect(),
+            stats_entries: self
+                .stats_entries
+                .iter()
+                .map(|(key, entry)| SummaryStatsSnapshotEntry {
+                    key: key.clone(),
+                    signature: entry.signature,
+                    date: entry.date,
+                })
+                .collect(),
         };
 
         serde_json::to_vec(&snapshot).map_err(|error| {
@@ -294,21 +331,55 @@ impl SummaryCache {
     }
 
     pub(super) fn set(&mut self, key: String, entry: SummaryCacheEntry) {
+        self.stats_entries.remove(&key);
         self.entries.insert(key, entry);
         self.bump_version();
         self.dirty = true;
     }
 
+    fn get_stats(&self, key: &str, signature: FileSignature) -> Option<ChatStatsCacheEntry> {
+        if let Some(entry) = self.entries.get(key)
+            && entry.signature == signature
+        {
+            return Some(ChatStatsCacheEntry {
+                signature,
+                date: entry.summary.date,
+            });
+        }
+
+        self.stats_entries
+            .get(key)
+            .filter(|entry| entry.signature == signature)
+            .cloned()
+    }
+
+    fn set_stats(&mut self, key: String, entry: ChatStatsCacheEntry) {
+        match self.entries.get(&key) {
+            Some(summary) if summary.signature == entry.signature => return,
+            Some(_) => {
+                self.entries.remove(&key);
+            }
+            None => {}
+        }
+
+        self.stats_entries.insert(key, entry);
+        self.bump_version();
+        self.dirty = true;
+    }
+
     pub(super) fn remove(&mut self, key: &str) {
-        if self.entries.remove(key).is_some() {
+        let removed_summary = self.entries.remove(key).is_some();
+        let removed_stats = self.stats_entries.remove(key).is_some();
+        if removed_summary || removed_stats {
             self.dirty = true;
         }
         self.bump_version();
     }
 
     pub(super) fn clear(&mut self) {
-        if !self.entries.is_empty() {
+        if !self.entries.is_empty() || !self.stats_entries.is_empty() {
             self.entries.clear();
+            self.stats_entries.clear();
             self.dirty = true;
         }
         self.bump_version();
@@ -346,6 +417,236 @@ pub(super) struct ChatFileDescriptor {
 }
 
 impl FileChatRepository {
+    pub async fn calculate_character_chat_stats(
+        &self,
+        character_name: &str,
+    ) -> Result<(u64, i64), DomainError> {
+        let mut results = self
+            .calculate_character_chat_stats_batch(vec![character_name.to_string()])
+            .await?;
+        let (_, result) = results.pop().ok_or_else(|| {
+            DomainError::InternalError("Character chat stats batch returned no result".to_string())
+        })?;
+        result
+    }
+
+    pub async fn calculate_character_chat_stats_batch(
+        &self,
+        character_names: Vec<String>,
+    ) -> Result<Vec<(String, Result<(u64, i64), DomainError>)>, DomainError> {
+        let mut results = Vec::with_capacity(character_names.len());
+        let semaphore = Arc::new(Semaphore::new(Self::chat_stats_parallelism()));
+        let mut jobs = JoinSet::new();
+
+        for character_name in character_names {
+            let permit = semaphore.clone().acquire_owned().await.map_err(|_| {
+                DomainError::InternalError("Character chat stats scanner gate closed".to_string())
+            })?;
+            let characters_dir = self.characters_dir.clone();
+            let chats_dir = self.chats_dir.clone();
+            let chat_aliases = self.chat_aliases.clone();
+            let summary_cache = self.summary_cache.clone();
+
+            jobs.spawn(async move {
+                let _permit = permit;
+                let result = Self::calculate_character_chat_stats_from_parts(
+                    &characters_dir,
+                    &chats_dir,
+                    &chat_aliases,
+                    &summary_cache,
+                    &character_name,
+                )
+                .await;
+                (character_name, result)
+            });
+        }
+
+        while let Some(joined) = jobs.join_next().await {
+            results.push(joined.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Character chat stats scanner failed: {}",
+                    error
+                ))
+            })?);
+        }
+
+        if let Err(error) = self.flush_summary_index_if_needed().await {
+            tracing::warn!("Failed to persist chat stats index: {}", error);
+        }
+
+        Ok(results)
+    }
+
+    async fn calculate_character_chat_stats_from_parts(
+        characters_dir: &Path,
+        chats_dir: &Path,
+        chat_aliases: &SharedChatAliasStore,
+        summary_cache: &Arc<Mutex<SummaryCache>>,
+        character_name: &str,
+    ) -> Result<(u64, i64), DomainError> {
+        let dir_key = chat_directory_identity::resolve_character_chat_dir_key(
+            characters_dir,
+            chats_dir,
+            chat_aliases,
+            character_name,
+        )
+        .await?;
+        let chat_dir = chats_dir.join(dir_key);
+        let files = list_files_with_extension(&chat_dir, "jsonl").await?;
+
+        let mut total_size = 0;
+        let mut latest_chat_date = 0;
+        for path in files {
+            let Some(file_name) = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(ToString::to_string)
+            else {
+                continue;
+            };
+            let descriptor = ChatFileDescriptor {
+                character_name: character_name.to_string(),
+                file_name,
+                path,
+            };
+            let entry = Self::get_chat_stats_entry(summary_cache, &descriptor).await?;
+            total_size += entry.signature.size;
+            latest_chat_date = latest_chat_date.max(entry.date);
+        }
+
+        Ok((total_size, latest_chat_date))
+    }
+
+    async fn get_chat_stats_entry(
+        summary_cache: &Arc<Mutex<SummaryCache>>,
+        descriptor: &ChatFileDescriptor,
+    ) -> Result<ChatStatsCacheEntry, DomainError> {
+        let metadata = fs::metadata(&descriptor.path).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read chat metadata {:?}: {}",
+                descriptor.path, error
+            ))
+        })?;
+        let signature = Self::file_signature_from_metadata(&metadata);
+        let cache_key = Self::summary_cache_key(&descriptor.path);
+
+        {
+            let mut cache = summary_cache.lock().await;
+            cache.ensure_loaded()?;
+            if let Some(entry) = cache.get_stats(&cache_key, signature) {
+                return Ok(entry);
+            }
+        }
+
+        let date = Self::scan_chat_stats_date(&descriptor.path, signature).await?;
+        let entry = ChatStatsCacheEntry { signature, date };
+
+        {
+            let mut cache = summary_cache.lock().await;
+            cache.ensure_loaded()?;
+            cache.set_stats(cache_key, entry.clone());
+        }
+
+        Ok(entry)
+    }
+
+    async fn scan_chat_stats_date(
+        path: &Path,
+        signature: FileSignature,
+    ) -> Result<i64, DomainError> {
+        let Some(line) = Self::read_last_non_empty_line(path, signature.size).await? else {
+            return Ok(signature.modified_millis);
+        };
+        let last_message = serde_json::from_slice::<Value>(&line).ok();
+        let parsed_date = parse_message_timestamp_value(
+            last_message
+                .as_ref()
+                .and_then(|message| message.get("send_date")),
+        );
+
+        if parsed_date > 0 {
+            Ok(parsed_date)
+        } else {
+            Ok(signature.modified_millis)
+        }
+    }
+
+    async fn read_last_non_empty_line(
+        path: &Path,
+        file_size: u64,
+    ) -> Result<Option<Vec<u8>>, DomainError> {
+        if file_size == 0 {
+            return Ok(None);
+        }
+
+        let mut file = File::open(path).await.map_err(|error| {
+            DomainError::InternalError(format!("Failed to open chat file {:?}: {}", path, error))
+        })?;
+        let mut position = file_size;
+        let mut reversed_line = Vec::new();
+
+        while position > 0 {
+            let read_len = position.min(SUMMARY_SCAN_BUFFER_BYTES as u64) as usize;
+            position -= read_len as u64;
+            file.seek(SeekFrom::Start(position))
+                .await
+                .map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to seek chat file {:?}: {}",
+                        path, error
+                    ))
+                })?;
+
+            let mut buffer = vec![0u8; read_len];
+            file.read_exact(&mut buffer).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to read chat file {:?}: {}",
+                    path, error
+                ))
+            })?;
+
+            for &byte in buffer.iter().rev() {
+                if byte == b'\n' {
+                    if let Some(line) = Self::finish_reversed_stats_line(path, &mut reversed_line)?
+                    {
+                        return Ok(Some(line));
+                    }
+                } else {
+                    reversed_line.push(byte);
+                }
+            }
+        }
+
+        Self::finish_reversed_stats_line(path, &mut reversed_line)
+    }
+
+    fn finish_reversed_stats_line(
+        path: &Path,
+        reversed_line: &mut Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, DomainError> {
+        let mut line = std::mem::take(reversed_line);
+        line.reverse();
+        Self::trim_trailing_carriage_returns(&mut line);
+        let is_empty = std::str::from_utf8(&line)
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to decode chat line in chat file {:?}: {}",
+                    path, error
+                ))
+            })?
+            .trim()
+            .is_empty();
+
+        if is_empty { Ok(None) } else { Ok(Some(line)) }
+    }
+
+    fn chat_stats_parallelism() -> usize {
+        std::thread::available_parallelism()
+            .map(|value| value.get())
+            .unwrap_or(4)
+            .clamp(1, MAX_CONCURRENT_CHAT_STATS_READS)
+    }
+
     async fn list_character_chat_directory_keys(&self) -> Result<Vec<String>, DomainError> {
         if !self.characters_dir.exists() {
             return Ok(Vec::new());
@@ -434,18 +735,14 @@ impl FileChatRepository {
     }
 
     pub(super) async fn flush_summary_index_if_needed(&self) -> Result<(), DomainError> {
-        let (index_path, bytes, version) = {
-            let mut cache = self.summary_cache.lock().await;
-            cache.ensure_loaded()?;
-            if !cache.is_dirty() {
-                return Ok(());
-            }
-            (
-                cache.index_path().to_path_buf(),
-                cache.serialize_snapshot()?,
-                cache.version(),
-            )
-        };
+        let mut cache = self.summary_cache.lock().await;
+        cache.ensure_loaded()?;
+        if !cache.is_dirty() {
+            return Ok(());
+        }
+
+        let index_path = cache.index_path().to_path_buf();
+        let bytes = cache.serialize_snapshot()?;
 
         if let Some(parent) = index_path.parent() {
             fs::create_dir_all(parent).await.map_err(|error| {
@@ -463,10 +760,7 @@ impl FileChatRepository {
             ))
         })?;
 
-        let mut cache = self.summary_cache.lock().await;
-        if cache.version() == version {
-            cache.mark_clean();
-        }
+        cache.mark_clean();
 
         Ok(())
     }

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use chrono::DateTime;
 use rand::random;
 use serde_json::{Value, json};
 use tokio::fs;
@@ -100,6 +101,12 @@ fn payload_with_message(
             "extra": {},
         }),
     ]
+}
+
+fn timestamp_millis(value: &str) -> i64 {
+    DateTime::parse_from_rfc3339(value)
+        .expect("parse timestamp")
+        .timestamp_millis()
 }
 
 #[test]
@@ -1306,6 +1313,83 @@ async fn rename_group_chat_rejects_existing_target_without_overwrite() {
             .join("group-session-renamed.jsonl")
             .exists()
     );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn calculate_character_chat_stats_uses_last_message_send_date() {
+    let (repository, root) = setup_repository().await;
+    let older = payload_with_message("stats-old", "2026-01-01T00:00:00.000Z", "older", "alice");
+    let newer = payload_with_message("stats-new", "2026-01-03T00:00:00.000Z", "newer", "alice");
+
+    save_chat_payload_from_values(&repository, &root, "alice", "older", &older, false)
+        .await
+        .expect("save older payload");
+    save_chat_payload_from_values(&repository, &root, "alice", "newer", &newer, false)
+        .await
+        .expect("save newer payload");
+
+    let (chat_size, date_last_chat) = repository
+        .calculate_character_chat_stats("alice")
+        .await
+        .expect("calculate chat stats");
+
+    assert!(chat_size > 0);
+    assert_eq!(date_last_chat, timestamp_millis("2026-01-03T00:00:00.000Z"));
+
+    let index_path = root
+        .join("user")
+        .join("cache")
+        .join("chat_summary_index_v1.json");
+    let parsed: Value = serde_json::from_str(
+        &fs::read_to_string(&index_path)
+            .await
+            .expect("read summary index"),
+    )
+    .expect("parse summary index");
+    assert_eq!(
+        parsed
+            .get("entries")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert_eq!(
+        parsed
+            .get("stats_entries")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(2)
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn calculate_character_chat_stats_counts_jsonl_files_only() {
+    let (repository, root) = setup_repository().await;
+    let payload = payload_with_message("stats-size", "2026-01-01T00:00:00.000Z", "hello", "alice");
+
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
+        .await
+        .expect("save payload");
+
+    let chat_dir = root.join("chats").join("alice");
+    let jsonl_size = fs::metadata(chat_dir.join("session.jsonl"))
+        .await
+        .expect("read jsonl metadata")
+        .len();
+    fs::write(chat_dir.join("sidecar.txt"), vec![b'x'; 4096])
+        .await
+        .expect("write sidecar");
+
+    let (chat_size, _) = repository
+        .calculate_character_chat_stats("alice")
+        .await
+        .expect("calculate chat stats");
+
+    assert_eq!(chat_size, jsonl_size);
 
     let _ = fs::remove_dir_all(&root).await;
 }

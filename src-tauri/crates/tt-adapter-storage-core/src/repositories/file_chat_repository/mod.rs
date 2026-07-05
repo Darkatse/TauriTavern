@@ -58,7 +58,7 @@ impl FileChatRepository {
     ///
     /// This is a convenience wrapper for single-repository use. Runtime
     /// bootstrap constructs character and chat repositories together and must
-    /// call `with_chat_aliases` so both repositories share one alias store.
+    /// inject a shared `FileChatRepository` into the character repository.
     #[allow(dead_code)]
     pub fn new(
         characters_dir: PathBuf,

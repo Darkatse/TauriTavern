@@ -14,8 +14,11 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 use self::cache::{CharacterShallowIndexCache, MemoryCache};
-use tt_adapter_storage_core::chat_directory_identity::{
-    SharedChatAliasStore, chat_alias_path_for_user_dir, new_shared_chat_alias_store,
+use tt_adapter_storage_core::{
+    FileChatRepository,
+    chat_directory_identity::{
+        SharedChatAliasStore, chat_alias_path_for_user_dir, new_shared_chat_alias_store,
+    },
 };
 
 /// File-based character repository implementation.
@@ -28,6 +31,7 @@ pub struct FileCharacterRepository {
     memory_cache: Arc<Mutex<MemoryCache>>,
     shallow_index_cache: Arc<Mutex<Option<CharacterShallowIndexCache>>>,
     chat_aliases: SharedChatAliasStore,
+    chat_repository: Arc<FileChatRepository>,
 }
 
 impl FileCharacterRepository {
@@ -35,7 +39,7 @@ impl FileCharacterRepository {
     ///
     /// This is a convenience wrapper for single-repository use. Runtime
     /// bootstrap constructs character and chat repositories together and must
-    /// call `with_chat_aliases` so both repositories share one alias store.
+    /// call `with_chat_repository` so both projections share one chat cache.
     #[allow(dead_code)]
     pub fn new(
         characters_dir: PathBuf,
@@ -59,15 +63,45 @@ impl FileCharacterRepository {
 
     /// Create a repository with the shared character/chat alias store.
     ///
-    /// Character and chat repositories must share this store in production so
-    /// lazy legacy-dir aliases are serialized through one cache. Prefer this
-    /// constructor whenever both repositories are created for the same runtime.
+    /// Use `with_chat_repository` whenever a runtime also exposes a chat
+    /// repository, so character and chat list projections share one summary
+    /// cache. This constructor is for isolated character-repository tests/tools.
     pub fn with_chat_aliases(
         characters_dir: PathBuf,
         chats_dir: PathBuf,
         thumbnails_avatar_dir: PathBuf,
         default_avatar_path: PathBuf,
         chat_aliases: SharedChatAliasStore,
+    ) -> Self {
+        let default_user_dir = characters_dir
+            .parent()
+            .or_else(|| chats_dir.parent())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| chats_dir.clone());
+        let chat_repository = Arc::new(FileChatRepository::with_chat_aliases(
+            characters_dir.clone(),
+            chats_dir.clone(),
+            default_user_dir.join("group chats"),
+            default_user_dir.join("backups"),
+            chat_aliases.clone(),
+        ));
+        Self::with_chat_repository(
+            characters_dir,
+            chats_dir,
+            thumbnails_avatar_dir,
+            default_avatar_path,
+            chat_aliases,
+            chat_repository,
+        )
+    }
+
+    pub fn with_chat_repository(
+        characters_dir: PathBuf,
+        chats_dir: PathBuf,
+        thumbnails_avatar_dir: PathBuf,
+        default_avatar_path: PathBuf,
+        chat_aliases: SharedChatAliasStore,
+        chat_repository: Arc<FileChatRepository>,
     ) -> Self {
         let shallow_index_path = character_shallow_index_path_for_characters_dir(&characters_dir);
         let memory_cache = Arc::new(Mutex::new(MemoryCache::new(
@@ -85,6 +119,7 @@ impl FileCharacterRepository {
             memory_cache,
             shallow_index_cache,
             chat_aliases,
+            chat_repository,
         }
     }
 }
