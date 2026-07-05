@@ -729,6 +729,15 @@ impl FileChatRepository {
         cache.clear();
     }
 
+    pub async fn clear_chat_summary_index(&self) -> Result<(), DomainError> {
+        {
+            let mut cache = self.summary_cache.lock().await;
+            cache.ensure_loaded()?;
+            cache.clear();
+        }
+        self.flush_summary_index_if_needed().await
+    }
+
     pub(super) async fn remove_summary_cache_for_path(&self, path: &Path) {
         let mut cache = self.summary_cache.lock().await;
         if cache.ensure_loaded().is_err() {

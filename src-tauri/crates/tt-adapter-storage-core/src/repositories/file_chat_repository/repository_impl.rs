@@ -184,6 +184,7 @@ impl ChatRepository for FileChatRepository {
             cache.remove(&cache_key);
         }
         self.remove_summary_cache_for_path(&path).await;
+        self.flush_summary_index_if_needed().await?;
 
         Ok(())
     }
@@ -250,6 +251,7 @@ impl ChatRepository for FileChatRepository {
         }
         self.remove_summary_cache_for_path(&old_path).await;
         self.remove_summary_cache_for_path(&new_path).await;
+        self.flush_summary_index_if_needed().await?;
 
         Ok(committed_file_name)
     }

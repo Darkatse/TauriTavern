@@ -126,15 +126,23 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         });
 
         const mapped = Array.isArray(chats)
-            ? chats.map((chat) => ({
-                file_name: context.ensureJsonl(chat.file_name),
-                file_size: chat.file_size,
-                chat_items: Number(chat.chat_items || 0),
-                message_count: Number(chat.chat_items || 0),
-                last_message: chat.last_message,
-                preview_message: chat.last_message,
-                last_mes: chat.last_message_date,
-            }))
+            ? chats.map((chat) => {
+                const fileName = context.ensureJsonl(chat.file_name);
+                const chatItems = Number(chat.chat_items || 0);
+                const lastMessage = String(chat.last_message || '');
+
+                return {
+                    file_id: context.stripJsonl(fileName),
+                    file_name: fileName,
+                    file_size: chat.file_size,
+                    chat_items: chatItems,
+                    message_count: chatItems,
+                    mes: lastMessage,
+                    last_message: lastMessage,
+                    preview_message: lastMessage,
+                    last_mes: chat.last_message_date,
+                };
+            })
             : [];
 
         return jsonResponse(mapped);

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { textResponse, jsonResponse } from '../src/tauri/main/http-utils.js';
+import { ensureJsonl, stripJsonl } from '../src/tauri/main/kernel/chat-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerCharacterRoutes } from '../src/tauri/main/routes/character-routes.js';
 import { createCharacterService } from '../src/tauri/main/services/characters/character-service.js';
@@ -170,6 +171,100 @@ test('/api/characters/get keeps name lookup only when avatar identity is absent'
     assert.deepEqual(calls, [
         { command: 'get_character', args: { name: 'Alice' } },
     ]);
+});
+
+test('/api/characters/chats maps cached backend summaries to upstream listing shape', async () => {
+    const calls = [];
+    const safeInvoke = async (command, args) => {
+        calls.push({ command, args });
+        assert.equal(command, 'get_character_chats_by_id');
+        assert.deepEqual(args, { dto: { name: 'Alice', simple: false } });
+        return [{
+            file_name: 'chat-a.jsonl',
+            file_size: '20.00kb',
+            chat_items: 3,
+            last_message: 'cached preview',
+            last_message_date: 1767225600000,
+        }];
+    };
+    const service = createCharacterService({
+        safeInvoke,
+    });
+    const router = registerGetRoute({
+        ...service,
+        safeInvoke,
+        ensureJsonl,
+        stripJsonl,
+    });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/chats',
+        url: new URL('http://localhost/api/characters/chats'),
+        body: { avatar_url: 'Alice.png' },
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), [{
+        file_id: 'chat-a',
+        file_name: 'chat-a.jsonl',
+        file_size: '20.00kb',
+        chat_items: 3,
+        message_count: 3,
+        mes: 'cached preview',
+        last_message: 'cached preview',
+        preview_message: 'cached preview',
+        last_mes: 1767225600000,
+    }]);
+    assert.equal(calls.length, 1);
+});
+
+test('/api/characters/chats preserves simple listing request', async () => {
+    const calls = [];
+    const safeInvoke = async (command, args) => {
+        calls.push({ command, args });
+        assert.equal(command, 'get_character_chats_by_id');
+        assert.deepEqual(args, { dto: { name: 'Alice', simple: true } });
+        return [{
+            file_name: 'chat-a.jsonl',
+            file_size: '',
+            chat_items: 0,
+            last_message: '',
+            last_message_date: 0,
+        }];
+    };
+    const service = createCharacterService({
+        safeInvoke,
+    });
+    const router = registerGetRoute({
+        ...service,
+        safeInvoke,
+        ensureJsonl,
+        stripJsonl,
+    });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/chats',
+        url: new URL('http://localhost/api/characters/chats'),
+        body: { avatar_url: 'Alice.png', simple: true },
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), [{
+        file_id: 'chat-a',
+        file_name: 'chat-a.jsonl',
+        file_size: '',
+        chat_items: 0,
+        message_count: 0,
+        mes: '',
+        last_message: '',
+        preview_message: '',
+        last_mes: 0,
+    }]);
+    assert.equal(calls.length, 1);
 });
 
 test('character identity resolver treats avatar values as exact filenames without URL fallback', async () => {
