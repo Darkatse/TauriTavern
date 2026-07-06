@@ -44,6 +44,38 @@ test('/api/characters/edit-avatar delegates multipart avatar replacement only', 
     assert.equal(calls[0].url, url);
 });
 
+test('/api/characters/edit saves without full list refresh', async () => {
+    const router = createRouteRegistry();
+    const calls = [];
+    const formData = new FormData();
+    formData.set('avatar_url', 'Alice.png');
+    const context = {
+        editCharacterFromForm: async (body, url) => {
+            calls.push({ type: 'edit', body, url });
+        },
+        getAllCharacters: async () => {
+            throw new Error('getAllCharacters should not be called for character edit');
+        },
+    };
+
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+
+    const url = new URL('http://localhost/api/characters/edit');
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/edit',
+        url,
+        body: formData,
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'ok');
+    assert.deepEqual(calls, [
+        { type: 'edit', body: formData, url },
+    ]);
+});
+
 test('/api/characters/edit-avatar rejects non-multipart payloads', async () => {
     const router = createRouteRegistry();
     const context = {

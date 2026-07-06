@@ -166,7 +166,6 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         }
 
         await context.editCharacterFromForm(body, url);
-        await context.getAllCharacters({ shallow: true, forceRefresh: true });
         return textResponse('ok');
     });
 
