@@ -175,6 +175,7 @@ export {};
  *   | 'save_quick_reply_set'
  *   | 'save_theme'
  *   | 'save_user_settings'
+ *   | 'save_user_settings_patch'
  *   | 'set_character_chat_metadata_extension'
  *   | 'set_group_chat_metadata_extension'
  *   | 'set_image_metadata_folder_thumbnails'

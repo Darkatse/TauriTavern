@@ -27,7 +27,7 @@ pub fn log_command(command: impl AsRef<str>) {
 fn should_log_as_warning(error: &CommandError) -> bool {
     matches!(
         error,
-        CommandError::TooManyRequests(_) | CommandError::Cancelled(_)
+        CommandError::TooManyRequests(_) | CommandError::Cancelled(_) | CommandError::Conflict(_)
     )
 }
 

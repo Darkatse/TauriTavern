@@ -68,6 +68,9 @@ fn agent_error_code_and_message(error: &ApplicationError) -> (String, String) {
         ApplicationError::ValidationError(message) => {
             structured_code_and_message(message, "agent.validation_error")
         }
+        ApplicationError::Conflict(message) => {
+            structured_code_and_message(message, "agent.conflict")
+        }
         ApplicationError::NotFound(message) => {
             structured_code_and_message(message, "agent.not_found")
         }

@@ -123,6 +123,8 @@ export function createInvokeService({ invoke, policies }) {
         switch (variant) {
             case 'BadRequest':
                 return `Bad request: ${nested}`;
+            case 'Conflict':
+                return `Conflict: ${nested}`;
             case 'NotFound':
                 return `Not found: ${nested}`;
             case 'Unauthorized':

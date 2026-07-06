@@ -10,7 +10,7 @@ use crate::presentation::commands::helpers::{
 use crate::presentation::errors::CommandError;
 use tt_application::dto::settings_dto::{
     SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
-    UpdateTauriTavernSettingsDto, UserSettingsDto,
+    UpdateTauriTavernSettingsDto, UserSettingsDto, UserSettingsPatchDto, UserSettingsSaveResultDto,
 };
 use tt_application::services::host_resource_service::HostResourceService;
 
@@ -135,6 +135,21 @@ pub async fn save_user_settings(
         .save_user_settings(settings)
         .await
         .map_err(map_command_error("Failed to save user settings"))
+}
+
+#[tauri::command]
+pub async fn save_user_settings_patch(
+    patch: UserSettingsPatchDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<UserSettingsSaveResultDto, CommandError> {
+    log_command("save_user_settings_patch");
+
+    app_state
+        .services
+        .settings_service
+        .save_user_settings_patch(patch)
+        .await
+        .map_err(map_command_error("Failed to save user settings patch"))
 }
 
 #[tauri::command]

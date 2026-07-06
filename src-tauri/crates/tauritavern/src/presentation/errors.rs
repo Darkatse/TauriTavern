@@ -9,6 +9,9 @@ pub enum CommandError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     #[error("Not found: {0}")]
     NotFound(String),
 
@@ -32,6 +35,7 @@ impl From<ApplicationError> for CommandError {
     fn from(error: ApplicationError) -> Self {
         match error {
             ApplicationError::ValidationError(msg) => CommandError::BadRequest(msg),
+            ApplicationError::Conflict(msg) => CommandError::Conflict(msg),
             ApplicationError::NotFound(msg) => CommandError::NotFound(msg),
             ApplicationError::Unauthorized(msg) => CommandError::Unauthorized(msg),
             ApplicationError::PermissionDenied(msg) => CommandError::Unauthorized(msg),

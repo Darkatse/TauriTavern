@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
@@ -12,11 +13,14 @@ use crate::sillytavern_sorting::{
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
-use tt_ports::repositories::settings_repository::{SettingsAggregateSignature, SettingsRepository};
+use tt_ports::repositories::settings_repository::{
+    SettingsAggregateSignature, SettingsRepository, UserSettingsRevision,
+};
 
 pub struct FileSettingsRepository {
     tauritavern_settings_file: PathBuf,
     user_settings_file: PathBuf,
+    user_settings_revision_file: PathBuf,
     base_directory: PathBuf,
 }
 
@@ -35,11 +39,22 @@ const SILLYTAVERN_SETTINGS_AGGREGATE_DIRECTORIES: &[&str] = &[
     "reasoning",
 ];
 
+const USER_SETTINGS_REVISION_CACHE_VERSION: u32 = 1;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SettingsAggregateSignatureEntry {
     label: String,
     size: u64,
     modified_nanos: u128,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct UserSettingsRevisionCacheFile {
+    version: u32,
+    hash_algorithm: String,
+    settings_hash: String,
+    settings_file_size: u64,
+    settings_file_modified_nanos: u128,
 }
 
 fn map_tauritavern_settings_read_error(path: &Path, error: std::io::Error) -> DomainError {
@@ -66,11 +81,16 @@ impl FileSettingsRepository {
     pub fn new(settings_dir: PathBuf) -> Self {
         let tauritavern_settings_file = settings_dir.join("tauritavern-settings.json");
         let user_settings_file = settings_dir.join("settings.json");
+        let user_settings_revision_file = settings_dir
+            .join("user")
+            .join("cache")
+            .join("settings_revision_v1.json");
         let base_directory = settings_dir;
 
         Self {
             tauritavern_settings_file,
             user_settings_file,
+            user_settings_revision_file,
             base_directory,
         }
     }
@@ -188,20 +208,46 @@ impl FileSettingsRepository {
         label: String,
         metadata: std::fs::Metadata,
     ) -> Result<SettingsAggregateSignatureEntry, DomainError> {
-        let modified_nanos = metadata
+        Ok(SettingsAggregateSignatureEntry {
+            label,
+            size: metadata.len(),
+            modified_nanos: Self::metadata_modified_nanos(&metadata)?,
+        })
+    }
+
+    fn metadata_modified_nanos(metadata: &std::fs::Metadata) -> Result<u128, DomainError> {
+        Ok(metadata
             .modified()
             .map_err(|error| {
                 DomainError::InternalError(format!("Failed to read file modified time: {}", error))
             })?
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_nanos();
+            .as_nanos())
+    }
 
-        Ok(SettingsAggregateSignatureEntry {
-            label,
-            size: metadata.len(),
-            modified_nanos,
-        })
+    async fn user_settings_file_revision_source(&self) -> Result<Option<(u64, u128)>, DomainError> {
+        match fs::metadata(&self.user_settings_file).await {
+            Ok(metadata) => {
+                if !metadata.is_file() {
+                    return Err(DomainError::InvalidData(format!(
+                        "User settings path is not a file: {}",
+                        self.user_settings_file.display()
+                    )));
+                }
+
+                Ok(Some((
+                    metadata.len(),
+                    Self::metadata_modified_nanos(&metadata)?,
+                )))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(DomainError::InternalError(format!(
+                "Failed to read user settings metadata '{}': {}",
+                self.user_settings_file.display(),
+                error
+            ))),
+        }
     }
 
     async fn push_file_signature(
@@ -341,6 +387,69 @@ impl SettingsRepository for FileSettingsRepository {
             self.user_settings_file.display()
         );
         read_json_file::<UserSettings>(&self.user_settings_file).await
+    }
+
+    async fn load_user_settings_revision(
+        &self,
+    ) -> Result<Option<UserSettingsRevision>, DomainError> {
+        let Some((settings_file_size, settings_file_modified_nanos)) =
+            self.user_settings_file_revision_source().await?
+        else {
+            return Ok(None);
+        };
+
+        let cache = match read_json_file::<UserSettingsRevisionCacheFile>(
+            &self.user_settings_revision_file,
+        )
+        .await
+        {
+            Ok(cache) => cache,
+            Err(DomainError::NotFound(_)) => return Ok(None),
+            Err(error) => {
+                tracing::warn!(
+                    "Ignoring user settings revision cache '{}': {}",
+                    self.user_settings_revision_file.display(),
+                    error
+                );
+                return Ok(None);
+            }
+        };
+
+        if cache.version != USER_SETTINGS_REVISION_CACHE_VERSION
+            || cache.settings_file_size != settings_file_size
+            || cache.settings_file_modified_nanos != settings_file_modified_nanos
+        {
+            return Ok(None);
+        }
+
+        Ok(Some(UserSettingsRevision {
+            hash_algorithm: cache.hash_algorithm,
+            settings_hash: cache.settings_hash,
+        }))
+    }
+
+    async fn save_user_settings_revision(
+        &self,
+        revision: &UserSettingsRevision,
+    ) -> Result<(), DomainError> {
+        let Some((settings_file_size, settings_file_modified_nanos)) =
+            self.user_settings_file_revision_source().await?
+        else {
+            return Err(DomainError::NotFound(format!(
+                "File not found: {}",
+                self.user_settings_file.display()
+            )));
+        };
+
+        let cache = UserSettingsRevisionCacheFile {
+            version: USER_SETTINGS_REVISION_CACHE_VERSION,
+            hash_algorithm: revision.hash_algorithm.clone(),
+            settings_hash: revision.settings_hash.clone(),
+            settings_file_size,
+            settings_file_modified_nanos,
+        };
+
+        write_json_file(&self.user_settings_revision_file, &cache).await
     }
 
     async fn create_snapshot(&self) -> Result<(), DomainError> {
@@ -521,7 +630,7 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use tt_ports::repositories::settings_repository::SettingsRepository;
+    use tt_ports::repositories::settings_repository::{SettingsRepository, UserSettingsRevision};
 
     struct TestDir {
         path: PathBuf,
@@ -569,6 +678,50 @@ mod tests {
             .await
             .expect("load externally updated user settings");
         assert_eq!(second.data, json!({"hello":"world"}));
+    }
+
+    #[tokio::test]
+    async fn user_settings_revision_cache_uses_user_cache_directory_and_expires_on_file_change() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+
+        repository
+            .save_user_settings(&tt_domain::models::settings::UserSettings {
+                data: json!({"hello":"world"}),
+            })
+            .await
+            .expect("save user settings");
+        repository
+            .save_user_settings_revision(&UserSettingsRevision {
+                hash_algorithm: "test-hash".to_string(),
+                settings_hash: "abc".to_string(),
+            })
+            .await
+            .expect("save revision");
+
+        let cache_path = dir
+            .path()
+            .join("user")
+            .join("cache")
+            .join("settings_revision_v1.json");
+        assert!(cache_path.is_file());
+
+        let revision = repository
+            .load_user_settings_revision()
+            .await
+            .expect("load revision")
+            .expect("revision should be fresh");
+        assert_eq!(revision.settings_hash, "abc");
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        fs::write(dir.path().join("settings.json"), r#"{"hello":"changed"}"#)
+            .expect("change settings file");
+
+        let stale = repository
+            .load_user_settings_revision()
+            .await
+            .expect("load stale revision");
+        assert!(stale.is_none());
     }
 
     #[tokio::test]

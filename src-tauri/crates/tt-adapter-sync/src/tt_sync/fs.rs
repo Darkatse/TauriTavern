@@ -103,7 +103,7 @@ fn scan_dir_recursive(
             .map_err(|error| DomainError::InternalError(error.to_string()))?;
         let relative = normalize_relative_path(relative)?;
 
-        if ttsync_core::dataset::is_excluded(&relative) {
+        if is_tauritavern_runtime_cache(&relative) || ttsync_core::dataset::is_excluded(&relative) {
             continue;
         }
 
@@ -150,6 +150,10 @@ fn agent_run_file_is_terminal(path: &Path) -> Result<bool, DomainError> {
     })?;
     ttsync_core::dataset::agent_run_json_is_terminal(&text)
         .map_err(|error| DomainError::InvalidData(format!("{}: {}", path.display(), error)))
+}
+
+fn is_tauritavern_runtime_cache(relative: &str) -> bool {
+    relative.starts_with("default-user/user/cache/")
 }
 
 fn make_entry(sync_root: &Path, file_path: &Path) -> Result<ManifestEntryV2, DomainError> {
@@ -221,12 +225,14 @@ mod tests {
         let root = unique_temp_root();
         let _ = std::fs::remove_dir_all(&root);
         let lan_sync_dir = root.join("default-user").join("user").join("lan-sync");
+        let user_cache_dir = root.join("default-user").join("user").join("cache");
 
         std::fs::create_dir_all(root.join("default-user").join("chats"))
             .expect("create chats directory");
         std::fs::create_dir_all(lan_sync_dir.join("v2")).expect("create lan sync state directory");
         std::fs::create_dir_all(lan_sync_dir.join("tt-sync-v2"))
             .expect("create tt sync state directory");
+        std::fs::create_dir_all(&user_cache_dir).expect("create user cache directory");
 
         std::fs::write(
             root.join("default-user").join("chats").join("chat.jsonl"),
@@ -248,6 +254,8 @@ mod tests {
             b"[]",
         )
         .expect("write excluded paired servers");
+        std::fs::write(user_cache_dir.join("settings_revision_v1.json"), b"{}")
+            .expect("write excluded settings revision cache");
 
         std::fs::create_dir_all(
             root.join("_tauritavern")
@@ -444,6 +452,7 @@ mod tests {
             "default-user/user/lan-sync/v2/peers.json",
             "default-user/user/lan-sync/tt-sync-v2/identity.json",
             "default-user/user/lan-sync/tt-sync-v2/paired-servers.json",
+            "default-user/user/cache/settings_revision_v1.json",
         ] {
             assert!(
                 !paths.contains(&state_path.to_string()),

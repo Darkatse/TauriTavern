@@ -143,6 +143,34 @@ pub struct UserSettingsDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSettingsPatchDto {
+    pub hash_algorithm: String,
+    pub base_hash: String,
+    pub ops: Vec<UserSettingsPatchOpDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+pub enum UserSettingsPatchOpDto {
+    Set { path: Vec<String>, value: Value },
+    Delete { path: Vec<String> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSettingsSaveResultDto {
+    pub result: String,
+    pub mode: String,
+    pub hash_algorithm: String,
+    pub settings_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSettingsRevisionDto {
+    pub hash_algorithm: String,
+    pub settings_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSnapshotDto {
     pub date: i64,
     pub name: String,
@@ -152,6 +180,7 @@ pub struct SettingsSnapshotDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SillyTavernSettingsResponseDto {
     pub settings: String,
+    pub tauritavern_settings_revision: UserSettingsRevisionDto,
     pub koboldai_settings: Vec<String>,
     pub koboldai_setting_names: Vec<String>,
     pub world_names: Vec<String>,
