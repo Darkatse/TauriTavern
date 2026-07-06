@@ -10,6 +10,7 @@ use tokio::{
 use crate::png_card_metadata::{
     process_avatar_image, read_character_data_from_png, write_character_data_to_png,
 };
+use tt_adapter_storage_core::file_system::{replace_file_with_fallback, unique_temp_path};
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::merge_json_value;
 use tt_domain::models::{character::Character, chat::parse_message_timestamp_value};
@@ -613,11 +614,29 @@ impl CharacterRepository for FileCharacterRepository {
         };
 
         let new_image_data = write_character_data_to_png(&image_data, character_card_json)?;
+        if !replaced_avatar && new_image_data == image_data {
+            let character = self.read_character_from_file(&file_path).await?;
+            let mut cache = self.memory_cache.lock().await;
+            cache.set(name.to_string(), character.clone());
+            return Ok(character);
+        }
 
-        fs::write(&file_path, new_image_data).await.map_err(|e| {
-            tracing::error!("Failed to write character file: {}", e);
-            DomainError::InternalError(format!("Failed to write character file: {}", e))
+        let temp_path = unique_temp_path(&file_path, "character.png");
+        fs::write(&temp_path, new_image_data).await.map_err(|e| {
+            tracing::error!("Failed to write character temp file: {}", e);
+            DomainError::InternalError(format!("Failed to write character temp file: {}", e))
         })?;
+        if let Err(error) = replace_file_with_fallback(&temp_path, &file_path).await {
+            {
+                let mut cache = self.memory_cache.lock().await;
+                cache.remove(name);
+            }
+            self.clear_shallow_index_cache().await;
+            if replaced_avatar {
+                let _ = self.invalidate_avatar_thumbnail(name).await;
+            }
+            return Err(error);
+        }
 
         if replaced_avatar {
             self.invalidate_avatar_thumbnail(name).await?;

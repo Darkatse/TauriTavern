@@ -1,3 +1,4 @@
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::DateTime;
 use crc32fast::Hasher;
 use std::io::Cursor;
@@ -358,6 +359,244 @@ async fn create_with_avatar_allocates_unique_file_stems() {
 
     assert_eq!(loaded_first.first_mes, "First greeting");
     assert_eq!(loaded_second.first_mes, "Second greeting");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn write_character_card_json_skips_when_writer_output_is_unchanged() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Noop Edit".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+    repository
+        .find_all(true)
+        .await
+        .expect("create persistent shallow index");
+
+    let character_path = root.join("characters").join("Noop Edit.png");
+    let before_png = fs::read(&character_path)
+        .await
+        .expect("read character png before edit");
+    let card_json = serde_json::to_string(&character.to_v2()).expect("serialize card");
+
+    let updated = repository
+        .write_character_card_json("Noop Edit", &card_json, None, None)
+        .await
+        .expect("skip byte-identical metadata save");
+
+    let after_png = fs::read(&character_path)
+        .await
+        .expect("read character png after edit");
+    assert_eq!(updated.name, "Noop Edit");
+    assert_eq!(after_png, before_png);
+    assert!(shallow_index_path(&root).is_file());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn write_character_card_json_rewrites_changed_metadata_and_clears_shallow_index() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Changed Edit".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+    repository
+        .find_all(true)
+        .await
+        .expect("create persistent shallow index");
+
+    let character_path = root.join("characters").join("Changed Edit.png");
+    let before_png = fs::read(&character_path)
+        .await
+        .expect("read character png before edit");
+    let stored_json =
+        read_character_data_from_png(&before_png).expect("extract stored character data");
+    let mut stored_value: Value = serde_json::from_str(&stored_json).expect("parse stored card");
+    stored_value["description"] = Value::String("changed desc".to_string());
+    stored_value["data"]["description"] = Value::String("changed desc".to_string());
+    let changed_json = serde_json::to_string(&stored_value).expect("serialize changed card");
+
+    let updated = repository
+        .write_character_card_json("Changed Edit", &changed_json, None, None)
+        .await
+        .expect("write changed metadata");
+
+    let after_png = fs::read(&character_path)
+        .await
+        .expect("read character png after edit");
+    let after_json =
+        read_character_data_from_png(&after_png).expect("extract updated character data");
+    let after_value: Value = serde_json::from_str(&after_json).expect("parse updated card");
+
+    assert_eq!(updated.description, "changed desc");
+    assert_ne!(after_png, before_png);
+    assert_eq!(
+        repository
+            .find_by_name("Changed Edit")
+            .await
+            .expect("load updated cache entry")
+            .description,
+        "changed desc"
+    );
+    assert_eq!(
+        after_value.get("description").and_then(Value::as_str),
+        Some("changed desc")
+    );
+    assert!(!shallow_index_path(&root).exists());
+    assert!(repository.shallow_index_cache.lock().await.is_none());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn write_character_card_json_overwrites_invalid_existing_metadata() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Repair Edit".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+    repository
+        .find_all(true)
+        .await
+        .expect("create persistent shallow index");
+
+    let character_path = root.join("characters").join("Repair Edit.png");
+    let broken_png = insert_text_chunk_before_iend(build_minimal_png(), "chara", "not-base64");
+    fs::write(&character_path, broken_png)
+        .await
+        .expect("replace card with broken metadata");
+    let card_json = serde_json::to_string(&character.to_v2()).expect("serialize card");
+
+    let updated = repository
+        .write_character_card_json("Repair Edit", &card_json, None, None)
+        .await
+        .expect("repair broken metadata");
+
+    let repaired_png = fs::read(&character_path)
+        .await
+        .expect("read repaired character png");
+    let repaired_json =
+        read_character_data_from_png(&repaired_png).expect("extract repaired character data");
+    let repaired_value: Value = serde_json::from_str(&repaired_json).expect("parse repaired card");
+
+    assert_eq!(updated.name, "Repair Edit");
+    assert_eq!(
+        repaired_value.get("name").and_then(Value::as_str),
+        Some("Repair Edit")
+    );
+    assert!(!shallow_index_path(&root).exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn write_character_card_json_canonicalizes_dirty_metadata_chunks() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Dirty Chunks".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+    repository
+        .find_all(true)
+        .await
+        .expect("create persistent shallow index");
+
+    let character_path = root.join("characters").join("Dirty Chunks.png");
+    let clean_png = fs::read(&character_path)
+        .await
+        .expect("read clean character png");
+    let selected_json =
+        read_character_data_from_png(&clean_png).expect("extract selected character data");
+    let stale_json = r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Dirty Chunks","description":"stale"}"#;
+    let dirty_png =
+        insert_text_chunk_before_iend(clean_png, "chara", &BASE64.encode(stale_json.as_bytes()));
+    fs::write(&character_path, dirty_png)
+        .await
+        .expect("write dirty metadata chunks");
+
+    repository
+        .write_character_card_json("Dirty Chunks", &selected_json, None, None)
+        .await
+        .expect("canonicalize dirty metadata");
+
+    let rewritten_png = fs::read(&character_path)
+        .await
+        .expect("read rewritten character png");
+    let character_chunks_count = read_text_chunks_from_png(&rewritten_png)
+        .expect("read text metadata")
+        .iter()
+        .filter(|chunk| {
+            chunk.keyword.eq_ignore_ascii_case("chara")
+                || chunk.keyword.eq_ignore_ascii_case("ccv3")
+        })
+        .count();
+
+    assert_eq!(character_chunks_count, 2);
+    assert!(!shallow_index_path(&root).exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn write_character_card_json_replaces_avatar_even_when_metadata_is_unchanged() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Avatar Edit".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+    repository
+        .find_all(true)
+        .await
+        .expect("create persistent shallow index");
+
+    let thumbnail_path = root.join("thumbnails/avatar").join("Avatar Edit.png");
+    fs::write(&thumbnail_path, build_minimal_png())
+        .await
+        .expect("write stale thumbnail");
+    let avatar_path = root.join("replacement-avatar.png");
+    fs::write(&avatar_path, build_distinct_png())
+        .await
+        .expect("write replacement avatar");
+    let card_json = serde_json::to_string(&character.to_v2()).expect("serialize card");
+
+    repository
+        .write_character_card_json("Avatar Edit", &card_json, Some(&avatar_path), None)
+        .await
+        .expect("replace avatar");
+
+    let character_path = root.join("characters").join("Avatar Edit.png");
+    let stored_png = fs::read(&character_path)
+        .await
+        .expect("read updated character png");
+    let stored_image = image::load_from_memory(&stored_png).expect("decode stored avatar");
+
+    assert_eq!(stored_image.width(), 2);
+    assert_eq!(stored_image.height(), 2);
+    assert!(!thumbnail_path.exists());
+    assert!(!shallow_index_path(&root).exists());
 
     let _ = fs::remove_dir_all(&root).await;
 }
