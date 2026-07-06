@@ -10,9 +10,11 @@ import { callGenericPopup, Popup, POPUP_TYPE } from './popup.js';
 import { groups, selected_group } from './group-chats.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import { deleteMediaFromServer } from './chats.js';
+import { consumeStartupPrefetch, startStartupPrefetch } from './tauri/startup/startup-prefetch-registry.js';
 
 const BG_METADATA_KEY = 'custom_background';
 const LIST_METADATA_KEY = 'chat_backgrounds';
+const STARTUP_BACKGROUNDS_PREFETCH_KEY = 'backgrounds';
 
 /** @type {Array<{id: string, name: string, thumbnailFile: string}>} */
 let folderList = [];
@@ -835,7 +837,7 @@ function renderChatBackgrounds(backgrounds) {
     activateLazyLoader();
 }
 
-export async function refreshSystemBackgroundEntries() {
+async function fetchSystemBackgroundsPayload() {
     const response = await fetch('/api/backgrounds/all', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -848,6 +850,10 @@ export async function refreshSystemBackgroundEntries() {
         throw new Error('Invalid backgrounds response: images must be an array');
     }
 
+    return { images, config };
+}
+
+function applySystemBackgroundsPayload({ images, config }) {
     Object.assign(THUMBNAIL_CONFIG, config);
 
     const normalizedImages = images.map(normalizeSystemBackgroundEntry);
@@ -864,24 +870,11 @@ export async function refreshSystemBackgroundEntries() {
     return getSystemBackgroundEntries();
 }
 
-export async function getBackgrounds() {
-    await refreshSystemBackgroundEntries();
-
-    // Load folders first so getFilteredImages() works correctly in folder view
-    await loadFolders();
-
-    await preloadImageMetadata();
-
-    // Render only filtered images if inside a folder, otherwise all
-    renderSystemBackgrounds(getFilteredImages());
-    highlightSelectedBackground();
+export async function refreshSystemBackgroundEntries() {
+    return applySystemBackgroundsPayload(await fetchSystemBackgroundsPayload());
 }
 
-/**
- * Preloads all image metadata to use dominant colors as placeholders.
- * @return {Promise<void>}
- */
-async function preloadImageMetadata() {
+async function fetchBackgroundMetadataPayload() {
     const response = await fetch('/api/image-metadata/all', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -889,7 +882,10 @@ async function preloadImageMetadata() {
     });
     await requireOkResponse(response, 'Load image metadata');
 
-    const data = await response.json();
+    return response.json();
+}
+
+function applyBackgroundMetadataPayload(data) {
     if (data?.images) {
         METADATA_CACHE.clear();
         for (const [path, metadata] of Object.entries(data.images)) {
@@ -898,10 +894,7 @@ async function preloadImageMetadata() {
     }
 }
 
-/**
- * Loads folder data from the server (separate from image loading).
- */
-async function loadFolders() {
+async function fetchBackgroundFoldersPayload() {
     const response = await fetch('/api/backgrounds/folders', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -909,7 +902,10 @@ async function loadFolders() {
     });
     await requireOkResponse(response, 'Load background folders');
 
-    const data = await response.json();
+    return response.json();
+}
+
+async function applyBackgroundFoldersPayload(data) {
     assertBackgroundFoldersPayload(data);
     folderList = data.folders;
     imageFolderMap = data.imageFolderMap;
@@ -940,6 +936,35 @@ async function loadFolders() {
     }
 
     renderFolderGrid();
+}
+
+async function loadBackgroundsPayload() {
+    const systemBackgrounds = await fetchSystemBackgroundsPayload();
+    const [folders, metadata] = await Promise.all([
+        fetchBackgroundFoldersPayload(),
+        fetchBackgroundMetadataPayload(),
+    ]);
+
+    return { systemBackgrounds, folders, metadata };
+}
+
+async function applyBackgroundsPayload({ systemBackgrounds, folders, metadata }) {
+    applySystemBackgroundsPayload(systemBackgrounds);
+    await applyBackgroundFoldersPayload(folders);
+    applyBackgroundMetadataPayload(metadata);
+}
+
+export function prefetchBackgrounds() {
+    return startStartupPrefetch(STARTUP_BACKGROUNDS_PREFETCH_KEY, loadBackgroundsPayload);
+}
+
+export async function getBackgrounds() {
+    const payload = await consumeStartupPrefetch(STARTUP_BACKGROUNDS_PREFETCH_KEY, loadBackgroundsPayload);
+    await applyBackgroundsPayload(payload);
+
+    // Render only filtered images if inside a folder, otherwise all
+    renderSystemBackgrounds(getFilteredImages());
+    highlightSelectedBackground();
 }
 
 /**

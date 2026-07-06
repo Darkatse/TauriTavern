@@ -62,5 +62,5 @@ test('Z.AI GLM 5.2 exposes native reasoning effort without generic downgrades', 
     assert.match(indexHtml, new RegExp(`data-source="zai" data-i18n="${ZAI_REASONING_EFFORT_I18N_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
     assert.equal(zhCn[ZAI_REASONING_EFFORT_I18N_KEY], 'Z.AI GLM-5.2 选项：自动不会发送推理强度字段；极低会跳过思考过程；低和中会请求 high 推理强度；超高会请求 max 推理强度。');
     assert.equal(zhTw[ZAI_REASONING_EFFORT_I18N_KEY], 'Z.AI GLM-5.2 選項：自動不會傳送推理耗費欄位；最小會略過思考過程；低和中會請求 high 推理耗費；超高會請求 max 推理耗費。');
-    assert.match(openaiSource, /function updateReasoningEffortControlVisibility\(\)\s*{[\s\S]*block\.toggle\(isZaiReasoningEffortModel\(oai_settings\.zai_model\)\);[\s\S]*}/);
+    assert.match(openaiSource, /function updateReasoningEffortControlVisibility\(\)\s*{[\s\S]*block\.toggle\(oai_settings\.chat_completion_source !== chat_completion_sources\.ZAI \|\| isZaiReasoningEffortModel\(oai_settings\.zai_model\)\);[\s\S]*}/);
 });

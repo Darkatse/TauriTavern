@@ -319,7 +319,7 @@ import {
     updatePersonaConnectionsAvatarList,
     isPersonaPanelOpen,
 } from './scripts/personas.js';
-import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_settings } from './scripts/backgrounds.js';
+import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_settings, prefetchBackgrounds } from './scripts/backgrounds.js';
 import { hideLoader, showLoader, removePreloader } from './scripts/loader.js';
 import { loader } from './scripts/action-loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
@@ -1009,6 +1009,7 @@ async function firstLoadInit() {
         await initPresetManager();
         await initSystemMessages();
         await applySettingsSnapshot(bootstrapSnapshot.settings);
+        void prefetchBackgrounds();
         await checkOpenRouterAuth();
         syncMobileImmersiveFullscreenUi();
         initKeyboard();

@@ -52,16 +52,19 @@ test('global background helper reuses background state instead of simulating UI 
 test('background option refresh is separated from drawer rendering', async () => {
     const source = await readRepoFile('src/scripts/backgrounds.js');
     const refreshStart = source.indexOf('export async function refreshSystemBackgroundEntries');
+    const refreshEnd = source.indexOf('async function fetchBackgroundMetadataPayload', refreshStart);
     const getBackgroundsStart = source.indexOf('export async function getBackgrounds');
-    const getBackgroundsEnd = source.indexOf('/**\n * Preloads all image metadata', getBackgroundsStart);
+    const getBackgroundsEnd = source.indexOf('function renderFolderGrid', getBackgroundsStart);
 
     assert.notEqual(refreshStart, -1);
+    assert.notEqual(refreshEnd, -1);
     assert.notEqual(getBackgroundsStart, -1);
     assert.notEqual(getBackgroundsEnd, -1);
 
-    const refresh = source.slice(refreshStart, getBackgroundsStart);
+    const refresh = source.slice(refreshStart, refreshEnd);
     const getBackgrounds = source.slice(getBackgroundsStart, getBackgroundsEnd);
-    assert.doesNotMatch(refresh, /renderSystemBackgrounds|loadFolders|preloadImageMetadata/);
-    assert.match(getBackgrounds, /refreshSystemBackgroundEntries/);
-    assert.match(getBackgrounds, /renderSystemBackgrounds/);
+    assert.doesNotMatch(refresh, /renderSystemBackgrounds|renderFolderGrid|loadFolders|preloadImageMetadata/);
+    assert.match(getBackgrounds, /consumeStartupPrefetch\(STARTUP_BACKGROUNDS_PREFETCH_KEY, loadBackgroundsPayload\)/);
+    assert.match(getBackgrounds, /await applyBackgroundsPayload\(payload\)/);
+    assert.match(getBackgrounds, /renderSystemBackgrounds\(getFilteredImages\(\)\)/);
 });

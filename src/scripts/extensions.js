@@ -75,6 +75,7 @@ let connectedToApi = false;
 let manifests = {};
 let offlineExtensionsDiscoveryPromise = null;
 let offlineExtensionsPreparationPromise = null;
+let offlineExtensionsDiscoveryGeneration = 0;
 
 /**
  * Default URL for the Extras API.
@@ -370,18 +371,27 @@ async function discoverExtensions() {
 export function startOfflineExtensionsDiscovery({ forceRefresh = false } = {}) {
     if (forceRefresh) {
         offlineExtensionsDiscoveryPromise = null;
+        offlineExtensionsDiscoveryGeneration += 1;
     }
 
     if (offlineExtensionsDiscoveryPromise) {
         return offlineExtensionsDiscoveryPromise;
     }
 
+    const generation = offlineExtensionsDiscoveryGeneration;
     offlineExtensionsDiscoveryPromise = (async () => {
         await waitForTauriMainReady();
         const extensions = await discoverExtensions();
-        extensionNames = extensions.map(x => x.name);
-        extensionTypes = Object.fromEntries(extensions.map(x => [x.name, x.type]));
-        manifests = await getManifests(extensionNames);
+        const nextExtensionNames = extensions.map(x => x.name);
+        const nextExtensionTypes = Object.fromEntries(extensions.map(x => [x.name, x.type]));
+        const nextManifests = await getManifests(nextExtensionNames);
+        if (generation !== offlineExtensionsDiscoveryGeneration) {
+            return offlineExtensionsDiscoveryPromise ?? [];
+        }
+
+        extensionNames = nextExtensionNames;
+        extensionTypes = nextExtensionTypes;
+        manifests = nextManifests;
         return extensions;
     })();
 
@@ -651,28 +661,17 @@ export function getExtensionManifest(name) {
  */
 async function getManifests(names) {
     const obj = {};
-    const promises = [];
+    await Promise.all(names.map(async name => {
+        try {
+            const response = await fetch(getExtensionResourceUrl(name, 'manifest.json'));
+            if (response.ok) {
+                obj[name] = await response.json();
+            }
+        } catch (err) {
+            console.log('Could not load manifest.json for ' + name, err);
+        }
+    }));
 
-    for (const name of names) {
-        const promise = new Promise((resolve, reject) => {
-            fetch(getExtensionResourceUrl(name, 'manifest.json')).then(async response => {
-                if (response.ok) {
-                    const json = await response.json();
-                    obj[name] = json;
-                    resolve();
-                } else {
-                    reject();
-                }
-            }).catch(err => {
-                reject();
-                console.log('Could not load manifest.json for ' + name, err);
-            });
-        });
-
-        promises.push(promise);
-    }
-
-    await Promise.allSettled(promises);
     return obj;
 }
 
