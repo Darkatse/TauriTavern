@@ -96,6 +96,7 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
   - `src-tauri/crates/tauritavern/src/platform/ios_document_picker.rs`
   - `src-tauri/crates/tauritavern/src/platform/ios_share_sheet.rs`
 - Data Archive import staging 只暴露 `prepare_data_archive_import_target_path`；不要恢复旧的 `get_data_archive_imports_root`，避免把 staging root 交给前端自行拼路径。
+- 角色卡替换的文件选择同样走 iOS Document Picker + app cache/temp staging；宿主只返回 staged path/原文件名，前端会读成标准 `File` 后继续复用上游 `/api/characters/import` 与 `preserved_name` 语义。当前 native picker 只暴露 Rust 角色导入器真实支持的 `json/png`。
 
 ### 2.5 macOS 元数据导致的“布局歧义”问题
 

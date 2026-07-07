@@ -933,8 +933,19 @@ type TauriTavernLayoutApi = {
     ) => Promise<TauriTavernHostUnsubscribe>;
 };
 
+type TauriTavernCharacterCardsPickOptions = {
+    multiple?: boolean;
+    title?: string;
+};
+
+type TauriTavernCharacterCardsApi = {
+    isNativePickerAvailable: () => boolean;
+    pickFiles: (options?: TauriTavernCharacterCardsPickOptions) => Promise<File[] | null>;
+};
+
 type TauriTavernHostApi = {
     chat?: TauriTavernChatApi;
+    characterCards?: TauriTavernCharacterCardsApi;
     agent?: TauriTavernAgentApi;
     llmConnections?: TauriTavernLlmConnectionsApi;
     skill?: TauriTavernSkillApi;

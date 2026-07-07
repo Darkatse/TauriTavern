@@ -71,6 +71,10 @@ import {
     resumeImportedCharacterAgentAssetQueue,
 } from './scripts/tauri/agent-import-postprocess.js';
 import {
+    isNativeCharacterCardPickerAvailable,
+    pickNativeCharacterCardFiles,
+} from './scripts/tauri/character-card-picker.js';
+import {
     captureSettingsSaveBaseline,
     clearSettingsSaveBaseline,
     isSettingsPatchConflictError,
@@ -14020,19 +14024,42 @@ jQuery(async function () {
 
                 switch (result) {
                     case POPUP_RESULT_FILE: {
-                        async function uploadReplacementCard(e) {
-                            const file = e.target.files[0];
+                        async function replaceCharacterFromFile(file) {
                             if (!file) {
                                 return;
                             }
 
+                            const data = new Map();
+                            data.set(file, characters[this_chid].avatar);
+                            await processDroppedFiles([file], data);
+                            await postReplace();
+                        }
+
+                        function showReplacementError(error) {
+                            console.warn('Failed to replace the character card:', error);
+                            toastr.error('Failed to replace the character card.', 'Something went wrong');
+                        }
+
+                        if (isNativeCharacterCardPickerAvailable()) {
                             try {
-                                const data = new Map();
-                                data.set(file, characters[this_chid].avatar);
-                                await processDroppedFiles([file], data);
-                                await postReplace();
-                            } catch {
-                                toastr.error('Failed to replace the character card.', 'Something went wrong');
+                                const files = await pickNativeCharacterCardFiles({
+                                    multiple: false,
+                                    title: t`Replace Character Card`,
+                                });
+                                await replaceCharacterFromFile(files?.[0]);
+                            } catch (error) {
+                                showReplacementError(error);
+                            }
+                            break;
+                        }
+
+                        async function uploadReplacementCard(e) {
+                            try {
+                                await replaceCharacterFromFile(e.target.files[0]);
+                            } catch (error) {
+                                showReplacementError(error);
+                            } finally {
+                                e.target.value = '';
                             }
                         }
                         $('#character_replace_file').off('change').on('change', uploadReplacementCard).trigger('click');

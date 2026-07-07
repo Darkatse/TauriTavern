@@ -30,6 +30,7 @@ const SKILL_IMPORT_CONTENT_TYPES: &[&str] = &[
     "com.pkware.zip-archive",
     "public.data",
 ];
+const CHARACTER_CARD_CONTENT_TYPES: &[&str] = &["public.json", "public.png"];
 
 pub struct PickedUrl {
     pub url: Retained<NSURL>,
@@ -122,7 +123,7 @@ impl DocumentPickerDelegate {
 
     fn picked_url_to_outcome(url: &NSURL) -> PickOutcome {
         if !url.isFileURL() {
-            return PickOutcome::Failed("Picked archive URL is not a file URL".to_string());
+            return PickOutcome::Failed("Picked document URL is not a file URL".to_string());
         }
 
         let file_name = url
@@ -172,7 +173,7 @@ fn resolve_content_types(identifiers: &[&str]) -> Result<Retained<NSArray<UTType
     Ok(NSArray::from_retained_slice(&content_types))
 }
 
-async fn pick_archive_with_content_types(
+async fn pick_document_with_content_types(
     window: &WebviewWindow,
     identifiers: &'static [&'static str],
 ) -> Result<PickDocumentResult, DomainError> {
@@ -205,13 +206,6 @@ async fn pick_archive_with_content_types(
                 return;
             };
 
-            let delegate_sender = sender
-                .take()
-                .expect("Document picker sender should be set before delegate creation");
-
-            let delegate = DocumentPickerDelegate::new(mtm, delegate_sender);
-            let delegate_protocol_object = ProtocolObject::from_ref(&*delegate);
-
             let content_types = match resolve_content_types(identifiers) {
                 Ok(content_types) => content_types,
                 Err(message) => {
@@ -219,6 +213,13 @@ async fn pick_archive_with_content_types(
                     return;
                 }
             };
+
+            let delegate_sender = sender
+                .take()
+                .expect("Document picker sender should be set before delegate creation");
+
+            let delegate = DocumentPickerDelegate::new(mtm, delegate_sender);
+            let delegate_protocol_object = ProtocolObject::from_ref(&*delegate);
 
             let picker = UIDocumentPickerViewController::initForOpeningContentTypes_asCopy(
                 UIDocumentPickerViewController::alloc(mtm),
@@ -255,13 +256,19 @@ async fn pick_archive_with_content_types(
 }
 
 pub async fn pick_data_archive(window: &WebviewWindow) -> Result<PickDocumentResult, DomainError> {
-    pick_archive_with_content_types(window, DATA_ARCHIVE_CONTENT_TYPES).await
+    pick_document_with_content_types(window, DATA_ARCHIVE_CONTENT_TYPES).await
 }
 
 pub async fn pick_skill_import_archive(
     window: &WebviewWindow,
 ) -> Result<PickDocumentResult, DomainError> {
-    pick_archive_with_content_types(window, SKILL_IMPORT_CONTENT_TYPES).await
+    pick_document_with_content_types(window, SKILL_IMPORT_CONTENT_TYPES).await
+}
+
+pub async fn pick_character_card(
+    window: &WebviewWindow,
+) -> Result<PickDocumentResult, DomainError> {
+    pick_document_with_content_types(window, CHARACTER_CARD_CONTENT_TYPES).await
 }
 
 struct SecurityScopedAccess<'a> {
@@ -309,7 +316,7 @@ pub fn copy_picked_url_to_path(
         .copyItemAtURL_toURL_error(source_url, &target_url)
         .map_err(|error: Retained<NSError>| {
             DomainError::InternalError(format!(
-                "Failed to copy selected archive to staging directory: {}",
+                "Failed to copy selected document to staging directory: {}",
                 error.localizedDescription()
             ))
         })?;
