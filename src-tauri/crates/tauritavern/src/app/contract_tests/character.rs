@@ -562,6 +562,104 @@ async fn character_service_import_auto_links_embedded_lorebook_without_dropping_
 }
 
 #[tokio::test]
+async fn character_service_preserved_import_replaces_cached_card_and_lorebook() {
+    let root = temp_root("character-preserved-import-lorebook");
+    let (service, world_repository) = character_service_with_world_repository(&root).await;
+    world_repository
+        .save_world_info("Old Lore", &world_info("old linked lore"))
+        .await
+        .expect("save old world info");
+
+    let mut old_card = character_card("Preserved", json!({ "world": "Old Lore" }));
+    old_card["first_mes"] = json!("old first message");
+    old_card["data"]["first_mes"] = json!("old first message");
+    old_card["data"]["character_book"] = character_book("Old Lore", "old embedded lore");
+    fs::write(
+        root.join("default-user/characters/Preserved.png"),
+        character_png(&old_card),
+    )
+    .await
+    .expect("write old character card");
+
+    let cached_old = service
+        .get_character("Preserved")
+        .await
+        .expect("cache old character");
+    assert_eq!(cached_old.first_mes, "old first message");
+
+    let mut replacement_card = character_card(
+        "Imported Replacement",
+        json!({ "world": "New Embedded Lore" }),
+    );
+    replacement_card["first_mes"] = json!("new first message");
+    replacement_card["data"]["first_mes"] = json!("new first message");
+    replacement_card["data"]["character_book"] =
+        character_book("New Embedded Lore", "new embedded lore");
+    let import_path = root.join("replacement.png");
+    fs::write(&import_path, character_png(&replacement_card))
+        .await
+        .expect("write replacement character card");
+
+    let imported = service
+        .import_character(ImportCharacterDto {
+            file_path: import_path.to_string_lossy().to_string(),
+            preserve_file_name: Some("Preserved.png".to_string()),
+        })
+        .await
+        .expect("import preserved replacement");
+    assert_eq!(imported.avatar, "Preserved.png");
+    assert_eq!(imported.name, "Imported Replacement");
+    assert_eq!(imported.first_mes, "new first message");
+
+    let reloaded = service
+        .get_character("Preserved")
+        .await
+        .expect("reload replacement");
+    assert_eq!(reloaded.name, "Imported Replacement");
+    assert_eq!(reloaded.first_mes, "new first message");
+    assert_eq!(
+        reloaded
+            .extensions
+            .as_ref()
+            .and_then(|extensions| extensions.get("world")),
+        Some(&json!("New Embedded Lore"))
+    );
+    assert_eq!(
+        reloaded
+            .character_book
+            .as_ref()
+            .and_then(|book| book.pointer("/entries/0/content")),
+        Some(&json!("new embedded lore"))
+    );
+
+    let stored_card = read_stored_card(&root, "Preserved").await;
+    assert_eq!(
+        stored_card.pointer("/data/extensions/world"),
+        Some(&json!("New Embedded Lore"))
+    );
+    assert_eq!(
+        stored_card.pointer("/data/character_book/entries/0/content"),
+        Some(&json!("new embedded lore"))
+    );
+
+    let imported_world = world_repository
+        .get_world_info("New Embedded Lore", false)
+        .await
+        .expect("read imported world info")
+        .expect("imported world info exists");
+    assert!(
+        imported_world
+            .get("entries")
+            .and_then(Value::as_object)
+            .expect("world entries")
+            .values()
+            .any(|entry| entry.get("content") == Some(&json!("new embedded lore")))
+    );
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn character_service_single_merge_preserves_unknown_fields_and_rejects_invalid_cards() {
     let root = temp_root("character-single-merge");
     let service = character_service(&root).await;

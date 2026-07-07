@@ -61,6 +61,9 @@ test('/api/characters/import returns canonical character payload and Agent post-
             calls.push({ type: 'normalize', character });
             return normalized;
         },
+        invalidateInvokeAll: (command) => {
+            calls.push({ type: 'invalidate', command });
+        },
         getAllCharacters: async (options) => {
             calls.push({ type: 'refresh', options });
             return [];
@@ -112,6 +115,7 @@ test('/api/characters/import returns canonical character payload and Agent post-
         },
         { type: 'cleanup' },
         { type: 'normalize', character: imported },
+        { type: 'invalidate', command: 'read_thumbnail_asset' },
         { type: 'refresh', options: { shallow: true, forceRefresh: true } },
     ]);
 });

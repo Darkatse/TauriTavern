@@ -407,6 +407,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         }
 
         const normalized = context.normalizeCharacter(imported);
+        context.invalidateInvokeAll('read_thumbnail_asset');
         await context.getAllCharacters({ shallow: true, forceRefresh: true });
         const fileName = String(normalized.avatar || '').replace(/\.png$/i, '');
 

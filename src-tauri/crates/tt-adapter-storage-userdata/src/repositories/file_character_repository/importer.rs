@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::png_card_metadata::{read_character_data_from_png, write_character_data_to_png};
+use tt_adapter_storage_core::file_system::{replace_file_with_fallback, unique_temp_path};
 use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
 use tt_domain::models::chat::{
@@ -463,14 +464,17 @@ impl FileCharacterRepository {
     ) -> Result<PathBuf, DomainError> {
         let image_data = write_character_data_to_png(base_image_data, card_json)?;
         let target_path = self.get_character_path(file_stem);
+        let temp_path = unique_temp_path(&target_path, "character.png");
 
-        fs::write(&target_path, image_data).await.map_err(|e| {
+        fs::write(&temp_path, image_data).await.map_err(|e| {
             DomainError::InternalError(format!(
-                "Failed to write imported character file {}: {}",
-                target_path.display(),
+                "Failed to write imported character temp file {}: {}",
+                temp_path.display(),
                 e
             ))
         })?;
+        self.discard_character_read_cache(file_stem).await;
+        replace_file_with_fallback(&temp_path, &target_path).await?;
 
         Ok(target_path)
     }

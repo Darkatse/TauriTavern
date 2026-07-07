@@ -72,6 +72,22 @@ impl FileCharacterRepository {
         }
     }
 
+    pub(crate) async fn discard_character_read_cache(&self, file_name: &str) {
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.remove(file_name);
+        }
+        self.clear_shallow_index_cache().await;
+    }
+
+    pub(crate) async fn publish_character_write(&self, file_name: String, character: Character) {
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.set(file_name, character);
+        }
+        self.clear_shallow_index_cache().await;
+    }
+
     async fn default_create_avatar_carrier(&self) -> Result<CreateAvatarCarrier, DomainError> {
         Ok(CreateAvatarCarrier {
             image_data: self.read_default_avatar().await?,
@@ -489,11 +505,8 @@ impl CharacterRepository for FileCharacterRepository {
         let cached_character =
             Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
 
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.set(file_name, cached_character);
-        }
-        self.clear_shallow_index_cache().await;
+        self.publish_character_write(file_name, cached_character)
+            .await;
 
         Ok(())
     }
@@ -638,16 +651,13 @@ impl CharacterRepository for FileCharacterRepository {
             return Err(error);
         }
 
+        let character = self.read_character_from_file(&file_path).await?;
+        self.publish_character_write(name.to_string(), character.clone())
+            .await;
+
         if replaced_avatar {
             self.invalidate_avatar_thumbnail(name).await?;
         }
-
-        let character = self.read_character_from_file(&file_path).await?;
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.set(name.to_string(), character.clone());
-        }
-        self.clear_shallow_index_cache().await;
 
         Ok(character)
     }
@@ -767,11 +777,8 @@ impl CharacterRepository for FileCharacterRepository {
         })?;
 
         let character = self.read_character_from_file(&target_path).await?;
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.set(target_file_stem, character.clone());
-        }
-        self.clear_shallow_index_cache().await;
+        self.publish_character_write(target_file_stem, character.clone())
+            .await;
 
         Ok(character)
     }
@@ -809,7 +816,10 @@ impl CharacterRepository for FileCharacterRepository {
             ))),
         }?;
 
-        self.clear_shallow_index_cache().await;
+        let file_name = character.get_file_name();
+        self.publish_character_write(file_name.clone(), character.clone())
+            .await;
+        self.invalidate_avatar_thumbnail(&file_name).await?;
         Ok(character)
     }
 
@@ -943,11 +953,8 @@ impl CharacterRepository for FileCharacterRepository {
         let stored_character =
             Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
 
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.set(file_name, stored_character.clone());
-        }
-        self.clear_shallow_index_cache().await;
+        self.publish_character_write(file_name, stored_character.clone())
+            .await;
 
         Ok(CharacterCreateResult {
             character: stored_character,
@@ -993,15 +1000,11 @@ impl CharacterRepository for FileCharacterRepository {
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
-        self.invalidate_avatar_thumbnail(&file_name).await?;
-
         let cached_character =
             Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.set(file_name, cached_character);
-        }
-        self.clear_shallow_index_cache().await;
+        self.publish_character_write(file_name.clone(), cached_character)
+            .await;
+        self.invalidate_avatar_thumbnail(&file_name).await?;
 
         Ok(())
     }

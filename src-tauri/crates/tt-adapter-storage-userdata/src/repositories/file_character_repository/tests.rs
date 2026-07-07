@@ -924,6 +924,148 @@ async fn import_json_normalizes_preserved_file_name() {
 }
 
 #[tokio::test]
+async fn import_preserved_json_replaces_cached_full_card() {
+    let (repository, root) = setup_repository().await;
+
+    let old_character = Character::new(
+        "Preserved".to_string(),
+        "old description".to_string(),
+        "old personality".to_string(),
+        "old first message".to_string(),
+    );
+    repository
+        .save(&old_character)
+        .await
+        .expect("save old character");
+    repository
+        .find_by_name("Preserved")
+        .await
+        .expect("load old character into full cache");
+
+    let new_character = Character::new(
+        "Imported Json Replacement".to_string(),
+        "new json description".to_string(),
+        "new json personality".to_string(),
+        "new json first message".to_string(),
+    );
+    let import_path = root.join("replacement.json");
+    fs::write(
+        &import_path,
+        serde_json::to_vec(&new_character.to_v2()).expect("serialize replacement json"),
+    )
+    .await
+    .expect("write replacement json");
+
+    let imported = repository
+        .import_character(&import_path, Some("Preserved.png".to_string()))
+        .await
+        .expect("import preserved json replacement");
+    assert_eq!(imported.avatar, "Preserved.png");
+    assert_eq!(imported.first_mes, "new json first message");
+
+    let reloaded = repository
+        .find_by_name("Preserved")
+        .await
+        .expect("reload replacement");
+    assert_eq!(reloaded.name, "Imported Json Replacement");
+    assert_eq!(reloaded.first_mes, "new json first message");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_preserved_character_replaces_cached_full_card() {
+    let (repository, root) = setup_repository().await;
+
+    let old_character = Character::new(
+        "Preserved".to_string(),
+        "old description".to_string(),
+        "old personality".to_string(),
+        "old first message".to_string(),
+    );
+    repository
+        .save(&old_character)
+        .await
+        .expect("save old character");
+
+    let cached_old = repository
+        .find_by_name("Preserved")
+        .await
+        .expect("load old character into full cache");
+    assert_eq!(cached_old.first_mes, "old first message");
+
+    let thumbnail_path = root.join("thumbnails/avatar/Preserved.png");
+    fs::write(&thumbnail_path, b"stale thumbnail")
+        .await
+        .expect("write stale thumbnail");
+
+    let new_character = Character::new(
+        "Imported Replacement".to_string(),
+        "new description".to_string(),
+        "new personality".to_string(),
+        "new first message".to_string(),
+    );
+    let source_png = write_character_data_to_png(
+        &build_distinct_png(),
+        &serde_json::to_string(&new_character.to_v2()).expect("serialize replacement card"),
+    )
+    .expect("embed replacement card in png");
+    let import_path = root.join("replacement.png");
+    fs::write(&import_path, source_png)
+        .await
+        .expect("write replacement png");
+
+    let imported = repository
+        .import_character(&import_path, Some("Preserved.png".to_string()))
+        .await
+        .expect("import preserved replacement");
+    assert_eq!(imported.avatar, "Preserved.png");
+    assert_eq!(imported.name, "Imported Replacement");
+    assert_eq!(imported.first_mes, "new first message");
+    assert!(
+        !fs::try_exists(&thumbnail_path)
+            .await
+            .expect("check stale thumbnail")
+    );
+
+    let mut reloaded = repository
+        .find_by_name("Preserved")
+        .await
+        .expect("reload replacement from full cache");
+    assert_eq!(reloaded.name, "Imported Replacement");
+    assert_eq!(reloaded.first_mes, "new first message");
+
+    reloaded.chat = "Restored Existing Chat".to_string();
+    let post_replace_json =
+        serde_json::to_string(&reloaded.to_v2()).expect("serialize post-replace save");
+    repository
+        .write_character_card_json("Preserved", &post_replace_json, None, None)
+        .await
+        .expect("post-replace save should keep replacement metadata");
+
+    let final_character = repository
+        .find_by_name("Preserved")
+        .await
+        .expect("reload final character");
+    assert_eq!(final_character.name, "Imported Replacement");
+    assert_eq!(final_character.first_mes, "new first message");
+    assert_eq!(final_character.chat, "Restored Existing Chat");
+
+    let stored_json = repository
+        .read_character_card_json("Preserved")
+        .await
+        .expect("read stored replacement card");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse stored replacement card");
+    assert_eq!(
+        stored_value.pointer("/data/first_mes"),
+        Some(&json!("new first message"))
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn import_png_preserves_unknown_card_fields() {
     let (repository, root) = setup_repository().await;
 
