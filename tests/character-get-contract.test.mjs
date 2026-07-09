@@ -80,6 +80,7 @@ test('/api/characters/get treats avatar_url as an exact avatar filename identity
         { avatar: 'Alice%2FB.png', stem: 'Alice%2FB' },
         { avatar: ' Alice.png', stem: ' Alice' },
         { avatar: '名字.带.点.png', stem: '名字.带.点' },
+        { avatar: 'Legacy\u0080.png', stem: 'Legacy\u0080' },
     ];
 
     for (const item of cases) {
@@ -108,6 +109,7 @@ test('/api/characters/get rejects URL-like and path-like avatar_url values befor
         'Alice.png#hash',
         'Alice.PNG',
         'Alice',
+        'Bad\u007F.png',
     ]) {
         const response = await router.handle({
             method: 'POST',

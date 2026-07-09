@@ -114,6 +114,7 @@ import {
     world_names,
     worldInfoCache,
     flushWorldInfoSaves,
+    loadWorldInfo,
     updateWorldInfoList,
     deleteWorldInfo,
     importEmbeddedWorldInfo,
@@ -11819,13 +11820,21 @@ export async function swipe_right(event = null, { source, repeated, message } = 
     await swipe.call(this, event, SWIPE_DIRECTION.RIGHT, { source: source, repeated: repeated, message: message });
 }
 
+class CharacterReplacementPostImportError extends Error {
+    constructor(message, cause) {
+        super(message, { cause });
+        this.name = 'CharacterReplacementPostImportError';
+    }
+}
+
 /**
  * Imports supported files dropped into the app window.
  * @param {File[]} files Array of files to process
  * @param {Map<File, string>} [data] Extra data to pass to the import function
+ * @param {{ replacement?: boolean }} [options] Internal import intent
  * @returns {Promise<void>}
  */
-export async function processDroppedFiles(files, data = new Map()) {
+export async function processDroppedFiles(files, data = new Map(), { replacement = false } = {}) {
     const allowedMimeTypes = [
         'application/json',
         'image/png',
@@ -11841,24 +11850,51 @@ export async function processDroppedFiles(files, data = new Map()) {
     ];
 
     const avatarFileNames = [];
+    const replacements = [];
     pauseImportedCharacterAgentAssetQueue();
     try {
         for (const file of files) {
             const extension = file.name.split('.').pop().toLowerCase();
             if (allowedMimeTypes.some(x => file.type.startsWith(x)) || allowedExtensions.includes(extension)) {
                 const preservedName = data instanceof Map && data.get(file);
-                const avatarFileName = await importCharacter(file, { preserveFileName: preservedName });
-                if (avatarFileName !== undefined) {
-                    avatarFileNames.push(avatarFileName);
+                const imported = await importCharacter(file, { preserveFileName: preservedName, replacement });
+                if (imported) {
+                    avatarFileNames.push(imported.avatarFileName);
+                    if (imported.replaced) {
+                        replacements.push(imported.avatarFileName);
+                    }
                 }
             } else {
+                if (replacement) {
+                    throw new Error(t`Unsupported file type: ` + file.name);
+                }
                 toastr.warning(t`Unsupported file type: ` + file.name);
             }
         }
 
-        if (avatarFileNames.length > 0) {
-            await importCharactersTags(avatarFileNames);
-            selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+        try {
+            if (avatarFileNames.length > 0) {
+                await importCharactersTags(avatarFileNames);
+            }
+
+            for (const avatarFileName of replacements) {
+                await resolveImportedCharacterLorebookConflict(avatarFileName);
+            }
+
+            if (avatarFileNames.length > 0) {
+                selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+            }
+        } catch (error) {
+            if (error instanceof CharacterReplacementPostImportError) {
+                throw error;
+            }
+            if (replacements.length > 0) {
+                throw new CharacterReplacementPostImportError(
+                    error?.message || t`Failed to resolve the World/Lorebook conflict.`,
+                    error,
+                );
+            }
+            throw error;
         }
     } finally {
         resumeImportedCharacterAgentAssetQueue();
@@ -11897,9 +11933,10 @@ function selectImportedChar(charId) {
  * @param {object} [options] - Options
  * @param {string} [options.preserveFileName] Whether to preserve original file name
  * @param {Boolean} [options.importTags=false] Whether to import tags
- * @returns {Promise<string>}
+ * @param {Boolean} [options.replacement=false] Whether this import was explicitly requested as a replacement
+ * @returns {Promise<{ avatarFileName: string, replaced: boolean }|undefined>}
  */
-async function importCharacter(file, { preserveFileName = '', importTags = false } = {}) {
+async function importCharacter(file, { preserveFileName = '', importTags = false, replacement = false } = {}) {
     if (is_group_generating || is_send_press) {
         toastr.error(t`Cannot import characters while generating. Stop the request and try again.`, t`Import aborted`);
         throw new Error('Cannot import character while generating');
@@ -11907,10 +11944,11 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
 
     const ext = file.name.match(/\.(\w+)$/);
     if (!ext || !(['json', 'png', 'yaml', 'yml', 'charx', 'byaf'].includes(ext[1].toLowerCase()))) {
+        if (replacement) {
+            throw new Error(t`Unsupported file type: ` + file.name);
+        }
         return;
     }
-
-    const exists = preserveFileName ? characters.find(character => character.avatar === preserveFileName) : undefined;
 
     const format = ext[1].toLowerCase();
     $('#character_import_file_type').val(format);
@@ -11920,7 +11958,12 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
     formData.append('user_name', name1);
     if (preserveFileName) formData.append('preserved_name', preserveFileName);
 
+    let replacementCommitted = false;
     try {
+        if (replacement) {
+            await flushWorldInfoSaves('replace_character_lorebook_conflict');
+        }
+
         const result = await fetch('/api/characters/import', {
             method: 'POST',
             body: formData,
@@ -11954,16 +11997,27 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
         }
 
         if (data.file_name !== undefined) {
-            let avatarFileName = `${data.file_name}.png`;
+            const avatarFileName = `${data.file_name}.png`;
+            const replaced = Boolean(data.replaced);
+            replacementCommitted = replacement;
 
             // Refresh existing thumbnail
-            if (exists && this_chid !== undefined) {
+            if (replaced && this_chid !== undefined) {
                 await fetch(getThumbnailUrl('avatar', avatarFileName), { cache: 'reload' });
             }
 
             $('#character_search_bar').val('').trigger('input');
 
-            if (exists) {
+            const linkedWorld = String(
+                data.character?.data?.extensions?.world
+                || data.character?.extensions?.world
+                || '',
+            );
+            if (linkedWorld && !world_names?.includes(linkedWorld)) {
+                await updateWorldInfoList();
+            }
+
+            if (replaced) {
                 toastr.success(t`Character Replaced: ${String(data.file_name).replace('.png', '')}`);
             } else {
                 toastr.success(t`Character Created: ${String(data.file_name).replace('.png', '')}`);
@@ -11978,10 +12032,24 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
                 character: data.character,
                 postImport: data.post_import,
             });
-            return avatarFileName;
+            return { avatarFileName, replaced };
+        }
+
+        if (replacement) {
+            throw new Error(t`Failed to replace the character card.`);
         }
     } catch (error) {
         console.error('Error importing character', error);
+        if (replacementCommitted) {
+            throw new CharacterReplacementPostImportError(
+                error?.message || t`Failed to resolve the World/Lorebook conflict.`,
+                error,
+            );
+        }
+        if (replacement) {
+            throw error;
+        }
+
         const message = error?.message || t`The file is likely invalid or corrupted.`;
         toastr.error(message, t`Could not import character`);
     }
@@ -12010,12 +12078,169 @@ async function importFromURL(items, files) {
 }
 
 async function readLorebookConflictResponse(response) {
-    const data = await response.json().catch(() => ({}));
+    const data = await response.clone().json().catch(() => null);
     if (!response.ok || data?.error) {
-        throw new Error(data?.details || data?.error || response.statusText);
+        const responseText = data ? '' : await response.text().catch(() => '');
+        const error = new Error(data?.details || data?.error || responseText || response.statusText);
+        Object.assign(error, { status: response.status });
+        throw error;
+    }
+    if (!data) {
+        throw new Error(t`Invalid World/Lorebook response.`);
     }
 
     return data;
+}
+
+async function getCharacterLorebookConflict(avatarFileName) {
+    const response = await fetch('/api/characters/lorebook-conflict', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ avatar_url: avatarFileName }),
+        cache: 'no-cache',
+    });
+
+    return readLorebookConflictResponse(response);
+}
+
+async function syncResolvedWorldInfo(resolved) {
+    const worldName = String(resolved?.affected_world || '');
+    if (!worldName) {
+        throw new Error(t`The resolved World/Lorebook name is missing.`);
+    }
+
+    worldInfoCache.delete(worldName);
+    const worldData = await loadWorldInfo(worldName);
+    if (!worldData) {
+        throw new Error(t`Failed to load the resolved World/Lorebook.`);
+    }
+
+    if (resolved.world_written) {
+        await eventSource.emit(event_types.WORLDINFO_UPDATED, worldName, worldData);
+    }
+    if (!world_names?.includes(worldName)) {
+        await updateWorldInfoList();
+        if (!world_names?.includes(worldName)) {
+            throw new Error(t`Failed to refresh the World/Lorebook list.`);
+        }
+    }
+}
+
+async function applyCharacterLorebookConflictResolution(avatarFileName, resolution, conflictToken) {
+    if (!conflictToken) {
+        throw new Error(t`The World/Lorebook conflict token is missing.`);
+    }
+
+    const response = await fetch('/api/characters/resolve-lorebook-conflict', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            avatar_url: avatarFileName,
+            resolution,
+            conflict_token: conflictToken,
+        }),
+        cache: 'no-cache',
+    });
+    const resolved = await readLorebookConflictResponse(response);
+
+    if (resolved?.affected_world) {
+        try {
+            await syncResolvedWorldInfo(resolved);
+        } catch (error) {
+            console.error('Failed to synchronize resolved World/Lorebook state:', error);
+            toastr.error(error?.message, t`World/Lorebook refresh failed`);
+        }
+    } else if (resolution !== 'current') {
+        throw new Error(t`The resolved World/Lorebook name is missing.`);
+    }
+
+    if (resolution === 'copy') {
+        const message = resolved.world
+            ? t`The embedded World/Lorebook was saved as '${String(resolved.affected_world)}'. The current link was kept.`
+            : t`The embedded World/Lorebook was saved as '${String(resolved.affected_world)}'. It was not bound automatically.`;
+        toastr.success(
+            message,
+            t`World/Lorebook saved`,
+        );
+    }
+}
+
+async function resolveImportedCharacterLorebookConflict(avatarFileName) {
+    while (true) {
+        const conflict = await getCharacterLorebookConflict(avatarFileName);
+        if (!conflict?.conflict) {
+            return;
+        }
+
+        const conflictToken = String(conflict.conflict_token || '');
+        const worldName = String(conflict.world || '');
+        const embeddedName = String(conflict.embedded_name || t`Embedded World/Lorebook`);
+        const currentAvailable = Boolean(conflict.current_available);
+        const currentWorldLabel = worldName
+            ? `<code>${escapeHtml(worldName)}</code>`
+            : `<code>${t`missing`}</code>`;
+        const unavailableMessage = currentAvailable
+            ? ''
+            : `<div>${t`The current local World/Lorebook is missing. Saving a copy will not bind it automatically.`}</div>`;
+        const keepCurrentMessage = currentAvailable
+            ? `<div>${t`Keeping the current version replaces the card's embedded copy with the local version.`}</div>`
+            : '';
+        const popupBody = `
+            <div>${t`The card's embedded World/Lorebook differs from the linked local version.`}</div>
+            <div class="m-t-1">${t`Current local World/Lorebook:`} ${currentWorldLabel}</div>
+            <div>${t`Embedded World/Lorebook:`} <code>${escapeHtml(embeddedName)}</code></div>
+            <div class="m-t-1">${t`Using the new version overwrites the local World/Lorebook and may affect other characters.`}</div>
+            <div>${t`Saving a copy keeps the current link and stores the new version separately.`}</div>
+            ${keepCurrentMessage}
+            ${unavailableMessage}
+        `;
+        const customButtons = [
+            {
+                text: t`Use New`,
+                result: POPUP_RESULT.CUSTOM1,
+            },
+            {
+                text: t`Keep Both`,
+                result: POPUP_RESULT.CUSTOM2,
+            },
+        ];
+        if (currentAvailable) {
+            customButtons.push({
+                text: t`Keep Current`,
+                result: POPUP_RESULT.CUSTOM3,
+            });
+        }
+
+        const result = await Popup.show.confirm(t`World/Lorebook conflict`, popupBody, {
+            okButton: false,
+            cancelButton: false,
+            customButtons,
+            defaultResult: currentAvailable ? POPUP_RESULT.CUSTOM2 : POPUP_RESULT.CUSTOM1,
+            allowEscapeClose: false,
+        });
+        const resolution = {
+            [POPUP_RESULT.CUSTOM1]: 'embedded',
+            [POPUP_RESULT.CUSTOM2]: 'copy',
+            [POPUP_RESULT.CUSTOM3]: 'current',
+        }[result];
+        if (!resolution) {
+            throw new Error(t`World/Lorebook choice was cancelled.`);
+        }
+
+        try {
+            await applyCharacterLorebookConflictResolution(
+                avatarFileName,
+                resolution,
+                conflictToken,
+            );
+            return;
+        } catch (error) {
+            if (error?.status === 409) {
+                continue;
+            }
+            throw error;
+        }
+    }
 }
 
 async function resolveCharacterLorebookConflictBeforeNewChat() {
@@ -12030,91 +12255,81 @@ async function resolveCharacterLorebookConflictBeforeNewChat() {
 
     try {
         await flushWorldInfoSaves('new_chat_lorebook_conflict_check');
-        const conflictResponse = await fetch('/api/characters/lorebook-conflict', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ avatar_url: character.avatar }),
-            cache: 'no-cache',
-        });
-        const conflict = await readLorebookConflictResponse(conflictResponse);
+        while (true) {
+            const conflict = await getCharacterLorebookConflict(character.avatar);
 
-        if (!conflict?.conflict) {
-            return true;
-        }
-
-        const worldName = String(conflict.world || character?.data?.extensions?.world || '');
-        const embeddedName = String(conflict.embedded_name || t`Embedded World/Lorebook`);
-        const currentAvailable = Boolean(conflict.current_available);
-        const currentWorldLabel = worldName ? `<code>${escapeHtml(worldName)}</code>` : `<code>${t`missing`}</code>`;
-        const embeddedWorldLabel = `<code>${escapeHtml(embeddedName)}</code>`;
-        const unavailableMessage = currentAvailable
-            ? ''
-            : `<div class="m-t-1">${t`The linked local World/Lorebook file is missing. You can restore it from the embedded copy or cancel.`}</div>`;
-
-        const popupBody = `
-            <div>${t`The embedded World/Lorebook and linked local World/Lorebook are different.`}</div>
-            <div class="m-t-1">${t`Current local World/Lorebook:`} ${currentWorldLabel}</div>
-            <div>${t`Embedded World/Lorebook:`} ${embeddedWorldLabel}</div>
-            ${unavailableMessage}
-            <div class="m-t-1">${t`Choose which version to keep before starting a new chat. The other version will be overwritten.`}</div>
-        `;
-        const customButtons = [];
-
-        if (currentAvailable) {
-            customButtons.push({
-                text: t`Save current World/Lorebook`,
-                result: POPUP_RESULT.CUSTOM1,
-            });
-        }
-
-        customButtons.push(
-            {
-                text: t`Overwrite with embedded World/Lorebook`,
-                result: POPUP_RESULT.CUSTOM2,
-            },
-            {
-                text: translate('Cancel', 'Cancel World/Lorebook conflict'),
-                result: POPUP_RESULT.NEGATIVE,
-            },
-        );
-
-        const result = await Popup.show.confirm(t`World/Lorebook conflict`, popupBody, {
-            okButton: false,
-            cancelButton: false,
-            customButtons,
-            defaultResult: currentAvailable ? POPUP_RESULT.CUSTOM1 : POPUP_RESULT.CUSTOM2,
-        });
-
-        const resolution = result === POPUP_RESULT.CUSTOM1
-            ? 'current'
-            : result === POPUP_RESULT.CUSTOM2
-                ? 'embedded'
-                : '';
-
-        if (!resolution) {
-            return false;
-        }
-
-        const resolveResponse = await fetch('/api/characters/resolve-lorebook-conflict', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                avatar_url: character.avatar,
-                resolution,
-            }),
-            cache: 'no-cache',
-        });
-        const resolved = await readLorebookConflictResponse(resolveResponse);
-
-        if (resolution === 'embedded') {
-            const resolvedWorld = String(resolved?.world || worldName || '');
-            if (resolvedWorld) {
-                worldInfoCache.delete(resolvedWorld);
+            if (!conflict?.conflict) {
+                return true;
             }
-            await updateWorldInfoList();
-        }
 
-        return true;
+            const conflictToken = String(conflict.conflict_token || '');
+            const worldName = String(conflict.world || character?.data?.extensions?.world || '');
+            const embeddedName = String(conflict.embedded_name || t`Embedded World/Lorebook`);
+            const currentAvailable = Boolean(conflict.current_available);
+            const currentWorldLabel = worldName ? `<code>${escapeHtml(worldName)}</code>` : `<code>${t`missing`}</code>`;
+            const embeddedWorldLabel = `<code>${escapeHtml(embeddedName)}</code>`;
+            const unavailableMessage = currentAvailable
+                ? ''
+                : `<div class="m-t-1">${t`The linked local World/Lorebook file is missing. You can restore it from the embedded copy or cancel.`}</div>`;
+
+            const popupBody = `
+                <div>${t`The embedded World/Lorebook and linked local World/Lorebook are different.`}</div>
+                <div class="m-t-1">${t`Current local World/Lorebook:`} ${currentWorldLabel}</div>
+                <div>${t`Embedded World/Lorebook:`} ${embeddedWorldLabel}</div>
+                ${unavailableMessage}
+                <div class="m-t-1">${t`Choose which version to keep before starting a new chat. The other version will be overwritten.`}</div>
+            `;
+            const customButtons = [];
+
+            if (currentAvailable) {
+                customButtons.push({
+                    text: t`Save current World/Lorebook`,
+                    result: POPUP_RESULT.CUSTOM1,
+                });
+            }
+
+            customButtons.push(
+                {
+                    text: t`Overwrite with embedded World/Lorebook`,
+                    result: POPUP_RESULT.CUSTOM2,
+                },
+                {
+                    text: translate('Cancel', 'Cancel World/Lorebook conflict'),
+                    result: POPUP_RESULT.NEGATIVE,
+                },
+            );
+
+            const result = await Popup.show.confirm(t`World/Lorebook conflict`, popupBody, {
+                okButton: false,
+                cancelButton: false,
+                customButtons,
+                defaultResult: currentAvailable ? POPUP_RESULT.CUSTOM1 : POPUP_RESULT.CUSTOM2,
+            });
+
+            const resolution = result === POPUP_RESULT.CUSTOM1
+                ? 'current'
+                : result === POPUP_RESULT.CUSTOM2
+                    ? 'embedded'
+                    : '';
+
+            if (!resolution) {
+                return false;
+            }
+
+            try {
+                await applyCharacterLorebookConflictResolution(
+                    character.avatar,
+                    resolution,
+                    conflictToken,
+                );
+                return true;
+            } catch (error) {
+                if (error?.status === 409) {
+                    continue;
+                }
+                throw error;
+            }
+        }
     } catch (error) {
         console.error('Failed to resolve character lorebook conflict before new chat.', error);
         toastr.error(error?.message || t`Failed to resolve the World/Lorebook conflict.`, t`New chat cancelled`);
@@ -13574,9 +13789,9 @@ jQuery(async function () {
         pauseImportedCharacterAgentAssetQueue();
         try {
             for (const file of e.target.files) {
-                const avatarFileName = await importCharacter(file);
-                if (avatarFileName !== undefined) {
-                    avatarFileNames.push(avatarFileName);
+                const imported = await importCharacter(file);
+                if (imported) {
+                    avatarFileNames.push(imported.avatarFileName);
                 }
             }
 
@@ -14018,8 +14233,31 @@ jQuery(async function () {
 
                 // Remember the chat currently selected, so we can reload it after the replacement
                 const currentChatFile = characters[this_chid].chat;
-                async function postReplace() {
-                    await openCharacterChat(currentChatFile);
+                const replacementAvatar = characters[this_chid].avatar;
+                async function replaceAndReopenChat(importAction) {
+                    await importAction();
+                    try {
+                        await openCharacterChat(currentChatFile);
+                    } catch (error) {
+                        throw new CharacterReplacementPostImportError(
+                            error?.message || t`Failed to resolve the World/Lorebook conflict.`,
+                            error,
+                        );
+                    }
+                }
+
+                async function showReplacementError(error) {
+                    console.warn('Failed to replace the character card:', error);
+                    const postImportFailure = error instanceof CharacterReplacementPostImportError;
+                    toastr.error(
+                        error?.message || t`Failed to replace the character card.`,
+                        postImportFailure ? t`Character replaced; follow-up failed` : t`Character replacement failed`,
+                    );
+                    try {
+                        await getCharacters();
+                    } catch (refreshError) {
+                        console.warn('Failed to refresh characters after replacement error:', refreshError);
+                    }
                 }
 
                 switch (result) {
@@ -14030,14 +14268,12 @@ jQuery(async function () {
                             }
 
                             const data = new Map();
-                            data.set(file, characters[this_chid].avatar);
-                            await processDroppedFiles([file], data);
-                            await postReplace();
-                        }
-
-                        function showReplacementError(error) {
-                            console.warn('Failed to replace the character card:', error);
-                            toastr.error('Failed to replace the character card.', 'Something went wrong');
+                            data.set(file, replacementAvatar);
+                            await replaceAndReopenChat(() => processDroppedFiles(
+                                [file],
+                                data,
+                                { replacement: true },
+                            ));
                         }
 
                         if (isNativeCharacterCardPickerAvailable()) {
@@ -14048,7 +14284,7 @@ jQuery(async function () {
                                 });
                                 await replaceCharacterFromFile(files?.[0]);
                             } catch (error) {
-                                showReplacementError(error);
+                                await showReplacementError(error);
                             }
                             break;
                         }
@@ -14057,7 +14293,7 @@ jQuery(async function () {
                             try {
                                 await replaceCharacterFromFile(e.target.files[0]);
                             } catch (error) {
-                                showReplacementError(error);
+                                await showReplacementError(error);
                             } finally {
                                 e.target.value = '';
                             }
@@ -14074,8 +14310,14 @@ jQuery(async function () {
                             break;
                         }
                         onlineUrl = inputUrl;
-                        await importFromExternalUrl(onlineUrl, { preserveFileName: characters[this_chid].avatar });
-                        await postReplace();
+                        try {
+                            await replaceAndReopenChat(() => importFromExternalUrl(onlineUrl, {
+                                preserveFileName: replacementAvatar,
+                                replacement: true,
+                            }));
+                        } catch (error) {
+                            await showReplacementError(error);
+                        }
                         break;
                     }
                 }

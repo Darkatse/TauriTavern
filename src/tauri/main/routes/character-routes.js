@@ -7,6 +7,7 @@ import {
     resolveExistingRouteCharacterId,
     resolveRouteCharacterId,
 } from './character-route-utils.js';
+import { registerCharacterImportRoute } from './character-import-route.js';
 
 const CHARACTER_CREATE_WARNING_HEADER = 'x-tauritavern-warning';
 
@@ -37,35 +38,6 @@ function buildCharacterMergeUpdate(body) {
 
     delete update.avatar_url;
     return update;
-}
-
-/**
- * @param {any} character
- * @param {'agentProfiles' | 'skills'} field
- */
-function getCharacterTauriExtensionField(character, field) {
-    const sources = [
-        character?.data?.extensions?.tauritavern,
-        character?.extensions?.tauritavern,
-    ];
-
-    for (const source of sources) {
-        if (source && typeof source === 'object' && !Array.isArray(source)
-            && Object.prototype.hasOwnProperty.call(source, field)) {
-            return source[field];
-        }
-    }
-
-    return undefined;
-}
-
-/**
- * @param {any} character
- * @param {'agentProfiles' | 'skills'} field
- */
-function hasCharacterEmbeddedAgentAsset(character, field) {
-    const value = getCharacterTauriExtensionField(character, field);
-    return value !== undefined && value !== null;
 }
 
 function createCharacterResponse(outcome, textResponse) {
@@ -185,14 +157,18 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             dto: { name: characterId },
         });
 
-        return jsonResponse(result || { conflict: false });
+        return jsonResponse(result);
     });
 
     router.post('/api/characters/resolve-lorebook-conflict', async ({ body }) => {
         const avatar = pickAvatarIdentity(body);
         const resolution = typeof body?.resolution === 'string' ? body.resolution : '';
-        if (!['current', 'embedded'].includes(resolution)) {
+        const conflictToken = typeof body?.conflict_token === 'string' ? body.conflict_token : '';
+        if (!['current', 'embedded', 'copy'].includes(resolution)) {
             return jsonResponse({ error: 'Invalid lorebook conflict resolution' }, 400);
+        }
+        if (resolution === 'copy' && !conflictToken) {
+            return jsonResponse({ error: 'Missing lorebook conflict token' }, 400);
         }
 
         const resolved = await resolveRouteCharacterId(context, { avatar, fallbackName: body?.name });
@@ -209,11 +185,12 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             dto: {
                 name: characterId,
                 resolution,
+                conflict_token: conflictToken || null,
             },
         });
 
         await context.getAllCharacters({ shallow: true, forceRefresh: true });
-        return jsonResponse(result || {});
+        return jsonResponse(result);
     });
 
     router.post('/api/characters/edit-avatar', async ({ body, url }) => {
@@ -368,58 +345,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         return jsonResponse({ ok: true });
     });
 
-    router.post('/api/characters/import', async ({ body }) => {
-        if (!(body instanceof FormData)) {
-            return jsonResponse({ error: 'Expected multipart form data' }, 400);
-        }
-
-        const file = body.get('avatar');
-        if (!(file instanceof Blob)) {
-            return jsonResponse({ error: 'No character file provided' }, 400);
-        }
-
-        const fileType = String(body.get('file_type') || '').trim().toLowerCase();
-        const fallbackName = fileType ? `import.${fileType}` : 'import.bin';
-        const preferredName = file instanceof File && file.name ? file.name : fallbackName;
-
-        const fileInfo = await context.materializeUploadFile(file, {
-            kind: 'character-import',
-            preferredName,
-            preferredExtension: fileType,
-        });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            return jsonResponse({ error: `Unable to access uploaded character file path${reason}` }, 400);
-        }
-
-        const preserveFileName = body.get('preserved_name');
-
-        let imported;
-        try {
-            imported = await context.safeInvoke('import_character', {
-                dto: {
-                    file_path: fileInfo.filePath,
-                    preserve_file_name: preserveFileName ? String(preserveFileName) : null,
-                },
-            });
-        } finally {
-            await fileInfo.cleanup?.();
-        }
-
-        const normalized = context.normalizeCharacter(imported);
-        context.invalidateInvokeAll('read_thumbnail_asset');
-        await context.getAllCharacters({ shallow: true, forceRefresh: true });
-        const fileName = String(normalized.avatar || '').replace(/\.png$/i, '');
-
-        return jsonResponse({
-            file_name: fileName,
-            character: normalized,
-            post_import: {
-                has_agent_profiles: hasCharacterEmbeddedAgentAsset(normalized, 'agentProfiles'),
-                has_agent_skills: hasCharacterEmbeddedAgentAsset(normalized, 'skills'),
-            },
-        });
-    });
+    registerCharacterImportRoute(router, context, { jsonResponse });
 
     router.post('/api/characters/export', async ({ body }) => {
         const avatar = body?.avatar_url;

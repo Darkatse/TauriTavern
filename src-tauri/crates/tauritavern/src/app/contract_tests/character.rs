@@ -432,7 +432,7 @@ async fn character_service_update_avatar_materializes_current_lorebook_into_writ
 }
 
 #[tokio::test]
-async fn character_service_lorebook_conflict_resolution_uses_selected_source() {
+async fn character_service_lorebook_conflict_resolution_uses_current_or_embedded_source() {
     let root = temp_root("character-lorebook-conflict");
     let (service, world_repository) = character_service_with_world_repository(&root).await;
     world_repository
@@ -457,13 +457,17 @@ async fn character_service_lorebook_conflict_resolution_uses_selected_source() {
     assert!(conflict.conflict);
     assert!(conflict.current_available);
 
-    service
+    let current_result = service
         .resolve_lorebook_conflict(ResolveCharacterLorebookConflictDto {
             name: "Alice".to_string(),
             resolution: CharacterLorebookConflictResolution::Current,
+            conflict_token: None,
         })
         .await
         .expect("resolve with current world");
+    assert_eq!(current_result.world, "CurrentLore");
+    assert_eq!(current_result.affected_world, None);
+    assert!(!current_result.world_written);
     let resolved_card = read_stored_card(&root, "Alice").await;
     assert_eq!(
         resolved_card.pointer("/data/character_book/entries/0/content"),
@@ -484,13 +488,30 @@ async fn character_service_lorebook_conflict_resolution_uses_selected_source() {
     .await
     .expect("write embedded-resolution card");
 
-    service
+    let embedded_conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Bob".to_string(),
+        })
+        .await
+        .expect("check embedded conflict");
+    let embedded_result = service
         .resolve_lorebook_conflict(ResolveCharacterLorebookConflictDto {
             name: "Bob".to_string(),
             resolution: CharacterLorebookConflictResolution::Embedded,
+            conflict_token: Some(
+                embedded_conflict
+                    .conflict_token
+                    .expect("embedded conflict token"),
+            ),
         })
         .await
         .expect("resolve with embedded book");
+    assert_eq!(embedded_result.world, "EmbeddedLore");
+    assert_eq!(
+        embedded_result.affected_world.as_deref(),
+        Some("EmbeddedLore")
+    );
+    assert!(embedded_result.world_written);
     let overwritten = world_repository
         .get_world_info("EmbeddedLore", false)
         .await
@@ -504,6 +525,279 @@ async fn character_service_lorebook_conflict_resolution_uses_selected_source() {
             .values()
             .any(|entry| entry.get("content") == Some(&json!("embedded conflict lore")))
     );
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn character_service_copy_resolution_preserves_current_and_reuses_identical_copy() {
+    let root = temp_root("character-lorebook-copy-resolution");
+    let (service, world_repository) = character_service_with_world_repository(&root).await;
+
+    world_repository
+        .save_world_info("CopyLore", &world_info("locally edited lore"))
+        .await
+        .expect("save locally edited world info");
+    let mut copy_card = character_card("Carol", json!({ "world": "CopyLore" }));
+    copy_card["data"]["character_book"] = character_book("CopyLore", "new embedded lore");
+    fs::write(
+        root.join("default-user/characters/Carol.png"),
+        character_png(&copy_card),
+    )
+    .await
+    .expect("write copy-resolution card");
+
+    let copy_conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Carol".to_string(),
+        })
+        .await
+        .expect("check copy conflict");
+    let copy_result = service
+        .resolve_lorebook_conflict(ResolveCharacterLorebookConflictDto {
+            name: "Carol".to_string(),
+            resolution: CharacterLorebookConflictResolution::Copy,
+            conflict_token: Some(copy_conflict.conflict_token.expect("copy conflict token")),
+        })
+        .await
+        .expect("resolve by saving embedded book as a copy");
+    assert_eq!(copy_result.world, "CopyLore");
+    assert_eq!(copy_result.affected_world.as_deref(), Some("CopyLore (2)"));
+    assert!(copy_result.world_written);
+
+    let current_world = world_repository
+        .get_world_info("CopyLore", false)
+        .await
+        .expect("read current world")
+        .expect("current world exists");
+    assert_eq!(
+        current_world.pointer("/entries/1/content"),
+        Some(&json!("locally edited lore"))
+    );
+    let copied_world = world_repository
+        .get_world_info("CopyLore (2)", false)
+        .await
+        .expect("read copied world")
+        .expect("copied world exists");
+    assert!(
+        copied_world
+            .get("entries")
+            .and_then(Value::as_object)
+            .expect("copied world entries")
+            .values()
+            .any(|entry| entry.get("content") == Some(&json!("new embedded lore")))
+    );
+    let resolved_copy_card = read_stored_card(&root, "Carol").await;
+    assert_eq!(
+        resolved_copy_card.pointer("/data/extensions/world"),
+        Some(&json!("CopyLore"))
+    );
+    assert_eq!(
+        resolved_copy_card.pointer("/data/character_book/entries/0/content"),
+        Some(&json!("locally edited lore"))
+    );
+    let resolved_copy_conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Carol".to_string(),
+        })
+        .await
+        .expect("check copied lorebook resolution");
+    assert!(!resolved_copy_conflict.conflict);
+
+    fs::write(
+        root.join("default-user/characters/Carol.png"),
+        character_png(&copy_card),
+    )
+    .await
+    .expect("restore incoming copy-resolution card");
+    let (fresh_service, fresh_world_repository) =
+        character_service_with_world_repository(&root).await;
+    let repeated_conflict = fresh_service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Carol".to_string(),
+        })
+        .await
+        .expect("check repeated copy conflict");
+    let repeated_copy = fresh_service
+        .resolve_lorebook_conflict(ResolveCharacterLorebookConflictDto {
+            name: "Carol".to_string(),
+            resolution: CharacterLorebookConflictResolution::Copy,
+            conflict_token: Some(
+                repeated_conflict
+                    .conflict_token
+                    .expect("repeated copy conflict token"),
+            ),
+        })
+        .await
+        .expect("reuse an identical saved copy");
+    assert_eq!(
+        repeated_copy.affected_world.as_deref(),
+        Some("CopyLore (2)")
+    );
+    assert!(!repeated_copy.world_written);
+    assert!(
+        fresh_world_repository
+            .get_world_info("CopyLore (3)", false)
+            .await
+            .expect("check redundant copy")
+            .is_none()
+    );
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn character_service_rejects_stale_lorebook_resolution() {
+    let root = temp_root("character-lorebook-stale-resolution");
+    let (service, world_repository) = character_service_with_world_repository(&root).await;
+    world_repository
+        .save_world_info("Lore", &world_info("local version one"))
+        .await
+        .expect("save initial world info");
+    let mut card = character_card("Alice", json!({ "world": "Lore" }));
+    card["data"]["character_book"] = character_book("Lore", "embedded update");
+    fs::write(
+        root.join("default-user/characters/Alice.png"),
+        character_png(&card),
+    )
+    .await
+    .expect("write conflicting character");
+
+    let conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Alice".to_string(),
+        })
+        .await
+        .expect("check conflict");
+    world_repository
+        .save_world_info("Lore", &world_info("local version two"))
+        .await
+        .expect("edit world while choice is open");
+
+    let error = service
+        .resolve_lorebook_conflict(ResolveCharacterLorebookConflictDto {
+            name: "Alice".to_string(),
+            resolution: CharacterLorebookConflictResolution::Embedded,
+            conflict_token: Some(conflict.conflict_token.expect("conflict token")),
+        })
+        .await
+        .expect_err("stale choice must not overwrite the newer local world");
+    assert!(matches!(error, ApplicationError::Conflict(_)));
+    let current = world_repository
+        .get_world_info("Lore", false)
+        .await
+        .expect("read current world")
+        .expect("current world exists");
+    assert_eq!(
+        current.pointer("/entries/1/content"),
+        Some(&json!("local version two"))
+    );
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn character_service_copy_resolution_saves_without_binding_when_current_is_missing() {
+    let root = temp_root("character-lorebook-copy-without-current");
+    let (service, world_repository) = character_service_with_world_repository(&root).await;
+    let mut card = character_card("Alice", json!({ "world": "Missing Lore" }));
+    card["data"]["character_book"] = character_book("Missing Lore", "embedded update");
+    fs::write(
+        root.join("default-user/characters/Alice.png"),
+        character_png(&card),
+    )
+    .await
+    .expect("write conflicting character");
+
+    let conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Alice".to_string(),
+        })
+        .await
+        .expect("check missing-current conflict");
+    assert!(conflict.conflict);
+    assert!(!conflict.current_available);
+
+    let missing_token = service
+        .resolve_lorebook_conflict(ResolveCharacterLorebookConflictDto {
+            name: "Alice".to_string(),
+            resolution: CharacterLorebookConflictResolution::Copy,
+            conflict_token: None,
+        })
+        .await
+        .expect_err("copy resolution requires the checked token");
+    assert!(matches!(
+        missing_token,
+        ApplicationError::ValidationError(_)
+    ));
+
+    let result = service
+        .resolve_lorebook_conflict(ResolveCharacterLorebookConflictDto {
+            name: "Alice".to_string(),
+            resolution: CharacterLorebookConflictResolution::Copy,
+            conflict_token: Some(conflict.conflict_token.expect("conflict token")),
+        })
+        .await
+        .expect("save embedded lorebook as an unbound copy");
+    assert_eq!(result.world, "");
+    assert_eq!(result.affected_world.as_deref(), Some("Missing Lore (2)"));
+    assert!(result.world_written);
+    assert!(
+        world_repository
+            .get_world_info("Missing Lore (2)", false)
+            .await
+            .expect("read copied world")
+            .is_some()
+    );
+    let stored = read_stored_card(&root, "Alice").await;
+    assert_eq!(stored.pointer("/data/extensions/world"), Some(&json!("")));
+    assert!(stored.pointer("/data/character_book").is_none());
+    service
+        .update_character_card_data(
+            "Alice",
+            UpdateCharacterCardDataDto {
+                card_json: serde_json::to_string(&stored).expect("serialize resolved card"),
+                avatar_path: None,
+                crop: None,
+            },
+        )
+        .await
+        .expect("post-replacement save must accept the unbound copy state");
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn character_service_unbound_embedded_lorebook_is_not_a_conflict() {
+    let root = temp_root("character-lorebook-embedded-without-link");
+    let (service, world_repository) = character_service_with_world_repository(&root).await;
+    let mut card = character_card("Alice", json!({}));
+    card["data"]["character_book"] = character_book("Embedded Lore", "embedded update");
+    fs::write(
+        root.join("default-user/characters/Alice.png"),
+        character_png(&card),
+    )
+    .await
+    .expect("write unbound embedded lorebook card");
+
+    let conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Alice".to_string(),
+        })
+        .await
+        .expect("check unbound embedded conflict");
+    assert!(!conflict.conflict);
+    assert!(!conflict.current_available);
+    assert!(conflict.conflict_token.is_none());
+    assert!(
+        world_repository
+            .get_world_info("Embedded Lore", false)
+            .await
+            .expect("check imported world")
+            .is_none()
+    );
+    let stored = read_stored_card(&root, "Alice").await;
+    assert!(stored.pointer("/data/extensions/world").is_none());
 
     let _ = fs::remove_dir_all(root).await;
 }
@@ -558,11 +852,39 @@ async fn character_service_import_auto_links_embedded_lorebook_without_dropping_
         Some(&json!("embedded lore"))
     );
 
+    let mut named_card = character_card("Named Import", json!({ "world": "Embedded Lore" }));
+    named_card["data"]["character_book"] = character_book("Embedded Lore", "updated embedded lore");
+    let named_import_path = root.join("named-import.png");
+    fs::write(&named_import_path, character_png(&named_card))
+        .await
+        .expect("write named import png");
+
+    let named_import = service
+        .import_character(ImportCharacterDto {
+            file_path: named_import_path.to_string_lossy().to_string(),
+            preserve_file_name: Some("Named.png".to_string()),
+        })
+        .await
+        .expect("import new character with a prescribed file name");
+    assert_eq!(named_import.avatar, "Named.png");
+    let named_stored_card = read_stored_card(&root, "Named").await;
+    assert_eq!(
+        named_stored_card.pointer("/data/extensions/world"),
+        Some(&json!("Embedded Lore (2)"))
+    );
+    assert!(
+        world_repository
+            .get_world_info("Embedded Lore (2)", false)
+            .await
+            .expect("read named import world info")
+            .is_some()
+    );
+
     let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
-async fn character_service_preserved_import_replaces_cached_card_and_lorebook() {
+async fn character_service_replace_preserves_local_lorebook_binding() {
     let root = temp_root("character-preserved-import-lorebook");
     let (service, world_repository) = character_service_with_world_repository(&root).await;
     world_repository
@@ -587,26 +909,24 @@ async fn character_service_preserved_import_replaces_cached_card_and_lorebook() 
         .expect("cache old character");
     assert_eq!(cached_old.first_mes, "old first message");
 
-    let mut replacement_card = character_card(
-        "Imported Replacement",
-        json!({ "world": "New Embedded Lore" }),
-    );
+    let mut replacement_card =
+        character_card("Imported Replacement", json!({ "world": "Incoming Lore" }));
     replacement_card["first_mes"] = json!("new first message");
     replacement_card["data"]["first_mes"] = json!("new first message");
     replacement_card["data"]["character_book"] =
-        character_book("New Embedded Lore", "new embedded lore");
+        character_book("Incoming Lore", "new embedded lore");
     let import_path = root.join("replacement.png");
     fs::write(&import_path, character_png(&replacement_card))
         .await
         .expect("write replacement character card");
 
     let imported = service
-        .import_character(ImportCharacterDto {
+        .replace_character(ReplaceCharacterDto {
             file_path: import_path.to_string_lossy().to_string(),
-            preserve_file_name: Some("Preserved.png".to_string()),
+            name: "Preserved".to_string(),
         })
         .await
-        .expect("import preserved replacement");
+        .expect("replace character");
     assert_eq!(imported.avatar, "Preserved.png");
     assert_eq!(imported.name, "Imported Replacement");
     assert_eq!(imported.first_mes, "new first message");
@@ -622,7 +942,7 @@ async fn character_service_preserved_import_replaces_cached_card_and_lorebook() 
             .extensions
             .as_ref()
             .and_then(|extensions| extensions.get("world")),
-        Some(&json!("New Embedded Lore"))
+        Some(&json!("Old Lore"))
     );
     assert_eq!(
         reloaded
@@ -635,27 +955,102 @@ async fn character_service_preserved_import_replaces_cached_card_and_lorebook() 
     let stored_card = read_stored_card(&root, "Preserved").await;
     assert_eq!(
         stored_card.pointer("/data/extensions/world"),
-        Some(&json!("New Embedded Lore"))
+        Some(&json!("Old Lore"))
     );
     assert_eq!(
         stored_card.pointer("/data/character_book/entries/0/content"),
         Some(&json!("new embedded lore"))
     );
 
-    let imported_world = world_repository
-        .get_world_info("New Embedded Lore", false)
+    let current_world = world_repository
+        .get_world_info("Old Lore", false)
         .await
-        .expect("read imported world info")
-        .expect("imported world info exists");
+        .expect("read current world info")
+        .expect("current world info exists");
+    assert_eq!(
+        current_world.pointer("/entries/1/content"),
+        Some(&json!("old linked lore"))
+    );
     assert!(
-        imported_world
-            .get("entries")
-            .and_then(Value::as_object)
-            .expect("world entries")
-            .values()
-            .any(|entry| entry.get("content") == Some(&json!("new embedded lore")))
+        world_repository
+            .get_world_info("Old Lore (2)", false)
+            .await
+            .expect("check implicit lorebook copy")
+            .is_none()
     );
 
+    let conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Preserved".to_string(),
+        })
+        .await
+        .expect("check deferred lorebook conflict");
+    assert!(conflict.conflict);
+    assert!(conflict.current_available);
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn character_service_replace_does_not_auto_import_embedded_lorebook() {
+    let root = temp_root("character-replace-no-world-side-effect");
+    let service = character_service(&root).await;
+    let old_card = character_card("Preserved", json!({ "world": "Old Lore" }));
+    fs::write(
+        root.join("default-user/characters/Preserved.png"),
+        character_png(&old_card),
+    )
+    .await
+    .expect("write old character card");
+
+    fs::write(root.join("default-user/worlds"), b"not a directory")
+        .await
+        .expect("block world directory creation");
+
+    let mut replacement_card = character_card("Replacement", json!({}));
+    replacement_card["data"]["character_book"] =
+        character_book("Embedded Lore", "new embedded lore");
+    let import_path = root.join("replacement.png");
+    fs::write(&import_path, character_png(&replacement_card))
+        .await
+        .expect("write replacement character card");
+
+    let replaced = service
+        .replace_character(ReplaceCharacterDto {
+            file_path: import_path.to_string_lossy().to_string(),
+            name: "Preserved".to_string(),
+        })
+        .await
+        .expect("replacement must not touch the blocked world directory");
+
+    assert_eq!(replaced.name, "Replacement");
+    let stored = read_stored_card(&root, "Preserved").await;
+    assert_eq!(
+        stored.pointer("/data/extensions/world"),
+        Some(&json!("Old Lore"))
+    );
+    assert_eq!(
+        stored.pointer("/data/character_book/entries/0/content"),
+        Some(&json!("new embedded lore"))
+    );
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn character_service_replace_rejects_non_segment_storage_identity() {
+    let root = temp_root("character-replace-invalid-storage-identity");
+    let service = character_service(&root).await;
+
+    let error = service
+        .replace_character(ReplaceCharacterDto {
+            file_path: root.join("replacement.png").to_string_lossy().to_string(),
+            name: "../outside".to_string(),
+        })
+        .await
+        .expect_err("path-like replacement identity must fail before repository lookup");
+
+    assert!(matches!(error, ApplicationError::ValidationError(_)));
     let _ = fs::remove_dir_all(root).await;
 }
 

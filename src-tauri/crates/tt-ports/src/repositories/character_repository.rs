@@ -50,6 +50,14 @@ pub trait CharacterRepository: Send + Sync {
         preserve_file_name: Option<String>,
     ) -> Result<Character, DomainError>;
 
+    /// Replace an existing character while optionally preserving its local primary lorebook.
+    async fn replace_character(
+        &self,
+        file_path: &Path,
+        name: &str,
+        primary_lorebook: Option<&str>,
+    ) -> Result<Character, DomainError>;
+
     /// Export a character card to a target path without mutating the stored source file.
     async fn export_character(
         &self,

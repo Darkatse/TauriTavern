@@ -139,6 +139,7 @@ pub struct CharacterLorebookConflictDto {
     pub world: String,
     pub embedded_name: Option<String>,
     pub current_available: bool,
+    pub conflict_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -146,17 +147,21 @@ pub struct CharacterLorebookConflictDto {
 pub enum CharacterLorebookConflictResolution {
     Current,
     Embedded,
+    Copy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolveCharacterLorebookConflictDto {
     pub name: String,
     pub resolution: CharacterLorebookConflictResolution,
+    pub conflict_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolveCharacterLorebookConflictResultDto {
     pub world: String,
+    pub affected_world: Option<String>,
+    pub world_written: bool,
 }
 
 /// Raw character card merge DTO used by upstream-compatible HTTP routes.
@@ -206,6 +211,13 @@ pub struct DuplicateCharacterDto {
 pub struct ImportCharacterDto {
     pub file_path: String,
     pub preserve_file_name: Option<String>,
+}
+
+/// Existing character replacement DTO. `name` is the exact storage stem.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplaceCharacterDto {
+    pub file_path: String,
+    pub name: String,
 }
 
 /// Character export DTO
@@ -454,10 +466,38 @@ impl From<ImageCropDto> for ImageCrop {
 
 #[cfg(test)]
 mod tests {
-    use super::{CharacterDto, CreateCharacterDto, merge_character_extensions};
+    use super::{
+        CharacterDto, CharacterLorebookConflictResolution, CreateCharacterDto,
+        ResolveCharacterLorebookConflictDto, merge_character_extensions,
+    };
     use chrono::{SecondsFormat, TimeZone, Utc};
     use serde_json::json;
     use tt_domain::models::character::Character;
+
+    #[test]
+    fn lorebook_conflict_resolution_uses_public_wire_values() {
+        for (wire_value, expected) in [
+            ("current", CharacterLorebookConflictResolution::Current),
+            ("embedded", CharacterLorebookConflictResolution::Embedded),
+            ("copy", CharacterLorebookConflictResolution::Copy),
+        ] {
+            let dto: ResolveCharacterLorebookConflictDto = serde_json::from_value(json!({
+                "name": "Alice",
+                "resolution": wire_value,
+                "conflict_token": "token",
+            }))
+            .expect("deserialize public lorebook conflict resolution");
+
+            assert_eq!(dto.resolution, expected);
+        }
+
+        let legacy: ResolveCharacterLorebookConflictDto = serde_json::from_value(json!({
+            "name": "Alice",
+            "resolution": "current",
+        }))
+        .expect("deserialize legacy resolution without token");
+        assert!(legacy.conflict_token.is_none());
+    }
 
     #[test]
     fn try_from_create_character_dto_maps_structured_extensions() {

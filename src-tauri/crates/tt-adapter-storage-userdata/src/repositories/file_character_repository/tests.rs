@@ -16,6 +16,7 @@ use crate::png_card_metadata::{
 use tt_adapter_storage_core::{
     FileChatRepository, chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
 };
+use tt_domain::errors::DomainError;
 use tt_domain::models::character::{Character, CharacterData};
 use tt_ports::repositories::character_repository::{
     CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterRepository,
@@ -894,7 +895,7 @@ async fn import_png_does_not_eagerly_create_chat_file() {
 }
 
 #[tokio::test]
-async fn import_json_normalizes_preserved_file_name() {
+async fn import_json_uses_exact_preserved_file_name() {
     let (repository, root) = setup_repository().await;
 
     let character = Character::new(
@@ -1062,6 +1063,111 @@ async fn import_preserved_character_replaces_cached_full_card() {
         Some(&json!("new first message"))
     );
 
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn replace_character_preserves_requested_primary_lorebook_in_single_import_write() {
+    let (repository, root) = setup_repository().await;
+    let mut old_character = Character::new(
+        "Preserved".to_string(),
+        "old description".to_string(),
+        "old personality".to_string(),
+        "old first message".to_string(),
+    );
+    old_character.data.extensions.world = "Local Lore".to_string();
+    repository
+        .save(&old_character)
+        .await
+        .expect("save old character");
+
+    let mut replacement = Character::new(
+        "Replacement".to_string(),
+        "new description".to_string(),
+        "new personality".to_string(),
+        "new first message".to_string(),
+    );
+    replacement.data.extensions.world = "Incoming Lore".to_string();
+    let source_png = write_character_data_to_png(
+        &build_distinct_png(),
+        &serde_json::to_string(&replacement.to_v2()).expect("serialize replacement card"),
+    )
+    .expect("embed replacement card in png");
+    let import_path = root.join("replacement.png");
+    fs::write(&import_path, source_png)
+        .await
+        .expect("write replacement png");
+
+    let imported = repository
+        .replace_character(&import_path, "Preserved", Some("Local Lore"))
+        .await
+        .expect("replace character");
+    assert_eq!(imported.avatar, "Preserved.png");
+    assert_eq!(imported.name, "Replacement");
+    assert_eq!(imported.data.extensions.world, "Local Lore");
+
+    let stored_json = repository
+        .read_character_card_json("Preserved")
+        .await
+        .expect("read stored replacement card");
+    let stored_value: Value = serde_json::from_str(&stored_json).expect("parse stored card");
+    assert_eq!(
+        stored_value.pointer("/data/extensions/world"),
+        Some(&json!("Local Lore"))
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn failed_replace_keeps_existing_character_and_thumbnail() {
+    let (repository, root) = setup_repository().await;
+    let character = Character::new(
+        "Preserved".to_string(),
+        "old description".to_string(),
+        "old personality".to_string(),
+        "old first message".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+
+    let thumbnail_path = root.join("thumbnails/avatar/Preserved.png");
+    fs::write(&thumbnail_path, b"existing thumbnail")
+        .await
+        .expect("write thumbnail");
+    let import_path = root.join("invalid.png");
+    fs::write(&import_path, b"not a character card")
+        .await
+        .expect("write invalid card");
+
+    repository
+        .replace_character(&import_path, "Preserved", None)
+        .await
+        .expect_err("invalid replacement must fail");
+
+    assert!(thumbnail_path.exists());
+    let reloaded = repository
+        .find_by_name("Preserved")
+        .await
+        .expect("reload existing character");
+    assert_eq!(reloaded.first_mes, "old first message");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn replace_character_rejects_non_segment_storage_identity() {
+    let (repository, root) = setup_repository().await;
+    let import_path = root.join("replacement.json");
+    fs::write(&import_path, b"{}")
+        .await
+        .expect("write replacement");
+
+    let error = repository
+        .replace_character(&import_path, "../outside", None)
+        .await
+        .expect_err("path-like replacement identity must fail");
+
+    assert!(matches!(error, DomainError::InvalidData(_)));
     let _ = fs::remove_dir_all(&root).await;
 }
 

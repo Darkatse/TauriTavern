@@ -7,22 +7,25 @@ use crate::dto::character_dto::{
     CheckCharacterLorebookConflictDto, CreateCharacterDto, CreateCharacterWithAvatarResultDto,
     CreateWithAvatarDto, DeleteCharacterDto, DuplicateCharacterDto, ExportCharacterContentDto,
     ExportCharacterContentResultDto, ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto,
-    MergeCharacterCardDataDto, RenameCharacterDto, ResolveCharacterLorebookConflictDto,
-    ResolveCharacterLorebookConflictResultDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
-    UpdateCharacterDto, merge_character_extensions,
+    MergeCharacterCardDataDto, RenameCharacterDto, ReplaceCharacterDto,
+    ResolveCharacterLorebookConflictDto, ResolveCharacterLorebookConflictResultDto,
+    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto, merge_character_extensions,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_workspace_lifecycle_service::{
     AgentChatWorkspaceTarget, AgentWorkspaceLifecycleService,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+use tt_contracts::client_asset_paths::validate_path_segment;
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::{merge_json_value, merge_json_value_with_unset};
 use tt_domain::models::character::Character;
-use tt_domain::models::world_info::sanitize_world_info_name;
+use tt_domain::models::filename::MAX_SANITIZED_FILENAME_BYTES;
+use tt_domain::models::world_info::{WORLD_INFO_EXTENSION, sanitize_world_info_name};
 use tt_ports::repositories::character_repository::{CharacterRepository, ImageCrop};
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::world_info_repository::WorldInfoRepository;
@@ -338,18 +341,48 @@ impl CharacterService {
             dto.resolution
         );
 
-        let world = match dto.resolution {
+        let conflict = self
+            .character_lorebook_conflict(&self.repository.find_by_name(&dto.name).await?)
+            .await?;
+        if !conflict.conflict {
+            return Err(ApplicationError::ValidationError(
+                "Character has no lorebook conflict".to_string(),
+            ));
+        }
+        if dto.resolution == CharacterLorebookConflictResolution::Copy
+            && dto.conflict_token.is_none()
+        {
+            return Err(ApplicationError::ValidationError(
+                "Lorebook copy resolution requires a conflict token".to_string(),
+            ));
+        }
+        if let Some(token) = dto.conflict_token.as_deref()
+            && conflict.conflict_token.as_deref() != Some(token)
+        {
+            return Err(ApplicationError::Conflict(
+                "Character lorebook changed while awaiting resolution".to_string(),
+            ));
+        }
+
+        match dto.resolution {
             CharacterLorebookConflictResolution::Current => {
-                self.resolve_lorebook_conflict_with_current_world(&dto.name)
-                    .await?
+                let linked_world = self
+                    .resolve_lorebook_conflict_with_current_world(&dto.name)
+                    .await?;
+                Ok(ResolveCharacterLorebookConflictResultDto {
+                    world: linked_world,
+                    affected_world: None,
+                    world_written: false,
+                })
             }
             CharacterLorebookConflictResolution::Embedded => {
                 self.resolve_lorebook_conflict_with_embedded_book(&dto.name)
-                    .await?
+                    .await
             }
-        };
-
-        Ok(ResolveCharacterLorebookConflictResultDto { world })
+            CharacterLorebookConflictResolution::Copy => {
+                self.resolve_lorebook_conflict_with_copy(&dto.name).await
+            }
+        }
     }
 
     /// Merge raw attributes into a stored character card using upstream-compatible deep merge semantics.
@@ -516,6 +549,28 @@ impl CharacterService {
 
             return Err(error.into());
         }
+
+        Ok(CharacterDto::from(character))
+    }
+
+    /// Replace a stored character while preserving its local primary lorebook binding.
+    pub async fn replace_character(
+        &self,
+        dto: ReplaceCharacterDto,
+    ) -> Result<CharacterDto, ApplicationError> {
+        tracing::debug!("Replacing character {} from: {}", dto.name, dto.file_path);
+        if !validate_path_segment(&dto.name) {
+            return Err(ApplicationError::ValidationError(
+                "Character storage identity is invalid".to_string(),
+            ));
+        }
+        let current = self.repository.find_by_name(&dto.name).await?;
+        let primary_lorebook = (!current.data.extensions.world.is_empty())
+            .then_some(current.data.extensions.world.as_str());
+        let character = self
+            .repository
+            .replace_character(Path::new(&dto.file_path), &dto.name, primary_lorebook)
+            .await?;
 
         Ok(CharacterDto::from(character))
     }
@@ -802,18 +857,21 @@ impl CharacterService {
                 world: world_name,
                 embedded_name,
                 current_available: false,
+                conflict_token: None,
             });
         };
 
         if world_name.is_empty() {
             return Ok(CharacterLorebookConflictDto {
                 conflict: false,
+                conflict_token: None,
                 world: world_name,
                 embedded_name,
                 current_available: false,
             });
         }
 
+        let embedded_canonical = Self::canonical_character_book_for_compare(embedded_book)?;
         let Some(world_info) = self
             .world_info_repository
             .get_world_info(&world_name, false)
@@ -821,21 +879,62 @@ impl CharacterService {
         else {
             return Ok(CharacterLorebookConflictDto {
                 conflict: true,
+                conflict_token: Some(Self::lorebook_conflict_token(
+                    &world_name,
+                    &embedded_canonical,
+                    None,
+                )?),
                 world: world_name,
                 embedded_name,
                 current_available: false,
             });
         };
 
-        let embedded_canonical = Self::canonical_character_book_for_compare(embedded_book)?;
         let current_canonical = Self::canonical_world_info_for_compare(&world_info)?;
+        let conflict = embedded_canonical != current_canonical;
 
         Ok(CharacterLorebookConflictDto {
-            conflict: embedded_canonical != current_canonical,
+            conflict,
+            conflict_token: conflict
+                .then(|| {
+                    Self::lorebook_conflict_token(
+                        &world_name,
+                        &embedded_canonical,
+                        Some(&current_canonical),
+                    )
+                })
+                .transpose()?,
             world: world_name,
             embedded_name,
             current_available: true,
         })
+    }
+
+    fn lorebook_conflict_token(
+        world_name: &str,
+        embedded: &Value,
+        current: Option<&Value>,
+    ) -> Result<String, ApplicationError> {
+        let mut hasher = Sha256::new();
+        hasher.update(world_name.as_bytes());
+        hasher.update([0]);
+        hasher.update(serde_json::to_vec(embedded).map_err(|error| {
+            ApplicationError::InternalError(format!(
+                "Failed to serialize embedded lorebook for conflict check: {}",
+                error
+            ))
+        })?);
+        hasher.update([0]);
+        if let Some(current) = current {
+            hasher.update(serde_json::to_vec(current).map_err(|error| {
+                ApplicationError::InternalError(format!(
+                    "Failed to serialize current lorebook for conflict check: {}",
+                    error
+                ))
+            })?);
+        }
+
+        Ok(format!("{:x}", hasher.finalize()))
     }
 
     async fn resolve_lorebook_conflict_with_current_world(
@@ -874,7 +973,7 @@ impl CharacterService {
     async fn resolve_lorebook_conflict_with_embedded_book(
         &self,
         name: &str,
-    ) -> Result<String, ApplicationError> {
+    ) -> Result<ResolveCharacterLorebookConflictResultDto, ApplicationError> {
         let character = self.repository.find_by_name(name).await?;
         let world_name = character.data.extensions.world.clone();
         if world_name.is_empty() {
@@ -882,7 +981,6 @@ impl CharacterService {
                 "Character has no linked world info".to_string(),
             ));
         }
-
         let Some(embedded_book) = character.data.character_book.as_ref() else {
             return Err(ApplicationError::ValidationError(
                 "Character has no embedded world info".to_string(),
@@ -894,7 +992,81 @@ impl CharacterService {
             .save_world_info(&world_name, &world_info)
             .await?;
 
-        Ok(world_name)
+        Ok(ResolveCharacterLorebookConflictResultDto {
+            affected_world: Some(world_name.clone()),
+            world: world_name,
+            world_written: true,
+        })
+    }
+
+    async fn resolve_lorebook_conflict_with_copy(
+        &self,
+        name: &str,
+    ) -> Result<ResolveCharacterLorebookConflictResultDto, ApplicationError> {
+        let character = self.repository.find_by_name(name).await?;
+        let world_name = character.data.extensions.world.clone();
+        let Some(embedded_book) = character.data.character_book.as_ref() else {
+            return Err(ApplicationError::ValidationError(
+                "Character has no embedded world info".to_string(),
+            ));
+        };
+
+        let world_info = character_book_to_world_info(embedded_book)?;
+        let preferred_name = Self::resolve_embedded_world_name(&character, embedded_book);
+        let (copied_world, should_save) = self
+            .resolve_available_world_copy_name(&preferred_name, &world_info)
+            .await?;
+
+        if should_save {
+            self.world_info_repository
+                .save_world_info(&copied_world, &world_info)
+                .await?;
+        }
+
+        let current_available = !world_name.is_empty()
+            && self
+                .world_info_repository
+                .get_world_info(&world_name, false)
+                .await?
+                .is_some();
+        let linked_world = if current_available {
+            self.resolve_lorebook_conflict_with_current_world(name)
+                .await?;
+            world_name
+        } else {
+            self.clear_unavailable_lorebook_binding(name).await?;
+            String::new()
+        };
+
+        Ok(ResolveCharacterLorebookConflictResultDto {
+            world: linked_world,
+            affected_world: Some(copied_world),
+            world_written: should_save,
+        })
+    }
+
+    async fn clear_unavailable_lorebook_binding(&self, name: &str) -> Result<(), ApplicationError> {
+        let raw_json = self.repository.read_character_card_json(name).await?;
+        let mut card_value = card_contract::parse_character_card_json(&raw_json)?;
+        if let Some(data) = card_value.get_mut("data").and_then(Value::as_object_mut) {
+            data.remove("character_book");
+        }
+        let world = card_value
+            .pointer_mut("/data/extensions/world")
+            .ok_or_else(|| {
+                ApplicationError::ValidationError("Character has no linked world info".to_string())
+            })?;
+        *world = Value::String(String::new());
+        self.write_character_card_value(
+            name,
+            card_value,
+            None,
+            None,
+            CharacterCardValidationMode::ReadableOnly,
+            CharacterCardLorebookMaterializationMode::Skip,
+        )
+        .await?;
+        Ok(())
     }
 
     fn character_book_display_name(character_book: &Value) -> Option<String> {
@@ -1041,36 +1213,6 @@ impl CharacterService {
         preferred_name: &str,
         payload: &Value,
     ) -> Result<(String, bool), DomainError> {
-        fn strip_trailing_index_suffix(name: &str) -> &str {
-            let trimmed = name.trim_end();
-            let Some(close_paren) = trimmed.rfind(')') else {
-                return name;
-            };
-            if close_paren + 1 != trimmed.len() {
-                return name;
-            }
-            let Some(open_paren) = trimmed[..close_paren].rfind('(') else {
-                return name;
-            };
-            if open_paren == 0 {
-                return name;
-            }
-            let prefix = trimmed[..open_paren].trim_end();
-            if prefix.is_empty() {
-                return name;
-            }
-            let digits = trimmed[open_paren + 1..close_paren].trim();
-            if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
-                return name;
-            }
-
-            prefix
-        }
-
-        fn entries_match(a: &Value, b: &Value) -> bool {
-            a.get("entries") == b.get("entries")
-        }
-
         let base_name = sanitize_world_info_name(preferred_name);
         if base_name.is_empty() {
             return Err(DomainError::InvalidData(
@@ -1084,7 +1226,7 @@ impl CharacterService {
             .await?;
 
         if let Some(existing_payload) = existing {
-            if entries_match(&existing_payload, payload) {
+            if existing_payload.get("entries") == payload.get("entries") {
                 return Ok((base_name, false));
             }
 
@@ -1094,20 +1236,111 @@ impl CharacterService {
                 .await?
                 .into_iter()
                 .collect();
-
-            let base_candidate = strip_trailing_index_suffix(&base_name);
-            let mut suffix = 2usize;
-            loop {
-                let candidate =
-                    sanitize_world_info_name(&format!("{} ({})", base_candidate, suffix));
-                if !candidate.is_empty() && !names.contains(&candidate) {
+            let base_candidate = Self::strip_trailing_index_suffix(&base_name);
+            for suffix in 2..100_000 {
+                let candidate = Self::indexed_world_name(base_candidate, suffix)?;
+                if !names.contains(&candidate) {
                     return Ok((candidate, true));
                 }
-                suffix += 1;
             }
+
+            return Err(DomainError::InvalidData(
+                "Unable to allocate an embedded world info name".to_string(),
+            ));
         }
 
         Ok((base_name, true))
+    }
+
+    async fn resolve_available_world_copy_name(
+        &self,
+        preferred_name: &str,
+        payload: &Value,
+    ) -> Result<(String, bool), DomainError> {
+        let base_name = sanitize_world_info_name(preferred_name);
+        if base_name.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Embedded world info name is invalid".to_string(),
+            ));
+        }
+
+        let payload_canonical = Self::canonical_world_info_for_compare(payload)?;
+        self.resolve_available_suffixed_world_name(
+            Self::strip_trailing_index_suffix(&base_name),
+            &payload_canonical,
+        )
+        .await
+    }
+
+    async fn resolve_available_suffixed_world_name(
+        &self,
+        base_name: &str,
+        payload_canonical: &Value,
+    ) -> Result<(String, bool), DomainError> {
+        for suffix in 2..100_000 {
+            let candidate = Self::indexed_world_name(base_name, suffix)?;
+            match self
+                .world_info_repository
+                .get_world_info(&candidate, false)
+                .await?
+            {
+                Some(candidate_payload)
+                    if Self::canonical_world_info_for_compare(&candidate_payload)?
+                        == *payload_canonical =>
+                {
+                    return Ok((candidate, false));
+                }
+                Some(_) => continue,
+                None => return Ok((candidate, true)),
+            }
+        }
+
+        Err(DomainError::InvalidData(
+            "Unable to allocate a world info copy name".to_string(),
+        ))
+    }
+
+    fn strip_trailing_index_suffix(name: &str) -> &str {
+        let trimmed = name.trim_end();
+        let Some(close_paren) = trimmed.rfind(')') else {
+            return name;
+        };
+        let Some(open_paren) = trimmed[..close_paren].rfind('(') else {
+            return name;
+        };
+        let prefix = trimmed[..open_paren].trim_end();
+        let digits = trimmed[open_paren + 1..close_paren].trim();
+        if close_paren + 1 != trimmed.len()
+            || prefix.is_empty()
+            || digits.is_empty()
+            || !digits.chars().all(|character| character.is_ascii_digit())
+        {
+            return name;
+        }
+
+        prefix
+    }
+
+    fn indexed_world_name(base_name: &str, index: usize) -> Result<String, DomainError> {
+        let suffix = format!(" ({index})");
+        let max_base_bytes = MAX_SANITIZED_FILENAME_BYTES
+            .checked_sub(WORLD_INFO_EXTENSION.len() + 1 + suffix.len())
+            .ok_or_else(|| {
+                DomainError::InvalidData("World info name suffix is too long".to_string())
+            })?;
+        let mut end = base_name.len().min(max_base_bytes);
+        while !base_name.is_char_boundary(end) {
+            end -= 1;
+        }
+
+        let candidate = sanitize_world_info_name(&format!("{}{suffix}", &base_name[..end]));
+        if candidate.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Unable to allocate a world info copy name".to_string(),
+            ));
+        }
+
+        Ok(candidate)
     }
 
     async fn build_export_card_value(&self, name: &str) -> Result<Value, DomainError> {

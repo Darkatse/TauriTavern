@@ -30,8 +30,8 @@ use tt_application::dto::character_dto::{
     BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataFilterDto,
     CharacterLorebookConflictResolution, CheckCharacterLorebookConflictDto, CreateCharacterDto,
     ExportCharacterContentDto, ExportCharacterDto, ImportCharacterDto, MergeCharacterCardDataDto,
-    ResolveCharacterLorebookConflictDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
-    UpdateCharacterDto,
+    ReplaceCharacterDto, ResolveCharacterLorebookConflictDto, UpdateAvatarDto,
+    UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
 use tt_application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use tt_application::errors::ApplicationError;

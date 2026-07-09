@@ -7,6 +7,7 @@ use tokio::fs;
 
 use crate::png_card_metadata::{read_character_data_from_png, write_character_data_to_png};
 use tt_adapter_storage_core::file_system::{replace_file_with_fallback, unique_temp_path};
+use tt_contracts::client_asset_paths::validate_path_segment;
 use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
 use tt_domain::models::chat::{
@@ -20,6 +21,17 @@ use super::FileCharacterRepository;
 struct ImportedCharacterCard {
     character: Character,
     card_value: Value,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum CharacterImportMode<'a> {
+    New {
+        preserve_file_name: Option<&'a str>,
+    },
+    Replace {
+        file_stem: &'a str,
+        primary_lorebook: Option<&'a str>,
+    },
 }
 
 impl FileCharacterRepository {
@@ -361,26 +373,18 @@ impl FileCharacterRepository {
     }
 
     fn normalize_preserved_file_stem(raw_name: &str) -> Result<String, DomainError> {
-        let trimmed = raw_name.trim();
-        if trimmed.is_empty() {
+        let Some(stem) = raw_name.strip_suffix(".png") else {
             return Err(DomainError::InvalidData(
-                "Preserved file name is empty".to_string(),
+                "Preserved file name is invalid".to_string(),
             ));
-        }
-
-        let stem = Path::new(trimmed)
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or(trimmed);
-        let normalized = sanitize_filename(stem);
-
-        if normalized.is_empty() {
+        };
+        if stem.is_empty() || !validate_path_segment(raw_name) {
             return Err(DomainError::InvalidData(
                 "Preserved file name is invalid".to_string(),
             ));
         }
 
-        Ok(normalized)
+        Ok(stem.to_string())
     }
 
     fn resolve_import_file_stem(
@@ -390,10 +394,7 @@ impl FileCharacterRepository {
         preserve_file_name: Option<&str>,
     ) -> Result<String, DomainError> {
         if let Some(name) = preserve_file_name {
-            let name = name.trim();
-            if !name.is_empty() {
-                return Self::normalize_preserved_file_stem(name);
-            }
+            return Self::normalize_preserved_file_stem(name);
         }
 
         let mut base = sanitize_filename(&character.name);
@@ -456,6 +457,31 @@ impl FileCharacterRepository {
         character.data.extensions.fav = false;
     }
 
+    fn prepare_imported_character(
+        &self,
+        character: &mut Character,
+        source_path: &Path,
+        mode: CharacterImportMode<'_>,
+    ) -> Result<String, DomainError> {
+        let (file_stem, primary_lorebook) = match mode {
+            CharacterImportMode::New { preserve_file_name } => (
+                self.resolve_import_file_stem(character, source_path, preserve_file_name)?,
+                None,
+            ),
+            CharacterImportMode::Replace {
+                file_stem,
+                primary_lorebook,
+            } => (file_stem.to_string(), primary_lorebook),
+        };
+
+        Self::prepare_imported_character_for_storage(character, &file_stem);
+        if let Some(primary_lorebook) = primary_lorebook {
+            character.data.extensions.world = primary_lorebook.to_string();
+        }
+
+        Ok(file_stem)
+    }
+
     async fn persist_character_card_json(
         &self,
         file_stem: &str,
@@ -479,21 +505,18 @@ impl FileCharacterRepository {
         Ok(target_path)
     }
 
-    pub(crate) async fn import_from_png_file(
+    async fn import_from_png_file(
         &self,
         source_path: &Path,
         file_data: &[u8],
-        preserve_file_name: Option<&str>,
+        mode: CharacterImportMode<'_>,
     ) -> Result<Character, DomainError> {
         let card_json = read_character_data_from_png(file_data)?;
         let ImportedCharacterCard {
             mut character,
             mut card_value,
         } = self.parse_imported_character_json(&card_json)?;
-        let file_stem =
-            self.resolve_import_file_stem(&character, source_path, preserve_file_name)?;
-
-        Self::prepare_imported_character_for_storage(&mut character, &file_stem);
+        let file_stem = self.prepare_imported_character(&mut character, source_path, mode)?;
         Self::merge_existing_character_projection_into_card_value(&mut card_value, &character)?;
         let stored_card_json = Self::serialize_card_value(&card_value, "imported character card")?;
 
@@ -504,11 +527,11 @@ impl FileCharacterRepository {
         self.read_character_from_file(&target_path).await
     }
 
-    pub(crate) async fn import_from_json_file(
+    async fn import_from_json_file(
         &self,
         source_path: &Path,
         file_data: Vec<u8>,
-        preserve_file_name: Option<&str>,
+        mode: CharacterImportMode<'_>,
     ) -> Result<Character, DomainError> {
         let card_json = String::from_utf8(file_data).map_err(|e| {
             DomainError::InvalidData(format!("Failed to decode JSON character file: {}", e))
@@ -517,10 +540,7 @@ impl FileCharacterRepository {
             mut character,
             mut card_value,
         } = self.parse_imported_character_json(&card_json)?;
-        let file_stem =
-            self.resolve_import_file_stem(&character, source_path, preserve_file_name)?;
-
-        Self::prepare_imported_character_for_storage(&mut character, &file_stem);
+        let file_stem = self.prepare_imported_character(&mut character, source_path, mode)?;
         Self::merge_existing_character_projection_into_card_value(&mut card_value, &character)?;
         let stored_card_json = Self::serialize_card_value(&card_value, "imported character card")?;
 
@@ -531,11 +551,60 @@ impl FileCharacterRepository {
 
         self.read_character_from_file(&target_path).await
     }
+
+    pub(super) async fn import_character_file(
+        &self,
+        file_path: &Path,
+        mode: CharacterImportMode<'_>,
+    ) -> Result<Character, DomainError> {
+        let file_data = fs::read(file_path).await.map_err(|error| {
+            tracing::error!("Failed to read character import file: {}", error);
+            DomainError::InternalError(format!("Failed to read character import file: {}", error))
+        })?;
+
+        match file_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "png" => self.import_from_png_file(file_path, &file_data, mode).await,
+            "json" => self.import_from_json_file(file_path, file_data, mode).await,
+            extension => Err(DomainError::InvalidData(format!(
+                "Unsupported file format: {}",
+                extension
+            ))),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::FileCharacterRepository;
+
+    #[test]
+    fn preserved_avatar_filename_is_an_exact_identity() {
+        assert_eq!(
+            FileCharacterRepository::normalize_preserved_file_stem(" Alice#1.png")
+                .expect("valid exact avatar filename"),
+            " Alice#1"
+        );
+        assert_eq!(
+            FileCharacterRepository::normalize_preserved_file_stem("Legacy\u{0080}.png")
+                .expect("legacy C1 filename"),
+            "Legacy\u{0080}"
+        );
+        for invalid in [
+            "Alice.PNG",
+            "Alice.png ",
+            "folder/Alice.png",
+            "Alice.png?cache=1",
+            "Bad\u{007F}.png",
+        ] {
+            assert!(FileCharacterRepository::normalize_preserved_file_stem(invalid).is_err());
+        }
+    }
 
     #[test]
     fn normalize_imported_character_chat_uses_shared_chat_file_contract() {

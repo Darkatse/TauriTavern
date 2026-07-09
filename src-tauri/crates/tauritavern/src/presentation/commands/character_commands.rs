@@ -11,9 +11,9 @@ use tt_application::dto::character_dto::{
     CreateCharacterDto, CreateCharacterWithAvatarResultDto, CreateWithAvatarDto,
     DeleteCharacterDto, DuplicateCharacterDto, ExportCharacterContentDto,
     ExportCharacterContentResultDto, ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto,
-    MergeCharacterCardDataDto, RenameCharacterDto, ResolveCharacterLorebookConflictDto,
-    ResolveCharacterLorebookConflictResultDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
-    UpdateCharacterDto,
+    MergeCharacterCardDataDto, RenameCharacterDto, ReplaceCharacterDto,
+    ResolveCharacterLorebookConflictDto, ResolveCharacterLorebookConflictResultDto,
+    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
 use tt_domain::models::skill::{SkillScope, SkillScopeRetargetRequest};
 
@@ -282,6 +282,24 @@ pub async fn import_character(
         .import_character(dto)
         .await
         .map_err(map_command_error("Failed to import character"))
+}
+
+#[tauri::command]
+pub async fn replace_character(
+    dto: ReplaceCharacterDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<CharacterDto, CommandError> {
+    log_command(format!(
+        "replace_character {} from {}",
+        dto.name, dto.file_path
+    ));
+
+    app_state
+        .services
+        .character_service
+        .replace_character(dto)
+        .await
+        .map_err(map_command_error("Failed to replace character"))
 }
 
 #[tauri::command]

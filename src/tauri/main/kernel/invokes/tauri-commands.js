@@ -141,6 +141,7 @@ export {};
  *   | 'read_thumbnail_asset'
  *   | 'read_user_avatar_asset'
  *   | 'read_user_file_asset'
+ *   | 'replace_character'
  *   | 'request_notification_permission'
  *   | 'check_character_lorebook_conflict'
  *   | 'rename_background'

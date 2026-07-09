@@ -11,6 +11,7 @@ use crate::png_card_metadata::{
     process_avatar_image, read_character_data_from_png, write_character_data_to_png,
 };
 use tt_adapter_storage_core::file_system::{replace_file_with_fallback, unique_temp_path};
+use tt_contracts::client_asset_paths::validate_path_segment;
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::merge_json_value;
 use tt_domain::models::{character::Character, chat::parse_message_timestamp_value};
@@ -20,7 +21,7 @@ use tt_ports::repositories::character_repository::{
 };
 use tt_ports::repositories::chat_repository::{ChatRepository, ChatSearchResult};
 
-use super::FileCharacterRepository;
+use super::{FileCharacterRepository, importer::CharacterImportMode};
 
 const CHARACTER_CHAT_TAIL_SCAN_BUFFER_BYTES: usize = 64 * 1024;
 
@@ -789,37 +790,53 @@ impl CharacterRepository for FileCharacterRepository {
         preserve_file_name: Option<String>,
     ) -> Result<Character, DomainError> {
         self.ensure_directory_exists().await?;
-
-        let file_data = fs::read(file_path).await.map_err(|e| {
-            tracing::error!("Failed to read file: {}", e);
-            DomainError::InternalError(format!("Failed to read file: {}", e))
-        })?;
-
-        let extension = file_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-
-        let character = match extension.as_str() {
-            "png" => {
-                self.import_from_png_file(file_path, &file_data, preserve_file_name.as_deref())
-                    .await
-            }
-            "json" => {
-                self.import_from_json_file(file_path, file_data, preserve_file_name.as_deref())
-                    .await
-            }
-            _ => Err(DomainError::InvalidData(format!(
-                "Unsupported file format: {}",
-                extension
-            ))),
-        }?;
+        let character = self
+            .import_character_file(
+                file_path,
+                CharacterImportMode::New {
+                    preserve_file_name: preserve_file_name.as_deref(),
+                },
+            )
+            .await?;
 
         let file_name = character.get_file_name();
         self.publish_character_write(file_name.clone(), character.clone())
             .await;
         self.invalidate_avatar_thumbnail(&file_name).await?;
+        Ok(character)
+    }
+
+    async fn replace_character(
+        &self,
+        file_path: &Path,
+        name: &str,
+        primary_lorebook: Option<&str>,
+    ) -> Result<Character, DomainError> {
+        self.ensure_directory_exists().await?;
+        if !validate_path_segment(name) {
+            return Err(DomainError::InvalidData(
+                "Character storage identity is invalid".to_string(),
+            ));
+        }
+        if !self.get_character_path(name).exists() {
+            return Err(DomainError::NotFound(format!(
+                "Character not found: {}",
+                name
+            )));
+        }
+
+        let character = self
+            .import_character_file(
+                file_path,
+                CharacterImportMode::Replace {
+                    file_stem: name,
+                    primary_lorebook,
+                },
+            )
+            .await?;
+        self.invalidate_avatar_thumbnail(name).await?;
+        self.publish_character_write(name.to_string(), character.clone())
+            .await;
         Ok(character)
     }
 
