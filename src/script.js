@@ -8654,7 +8654,7 @@ async function read_avatar_load(input) {
 
         // Bust cache for the avatar thumbnail and character image
         const thumbnailUrl = getThumbnailUrl('avatar', avatarKey);
-        await fetch(getThumbnailUrl('avatar', avatarKey, true), { method: 'GET', cache: 'reload' });
+        await fetch(thumbnailUrl, { method: 'GET', cache: 'reload' });
         await fetch(`/characters/${avatarKey}`, { method: 'GET', cache: 'reload' });
 
         // Refresh all visible avatar images that use this thumbnail URL
@@ -11958,7 +11958,7 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
 
             // Refresh existing thumbnail
             if (exists && this_chid !== undefined) {
-                await fetch(getThumbnailUrl('avatar', avatarFileName, true), { cache: 'reload' });
+                await fetch(getThumbnailUrl('avatar', avatarFileName), { cache: 'reload' });
             }
 
             $('#character_search_bar').val('').trigger('input');
