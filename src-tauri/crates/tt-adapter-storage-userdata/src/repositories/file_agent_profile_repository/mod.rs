@@ -12,6 +12,7 @@ use tt_adapter_storage_core::file_system::{
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::{
     AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentProfileDefinition, AgentProfileId,
+    AgentProfileSummary,
 };
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::{
@@ -110,7 +111,7 @@ impl FileAgentProfileRepository {
             }
         };
         match profile_from_value(value.clone(), &file_id, path) {
-            Ok(profile) => Ok(AgentProfileStorageFileScan::Profile(profile)),
+            Ok(profile) => Ok(AgentProfileStorageFileScan::Profile(profile.summary())),
             Err(original_error) => {
                 let mut normalized = value;
                 let normalized_result =
@@ -213,9 +214,7 @@ impl AgentProfileStorageHealthRepository for FileAgentProfileRepository {
         };
         for path in files {
             match self.scan_profile_file(&path).await? {
-                AgentProfileStorageFileScan::Profile(profile) => {
-                    scan.profiles.push(profile.summary())
-                }
+                AgentProfileStorageFileScan::Profile(profile) => scan.profiles.push(profile),
                 AgentProfileStorageFileScan::Issue(issue) => scan.issues.push(issue),
             }
         }
@@ -300,7 +299,7 @@ impl FileAgentProfileRepository {
 }
 
 enum AgentProfileStorageFileScan {
-    Profile(AgentProfileDefinition),
+    Profile(AgentProfileSummary),
     Issue(AgentProfileStorageIssue),
 }
 
