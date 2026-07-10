@@ -30,7 +30,6 @@ impl AgentRuntimeService {
         call: &AgentToolCall,
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
-        commit_count: usize,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut super::AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
@@ -165,7 +164,7 @@ impl AgentRuntimeService {
                 invocation_id,
                 call,
                 profile,
-                commit_count,
+                commit_ledger.len(),
                 cancel,
             )
             .await
@@ -205,7 +204,7 @@ impl AgentRuntimeService {
                                 outcome.elapsed_ms,
                             )
                         } else if profile.run.presentation == AgentRunPresentation::Foreground
-                            && commit_count == 0
+                            && commit_ledger.is_empty()
                         {
                             recoverable_tool_error(
                                 call,

@@ -43,7 +43,6 @@ impl AgentRuntimeService {
     ) -> Result<Option<AgentLoopExit>, ApplicationError> {
         let mut tool_session = AgentToolSession::new(effective_skills.to_vec());
         let mut seen_child_result_task_ids = HashSet::new();
-        let mut commit_count = commit_ledger.len();
         // Counts soft drift recovery nudges for model-facing text and
         // journal events. It is intentionally not a separate budget: the
         // existing maxRounds loop remains the only retry boundary.
@@ -202,7 +201,6 @@ impl AgentRuntimeService {
                         &call,
                         &mut tool_session,
                         profile,
-                        commit_count,
                         commit_ledger,
                         cancel,
                     )
@@ -261,14 +259,13 @@ impl AgentRuntimeService {
                         mode,
                         message_id,
                     } => {
-                        commit_count += 1;
                         self.event(
                             run_id,
                             AgentRunEventLevel::Info,
                             "chat_commit_recorded",
                             json!({
                                 "invocationId": invocation_id,
-                                "commitCount": commit_count,
+                                "commitCount": commit_ledger.len(),
                                 "path": path.as_str(),
                                 "mode": mode,
                                 "messageId": message_id.as_deref(),
@@ -328,7 +325,7 @@ impl AgentRuntimeService {
                     AgentRunEventLevel::Info,
                     "agent_loop_finished",
                     json!({
-                        "commitCount": commit_count,
+                        "commitCount": commit_ledger.len(),
                         "round": round,
                         "invocationId": invocation_id,
                     }),
@@ -353,7 +350,7 @@ impl AgentRuntimeService {
                         invocation_id,
                         &mut seen_child_result_task_ids,
                         profile,
-                        commit_count,
+                        commit_ledger.len(),
                     )
                     .await?
             {

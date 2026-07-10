@@ -397,6 +397,16 @@ async fn agent_runtime_foreground_commit_guard_and_host_resolution_use_real_repo
     assert!(events.iter().any(|event| {
         event.event_type == "chat_commit_completed" && event.payload["messageId"] == "message_1"
     }));
+    let commit_recorded = events
+        .iter()
+        .find(|event| event.event_type == "chat_commit_recorded")
+        .expect("chat commit recorded event");
+    assert_eq!(commit_recorded.payload["commitCount"], 1);
+    let loop_finished = events
+        .iter()
+        .find(|event| event.event_type == "agent_loop_finished")
+        .expect("agent loop finished event");
+    assert_eq!(loop_finished.payload["commitCount"], 1);
     let metadata_requested = events
         .iter()
         .find(|event| event.event_type == "persistent_state_metadata_update_requested")
