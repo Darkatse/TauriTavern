@@ -95,14 +95,14 @@ pub(super) fn serve_user_data_asset(
             }
         };
 
-        if webview_reapplies_background_video_range && range.start != 0 {
+        if webview_reapplies_background_video_range && range.start() != 0 {
             return match opened.read(None) {
                 Ok(bytes) => {
                     let response = response::partial(
                         &metadata,
                         bytes,
-                        format!("bytes {}-{}/{}", range.start, range.end, total_size),
-                        range.len(),
+                        format!("bytes {}-{}/{}", range.start(), range.end(), total_size),
+                        range.byte_len(),
                     );
                     tracing::debug!(
                         "User data asset Android video range workaround hit: {}",
@@ -114,7 +114,7 @@ pub(super) fn serve_user_data_asset(
             };
         }
 
-        if usize::try_from(range.len()).is_err() {
+        if usize::try_from(range.byte_len()).is_err() {
             return response::with_accept_ranges(response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Range is too large to serve",
@@ -126,8 +126,8 @@ pub(super) fn serve_user_data_asset(
                 let response = response::partial(
                     &metadata,
                     bytes,
-                    format!("bytes {}-{}/{}", range.start, range.end, total_size),
-                    range.len(),
+                    format!("bytes {}-{}/{}", range.start(), range.end(), total_size),
+                    range.byte_len(),
                 );
 
                 tracing::debug!(

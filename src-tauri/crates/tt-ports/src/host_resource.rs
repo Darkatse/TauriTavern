@@ -97,7 +97,7 @@ impl OpenedHostResource {
 
     pub fn read(self, range: Option<ByteRange>) -> Result<Vec<u8>, HostResourceStoreError> {
         let expected_len = range
-            .map(|range| range.len())
+            .map(|range| range.byte_len())
             .unwrap_or(self.metadata.content_length);
         let bytes = self.body.read(range)?;
         if bytes.len() as u64 != expected_len {

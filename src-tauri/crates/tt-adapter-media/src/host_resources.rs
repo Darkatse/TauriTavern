@@ -110,10 +110,10 @@ impl HostResourceBody for FileHostResourceBody {
             return Ok(bytes);
         };
 
-        let range_len = usize::try_from(range.len())
+        let range_len = usize::try_from(range.byte_len())
             .map_err(|_| HostResourceStoreError::internal("Range is too large to serve"))?;
         self.file
-            .seek(std::io::SeekFrom::Start(range.start))
+            .seek(std::io::SeekFrom::Start(range.start()))
             .map_err(|error| io_error(&self.path, error, "seek"))?;
 
         let mut bytes = vec![0u8; range_len];
@@ -412,6 +412,7 @@ mod tests {
 
     use image::codecs::gif::GifEncoder;
     use image::{Frame, ImageBuffer, Rgb, Rgba};
+    use tt_contracts::range::parse_single_range_header;
 
     use super::*;
 
@@ -517,13 +518,14 @@ mod tests {
         fs::create_dir_all(file.parent().expect("background parent")).expect("background dir");
         fs::write(&file, b"abcd").expect("background file");
 
+        let range = parse_single_range_header("bytes=1-2", 4).expect("parse range");
         let bytes = store
             .open(HostResourceSourceRequest::UserData {
                 kind: UserDataAssetKind::Background,
                 relative_path: Path::new("a.bin"),
             })
             .expect("open range")
-            .read(Some(ByteRange { start: 1, end: 2 }))
+            .read(Some(range))
             .expect("read range");
 
         assert_eq!(bytes, b"bc");

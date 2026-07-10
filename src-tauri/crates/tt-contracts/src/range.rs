@@ -1,11 +1,19 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByteRange {
-    pub start: u64,
-    pub end: u64,
+    start: u64,
+    end: u64,
 }
 
 impl ByteRange {
-    pub fn len(&self) -> u64 {
+    pub const fn start(&self) -> u64 {
+        self.start
+    }
+
+    pub const fn end(&self) -> u64 {
+        self.end
+    }
+
+    pub const fn byte_len(&self) -> u64 {
         self.end - self.start + 1
     }
 }
@@ -76,31 +84,31 @@ mod tests {
     #[test]
     fn parses_open_ended_range() {
         let range = parse_single_range_header("bytes=1-", 4).expect("parse");
-        assert_eq!(range.start, 1);
-        assert_eq!(range.end, 3);
-        assert_eq!(range.len(), 3);
+        assert_eq!(range.start(), 1);
+        assert_eq!(range.end(), 3);
+        assert_eq!(range.byte_len(), 3);
     }
 
     #[test]
     fn parses_explicit_range() {
         let range = parse_single_range_header("bytes=1-2", 4).expect("parse");
-        assert_eq!(range.start, 1);
-        assert_eq!(range.end, 2);
-        assert_eq!(range.len(), 2);
+        assert_eq!(range.start(), 1);
+        assert_eq!(range.end(), 2);
+        assert_eq!(range.byte_len(), 2);
     }
 
     #[test]
     fn clamps_end_to_total_size() {
         let range = parse_single_range_header("bytes=1-999", 4).expect("parse");
-        assert_eq!(range.start, 1);
-        assert_eq!(range.end, 3);
+        assert_eq!(range.start(), 1);
+        assert_eq!(range.end(), 3);
     }
 
     #[test]
     fn parses_suffix_range() {
         let range = parse_single_range_header("bytes=-2", 4).expect("parse");
-        assert_eq!(range.start, 2);
-        assert_eq!(range.end, 3);
+        assert_eq!(range.start(), 2);
+        assert_eq!(range.end(), 3);
     }
 
     #[test]
@@ -112,6 +120,12 @@ mod tests {
     #[test]
     fn rejects_unsatisfiable_range_start_beyond_length() {
         let result = parse_single_range_header("bytes=4-", 4);
+        assert_eq!(result, Err(RangeHeaderError::Unsatisfiable));
+    }
+
+    #[test]
+    fn rejects_descending_range() {
+        let result = parse_single_range_header("bytes=2-1", 4);
         assert_eq!(result, Err(RangeHeaderError::Unsatisfiable));
     }
 

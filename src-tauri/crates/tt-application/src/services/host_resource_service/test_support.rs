@@ -18,7 +18,7 @@ impl HostResourceBody for BytesBody {
     fn read(self: Box<Self>, range: Option<ByteRange>) -> Result<Vec<u8>, HostResourceStoreError> {
         self.reads.fetch_add(1, Ordering::Relaxed);
         Ok(match range {
-            Some(range) => self.bytes[range.start as usize..=range.end as usize].to_vec(),
+            Some(range) => self.bytes[range.start() as usize..=range.end() as usize].to_vec(),
             None => self.bytes,
         })
     }
