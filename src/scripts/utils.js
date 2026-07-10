@@ -1,8 +1,9 @@
 import {
     moment,
     DOMPurify,
+    Readability,
+    isProbablyReaderable,
     lodash,
-    getReadability,
 } from '../lib.js';
 
 import { getContext } from './extensions.js';
@@ -2020,8 +2021,6 @@ function postProcessText(text, collapse = true) {
  * @returns {Promise<string>} A promise that resolves to the parsed text.
  */
 export async function getReadableText(document, textSelector = 'body') {
-    const { Readability, isProbablyReaderable } = await getReadability();
-
     if (isProbablyReaderable(document)) {
         const parser = new Readability(document);
         const article = parser.parse();

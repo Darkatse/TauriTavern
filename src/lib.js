@@ -16,6 +16,8 @@ import libCoreBundle, {
     css,
     Bowser,
     DiffMatchPatch,
+    Readability,
+    isProbablyReaderable,
     SVGInject,
     showdown,
     moment,
@@ -23,6 +25,8 @@ import libCoreBundle, {
     Popper,
     droll,
     morphdom,
+    chalk,
+    yaml,
     chevrotain,
     gzipSync,
     gzip,
@@ -55,11 +59,6 @@ export async function getHljs() {
     }
 
     return hljs;
-}
-
-export async function getReadability() {
-    const { Readability, isProbablyReaderable } = await loadOptionalBundle();
-    return { Readability, isProbablyReaderable };
 }
 
 /**
@@ -176,6 +175,8 @@ export {
     css,
     Bowser,
     DiffMatchPatch,
+    Readability,
+    isProbablyReaderable,
     SVGInject,
     showdown,
     moment,
@@ -183,6 +184,8 @@ export {
     Popper,
     droll,
     morphdom,
+    chalk,
+    yaml,
     chevrotain,
     gzipSync,
     gzip,

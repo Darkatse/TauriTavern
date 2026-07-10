@@ -40,7 +40,7 @@ See `docs/BackendStructure.md` for the authoritative boundaries.
 Frontend startup flow:
 
 1. `src/init.js` loads `lib.js` -> `tauri-main.js` -> `script.js`
-2. `src/lib.js` statically imports `src/dist/lib.core.bundle.js` and re-exports a stable ESM library surface (heavy/optional libs are loaded on demand via `getHljs()/getReadability()` from `src/dist/lib.optional.bundle.js`)
+2. `src/lib.js` statically imports `src/dist/lib.core.bundle.js` and re-exports a stable ESM library surface (`highlight.js` is loaded on demand via `getHljs()`)
 3. `src/tauri-main.js` delegates to `bootstrapTauriMain()`
 4. `src/tauri/main/bootstrap.js` creates context/router/interceptors, installs the `window.__TAURITAVERN__` platform ABI, and injects a trace header for host-handled routes
 

@@ -1,8 +1,7 @@
 // Core library bundle for TauriTavern.
 //
-// Keep this file limited to libraries required during Shell/Core startup stages.
-// Heavy / feature-specific libraries should live in lib-bundle-optional.js and be
-// loaded via `lib.js` on demand.
+// Keep the synchronous /lib.js ABI here. Libraries with an intentionally async
+// API should live in lib-bundle-optional.js and be loaded via `lib.js` on demand.
 
 import lodash from 'lodash';
 import Fuse from 'fuse.js';
@@ -12,6 +11,7 @@ import Handlebars from 'handlebars';
 import css from '@adobe/css-tools';
 import Bowser from 'bowser';
 import DiffMatchPatch from 'diff-match-patch';
+import { isProbablyReaderable, Readability } from '@mozilla/readability';
 import SVGInject from '@iconfu/svg-inject';
 import showdown from 'showdown';
 import moment from 'moment';
@@ -19,6 +19,8 @@ import seedrandom from 'seedrandom';
 import * as Popper from '@popperjs/core';
 import droll from 'droll';
 import morphdom from 'morphdom';
+import chalk from 'chalk';
+import yaml from 'yaml';
 import * as chevrotain from 'chevrotain';
 import { gzipSync, gzip } from 'fflate';
 import jsSha256Module from 'js-sha256';
@@ -34,6 +36,8 @@ const libBundle = {
     css,
     Bowser,
     DiffMatchPatch,
+    Readability,
+    isProbablyReaderable,
     SVGInject,
     showdown,
     moment,
@@ -41,6 +45,8 @@ const libBundle = {
     Popper,
     droll,
     morphdom,
+    chalk,
+    yaml,
     chevrotain,
     gzipSync,
     gzip,
@@ -57,6 +63,8 @@ export {
     css,
     Bowser,
     DiffMatchPatch,
+    Readability,
+    isProbablyReaderable,
     SVGInject,
     showdown,
     moment,
@@ -64,6 +72,8 @@ export {
     Popper,
     droll,
     morphdom,
+    chalk,
+    yaml,
     chevrotain,
     gzipSync,
     gzip,

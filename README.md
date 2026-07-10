@@ -42,7 +42,7 @@ Rust 后端是 Cargo workspace，不再是单体 host crate。Clean Architecture
 前端启动流程：
 
 1. `src/init.js` 依次加载 `lib.js` → `tauri-main.js` → `script.js`
-2. `src/lib.js` 静态导入 `src/dist/lib.core.bundle.js` 并导出稳定的 ESM 库接口（重/可选库通过 `getHljs()/getReadability()` 动态加载 `src/dist/lib.optional.bundle.js`）
+2. `src/lib.js` 静态导入 `src/dist/lib.core.bundle.js` 并导出稳定的 ESM 库接口（`highlight.js` 通过 `getHljs()` 按需加载）
 3. `src/tauri-main.js` 委托给 `bootstrapTauriMain()`
 4. `src/tauri/main/bootstrap.js` 创建上下文/路由/拦截器，安装 `window.__TAURITAVERN__` 平台 ABI，并为宿主接管路由注入追踪 header
 

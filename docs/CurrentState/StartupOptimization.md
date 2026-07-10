@@ -16,7 +16,7 @@
 - **Host Ready 显式等待**：在首次 `/api/*` 访问前等待 `__TAURITAVERN_MAIN_READY__`，确保拦截器/路由已安装，且 Tauri 后端已进入可接收 `AppState` 命令的 readiness 状态。
 - **bootstrap 快照**：用一次 `/api/bootstrap` 拉齐启动关键数据，并在前端以“prime snapshot”方式避免重复请求（settings/characters/groups/avatars/secret_state）。
 - **扩展启动分层**：扩展发现可提前后台启动；系统扩展仍在 Full 阶段完成，local/global third-party 扩展延后到 `APP_READY` 后串行激活，从启动关键路径移出。
-- **lib.bundle 拆分为 core/optional**：重库（如 `highlight.js` / Readability）迁到可选 bundle，通过 `lib.js` 的 async helper 按需加载，减少首屏解析/编译压力。
+- **lib.bundle 拆分为 core/optional**：`highlight.js` 通过 `lib.js` 的 async helper 按需加载；上游同步 `/lib.js` ABI 保留在 core bundle。
 - **重任务后移**：`initTokenizers()`、`initScrapers()` 在 `APP_READY` 后、两次 paint 之后后台启动。
 
 ---
@@ -159,7 +159,6 @@
   - 静态 import core bundle，并 re-export 上游常用库
   - 可选库按需加载：
     - `getHljs()`：动态 import optional bundle；并注册 `stscript` 语言（`src/scripts/slash-commands/stscript-hljs-language.js`）
-    - `getReadability()`：动态 import optional bundle
   - `initLibraryShims()`：将少量库挂到 `window`（用于第三方扩展兼容）；其中 `window._ = lodash` 是正式 ABI，需先于 third-party 扩展模块求值完成
 
 ### 6.3 代码高亮（延迟执行）

@@ -61,6 +61,7 @@
     "@mozilla/readability": "^0.6.0",
     "@popperjs/core": "^2.11.8",
     "bowser": "^2.12.1",
+    "chalk": "^5.6.0",
     "chevrotain": "^11.2.0",
     "diff-match-patch": "^1.0.5",
     "dompurify": "^3.4.2",
@@ -76,7 +77,8 @@
     "morphdom": "^2.7.7",
     "seedrandom": "^3.0.5",
     "showdown": "^2.1.0",
-    "vue": "^3.5.33"
+    "vue": "^3.5.33",
+    "yaml": "^2.8.3"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
