@@ -97,7 +97,7 @@
 
 - `window.__TAURITAVERN_MAIN_READY__`：在 `src/tauri/main/bootstrap.js` 设置
 - `waitForTauriMainReady()`：前端轮询等待该 promise 注册并 resolve（`src/scripts/extensions/runtime/tauri-ready.js`）
-- Tauri runtime 下，Host 初始化链会在 `context.initialize()` 前调用 `wait_for_backend_ready`，避免首批 `AppState` 命令依赖 Tauri 的 “state not managed” 错误文本重试。
+- Tauri runtime 下，Host 初始化链会在任何需要 `AppState` 的首批工作前调用 `wait_for_backend_ready`，避免依赖 Tauri 的 “state not managed” 错误文本重试。
 
 ---
 

@@ -561,14 +561,10 @@ test('/api/characters/merge-attributes rejects path-like single avatar fields', 
 
 test('character form service maps edit-avatar to update_avatar without full character rewrite', async () => {
     const invokes = [];
-    const invalidations = [];
     const cleanups = [];
     const service = createCharacterFormService({
         safeInvoke: async (command, args) => {
             invokes.push({ command, args });
-        },
-        invalidateInvokeAll: (command) => {
-            invalidations.push(command);
         },
         resolveCharacterId: async () => {
             throw new Error('resolveCharacterId should not be called');
@@ -614,7 +610,6 @@ test('character form service maps edit-avatar to update_avatar without full char
             },
         },
     ]);
-    assert.deepEqual(invalidations, ['read_thumbnail_asset']);
     assert.deepEqual(cleanups, ['avatar.png']);
 });
 
@@ -956,9 +951,6 @@ test('character form service fails fast on invalid avatar_url', async () => {
         safeInvoke: async () => {
             throw new Error('should not be called');
         },
-        invalidateInvokeAll: () => {
-            throw new Error('should not be called');
-        },
         resolveCharacterId: async () => {
             throw new Error('should not be called');
         },
@@ -986,9 +978,6 @@ test('character form service fails fast on invalid avatar_url', async () => {
 test('character form service keeps missing edit-avatar target on upstream 400 contract', async () => {
     const service = createCharacterFormService({
         safeInvoke: async () => {
-            throw new Error('should not be called');
-        },
-        invalidateInvokeAll: () => {
             throw new Error('should not be called');
         },
         resolveCharacterId: async ({ avatar }) => {

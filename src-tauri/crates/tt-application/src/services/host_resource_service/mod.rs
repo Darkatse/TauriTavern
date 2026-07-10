@@ -17,19 +17,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use http::header::{HeaderName, HeaderValue};
 use http::{Method, Request, Response, StatusCode};
 use route_classifier::{HostResourceRoute, classify_host_resource_route};
-use tt_domain::errors::DomainError;
 use tt_ports::host_resource::HostResourceAssetStore;
 
 static NEXT_TRACE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const TAURITAVERN_TRACE_ID: HeaderName = HeaderName::from_static("x-tauritavern-trace-id");
 
 pub type HostResourceResponse = Response<Vec<u8>>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostResourceBinaryAsset {
-    pub bytes: Vec<u8>,
-    pub mime_type: String,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostResourceDeliveryCapabilities {
@@ -105,15 +98,6 @@ impl HostResourceService {
         Some(finalize_response(request, response))
     }
 
-    pub async fn read_thumbnail_asset_for_command(
-        &self,
-        thumbnail_type: &str,
-        file: &str,
-    ) -> Result<HostResourceBinaryAsset, DomainError> {
-        thumbnail::read_thumbnail_asset_for_command(Arc::clone(&self.store), thumbnail_type, file)
-            .await
-    }
-
     pub fn set_avatar_persona_original_images_enabled(&self, enabled: bool) {
         self.avatar_persona_original_images_enabled
             .store(enabled, Ordering::Relaxed);
@@ -157,7 +141,7 @@ mod tests {
     use http::{Method, StatusCode};
     use tt_ports::host_resource::{
         HostResourceSourceRequest, HostResourceStoreError, OpenedHostResource,
-        ThumbnailAssetRequest, ThumbnailKind,
+        ThumbnailAssetRequest, ThumbnailKind, ThumbnailSelection,
     };
 
     use super::*;
@@ -250,12 +234,12 @@ mod tests {
                 ThumbnailAssetRequest {
                     kind: ThumbnailKind::Avatar,
                     file: "a.png".to_string(),
-                    use_thumbnails: true,
+                    selection: ThumbnailSelection::PreferGenerated,
                 },
                 ThumbnailAssetRequest {
                     kind: ThumbnailKind::Avatar,
                     file: "a.png".to_string(),
-                    use_thumbnails: false,
+                    selection: ThumbnailSelection::Original,
                 },
             ]
         );

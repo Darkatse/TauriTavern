@@ -99,15 +99,11 @@ async fn character_service_with_world_repository(
     let default_user = root.join("default-user");
     let characters = default_user.join("characters");
     let chats = default_user.join("chats");
-    let thumbnails = default_user.join("thumbnails/avatar");
     let default_avatar = default_user.join("default.png");
     fs::create_dir_all(&characters)
         .await
         .expect("create characters dir");
     fs::create_dir_all(&chats).await.expect("create chats dir");
-    fs::create_dir_all(&thumbnails)
-        .await
-        .expect("create thumbnails dir");
     fs::write(&default_avatar, minimal_png())
         .await
         .expect("write default avatar");
@@ -123,7 +119,6 @@ async fn character_service_with_world_repository(
     let character_repository = Arc::new(FileCharacterRepository::with_chat_repository(
         default_user.join("characters"),
         default_user.join("chats"),
-        thumbnails,
         default_avatar,
         aliases,
         file_chat_repository.clone(),

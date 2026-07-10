@@ -32,11 +32,18 @@ pub enum ThumbnailKind {
     Background,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThumbnailSelection {
+    Original,
+    PreferGenerated,
+    RequireGenerated,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThumbnailAssetRequest {
     pub kind: ThumbnailKind,
     pub file: String,
-    pub use_thumbnails: bool,
+    pub selection: ThumbnailSelection,
 }
 
 #[derive(Debug, Clone, Copy)]

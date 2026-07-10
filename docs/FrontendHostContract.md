@@ -53,12 +53,10 @@
 由 `createTauriMainContext()` 安装（实现：`src/tauri/main/context/index.js`，兼容入口：`src/tauri/main/context.js`）：
 
 - `window.__TAURITAVERN_THUMBNAIL__(type, file, useTimestamp?) -> string`
-  - 生成缩略图 URL（通常返回 `/thumbnail?...` 或 asset protocol URL）。
-- `window.__TAURITAVERN_THUMBNAIL_BLOB_URL__(type, file, options?) -> Promise<string>`
-  - 返回可直接用于 `<img src>` 的 blob URL（内部有 cache/in-flight 去重）。
+  - 为 `bg` / `avatar` / `persona` 生成 `/thumbnail?...` Host Resource URL；未知 type 直接抛错。
+  - 正常第一方路径不使用 `useTimestamp`；该参数只保留为显式 force/debug cache bust。
 - `window.__TAURITAVERN_BACKGROUND_PATH__(file) -> string`
-- `window.__TAURITAVERN_AVATAR_PATH__(file) -> string | null`
-- `window.__TAURITAVERN_PERSONA_PATH__(file) -> string`
+  - 生成 `/backgrounds/<encoded file>` Host Resource URL。
 
 这些 API 的**可观察行为**必须保持：
 
@@ -105,11 +103,11 @@
 为避免未来继续扩散 `window.__TAURITAVERN_*` 零散符号，宿主层额外提供一个**统一出口**：
 
 - `window.__TAURITAVERN__ : { abiVersion, traceHeader, ready, invoke, assets, api }`
-  - `abiVersion: number`：ABI 版本号（语义化破坏改动时递增）。
+  - `abiVersion: 1`：ABI 版本号（已发布扩展契约发生语义化破坏改动时递增）。
   - `traceHeader: string`：请求追踪 header 名（见 4.4）。
   - `ready: Promise<void> | null`：与 `__TAURITAVERN_MAIN_READY__` 语义一致。
   - `invoke.safeInvoke(...)` / `invoke.flushAll()`：对 `context` invoke 能力的稳定包装。
-  - `assets.*`：对资源路径/缩略图相关全局 API 的统一引用。
+  - `assets.thumbnailUrl` / `assets.backgroundPath`：对 3.1 中稳定 Host Resource URL helper 的统一引用。
   - `api.layout`：布局契约 API（safe-area / viewport / Android IME），并配合 `data-tt-mobile-surface` taxonomy 让扩展以几行 opt-in 完成移动端适配。
     - 详细签名与示例见：`docs/API/Layout.md`。
   - `api.chat`：TauriTavern 独有的聊天/记忆类扩展 API（聊天摘要、元数据、历史分页、稳定存储、后端定位、纯文本检索）。
@@ -268,6 +266,13 @@
 - `Content-Type` 正确；成功表示使用 `Cache-Control: private, no-cache`、weak ETag 和适用的 Last-Modified，错误/OPTIONS/416 使用 `no-store`（完整条件请求与平台 delivery 语义见 `docs/CurrentState/HostResourceCaching.md`）
 - 媒体文件（`video/*` / `audio/*`）必须支持 `Range`（单范围）并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
 
+背景预览与背景消费是两个不同表示：
+
+- 系统静态图预览使用普通 `/thumbnail`；
+- GIF/WebP/APNG 在预览动画开启时使用 raw `/backgrounds/*`，关闭时使用 `/thumbnail?...&static=true` 的 first-frame JPEG；
+- MP4 选择器使用占位图，不为 poster 引入视频解码器；
+- active background 与 `<video>` 始终保留 raw `/backgrounds/*`，`static=true` 不得进入播放路径。
+
 禁止事项（为了保持契约稳定）：
 
 - 禁止通过 DOM 原型级 monkey patch（例如改写 `HTMLImageElement.src`）来“模拟”这些端点的加载行为；必须补齐真实端点。
@@ -341,6 +346,7 @@ header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免�
    - iframe 能加载且不被同源 patch/拦截破坏。
 4. **浏览器资源契约（端点级）**
    - `/thumbnail?type=bg|avatar|persona&file=...` 能返回图片 bytes（无 `blob:` 魔法）；不存在返回真实 `404`
+   - `/thumbnail?type=bg&file=<animated>&static=true` 对可解码动画返回 JPEG；MP4 的 raw `/backgrounds/*` Range 播放不受影响
    - `/css/user.css` 能从数据目录 `_css/user.css` 返回用户 CSS；不存在返回真实 `404`
    - `/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 作为子资源可直接加载
    - `/scripts/extensions/third-party/*` 的 ESM/CSS/图片/字体均可加载，未命中返回 `404`

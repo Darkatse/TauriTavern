@@ -17,14 +17,7 @@ interface Window {
     _?: any;
 
     __TAURITAVERN_THUMBNAIL__?: (type: string, file: string, useTimestamp?: boolean) => string;
-    __TAURITAVERN_THUMBNAIL_BLOB_URL__?: (
-        type: string,
-        file: string,
-        options?: { animated?: boolean; useTimestamp?: boolean },
-    ) => Promise<string>;
     __TAURITAVERN_BACKGROUND_PATH__?: (file: string) => string;
-    __TAURITAVERN_AVATAR_PATH__?: (file: string) => string | null;
-    __TAURITAVERN_PERSONA_PATH__?: (file: string) => string;
 
     __TAURITAVERN_IMPORT_ARCHIVE_PICKER__?: {
         onNativeResult: (payload: any) => void;
@@ -64,15 +57,8 @@ type TauriTavernHostInvokeApi = {
 };
 
 type TauriTavernHostAssetsApi = {
-    thumbnailUrl?: (type: string, file: string, useTimestamp?: boolean) => string;
-    thumbnailBlobUrl?: (
-        type: string,
-        file: string,
-        options?: { animated?: boolean; useTimestamp?: boolean },
-    ) => Promise<string>;
-    backgroundPath?: (file: string) => string;
-    avatarPath?: (file: string) => string | null;
-    personaPath?: (file: string) => string;
+    thumbnailUrl: (type: string, file: string, useTimestamp?: boolean) => string;
+    backgroundPath: (file: string) => string;
 };
 
 type TauriTavernChatApi = {
@@ -956,7 +942,7 @@ type TauriTavernHostApi = {
 };
 
 type TauriTavernHostAbi = {
-    abiVersion: number;
+    abiVersion: 1;
     traceHeader: string;
     ready: Promise<void> | null;
     invoke: TauriTavernHostInvokeApi;

@@ -61,13 +61,6 @@ test('/api/characters/import returns canonical character payload and Agent post-
             calls.push({ type: 'normalize', character });
             return normalized;
         },
-        invalidateInvokeAll: (command) => {
-            calls.push({ type: 'invalidate', command });
-        },
-        getAllCharacters: async (options) => {
-            calls.push({ type: 'refresh', options });
-            return [];
-        },
     };
 
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
@@ -116,8 +109,6 @@ test('/api/characters/import returns canonical character payload and Agent post-
         },
         { type: 'cleanup' },
         { type: 'normalize', character: imported },
-        { type: 'invalidate', command: 'read_thumbnail_asset' },
-        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
     ]);
 });
 
@@ -139,8 +130,6 @@ test('/api/characters/import uses the explicit replacement command for an existi
             return imported;
         },
         normalizeCharacter: character => character,
-        invalidateInvokeAll: () => {},
-        getAllCharacters: async () => [],
     };
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
 
@@ -182,8 +171,6 @@ test('/api/characters/import keeps prescribed names on the ordinary import path 
             return { name: 'New', avatar: 'New.png' };
         },
         normalizeCharacter: character => character,
-        invalidateInvokeAll: () => {},
-        getAllCharacters: async () => [],
     };
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
 
@@ -210,7 +197,7 @@ test('/api/characters/import keeps prescribed names on the ordinary import path 
     });
 });
 
-test('/api/characters/import does not hide host cache refresh failures', async () => {
+test('/api/characters/import returns the committed result without route-level list reconciliation', async () => {
     const router = createRouteRegistry();
     const context = {
         materializeUploadFile: async () => ({
@@ -219,9 +206,8 @@ test('/api/characters/import does not hide host cache refresh failures', async (
         }),
         safeInvoke: async () => ({ name: 'Alice', avatar: 'Alice.png' }),
         normalizeCharacter: character => character,
-        invalidateInvokeAll: () => {},
         getAllCharacters: async () => {
-            throw new Error('cache refresh failed');
+            throw new Error('route-level list reconciliation must not run');
         },
     };
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
@@ -230,15 +216,15 @@ test('/api/characters/import does not hide host cache refresh failures', async (
     body.set('avatar', new Blob(['png-bytes'], { type: 'image/png' }), 'Alice.png');
     body.set('file_type', 'png');
 
-    await assert.rejects(
-        router.handle({
-            method: 'POST',
-            path: '/api/characters/import',
-            url: new URL('http://localhost/api/characters/import'),
-            body,
-        }),
-        /cache refresh failed/,
-    );
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/import',
+        url: new URL('http://localhost/api/characters/import'),
+        body,
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).file_name, 'Alice');
 });
 
 test('/api/characters/import rejects non-exact preserved avatar identities before staging', async () => {

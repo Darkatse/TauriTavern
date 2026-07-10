@@ -144,7 +144,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::world_info_commands::import_world_info,
         // User directory commands
         super::user_directory_commands::get_user_directory,
-        super::user_directory_commands::get_default_user_directory,
         super::user_directory_commands::ensure_user_directories_exist,
         super::user_directory_commands::ensure_default_user_directories_exist,
         // Secret commands
@@ -241,7 +240,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // File commands
         super::file_commands::sanitize_filename,
         super::file_commands::upload_user_file,
-        super::file_commands::read_user_file_asset,
         super::file_commands::delete_user_file,
         super::file_commands::verify_user_files,
         // Image commands
@@ -253,7 +251,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::avatar_commands::get_avatars,
         super::avatar_commands::delete_avatar,
         super::avatar_commands::upload_avatar,
-        super::avatar_commands::read_user_avatar_asset,
         // Group commands
         super::group_commands::get_all_groups,
         super::group_commands::get_group,
@@ -269,7 +266,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::background_commands::rename_background,
         super::background_commands::upload_background,
         super::background_commands::upload_background_from_path,
-        super::background_commands::read_thumbnail_asset,
         super::image_metadata_commands::get_background_folders,
         super::image_metadata_commands::create_image_metadata_folder,
         super::image_metadata_commands::update_image_metadata_folder,

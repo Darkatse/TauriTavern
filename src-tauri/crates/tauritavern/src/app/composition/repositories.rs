@@ -130,10 +130,6 @@ pub(super) fn build(
         Arc::new(FileCharacterRepository::with_chat_repository(
             data_directory.characters().to_path_buf(),
             data_directory.chats().to_path_buf(),
-            data_directory
-                .default_user()
-                .join("thumbnails")
-                .join("avatar"),
             data_directory.default_avatar().to_path_buf(),
             chat_aliases,
             file_chat_repository.clone(),
@@ -196,11 +192,9 @@ pub(super) fn build(
         data_directory.group_chats().to_path_buf(),
     ));
 
-    let background_repository: Arc<dyn BackgroundRepository> =
-        Arc::new(FileBackgroundRepository::new(
-            data_directory.default_user().join("backgrounds"),
-            data_directory.default_user().join("thumbnails/bg"),
-        ));
+    let background_repository: Arc<dyn BackgroundRepository> = Arc::new(
+        FileBackgroundRepository::new(data_directory.default_user().join("backgrounds")),
+    );
     let image_metadata_repository: Arc<dyn ImageMetadataRepository> =
         Arc::new(FileImageMetadataRepository::new(
             default_user_dir.clone(),

@@ -1,4 +1,4 @@
-import { invoke, isTauri as isTauriRuntime, convertFileSrc } from '../../tauri-bridge.js';
+import { invoke, isTauri as isTauriRuntime } from '../../tauri-bridge.js';
 import { createTauriMainContext } from './context.js';
 import { createDownloadBridge } from './download-bridge.js';
 import { createInterceptors } from './interceptors.js';
@@ -155,10 +155,7 @@ function installHostAbi(context) {
         },
         assets: {
             thumbnailUrl: window.__TAURITAVERN_THUMBNAIL__,
-            thumbnailBlobUrl: window.__TAURITAVERN_THUMBNAIL_BLOB_URL__,
             backgroundPath: window.__TAURITAVERN_BACKGROUND_PATH__,
-            avatarPath: window.__TAURITAVERN_AVATAR_PATH__,
-            personaPath: window.__TAURITAVERN_PERSONA_PATH__,
         },
     };
 }
@@ -274,7 +271,7 @@ export function bootstrapTauriMain() {
     installBackNavigationBridge();
     installNativeShareBridge();
 
-    const context = createTauriMainContext({ invoke, convertFileSrc });
+    const context = createTauriMainContext({ invoke });
     installHostAbi(context); installLayoutApi(context); installChatApi(context); installCharacterCardsApi(context); installAgentApi(context); installLlmConnectionsApi(context); installSkillApi(context); installDevApi(context); installExtensionStoreApi(context); installWorldInfoApi();
     installMainApiOptionParking();
     installWorldInfoGlobalSelectorSelect2Enforcer();

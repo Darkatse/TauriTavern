@@ -1,15 +1,11 @@
-use std::sync::Arc;
-
 use http::{Method, Request, StatusCode};
-use tt_domain::errors::DomainError;
-use tt_domain::models::filename::sanitize_filename;
 
 use super::response::{self, RepresentationMetadata, RetrievalDecision};
-use super::{HostResourceBinaryAsset, HostResourceDeliveryCapabilities, HostResourceResponse};
+use super::{HostResourceDeliveryCapabilities, HostResourceResponse};
 use crate::client_asset_paths::validate_path_segment;
 use tt_ports::host_resource::{
     HostResourceAssetStore, HostResourceSourceRequest, HostResourceStoreError,
-    ThumbnailAssetRequest, ThumbnailKind,
+    ThumbnailAssetRequest, ThumbnailKind, ThumbnailSelection,
 };
 
 const THUMBNAIL_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
@@ -29,7 +25,7 @@ pub(super) fn serve_thumbnail(
     }
 
     let query = request.uri().query().unwrap_or("");
-    let (thumbnail_type, file) = match parse_thumbnail_query(query) {
+    let (thumbnail_type, file, static_preview) = match parse_thumbnail_query(query) {
         Ok(value) => value,
         Err(error) => {
             return response::error(error.status_code(), error.message());
@@ -43,16 +39,30 @@ pub(super) fn serve_thumbnail(
         }
     };
 
-    let use_thumbnails = match kind {
-        ThumbnailKind::Avatar | ThumbnailKind::Persona => !avatar_persona_original_images_enabled,
-        ThumbnailKind::Background => true,
+    if static_preview && kind != ThumbnailKind::Background {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "Static previews are only supported for backgrounds",
+        );
+    }
+
+    let selection = match kind {
+        ThumbnailKind::Avatar | ThumbnailKind::Persona
+            if avatar_persona_original_images_enabled =>
+        {
+            ThumbnailSelection::Original
+        }
+        ThumbnailKind::Background if static_preview => ThumbnailSelection::RequireGenerated,
+        ThumbnailKind::Avatar | ThumbnailKind::Persona | ThumbnailKind::Background => {
+            ThumbnailSelection::PreferGenerated
+        }
     };
 
     let opened = match store.open(HostResourceSourceRequest::Thumbnail(
         &ThumbnailAssetRequest {
             kind,
             file: file.clone(),
-            use_thumbnails,
+            selection,
         },
     )) {
         Ok(opened) => opened,
@@ -81,78 +91,12 @@ pub(super) fn serve_thumbnail(
     response::ok(&metadata, bytes)
 }
 
-pub(super) async fn read_thumbnail_asset_for_command(
-    store: Arc<dyn HostResourceAssetStore>,
-    thumbnail_type: &str,
-    file: &str,
-) -> Result<HostResourceBinaryAsset, DomainError> {
-    let kind = parse_thumbnail_kind(thumbnail_type)
-        .ok_or_else(|| DomainError::InvalidData("Invalid thumbnail type".to_string()))?;
-    let file = sanitize_command_thumbnail_filename(kind, file)?;
-
-    tokio::task::spawn_blocking(move || {
-        let opened = store
-            .open(HostResourceSourceRequest::Thumbnail(
-                &ThumbnailAssetRequest {
-                    kind,
-                    file,
-                    use_thumbnails: true,
-                },
-            ))
-            .map_err(domain_error_from_store_error)?;
-        let mime_type = opened.metadata.content_type.clone();
-        let bytes = opened.read(None).map_err(domain_error_from_store_error)?;
-        Ok(HostResourceBinaryAsset { bytes, mime_type })
-    })
-    .await
-    .map_err(|error| DomainError::InternalError(format!("Thumbnail worker failed: {error}")))?
-}
-
 fn parse_thumbnail_kind(value: &str) -> Option<ThumbnailKind> {
     match value.trim().to_ascii_lowercase().as_str() {
         "bg" => Some(ThumbnailKind::Background),
         "avatar" => Some(ThumbnailKind::Avatar),
         "persona" => Some(ThumbnailKind::Persona),
         _ => None,
-    }
-}
-
-fn sanitize_command_thumbnail_filename(
-    kind: ThumbnailKind,
-    filename: &str,
-) -> Result<String, DomainError> {
-    let sanitized = match kind {
-        ThumbnailKind::Background => sanitize_filename(filename),
-        ThumbnailKind::Avatar | ThumbnailKind::Persona => filename
-            .chars()
-            .map(|character| match character {
-                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-                _ if character.is_control() => '_',
-                _ => character,
-            })
-            .collect::<String>()
-            .trim()
-            .trim_end_matches(['.', ' '])
-            .to_string(),
-    };
-
-    if sanitized.is_empty() {
-        let message = match kind {
-            ThumbnailKind::Background => "Invalid background filename",
-            ThumbnailKind::Avatar | ThumbnailKind::Persona => "Invalid thumbnail file name",
-        };
-        return Err(DomainError::InvalidData(message.to_string()));
-    }
-
-    Ok(sanitized)
-}
-
-fn domain_error_from_store_error(error: HostResourceStoreError) -> DomainError {
-    match error {
-        HostResourceStoreError::NotFound(message) => DomainError::NotFound(message),
-        HostResourceStoreError::Forbidden(message) | HostResourceStoreError::Internal(message) => {
-            DomainError::InternalError(message)
-        }
     }
 }
 
@@ -190,9 +134,10 @@ impl ThumbnailQueryError {
     }
 }
 
-fn parse_thumbnail_query(query: &str) -> Result<(String, String), ThumbnailQueryError> {
+fn parse_thumbnail_query(query: &str) -> Result<(String, String, bool), ThumbnailQueryError> {
     let mut thumbnail_type = None;
     let mut file = None;
+    let mut static_preview = false;
 
     for pair in query.split('&') {
         if pair.is_empty() {
@@ -211,6 +156,13 @@ fn parse_thumbnail_query(query: &str) -> Result<(String, String), ThumbnailQuery
         match key.as_str() {
             "type" => thumbnail_type = Some(value),
             "file" => file = Some(value),
+            "static" => {
+                static_preview = match value.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(ThumbnailQueryError::InvalidQuery),
+                }
+            }
             _ => {}
         }
     }
@@ -232,7 +184,7 @@ fn parse_thumbnail_query(query: &str) -> Result<(String, String), ThumbnailQuery
         return Err(ThumbnailQueryError::ForbiddenFile);
     }
 
-    Ok((normalized_type, file))
+    Ok((normalized_type, file, static_preview))
 }
 
 #[cfg(test)]
@@ -293,7 +245,7 @@ mod tests {
             &[ThumbnailAssetRequest {
                 kind: ThumbnailKind::Avatar,
                 file: "a.png".to_string(),
-                use_thumbnails: false,
+                selection: ThumbnailSelection::Original,
             }]
         );
     }
@@ -330,9 +282,49 @@ mod tests {
             &[ThumbnailAssetRequest {
                 kind: ThumbnailKind::Background,
                 file: "a.png".to_string(),
-                use_thumbnails: true,
+                selection: ThumbnailSelection::PreferGenerated,
             }]
         );
+    }
+
+    #[test]
+    fn static_background_requires_a_generated_preview() {
+        let store = store();
+
+        let response = serve_thumbnail(
+            &store,
+            false,
+            &test_support::request(Method::GET, "/thumbnail?type=bg&file=a.gif&static=true"),
+            HostResourceDeliveryCapabilities::new(true, false),
+        );
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            store.requests.lock().expect("lock").as_slice(),
+            &[ThumbnailAssetRequest {
+                kind: ThumbnailKind::Background,
+                file: "a.gif".to_string(),
+                selection: ThumbnailSelection::RequireGenerated,
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_static_preview_for_non_background_assets() {
+        let store = store();
+
+        let response = serve_thumbnail(
+            &store,
+            false,
+            &test_support::request(
+                Method::GET,
+                "/thumbnail?type=persona&file=a.gif&static=true",
+            ),
+            HostResourceDeliveryCapabilities::new(true, false),
+        );
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(store.requests.lock().expect("lock").is_empty());
     }
 
     #[test]
@@ -349,71 +341,5 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.body().is_empty());
         assert_eq!(store.reads.load(std::sync::atomic::Ordering::Relaxed), 0);
-    }
-
-    #[tokio::test]
-    async fn command_thumbnail_always_uses_thumbnail_cache_and_sanitizes_file() {
-        let store = Arc::new(store());
-        let service = crate::services::host_resource_service::HostResourceService::new(
-            true,
-            Arc::clone(&store),
-        );
-
-        let asset = service
-            .read_thumbnail_asset_for_command(" Avatar ", " bad:name?.png. ")
-            .await
-            .expect("asset");
-
-        assert_eq!(asset.bytes, b"thumbnail".to_vec());
-        assert_eq!(
-            store.requests.lock().expect("lock").as_slice(),
-            &[ThumbnailAssetRequest {
-                kind: ThumbnailKind::Avatar,
-                file: "bad_name_.png".to_string(),
-                use_thumbnails: true,
-            }]
-        );
-    }
-
-    #[tokio::test]
-    async fn command_thumbnail_rejects_empty_sanitized_file() {
-        let store = Arc::new(store());
-        let service = crate::services::host_resource_service::HostResourceService::new(
-            false,
-            Arc::clone(&store),
-        );
-
-        let error = service
-            .read_thumbnail_asset_for_command("bg", " ... ")
-            .await
-            .expect_err("invalid file");
-
-        assert!(
-            matches!(error, DomainError::InvalidData(message) if message == "Invalid background filename")
-        );
-        assert!(store.requests.lock().expect("lock").is_empty());
-    }
-
-    #[tokio::test]
-    async fn command_background_thumbnail_uses_background_filename_sanitizer() {
-        let store = Arc::new(store());
-        let service = crate::services::host_resource_service::HostResourceService::new(
-            false,
-            Arc::clone(&store),
-        );
-
-        service
-            .read_thumbnail_asset_for_command("bg", "..\\bad:*name?.png")
-            .await
-            .expect("asset");
-
-        assert_eq!(
-            store.requests.lock().expect("lock").as_slice(),
-            &[ThumbnailAssetRequest {
-                kind: ThumbnailKind::Background,
-                file: "..badname.png".to_string(),
-                use_thumbnails: true,
-            }]
-        );
     }
 }

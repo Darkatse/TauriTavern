@@ -1,23 +1,13 @@
 use std::sync::Arc;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use serde::Serialize;
 use tauri::State;
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::background_dto::{DeleteBackgroundDto, RenameBackgroundDto};
-use tt_application::services::host_resource_service::HostResourceService;
 use tt_domain::models::background::BackgroundListEntry;
 use tt_domain::models::image_metadata::ImageMetadataIndex;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ThumbnailAssetPayload {
-    pub content_base64: String,
-    pub mime_type: String,
-}
 
 #[tauri::command]
 pub async fn get_all_backgrounds(
@@ -117,28 +107,4 @@ pub async fn upload_background_from_path(
         .upload_background_from_path(&filename, std::path::Path::new(&file_path))
         .await
         .map_err(map_command_error("Failed to upload background from path"))
-}
-
-#[tauri::command]
-pub async fn read_thumbnail_asset(
-    host_resources: State<'_, Arc<HostResourceService>>,
-    thumbnail_type: String,
-    file: String,
-    animated: Option<bool>,
-) -> Result<ThumbnailAssetPayload, CommandError> {
-    log_command(format!(
-        "read_thumbnail_asset type={} file={}",
-        thumbnail_type, file
-    ));
-    let _ = animated;
-
-    let asset = host_resources
-        .read_thumbnail_asset_for_command(&thumbnail_type, &file)
-        .await
-        .map_err(map_command_error("Failed to read thumbnail asset"))?;
-
-    Ok(ThumbnailAssetPayload {
-        content_base64: BASE64_STANDARD.encode(asset.bytes),
-        mime_type: asset.mime_type,
-    })
 }

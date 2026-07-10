@@ -29,6 +29,8 @@ Representation 浏览器实际观察到的 bytes + metadata
 Delivery       当前 Tauri/Wry/IPC 入口能承载的响应形式
 ```
 
+缓存职责也按层分离：filesystem 是资源事实，Rust thumbnail cache 是由 source revision 与 recipe 标识的派生产物，P1 是 WebView 可见表示的唯一 freshness validator，WebView cache 只做机会性存储。mutation 不维护第二套 revision registry，也不依赖 WebView 是否真的保存 synthetic response 才能保证正确性。
+
 `tt-ports::HostResourceAssetStore::open` 一次完成选源和打开文件，返回：
 
 - MIME、长度、mtime、opaque source revision；
@@ -58,7 +60,7 @@ Last-Modified: ...   # 表示具有可靠文件 mtime 时
 - 405；
 - 416。
 
-P1 不提供 immutable policy。只有 P2 引入 deterministic revision URL 后才能安全使用 immutable。
+当前不为 data-root-backed mutable Host Resource 提供 immutable policy。它们允许外部与 symlink writer 修改；fresh immutable hit 会直接绕过 Rust，使 Host Resource 无法发现变化。`immutable` 只适合未来真正的构建期内容哈希资源或内容寻址存储，不属于当前 Host Resource 契约。
 
 ## 4. Validator 与条件请求
 
@@ -97,11 +99,22 @@ HEAD 在 service 最终出口统一清空正文，因此成功和错误状态都
 | user-data | kind + backing file revision | source mtime | 精确 |
 | third-party raw | local/global + backing file revision | source mtime | 精确 |
 | `ttCompat=layer` | source revision + transform revision | 不发送 | 省略 |
-| thumbnail | 最终打开的 original/cached-JPEG revision | 最终文件 mtime | 精确 |
+| thumbnail original | kind + source file revision | source mtime | 精确 |
+| thumbnail generated JPEG | source revision + generator recipe + cached file revision | cached file mtime | 精确 |
 
 `ttCompat=layer` 在请求时转换正文，未读取正文前无法知道最终长度，因此 HEAD 合法省略 Content-Length，不使用源 CSS 的错误长度。
 
-Thumbnail 继续复用现有磁盘缓存。编码在锁外并行，只有短暂的 cache replace/mtime 绑定提交区串行化，以兼容 Android 的 copy fallback。生成 JPEG 的 mtime 精确继承 source mtime，freshness 使用相等比较；旧 source 的并发慢任务即使最后写回，也不会把旧缓存伪装成针对新 source 的新鲜结果。adapter 在最终表示选定前完成动画检测、freshness、生成和 original fallback，并返回已经打开的 original 或 cached JPEG handle。生成/打开失败会记录原因后按上游语义回退 original；选定后 body read 失败会显式失败，不再切换表示。
+Thumbnail 继续复用现有磁盘缓存，但缓存命中不再依赖 JPEG mtime 恰好等于 source mtime。生成 JPEG 的标准 COM marker 内保存 semantic identity，内容绑定：
+
+- source kind、length、高精度 mtime 与 MIME 形成的 source revision；
+- width、height、quality、resize mode；
+- JPEG/filter/generator schema version。
+
+identity 与 JPEG 是同一个原子 artifact：旧缓存、上游 SillyTavern 或外部进程生成的 JPEG 没有匹配 COM marker，都会自然 miss，不需要迁移分支，也不会把外部 bytes 误认成本 recipe 的产物。编码在锁外并行；单个 JPEG 的短提交/校验打开区串行化。生成读取以 source open 时长度为上界，并在读取后复核 handle length/mtime；atomic path replacement 继续对应旧 opened snapshot，原地变化则 fail-fast。generated Host revision 使用同一个 identity，因此 source 或 recipe 任一变化都会同时使磁盘产物与 ETag 失效。
+
+业务 mutation 不删除或预热 thumbnail cache。原文件始终先于 cache 被打开；删除后的旧 artifact 不可达，同名重建或覆盖后的 demand 会因 COM identity 不匹配而原地替换。这样 background、character、persona、archive import、同步与外部/symlink writer 都遵循同一 freshness 条件，缓存维护失败也不会把已成功的业务 mutation 伪装成失败。
+
+默认 `/thumbnail` 保持上游选择语义：静态图优先 generated JPEG，动画与无法生成的普通缩略图可回退 original。`/thumbnail?type=bg&...&static=true` 是 gallery/folder 专用的强制静态表示：可解码 GIF/WebP/APNG 生成 first-frame JPEG；生成失败直接报错，绝不把动画 original 冒充静态预览。MP4 不引入视频解码依赖，前端预览使用占位；active background 与媒体播放始终读取 raw `/backgrounds/*`。
 
 ## 6. 平台 delivery
 
@@ -139,7 +152,11 @@ presentation 在路由前精确校验 scheme 和完整 authority；relative URI�
 - 不重新增加 `stat_xxx/read_xxx` 方法矩阵；
 - 不在 presentation 或 route handler 手写字符串 status/header DTO；
 - 新派生表示必须把变换 variant 纳入 ETag，且不能伪造未知 Content-Length；
-- thumbnail generator version 只有与磁盘 cache identity 一起升级时才能进入 revision；
-- mutation revision、版本 URL、immutable 和 frontend Blob cache 调整属于 P2；
+- thumbnail recipe 或单文件缓存格式发生任何可观察变化时必须升级 generator schema；JPEG COM identity 与 generated Host revision 必须继续使用同一身份；
+- data-root-backed mutable Host Resource 长期保持稳定 URL + `private, no-cache`；P1 是 WebView 可见表示的唯一 freshness validator，不是 immutable 前的临时 fallback；
+- 不为 mutable Host Resource 建 mutation revision registry 或 `immutable` URL。data root 允许外部/symlink writer；fresh immutable hit 会绕过 Host Resource，令外部变化无法被发现；
+- 第一方普通 browser resource 不得通过 Tauri asset protocol、base64 read command 或 server-thumbnail Blob cache 绕过本服务；
+- mutation 只建立文件事实，既不维护/删除 Rust derived cache，也不预热 WebView cache；随后只负责触发稳定 URL 的真实 consumer demand，刷新不是 commit 的组成部分，也不得用随机 query 伪造 revision；
+- frontend 仅保留有独立派生职责的 background preview cache；Host background 记录必须绑定当前 raw ETag 与 preview recipe；
 - WebView synthetic response cache 只是优化，不能成为业务正确性的前提；
 - Wry 升级必须重新审计 Android 3xx、header 和 cache-control 行为。

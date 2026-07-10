@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::persistence::thumbnail_cache::{
-    OpenThumbnailSource, ThumbnailConfig, open_thumbnail_or_original_sync,
+    OpenThumbnailSource, ThumbnailConfig, ThumbnailSourceSnapshot, open_thumbnail_or_original_sync,
+    thumbnail_cache_identity,
 };
 use crate::thumbnails::{avatar_thumbnail_config, background_thumbnail_config};
 use tt_contracts::client_asset_paths::UserDataAssetKind;
@@ -14,7 +15,7 @@ use tt_domain::models::user_directory::UserDirectory;
 use tt_ports::host_resource::{
     HostResourceAssetStore, HostResourceBody, HostResourceSourceMetadata,
     HostResourceSourceRequest, HostResourceSourceRevision, HostResourceStoreError,
-    OpenedHostResource, ThumbnailAssetRequest, ThumbnailKind,
+    OpenedHostResource, ThumbnailAssetRequest, ThumbnailKind, ThumbnailSelection,
 };
 
 #[derive(Debug, Clone)]
@@ -229,27 +230,40 @@ impl FilesystemHostResourceStore {
         let thumbnail_path = thumbnail_root.join(&request.file);
         let original = open_file(&original_path)?;
 
-        if !request.use_thumbnails {
-            return Ok(original.into_resource(thumbnail_revision_scope(request.kind, false)));
+        if request.selection == ThumbnailSelection::Original {
+            return Ok(original.into_resource(thumbnail_original_revision_scope(request.kind)));
         }
 
+        let original_revision = source_revision(
+            thumbnail_original_revision_scope(request.kind),
+            original.content_length,
+            original.last_modified,
+            &original.content_type,
+        );
+        let cache_identity = thumbnail_cache_identity(original_revision.as_bytes(), config);
+        let source_snapshot = ThumbnailSourceSnapshot {
+            content_length: original.content_length,
+            last_modified: original.last_modified,
+        };
         let selected = open_thumbnail_or_original_sync(
             original.file,
             &original_path,
-            original.last_modified,
+            source_snapshot,
             &thumbnail_path,
             config,
+            &cache_identity,
+            request.selection == ThumbnailSelection::RequireGenerated,
         )
         .map_err(host_resource_error_from_domain)?;
 
         match selected {
             OpenThumbnailSource::Original(file) => {
                 Ok(open_file_handle(&original_path, file, None)?
-                    .into_resource(thumbnail_revision_scope(request.kind, false)))
+                    .into_resource(thumbnail_original_revision_scope(request.kind)))
             }
             OpenThumbnailSource::CachedJpeg(file) => {
                 Ok(open_file_handle(&thumbnail_path, file, Some("image/jpeg"))?
-                    .into_resource(thumbnail_revision_scope(request.kind, true)))
+                    .into_resource(&cache_identity))
             }
         }
     }
@@ -359,14 +373,11 @@ fn user_data_revision_scope(kind: UserDataAssetKind) -> &'static [u8] {
     }
 }
 
-fn thumbnail_revision_scope(kind: ThumbnailKind, generated: bool) -> &'static [u8] {
-    match (kind, generated) {
-        (ThumbnailKind::Avatar, false) => b"thumbnail-avatar-original",
-        (ThumbnailKind::Avatar, true) => b"thumbnail-avatar-generated",
-        (ThumbnailKind::Persona, false) => b"thumbnail-persona-original",
-        (ThumbnailKind::Persona, true) => b"thumbnail-persona-generated",
-        (ThumbnailKind::Background, false) => b"thumbnail-background-original",
-        (ThumbnailKind::Background, true) => b"thumbnail-background-generated",
+fn thumbnail_original_revision_scope(kind: ThumbnailKind) -> &'static [u8] {
+    match kind {
+        ThumbnailKind::Avatar => b"thumbnail-avatar-original",
+        ThumbnailKind::Persona => b"thumbnail-persona-original",
+        ThumbnailKind::Background => b"thumbnail-background-original",
     }
 }
 
@@ -397,7 +408,10 @@ fn host_resource_error_from_domain(error: DomainError) -> HostResourceStoreError
 
 #[cfg(test)]
 mod tests {
-    use image::{ImageBuffer, Rgb};
+    use std::fs::FileTimes;
+
+    use image::codecs::gif::GifEncoder;
+    use image::{Frame, ImageBuffer, Rgb, Rgba};
 
     use super::*;
 
@@ -550,7 +564,7 @@ mod tests {
         let request = ThumbnailAssetRequest {
             kind: ThumbnailKind::Avatar,
             file: "a.gif".to_string(),
-            use_thumbnails: true,
+            selection: ThumbnailSelection::PreferGenerated,
         };
         let opened = store
             .open(HostResourceSourceRequest::Thumbnail(&request))
@@ -573,7 +587,7 @@ mod tests {
         let request = ThumbnailAssetRequest {
             kind: ThumbnailKind::Avatar,
             file: "a.png".to_string(),
-            use_thumbnails: true,
+            selection: ThumbnailSelection::PreferGenerated,
         };
 
         let opened = store
@@ -595,7 +609,7 @@ mod tests {
         let request = ThumbnailAssetRequest {
             kind: ThumbnailKind::Avatar,
             file: "a.png".to_string(),
-            use_thumbnails: true,
+            selection: ThumbnailSelection::PreferGenerated,
         };
 
         let opened = store
@@ -603,6 +617,109 @@ mod tests {
             .expect("fallback original");
         assert_eq!(opened.metadata.content_type, "image/png");
         assert_eq!(opened.read(None).expect("read original"), b"not-an-image");
+    }
+
+    #[test]
+    fn required_static_preview_decodes_an_animated_image_to_jpeg() {
+        let temp = TempDirGuard::new("host-resources-thumbnail-required-static");
+        let store = FilesystemHostResourceStore::new(roots(&temp.path));
+        let file = temp.path.join("backgrounds").join("a.gif");
+        fs::create_dir_all(file.parent().expect("background parent")).expect("background dir");
+        let mut encoder = GifEncoder::new(fs::File::create(&file).expect("create gif"));
+        encoder
+            .encode_frame(Frame::new(ImageBuffer::from_pixel(
+                2,
+                2,
+                Rgba([255u8, 0, 0, 255]),
+            )))
+            .expect("encode gif");
+        drop(encoder);
+        let request = ThumbnailAssetRequest {
+            kind: ThumbnailKind::Background,
+            file: "a.gif".to_string(),
+            selection: ThumbnailSelection::RequireGenerated,
+        };
+
+        let opened = store
+            .open(HostResourceSourceRequest::Thumbnail(&request))
+            .expect("static preview");
+        assert_eq!(opened.metadata.content_type, "image/jpeg");
+        assert!(
+            opened
+                .read(None)
+                .expect("read preview")
+                .starts_with(&[0xff, 0xd8])
+        );
+    }
+
+    #[test]
+    fn required_static_preview_fails_for_unsupported_video() {
+        let temp = TempDirGuard::new("host-resources-thumbnail-required-video");
+        let store = FilesystemHostResourceStore::new(roots(&temp.path));
+        let file = temp.path.join("backgrounds").join("a.mp4");
+        fs::create_dir_all(file.parent().expect("background parent")).expect("background dir");
+        fs::write(&file, b"video").expect("video file");
+        let request = ThumbnailAssetRequest {
+            kind: ThumbnailKind::Background,
+            file: "a.mp4".to_string(),
+            selection: ThumbnailSelection::RequireGenerated,
+        };
+
+        let error = match store.open(HostResourceSourceRequest::Thumbnail(&request)) {
+            Ok(_) => panic!("video cannot produce an image preview"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, HostResourceStoreError::Internal(_)));
+    }
+
+    #[test]
+    fn generated_thumbnail_revision_tracks_source_length_when_mtime_is_preserved() {
+        let temp = TempDirGuard::new("host-resources-thumbnail-source-revision");
+        let store = FilesystemHostResourceStore::new(roots(&temp.path));
+        let file = temp.path.join("characters").join("a.png");
+        fs::create_dir_all(file.parent().expect("characters parent")).expect("characters dir");
+        ImageBuffer::from_pixel(2, 2, Rgb([255u8, 0, 0]))
+            .save(&file)
+            .expect("first source image");
+        let request = ThumbnailAssetRequest {
+            kind: ThumbnailKind::Avatar,
+            file: "a.png".to_string(),
+            selection: ThumbnailSelection::PreferGenerated,
+        };
+
+        let first = store
+            .open(HostResourceSourceRequest::Thumbnail(&request))
+            .expect("first thumbnail");
+        let first_revision = first.metadata.revision.clone();
+        let first_bytes = first.read(None).expect("first bytes");
+        let source_metadata = fs::metadata(&file).expect("source metadata");
+        let source_mtime = source_metadata.modified().expect("source mtime");
+
+        let reopened = store
+            .open(HostResourceSourceRequest::Thumbnail(&request))
+            .expect("reopen thumbnail");
+        assert_eq!(reopened.metadata.revision, first_revision);
+
+        ImageBuffer::from_pixel(3, 2, Rgb([0u8, 0, 255]))
+            .save(&file)
+            .expect("replacement source image");
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&file)
+            .expect("open replacement source")
+            .set_times(FileTimes::new().set_modified(source_mtime))
+            .expect("preserve source mtime");
+        assert_ne!(
+            fs::metadata(&file).expect("replacement metadata").len(),
+            source_metadata.len()
+        );
+
+        let changed = store
+            .open(HostResourceSourceRequest::Thumbnail(&request))
+            .expect("changed thumbnail");
+        assert_ne!(changed.metadata.revision, first_revision);
+        assert_ne!(changed.read(None).expect("changed bytes"), first_bytes);
     }
 
     #[test]

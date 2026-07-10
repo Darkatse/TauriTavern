@@ -32,6 +32,10 @@
 - `Accept-Ranges: bytes`
 - 允许 data root 内的 symlink 指向外部文件或目录，以支持与 SillyTavern 共享同一套数据。
 
+第一方 `<img>`、`<video>`、CSS 与普通 fetch 必须直接使用这些 Host Resource URL。
+
+背景选择器的预览不改变媒体消费契约。GIF/WebP/APNG 可以按设置选择 raw 动画或 `static=true` first-frame JPEG；MP4 选择器使用占位图，因为当前不为 poster 引入视频解码依赖。
+
 ---
 
 ## 3. Range 契约（单范围）

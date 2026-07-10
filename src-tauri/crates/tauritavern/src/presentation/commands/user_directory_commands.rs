@@ -26,20 +26,6 @@ pub async fn get_user_directory(
 }
 
 #[tauri::command]
-pub async fn get_default_user_directory(
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<UserDirectoryDto, CommandError> {
-    log_command("get_default_user_directory");
-
-    app_state
-        .services
-        .user_directory_service
-        .get_default_user_directory()
-        .await
-        .map_err(map_command_error("Failed to get default user directory"))
-}
-
-#[tauri::command]
 pub async fn ensure_user_directories_exist(
     handle: String,
     app_state: State<'_, Arc<AppState>>,

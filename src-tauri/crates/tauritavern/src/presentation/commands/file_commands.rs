@@ -89,17 +89,9 @@ const UNSAFE_EXTENSIONS: &[&str] = &[
     ".ws",
 ];
 
-const MAX_MOBILE_INLINE_USER_FILE_BYTES: u64 = 16 * 1024 * 1024;
-
 #[derive(Debug, Serialize)]
 pub struct UserFileUploadResult {
     pub path: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct UserFileAssetPayload {
-    pub content_base64: String,
-    pub mime_type: String,
 }
 
 fn normalize_relative_path(raw: &str) -> Result<PathBuf, CommandError> {
@@ -258,53 +250,6 @@ pub async fn upload_user_file(
 
     Ok(UserFileUploadResult {
         path: format!("/user/files/{}", validated_name),
-    })
-}
-
-#[tauri::command]
-pub async fn read_user_file_asset(
-    relative_path: String,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<UserFileAssetPayload, CommandError> {
-    log_command(format!("read_user_file_asset {}", relative_path));
-
-    let relative = normalize_relative_path(&relative_path)?;
-    let files_dir = get_default_user_files_directory(&app_state).await?;
-    let target_path = resolve_target_path(&files_dir, &relative)?;
-
-    let metadata = fs::metadata(&target_path)
-        .await
-        .map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => CommandError::NotFound("File not found".to_string()),
-            _ => CommandError::InternalServerError(format!("Failed to stat file: {}", error)),
-        })?;
-
-    if cfg!(mobile) && metadata.len() > MAX_MOBILE_INLINE_USER_FILE_BYTES {
-        tracing::warn!(
-            "Rejected large user file asset ({} bytes): {}",
-            metadata.len(),
-            relative_path
-        );
-        return Err(CommandError::BadRequest(
-            "File is too large to load on mobile.".to_string(),
-        ));
-    }
-
-    let bytes = fs::read(&target_path)
-        .await
-        .map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => CommandError::NotFound("File not found".to_string()),
-            _ => CommandError::InternalServerError(format!("Failed to read file: {}", error)),
-        })?;
-
-    let mime_type = mime_guess::from_path(&target_path)
-        .first_or_octet_stream()
-        .essence_str()
-        .to_string();
-
-    Ok(UserFileAssetPayload {
-        content_base64: BASE64_STANDARD.encode(bytes),
-        mime_type,
     })
 }
 

@@ -415,7 +415,6 @@ export async function getFileAttachment(url) {
     try {
         const result = await fetch(url, {
             method: 'GET',
-            cache: 'force-cache',
             headers: getRequestHeaders(),
         });
 

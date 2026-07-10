@@ -14,27 +14,42 @@ function sliceSource(source, start, end) {
     return source.slice(startIndex, endIndex);
 }
 
-test('avatar mutations reload the canonical thumbnail URL', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+test('avatar mutations re-demand canonical Host URLs through image consumers', async () => {
+    const [source, slashCommandsSource] = await Promise.all([
+        readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/scripts/slash-commands.js'), 'utf8'),
+    ]);
     const avatarEditSource = sliceSource(
         source,
         'async function read_avatar_load(input)',
         'export function getThumbnailUrl',
+    );
+    const refreshSource = sliceSource(
+        source,
+        'export async function refreshCharacterAvatarImages(avatarKey)',
+        'export function buildAvatarList',
     );
     const importCharacterSource = sliceSource(
         source,
         'async function importCharacter(file',
         'async function importFromURL',
     );
+    const slashAvatarSource = sliceSource(
+        slashCommandsSource,
+        'async function uploadCharacterAvatar(avatarKey',
+        'async function createCharacterCallback',
+    );
 
-    assert.match(
-        avatarEditSource,
-        /const thumbnailUrl = getThumbnailUrl\('avatar', avatarKey\);\s*await fetch\(thumbnailUrl, \{ method: 'GET', cache: 'reload' \}\);/,
-    );
-    assert.doesNotMatch(avatarEditSource, /getThumbnailUrl\('avatar', avatarKey,\s*true\)/);
-    assert.match(
-        importCharacterSource,
-        /await fetch\(getThumbnailUrl\('avatar', avatarFileName\), \{ cache: 'reload' \}\);/,
-    );
-    assert.doesNotMatch(importCharacterSource, /getThumbnailUrl\('avatar', avatarFileName,\s*true\)/);
+    assert.match(avatarEditSource, /await refreshCharacterAvatarImages\(avatarKey\);/);
+    assert.match(importCharacterSource, /await refreshCharacterAvatarImages\(avatarFileName\);/);
+    assert.match(slashAvatarSource, /await refreshCharacterAvatarImages\(avatarKey\);/);
+    for (const mutationSource of [avatarEditSource, importCharacterSource, slashAvatarSource]) {
+        assert.doesNotMatch(mutationSource, /cache\s*:\s*['"]reload['"]/);
+    }
+
+    assert.match(refreshSource, /getThumbnailUrl\('avatar', avatarKey\)/);
+    assert.match(refreshSource, /`\/characters\/\$\{encodeURIComponent\(avatarKey\)\}`/);
+    assert.match(refreshSource, /image\.removeAttribute\('src'\)/);
+    assert.match(refreshSource, /requestAnimationFrame/);
+    assert.match(refreshSource, /image\.src = src/);
 });

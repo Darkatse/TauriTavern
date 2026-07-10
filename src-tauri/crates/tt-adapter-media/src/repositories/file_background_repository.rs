@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::persistence::thumbnail_cache::invalidate_thumbnail_cache;
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
 use tt_ports::repositories::background_repository::BackgroundRepository;
@@ -10,16 +9,12 @@ use tt_ports::repositories::background_repository::BackgroundRepository;
 /// File system implementation of the BackgroundRepository
 pub struct FileBackgroundRepository {
     backgrounds_dir: PathBuf,
-    thumbnails_bg_dir: PathBuf,
 }
 
 impl FileBackgroundRepository {
     /// Create a new FileBackgroundRepository instance
-    pub fn new(backgrounds_dir: PathBuf, thumbnails_bg_dir: PathBuf) -> Self {
-        Self {
-            backgrounds_dir,
-            thumbnails_bg_dir,
-        }
+    pub fn new(backgrounds_dir: PathBuf) -> Self {
+        Self { backgrounds_dir }
     }
 
     fn normalize_filename(&self, filename: &str) -> Result<String, DomainError> {
@@ -31,10 +26,6 @@ impl FileBackgroundRepository {
         }
 
         Ok(sanitized)
-    }
-
-    fn thumbnail_cache_path(&self, filename: &str) -> PathBuf {
-        self.thumbnails_bg_dir.join(filename)
     }
 
     async fn ensure_backgrounds_dir_exists(&self) -> Result<(), DomainError> {
@@ -60,11 +51,6 @@ impl FileBackgroundRepository {
                     error
                 ))
             })
-    }
-
-    async fn invalidate_thumbnail_cache(&self, filename: &str) -> Result<(), DomainError> {
-        let thumbnail_path = self.thumbnail_cache_path(filename);
-        invalidate_thumbnail_cache(&thumbnail_path).await
     }
 }
 
@@ -96,7 +82,6 @@ impl BackgroundRepository for FileBackgroundRepository {
             DomainError::InternalError(format!("Failed to delete background file: {}", error))
         })?;
 
-        self.invalidate_thumbnail_cache(&normalized).await?;
         Ok(())
     }
 
@@ -146,8 +131,6 @@ impl BackgroundRepository for FileBackgroundRepository {
             DomainError::InternalError(format!("Failed to rename background file: {}", error))
         })?;
 
-        self.invalidate_thumbnail_cache(&old_normalized).await?;
-        self.invalidate_thumbnail_cache(&new_normalized).await?;
         Ok(())
     }
 
@@ -166,7 +149,6 @@ impl BackgroundRepository for FileBackgroundRepository {
             DomainError::InternalError(format!("Failed to write background file: {}", error))
         })?;
 
-        self.invalidate_thumbnail_cache(&normalized).await?;
         Ok(normalized)
     }
 
@@ -197,7 +179,6 @@ impl BackgroundRepository for FileBackgroundRepository {
             DomainError::InternalError(format!("Failed to copy background file: {}", error))
         })?;
 
-        self.invalidate_thumbnail_cache(&normalized).await?;
         Ok(normalized)
     }
 }
@@ -211,10 +192,7 @@ mod tests {
 
     #[test]
     fn normalize_filename_matches_upstream_sanitize_filename() {
-        let repository = FileBackgroundRepository::new(
-            PathBuf::from("backgrounds"),
-            PathBuf::from("thumbnails/bg"),
-        );
+        let repository = FileBackgroundRepository::new(PathBuf::from("backgrounds"));
         let normalized = repository
             .normalize_filename("..\\bad:*name?.png")
             .expect("filename should be valid after normalization");
@@ -224,10 +202,7 @@ mod tests {
 
     #[test]
     fn normalize_filename_rejects_empty_result() {
-        let repository = FileBackgroundRepository::new(
-            PathBuf::from("backgrounds"),
-            PathBuf::from("thumbnails/bg"),
-        );
+        let repository = FileBackgroundRepository::new(PathBuf::from("backgrounds"));
         assert!(repository.normalize_filename(" ... ").is_err());
     }
 
@@ -254,14 +229,13 @@ mod tests {
     async fn upload_background_from_path_copies_file() {
         let temp = TempDirGuard::new("background-upload-from-path");
         let backgrounds_dir = temp.path.join("backgrounds");
-        let thumbnails_dir = temp.path.join("thumbnails/bg");
         let source_path = temp.path.join("source.bin");
 
         tokio::fs::write(&source_path, b"ok")
             .await
             .expect("write source");
 
-        let repository = FileBackgroundRepository::new(backgrounds_dir.clone(), thumbnails_dir);
+        let repository = FileBackgroundRepository::new(backgrounds_dir.clone());
         let uploaded = repository
             .upload_background_from_path("a.bin", &source_path)
             .await

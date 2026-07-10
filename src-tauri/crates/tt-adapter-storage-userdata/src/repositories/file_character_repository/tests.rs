@@ -86,7 +86,6 @@ fn insert_text_chunk_before_iend(mut png: Vec<u8>, keyword: &str, text: &str) ->
 async fn repository_for_root(root: &Path) -> FileCharacterRepository {
     let characters_dir = root.join("characters");
     let chats_dir = root.join("chats");
-    let thumbnails_avatar_dir = root.join("thumbnails/avatar");
     let default_avatar = root.join("default.png");
 
     fs::create_dir_all(&characters_dir)
@@ -95,9 +94,6 @@ async fn repository_for_root(root: &Path) -> FileCharacterRepository {
     fs::create_dir_all(&chats_dir)
         .await
         .expect("create chats dir");
-    fs::create_dir_all(&thumbnails_avatar_dir)
-        .await
-        .expect("create avatar thumbnails dir");
     fs::write(&default_avatar, build_minimal_png())
         .await
         .expect("write default avatar");
@@ -114,7 +110,6 @@ async fn repository_for_root(root: &Path) -> FileCharacterRepository {
     FileCharacterRepository::with_chat_repository(
         characters_dir,
         chats_dir,
-        thumbnails_avatar_dir,
         default_avatar,
         chat_aliases,
         chat_repository,
@@ -573,10 +568,6 @@ async fn write_character_card_json_replaces_avatar_even_when_metadata_is_unchang
         .await
         .expect("create persistent shallow index");
 
-    let thumbnail_path = root.join("thumbnails/avatar").join("Avatar Edit.png");
-    fs::write(&thumbnail_path, build_minimal_png())
-        .await
-        .expect("write stale thumbnail");
     let avatar_path = root.join("replacement-avatar.png");
     fs::write(&avatar_path, build_distinct_png())
         .await
@@ -596,7 +587,6 @@ async fn write_character_card_json_replaces_avatar_even_when_metadata_is_unchang
 
     assert_eq!(stored_image.width(), 2);
     assert_eq!(stored_image.height(), 2);
-    assert!(!thumbnail_path.exists());
     assert!(!shallow_index_path(&root).exists());
 
     let _ = fs::remove_dir_all(&root).await;
@@ -995,11 +985,6 @@ async fn import_preserved_character_replaces_cached_full_card() {
         .expect("load old character into full cache");
     assert_eq!(cached_old.first_mes, "old first message");
 
-    let thumbnail_path = root.join("thumbnails/avatar/Preserved.png");
-    fs::write(&thumbnail_path, b"stale thumbnail")
-        .await
-        .expect("write stale thumbnail");
-
     let new_character = Character::new(
         "Imported Replacement".to_string(),
         "new description".to_string(),
@@ -1023,12 +1008,6 @@ async fn import_preserved_character_replaces_cached_full_card() {
     assert_eq!(imported.avatar, "Preserved.png");
     assert_eq!(imported.name, "Imported Replacement");
     assert_eq!(imported.first_mes, "new first message");
-    assert!(
-        !fs::try_exists(&thumbnail_path)
-            .await
-            .expect("check stale thumbnail")
-    );
-
     let mut reloaded = repository
         .find_by_name("Preserved")
         .await
@@ -1120,7 +1099,7 @@ async fn replace_character_preserves_requested_primary_lorebook_in_single_import
 }
 
 #[tokio::test]
-async fn failed_replace_keeps_existing_character_and_thumbnail() {
+async fn failed_replace_keeps_existing_character() {
     let (repository, root) = setup_repository().await;
     let character = Character::new(
         "Preserved".to_string(),
@@ -1130,10 +1109,6 @@ async fn failed_replace_keeps_existing_character_and_thumbnail() {
     );
     repository.save(&character).await.expect("save character");
 
-    let thumbnail_path = root.join("thumbnails/avatar/Preserved.png");
-    fs::write(&thumbnail_path, b"existing thumbnail")
-        .await
-        .expect("write thumbnail");
     let import_path = root.join("invalid.png");
     fs::write(&import_path, b"not a character card")
         .await
@@ -1144,7 +1119,6 @@ async fn failed_replace_keeps_existing_character_and_thumbnail() {
         .await
         .expect_err("invalid replacement must fail");
 
-    assert!(thumbnail_path.exists());
     let reloaded = repository
         .find_by_name("Preserved")
         .await
@@ -2807,7 +2781,7 @@ async fn rename_preserves_avatar_pixel_data() {
 }
 
 #[tokio::test]
-async fn update_avatar_invalidates_stale_thumbnail() {
+async fn update_avatar_replaces_stored_image() {
     let (repository, root) = setup_repository().await;
 
     let character = Character::new(
@@ -2822,11 +2796,6 @@ async fn update_avatar_invalidates_stale_thumbnail() {
         .expect("create character")
         .character;
 
-    let thumbnail_path = root.join("thumbnails/avatar").join(&created.avatar);
-    fs::write(&thumbnail_path, b"stale thumbnail")
-        .await
-        .expect("write stale thumbnail");
-
     let replacement_path = root.join("replacement.png");
     fs::write(&replacement_path, build_distinct_png())
         .await
@@ -2837,11 +2806,12 @@ async fn update_avatar_invalidates_stale_thumbnail() {
         .await
         .expect("update avatar");
 
-    assert!(
-        !fs::try_exists(&thumbnail_path)
-            .await
-            .expect("check thumbnail")
-    );
+    let stored_png = fs::read(root.join("characters").join(&created.avatar))
+        .await
+        .expect("read updated character png");
+    let stored_image = image::load_from_memory(&stored_png).expect("decode updated avatar");
+    assert_eq!(stored_image.width(), 2);
+    assert_eq!(stored_image.height(), 2);
 
     let _ = fs::remove_dir_all(&root).await;
 }

@@ -74,21 +74,6 @@ impl FileCharacterRepository {
         stored
     }
 
-    async fn invalidate_avatar_thumbnail(&self, file_name: &str) -> Result<(), DomainError> {
-        let thumbnail_path = self
-            .thumbnails_avatar_dir
-            .join(format!("{}.png", file_name));
-        match fs::remove_file(&thumbnail_path).await {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(DomainError::InternalError(format!(
-                "Failed to remove thumbnail cache '{}': {}",
-                thumbnail_path.display(),
-                error
-            ))),
-        }
-    }
-
     pub(crate) async fn discard_character_read_cache(&self, file_name: &str) {
         {
             let mut cache = self.memory_cache.lock().await;
@@ -654,19 +639,12 @@ impl CharacterRepository for FileCharacterRepository {
                 cache.remove(name);
             }
             self.clear_shallow_index_cache().await;
-            if replaced_avatar {
-                let _ = self.invalidate_avatar_thumbnail(name).await;
-            }
             return Err(error);
         }
 
         let character = self.read_character_from_file(&file_path).await?;
         self.publish_character_write(name.to_string(), character.clone())
             .await;
-
-        if replaced_avatar {
-            self.invalidate_avatar_thumbnail(name).await?;
-        }
 
         Ok(character)
     }
@@ -807,7 +785,6 @@ impl CharacterRepository for FileCharacterRepository {
         let file_name = character.get_file_name();
         self.publish_character_write(file_name.clone(), character.clone())
             .await;
-        self.invalidate_avatar_thumbnail(&file_name).await?;
         Ok(character)
     }
 
@@ -839,7 +816,6 @@ impl CharacterRepository for FileCharacterRepository {
                 },
             )
             .await?;
-        self.invalidate_avatar_thumbnail(name).await?;
         self.publish_character_write(name.to_string(), character.clone())
             .await;
         Ok(character)
@@ -1020,8 +996,6 @@ impl CharacterRepository for FileCharacterRepository {
             Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
         self.publish_character_write(file_name.clone(), cached_character)
             .await;
-        self.invalidate_avatar_thumbnail(&file_name).await?;
-
         Ok(())
     }
 

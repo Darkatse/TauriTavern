@@ -3306,7 +3306,7 @@ function getCharacterAvatarUrl() {
 }
 
 function getUserAvatarUrl() {
-    return getUserAvatar(user_avatar, { forFetch: true });
+    return getUserAvatar(user_avatar);
 }
 
 /**

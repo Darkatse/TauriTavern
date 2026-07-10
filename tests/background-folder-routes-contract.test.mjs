@@ -129,9 +129,6 @@ test('/api/backgrounds/upload leaves filename sanitization to Rust storage bound
             });
             return 'CON';
         },
-        invalidateInvokeAll(scope) {
-            calls.push({ command: 'invalidateInvokeAll', scope });
-        },
     });
 
     const body = new FormData();
@@ -158,7 +155,6 @@ test('/api/backgrounds/upload leaves filename sanitization to Rust storage bound
             command: 'upload_background_from_path',
             args: { filename: 'CON ', file_path: '/tmp/staged-background' },
         },
-        { command: 'invalidateInvokeAll', scope: 'read_thumbnail_asset' },
     ]);
 });
 

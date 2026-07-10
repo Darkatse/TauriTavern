@@ -5015,7 +5015,7 @@ class Message {
         const isDataUrl = isDataURL(image);
         if (!isDataUrl) {
             try {
-                const response = await fetch(image, { method: 'GET', cache: 'force-cache' });
+                const response = await fetch(image);
                 if (!response.ok) throw new Error('Failed to fetch image');
                 const blob = await response.blob();
                 image = await getBase64Async(blob);
@@ -5049,7 +5049,7 @@ class Message {
         const isDataUrl = isDataURL(video);
         if (!isDataUrl) {
             try {
-                const response = await fetch(video, { method: 'GET', cache: 'force-cache' });
+                const response = await fetch(video);
                 if (!response.ok) throw new Error('Failed to fetch video');
                 const blob = await response.blob();
                 video = await getBase64Async(blob);
@@ -5084,7 +5084,7 @@ class Message {
         const isDataUrl = isDataURL(audio);
         if (!isDataUrl) {
             try {
-                const response = await fetch(audio, { method: 'GET', cache: 'force-cache' });
+                const response = await fetch(audio);
                 if (!response.ok) throw new Error('Failed to fetch audio');
                 const blob = await response.blob();
                 audio = await getBase64Async(blob);

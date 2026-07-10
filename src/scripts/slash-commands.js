@@ -28,6 +28,7 @@ import {
     getOneCharacter,
     getRequestHeaders,
     getThumbnailUrl,
+    refreshCharacterAvatarImages,
     isConnectionValidationSuspended,
     is_send_press,
     main_api,
@@ -5296,18 +5297,7 @@ async function uploadCharacterAvatar(avatarKey, base64Data, { resizePrompt = fal
             throw new Error(errorText || `Avatar upload failed: ${uploadResponse.status}`);
         }
 
-        const thumbnailUrl = getThumbnailUrl('avatar', avatarKey);
-        await fetch(thumbnailUrl, { method: 'GET', cache: 'reload' });
-        await fetch(`/characters/${avatarKey}`, { method: 'GET', cache: 'reload' });
-
-        const avatarImages = document.querySelectorAll(`img[src^="${thumbnailUrl}"]`);
-        for (const img of avatarImages) {
-            if (img instanceof HTMLImageElement) {
-                const originalSrc = img.src;
-                img.src = '';
-                img.src = originalSrc;
-            }
-        }
+        await refreshCharacterAvatarImages(avatarKey);
 
         return true;
     } catch (error) {

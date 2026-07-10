@@ -103,12 +103,15 @@ function readThemeOptions() {
     }));
 }
 
-function getBackgroundThumbnailUrl(filename) {
-    if (typeof window.__TAURITAVERN_THUMBNAIL__ === 'function') {
-        return window.__TAURITAVERN_THUMBNAIL__('bg', filename);
+function getBackgroundThumbnailUrl(filename, isAnimated) {
+    if (filename.toLowerCase().endsWith('.mp4')) {
+        return '/img/No-Image-Placeholder.svg';
     }
 
-    return `/thumbnail?type=bg&file=${encodeURIComponent(filename)}`;
+    const url = typeof window.__TAURITAVERN_THUMBNAIL__ === 'function'
+        ? window.__TAURITAVERN_THUMBNAIL__('bg', filename)
+        : `/thumbnail?type=bg&file=${encodeURIComponent(filename)}`;
+    return isAnimated ? `${url}&static=true` : url;
 }
 
 async function readBackgroundOptions() {
@@ -124,7 +127,7 @@ async function readBackgroundOptions() {
         backgroundOptions: backgroundEntries.map((entry) => ({
             value: entry.filename,
             label: entry.filename,
-            thumbnailUrl: getBackgroundThumbnailUrl(entry.filename),
+            thumbnailUrl: getBackgroundThumbnailUrl(entry.filename, entry.isAnimated),
             isAnimated: entry.isAnimated,
         })),
     };

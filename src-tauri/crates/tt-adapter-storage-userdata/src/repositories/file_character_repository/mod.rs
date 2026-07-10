@@ -25,7 +25,6 @@ use tt_adapter_storage_core::{
 pub struct FileCharacterRepository {
     characters_dir: PathBuf,
     chats_dir: PathBuf,
-    thumbnails_avatar_dir: PathBuf,
     default_avatar_path: PathBuf,
     shallow_index_path: PathBuf,
     memory_cache: Arc<Mutex<MemoryCache>>,
@@ -41,24 +40,13 @@ impl FileCharacterRepository {
     /// bootstrap constructs character and chat repositories together and must
     /// call `with_chat_repository` so both projections share one chat cache.
     #[allow(dead_code)]
-    pub fn new(
-        characters_dir: PathBuf,
-        chats_dir: PathBuf,
-        thumbnails_avatar_dir: PathBuf,
-        default_avatar_path: PathBuf,
-    ) -> Self {
+    pub fn new(characters_dir: PathBuf, chats_dir: PathBuf, default_avatar_path: PathBuf) -> Self {
         let chat_aliases_path = chats_dir
             .parent()
             .map(chat_alias_path_for_user_dir)
             .unwrap_or_else(|| chats_dir.join("chat_aliases_v1.json"));
         let chat_aliases = new_shared_chat_alias_store(chat_aliases_path);
-        Self::with_chat_aliases(
-            characters_dir,
-            chats_dir,
-            thumbnails_avatar_dir,
-            default_avatar_path,
-            chat_aliases,
-        )
+        Self::with_chat_aliases(characters_dir, chats_dir, default_avatar_path, chat_aliases)
     }
 
     /// Create a repository with the shared character/chat alias store.
@@ -69,7 +57,6 @@ impl FileCharacterRepository {
     pub fn with_chat_aliases(
         characters_dir: PathBuf,
         chats_dir: PathBuf,
-        thumbnails_avatar_dir: PathBuf,
         default_avatar_path: PathBuf,
         chat_aliases: SharedChatAliasStore,
     ) -> Self {
@@ -88,7 +75,6 @@ impl FileCharacterRepository {
         Self::with_chat_repository(
             characters_dir,
             chats_dir,
-            thumbnails_avatar_dir,
             default_avatar_path,
             chat_aliases,
             chat_repository,
@@ -98,7 +84,6 @@ impl FileCharacterRepository {
     pub fn with_chat_repository(
         characters_dir: PathBuf,
         chats_dir: PathBuf,
-        thumbnails_avatar_dir: PathBuf,
         default_avatar_path: PathBuf,
         chat_aliases: SharedChatAliasStore,
         chat_repository: Arc<FileChatRepository>,
@@ -113,7 +98,6 @@ impl FileCharacterRepository {
         Self {
             characters_dir,
             chats_dir,
-            thumbnails_avatar_dir,
             default_avatar_path,
             shallow_index_path,
             memory_cache,

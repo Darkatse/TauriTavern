@@ -39,11 +39,6 @@ export async function initializeTauriIntegration(
         safePerfMark('tt:tauri:init:backend-ready');
     }
 
-    await context.initialize();
-    if (perfEnabled) {
-        safePerfMark('tt:tauri:init:context-ready');
-    }
-
     // Re-apply runtime patches in case third-party code recreated fetch/jQuery or download bindings after bootstrap.
     interceptors.patchFetch();
     interceptors.patchJQueryAjax();

@@ -8653,23 +8653,7 @@ async function read_avatar_load(input) {
         const formData = new FormData(/** @type {HTMLFormElement} */($('#form_create').get(0)));
         const avatarKey = formData.get('avatar_url').toString();
 
-        // Bust cache for the avatar thumbnail and character image
-        const thumbnailUrl = getThumbnailUrl('avatar', avatarKey);
-        await fetch(thumbnailUrl, { method: 'GET', cache: 'reload' });
-        await fetch(`/characters/${avatarKey}`, { method: 'GET', cache: 'reload' });
-
-        // Refresh all visible avatar images that use this thumbnail URL
-        // This handles messages, character list, and any other place using the thumbnail
-        const avatarImages = document.querySelectorAll(`img[src^="${thumbnailUrl}"]`);
-        for (const img of avatarImages) {
-            if (img instanceof HTMLImageElement) {
-                const originalSrc = img.src;
-                img.src = '';
-                img.src = originalSrc;
-            }
-        }
-        console.debug(`Refreshed ${avatarImages.length} avatar images for ${avatarKey}`);
-
+        await refreshCharacterAvatarImages(avatarKey);
         console.log('Avatar refreshed');
     }
 }
@@ -8683,14 +8667,32 @@ async function read_avatar_load(input) {
  */
 export function getThumbnailUrl(type, file, t = false) {
     if (typeof window.__TAURITAVERN_THUMBNAIL__ === 'function') {
-        try {
-            return window.__TAURITAVERN_THUMBNAIL__(type, file, t);
-        } catch (error) {
-            console.warn('Tauri thumbnail helper failed:', error);
-        }
+        return window.__TAURITAVERN_THUMBNAIL__(type, file, t);
     }
 
     return `/thumbnail?type=${type}&file=${encodeURIComponent(file)}${t ? `&t=${Date.now()}` : ''}`;
+}
+
+/**
+ * Re-demands visible character avatar representations through their real image consumers.
+ * @param {string} avatarKey Character avatar filename
+ */
+export async function refreshCharacterAvatarImages(avatarKey) {
+    const urls = new Set([
+        getThumbnailUrl('avatar', avatarKey),
+        `/characters/${encodeURIComponent(avatarKey)}`,
+    ].map(url => new URL(url, window.location.href).href));
+    const images = Array.from(document.images)
+        .filter(image => urls.has(image.src))
+        .map(image => ({ image, src: image.src }));
+
+    if (images.length === 0) {
+        return;
+    }
+
+    images.forEach(({ image }) => image.removeAttribute('src'));
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    images.forEach(({ image, src }) => { image.src = src; });
 }
 
 export function buildAvatarList(block, entities, { templateId = 'inline_avatar_template', empty = true, interactable = false, highlightFavs = true } = {}) {
@@ -12001,9 +12003,8 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
             const replaced = Boolean(data.replaced);
             replacementCommitted = replacement;
 
-            // Refresh existing thumbnail
             if (replaced && this_chid !== undefined) {
-                await fetch(getThumbnailUrl('avatar', avatarFileName), { cache: 'reload' });
+                await refreshCharacterAvatarImages(avatarFileName);
             }
 
             $('#character_search_bar').val('').trigger('input');
@@ -14058,9 +14059,11 @@ jQuery(async function () {
         const messageElement = $(this).closest('.mes');
         const thumbURL = $(this).children('img').attr('src');
         const charsPath = '/characters/';
-        const targetAvatarImg = thumbURL.substring(thumbURL.lastIndexOf('=') + 1);
+        const targetAvatarImg = thumbURL.includes('/thumbnail?')
+            ? new URL(thumbURL, window.location.href).searchParams.get('file') || ''
+            : thumbURL.substring(thumbURL.lastIndexOf('=') + 1);
         const charname = targetAvatarImg.replace('.png', '');
-        const isValidCharacter = characters.some(x => x.avatar === decodeURIComponent(targetAvatarImg));
+        const isValidCharacter = characters.some(x => x.avatar === targetAvatarImg);
 
         // Remove existing zoomed avatars for characters that are not the clicked character when moving UI is not enabled
         if (!power_user.movingUI) {
@@ -14073,7 +14076,7 @@ jQuery(async function () {
             });
         }
 
-        const avatarSrc = (isDataURL(thumbURL) || /^\/?img\/(?:.+)/.test(thumbURL)) ? thumbURL : charsPath + targetAvatarImg;
+        const avatarSrc = (isDataURL(thumbURL) || /^\/?img\/(?:.+)/.test(thumbURL)) ? thumbURL : charsPath + encodeURIComponent(targetAvatarImg);
         if ($(`.zoomed_avatar[forChar="${charname}"]`).length) {
             console.debug('removing container as it already existed');
             $(`.zoomed_avatar[forChar="${charname}"]`).fadeOut(animation_duration, () => {
@@ -14093,7 +14096,7 @@ jQuery(async function () {
             const zoomedAvatarImgElement = $(`.zoomed_avatar[forChar="${charname}"] img`);
             if (messageElement.attr('is_user') == 'true' || (messageElement.attr('is_system') == 'true' && !isValidCharacter)) {
                 //handle user and system avatars
-                const isValidPersona = decodeURIComponent(targetAvatarImg) in power_user.personas;
+                const isValidPersona = targetAvatarImg in power_user.personas;
                 if (isValidPersona) {
                     const personaSrc = getUserAvatar(targetAvatarImg);
                     zoomedAvatarImgElement.attr('src', personaSrc);

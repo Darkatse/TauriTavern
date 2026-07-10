@@ -333,7 +333,6 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
 
     router.post('/api/backgrounds/delete', async ({ body }) => {
         await context.safeInvoke('delete_background', { dto: { bg: body?.bg || '' } });
-        context.invalidateInvokeAll('read_thumbnail_asset');
         return jsonResponse({ ok: true });
     });
 
@@ -345,7 +344,6 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             },
         });
 
-        context.invalidateInvokeAll('read_thumbnail_asset');
         return jsonResponse({ ok: true });
     });
 
@@ -374,7 +372,6 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
                 filename: rawFilename,
                 file_path: fileInfo.filePath,
             });
-            context.invalidateInvokeAll('read_thumbnail_asset');
             return textResponse(String(uploaded || rawFilename));
         } finally {
             await fileInfo.cleanup?.();
