@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn agent_runtime_loop_uses_real_file_repositories() {
+async fn agent_runtime_background_run_finish_uses_run_presentation() {
     let root = temp_root("agent-runtime");
     let fixture = agent_runtime_fixture(&root);
     let registry = BuiltinAgentToolRegistry::phase2c();
@@ -13,7 +13,7 @@ async fn agent_runtime_loop_uses_real_file_repositories() {
         })
         .await
         .expect("resolve default profile");
-    profile.run.presentation = AgentRunPresentation::Background;
+    profile.run.presentation = AgentRunPresentation::Foreground;
     profile.tools.max_rounds = 2;
 
     let run = AgentRun {
@@ -266,7 +266,7 @@ async fn agent_runtime_agent_list_discovers_callable_profiles_with_real_reposito
 }
 
 #[tokio::test]
-async fn agent_runtime_foreground_commit_guard_and_host_resolution_use_real_repositories() {
+async fn agent_runtime_foreground_commit_guard_uses_run_presentation() {
     let root = temp_root("agent-foreground");
     let fixture = agent_runtime_fixture_with_responses(
         &root,
@@ -332,7 +332,7 @@ async fn agent_runtime_foreground_commit_guard_and_host_resolution_use_real_repo
         ],
     );
     let mut profile = resolve_contract_profile(&fixture).await;
-    profile.run.presentation = AgentRunPresentation::Foreground;
+    profile.run.presentation = AgentRunPresentation::Background;
     profile.tools.max_rounds = 3;
     let run = contract_run(
         "run_foreground_contract",

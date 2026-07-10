@@ -203,8 +203,9 @@ impl AgentRuntimeService {
                                 "Return-mode child Agent invocations must complete with task.return, not workspace.finish.",
                                 outcome.elapsed_ms,
                             )
-                        } else if profile.run.presentation == AgentRunPresentation::Foreground
-                            && commit_ledger.is_empty()
+                        } else if commit_ledger.is_empty()
+                            && self.run_repository.load_run(run_id).await?.presentation
+                                == AgentRunPresentation::Foreground
                         {
                             recoverable_tool_error(
                                 call,

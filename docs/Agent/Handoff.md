@@ -313,6 +313,7 @@ Target handoff invocation 使用自己的 Profile 工具面。常见配置：
 
 Handoff 链共享同一个 `RunCommitLedger`。因此：
 
+- `AgentRun.presentation` 表达 run-level 用户输出义务；target Profile 的 `run.presentation` 表达当前 invocation 阶段，两者允许不同。
 - 前一个 Agent 已经 `workspace.commit` 后，后续 Agent 可以继续修订并再次 commit。
 - `workspace.finish` 的前台 commit 要求是 run-level，不是 invocation-local。只要同一个 run 已经有成功 commit，后续 handoff owner 可以 finish。
 - 仍建议最终 Agent 在做实质修订后再次 commit，避免用户看到的是上一个阶段的输出。
