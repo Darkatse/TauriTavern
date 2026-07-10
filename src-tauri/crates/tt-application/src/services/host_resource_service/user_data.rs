@@ -1,336 +1,310 @@
-use super::contract::{
-    HostResourceMethod, HostResourceRequest, HostResourceResponse, header, status,
-};
-use super::ports::{HostResourceAssetStore, HostResourceStoreError};
 use super::range::{RangeHeaderError, parse_single_range_header};
+use super::response::{self, RepresentationMetadata, RetrievalDecision};
+use super::{HostResourceDeliveryCapabilities, HostResourceResponse};
 use crate::client_asset_paths::{
     UserDataAssetKind, UserDataPathError, parse_user_data_asset_request_path,
+};
+use http::header::RANGE;
+use http::{Method, Request, StatusCode};
+use tt_ports::host_resource::{
+    HostResourceAssetStore, HostResourceSourceRequest, HostResourceStoreError,
 };
 
 const USER_DATA_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 
-#[derive(Clone, Copy)]
-pub(crate) struct UserDataAssetRequestPolicy {
-    android_webview_reapplies_range_semantics: bool,
-}
-
-impl UserDataAssetRequestPolicy {
-    pub(crate) const fn for_current_platform() -> Self {
-        Self {
-            android_webview_reapplies_range_semantics: cfg!(target_os = "android"),
-        }
-    }
-
-    #[cfg(test)]
-    const fn android_workaround(enabled: bool) -> Self {
-        Self {
-            android_webview_reapplies_range_semantics: enabled,
-        }
-    }
-}
-
 pub(super) fn serve_user_data_asset(
     store: &dyn HostResourceAssetStore,
-    request: &HostResourceRequest<'_>,
-    policy: UserDataAssetRequestPolicy,
+    request: &Request<Vec<u8>>,
+    delivery: HostResourceDeliveryCapabilities,
 ) -> HostResourceResponse {
-    match request.method {
-        HostResourceMethod::Options => {
-            return HostResourceResponse::no_content(USER_DATA_ALLOWED_METHODS);
+    match *request.method() {
+        Method::OPTIONS => {
+            return response::no_content(USER_DATA_ALLOWED_METHODS);
         }
-        HostResourceMethod::Get | HostResourceMethod::Head => {}
-        _ => return HostResourceResponse::method_not_allowed(USER_DATA_ALLOWED_METHODS),
+        Method::GET | Method::HEAD => {}
+        _ => return response::method_not_allowed(USER_DATA_ALLOWED_METHODS),
     }
 
-    let parsed = match parse_user_data_asset_request_path(request.path) {
+    let parsed = match parse_user_data_asset_request_path(request.uri().path()) {
         Ok(Some(value)) => value,
-        Ok(None) => return HostResourceResponse::plain_text(status::NOT_FOUND, "Not Found"),
+        Ok(None) => return response::error(StatusCode::NOT_FOUND, "Not Found"),
         Err(UserDataPathError::MissingAssetPath) => {
-            return HostResourceResponse::plain_text(status::NOT_FOUND, "Not Found");
+            return response::error(StatusCode::NOT_FOUND, "Not Found");
         }
         Err(UserDataPathError::InvalidPath) => {
-            return HostResourceResponse::plain_text(status::BAD_REQUEST, "Invalid asset path");
+            return response::error(StatusCode::BAD_REQUEST, "Invalid asset path");
         }
     };
 
-    let stat = match store.stat_user_data_asset(parsed.kind, &parsed.relative_path) {
-        Ok(stat) => stat,
+    let opened = match store.open(HostResourceSourceRequest::UserData {
+        kind: parsed.kind,
+        relative_path: &parsed.relative_path,
+    }) {
+        Ok(opened) => opened,
         Err(error) => return store_error_response(error),
     };
+    let metadata = match RepresentationMetadata::raw(&opened.metadata, None) {
+        Ok(metadata) => metadata,
+        Err(error) => return store_error_response(error),
+    };
+    let total_size = opened.metadata.content_length;
 
-    if request.method == HostResourceMethod::Head {
-        return with_accept_ranges(
-            HostResourceResponse::bytes(status::OK, Vec::new(), &stat.mime_type)
-                .with_header(header::CONTENT_LENGTH, stat.len.to_string()),
-        );
+    match response::decide_retrieval(request, &metadata, delivery) {
+        RetrievalDecision::NotModified => {
+            return response::with_accept_ranges(response::not_modified(&metadata));
+        }
+        RetrievalDecision::Head => {
+            return response::with_accept_ranges(response::head(&metadata));
+        }
+        RetrievalDecision::Full => {
+            return read_full_response(opened, &metadata);
+        }
+        RetrievalDecision::Continue => {}
     }
 
-    let is_android_background_video = policy.android_webview_reapplies_range_semantics
+    let webview_reapplies_background_video_range = delivery.webview_reapplies_range_semantics()
         && parsed.kind == UserDataAssetKind::Background
-        && stat.mime_type.starts_with("video/");
+        && opened.metadata.content_type.starts_with("video/");
 
-    if let Some(range_header) = request.headers.get(header::RANGE) {
-        let header_value = match std::str::from_utf8(range_header) {
+    let mut range_headers = request.headers().get_all(RANGE).iter();
+    if let Some(range_header) = range_headers.next() {
+        if range_headers.next().is_some() {
+            return response::range_not_satisfiable(
+                "Multiple ranges are not supported",
+                total_size,
+            );
+        }
+        if !response::if_range_allows_range(request, &metadata) {
+            return read_full_response(opened, &metadata);
+        }
+
+        let header_value = match range_header.to_str() {
             Ok(value) => value,
             Err(_) => {
-                return range_not_satisfiable("Invalid Range header", stat.len);
+                return response::range_not_satisfiable("Invalid Range header", total_size);
             }
         };
 
-        let range = match parse_single_range_header(header_value, stat.len) {
+        let range = match parse_single_range_header(header_value, total_size) {
             Ok(value) => value,
             Err(RangeHeaderError::Invalid) => {
-                return range_not_satisfiable("Invalid Range header", stat.len);
+                return response::range_not_satisfiable("Invalid Range header", total_size);
             }
             Err(RangeHeaderError::Unsatisfiable) => {
-                return range_not_satisfiable("Range not satisfiable", stat.len);
+                return response::range_not_satisfiable("Range not satisfiable", total_size);
             }
         };
 
-        if is_android_background_video && range.start != 0 {
-            return match store.read_user_data_asset(parsed.kind, &parsed.relative_path) {
+        if webview_reapplies_background_video_range && range.start != 0 {
+            return match opened.read(None) {
                 Ok(bytes) => {
-                    let response = HostResourceResponse::bytes(
-                        status::PARTIAL_CONTENT,
+                    let response = response::partial(
+                        &metadata,
                         bytes,
-                        &stat.mime_type,
-                    )
-                    .with_header(
-                        header::CONTENT_RANGE,
-                        format!("bytes {}-{}/{}", range.start, range.end, stat.len),
-                    )
-                    .with_header(header::CONTENT_LENGTH, range.len().to_string());
+                        format!("bytes {}-{}/{}", range.start, range.end, total_size),
+                        range.len(),
+                    );
                     tracing::debug!(
                         "User data asset Android video range workaround hit: {}",
                         parsed.relative_path_display
                     );
-                    with_accept_ranges(response)
+                    response::with_accept_ranges(response)
                 }
-                Err(error) => with_accept_ranges(store_error_response(error)),
+                Err(error) => response::with_accept_ranges(store_error_response(error)),
             };
         }
 
         if usize::try_from(range.len()).is_err() {
-            return with_accept_ranges(HostResourceResponse::plain_text(
-                status::INTERNAL_SERVER_ERROR,
+            return response::with_accept_ranges(response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
                 "Range is too large to serve",
             ));
         }
 
-        return match store.read_user_data_asset_range(parsed.kind, &parsed.relative_path, range) {
+        return match opened.read(Some(range)) {
             Ok(bytes) => {
-                let response =
-                    HostResourceResponse::bytes(status::PARTIAL_CONTENT, bytes, &stat.mime_type)
-                        .with_header(
-                            header::CONTENT_RANGE,
-                            format!("bytes {}-{}/{}", range.start, range.end, stat.len),
-                        )
-                        .with_header(header::CONTENT_LENGTH, range.len().to_string());
+                let response = response::partial(
+                    &metadata,
+                    bytes,
+                    format!("bytes {}-{}/{}", range.start, range.end, total_size),
+                    range.len(),
+                );
 
                 tracing::debug!(
                     "User data asset range hit: {:?}/{}",
                     parsed.kind,
                     parsed.relative_path_display
                 );
-                with_accept_ranges(response)
+                response::with_accept_ranges(response)
             }
-            Err(error) => with_accept_ranges(store_error_response(error)),
+            Err(error) => response::with_accept_ranges(store_error_response(error)),
         };
     }
 
-    match store.read_user_data_asset(parsed.kind, &parsed.relative_path) {
+    match opened.read(None) {
         Ok(bytes) => {
             tracing::debug!(
                 "User data asset hit: {:?}/{}",
                 parsed.kind,
                 parsed.relative_path_display
             );
-            with_accept_ranges(
-                HostResourceResponse::bytes(status::OK, bytes, &stat.mime_type)
-                    .with_header(header::CONTENT_LENGTH, stat.len.to_string()),
-            )
+            response::with_accept_ranges(response::ok(&metadata, bytes))
         }
-        Err(error) => with_accept_ranges(store_error_response(error)),
+        Err(error) => response::with_accept_ranges(store_error_response(error)),
     }
 }
 
-fn with_accept_ranges(response: HostResourceResponse) -> HostResourceResponse {
-    response.with_header(header::ACCEPT_RANGES, "bytes")
-}
-
-fn range_not_satisfiable(message: &str, total_size: u64) -> HostResourceResponse {
-    with_accept_ranges(
-        HostResourceResponse::plain_text(status::RANGE_NOT_SATISFIABLE, message)
-            .with_header(header::CONTENT_RANGE, format!("bytes */{}", total_size)),
-    )
+fn read_full_response(
+    opened: tt_ports::host_resource::OpenedHostResource,
+    metadata: &RepresentationMetadata,
+) -> HostResourceResponse {
+    match opened.read(None) {
+        Ok(bytes) => response::with_accept_ranges(response::ok(metadata, bytes)),
+        Err(error) => response::with_accept_ranges(store_error_response(error)),
+    }
 }
 
 fn store_error_response(error: HostResourceStoreError) -> HostResourceResponse {
-    match error {
-        HostResourceStoreError::NotFound(_) => {
-            HostResourceResponse::plain_text(status::NOT_FOUND, "Not Found")
-        }
-        HostResourceStoreError::Forbidden(message) => {
-            HostResourceResponse::plain_text(status::FORBIDDEN, &message)
-        }
-        HostResourceStoreError::Internal(message) => {
-            HostResourceResponse::plain_text(status::INTERNAL_SERVER_ERROR, &message)
-        }
-        HostResourceStoreError::PayloadTooLarge { .. } => HostResourceResponse::plain_text(
-            status::PAYLOAD_TOO_LARGE,
-            "Host resource is too large to load.",
-        ),
-    }
+    response::store_error(error, "Not Found")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::services::host_resource_service::contract::{
-        HostResourceHeader, HostResourceHeaders,
-    };
-    use crate::services::host_resource_service::ports::{
-        HostResourceBinaryAsset, HostResourceFileStat, ThumbnailAssetRequest,
-    };
-    use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    struct Store;
+    use http::header::{CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, RANGE};
+    use tt_ports::host_resource::{
+        HostResourceSourceRequest, HostResourceStoreError, OpenedHostResource,
+    };
+
+    use super::*;
+    use crate::services::host_resource_service::test_support;
+
+    struct Store {
+        opens: Arc<AtomicUsize>,
+    }
 
     impl HostResourceAssetStore for Store {
-        fn read_user_css(&self) -> Result<Vec<u8>, HostResourceStoreError> {
-            unreachable!()
-        }
-
-        fn stat_third_party_asset(
+        fn open(
             &self,
-            _extension_folder: &str,
-            _relative_path: &Path,
-        ) -> Result<HostResourceFileStat, HostResourceStoreError> {
-            unreachable!()
-        }
-
-        fn read_third_party_asset(
-            &self,
-            _extension_folder: &str,
-            _relative_path: &Path,
-            _max_len: Option<u64>,
-        ) -> Result<HostResourceBinaryAsset, HostResourceStoreError> {
-            unreachable!()
-        }
-
-        fn stat_user_data_asset(
-            &self,
-            kind: UserDataAssetKind,
-            _relative_path: &Path,
-        ) -> Result<HostResourceFileStat, HostResourceStoreError> {
+            request: HostResourceSourceRequest<'_>,
+        ) -> Result<OpenedHostResource, HostResourceStoreError> {
+            self.opens.fetch_add(1, Ordering::Relaxed);
+            let HostResourceSourceRequest::UserData { kind, .. } = request else {
+                unreachable!()
+            };
             let mime_type = if kind == UserDataAssetKind::Background {
                 "video/mp4"
             } else {
                 "application/octet-stream"
             };
-            Ok(HostResourceFileStat {
-                len: 4,
-                mime_type: mime_type.to_string(),
-            })
-        }
-
-        fn read_user_data_asset(
-            &self,
-            _kind: UserDataAssetKind,
-            _relative_path: &Path,
-        ) -> Result<Vec<u8>, HostResourceStoreError> {
-            Ok(b"abcd".to_vec())
-        }
-
-        fn read_user_data_asset_range(
-            &self,
-            _kind: UserDataAssetKind,
-            _relative_path: &Path,
-            range: super::super::range::ByteRange,
-        ) -> Result<Vec<u8>, HostResourceStoreError> {
-            Ok(b"abcd"[range.start as usize..=range.end as usize].to_vec())
-        }
-
-        fn read_thumbnail_asset(
-            &self,
-            _request: ThumbnailAssetRequest,
-        ) -> Result<HostResourceBinaryAsset, HostResourceStoreError> {
-            unreachable!()
+            Ok(test_support::opened(
+                b"abcd",
+                mime_type,
+                Arc::new(AtomicUsize::new(0)),
+            ))
         }
     }
 
-    fn request(method: HostResourceMethod, uri: &'static str) -> HostResourceRequest<'static> {
-        request_with_headers(method, uri, &[])
-    }
-
-    fn request_with_headers<'a>(
-        method: HostResourceMethod,
-        uri: &'static str,
-        headers: &'a [HostResourceHeader<'a>],
-    ) -> HostResourceRequest<'a> {
-        let (path, query) = uri
-            .split_once('?')
-            .map_or((uri, None), |(path, query)| (path, Some(query)));
-        HostResourceRequest::new(method, path, query, HostResourceHeaders::new(headers))
-    }
-
-    fn header<'a>(response: &'a HostResourceResponse, name: &str) -> Option<&'a str> {
-        response
-            .headers
-            .iter()
-            .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.as_str())
+    fn store() -> Store {
+        Store {
+            opens: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
     #[test]
     fn serves_user_data_ranges() {
-        let headers = [HostResourceHeader {
-            name: header::RANGE,
-            value: b"bytes=1-2",
-        }];
-        let request = request_with_headers(HostResourceMethod::Get, "/backgrounds/a.mp4", &headers);
+        let mut request = test_support::request(Method::GET, "/backgrounds/a.mp4");
+        request
+            .headers_mut()
+            .insert(RANGE, "bytes=1-2".parse().expect("range"));
 
         let response = serve_user_data_asset(
-            &Store,
+            &store(),
             &request,
-            UserDataAssetRequestPolicy::android_workaround(false),
+            HostResourceDeliveryCapabilities::new(true, false),
         );
 
-        assert_eq!(response.status, status::PARTIAL_CONTENT);
-        assert_eq!(response.body, b"bc");
-        assert_eq!(
-            header(&response, header::CONTENT_RANGE),
-            Some("bytes 1-2/4")
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.body(), b"bc");
+        assert_eq!(response.headers()[CONTENT_RANGE], "bytes 1-2/4");
+    }
+
+    #[test]
+    fn rejects_multiple_range_field_lines() {
+        let mut request = test_support::request(Method::GET, "/backgrounds/a.mp4");
+        request
+            .headers_mut()
+            .append(RANGE, "bytes=0-0".parse().expect("first range"));
+        request
+            .headers_mut()
+            .append(RANGE, "bytes=2-2".parse().expect("second range"));
+
+        let response = serve_user_data_asset(
+            &store(),
+            &request,
+            HostResourceDeliveryCapabilities::new(true, false),
         );
+
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(response.headers()[CONTENT_RANGE], "bytes */4");
     }
 
     #[test]
     fn android_background_video_range_returns_full_body_with_range_headers() {
-        let headers = [HostResourceHeader {
-            name: header::RANGE,
-            value: b"bytes=1-2",
-        }];
-        let request = request_with_headers(HostResourceMethod::Get, "/backgrounds/a.mp4", &headers);
+        let mut request = test_support::request(Method::GET, "/backgrounds/a.mp4");
+        request
+            .headers_mut()
+            .insert(RANGE, "bytes=1-2".parse().expect("range"));
 
         let response = serve_user_data_asset(
-            &Store,
+            &store(),
             &request,
-            UserDataAssetRequestPolicy::android_workaround(true),
+            HostResourceDeliveryCapabilities::new(false, true),
         );
 
-        assert_eq!(response.status, status::PARTIAL_CONTENT);
-        assert_eq!(response.body, b"abcd");
-        assert_eq!(header(&response, header::CONTENT_LENGTH), Some("2"));
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.body(), b"abcd");
+        assert_eq!(response.headers()[CONTENT_LENGTH], "2");
+    }
+
+    #[test]
+    fn weak_if_range_returns_full_representation() {
+        let store = store();
+        let first = serve_user_data_asset(
+            &store,
+            &test_support::request(Method::GET, "/backgrounds/a.mp4"),
+            HostResourceDeliveryCapabilities::new(true, false),
+        );
+        let mut request = test_support::request(Method::GET, "/backgrounds/a.mp4");
+        request
+            .headers_mut()
+            .insert(RANGE, "bytes=1-2".parse().expect("range"));
+        request
+            .headers_mut()
+            .insert(IF_RANGE, first.headers()[ETAG].clone());
+
+        let response = serve_user_data_asset(
+            &store,
+            &request,
+            HostResourceDeliveryCapabilities::new(true, false),
+        );
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.body(), b"abcd");
     }
 
     #[test]
     fn rejects_invalid_user_data_paths_before_store_access() {
+        let store = store();
         let response = serve_user_data_asset(
-            &Store,
-            &request(HostResourceMethod::Get, "/backgrounds/%2Fbad.png"),
-            UserDataAssetRequestPolicy::android_workaround(false),
+            &store,
+            &test_support::request(Method::GET, "/backgrounds/%2Fbad.png"),
+            HostResourceDeliveryCapabilities::new(true, false),
         );
 
-        assert_eq!(response.status, status::BAD_REQUEST);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(store.opens.load(Ordering::Relaxed), 0);
     }
 }

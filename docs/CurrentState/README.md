@@ -78,3 +78,7 @@
 16. `docs/CurrentState/LoggingObservability.md`
    - Logging / Dev Observability 当前实现快照
    - 包含 tracing 普通日志、用户可见 backend error、DevObservabilityHub、LLM API log 与边界守卫契约
+
+17. `docs/CurrentState/HostResourceCaching.md`
+   - Host Resource 的 opened source、representation revision、条件请求和平台 delivery 契约
+   - 包含 weak ETag/Last-Modified/HEAD/Range/If-Range、Android 304 限制与持续开发约束

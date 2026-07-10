@@ -11,6 +11,8 @@ test-support = []
 async-trait = "0.1"
 base64 = "0.22"
 chrono = { workspace = true }
+headers = "0.4"
+http = "1"
 mime_guess = "2.0.5"
 percent-encoding = "2"
 rand = { workspace = true }

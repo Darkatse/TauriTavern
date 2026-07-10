@@ -3,7 +3,6 @@ pub mod character;
 pub mod chat;
 pub mod client_asset_paths;
 pub mod host;
-pub mod host_resource;
 pub mod observability;
 pub mod provider_metadata;
 pub mod range;

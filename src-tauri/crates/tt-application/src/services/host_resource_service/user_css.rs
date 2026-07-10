@@ -1,159 +1,137 @@
-use super::contract::{
-    HostResourceMethod, HostResourceRequest, HostResourceResponse, header, status,
-};
-use super::ports::{HostResourceAssetStore, HostResourceStoreError};
+use http::{Method, Request};
+use tt_ports::host_resource::{HostResourceAssetStore, HostResourceSourceRequest};
+
+use super::response::{self, RepresentationMetadata, RetrievalDecision};
+use super::{HostResourceDeliveryCapabilities, HostResourceResponse};
 
 const USER_CSS_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 const USER_CSS_CONTENT_TYPE: &str = "text/css; charset=utf-8";
 
 pub(super) fn serve_user_css(
     store: &dyn HostResourceAssetStore,
-    request: &HostResourceRequest<'_>,
+    request: &Request<Vec<u8>>,
+    delivery: HostResourceDeliveryCapabilities,
 ) -> HostResourceResponse {
-    match request.method {
-        HostResourceMethod::Options => {
-            return HostResourceResponse::no_content(USER_CSS_ALLOWED_METHODS);
+    match *request.method() {
+        Method::OPTIONS => {
+            return response::no_content(USER_CSS_ALLOWED_METHODS);
         }
-        HostResourceMethod::Get | HostResourceMethod::Head => {}
-        _ => return HostResourceResponse::method_not_allowed(USER_CSS_ALLOWED_METHODS),
+        Method::GET | Method::HEAD => {}
+        _ => return response::method_not_allowed(USER_CSS_ALLOWED_METHODS),
     }
 
-    let bytes = match store.read_user_css() {
-        Ok(bytes) => bytes,
-        Err(HostResourceStoreError::NotFound(_)) => {
-            return HostResourceResponse::plain_text(status::NOT_FOUND, "User CSS not found");
-        }
-        Err(HostResourceStoreError::Forbidden(message)) => {
-            return HostResourceResponse::plain_text(status::FORBIDDEN, &message);
-        }
-        Err(HostResourceStoreError::Internal(message)) => {
-            return HostResourceResponse::plain_text(status::INTERNAL_SERVER_ERROR, &message);
-        }
-        Err(HostResourceStoreError::PayloadTooLarge { .. }) => {
-            return HostResourceResponse::plain_text(
-                status::PAYLOAD_TOO_LARGE,
-                "Host resource is too large to load.",
-            );
-        }
+    let opened = match store.open(HostResourceSourceRequest::UserCss) {
+        Ok(opened) => opened,
+        Err(error) => return response::store_error(error, "User CSS not found"),
+    };
+    let metadata = match RepresentationMetadata::raw(&opened.metadata, Some(USER_CSS_CONTENT_TYPE))
+    {
+        Ok(metadata) => metadata,
+        Err(error) => return response::store_error(error, "User CSS not found"),
     };
 
-    let content_length = bytes.len();
-    let body = if request.method == HostResourceMethod::Head {
-        Vec::new()
-    } else {
-        bytes
-    };
-
-    HostResourceResponse::bytes(status::OK, body, USER_CSS_CONTENT_TYPE)
-        .with_header(header::CONTENT_LENGTH, content_length.to_string())
+    match response::decide_retrieval(request, &metadata, delivery) {
+        RetrievalDecision::NotModified => response::not_modified(&metadata),
+        RetrievalDecision::Head => response::head(&metadata),
+        RetrievalDecision::Full | RetrievalDecision::Continue => match opened.read(None) {
+            Ok(bytes) => response::ok(&metadata, bytes),
+            Err(error) => response::store_error(error, "User CSS not found"),
+        },
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::client_asset_paths::UserDataAssetKind;
-    use crate::services::host_resource_service::contract::HostResourceHeaders;
-    use crate::services::host_resource_service::ports::{
-        HostResourceBinaryAsset, HostResourceFileStat, ThumbnailAssetRequest,
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use http::StatusCode;
+    use http::header::{CACHE_CONTROL, CONTENT_LENGTH, ETAG, IF_NONE_MATCH};
+    use tt_ports::host_resource::{
+        HostResourceSourceRequest, HostResourceStoreError, OpenedHostResource,
     };
-    use crate::services::host_resource_service::range::ByteRange;
-    use std::path::Path;
+
+    use super::*;
+    use crate::services::host_resource_service::test_support;
 
     struct Store {
-        css: Result<Vec<u8>, HostResourceStoreError>,
+        missing: bool,
+        reads: Arc<AtomicUsize>,
     }
 
     impl HostResourceAssetStore for Store {
-        fn read_user_css(&self) -> Result<Vec<u8>, HostResourceStoreError> {
-            self.css.clone()
-        }
-
-        fn stat_third_party_asset(
+        fn open(
             &self,
-            _extension_folder: &str,
-            _relative_path: &Path,
-        ) -> Result<HostResourceFileStat, HostResourceStoreError> {
-            unreachable!()
+            request: HostResourceSourceRequest<'_>,
+        ) -> Result<OpenedHostResource, HostResourceStoreError> {
+            assert!(matches!(request, HostResourceSourceRequest::UserCss));
+            if self.missing {
+                return Err(HostResourceStoreError::not_found("missing"));
+            }
+            Ok(test_support::opened(
+                b"body {}",
+                "text/css",
+                Arc::clone(&self.reads),
+            ))
         }
-
-        fn read_third_party_asset(
-            &self,
-            _extension_folder: &str,
-            _relative_path: &Path,
-            _max_len: Option<u64>,
-        ) -> Result<HostResourceBinaryAsset, HostResourceStoreError> {
-            unreachable!()
-        }
-
-        fn stat_user_data_asset(
-            &self,
-            _kind: UserDataAssetKind,
-            _relative_path: &Path,
-        ) -> Result<HostResourceFileStat, HostResourceStoreError> {
-            unreachable!()
-        }
-
-        fn read_user_data_asset(
-            &self,
-            _kind: UserDataAssetKind,
-            _relative_path: &Path,
-        ) -> Result<Vec<u8>, HostResourceStoreError> {
-            unreachable!()
-        }
-
-        fn read_user_data_asset_range(
-            &self,
-            _kind: UserDataAssetKind,
-            _relative_path: &Path,
-            _range: ByteRange,
-        ) -> Result<Vec<u8>, HostResourceStoreError> {
-            unreachable!()
-        }
-
-        fn read_thumbnail_asset(
-            &self,
-            _request: ThumbnailAssetRequest,
-        ) -> Result<HostResourceBinaryAsset, HostResourceStoreError> {
-            unreachable!()
-        }
-    }
-
-    fn request(method: HostResourceMethod) -> HostResourceRequest<'static> {
-        HostResourceRequest::new(method, "/css/user.css", None, HostResourceHeaders::empty())
-    }
-
-    fn header<'a>(response: &'a HostResourceResponse, name: &str) -> Option<&'a str> {
-        response
-            .headers
-            .iter()
-            .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.as_str())
     }
 
     #[test]
-    fn serves_user_css_and_head_keeps_length() {
+    fn serves_revalidatable_css_without_reading_head_or_304() {
+        let reads = Arc::new(AtomicUsize::new(0));
         let store = Store {
-            css: Ok(b"body {}".to_vec()),
+            missing: false,
+            reads: Arc::clone(&reads),
         };
+        let delivery = HostResourceDeliveryCapabilities::new(true, false);
 
-        let get = serve_user_css(&store, &request(HostResourceMethod::Get));
-        let head = serve_user_css(&store, &request(HostResourceMethod::Head));
+        let get = serve_user_css(
+            &store,
+            &test_support::request(Method::GET, "/css/user.css"),
+            delivery,
+        );
+        let head = serve_user_css(
+            &store,
+            &test_support::request(Method::HEAD, "/css/user.css"),
+            delivery,
+        );
+        let mut conditional = test_support::request(Method::GET, "/css/user.css");
+        conditional
+            .headers_mut()
+            .insert(IF_NONE_MATCH, get.headers()[ETAG].clone());
+        let not_modified = serve_user_css(&store, &conditional, delivery);
+        let full_fallback = serve_user_css(
+            &store,
+            &conditional,
+            HostResourceDeliveryCapabilities::new(false, false),
+        );
 
-        assert_eq!(get.status, status::OK);
-        assert_eq!(get.body, b"body {}");
-        assert_eq!(head.status, status::OK);
-        assert!(head.body.is_empty());
-        assert_eq!(header(&head, header::CONTENT_LENGTH), Some("7"));
+        assert_eq!(get.status(), StatusCode::OK);
+        assert_eq!(get.body(), b"body {}");
+        assert_eq!(get.headers()[CACHE_CONTROL], "private, no-cache");
+        assert_eq!(head.status(), StatusCode::OK);
+        assert!(head.body().is_empty());
+        assert_eq!(head.headers()[CONTENT_LENGTH], "7");
+        assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(full_fallback.status(), StatusCode::OK);
+        assert_eq!(full_fallback.body(), b"body {}");
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
     }
 
     #[test]
     fn returns_not_found_when_user_css_is_missing() {
         let store = Store {
-            css: Err(HostResourceStoreError::not_found("missing")),
+            missing: true,
+            reads: Arc::new(AtomicUsize::new(0)),
         };
 
-        let response = serve_user_css(&store, &request(HostResourceMethod::Get));
+        let response = serve_user_css(
+            &store,
+            &test_support::request(Method::GET, "/css/user.css"),
+            HostResourceDeliveryCapabilities::new(true, false),
+        );
 
-        assert_eq!(response.status, status::NOT_FOUND);
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
     }
 }

@@ -28,7 +28,7 @@
 - 仅接受 `GET` / `HEAD` / `OPTIONS`，其他方法返回 `405`
 - 未命中返回真实 `404`（不回退到 `index.html`）
 - `Content-Type` 必须与文件类型匹配（基于扩展名推断）
-- `Cache-Control: no-store`
+- 成功响应使用 `Cache-Control: private, no-cache`、weak ETag 和 Last-Modified；完整表示与条件请求契约见 `docs/CurrentState/HostResourceCaching.md`
 - `Accept-Ranges: bytes`
 - 允许 data root 内的 symlink 指向外部文件或目录，以支持与 SillyTavern 共享同一套数据。
 
@@ -59,6 +59,8 @@
 ## 4. Android WebView 差异与当前 workaround（视频背景）
 
 现象（历史问题）：
+
+- Android `WebResourceResponse` 不支持 3xx，因此 Host Resource validator 命中时返回完整 200，而不是 304；
 
 - Android WebView 对 `video/mp4` 的请求序列通常包含多个 Range（例如 `bytes=0-`、`bytes=131072-`、尾部 Range 等）。
 - 在 Tauri mobile 的资源拦截链路中（`shouldInterceptRequest`），Android WebView 会对**拦截返回的响应流**再次应用请求的 Range 语义。

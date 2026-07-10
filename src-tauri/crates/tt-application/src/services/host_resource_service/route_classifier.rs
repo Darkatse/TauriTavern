@@ -1,8 +1,8 @@
-use super::contract::HostResourceRequest;
 use crate::client_asset_paths::{
     THIRD_PARTY_EXTENSION_ROUTE_PREFIX, THUMBNAIL_ROUTE_PATH, USER_CSS_ROUTE,
     is_user_data_asset_route,
 };
+use http::Request;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HostResourceRoute {
@@ -13,9 +13,9 @@ pub(crate) enum HostResourceRoute {
 }
 
 pub(crate) fn classify_host_resource_route(
-    request: &HostResourceRequest<'_>,
+    request: &Request<Vec<u8>>,
 ) -> Option<HostResourceRoute> {
-    let path = request.path;
+    let path = request.uri().path();
     if path == USER_CSS_ROUTE {
         return Some(HostResourceRoute::UserCss);
     }
@@ -38,17 +38,14 @@ pub(crate) fn classify_host_resource_route(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::host_resource_service::contract::{
-        HostResourceHeaders, HostResourceMethod,
-    };
+    use http::Method;
 
-    fn request(path: &'static str) -> HostResourceRequest<'static> {
-        HostResourceRequest::new(
-            HostResourceMethod::Get,
-            path,
-            None,
-            HostResourceHeaders::empty(),
-        )
+    fn request(path: &'static str) -> Request<Vec<u8>> {
+        Request::builder()
+            .method(Method::GET)
+            .uri(path)
+            .body(Vec::new())
+            .expect("request")
     }
 
     #[test]

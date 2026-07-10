@@ -1,22 +1,20 @@
 use std::sync::Arc;
 
+use tauri::http::header::{
+    ACCEPT_RANGES, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG, IF_NONE_MATCH,
+    RANGE,
+};
+use tauri::http::{Method, Request, StatusCode};
 use tokio::fs;
 use tt_adapter_media::FilesystemHostResourceStore;
-use tt_contracts::host_resource::{
-    HostResourceHeader, HostResourceHeaders, HostResourceMethod, HostResourceRequest,
-    HostResourceResponse, header, status,
-};
 
 use super::temp_root;
-use tt_application::services::host_resource_service::HostResourceService;
+use tt_application::services::host_resource_service::{
+    HostResourceDeliveryCapabilities, HostResourceService,
+};
 
-fn response_header<'a>(response: &'a HostResourceResponse, name: &str) -> Option<&'a str> {
-    response
-        .headers
-        .iter()
-        .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
-        .map(|(_, value)| value.as_str())
-}
+const DELIVERY: HostResourceDeliveryCapabilities =
+    HostResourceDeliveryCapabilities::new(true, false);
 
 #[tokio::test]
 async fn filesystem_host_resources_serve_background_video_range() {
@@ -34,54 +32,37 @@ async fn filesystem_host_resources_serve_background_video_range() {
         Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
     );
 
-    let range_headers = [HostResourceHeader {
-        name: header::RANGE,
-        value: b"bytes=1-2",
-    }];
-    let request = HostResourceRequest::new(
-        HostResourceMethod::Get,
-        "/backgrounds/a.mp4",
-        None,
-        HostResourceHeaders::new(&range_headers),
-    );
-    let response = service.try_serve(&request).expect("serve background range");
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/backgrounds/a.mp4")
+        .header(RANGE, "bytes=1-2")
+        .body(Vec::new())
+        .expect("range request");
+    let response = service
+        .try_serve(&request, DELIVERY)
+        .expect("serve background range");
 
-    assert_eq!(response.status, status::PARTIAL_CONTENT);
-    assert_eq!(response.body, b"bc");
-    assert_eq!(
-        response_header(&response, header::CONTENT_RANGE),
-        Some("bytes 1-2/4")
-    );
-    assert_eq!(
-        response_header(&response, header::CONTENT_LENGTH),
-        Some("2")
-    );
-    assert_eq!(
-        response_header(&response, header::ACCEPT_RANGES),
-        Some("bytes")
-    );
-    assert_eq!(
-        response_header(&response, header::CONTENT_TYPE),
-        Some("video/mp4")
-    );
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.body(), b"bc");
+    assert_eq!(response.headers()[CONTENT_RANGE], "bytes 1-2/4");
+    assert_eq!(response.headers()[CONTENT_LENGTH], "2");
+    assert_eq!(response.headers()[ACCEPT_RANGES], "bytes");
+    assert_eq!(response.headers()[CONTENT_TYPE], "video/mp4");
+    assert_eq!(response.headers()[CACHE_CONTROL], "private, no-cache");
+    assert!(response.headers().contains_key(ETAG));
 
-    let invalid_range_headers = [HostResourceHeader {
-        name: header::RANGE,
-        value: b"bytes=0-1,2-3",
-    }];
-    let request = HostResourceRequest::new(
-        HostResourceMethod::Get,
-        "/backgrounds/a.mp4",
-        None,
-        HostResourceHeaders::new(&invalid_range_headers),
-    );
-    let response = service.try_serve(&request).expect("serve invalid range");
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/backgrounds/a.mp4")
+        .header(RANGE, "bytes=0-1,2-3")
+        .body(Vec::new())
+        .expect("invalid range request");
+    let response = service
+        .try_serve(&request, DELIVERY)
+        .expect("serve invalid range");
 
-    assert_eq!(response.status, status::RANGE_NOT_SATISFIABLE);
-    assert_eq!(
-        response_header(&response, header::CONTENT_RANGE),
-        Some("bytes */4")
-    );
+    assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(response.headers()[CONTENT_RANGE], "bytes */4");
 }
 
 #[tokio::test]
@@ -99,19 +80,55 @@ async fn filesystem_host_resources_return_original_for_animated_thumbnail() {
         false,
         Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
     );
-    let request = HostResourceRequest::new(
-        HostResourceMethod::Get,
-        "/thumbnail",
-        Some("type=bg&file=a.gif"),
-        HostResourceHeaders::empty(),
-    );
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/thumbnail?type=bg&file=a.gif")
+        .body(Vec::new())
+        .expect("thumbnail request");
 
-    let response = service.try_serve(&request).expect("serve thumbnail");
+    let response = service
+        .try_serve(&request, DELIVERY)
+        .expect("serve thumbnail");
 
-    assert_eq!(response.status, status::OK);
-    assert_eq!(response.body, b"gif");
-    assert_eq!(
-        response_header(&response, header::CONTENT_TYPE),
-        Some("image/gif")
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.body(), b"gif");
+    assert_eq!(response.headers()[CONTENT_TYPE], "image/gif");
+}
+
+#[tokio::test]
+async fn filesystem_host_resources_revalidate_without_reading_stale_content() {
+    let root = temp_root("host-resource-revalidation");
+    let background = root.join("default-user/backgrounds/a.png");
+    fs::create_dir_all(background.parent().expect("background parent"))
+        .await
+        .expect("create background dir");
+    fs::write(&background, b"old")
+        .await
+        .expect("write background");
+    let service = HostResourceService::new(
+        false,
+        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
     );
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/backgrounds/a.png")
+        .body(Vec::new())
+        .expect("initial request");
+    let initial = service.try_serve(&request, DELIVERY).expect("initial");
+    let mut conditional = Request::builder()
+        .method(Method::GET)
+        .uri("/backgrounds/a.png")
+        .body(Vec::new())
+        .expect("conditional request");
+    conditional
+        .headers_mut()
+        .insert(IF_NONE_MATCH, initial.headers()[ETAG].clone());
+
+    let not_modified = service
+        .try_serve(&conditional, DELIVERY)
+        .expect("not modified");
+
+    assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+    assert!(not_modified.body().is_empty());
+    assert!(!not_modified.headers().contains_key(CONTENT_TYPE));
 }

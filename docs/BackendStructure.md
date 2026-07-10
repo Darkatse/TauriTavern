@@ -27,8 +27,8 @@ Clean Architecture 是 TauriTavern 后端最重要的长期约束。它不是一
 | Clean Architecture 概念 | 当前落点 | 稳定职责 | 不应承担 |
 | --- | --- | --- | --- |
 | Entities / 领域核心 | `tt-domain` | 领域模型、值对象、领域错误、纯规则、纯文本/JSON 工具 | repository trait、async runtime、文件系统、网络、Tauri |
-| Cross-crate contracts | `tt-contracts` | 跨 crate DTO、事件、payload、observability、host resource 契约 | concrete IO、application service、Tauri |
-| Application ports | `tt-ports` | repository trait、gateway trait、event sink、runtime port | concrete adapter、reqwest/axum/tauri/image/zip 实现 |
+| Cross-crate contracts | `tt-contracts` | 跨 crate DTO、事件、payload、observability、通用值契约 | concrete IO、application service、Tauri |
+| Application ports | `tt-ports` | repository trait、gateway trait、event sink、runtime port、Host Resource opened-source port | concrete adapter、reqwest/axum/tauri/image/zip 实现 |
 | Use cases | `tt-application` | service、use case、job coordinator、策略编排 | Tauri、adapter、reqwest、具体 tokenizer、文件格式实现 |
 | Interface adapters | `tt-adapter-*` | Tauri-free 的具体 IO、运行时、持久化、文件格式、外部系统访问 | application service、Tauri host glue |
 | Frameworks / Drivers | `tauritavern` | Tauri builder、plugins、setup、window、commands、composition root、platform glue | 领域规则、用例实现、Tauri-free repository |
@@ -70,8 +70,8 @@ src-tauri/
 | --- | --- |
 | `tauritavern` | Tauri host、presentation command、composition root、host-bound infrastructure、platform glue |
 | `tt-domain` | 领域模型、值对象、领域错误、纯规则 |
-| `tt-contracts` | DTO、事件、payload、host resource contract、observability contract |
-| `tt-ports` | repository / gateway / runtime trait |
+| `tt-contracts` | DTO、事件、payload、通用值契约、observability contract |
+| `tt-ports` | repository / gateway / runtime trait、Host Resource opened-source port |
 | `tt-application` | 用例服务、业务编排、任务协调、policy 执行 |
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
 | `tt-adapter-provider-http` | LLM、SD、Translate、TTS、provider metadata 的 HTTP repository |

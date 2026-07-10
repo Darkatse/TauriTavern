@@ -44,6 +44,22 @@ fn avatar_import_warning(message: impl Into<String>) -> CharacterCreateWarning {
 }
 
 impl FileCharacterRepository {
+    async fn replace_character_png_file(
+        file_path: &Path,
+        image_data: &[u8],
+    ) -> Result<(), DomainError> {
+        let temp_path = unique_temp_path(file_path, "character.png");
+        fs::write(&temp_path, image_data).await.map_err(|error| {
+            tracing::error!(
+                "Failed to write character temp file {}: {}",
+                temp_path.display(),
+                error
+            );
+            DomainError::InternalError(format!("Failed to write character temp file: {error}"))
+        })?;
+        replace_file_with_fallback(&temp_path, file_path).await
+    }
+
     fn with_storage_identity_and_json(
         character: &Character,
         file_name: &str,
@@ -498,10 +514,7 @@ impl CharacterRepository for FileCharacterRepository {
 
         let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
 
-        fs::write(&file_path, new_image_data).await.map_err(|e| {
-            tracing::error!("Failed to write character file: {}", e);
-            DomainError::InternalError(format!("Failed to write character file: {}", e))
-        })?;
+        Self::replace_character_png_file(&file_path, &new_image_data).await?;
 
         let cached_character =
             Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
@@ -635,12 +648,7 @@ impl CharacterRepository for FileCharacterRepository {
             return Ok(character);
         }
 
-        let temp_path = unique_temp_path(&file_path, "character.png");
-        fs::write(&temp_path, new_image_data).await.map_err(|e| {
-            tracing::error!("Failed to write character temp file: {}", e);
-            DomainError::InternalError(format!("Failed to write character temp file: {}", e))
-        })?;
-        if let Err(error) = replace_file_with_fallback(&temp_path, &file_path).await {
+        if let Err(error) = Self::replace_character_png_file(&file_path, &new_image_data).await {
             {
                 let mut cache = self.memory_cache.lock().await;
                 cache.remove(name);
@@ -718,10 +726,7 @@ impl CharacterRepository for FileCharacterRepository {
 
         let new_image_data = write_character_data_to_png(&old_image_data, &patched_json)?;
 
-        fs::write(&new_path, new_image_data).await.map_err(|e| {
-            tracing::error!("Failed to write character file: {}", e);
-            DomainError::InternalError(format!("Failed to write character file: {}", e))
-        })?;
+        Self::replace_character_png_file(&new_path, &new_image_data).await?;
 
         let old_chat_dir = self.resolve_chat_directory(old_name).await?;
         let new_chat_dir = self.get_chat_directory(&target_file_stem);
@@ -962,10 +967,7 @@ impl CharacterRepository for FileCharacterRepository {
         let file_name = self.ensure_unique_file_stem(&base);
         let file_path = self.get_character_path(&file_name);
 
-        fs::write(&file_path, new_image_data).await.map_err(|e| {
-            tracing::error!("Failed to write character file: {}", e);
-            DomainError::InternalError(format!("Failed to write character file: {}", e))
-        })?;
+        Self::replace_character_png_file(&file_path, &new_image_data).await?;
 
         let stored_character =
             Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
@@ -1012,10 +1014,7 @@ impl CharacterRepository for FileCharacterRepository {
         let image_data = process_avatar_image(file_data, crop).await?;
         let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
 
-        fs::write(&file_path, new_image_data).await.map_err(|e| {
-            tracing::error!("Failed to write character file: {}", e);
-            DomainError::InternalError(format!("Failed to write character file: {}", e))
-        })?;
+        Self::replace_character_png_file(&file_path, &new_image_data).await?;
 
         let cached_character =
             Self::with_storage_identity_and_json(character, &file_name, Some(json_data));

@@ -83,8 +83,8 @@
 
 1. 校验请求方法，只接受 `GET` / `HEAD` / `OPTIONS`
 2. 通过 `src-tauri/crates/tt-application/src/client_asset_paths.rs` 解析并校验路径，再由 `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs` 分类到具体资源处理器
-3. 通过 `src-tauri/crates/tt-adapter-media/src/host_resources.rs` 定位文件并推断 MIME
-4. 返回真实 bytes、正确 `Content-Type`、`Cache-Control: no-store`
+3. 通过 `src-tauri/crates/tt-adapter-media/src/host_resources.rs` 一次完成 local/global 选源、打开文件和 metadata/revision 构造
+4. 返回真实 bytes、正确 `Content-Type`、`Cache-Control: private, no-cache`、weak ETag 和 Last-Modified；条件命中时按 transport capability 返回 304 或完整 200（见 `docs/CurrentState/HostResourceCaching.md`）
    - 对用户静态资源端点（如 `/backgrounds/*`）若请求携带 `Range`，支持单范围并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
 5. 未命中时返回真正 `404`，不回退到 `index.html`
 
@@ -96,7 +96,9 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 - Service Worker 将 `/css/user.css`、`/scripts/extensions/third-party/*`、`/thumbnail`、`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 转发到 `tt-ext` 自定义 scheme
 - Rust 侧 `register_uri_scheme_protocol("tt-ext", ...)` 在 dev 下统一分发上述资源请求
 - `convertFileSrc('', 'tt-ext')` 的结果可能因平台/WebView 不同而表现为 `tt-ext://localhost/` 或 `http(s)://tt-ext.localhost/`
-- 若某个平台的 Service Worker 无法直接 `fetch(tt-ext)`，fallback bridge 只传递 `pathname + search + method + Range`，并由页面上下文通过 Tauri invoke 调用同一套 Rust 资源分发逻辑；不要让 fallback 再依赖 WebView 网络栈
+- Service Worker 的直接 `tt-ext` fetch 保留原请求 cache mode；`Range`、`If-Range`、`If-None-Match`、`If-Modified-Since` 在直连或 IPC 路径中保持同一 Host Resource 语义，并通过 `Access-Control-Expose-Headers: *` 保留直连响应的完整表示头
+- `If-Range`、`If-None-Match`、`If-Modified-Since` 会触发 custom scheme 跨源 preflight，必须直接通过通用 header wire 进入 IPC；其余 Service Worker `fetch(tt-ext)` 失败时切换到 window-context `fetch(tt-ext)`，正文以 transferable `ArrayBuffer` 返回。普通二进制资源不得经过 serde JSON IPC
+- 非 Android 的 production、`tt-ext` 与 IPC fallback 都能代理 304；Android 按 Wry 硬约束返回完整 200。IPC 不另建 Cache API，因此自动生成 validator 的存储行为仍由具体 transport 决定
 
 因此，开发态与生产态虽然入口不同，但 third-party 路径语义保持一致。
 

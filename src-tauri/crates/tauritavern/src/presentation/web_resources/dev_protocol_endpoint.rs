@@ -2,11 +2,11 @@ use std::borrow::Cow;
 
 use tauri::http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-    HeaderValue,
+    ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue,
 };
 
 use crate::presentation::web_resources::tauri_resource_adapter::{
-    apply_host_resource_response, serve_dev_web_resource_from_app,
+    apply_host_resource_response, serve_dev_protocol_resource_from_app,
 };
 
 const DEV_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
@@ -27,8 +27,11 @@ pub fn handle_dev_protocol_request<R: tauri::Runtime>(
     response
         .headers_mut()
         .insert(ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("*"));
+    response
+        .headers_mut()
+        .insert(ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue::from_static("*"));
 
-    let host_response = serve_dev_web_resource_from_app(ctx.app_handle(), &request);
+    let host_response = serve_dev_protocol_resource_from_app(ctx.app_handle(), &request);
     apply_host_resource_response(&mut response, host_response);
     response
 }

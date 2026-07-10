@@ -265,7 +265,7 @@
 
 - 仅接受 `GET` / `HEAD` / `OPTIONS`
 - 未命中返回真实 `404`（不回退 `index.html`）
-- `Content-Type` 正确，`Cache-Control: no-store`
+- `Content-Type` 正确；成功表示使用 `Cache-Control: private, no-cache`、weak ETag 和适用的 Last-Modified，错误/OPTIONS/416 使用 `no-store`（完整条件请求与平台 delivery 语义见 `docs/CurrentState/HostResourceCaching.md`）
 - 媒体文件（`video/*` / `audio/*`）必须支持 `Range`（单范围）并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
 
 禁止事项（为了保持契约稳定）：

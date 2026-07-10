@@ -1,15 +1,18 @@
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use mime_guess::from_path;
-use std::io::Write;
+use std::fs::{File, FileTimes};
+use std::io::{Read, Seek, Write};
 use std::path::Path;
+use std::sync::Mutex;
+use std::time::SystemTime;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
-use tt_adapter_storage_core::file_system::unique_temp_path;
+use tt_adapter_storage_core::file_system::{replace_file_with_fallback_sync, unique_temp_path};
 use tt_domain::errors::DomainError;
 
 const ANIMATED_EXTENSIONS: &[&str] = &[".apng", ".mp4", ".webm", ".avi", ".mkv", ".flv", ".gif"];
+static THUMBNAIL_COMMIT_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Copy)]
 pub enum ThumbnailResizeMode {
@@ -25,10 +28,10 @@ pub struct ThumbnailConfig {
     pub resize_mode: ThumbnailResizeMode,
 }
 
-#[derive(Debug, Clone)]
-pub struct ThumbnailAsset {
-    pub bytes: Vec<u8>,
-    pub mime_type: String,
+#[derive(Debug)]
+pub enum OpenThumbnailSource {
+    Original(File),
+    CachedJpeg(File),
 }
 
 fn extension_lowercase(path: &Path) -> String {
@@ -73,20 +76,14 @@ async fn read_image_header(path: &Path) -> Result<Vec<u8>, DomainError> {
     Ok(header)
 }
 
-fn read_image_header_sync(path: &Path) -> Result<Vec<u8>, DomainError> {
-    use std::io::Read;
-
-    let mut file = std::fs::File::open(path).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => {
-            DomainError::NotFound(format!("Source image not found: {}", path.display()))
-        }
-        _ => DomainError::InternalError(format!(
-            "Failed to inspect image header '{}': {}",
+fn read_image_header_sync(file: &mut File, path: &Path) -> Result<Vec<u8>, DomainError> {
+    file.rewind().map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to seek image header '{}': {}",
             path.display(),
             error
-        )),
+        ))
     })?;
-
     let mut header = vec![0u8; 512];
     let read_len = file.read(&mut header).map_err(|error| {
         DomainError::InternalError(format!(
@@ -96,6 +93,13 @@ fn read_image_header_sync(path: &Path) -> Result<Vec<u8>, DomainError> {
         ))
     })?;
     header.truncate(read_len);
+    file.rewind().map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to rewind image '{}': {}",
+            path.display(),
+            error
+        ))
+    })?;
 
     Ok(header)
 }
@@ -119,88 +123,85 @@ pub async fn is_animated_image(path: &Path) -> Result<bool, DomainError> {
     Ok(false)
 }
 
-pub fn is_animated_image_sync(path: &Path) -> Result<bool, DomainError> {
+fn is_animated_image_sync(file: &mut File, path: &Path) -> Result<bool, DomainError> {
     let extension = extension_lowercase(path);
     if ANIMATED_EXTENSIONS.contains(&extension.as_str()) {
         return Ok(true);
     }
 
     if extension == ".png" {
-        let header = read_image_header_sync(path)?;
+        let header = read_image_header_sync(file, path)?;
         return Ok(is_apng_header(&header));
     }
 
     if extension == ".webp" {
-        let header = read_image_header_sync(path)?;
+        let header = read_image_header_sync(file, path)?;
         return Ok(is_animated_webp_header(&header));
     }
 
     Ok(false)
 }
 
-fn read_original_asset_sync(original_path: &Path) -> Result<ThumbnailAsset, DomainError> {
-    let bytes = std::fs::read(original_path).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to read original image '{}': {}",
-            original_path.display(),
-            error
-        ))
-    })?;
-
-    let mime_type = from_path(original_path)
-        .first_or_octet_stream()
-        .essence_str()
-        .to_string();
-
-    Ok(ThumbnailAsset { bytes, mime_type })
-}
-
-fn thumbnail_is_fresh_sync(
+fn open_fresh_thumbnail_sync(
     thumbnail_path: &Path,
-    original_path: &Path,
-) -> Result<bool, DomainError> {
-    let thumbnail_metadata = match std::fs::metadata(thumbnail_path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+    original_modified: SystemTime,
+) -> Result<Option<File>, DomainError> {
+    let file = match File::open(thumbnail_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(DomainError::InternalError(format!(
-                "Failed to read thumbnail metadata '{}': {}",
+                "Failed to open thumbnail cache '{}': {}",
                 thumbnail_path.display(),
                 error
             )));
         }
     };
-
-    let original_metadata = std::fs::metadata(original_path).map_err(|error| {
+    let metadata = file.metadata().map_err(|error| {
         DomainError::InternalError(format!(
-            "Failed to read original image metadata '{}': {}",
-            original_path.display(),
+            "Failed to inspect thumbnail cache '{}': {}",
+            thumbnail_path.display(),
+            error
+        ))
+    })?;
+    if !metadata.is_file() {
+        return Ok(None);
+    }
+    let thumbnail_modified = metadata.modified().map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to read thumbnail mtime '{}': {}",
+            thumbnail_path.display(),
             error
         ))
     })?;
 
-    let Some(original_modified) = original_metadata.modified().ok() else {
-        return Ok(false);
-    };
-    let Some(thumbnail_modified) = thumbnail_metadata.modified().ok() else {
-        return Ok(false);
-    };
-
-    Ok(original_modified <= thumbnail_modified)
+    Ok((original_modified == thumbnail_modified).then_some(file))
 }
 
 fn generate_thumbnail_sync(
+    original_file: &mut File,
     original_path: &Path,
+    original_modified: SystemTime,
     thumbnail_path: &Path,
     config: ThumbnailConfig,
 ) -> Result<(), DomainError> {
-    let source_bytes = std::fs::read(original_path).map_err(|error| {
+    original_file.rewind().map_err(|error| {
         DomainError::InternalError(format!(
-            "Failed to read source image '{}': {}",
+            "Failed to seek source image '{}': {}",
             original_path.display(),
             error
         ))
     })?;
+    let mut source_bytes = Vec::new();
+    original_file
+        .read_to_end(&mut source_bytes)
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read source image '{}': {}",
+                original_path.display(),
+                error
+            ))
+        })?;
 
     let source_image = image::load_from_memory(&source_bytes).map_err(|error| {
         DomainError::InternalError(format!(
@@ -268,81 +269,112 @@ fn generate_thumbnail_sync(
             error
         ))
     })?;
+    temp_file
+        .set_times(FileTimes::new().set_modified(original_modified))
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to bind temporary thumbnail '{}' to source mtime: {}",
+                temp_path.display(),
+                error
+            ))
+        })?;
     drop(temp_file);
 
-    match std::fs::remove_file(thumbnail_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(DomainError::InternalError(format!(
-                "Failed to replace thumbnail '{}': {}",
-                thumbnail_path.display(),
-                error
-            )));
-        }
-    }
+    let _commit = THUMBNAIL_COMMIT_LOCK.lock().map_err(|_| {
+        DomainError::InternalError("Thumbnail cache commit lock is poisoned".to_string())
+    })?;
+    replace_file_with_fallback_sync(&temp_path, thumbnail_path)?;
 
-    std::fs::rename(&temp_path, thumbnail_path).map_err(|error| {
+    let thumbnail_file = File::open(thumbnail_path).map_err(|error| {
         DomainError::InternalError(format!(
-            "Failed to finalize thumbnail '{}': {}",
+            "Failed to open generated thumbnail '{}': {}",
             thumbnail_path.display(),
             error
         ))
-    })
+    })?;
+    thumbnail_file
+        .set_times(FileTimes::new().set_modified(original_modified))
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to bind generated thumbnail '{}' to source mtime: {}",
+                thumbnail_path.display(),
+                error
+            ))
+        })?;
+    Ok(())
 }
 
-fn ensure_thumbnail_sync(
+pub fn open_thumbnail_or_original_sync(
+    mut original_file: File,
     original_path: &Path,
+    original_modified: SystemTime,
     thumbnail_path: &Path,
     config: ThumbnailConfig,
-) -> Result<(), DomainError> {
-    if thumbnail_is_fresh_sync(thumbnail_path, original_path)? {
-        return Ok(());
+) -> Result<OpenThumbnailSource, DomainError> {
+    if is_animated_image_sync(&mut original_file, original_path)? {
+        return Ok(OpenThumbnailSource::Original(original_file));
     }
 
-    generate_thumbnail_sync(original_path, thumbnail_path, config)
-}
-
-pub fn read_thumbnail_or_original_sync(
-    original_path: &Path,
-    thumbnail_path: &Path,
-    config: ThumbnailConfig,
-) -> Result<ThumbnailAsset, DomainError> {
-    let original_metadata =
-        std::fs::metadata(original_path).map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => DomainError::NotFound(format!(
-                "Source image not found: {}",
-                original_path.display()
-            )),
-            _ => DomainError::InternalError(format!(
-                "Failed to read source image metadata '{}': {}",
+    match open_fresh_thumbnail_sync(thumbnail_path, original_modified) {
+        Ok(Some(file)) => return Ok(OpenThumbnailSource::CachedJpeg(file)),
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                "Failed to inspect thumbnail cache '{}'; serving original '{}': {}",
+                thumbnail_path.display(),
                 original_path.display(),
                 error
-            )),
-        })?;
+            );
+            return rewind_original(original_file, original_path);
+        }
+    }
 
-    if !original_metadata.is_file() {
-        return Err(DomainError::NotFound(format!(
-            "Source image not found: {}",
+    if let Err(error) = generate_thumbnail_sync(
+        &mut original_file,
+        original_path,
+        original_modified,
+        thumbnail_path,
+        config,
+    ) {
+        tracing::warn!(
+            "Failed to materialize thumbnail '{}'; serving original '{}': {}",
+            thumbnail_path.display(),
+            original_path.display(),
+            error
+        );
+        return rewind_original(original_file, original_path);
+    }
+
+    match open_fresh_thumbnail_sync(thumbnail_path, original_modified) {
+        Ok(Some(file)) => return Ok(OpenThumbnailSource::CachedJpeg(file)),
+        Ok(None) => tracing::warn!(
+            "Generated thumbnail cache does not match source mtime '{}'; serving original '{}'",
+            thumbnail_path.display(),
             original_path.display()
-        )));
+        ),
+        Err(error) => tracing::warn!(
+            "Failed to open generated thumbnail '{}'; serving original '{}': {}",
+            thumbnail_path.display(),
+            original_path.display(),
+            error
+        ),
     }
 
-    if is_animated_image_sync(original_path)? {
-        return read_original_asset_sync(original_path);
-    }
+    rewind_original(original_file, original_path)
+}
 
-    if ensure_thumbnail_sync(original_path, thumbnail_path, config).is_err() {
-        return read_original_asset_sync(original_path);
-    }
-
-    match std::fs::read(thumbnail_path) {
-        Ok(bytes) => Ok(ThumbnailAsset {
-            bytes,
-            mime_type: "image/jpeg".to_string(),
-        }),
-        Err(_) => read_original_asset_sync(original_path),
-    }
+fn rewind_original(
+    mut original_file: File,
+    original_path: &Path,
+) -> Result<OpenThumbnailSource, DomainError> {
+    original_file.rewind().map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to rewind original image '{}': {}",
+            original_path.display(),
+            error
+        ))
+    })?;
+    Ok(OpenThumbnailSource::Original(original_file))
 }
 
 pub async fn invalidate_thumbnail_cache(thumbnail_path: &Path) -> Result<(), DomainError> {
@@ -397,8 +429,16 @@ mod tests {
         std::fs::write(&outside_path, b"keep").expect("write outside target");
         std::os::unix::fs::symlink(&outside_path, &old_temp_path).expect("temp symlink");
 
+        let mut original_file = File::open(&original_path).expect("open source image");
+        let original_modified = original_file
+            .metadata()
+            .expect("source metadata")
+            .modified()
+            .expect("source mtime");
         generate_thumbnail_sync(
+            &mut original_file,
             &original_path,
+            original_modified,
             &thumbnail_path,
             ThumbnailConfig {
                 width: 1,
@@ -411,5 +451,12 @@ mod tests {
 
         assert_eq!(std::fs::read(&outside_path).expect("read outside"), b"keep");
         assert!(thumbnail_path.is_file());
+        assert_eq!(
+            std::fs::metadata(&thumbnail_path)
+                .expect("thumbnail metadata")
+                .modified()
+                .expect("thumbnail mtime"),
+            original_modified
+        );
     }
 }

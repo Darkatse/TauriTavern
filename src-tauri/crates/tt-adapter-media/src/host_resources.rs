@@ -1,16 +1,20 @@
 use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::persistence::thumbnail_cache::{ThumbnailConfig, read_thumbnail_or_original_sync};
+use crate::persistence::thumbnail_cache::{
+    OpenThumbnailSource, ThumbnailConfig, open_thumbnail_or_original_sync,
+};
 use crate::thumbnails::{avatar_thumbnail_config, background_thumbnail_config};
 use tt_contracts::client_asset_paths::UserDataAssetKind;
 use tt_contracts::range::ByteRange;
 use tt_domain::errors::DomainError;
 use tt_domain::models::user_directory::UserDirectory;
 use tt_ports::host_resource::{
-    HostResourceAssetStore, HostResourceBinaryAsset, HostResourceFileStat, HostResourceStoreError,
-    ThumbnailAssetRequest, ThumbnailKind,
+    HostResourceAssetStore, HostResourceBody, HostResourceSourceMetadata,
+    HostResourceSourceRequest, HostResourceSourceRevision, HostResourceStoreError,
+    OpenedHostResource, ThumbnailAssetRequest, ThumbnailKind,
 };
 
 #[derive(Debug, Clone)]
@@ -56,14 +60,91 @@ pub struct FilesystemHostResourceStore {
     roots: HostResourceRoots,
 }
 
-struct ResolvedHostResourceFile {
-    stat: HostResourceFileStat,
-}
-
 struct OpenHostResourceFile {
     path: PathBuf,
     file: fs::File,
-    stat: HostResourceFileStat,
+    content_type: String,
+    content_length: u64,
+    last_modified: SystemTime,
+}
+
+struct FileHostResourceBody {
+    path: PathBuf,
+    file: fs::File,
+    content_length: u64,
+    last_modified: SystemTime,
+}
+
+impl FileHostResourceBody {
+    fn ensure_source_unchanged(&self) -> Result<(), HostResourceStoreError> {
+        let metadata = self
+            .file
+            .metadata()
+            .map_err(|error| io_error(&self.path, error, "stat after read"))?;
+        let last_modified = metadata
+            .modified()
+            .map_err(|error| io_error(&self.path, error, "read modification time after read"))?;
+        if metadata.len() != self.content_length || last_modified != self.last_modified {
+            return Err(HostResourceStoreError::internal(format!(
+                "Host resource changed while being read: {}",
+                self.path.display()
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl HostResourceBody for FileHostResourceBody {
+    fn read(
+        mut self: Box<Self>,
+        range: Option<ByteRange>,
+    ) -> Result<Vec<u8>, HostResourceStoreError> {
+        let Some(range) = range else {
+            let mut bytes = Vec::new();
+            (&mut self.file)
+                .take(self.content_length.saturating_add(1))
+                .read_to_end(&mut bytes)
+                .map_err(|error| io_error(&self.path, error, "read"))?;
+            self.ensure_source_unchanged()?;
+            return Ok(bytes);
+        };
+
+        let range_len = usize::try_from(range.len())
+            .map_err(|_| HostResourceStoreError::internal("Range is too large to serve"))?;
+        self.file
+            .seek(std::io::SeekFrom::Start(range.start))
+            .map_err(|error| io_error(&self.path, error, "seek"))?;
+
+        let mut bytes = vec![0u8; range_len];
+        self.file
+            .read_exact(&mut bytes)
+            .map_err(|error| io_error(&self.path, error, "read range"))?;
+        self.ensure_source_unchanged()?;
+        Ok(bytes)
+    }
+}
+
+impl OpenHostResourceFile {
+    fn into_resource(self, revision_scope: &[u8]) -> OpenedHostResource {
+        let metadata = HostResourceSourceMetadata {
+            content_type: self.content_type.clone(),
+            content_length: self.content_length,
+            last_modified: self.last_modified,
+            revision: source_revision(
+                revision_scope,
+                self.content_length,
+                self.last_modified,
+                &self.content_type,
+            ),
+        };
+        let body = FileHostResourceBody {
+            path: self.path,
+            file: self.file,
+            content_length: self.content_length,
+            last_modified: self.last_modified,
+        };
+        OpenedHostResource::new(metadata, Box::new(body))
+    }
 }
 
 impl FilesystemHostResourceStore {
@@ -109,42 +190,24 @@ impl FilesystemHostResourceStore {
         }
     }
 
-    fn resolve_third_party_asset(
-        &self,
-        extension_folder: &str,
-        relative_path: &Path,
-    ) -> Result<ResolvedHostResourceFile, HostResourceStoreError> {
-        for root in [
-            &self.roots.local_extensions_dir,
-            &self.roots.global_extensions_dir,
-        ] {
-            let path = root.join(extension_folder).join(relative_path);
-            match stat_file(&path) {
-                Ok(stat) => return Ok(ResolvedHostResourceFile { stat }),
-                Err(HostResourceStoreError::NotFound(_)) => {}
-                Err(error) => return Err(error),
-            }
-        }
-
-        Err(HostResourceStoreError::not_found(format!(
-            "Third-party extension asset not found: {}/{}",
-            extension_folder,
-            relative_path.display()
-        )))
-    }
-
     fn open_third_party_asset(
         &self,
         extension_folder: &str,
         relative_path: &Path,
-    ) -> Result<OpenHostResourceFile, HostResourceStoreError> {
-        for root in [
-            &self.roots.local_extensions_dir,
-            &self.roots.global_extensions_dir,
+    ) -> Result<OpenedHostResource, HostResourceStoreError> {
+        for (root, revision_scope) in [
+            (
+                &self.roots.local_extensions_dir,
+                b"third-party-local".as_slice(),
+            ),
+            (
+                &self.roots.global_extensions_dir,
+                b"third-party-global".as_slice(),
+            ),
         ] {
             let path = root.join(extension_folder).join(relative_path);
             match open_file(&path) {
-                Ok(opened) => return Ok(opened),
+                Ok(opened) => return Ok(opened.into_resource(revision_scope)),
                 Err(HostResourceStoreError::NotFound(_)) => {}
                 Err(error) => return Err(error),
             }
@@ -156,155 +219,75 @@ impl FilesystemHostResourceStore {
             relative_path.display()
         )))
     }
+
+    fn open_thumbnail_asset(
+        &self,
+        request: &ThumbnailAssetRequest,
+    ) -> Result<OpenedHostResource, HostResourceStoreError> {
+        let (original_root, thumbnail_root, config) = self.thumbnail_paths(request);
+        let original_path = original_root.join(&request.file);
+        let thumbnail_path = thumbnail_root.join(&request.file);
+        let original = open_file(&original_path)?;
+
+        if !request.use_thumbnails {
+            return Ok(original.into_resource(thumbnail_revision_scope(request.kind, false)));
+        }
+
+        let selected = open_thumbnail_or_original_sync(
+            original.file,
+            &original_path,
+            original.last_modified,
+            &thumbnail_path,
+            config,
+        )
+        .map_err(host_resource_error_from_domain)?;
+
+        match selected {
+            OpenThumbnailSource::Original(file) => {
+                Ok(open_file_handle(&original_path, file, None)?
+                    .into_resource(thumbnail_revision_scope(request.kind, false)))
+            }
+            OpenThumbnailSource::CachedJpeg(file) => {
+                Ok(open_file_handle(&thumbnail_path, file, Some("image/jpeg"))?
+                    .into_resource(thumbnail_revision_scope(request.kind, true)))
+            }
+        }
+    }
 }
 
 impl HostResourceAssetStore for FilesystemHostResourceStore {
-    fn read_user_css(&self) -> Result<Vec<u8>, HostResourceStoreError> {
-        read_file(&self.roots.user_css_file)
-    }
-
-    fn stat_third_party_asset(
+    fn open(
         &self,
-        extension_folder: &str,
-        relative_path: &Path,
-    ) -> Result<HostResourceFileStat, HostResourceStoreError> {
-        self.resolve_third_party_asset(extension_folder, relative_path)
-            .map(|resolved| resolved.stat)
-    }
-
-    fn read_third_party_asset(
-        &self,
-        extension_folder: &str,
-        relative_path: &Path,
-        max_len: Option<u64>,
-    ) -> Result<HostResourceBinaryAsset, HostResourceStoreError> {
-        let opened = self.open_third_party_asset(extension_folder, relative_path)?;
-
-        if let Some(limit_bytes) = max_len
-            && opened.stat.len > limit_bytes
-        {
-            return Err(HostResourceStoreError::payload_too_large(
-                opened.stat.len,
-                limit_bytes,
-            ));
+        request: HostResourceSourceRequest<'_>,
+    ) -> Result<OpenedHostResource, HostResourceStoreError> {
+        match request {
+            HostResourceSourceRequest::UserCss => {
+                Ok(open_file(&self.roots.user_css_file)?.into_resource(b"user-css"))
+            }
+            HostResourceSourceRequest::ThirdParty {
+                extension_folder,
+                relative_path,
+            } => self.open_third_party_asset(extension_folder, relative_path),
+            HostResourceSourceRequest::UserData {
+                kind,
+                relative_path,
+            } => Ok(open_file(&self.user_data_root(kind).join(relative_path))?
+                .into_resource(user_data_revision_scope(kind))),
+            HostResourceSourceRequest::Thumbnail(request) => self.open_thumbnail_asset(request),
         }
-
-        let bytes = read_open_file(opened.file, &opened.path, max_len)?;
-
-        Ok(HostResourceBinaryAsset {
-            bytes,
-            mime_type: opened.stat.mime_type,
-        })
     }
-
-    fn stat_user_data_asset(
-        &self,
-        kind: UserDataAssetKind,
-        relative_path: &Path,
-    ) -> Result<HostResourceFileStat, HostResourceStoreError> {
-        stat_scoped_file(self.user_data_root(kind), relative_path)
-    }
-
-    fn read_user_data_asset(
-        &self,
-        kind: UserDataAssetKind,
-        relative_path: &Path,
-    ) -> Result<Vec<u8>, HostResourceStoreError> {
-        read_scoped_file(self.user_data_root(kind), relative_path)
-    }
-
-    fn read_user_data_asset_range(
-        &self,
-        kind: UserDataAssetKind,
-        relative_path: &Path,
-        range: ByteRange,
-    ) -> Result<Vec<u8>, HostResourceStoreError> {
-        read_scoped_file_range(self.user_data_root(kind), relative_path, range)
-    }
-
-    fn read_thumbnail_asset(
-        &self,
-        request: ThumbnailAssetRequest,
-    ) -> Result<HostResourceBinaryAsset, HostResourceStoreError> {
-        let (original_root, thumbnail_root, config) = self.thumbnail_paths(&request);
-        let original_path = original_root.join(&request.file);
-        let thumbnail_path = thumbnail_root.join(&request.file);
-
-        stat_file(&original_path)?;
-
-        if !request.use_thumbnails {
-            return read_binary_asset(&original_path);
-        }
-
-        let asset = read_thumbnail_or_original_sync(&original_path, &thumbnail_path, config)
-            .map_err(host_resource_error_from_domain)?;
-
-        Ok(HostResourceBinaryAsset {
-            bytes: asset.bytes,
-            mime_type: asset.mime_type,
-        })
-    }
-}
-
-fn stat_scoped_file(
-    root: &Path,
-    relative_path: &Path,
-) -> Result<HostResourceFileStat, HostResourceStoreError> {
-    stat_file(&root.join(relative_path))
-}
-
-fn read_scoped_file(root: &Path, relative_path: &Path) -> Result<Vec<u8>, HostResourceStoreError> {
-    read_file(&root.join(relative_path))
-}
-
-fn read_scoped_file_range(
-    root: &Path,
-    relative_path: &Path,
-    range: ByteRange,
-) -> Result<Vec<u8>, HostResourceStoreError> {
-    let path = root.join(relative_path);
-    stat_file(&path)?;
-
-    let range_len = usize::try_from(range.len())
-        .map_err(|_| HostResourceStoreError::internal("Range is too large to serve"))?;
-    let mut file = fs::File::open(&path).map_err(|error| io_error(&path, error, "open"))?;
-    file.seek(std::io::SeekFrom::Start(range.start))
-        .map_err(|error| {
-            HostResourceStoreError::internal(format!(
-                "Failed to seek host resource '{}': {}",
-                path.display(),
-                error
-            ))
-        })?;
-
-    let mut bytes = vec![0u8; range_len];
-    file.read_exact(&mut bytes).map_err(|error| {
-        HostResourceStoreError::internal(format!(
-            "Failed to read host resource range '{}': {}",
-            path.display(),
-            error
-        ))
-    })?;
-
-    Ok(bytes)
-}
-
-fn read_binary_asset(path: &Path) -> Result<HostResourceBinaryAsset, HostResourceStoreError> {
-    let bytes = read_file(path)?;
-    Ok(HostResourceBinaryAsset {
-        bytes,
-        mime_type: mime_type_for_path(path),
-    })
-}
-
-fn read_file(path: &Path) -> Result<Vec<u8>, HostResourceStoreError> {
-    stat_file(path)?;
-    fs::read(path).map_err(|error| io_error(path, error, "read"))
 }
 
 fn open_file(path: &Path) -> Result<OpenHostResourceFile, HostResourceStoreError> {
-    stat_file(path)?;
     let file = fs::File::open(path).map_err(|error| io_error(path, error, "open"))?;
+    open_file_handle(path, file, None)
+}
+
+fn open_file_handle(
+    path: &Path,
+    file: fs::File,
+    content_type: Option<&str>,
+) -> Result<OpenHostResourceFile, HostResourceStoreError> {
     let metadata = file
         .metadata()
         .map_err(|error| io_error(path, error, "stat"))?;
@@ -316,59 +299,46 @@ fn open_file(path: &Path) -> Result<OpenHostResourceFile, HostResourceStoreError
         )));
     }
 
+    let last_modified = metadata
+        .modified()
+        .map_err(|error| io_error(path, error, "read modification time"))?;
     Ok(OpenHostResourceFile {
         path: path.to_path_buf(),
         file,
-        stat: HostResourceFileStat {
-            len: metadata.len(),
-            mime_type: mime_type_for_path(path),
-        },
+        content_type: content_type
+            .map(str::to_owned)
+            .unwrap_or_else(|| mime_type_for_path(path)),
+        content_length: metadata.len(),
+        last_modified,
     })
 }
 
-fn read_open_file(
-    file: fs::File,
-    path: &Path,
-    max_len: Option<u64>,
-) -> Result<Vec<u8>, HostResourceStoreError> {
-    let mut bytes = Vec::new();
-
-    if let Some(limit_bytes) = max_len {
-        let mut limited = file.take(limit_bytes.saturating_add(1));
-        limited
-            .read_to_end(&mut bytes)
-            .map_err(|error| io_error(path, error, "read"))?;
-
-        if bytes.len() as u64 > limit_bytes {
-            return Err(HostResourceStoreError::payload_too_large(
-                bytes.len() as u64,
-                limit_bytes,
-            ));
+fn source_revision(
+    scope: &[u8],
+    content_length: u64,
+    last_modified: SystemTime,
+    content_type: &str,
+) -> HostResourceSourceRevision {
+    let mut revision = Vec::with_capacity(scope.len() + content_type.len() + 32);
+    revision.extend_from_slice(b"host-source-v1\0");
+    revision.extend_from_slice(scope);
+    revision.push(0);
+    revision.extend_from_slice(&content_length.to_be_bytes());
+    match last_modified.duration_since(UNIX_EPOCH) {
+        Ok(duration) => {
+            revision.push(1);
+            revision.extend_from_slice(&duration.as_secs().to_be_bytes());
+            revision.extend_from_slice(&duration.subsec_nanos().to_be_bytes());
         }
-
-        return Ok(bytes);
+        Err(error) => {
+            let duration = error.duration();
+            revision.push(0);
+            revision.extend_from_slice(&duration.as_secs().to_be_bytes());
+            revision.extend_from_slice(&duration.subsec_nanos().to_be_bytes());
+        }
     }
-
-    let mut file = file;
-    file.read_to_end(&mut bytes)
-        .map_err(|error| io_error(path, error, "read"))?;
-    Ok(bytes)
-}
-
-fn stat_file(path: &Path) -> Result<HostResourceFileStat, HostResourceStoreError> {
-    let metadata = fs::metadata(path).map_err(|error| io_error(path, error, "stat"))?;
-
-    if !metadata.is_file() {
-        return Err(HostResourceStoreError::not_found(format!(
-            "Host resource not found: {}",
-            path.display()
-        )));
-    }
-
-    Ok(HostResourceFileStat {
-        len: metadata.len(),
-        mime_type: mime_type_for_path(path),
-    })
+    revision.extend_from_slice(content_type.as_bytes());
+    HostResourceSourceRevision::new(revision)
 }
 
 fn mime_type_for_path(path: &Path) -> String {
@@ -376,6 +346,28 @@ fn mime_type_for_path(path: &Path) -> String {
         .first_or_octet_stream()
         .essence_str()
         .to_string()
+}
+
+fn user_data_revision_scope(kind: UserDataAssetKind) -> &'static [u8] {
+    match kind {
+        UserDataAssetKind::Character => b"user-data-character",
+        UserDataAssetKind::Persona => b"user-data-persona",
+        UserDataAssetKind::Background => b"user-data-background",
+        UserDataAssetKind::Asset => b"user-data-asset",
+        UserDataAssetKind::UserImage => b"user-data-image",
+        UserDataAssetKind::UserFile => b"user-data-file",
+    }
+}
+
+fn thumbnail_revision_scope(kind: ThumbnailKind, generated: bool) -> &'static [u8] {
+    match (kind, generated) {
+        (ThumbnailKind::Avatar, false) => b"thumbnail-avatar-original",
+        (ThumbnailKind::Avatar, true) => b"thumbnail-avatar-generated",
+        (ThumbnailKind::Persona, false) => b"thumbnail-persona-original",
+        (ThumbnailKind::Persona, true) => b"thumbnail-persona-generated",
+        (ThumbnailKind::Background, false) => b"thumbnail-background-original",
+        (ThumbnailKind::Background, true) => b"thumbnail-background-generated",
+    }
 }
 
 fn io_error(path: &Path, error: std::io::Error, operation: &str) -> HostResourceStoreError {
@@ -405,6 +397,8 @@ fn host_resource_error_from_domain(error: DomainError) -> HostResourceStoreError
 
 #[cfg(test)]
 mod tests {
+    use image::{ImageBuffer, Rgb};
+
     use super::*;
 
     struct TempDirGuard {
@@ -458,16 +452,20 @@ mod tests {
         fs::write(&local_file, br#"{"source":"local"}"#).expect("local file");
         fs::write(&global_file, br#"{"source":"global"}"#).expect("global file");
 
-        let asset = store
-            .read_third_party_asset("mobile", Path::new("manifest.json"), None)
-            .expect("read asset");
+        let opened = store
+            .open(HostResourceSourceRequest::ThirdParty {
+                extension_folder: "mobile",
+                relative_path: Path::new("manifest.json"),
+            })
+            .expect("open asset");
+        assert_eq!(opened.metadata.content_type, "application/json");
+        let bytes = opened.read(None).expect("read asset");
 
-        assert_eq!(asset.bytes, br#"{"source":"local"}"#);
-        assert_eq!(asset.mime_type, "application/json");
+        assert_eq!(bytes, br#"{"source":"local"}"#);
     }
 
     #[test]
-    fn third_party_asset_max_len_applies_to_selected_local_asset() {
+    fn third_party_selection_and_revision_change_when_local_asset_is_removed() {
         let temp = TempDirGuard::new("host-resources-third-party-max-len");
         let store = FilesystemHostResourceStore::new(roots(&temp.path));
         let local_file = temp.path.join("default-user/extensions/mobile/app.js");
@@ -477,15 +475,24 @@ mod tests {
         fs::write(&local_file, b"large").expect("local file");
         fs::write(&global_file, b"ok").expect("global file");
 
-        let result = store.read_third_party_asset("mobile", Path::new("app.js"), Some(2));
-
-        assert!(matches!(
-            result,
-            Err(HostResourceStoreError::PayloadTooLarge {
-                size_bytes: 5,
-                limit_bytes: 2,
+        let local = store
+            .open(HostResourceSourceRequest::ThirdParty {
+                extension_folder: "mobile",
+                relative_path: Path::new("app.js"),
             })
-        ));
+            .expect("local");
+        let local_revision = local.metadata.revision.clone();
+        assert_eq!(local.metadata.content_length, 5);
+        fs::remove_file(&local_file).expect("remove local");
+        let global = store
+            .open(HostResourceSourceRequest::ThirdParty {
+                extension_folder: "mobile",
+                relative_path: Path::new("app.js"),
+            })
+            .expect("global");
+
+        assert_eq!(global.metadata.content_length, 2);
+        assert_ne!(local_revision, global.metadata.revision);
     }
 
     #[test]
@@ -497,11 +504,12 @@ mod tests {
         fs::write(&file, b"abcd").expect("background file");
 
         let bytes = store
-            .read_user_data_asset_range(
-                UserDataAssetKind::Background,
-                Path::new("a.bin"),
-                ByteRange { start: 1, end: 2 },
-            )
+            .open(HostResourceSourceRequest::UserData {
+                kind: UserDataAssetKind::Background,
+                relative_path: Path::new("a.bin"),
+            })
+            .expect("open range")
+            .read(Some(ByteRange { start: 1, end: 2 }))
             .expect("read range");
 
         assert_eq!(bytes, b"bc");
@@ -520,7 +528,12 @@ mod tests {
         std::os::unix::fs::symlink(&outside, &link).expect("symlink");
 
         let bytes = store
-            .read_user_data_asset(UserDataAssetKind::Background, Path::new("escape.txt"))
+            .open(HostResourceSourceRequest::UserData {
+                kind: UserDataAssetKind::Background,
+                relative_path: Path::new("escape.txt"),
+            })
+            .expect("open symlinked file")
+            .read(None)
             .expect("read symlinked file");
 
         assert_eq!(bytes, b"secret");
@@ -534,15 +547,132 @@ mod tests {
         fs::create_dir_all(file.parent().expect("characters parent")).expect("characters dir");
         fs::write(&file, b"gif").expect("gif file");
 
-        let asset = store
-            .read_thumbnail_asset(ThumbnailAssetRequest {
-                kind: ThumbnailKind::Avatar,
-                file: "a.gif".to_string(),
-                use_thumbnails: true,
-            })
+        let request = ThumbnailAssetRequest {
+            kind: ThumbnailKind::Avatar,
+            file: "a.gif".to_string(),
+            use_thumbnails: true,
+        };
+        let opened = store
+            .open(HostResourceSourceRequest::Thumbnail(&request))
             .expect("thumbnail asset");
+        assert_eq!(opened.metadata.content_type, "image/gif");
+        let bytes = opened.read(None).expect("read thumbnail");
 
-        assert_eq!(asset.bytes, b"gif");
-        assert_eq!(asset.mime_type, "image/gif");
+        assert_eq!(bytes, b"gif");
+    }
+
+    #[test]
+    fn static_thumbnail_returns_opened_cached_jpeg() {
+        let temp = TempDirGuard::new("host-resources-thumbnail-generated");
+        let store = FilesystemHostResourceStore::new(roots(&temp.path));
+        let file = temp.path.join("characters").join("a.png");
+        fs::create_dir_all(file.parent().expect("characters parent")).expect("characters dir");
+        ImageBuffer::from_pixel(2, 2, Rgb([255u8, 0, 0]))
+            .save(&file)
+            .expect("source image");
+        let request = ThumbnailAssetRequest {
+            kind: ThumbnailKind::Avatar,
+            file: "a.png".to_string(),
+            use_thumbnails: true,
+        };
+
+        let opened = store
+            .open(HostResourceSourceRequest::Thumbnail(&request))
+            .expect("open thumbnail");
+        assert_eq!(opened.metadata.content_type, "image/jpeg");
+        let bytes = opened.read(None).expect("read thumbnail");
+
+        assert!(bytes.starts_with(&[0xff, 0xd8]));
+    }
+
+    #[test]
+    fn failed_thumbnail_generation_falls_back_before_representation_selection() {
+        let temp = TempDirGuard::new("host-resources-thumbnail-fallback");
+        let store = FilesystemHostResourceStore::new(roots(&temp.path));
+        let file = temp.path.join("characters").join("a.png");
+        fs::create_dir_all(file.parent().expect("characters parent")).expect("characters dir");
+        fs::write(&file, b"not-an-image").expect("invalid source image");
+        let request = ThumbnailAssetRequest {
+            kind: ThumbnailKind::Avatar,
+            file: "a.png".to_string(),
+            use_thumbnails: true,
+        };
+
+        let opened = store
+            .open(HostResourceSourceRequest::Thumbnail(&request))
+            .expect("fallback original");
+        assert_eq!(opened.metadata.content_type, "image/png");
+        assert_eq!(opened.read(None).expect("read original"), b"not-an-image");
+    }
+
+    #[test]
+    fn source_revision_is_stable_across_reopen() {
+        let temp = TempDirGuard::new("host-resources-stable-revision");
+        let store = FilesystemHostResourceStore::new(roots(&temp.path));
+        let file = temp.path.join("backgrounds").join("a.bin");
+        fs::create_dir_all(file.parent().expect("background parent")).expect("background dir");
+        fs::write(&file, b"abcd").expect("background file");
+        let request = || HostResourceSourceRequest::UserData {
+            kind: UserDataAssetKind::Background,
+            relative_path: Path::new("a.bin"),
+        };
+
+        let first = store.open(request()).expect("first");
+        let second = store.open(request()).expect("second");
+
+        assert_eq!(first.metadata.revision, second.metadata.revision);
+    }
+
+    #[test]
+    fn opened_handle_keeps_metadata_and_body_on_atomic_replacement() {
+        let temp = TempDirGuard::new("host-resources-open-handle-replacement");
+        let store = FilesystemHostResourceStore::new(roots(&temp.path));
+        let file = temp.path.join("backgrounds").join("a.bin");
+        let replacement = temp.path.join("backgrounds").join("replacement.bin");
+        fs::create_dir_all(file.parent().expect("background parent")).expect("background dir");
+        fs::write(&file, b"old").expect("old file");
+        fs::write(&replacement, b"newer").expect("new file");
+
+        let opened = store
+            .open(HostResourceSourceRequest::UserData {
+                kind: UserDataAssetKind::Background,
+                relative_path: Path::new("a.bin"),
+            })
+            .expect("open old");
+        tt_adapter_storage_core::file_system::replace_file_with_fallback_sync(&replacement, &file)
+            .expect("replace path");
+
+        assert_eq!(opened.metadata.content_length, 3);
+        assert_eq!(opened.read(None).expect("read old handle"), b"old");
+    }
+
+    #[test]
+    fn full_read_rejects_in_place_growth() {
+        use std::io::Write as _;
+
+        let temp = TempDirGuard::new("host-resources-in-place-growth");
+        let file_path = temp.path.join("growing.bin");
+        fs::write(&file_path, b"old").expect("initial file");
+        let body = FileHostResourceBody {
+            path: file_path.clone(),
+            file: fs::File::open(&file_path).expect("open initial file"),
+            content_length: 3,
+            last_modified: fs::metadata(&file_path)
+                .expect("initial metadata")
+                .modified()
+                .expect("initial mtime"),
+        };
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&file_path)
+            .expect("open append handle")
+            .write_all(b"new content that must not be read")
+            .expect("grow file");
+
+        let error = Box::new(body)
+            .read(None)
+            .expect_err("in-place growth must fail");
+
+        assert!(matches!(error, HostResourceStoreError::Internal(_)));
     }
 }

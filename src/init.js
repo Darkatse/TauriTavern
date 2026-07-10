@@ -106,7 +106,7 @@ async function setupDevThirdPartyExtensionServiceWorker() {
         }
     };
 
-    const installClientProxyBridge = () => {
+    const installClientProxyBridge = (ttExtBaseUrl) => {
         if (!('serviceWorker' in navigator)) {
             return;
         }
@@ -135,20 +135,45 @@ async function setupDevThirdPartyExtensionServiceWorker() {
                 port.postMessage({ ok: false, error: 'Blocked tt-ext proxy request' });
                 return;
             }
+
+            const search = String(data.search ?? '');
+            const method = String(data.method || 'GET').toUpperCase();
+            const headers = Array.isArray(data.headers) ? data.headers : [];
+            if (data.requiresIpc !== true) {
+                const targetUrl = new URL(`${pathname}${search}`, ttExtBaseUrl);
+                fetch(targetUrl.href, {
+                    method,
+                    credentials: 'omit',
+                    cache: data.cache,
+                    headers: new Headers(headers),
+                })
+                    .then(async (response) => {
+                        const buffer = await response.arrayBuffer();
+                        port.postMessage({
+                            ok: true,
+                            status: response.status,
+                            statusText: response.statusText,
+                            headers: Array.from(response.headers.entries()),
+                            body: buffer,
+                        }, [buffer]);
+                    })
+                    .catch((error) => {
+                        port.postMessage({ ok: false, error: String(error?.message || error) });
+                    });
+                return;
+            }
+
             if (typeof invoke !== 'function') {
                 port.postMessage({ ok: false, error: 'Tauri invoke is unavailable' });
                 return;
             }
 
-            const search = String(data.search ?? '');
-            const method = String(data.method || 'GET').toUpperCase();
-            const range = typeof data.range === 'string' && data.range ? data.range : null;
             invoke('read_dev_web_resource', {
                 request: {
                     pathname,
                     search,
                     method,
-                    range,
+                    headers,
                 },
             })
                 .then((response) => {
@@ -156,9 +181,9 @@ async function setupDevThirdPartyExtensionServiceWorker() {
                     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
                     port.postMessage({
                         ok: true,
-                        status: response?.status || 200,
-                        statusText: response?.statusText || '',
-                        headers: response?.headers || [],
+                        status: response.status,
+                        statusText: response.statusText,
+                        headers: response.headers,
                         body: buffer,
                     }, [buffer]);
                 })
@@ -188,7 +213,7 @@ async function setupDevThirdPartyExtensionServiceWorker() {
     const swUrl = `/tt-ext-sw.js?base=${encodeURIComponent(ttExtBaseUrl)}`;
 
     try {
-        installClientProxyBridge();
+        installClientProxyBridge(ttExtBaseUrl);
         await navigator.serviceWorker.register(swUrl, { scope: '/' });
         await navigator.serviceWorker.ready;
 
