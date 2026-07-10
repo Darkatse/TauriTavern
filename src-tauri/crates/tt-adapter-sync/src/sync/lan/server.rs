@@ -674,12 +674,14 @@ mod tests {
         assert!(!response.granted_permissions.write);
         assert_eq!(response.server_device_name, "Server");
 
-        let requests = inbound.requests.lock().expect("pairing request lock");
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].0, token);
-        assert_eq!(requests[0].1.device_id, peer_device_id);
-        assert_eq!(requests[0].1.client_base_url, "https://127.0.0.1:60000");
-        assert_eq!(requests[0].1.client_spki_sha256, "client-spki");
+        {
+            let requests = inbound.requests.lock().expect("pairing request lock");
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].0, token);
+            assert_eq!(requests[0].1.device_id, peer_device_id);
+            assert_eq!(requests[0].1.client_base_url, "https://127.0.0.1:60000");
+            assert_eq!(requests[0].1.client_spki_sha256, "client-spki");
+        }
 
         handle.shutdown();
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;

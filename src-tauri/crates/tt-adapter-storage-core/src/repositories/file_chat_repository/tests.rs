@@ -2980,7 +2980,7 @@ async fn group_chat_store_update_json_and_key_work() {
 
 async fn save_chat_payload_from_values(
     repository: &FileChatRepository,
-    root: &PathBuf,
+    root: &Path,
     character_name: &str,
     file_name: &str,
     payload: &[Value],
@@ -3512,7 +3512,7 @@ async fn patch_chat_payload_windowed_rejects_window_baseline_mismatch() {
 
 async fn save_group_chat_payload_from_values(
     repository: &FileChatRepository,
-    root: &PathBuf,
+    root: &Path,
     chat_id: &str,
     payload: &[Value],
     force: bool,
