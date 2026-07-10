@@ -350,14 +350,13 @@ fn rewrite_audio_url_content_parts(
                 rewrite_audio_url_part(provider_name, part, formats, fallback_policy)?;
             }
         }
-        Some(part @ Value::Object(_)) => {
+        Some(part @ Value::Object(_))
             if fallback_policy == AudioRewriteFallbackPolicy::Reject
-                && media_kind_in_value(part) == Some("audio")
-            {
-                return Err(ApplicationError::ValidationError(format!(
-                    "{provider_name} audio content parts must be inside a content array."
-                )));
-            }
+                && media_kind_in_value(part) == Some("audio") =>
+        {
+            return Err(ApplicationError::ValidationError(format!(
+                "{provider_name} audio content parts must be inside a content array."
+            )));
         }
         _ => {}
     }

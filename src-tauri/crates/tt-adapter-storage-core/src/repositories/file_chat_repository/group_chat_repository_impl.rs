@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -30,7 +31,7 @@ impl GroupChatRepository for FileChatRepository {
         for descriptor in descriptors {
             results.push(self.get_chat_summary(&descriptor, include_metadata).await?);
         }
-        results.sort_by(|a, b| b.date.cmp(&a.date));
+        results.sort_by_key(|result| Reverse(result.date));
         self.flush_summary_index_if_needed().await?;
         Ok(results)
     }
@@ -60,7 +61,7 @@ impl GroupChatRepository for FileChatRepository {
         for descriptor in selected {
             results.push(self.get_chat_summary(&descriptor, include_metadata).await?);
         }
-        results.sort_by(|a, b| b.date.cmp(&a.date));
+        results.sort_by_key(|result| Reverse(result.date));
         self.flush_summary_index_if_needed().await?;
         Ok(results)
     }
@@ -114,7 +115,7 @@ impl GroupChatRepository for FileChatRepository {
             }
         }
 
-        results.sort_by(|a, b| b.date.cmp(&a.date));
+        results.sort_by_key(|result| Reverse(result.date));
         self.cache_search_results(search_cache_key, results.clone())
             .await;
         self.flush_summary_index_if_needed().await?;

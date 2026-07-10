@@ -627,7 +627,7 @@ impl SettingsService {
             Value::Object(object) => {
                 writer.write_all(b"{").map_err(Self::canonical_json_error)?;
                 let mut entries = object.iter().collect::<Vec<_>>();
-                entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+                entries.sort_by_key(|(key, _)| *key);
                 for (index, (key, nested)) in entries.into_iter().enumerate() {
                     if index > 0 {
                         writer.write_all(b",").map_err(Self::canonical_json_error)?;

@@ -222,7 +222,7 @@ fn filter_and_sort_media_files(
     if sort_by_name {
         files.sort_by(|left, right| left.name.cmp(&right.name));
     } else if sort_by_date {
-        files.sort_by(|left, right| left.modified_ms.cmp(&right.modified_ms));
+        files.sort_by_key(|file| file.modified_ms);
     }
 
     if sort_order == "desc" {

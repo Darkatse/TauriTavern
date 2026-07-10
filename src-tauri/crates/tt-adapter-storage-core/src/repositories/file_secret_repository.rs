@@ -184,11 +184,9 @@ impl FileSecretRepository {
                         secrets.secrets.insert(key, normalized);
                     }
                 }
-                Value::String(legacy) => {
-                    if !legacy.trim().is_empty() {
-                        secrets.write_secret(key.clone(), legacy, key);
-                        migrated = true;
-                    }
+                Value::String(legacy) if !legacy.trim().is_empty() => {
+                    secrets.write_secret(key.clone(), legacy, key);
+                    migrated = true;
                 }
                 _ => {}
             }

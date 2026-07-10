@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
@@ -499,7 +500,7 @@ impl SettingsRepository for FileSettingsRepository {
             }
         }
 
-        snapshots.sort_by(|a, b| b.date.cmp(&a.date));
+        snapshots.sort_by_key(|snapshot| Reverse(snapshot.date));
 
         Ok(snapshots)
     }
