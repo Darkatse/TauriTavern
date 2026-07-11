@@ -47,7 +47,7 @@ pub struct Extension {
     pub extension_type: ExtensionType,
     /// Whether the extension is managed by TauriTavern.
     ///
-    /// Managed extensions have source metadata and can be updated.
+    /// Managed extensions have a supported embedded Git repository or legacy source metadata.
     /// Unmanaged extensions are still discoverable/loadable but cannot be updated.
     pub managed: bool,
     /// Backend-facing manifest summary of the extension
@@ -75,6 +75,19 @@ pub struct ExtensionVersion {
     pub is_up_to_date: bool,
     /// Remote URL of the extension repository
     pub remote_url: String,
+}
+
+/// A remote branch available to an installed extension.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionBranch {
+    /// Remote branch name without the `refs/heads/` prefix.
+    pub name: String,
+    /// Short commit hash for display.
+    pub commit: String,
+    /// Whether the extension currently selects this branch.
+    pub current: bool,
+    /// Optional display label. Remote advertisement does not provide one.
+    pub label: String,
 }
 
 /// Extension installation result

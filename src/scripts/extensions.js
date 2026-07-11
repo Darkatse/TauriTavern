@@ -1596,18 +1596,14 @@ async function onBranchClick() {
         return;
     }
 
-    let newBranch = '';
-
     const branches = await getExtensionBranches(extensionName, isGlobal);
     const selectElement = document.createElement('select');
     selectElement.classList.add('text_pole', 'wide100p');
-    selectElement.addEventListener('change', function () {
-        newBranch = this.value;
-    });
     for (const branch of branches) {
         const option = document.createElement('option');
         option.value = branch.name;
-        option.textContent = `${branch.name} (${branch.commit}) [${branch.label}]`;
+        const label = branch.label ? ` [${branch.label}]` : '';
+        option.textContent = `${branch.name} (${branch.commit})${label}`;
         option.selected = branch.current;
         selectElement.appendChild(option);
     }
@@ -1617,6 +1613,7 @@ async function onBranchClick() {
         cancelButton: t`Cancel`,
     });
     const popupResult = await popup.show();
+    const newBranch = selectElement.value;
 
     if (!popupResult || !newBranch) {
         return;

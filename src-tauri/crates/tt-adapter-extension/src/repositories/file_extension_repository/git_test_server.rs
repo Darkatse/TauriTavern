@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -15,7 +16,7 @@ pub(super) struct GitTestServer {
     address: SocketAddr,
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
-    last_commit: Option<gix::ObjectId>,
+    last_commits: HashMap<String, gix::ObjectId>,
 }
 
 impl GitTestServer {
@@ -69,7 +70,7 @@ impl GitTestServer {
             address,
             stop,
             thread: Some(thread),
-            last_commit: None,
+            last_commits: HashMap::new(),
         }
     }
 
@@ -78,6 +79,10 @@ impl GitTestServer {
     }
 
     pub(super) fn write_main(&mut self, version: &str) -> gix::ObjectId {
+        self.write_branch("main", version)
+    }
+
+    pub(super) fn write_branch(&mut self, name: &str, version: &str) -> gix::ObjectId {
         let repo = gix::open_opts(
             &self.origin,
             gix::open::Options::isolated().strict_config(true),
@@ -118,7 +123,7 @@ impl GitTestServer {
         let commit = repo
             .write_object(&gix::objs::Commit {
                 tree,
-                parents: self.last_commit.into_iter().collect(),
+                parents: self.last_commits.get(name).copied().into_iter().collect(),
                 author: actor.clone(),
                 committer: actor,
                 encoding: None,
@@ -128,18 +133,18 @@ impl GitTestServer {
             .expect("write fixture commit")
             .detach();
 
-        let branch: gix::refs::FullName = "refs/heads/main".try_into().unwrap();
-        let edits = [
-            RefEdit {
-                name: branch.clone(),
-                deref: false,
-                change: Change::Update {
-                    log: LogChange::default(),
-                    expected: PreviousValue::Any,
-                    new: Target::Object(commit),
-                },
+        let branch: gix::refs::FullName = format!("refs/heads/{name}").try_into().unwrap();
+        let mut edits = vec![RefEdit {
+            name: branch.clone(),
+            deref: false,
+            change: Change::Update {
+                log: LogChange::default(),
+                expected: PreviousValue::Any,
+                new: Target::Object(commit),
             },
-            RefEdit {
+        }];
+        if name == "main" {
+            edits.push(RefEdit {
                 name: "HEAD".try_into().unwrap(),
                 deref: false,
                 change: Change::Update {
@@ -147,18 +152,40 @@ impl GitTestServer {
                     expected: PreviousValue::Any,
                     new: Target::Symbolic(branch),
                 },
-            },
-        ];
+            });
+        }
         let actor = signature();
         let mut time = gix::date::parse::TimeBuf::default();
         repo.edit_references_as(edits, Some(actor.to_ref(&mut time)))
             .expect("update fixture refs");
-        self.last_commit = Some(commit);
+        self.last_commits.insert(name.to_string(), commit);
         commit
     }
 
+    pub(super) fn point_branch(&mut self, name: &str, commit: gix::ObjectId) {
+        let repo = gix::open_opts(
+            &self.origin,
+            gix::open::Options::isolated().strict_config(true),
+        )
+        .expect("open test origin");
+        let edit = RefEdit {
+            name: format!("refs/heads/{name}").try_into().unwrap(),
+            deref: false,
+            change: Change::Update {
+                log: LogChange::default(),
+                expected: PreviousValue::Any,
+                new: Target::Object(commit),
+            },
+        };
+        let actor = signature();
+        let mut time = gix::date::parse::TimeBuf::default();
+        repo.edit_references_as([edit], Some(actor.to_ref(&mut time)))
+            .expect("update fixture branch ref");
+        self.last_commits.insert(name.to_string(), commit);
+    }
+
     pub(super) fn write_annotated_tag(&self, name: &str) {
-        let commit = self.last_commit.expect("write a commit before a tag");
+        let commit = self.last_commits["main"];
         let repo = gix::open_opts(
             &self.origin,
             gix::open::Options::isolated().strict_config(true),

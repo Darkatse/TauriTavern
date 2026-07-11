@@ -260,7 +260,7 @@
 - `/backgrounds/*`、`/assets/*`
 - `/user/images/*`、`/user/files/*`
 
-第三方扩展管理 API 保持上游 install/update/version DTO 与 hook/event 语义，但 remote transport 已是 Rust gitoxide smart HTTP：扩展操作不再消费应用更新的 GitHub rate-limit stopper；mutating update 不使用前端 timeout/AbortSignal，因为 Tauri invoke 已进入 Rust 后不能据此取消磁盘写入。version 的 UI AbortSignal 仍可用于关闭只读检查结果。
+第三方扩展管理 API 保持上游 install/update/version/branches/switch DTO 与 hook/event 语义，remote transport 为 Rust gitoxide smart HTTP。mutating update 不使用前端 timeout/AbortSignal，因为 Tauri invoke 已进入 Rust 后不能据此取消磁盘写入。version 的 UI AbortSignal 仍可用于关闭只读检查结果。branches 只投影唯一远端 heads（空 label，不 fetch object）；switch 成功为 `204`，当前 branch 是 no-op，且不得隐式触发 update hook。
 
 对这些端点的最小可观察语义：
 

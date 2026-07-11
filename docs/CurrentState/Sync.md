@@ -16,7 +16,7 @@ TauriTavern 当前存在两种同步拓扑：
 关键结论（后续改动优先守住这些）：
 
 1. **同步语义以“用户数据一致性”为中心**：scope/exclude、`(size_bytes, modified_ms)` 增量判定、Mirror delete 的时序、原子写入与 mtime 保留。
-2. **本地 mutation 全局串行**：LAN Sync、TT-Sync v2 与第三方扩展 install/update/delete/move 共用同一个 composition-root `Semaphore(1)`。所有本地写操作都用 `try_acquire_owned()` fail-fast；只发送远端 pull-request 的作业、extension discovery/version 不占 permit（见 `src-tauri/crates/tauritavern/src/app/composition/services/{mod.rs,sync.rs}`）。
+2. **本地 mutation 全局串行**：LAN Sync、TT-Sync v2 与第三方扩展 install/update/switch/delete/move 共用同一个 composition-root `Semaphore(1)`。所有本地写操作都用 `try_acquire_owned()` fail-fast；只发送远端 pull-request 的作业、extension discovery/version/branches 不占 permit（见 `src-tauri/crates/tauritavern/src/app/composition/services/{mod.rs,sync.rs}`）。
 3. **长期同步 scope 由 TT-Sync `DatasetPolicy` 定义**：LAN Sync 与 TT-Sync v2 消费同一份策略，不再存在独立的 LAN v1 allowlist。
 4. **v2 协议已落地 Bundle + zstd 传输形态**：把 N 个 per-file 请求收敛为 1 个 bundle 请求，并可选 zstd 压缩；旧的 per-file 端点仍保留作为 fallback。
 5. **Sync Panel 入口默认走 scoped sync**：前端持久化一份 `DatasetSelection` 作为后续 LAN Sync / TT-Sync v2 默认范围，并要求对端支持 `bundle_v1 + zstd_v1`；不再静默降级到旧 LAN v1。
@@ -39,7 +39,7 @@ TauriTavern 当前存在两种同步拓扑：
 
 LAN Sync 与 TT-Sync v2 的 manifest 扫描严格遵循 `ttsync_core::dataset::ResolvedDatasetPolicy`，并且会排除 LAN/TT 同步状态目录（见 `src-tauri/crates/tt-adapter-sync/src/tt_sync/fs.rs`）。当前 TauriTavern 默认数据集还会排除 `_tauritavern/prompt-cache/`、`_tauritavern/.ios-policy.json`、`_cache/`、`.staging` 与同步临时文件。
 
-`.git` 不是全局排除组件。`extensions.local` / `extensions.third_party` 中由 SillyTavern 迁移而来的 embedded `.git/**` 按普通数据路径参与所选 Dataset 同步；不要为 `.git` 新增名称级排除规则。`extensions.sources` 当前仍同步 `_tauritavern/extension-sources` 下的 source metadata，Gitoxide 迁移计划只把它作为 legacy JSON 的滚动兼容路径，不再计划在其中新增 bare repository。
+`.git` 不是全局排除组件。`extensions.local` / `extensions.third_party` 中由 SillyTavern 迁移而来的 embedded `.git/**` 按普通数据路径参与所选 Dataset 同步；不要为 `.git` 新增名称级排除规则。`extensions.sources` 当前仍同步 `_tauritavern/extension-sources` 下的 source metadata，Gitoxide 扩展管理只把它作为 legacy JSON 的滚动兼容路径，不再在其中新增 bare repository。更早版本遗留在扩展根目录的 inline source JSON不再启动期搬迁，而是随扩展 Dataset保留到首次 Git写入转换。
 
 默认 TauriTavern 数据集已经覆盖 Agent 连续性数据：
 

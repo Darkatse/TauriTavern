@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use tt_domain::errors::DomainError;
 use tt_domain::models::extension::{
-    Extension, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
+    Extension, ExtensionBranch, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
 };
 
 #[async_trait]
@@ -35,6 +35,21 @@ pub trait ExtensionRepository: Send + Sync {
         extension_name: &str,
         global: bool,
     ) -> Result<ExtensionVersion, DomainError>;
+
+    /// List remote branches available to an extension.
+    async fn get_extension_branches(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<Vec<ExtensionBranch>, DomainError>;
+
+    /// Switch an extension to a remote branch.
+    async fn switch_extension_branch(
+        &self,
+        extension_name: &str,
+        branch: &str,
+        global: bool,
+    ) -> Result<(), DomainError>;
 
     /// Move an extension between local and global directories
     async fn move_extension(

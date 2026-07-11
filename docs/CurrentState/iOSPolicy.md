@@ -169,7 +169,7 @@ iOS 构建可通过 `TAURITAVERN_IOS_POLICY_PROFILE` 注入默认 profile，用�
 
 - `extensions.third_party_management`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/extension_commands.rs`
-    - `install_extension` / `update_extension` / `delete_extension` / `move_extension` / `get_extension_version`
+    - `install_extension` / `update_extension` / `delete_extension` / `get_extension_version` / `get_extension_branches` / `switch_extension_branch` / `move_extension`
 - `extensions.third_party_execution` + `extensions.system_allowlist`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/extension_commands.rs:get_extensions`
   - 行为：发现阶段过滤（system 仅 allowlist；local/global third-party 受 `third_party_execution` 控制）

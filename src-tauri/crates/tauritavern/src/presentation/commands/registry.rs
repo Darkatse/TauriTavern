@@ -204,6 +204,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::extension_commands::update_extension,
         super::extension_commands::delete_extension,
         super::extension_commands::get_extension_version,
+        super::extension_commands::get_extension_branches,
+        super::extension_commands::switch_extension_branch,
         super::extension_commands::move_extension,
         super::lan_sync_commands::lan_sync_get_status,
         super::lan_sync_commands::lan_sync_start_server,

@@ -13,7 +13,7 @@ use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit};
 use tt_domain::errors::DomainError;
 use tt_domain::models::extension::ExtensionManifestMetadata;
 
-use super::git_remote::parse_remote_url;
+use super::git_remote::{branch_ref, parse_remote_url, tag_ref};
 
 const ORIGIN: &str = "origin";
 const MANIFEST_PATH: &str = "manifest.json";
@@ -33,6 +33,27 @@ pub(super) enum ManagedRef {
 }
 
 impl ManagedRef {
+    pub(super) fn branch(display_name: &str) -> Result<Self, DomainError> {
+        let remote_ref = branch_ref(display_name)?;
+        let tracking_ref = format!("refs/remotes/origin/{display_name}");
+        gix::refs::FullName::try_from(tracking_ref.clone()).map_err(|error| {
+            DomainError::InvalidData(format!("Invalid Git tracking reference: {error}"))
+        })?;
+        Ok(Self::Branch {
+            local_ref: remote_ref.clone(),
+            remote_ref,
+            tracking_ref,
+            display_name: display_name.to_string(),
+        })
+    }
+
+    pub(super) fn tag(display_name: &str) -> Result<Self, DomainError> {
+        Ok(Self::Tag {
+            full_ref: tag_ref(display_name)?,
+            display_name: display_name.to_string(),
+        })
+    }
+
     pub(super) fn remote_ref(&self) -> &str {
         match self {
             Self::Branch { remote_ref, .. } => remote_ref,
@@ -119,6 +140,14 @@ pub(super) fn read_managed_state(repo: &gix::Repository) -> Result<ManagedState,
             .ok_or_else(|| {
                 DomainError::InvalidData("Embedded Git branch has no fetch remote".to_string())
             })?;
+        if !matches!(
+            &remote_name,
+            gix::remote::Name::Symbol(name) if name.as_ref() == ORIGIN
+        ) {
+            return Err(DomainError::InvalidData(
+                "Embedded Git branch must track the origin remote".to_string(),
+            ));
+        }
         let remote_ref = branch
             .remote_ref_name(gix::remote::Direction::Fetch)
             .ok_or_else(|| {
@@ -127,16 +156,9 @@ pub(super) fn read_managed_state(repo: &gix::Repository) -> Result<ManagedState,
                 )
             })?
             .map_err(|error| git_error("Invalid embedded Git upstream ref", error))?;
-        let tracking_ref = branch
-            .remote_tracking_ref_name(gix::remote::Direction::Fetch)
-            .ok_or_else(|| {
-                DomainError::InvalidData("Embedded Git branch has no tracking ref".to_string())
-            })?
-            .map_err(|error| git_error("Invalid embedded Git tracking ref", error))?;
         let remote_ref = utf8_ref(remote_ref.as_bstr())?;
-        let tracking_ref = utf8_ref(tracking_ref.as_bstr())?;
         let remote = repo
-            .find_remote(remote_name.as_ref())
+            .find_remote(ORIGIN)
             .map_err(|error| git_error("Failed to open embedded Git remote", error))?;
         let remote_url = remote_url(&remote)?;
         let display_name = remote_ref
@@ -147,14 +169,18 @@ pub(super) fn read_managed_state(repo: &gix::Repository) -> Result<ManagedState,
                 )
             })?
             .to_string();
+        let selected = ManagedRef::branch(&display_name)?;
+        if !matches!(
+            &selected,
+            ManagedRef::Branch { local_ref: canonical, .. } if canonical == &local_ref
+        ) {
+            return Err(DomainError::InvalidData(
+                "Embedded Git local branch must match its origin branch".to_string(),
+            ));
+        }
 
         return Ok(ManagedState {
-            selected: ManagedRef::Branch {
-                local_ref,
-                remote_ref,
-                tracking_ref,
-                display_name,
-            },
+            selected,
             deployed: deployed.detach(),
             remote_url,
         });
@@ -241,27 +267,36 @@ pub(super) fn prepare_candidate(
             continue;
         }
 
-        let object = repo.find_object(entry.oid).map_err(|error| {
-            git_error(
-                &format!("Candidate Git object is missing for '{path}'"),
-                error,
-            )
-        })?;
         let expected_kind = if entry.mode.is_tree() {
             gix::object::Kind::Tree
         } else {
             gix::object::Kind::Blob
         };
-        if object.kind != expected_kind {
-            return Err(DomainError::InvalidData(format!(
-                "Extension Git tree entry '{path}' has the wrong object kind"
-            )));
-        }
 
         if path == MANIFEST_PATH {
+            let object = repo
+                .find_object(entry.oid)
+                .map_err(|error| git_error("Candidate Git manifest object is missing", error))?;
+            if object.kind != expected_kind {
+                return Err(DomainError::InvalidData(
+                    "Extension manifest.json has the wrong object kind".to_string(),
+                ));
+            }
             manifest = Some(serde_json::from_slice(&object.data).map_err(|error| {
                 DomainError::InvalidData(format!("Invalid extension manifest.json: {error}"))
             })?);
+        } else {
+            let header = repo.find_header(entry.oid).map_err(|error| {
+                git_error(
+                    &format!("Candidate Git object is missing for '{path}'"),
+                    error,
+                )
+            })?;
+            if header.kind() != expected_kind {
+                return Err(DomainError::InvalidData(format!(
+                    "Extension Git tree entry '{path}' has the wrong object kind"
+                )));
+            }
         }
     }
 
@@ -375,6 +410,43 @@ pub(super) fn configure_symlink_policy(repo: &gix::Repository) -> Result<(), Dom
     })
 }
 
+pub(super) fn configure_branch_switch(
+    repo: &gix::Repository,
+    selected: &ManagedRef,
+) -> Result<(), DomainError> {
+    let ManagedRef::Branch {
+        local_ref,
+        remote_ref,
+        ..
+    } = selected
+    else {
+        return Err(DomainError::InvalidData(
+            "Extension switch target is not a branch".to_string(),
+        ));
+    };
+    let local_name = local_ref
+        .strip_prefix("refs/heads/")
+        .expect("branch local ref");
+    let refspec = format!(
+        "+{}:{}",
+        selected.remote_ref(),
+        selected.fetch_destination()
+    );
+
+    update_config(repo, |config| {
+        set_config(config, "core", None, "symlinks", "false")?;
+        {
+            let mut origin = config
+                .section_mut("remote", Some(ORIGIN.as_bytes().as_bstr()))
+                .map_err(|error| git_error("Embedded Git origin is missing", error))?;
+            while origin.remove("fetch").is_some() {}
+        }
+        set_config(config, "remote", Some(ORIGIN), "fetch", &refspec)?;
+        set_config(config, "branch", Some(local_name), "remote", ORIGIN)?;
+        set_config(config, "branch", Some(local_name), "merge", remote_ref)
+    })
+}
+
 pub(super) fn create_tracking_ref(
     repo: &gix::Repository,
     name: &str,
@@ -430,6 +502,40 @@ pub(super) fn finalize_install_ref(
     }
 }
 
+pub(super) fn finalize_branch_switch(
+    repo: &gix::Repository,
+    selected: &ManagedRef,
+    commit: gix::ObjectId,
+) -> Result<(), DomainError> {
+    let ManagedRef::Branch { local_ref, .. } = selected else {
+        return Err(DomainError::InvalidData(
+            "Extension switch target is not a branch".to_string(),
+        ));
+    };
+    apply_ref_edits(
+        repo,
+        [
+            ref_edit(
+                local_ref,
+                Target::Object(commit),
+                PreviousValue::Any,
+                "switch extension branch",
+            )?,
+            ref_edit(
+                "HEAD",
+                Target::Symbolic(
+                    local_ref
+                        .as_str()
+                        .try_into()
+                        .map_err(|error| git_error("Invalid embedded Git branch ref", error))?,
+                ),
+                PreviousValue::Any,
+                "select extension branch",
+            )?,
+        ],
+    )
+}
+
 pub(super) fn advance_deployed_ref(
     repo: &gix::Repository,
     selected: &ManagedRef,
@@ -449,24 +555,6 @@ pub(super) fn advance_deployed_ref(
             "update extension",
         )?],
     )
-}
-
-pub(super) fn read_manifest_from_disk(
-    extension_path: &Path,
-) -> Result<ExtensionManifestMetadata, DomainError> {
-    let path = extension_path.join(MANIFEST_PATH);
-    let bytes = fs::read(&path).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to read installed extension manifest '{}': {error}",
-            path.display()
-        ))
-    })?;
-    serde_json::from_slice(&bytes).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Invalid installed extension manifest '{}': {error}",
-            path.display()
-        ))
-    })
 }
 
 pub(super) fn validate_install_folder(name: &str) -> Result<(), DomainError> {
@@ -716,6 +804,64 @@ mod tests {
 
         paths.insert("src".to_string(), gix::objs::tree::EntryKind::Blob.into());
         assert!(validate_tree_prefixes(&paths).is_err());
+    }
+
+    #[test]
+    fn preflight_rejects_missing_and_wrong_kind_payload_objects() {
+        let path = temp_path("invalid-payload-object");
+        let repo = init_embedded(&path).expect("init repository");
+        let manifest = br#"{
+            "display_name":"Fixture",
+            "version":"1.0.0",
+            "author":"TauriTavern"
+        }"#;
+
+        let missing = gix::ObjectId::from_hex(b"1111111111111111111111111111111111111111")
+            .expect("missing object id");
+        let missing_commit = write_commit(
+            &repo,
+            vec![
+                blob_entry(
+                    &repo,
+                    MANIFEST_PATH,
+                    manifest,
+                    gix::objs::tree::EntryKind::Blob,
+                ),
+                gix::objs::tree::Entry {
+                    mode: gix::objs::tree::EntryKind::Blob.into(),
+                    filename: "payload.txt".into(),
+                    oid: missing,
+                },
+            ],
+        );
+        assert!(prepare_candidate(&repo, missing_commit).is_err());
+
+        let tree = repo
+            .write_object(&gix::objs::Tree {
+                entries: Vec::new(),
+            })
+            .expect("write wrong-kind tree")
+            .detach();
+        let wrong_kind_commit = write_commit(
+            &repo,
+            vec![
+                blob_entry(
+                    &repo,
+                    MANIFEST_PATH,
+                    manifest,
+                    gix::objs::tree::EntryKind::Blob,
+                ),
+                gix::objs::tree::Entry {
+                    mode: gix::objs::tree::EntryKind::Blob.into(),
+                    filename: "payload.txt".into(),
+                    oid: tree,
+                },
+            ],
+        );
+        assert!(prepare_candidate(&repo, wrong_kind_commit).is_err());
+
+        drop(repo);
+        fs::remove_dir_all(path).expect("remove repository");
     }
 
     #[test]

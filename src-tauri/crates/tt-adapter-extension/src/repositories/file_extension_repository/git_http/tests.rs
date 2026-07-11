@@ -4,11 +4,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use gix_transport::client::blocking_io::http::{
-    Http, PostBodyDataKind, Transport as HttpTransport,
-};
-use gix_transport::client::blocking_io::{Transport, TransportV2Ext};
-use gix_transport::{Protocol, Service};
+use gix_transport::client::blocking_io::http::{Http, PostBodyDataKind};
 use tt_adapter_http::HttpClientPool;
 use uuid::Uuid;
 
@@ -574,76 +570,6 @@ fn truncated_response_body_returns_a_safe_read_error() {
 }
 
 #[test]
-fn pinned_transport_v2_commands_use_bounded_post_bodies() {
-    let advertisement = packet_lines(&[b"version 2\n", b"ls-refs\n", b"fetch=shallow\n"]);
-    let server = spawn_server(3, move |index, _request, stream| {
-        if index == 0 {
-            respond(
-                stream,
-                "200 OK",
-                &[(
-                    "Content-Type",
-                    "application/x-git-upload-pack-advertisement",
-                )],
-                &advertisement,
-            )
-        } else {
-            respond(
-                stream,
-                "200 OK",
-                &[("Content-Type", "application/x-git-upload-pack-result")],
-                b"0000",
-            )
-        }
-    });
-    let remote = format!("{}/repo", server.base_url);
-    let git_url = remote.as_str().try_into().expect("parse gix URL");
-    let mut transport = HttpTransport::new_http(git_http(), git_url, Protocol::V2, false);
-
-    let handshake = transport
-        .handshake(Service::UploadPack, &[])
-        .expect("protocol v2 handshake");
-    assert_eq!(handshake.actual_protocol, Protocol::V2);
-    drop(handshake);
-
-    for command in ["ls-refs", "fetch"] {
-        let mut response = transport
-            .invoke(
-                command,
-                std::iter::empty::<(&str, Option<&str>)>(),
-                None::<std::iter::Empty<gix_transport::bstr::BString>>,
-                false,
-            )
-            .expect("prepare protocol v2 command");
-        response
-            .read_to_end(&mut Vec::new())
-            .expect("read protocol v2 command response");
-    }
-
-    let requests = (0..3)
-        .map(|_| {
-            server
-                .requests
-                .recv_timeout(Duration::from_secs(1))
-                .expect("smart HTTP request")
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        requests[1]
-            .body
-            .windows(b"command=ls-refs".len())
-            .any(|window| window == b"command=ls-refs")
-    );
-    assert!(
-        requests[2]
-            .body
-            .windows(b"command=fetch".len())
-            .any(|window| window == b"command=fetch")
-    );
-    server.finish();
-}
-
-#[test]
 fn pinned_gix_high_level_fetch_reaches_bounded_fetch_post() {
     let oid = "1111111111111111111111111111111111111111";
     let advertisement = packet_lines(&[b"version 2\n", b"ls-refs\n", b"fetch=shallow\n"]);
@@ -694,6 +620,12 @@ fn pinned_gix_high_level_fetch_reaches_bounded_fetch_post() {
                 .expect("high-level smart HTTP request")
         })
         .collect::<Vec<_>>();
+    assert!(
+        requests[1]
+            .body
+            .windows(b"command=ls-refs".len())
+            .any(|window| window == b"command=ls-refs")
+    );
     assert!(
         requests[2]
             .body

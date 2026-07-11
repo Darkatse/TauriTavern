@@ -43,7 +43,7 @@ pub(super) async fn get_extension_version(
         false => {
             let source = match repository
                 .source_store
-                .read(scope, &extension_folder_name)
+                .read(scope, &extension_folder_name, &extension_path)
                 .await?
             {
                 Some(source) => source,

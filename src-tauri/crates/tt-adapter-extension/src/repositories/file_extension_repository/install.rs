@@ -2,12 +2,12 @@ use std::fs;
 use std::path::Path;
 
 use gix::bstr::ByteSlice;
-use uuid::Uuid;
 
 use tt_domain::errors::DomainError;
-use tt_domain::models::extension::ExtensionInstallResult;
+use tt_domain::models::extension::{ExtensionInstallResult, ExtensionManifestMetadata};
 
 use super::FileExtensionRepository;
+use super::directory_ops::{cleanup_temp_directory, create_temp_directory};
 use super::git_http::GitHttp;
 use super::git_remote::{
     advertise_refs, branch_ref, fetch_exact, normalize_requested_reference, parse_remote_url,
@@ -15,10 +15,15 @@ use super::git_remote::{
 };
 use super::git_worktree::{
     ManagedRef, configure_install, create_tracking_ref, finalize_install_ref, init_embedded,
-    materialize_candidate, prepare_candidate, read_manifest_from_disk, validate_install_folder,
+    materialize_candidate, prepare_candidate, validate_install_folder,
 };
 
 const DEFAULT_HEAD_DESTINATION: &str = "refs/remotes/origin/HEAD";
+
+pub(super) struct StagedEmbedded {
+    pub(super) manifest: ExtensionManifestMetadata,
+    pub(super) commit: gix::ObjectId,
+}
 
 pub(super) async fn install_extension(
     repository: &FileExtensionRepository,
@@ -54,16 +59,7 @@ pub(super) async fn install_extension(
                 base_dir.display()
             ))
         })?;
-        let staging_dir = base_dir.join(format!(
-            ".tmp-extension-install-{}",
-            Uuid::new_v4().simple()
-        ));
-        fs::create_dir(&staging_dir).map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to create extension staging directory '{}': {error}",
-                staging_dir.display()
-            ))
-        })?;
+        let staging_dir = create_temp_directory(&base_dir, "tmp-extension-install")?;
 
         let result = install_embedded(
             &staging_dir,
@@ -74,7 +70,7 @@ pub(super) async fn install_extension(
             http_clients.as_ref(),
         );
         if result.is_err() {
-            let _ = fs::remove_dir_all(&staging_dir);
+            cleanup_temp_directory(&staging_dir);
         }
         result
     })
@@ -92,28 +88,7 @@ fn install_embedded(
     folder_name: &str,
     http_clients: &tt_adapter_http::HttpClientPool,
 ) -> Result<ExtensionInstallResult, DomainError> {
-    let mut repo = init_embedded(staging_dir)?;
-    let http = GitHttp::new(http_clients.git_blocking_client_builder()).map_err(|error| {
-        DomainError::InternalError(format!("Failed to create Git HTTP client: {error}"))
-    })?;
-    let (selected, candidate) = match requested_reference {
-        Some(reference) => fetch_requested_ref(&mut repo, http, remote_url, reference)?,
-        None => fetch_default_branch(&mut repo, http, remote_url)?,
-    };
-
-    let mut prepared = prepare_candidate(&repo, candidate)?;
-    materialize_candidate(&repo, staging_dir, &mut prepared)?;
-    configure_install(&repo, remote_url, &selected)?;
-    finalize_install_ref(&repo, &selected, candidate)?;
-
-    let manifest = read_manifest_from_disk(staging_dir)?;
-    if manifest != prepared.manifest {
-        return Err(DomainError::InternalError(
-            "Installed extension manifest differs from the validated Git object".to_string(),
-        ));
-    }
-    drop(prepared);
-    drop(repo);
+    let staged = stage_embedded(staging_dir, remote_url, requested_reference, http_clients)?;
 
     fs::rename(staging_dir, extension_path).map_err(|error| {
         if extension_path.exists() {
@@ -131,17 +106,68 @@ fn install_embedded(
 
     tracing::info!(
         "Extension installed: {} v{} by {} ({})",
-        manifest.display_name,
-        manifest.version,
-        manifest.author,
+        staged.manifest.display_name,
+        staged.manifest.version,
+        staged.manifest.author,
         extension_path.display()
     );
     Ok(ExtensionInstallResult {
-        version: manifest.version,
-        author: manifest.author,
-        display_name: manifest.display_name,
+        version: staged.manifest.version,
+        author: staged.manifest.author,
+        display_name: staged.manifest.display_name,
         extension_path: extension_path.to_string_lossy().to_string(),
         folder_name: folder_name.to_string(),
+    })
+}
+
+pub(super) fn stage_embedded(
+    staging_dir: &Path,
+    remote_url: &str,
+    requested_reference: Option<&str>,
+    http_clients: &tt_adapter_http::HttpClientPool,
+) -> Result<StagedEmbedded, DomainError> {
+    let mut repo = init_embedded(staging_dir)?;
+    let http = GitHttp::new(http_clients.git_blocking_client_builder()).map_err(|error| {
+        DomainError::InternalError(format!("Failed to create Git HTTP client: {error}"))
+    })?;
+    let (selected, candidate) = match requested_reference {
+        Some(reference) => fetch_requested_ref(&mut repo, http, remote_url, reference)?,
+        None => fetch_default_branch(&mut repo, http, remote_url)?,
+    };
+
+    finish_staged_embedded(repo, staging_dir, remote_url, selected, candidate)
+}
+
+pub(super) fn stage_embedded_branch(
+    staging_dir: &Path,
+    remote_url: &str,
+    branch: &str,
+    http_clients: &tt_adapter_http::HttpClientPool,
+) -> Result<StagedEmbedded, DomainError> {
+    let mut repo = init_embedded(staging_dir)?;
+    let http = GitHttp::new(http_clients.git_blocking_client_builder()).map_err(|error| {
+        DomainError::InternalError(format!("Failed to create Git HTTP client: {error}"))
+    })?;
+    let (selected, candidate) = fetch_branch(&mut repo, http, remote_url, branch)?;
+
+    finish_staged_embedded(repo, staging_dir, remote_url, selected, candidate)
+}
+
+fn finish_staged_embedded(
+    repo: gix::Repository,
+    staging_dir: &Path,
+    remote_url: &str,
+    selected: ManagedRef,
+    candidate: gix::ObjectId,
+) -> Result<StagedEmbedded, DomainError> {
+    let mut prepared = prepare_candidate(&repo, candidate)?;
+    materialize_candidate(&repo, staging_dir, &mut prepared)?;
+    configure_install(&repo, remote_url, &selected)?;
+    finalize_install_ref(&repo, &selected, candidate)?;
+
+    Ok(StagedEmbedded {
+        manifest: prepared.manifest,
+        commit: candidate,
     })
 }
 
@@ -162,22 +188,11 @@ fn fetch_default_branch(
     let display_name = target.strip_prefix("refs/heads/").ok_or_else(|| {
         DomainError::InvalidData("Remote Git HEAD does not point to a branch".to_string())
     })?;
-    let remote_ref = branch_ref(display_name)?;
-    let tracking_ref = format!("refs/remotes/origin/{display_name}");
-    gix::refs::FullName::try_from(tracking_ref.clone()).map_err(|error| {
-        DomainError::InvalidData(format!("Invalid Git tracking reference: {error}"))
-    })?;
+    let selected = ManagedRef::branch(display_name)?;
+    let tracking_ref = selected.fetch_destination().to_string();
     create_tracking_ref(repo, &tracking_ref, fetched.commit)?;
 
-    Ok((
-        ManagedRef::Branch {
-            local_ref: remote_ref.clone(),
-            remote_ref,
-            tracking_ref,
-            display_name: display_name.to_string(),
-        },
-        fetched.commit,
-    ))
+    Ok((selected, fetched.commit))
 }
 
 fn fetch_requested_ref(
@@ -201,33 +216,31 @@ fn fetch_requested_ref(
         .any(|remote_ref| remote_ref_name(remote_ref) == tag.as_bytes());
 
     if branch_exists {
-        let tracking_ref = format!("refs/remotes/origin/{reference}");
-        gix::refs::FullName::try_from(tracking_ref.clone()).map_err(|error| {
-            DomainError::InvalidData(format!("Invalid Git tracking reference: {error}"))
-        })?;
-        let fetched = fetch_exact(repo, http, remote_url, &branch, &tracking_ref)?;
-        return Ok((
-            ManagedRef::Branch {
-                local_ref: branch.clone(),
-                remote_ref: branch,
-                tracking_ref,
-                display_name: reference.to_string(),
-            },
-            fetched.commit,
-        ));
+        return fetch_branch(repo, http, remote_url, reference);
     }
     if tag_exists {
         let fetched = fetch_exact(repo, http, remote_url, &tag, &tag)?;
-        return Ok((
-            ManagedRef::Tag {
-                full_ref: tag,
-                display_name: reference.to_string(),
-            },
-            fetched.commit,
-        ));
+        return Ok((ManagedRef::tag(reference)?, fetched.commit));
     }
 
     Err(DomainError::InvalidData(format!(
         "Remote Git branch or tag does not exist: {reference}"
     )))
+}
+
+fn fetch_branch(
+    repo: &mut gix::Repository,
+    http: GitHttp,
+    remote_url: &str,
+    branch: &str,
+) -> Result<(ManagedRef, gix::ObjectId), DomainError> {
+    let selected = ManagedRef::branch(branch)?;
+    let fetched = fetch_exact(
+        repo,
+        http,
+        remote_url,
+        selected.remote_ref(),
+        selected.fetch_destination(),
+    )?;
+    Ok((selected, fetched.commit))
 }

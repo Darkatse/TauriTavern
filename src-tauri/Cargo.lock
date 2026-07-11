@@ -7326,7 +7326,6 @@ name = "tt-adapter-extension"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "bytes",
  "gix",
  "gix-transport",
  "rand 0.9.2",
@@ -7339,10 +7338,8 @@ dependencies = [
  "tt-adapter-storage-core",
  "tt-domain",
  "tt-ports",
- "typed-path",
  "url",
  "uuid",
- "zip",
 ]
 
 [[package]]

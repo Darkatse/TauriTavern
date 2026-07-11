@@ -373,6 +373,20 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
         return jsonResponse({ ok: true });
     });
 
-    router.post('/api/extensions/branches', async () => jsonResponse([]));
-    router.post('/api/extensions/switch', async () => jsonResponse({ error: 'Branch switching is not supported in Tauri backend' }, 400));
+    router.post('/api/extensions/branches', async ({ body }) => {
+        const result = await context.safeInvoke('get_extension_branches', {
+            extensionName: body?.extensionName || '',
+            global: Boolean(body?.global),
+        });
+        return jsonResponse(result);
+    });
+
+    router.post('/api/extensions/switch', async ({ body }) => {
+        await context.safeInvoke('switch_extension_branch', {
+            extensionName: body?.extensionName || '',
+            branch: body?.branch || '',
+            global: Boolean(body?.global),
+        });
+        return new Response(null, { status: 204 });
+    });
 }

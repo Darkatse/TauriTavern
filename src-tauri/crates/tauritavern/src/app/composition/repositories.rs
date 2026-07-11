@@ -177,7 +177,7 @@ pub(super) fn build(
             data_directory.global_extensions().to_path_buf(),
             data_directory.extension_sources().to_path_buf(),
             http_client_pool.clone(),
-        )?);
+        ));
 
     let extension_store_repository: Arc<dyn ExtensionStoreRepository> = Arc::new(
         FileExtensionStoreRepository::new(data_root.join("_tauritavern").join("extension-store")),

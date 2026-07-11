@@ -9,7 +9,7 @@ use crate::presentation::commands::helpers::{
 use crate::presentation::errors::CommandError;
 use tt_domain::ios_policy::IosPolicyScope;
 use tt_domain::models::extension::{
-    Extension, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
+    Extension, ExtensionBranch, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
 };
 
 #[tauri::command]
@@ -163,6 +163,62 @@ pub async fn get_extension_version(
         .get_extension_version(&extension_name, global)
         .await
         .map_err(map_command_error("Failed to get extension version"))
+}
+
+#[tauri::command]
+pub async fn get_extension_branches(
+    extension_name: String,
+    global: bool,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ExtensionBranch>, CommandError> {
+    log_command(format!("get_extension_branches {}", extension_name));
+
+    ensure_ios_policy_allows(
+        &app_state.ios_policy,
+        app_state
+            .ios_policy
+            .capabilities
+            .extensions
+            .third_party_management,
+        "extensions.third_party_management",
+    )?;
+
+    app_state
+        .services
+        .extension_service
+        .get_extension_branches(&extension_name, global)
+        .await
+        .map_err(map_command_error("Failed to get extension branches"))
+}
+
+#[tauri::command]
+pub async fn switch_extension_branch(
+    extension_name: String,
+    branch: String,
+    global: bool,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!(
+        "switch_extension_branch {} to {}",
+        extension_name, branch
+    ));
+
+    ensure_ios_policy_allows(
+        &app_state.ios_policy,
+        app_state
+            .ios_policy
+            .capabilities
+            .extensions
+            .third_party_management,
+        "extensions.third_party_management",
+    )?;
+
+    app_state
+        .services
+        .extension_service
+        .switch_extension_branch(&extension_name, &branch, global)
+        .await
+        .map_err(map_command_error("Failed to switch extension branch"))
 }
 
 #[tauri::command]

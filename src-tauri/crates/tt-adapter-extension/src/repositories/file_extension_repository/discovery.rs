@@ -87,7 +87,8 @@ async fn discover_scoped_extensions(
         let (managed, remote_url, commit_hash, branch_name) = match projection {
             Ok(Some(projection)) => projection,
             Ok(None) => match repository
-                .resolve_source_metadata(scope, &extension_folder_name, &path)
+                .source_store
+                .read(scope, &extension_folder_name, &path)
                 .await?
             {
                 Some(source) => (

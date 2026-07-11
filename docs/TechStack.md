@@ -44,7 +44,7 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | `tt-adapter-storage-core` | `DataDirectory`、基础文件系统 helper、chat/settings/user/theme/secret 等基础存储 |
 | `tt-adapter-storage-userdata` | character、world info、agent workspace/profile、skill local package store、PNG card metadata |
 | `tt-adapter-media` | avatar/background/user media/image metadata、browser-visible host resource file store |
-| `tt-adapter-extension` | third-party extension discovery/install/update/delete/move、ZIP extraction safety |
+| `tt-adapter-extension` | third-party extension 发现、安装、版本检查、更新、分支查询/切换、删除与移动；Gitoxide smart HTTP 与 embedded worktree |
 | `tt-adapter-sync` | LAN Sync、TT-Sync v2 runtime、client/server、sync jobs |
 | `tt-adapter-archive` | data archive import/export executor、archive path safety |
 
@@ -58,12 +58,13 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | `serde` / `serde_json` / `serde_yaml` | DTO、配置、SillyTavern 兼容数据格式 |
 | `tokio` / `tokio-util` | 异步任务、文件 IO、取消与运行时能力 |
 | `reqwest` / `hyper-util` / `tokio-tungstenite` | provider HTTP、stream、移动端 HTTP client 适配 |
+| `gix` / `gix-transport` | third-party extension Git smart HTTP、embedded repository/worktree |
 | `tracing` / `tracing-subscriber` / `tracing-appender` | 后端日志、过滤、rolling file、Dev observability |
 | `thiserror` | 分层错误类型 |
 | `async-trait` | repository / gateway async trait |
 | `miktik` | tokenizer 计数与编解码 |
 | `image` / `mime_guess` | 角色卡、媒体、图片 metadata |
-| `zip` / `tar` / `flate2` / `async-compression` | extension、skill、archive、压缩数据处理 |
+| `zip` / `tar` / `flate2` / `async-compression` | skill、archive、Dev bundle、压缩数据处理 |
 | `axum` / `axum-server` / `ttsync-*` | LAN Sync / TT-Sync v2 |
 | `uuid` / `chrono` / `rand` | 标识、时间、随机值 |
 

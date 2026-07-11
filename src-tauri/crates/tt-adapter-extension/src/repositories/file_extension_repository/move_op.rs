@@ -3,7 +3,6 @@ use tokio::fs as tokio_fs;
 use tt_domain::errors::DomainError;
 
 use super::FileExtensionRepository;
-use super::archive_zip::copy_dir_all;
 use super::source_store::ExtensionStoreScope;
 
 pub(super) async fn move_extension(
@@ -46,21 +45,13 @@ pub(super) async fn move_extension(
         )));
     }
 
-    copy_dir_all(&source_path, &destination_path).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to copy extension from '{}' to '{}': {}",
-            source_path.display(),
-            destination_path.display(),
-            error
-        ))
-    })?;
-
-    tokio_fs::remove_dir_all(&source_path)
+    tokio_fs::rename(&source_path, &destination_path)
         .await
         .map_err(|error| {
             DomainError::InternalError(format!(
-                "Failed to delete old extension location '{}': {}",
+                "Failed to move extension from '{}' to '{}': {}",
                 source_path.display(),
+                destination_path.display(),
                 error
             ))
         })?;

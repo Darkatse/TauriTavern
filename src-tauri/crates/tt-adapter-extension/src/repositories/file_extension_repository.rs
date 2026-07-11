@@ -6,21 +6,22 @@ use tt_adapter_http::HttpClientPool;
 use tt_adapter_storage_core::file_system::read_json_file;
 use tt_domain::errors::DomainError;
 use tt_domain::models::extension::{
-    Extension, ExtensionInstallResult, ExtensionManifestMetadata, ExtensionUpdateResult,
-    ExtensionVersion,
+    Extension, ExtensionBranch, ExtensionInstallResult, ExtensionManifestMetadata,
+    ExtensionUpdateResult, ExtensionVersion,
 };
 use tt_ports::repositories::extension_repository::ExtensionRepository;
 
-mod archive_zip;
+mod branches;
 mod delete;
+mod directory_ops;
 mod discovery;
 mod git_http;
 mod git_remote;
 mod git_worktree;
 mod install;
 mod move_op;
-mod providers;
 mod source_store;
+mod switch;
 mod update;
 mod version;
 
@@ -29,16 +30,13 @@ mod git_test_server;
 #[cfg(test)]
 mod tests;
 
-use self::providers::ExtensionSourceProvider;
-use self::providers::ExtensionSourceProviders;
-use self::source_store::{ExtensionSourceMetadata, ExtensionSourceStore, ExtensionStoreScope};
+use self::source_store::{ExtensionSourceStore, ExtensionStoreScope};
 
 pub struct FileExtensionRepository {
     user_extensions_dir: PathBuf,
     global_extensions_dir: PathBuf,
     http_clients: Arc<HttpClientPool>,
     source_store: ExtensionSourceStore,
-    providers: ExtensionSourceProviders,
 }
 
 /// Built-in extensions enabled in TauriTavern.
@@ -57,7 +55,6 @@ const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "translate",
     "tts",
 ];
-const SOURCE_METADATA_FILE: &str = ".tauritavern-source.json";
 const THIRD_PARTY_EXTENSION_NAME_PREFIX: &str = "third-party/";
 
 fn is_forbidden_extension_folder_char(character: char) -> bool {
@@ -111,22 +108,13 @@ impl FileExtensionRepository {
         global_extensions_dir: PathBuf,
         source_store_root: PathBuf,
         http_clients: Arc<HttpClientPool>,
-    ) -> Result<Self, DomainError> {
-        let source_store = ExtensionSourceStore::new(source_store_root);
-        let providers = ExtensionSourceProviders::new(http_clients.clone());
-        let repository = Self {
+    ) -> Self {
+        Self {
             user_extensions_dir,
             global_extensions_dir,
             http_clients,
-            source_store,
-            providers,
-        };
-        repository.source_store.migrate_all(
-            &repository.user_extensions_dir,
-            &repository.global_extensions_dir,
-        )?;
-
-        Ok(repository)
+            source_store: ExtensionSourceStore::new(source_store_root),
+        }
     }
 
     fn extension_base_dir(&self, global: bool) -> &Path {
@@ -175,43 +163,6 @@ impl FileExtensionRepository {
         let manifest: ExtensionManifestMetadata = read_json_file(&manifest_path).await?;
         Ok(Some(manifest))
     }
-
-    async fn resolve_source_metadata(
-        &self,
-        scope: ExtensionStoreScope,
-        extension_name: &str,
-        extension_path: &Path,
-    ) -> Result<Option<ExtensionSourceMetadata>, DomainError> {
-        self.source_store
-            .resolve_or_migrate(scope, extension_name, extension_path)
-            .await
-    }
-
-    async fn stage_extension_snapshot(
-        &self,
-        provider: &dyn ExtensionSourceProvider,
-        repo_path: &str,
-        commit: &str,
-        base_dir: &Path,
-        temp_prefix: &str,
-    ) -> Result<(PathBuf, ExtensionManifestMetadata), DomainError> {
-        let staging_dir = self.create_temp_directory(base_dir, temp_prefix).await?;
-
-        let result: Result<ExtensionManifestMetadata, DomainError> = async {
-            let archive_bytes = provider.download_archive_zip(repo_path, commit).await?;
-            self.extract_zip_bytes(archive_bytes.as_ref(), &staging_dir)?;
-            self.required_manifest_metadata(&staging_dir).await
-        }
-        .await;
-
-        match result {
-            Ok(manifest) => Ok((staging_dir, manifest)),
-            Err(error) => {
-                Self::cleanup_temp_directory(&staging_dir).await;
-                Err(error)
-            }
-        }
-    }
 }
 
 #[async_trait]
@@ -251,6 +202,23 @@ impl ExtensionRepository for FileExtensionRepository {
         global: bool,
     ) -> Result<ExtensionVersion, DomainError> {
         version::get_extension_version(self, extension_name, global).await
+    }
+
+    async fn get_extension_branches(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<Vec<ExtensionBranch>, DomainError> {
+        branches::get_extension_branches(self, extension_name, global).await
+    }
+
+    async fn switch_extension_branch(
+        &self,
+        extension_name: &str,
+        branch: &str,
+        global: bool,
+    ) -> Result<(), DomainError> {
+        switch::switch_extension_branch(self, extension_name, branch, global).await
     }
 
     async fn move_extension(

@@ -93,14 +93,40 @@ fn validate_full_ref(name: String) -> Result<String, DomainError> {
     Ok(name)
 }
 
-#[expect(
-    clippy::result_large_err,
-    reason = "gix fixes the credential callback error type; anonymous transport always returns Ok(None)"
-)]
 pub(super) fn advertise_refs(
     http: GitHttp,
     remote_url: &str,
     requested_refs: &[String],
+) -> Result<Vec<RemoteRef>, DomainError> {
+    Ok(query_refs(http, remote_url, requested_refs)?
+        .into_iter()
+        .filter(|remote_ref| {
+            requested_refs
+                .iter()
+                .any(|requested| remote_ref_name(remote_ref) == requested.as_bytes())
+        })
+        .collect())
+}
+
+pub(super) fn advertise_ref_prefix(
+    http: GitHttp,
+    remote_url: &str,
+    prefix: &str,
+) -> Result<Vec<RemoteRef>, DomainError> {
+    Ok(query_refs(http, remote_url, &[prefix.to_string()])?
+        .into_iter()
+        .filter(|remote_ref| remote_ref_name(remote_ref).starts_with(prefix.as_bytes()))
+        .collect())
+}
+
+#[expect(
+    clippy::result_large_err,
+    reason = "gix fixes the credential callback error type; anonymous transport always returns Ok(None)"
+)]
+fn query_refs(
+    http: GitHttp,
+    remote_url: &str,
+    requested_prefixes: &[String],
 ) -> Result<Vec<RemoteRef>, DomainError> {
     let git_url = gix::url::parse(remote_url.as_bytes().as_bstr())
         .map_err(|error| DomainError::InvalidData(format!("Invalid Git transport URL: {error}")))?;
@@ -118,14 +144,14 @@ pub(super) fn advertise_refs(
     let refs = match handshake.refs {
         Some(refs) => refs,
         None => {
-            let mut prefixes = gix::protocol::ls_refs::RefPrefixes::new();
-            prefixes.extend(
-                requested_refs
+            let mut ref_prefixes = gix::protocol::ls_refs::RefPrefixes::new();
+            ref_prefixes.extend(
+                requested_prefixes
                     .iter()
                     .map(|name| BString::from(name.as_str())),
             );
             gix::protocol::LsRefsCommand::new(
-                Some(prefixes),
+                Some(ref_prefixes),
                 &handshake.capabilities,
                 (
                     "agent",
@@ -137,14 +163,7 @@ pub(super) fn advertise_refs(
         }
     };
 
-    Ok(refs
-        .into_iter()
-        .filter(|remote_ref| {
-            requested_refs
-                .iter()
-                .any(|requested| remote_ref_name(remote_ref) == requested.as_bytes())
-        })
-        .collect())
+    Ok(refs)
 }
 
 #[expect(
@@ -239,8 +258,41 @@ pub(super) fn remote_symbolic_target(remote_ref: &RemoteRef) -> Option<&[u8]> {
 }
 
 pub(super) fn open_embedded(path: &Path) -> Result<gix::Repository, DomainError> {
-    gix::open_opts(path, gix::open::Options::isolated().strict_config(true))
-        .map_err(|error| git_error("Failed to open embedded Git repository", error))
+    let repo = gix::open_opts(path, gix::open::Options::isolated().strict_config(true))
+        .map_err(|error| git_error("Failed to open embedded Git repository", error))?;
+    let expected_workdir = canonicalize(path, "extension worktree")?;
+    let expected_git_dir = canonicalize(&path.join(".git"), "extension Git directory")?;
+    let git_dir = canonicalize(repo.git_dir(), "embedded Git directory")?;
+    let common_dir = canonicalize(repo.common_dir(), "embedded Git common directory")?;
+    let workdir = repo.workdir().ok_or_else(unsupported_layout)?;
+    let workdir = canonicalize(workdir, "embedded Git worktree")?;
+
+    if repo.is_bare()
+        || repo.kind() != gix::repository::Kind::Common
+        || git_dir != expected_git_dir
+        || common_dir != git_dir
+        || workdir != expected_workdir
+    {
+        return Err(unsupported_layout());
+    }
+
+    Ok(repo)
+}
+
+fn canonicalize(path: &Path, label: &str) -> Result<std::path::PathBuf, DomainError> {
+    std::fs::canonicalize(path).map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to resolve {label} '{}': {error}",
+            path.display()
+        ))
+    })
+}
+
+fn unsupported_layout() -> DomainError {
+    DomainError::InvalidData(
+        "Unsupported embedded Git layout. Reinstall this extension to enable Git management."
+            .to_string(),
+    )
 }
 
 fn git_error(context: &str, error: impl std::fmt::Display) -> DomainError {

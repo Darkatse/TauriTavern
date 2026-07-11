@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use tt_domain::models::extension::{
-    Extension, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
+    Extension, ExtensionBranch, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
 };
 use tt_ports::repositories::extension_repository::ExtensionRepository;
 
@@ -82,6 +82,36 @@ impl ExtensionService {
         tracing::debug!("Getting extension version: {}", extension_name);
         self.extension_repository
             .get_extension_version(extension_name, global)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn get_extension_branches(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<Vec<ExtensionBranch>, ApplicationError> {
+        tracing::debug!("Getting extension branches: {}", extension_name);
+        self.extension_repository
+            .get_extension_branches(extension_name, global)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn switch_extension_branch(
+        &self,
+        extension_name: &str,
+        branch: &str,
+        global: bool,
+    ) -> Result<(), ApplicationError> {
+        tracing::debug!(
+            "Switching extension {} to branch {}",
+            extension_name,
+            branch
+        );
+        let _permit = self.try_mutation_permit()?;
+        self.extension_repository
+            .switch_extension_branch(extension_name, branch, global)
             .await
             .map_err(Into::into)
     }
@@ -168,6 +198,23 @@ mod tests {
             })
         }
 
+        async fn get_extension_branches(
+            &self,
+            _extension_name: &str,
+            _global: bool,
+        ) -> Result<Vec<ExtensionBranch>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn switch_extension_branch(
+            &self,
+            _extension_name: &str,
+            _branch: &str,
+            _global: bool,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
         async fn move_extension(
             &self,
             _extension_name: &str,
@@ -195,6 +242,18 @@ mod tests {
                 .await
                 .is_ok()
         );
+        assert!(
+            service
+                .get_extension_branches("extension", false)
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            service
+                .switch_extension_branch("extension", "main", false)
+                .await,
+            Err(ApplicationError::Conflict(_))
+        ));
 
         drop(held);
         assert!(service.try_mutation_permit().is_ok());

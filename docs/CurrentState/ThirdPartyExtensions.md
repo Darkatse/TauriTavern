@@ -45,7 +45,7 @@
 - `APP_READY` 发出后，晚加载的 third-party 扩展仍可依赖 `eventSource` 对 `APP_READY` 的 auto-fire 语义完成 ready 钩子
 - `EXTENSION_SETTINGS_LOADED` 在存在待激活 third-party 扩展时会延后到 deferred activation 完成后再发出
 
-### 2.2 安装、版本与更新
+### 2.2 安装、版本、分支与更新
 
 第三方扩展管理已使用 Rust 原生 gitoxide 纵切面：
 
@@ -53,12 +53,15 @@
 - 未指定 ref 时使用 remote 的 born symbolic `HEAD`；显式 ref 按 branch-first、tag-second 解析。任意 revision expression/OID 不属于当前输入契约。
 - 新安装直接生成标准 non-bare embedded `.git/`，不再生成 `_tauritavern/extension-sources` JSON。branch 使用 symbolic HEAD + upstream；tag 使用 detached peeled HEAD + exact tag refspec。
 - version 只做 Git ref advertisement并比较 peeled remote OID 与 deployed HEAD，不 fetch、不写本地、不调用 provider REST API。
+- branches 只通过 `ls-refs refs/heads/` 返回排序后的唯一远端 branch 短名、7 位 OID、current 与空 label；不 unshallow、不下载 branch object、不修改本地状态。
+- switch 只接受远端 branch（兼容 `main` 与 `origin/main`），执行 exact depth-1 fetch、candidate preflight 和受管 worktree重建，最后提交标准 symbolic HEAD/upstream；切换当前 branch 是无网络 no-op，不同 branch指向当前 deployed OID时只切换refs/config，且不暗含 update hook。
 - update 对 embedded repo 只做一次 exact depth-1 fetch；OID 相同不触碰 payload，OID 不同则先验证完整 candidate tree，再重建 payload/index，最后推进 branch ref 或 detached HEAD。
-- install/update/version 的 Git 错误不会回退到 REST/ZIP。legacy JSON extension 的 version 已走 Git advertisement；其 update 暂时保留 provider/ZIP，等待后续迁移阶段首次写转换。
+- legacy JSON extension 的 version/branches 只读 Git advertisement；central source JSON优先，早期扩展根目录内的 inline V1/V2 JSON作为只读 fallback，不在启动或读取时搬迁。首次 update（即使 OID 相同）或切换到不同 branch 时，在 sibling `.tmp-*` 中建立标准 embedded repo，验证完成后替换活动 snapshot并删除或自然淘汰 JSON。失败保留旧 snapshot与来源状态。
+- provider REST、archive ZIP 与 host allowlist 后端已删除；所有 Git 错误均 fail-fast，不存在 REST/ZIP runtime fallback。
 
-candidate preflight 会在删除活动 payload 之前验证完整 tree：portable UTF-8 path、大小写/NFC collision、file/directory shape、ODB object kind、根 `manifest.json`。checkout 不执行 external filter/LFS/submodule；symlink 以普通文件物化，gitlink 只生成空目录占位。
+candidate preflight 会在删除活动 payload 之前验证完整 tree：portable UTF-8 path、大小写/NFC collision、file/directory shape、ODB object header kind、根 `manifest.json`内容。checkout 不执行 external filter/LFS/submodule；symlink 以普通文件物化，gitlink 只生成空目录占位。
 
-install/update/delete/move 与 LAN/TT Sync 的本地写操作共享一个 application-layer fail-fast permit；busy 映射为 409。discovery/version 是只读操作，不占 permit。update 前端不会再用 AbortSignal 假取消已经进入 Rust 的磁盘写操作。
+install/update/switch/delete/move 与 LAN/TT Sync 的本地写操作共享一个 application-layer fail-fast permit；busy 映射为 409。discovery/version/branches 是只读操作，不占 permit。update 前端不会再用 AbortSignal 假取消已经进入 Rust 的磁盘写操作。
 
 ### 2.3 前端资源加载
 
@@ -127,7 +130,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 
 - local third-party 扩展：`data/default-user/extensions/<folder>`
 - global third-party 扩展：`data/extensions/third-party/<folder>`
-- legacy 扩展来源元数据：`data/_tauritavern/extension-sources/{local|global}/`（新 embedded install 不再写入）
+- legacy 扩展来源元数据：优先读取 `data/_tauritavern/extension-sources/{local|global}/`；兼容更早版本的 `<extension>/.tauritavern-source.json`只读输入（新 embedded install 不再写入）
 
 当前优先级规则：
 
@@ -162,8 +165,9 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 
 - 不支持 SillyTavern 的 Node-only backend plugins
 - 不提供通用“前端伪静态服务器”或任意文件读取能力
-- `branches` / `switch` 路由在 Tauri 后端仍未实现
 - 不支持 private auth、SSH、credential helper、Git hook/external filter/LFS/submodule执行或递归 clone
+- 不支持 gitfile/linked worktree、外部 common dir、外部 `core.worktree` 等非本地 Git 布局；管理操作会 fail-fast 并要求重新安装，不自动修复或读取 stale JSON fallback
+- branch UI 不提供 local-only branch、tag/OID/revision switch、commit subject label、unshallow或完整历史
 - 根 `.git/` 和 legacy source JSON 均不存在的扩展仍可被发现和加载，但 `update` 会要求重新安装
 - third-party runtime 不再负责通用 JS 源码重写，不应再把它扩展回“大而全解释器”
 

@@ -182,7 +182,8 @@ src/
 - 扩展命令参数统一使用 camelCase（如 `extensionName`），避免 invoke 参数缺失。
 - 客户端版本检查仍遵循上游格式：`SillyTavern:<version>:TauriTavern`，用于 `minimum_client_version` 判断。
 - 拦截器是否接管请求由 `router.canHandle(method, path)` 决定，不再维护分散的路径白名单。
-- `/api/extensions/branches` 与 `/api/extensions/switch` 在 Tauri 后端默认不支持（返回空列表/错误），新增分支能力需后端先实现。
+- `/api/extensions/branches` 返回远端 branch 的 `{ name, commit, current, label }`；`label` 当前有意为空，前端仅在非空时显示。
+- `/api/extensions/switch` 接受 branch 短名并在成功时返回空 `204`；现有 reload/settings 时序保持不变，不新增 switch hook或借机触发 update hook。
 
 ### 7.5 常见问题定位
 
