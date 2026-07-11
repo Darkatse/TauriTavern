@@ -12,6 +12,10 @@ use crate::data_archive::shared::{
 /// Controls how entries under `archive_root_prefix` map into the normalized data root.
 /// Wrapped `BackupRoot/data/...` archives are `DataRoot` with a non-empty prefix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "policy variants intentionally name the accepted archive root level"
+)]
 pub enum ArchiveLayoutPolicy {
     DataRoot,
     UserHandleRoot,

@@ -111,6 +111,10 @@ pub async fn install_skill_import(
 }
 
 #[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Tauri command parameters intentionally preserve the flat invoke ABI"
+)]
 pub async fn read_skill_file(
     name: String,
     path: String,

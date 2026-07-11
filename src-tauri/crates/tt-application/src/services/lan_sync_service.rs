@@ -47,6 +47,10 @@ pub struct LanSyncService {
 }
 
 impl LanSyncService {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "composition boundary keeps independent LAN service dependencies explicit"
+    )]
     pub fn new(
         state: Arc<LanSyncRuntimeState>,
         settings_repository: Arc<dyn LanSyncSettingsRepository>,

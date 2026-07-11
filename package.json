@@ -17,7 +17,7 @@
     "check:logging-boundaries": "node scripts/check-logging-boundaries.mjs",
     "check:rust-boundaries": "node scripts/check-rust-crate-boundaries.mjs",
     "check:rust:dev": "cargo check --manifest-path src-tauri/Cargo.toml --workspace --no-default-features",
-    "check:rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets",
+    "check:rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings",
     "check:rust:all-targets": "cargo check --manifest-path src-tauri/Cargo.toml --workspace --no-default-features --all-targets",
     "check:rust:release-path": "cargo check --manifest-path src-tauri/Cargo.toml --workspace",
     "test": "pnpm run test:contracts",

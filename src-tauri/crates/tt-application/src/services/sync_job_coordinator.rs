@@ -34,6 +34,10 @@ impl SyncJobCoordinator {
         }
     }
 
+    #[expect(
+        clippy::result_large_err,
+        reason = "busy admission returns the canonical sync report consumed and published by callers"
+    )]
     pub fn try_start(&self, request: SyncJobRequest) -> Result<StartedSyncJob, SyncJobReport> {
         let job = build_job(request);
         let (permit, active_guard) = if job.execution == SyncExecutionKind::RequestRemotePull {
