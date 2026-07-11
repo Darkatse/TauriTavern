@@ -14,6 +14,9 @@ pub enum DomainError {
     #[error("Invalid data: {0}")]
     InvalidData(String),
 
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     #[error("Authentication error: {0}")]
     AuthenticationError(String),
 

@@ -3,13 +3,12 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tokio::fs as tokio_fs;
-use url::Url;
 
 use tt_adapter_storage_core::file_system::read_json_file;
 use tt_domain::errors::DomainError;
 
 use super::SOURCE_METADATA_FILE;
-use super::repo_url::{HOST_GITHUB, parse_repo_url};
+use super::providers::HOST_GITHUB;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ExtensionStoreScope {
@@ -119,16 +118,7 @@ impl ExtensionSourceStore {
         }
 
         let stored: StoredSourceMetadata = read_json_file(&path).await?;
-        let (metadata, needs_rewrite) = match stored {
-            StoredSourceMetadata::V2(metadata) => (metadata, false),
-            StoredSourceMetadata::V1(legacy) => (StoredSourceMetadata::V1(legacy).into_v2(), true),
-        };
-
-        if needs_rewrite {
-            self.write(scope, extension_name, &metadata).await?;
-        }
-
-        Ok(Some(metadata))
+        Ok(Some(stored.into_v2()))
     }
 
     pub(super) fn read_sync(
@@ -157,16 +147,7 @@ impl ExtensionSourceStore {
             ))
         })?;
 
-        let (metadata, needs_rewrite) = match stored {
-            StoredSourceMetadata::V2(metadata) => (metadata, false),
-            StoredSourceMetadata::V1(legacy) => (StoredSourceMetadata::V1(legacy).into_v2(), true),
-        };
-
-        if needs_rewrite {
-            self.write_sync(scope, extension_name, &metadata)?;
-        }
-
-        Ok(Some(metadata))
+        Ok(Some(stored.into_v2()))
     }
 
     pub(super) async fn write(
@@ -321,6 +302,10 @@ impl ExtensionSourceStore {
         extension_name: &str,
         extension_path: &Path,
     ) -> Result<(), DomainError> {
+        if extension_path.join(".git").exists() {
+            return Ok(());
+        }
+
         if self.read_sync(scope, extension_name)?.is_some() {
             self.delete_legacy_sync(extension_path)?;
             return Ok(());
@@ -330,10 +315,6 @@ impl ExtensionSourceStore {
             self.write_sync(scope, extension_name, &metadata)?;
             self.delete_legacy_sync(extension_path)?;
             return Ok(());
-        }
-
-        if let Some(metadata) = Self::infer_source_metadata_from_git_best_effort(extension_path) {
-            self.write_sync(scope, extension_name, &metadata)?;
         }
 
         Ok(())
@@ -353,11 +334,6 @@ impl ExtensionSourceStore {
         if let Some(metadata) = self.read_legacy(extension_path).await? {
             self.write(scope, extension_name, &metadata).await?;
             self.delete_legacy(extension_path).await?;
-            return Ok(Some(metadata));
-        }
-
-        if let Some(metadata) = Self::infer_source_metadata_from_git_best_effort(extension_path) {
-            self.write(scope, extension_name, &metadata).await?;
             return Ok(Some(metadata));
         }
 
@@ -433,301 +409,5 @@ impl ExtensionSourceStore {
                 error
             ))
         })
-    }
-
-    fn normalize_git_remote_url(remote_url: &str) -> Option<String> {
-        let trimmed = remote_url.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        if let Some(rest) = trimmed.strip_prefix("git@") {
-            let (host, path) = rest.split_once(':')?;
-            let host = host.trim();
-            let path = path.trim().trim_start_matches('/');
-            if host.is_empty() || path.is_empty() {
-                return None;
-            }
-            return Some(format!("https://{}/{}", host, path));
-        }
-
-        if trimmed.starts_with("ssh://") {
-            let url = Url::parse(trimmed).ok()?;
-            let host = url.host_str()?;
-            let path = url.path().trim_start_matches('/');
-            if path.is_empty() {
-                return None;
-            }
-            return Some(format!("https://{}/{}", host, path));
-        }
-
-        if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
-            return Some(trimmed.to_string());
-        }
-
-        None
-    }
-
-    fn parse_origin_remote_url(config: &str) -> Option<String> {
-        let mut in_origin = false;
-
-        for line in config.lines() {
-            let trimmed = line.trim();
-
-            if trimmed.starts_with('[') && trimmed.ends_with(']') {
-                in_origin = trimmed == "[remote \"origin\"]";
-                continue;
-            }
-
-            if !in_origin {
-                continue;
-            }
-
-            if let Some((key, value)) = trimmed.split_once('=')
-                && key.trim() == "url"
-            {
-                return Some(value.trim().to_string());
-            }
-        }
-
-        None
-    }
-
-    fn resolve_git_head_commit(
-        git_dir: &Path,
-        common_dir: Option<&Path>,
-        head_content: &str,
-    ) -> Option<String> {
-        let trimmed = head_content.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        fn read_ref_file_commit(root: &Path, ref_name: &str) -> Option<String> {
-            let commit = fs::read_to_string(root.join(ref_name)).ok()?;
-            let commit = commit.trim();
-            if commit.is_empty() {
-                None
-            } else {
-                Some(commit.to_string())
-            }
-        }
-
-        fn read_packed_refs_commit(root: &Path, ref_name: &str) -> Option<String> {
-            let packed_refs_path = root.join("packed-refs");
-            let packed_refs = fs::read_to_string(packed_refs_path).ok()?;
-            for line in packed_refs.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
-                    continue;
-                }
-
-                let mut parts = line.split_whitespace();
-                let Some(commit) = parts.next() else {
-                    continue;
-                };
-                let Some(name) = parts.next() else {
-                    continue;
-                };
-
-                if name == ref_name {
-                    return Some(commit.to_string());
-                }
-            }
-
-            None
-        }
-
-        if let Some(reference) = trimmed.strip_prefix("ref: ") {
-            let ref_name = reference.trim();
-            if ref_name.is_empty() {
-                return None;
-            }
-
-            if let Some(commit) = read_ref_file_commit(git_dir, ref_name) {
-                return Some(commit);
-            }
-
-            if let Some(common_dir) = common_dir
-                && let Some(commit) = read_ref_file_commit(common_dir, ref_name)
-            {
-                return Some(commit);
-            }
-
-            if let Some(commit) = read_packed_refs_commit(git_dir, ref_name) {
-                return Some(commit);
-            }
-
-            if let Some(common_dir) = common_dir
-                && let Some(commit) = read_packed_refs_commit(common_dir, ref_name)
-            {
-                return Some(commit);
-            }
-
-            return None;
-        }
-
-        Some(trimmed.to_string())
-    }
-
-    fn resolve_git_dir(extension_path: &Path) -> Result<Option<PathBuf>, DomainError> {
-        let dot_git = extension_path.join(".git");
-        if dot_git.is_dir() {
-            return Ok(Some(dot_git));
-        }
-
-        if !dot_git.is_file() {
-            return Ok(None);
-        }
-
-        let gitfile_contents = fs::read_to_string(&dot_git).map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read gitdir file for '{}': {}",
-                extension_path.display(),
-                error
-            ))
-        })?;
-
-        let first_line = gitfile_contents.lines().next().unwrap_or_default().trim();
-        let Some(gitdir_value) = first_line.strip_prefix("gitdir:") else {
-            return Ok(None);
-        };
-        let gitdir_value = gitdir_value.trim();
-        if gitdir_value.is_empty() {
-            return Ok(None);
-        }
-
-        let gitdir_path = PathBuf::from(gitdir_value);
-        let gitdir_path = if gitdir_path.is_absolute() {
-            gitdir_path
-        } else {
-            extension_path.join(gitdir_path)
-        };
-
-        if !gitdir_path.is_dir() {
-            return Ok(None);
-        }
-
-        Ok(Some(gitdir_path))
-    }
-
-    fn resolve_git_common_dir(git_dir: &Path) -> Result<Option<PathBuf>, DomainError> {
-        let commondir_path = git_dir.join("commondir");
-        if !commondir_path.is_file() {
-            return Ok(None);
-        }
-
-        let commondir_contents = fs::read_to_string(&commondir_path).map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read git commondir at '{}': {}",
-                commondir_path.display(),
-                error
-            ))
-        })?;
-
-        let commondir_value = commondir_contents.trim();
-        if commondir_value.is_empty() {
-            return Ok(None);
-        }
-
-        let commondir_path = PathBuf::from(commondir_value);
-        let commondir_path = if commondir_path.is_absolute() {
-            commondir_path
-        } else {
-            git_dir.join(commondir_path)
-        };
-
-        if !commondir_path.is_dir() {
-            return Ok(None);
-        }
-
-        Ok(Some(commondir_path))
-    }
-
-    fn infer_source_metadata_from_git_best_effort(
-        extension_path: &Path,
-    ) -> Option<ExtensionSourceMetadata> {
-        match Self::infer_source_metadata_from_git(extension_path) {
-            Ok(metadata) => metadata,
-            Err(error) => {
-                tracing::warn!(
-                    "Failed to infer extension source metadata from git for '{}': {}",
-                    extension_path.display(),
-                    error
-                );
-                None
-            }
-        }
-    }
-
-    fn infer_source_metadata_from_git(
-        extension_path: &Path,
-    ) -> Result<Option<ExtensionSourceMetadata>, DomainError> {
-        let Some(git_dir) = Self::resolve_git_dir(extension_path)? else {
-            return Ok(None);
-        };
-
-        let common_dir = Self::resolve_git_common_dir(&git_dir)?;
-
-        let git_config_path = git_dir.join("config");
-        let git_config = match fs::read_to_string(&git_config_path).or_else(|_| match &common_dir {
-            Some(common_dir) => fs::read_to_string(common_dir.join("config")),
-            None => Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "git config not found",
-            )),
-        }) {
-            Ok(config) => config,
-            Err(error) => {
-                return Err(DomainError::InternalError(format!(
-                    "Failed to read git config for '{}': {}",
-                    extension_path.display(),
-                    error
-                )));
-            }
-        };
-        let Some(remote_url) = Self::parse_origin_remote_url(&git_config) else {
-            return Ok(None);
-        };
-        let Some(normalized_remote_url) = Self::normalize_git_remote_url(&remote_url) else {
-            return Ok(None);
-        };
-
-        let repo = parse_repo_url(&normalized_remote_url)?;
-
-        let head_content = fs::read_to_string(git_dir.join("HEAD")).map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read git HEAD for '{}': {}",
-                extension_path.display(),
-                error
-            ))
-        })?;
-        let Some(installed_commit) =
-            Self::resolve_git_head_commit(&git_dir, common_dir.as_deref(), &head_content)
-        else {
-            return Ok(None);
-        };
-
-        let reference = if let Some(head_ref) = head_content.trim().strip_prefix("ref: ") {
-            head_ref
-                .trim()
-                .strip_prefix("refs/heads/")
-                .unwrap_or(head_ref.trim())
-                .to_string()
-        } else {
-            installed_commit.clone()
-        };
-
-        if reference.trim().is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(ExtensionSourceMetadata {
-            host: repo.host.clone(),
-            repo_path: repo.repo_path.clone(),
-            reference,
-            remote_url: repo.canonical_remote_url(),
-            installed_commit,
-        }))
     }
 }

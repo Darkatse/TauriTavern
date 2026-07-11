@@ -7,7 +7,9 @@ publish = false
 [dependencies]
 async-trait = "0.1"
 bytes = "1"
-reqwest = { workspace = true, features = ["json", "rustls", "socks"] }
+gix = { version = "=0.85.0", default-features = false, features = ["sha1", "blocking-network-client", "worktree-mutation"] }
+gix-transport = { version = "=0.57.2", default-features = false, features = ["http-client"] }
+reqwest = { workspace = true, features = ["blocking", "json", "rustls", "socks"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "macros", "rt"] }

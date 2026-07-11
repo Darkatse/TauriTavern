@@ -6,15 +6,9 @@ use url::Url;
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 
-use super::super::repo_url::HOST_GITLAB;
-use super::{ExtensionSourceProvider, parse_bytes_or_error, parse_json_or_error};
+use super::{ExtensionSourceProvider, HOST_GITLAB, parse_bytes_or_error, parse_json_or_error};
 
 const GITLAB_API_BASE: &str = "https://gitlab.com/api/v4";
-
-#[derive(Debug, Deserialize)]
-struct GitLabProjectInfo {
-    default_branch: String,
-}
 
 #[derive(Debug, Deserialize)]
 struct GitLabCommit {
@@ -56,25 +50,6 @@ impl GitLabProvider {
 impl ExtensionSourceProvider for GitLabProvider {
     fn host(&self) -> &'static str {
         HOST_GITLAB
-    }
-
-    async fn default_branch(&self, repo_path: &str) -> Result<String, DomainError> {
-        let url = self.project_base_url(repo_path)?;
-
-        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
-        let response = http_client.get(url.clone()).send().await.map_err(|error| {
-            DomainError::InternalError(format!("GitLab request failed: {}", error))
-        })?;
-
-        let info: GitLabProjectInfo = parse_json_or_error(response, &url, "GitLab").await?;
-        if info.default_branch.trim().is_empty() {
-            return Err(DomainError::InternalError(format!(
-                "Repository '{}' has no default branch",
-                repo_path
-            )));
-        }
-
-        Ok(info.default_branch)
     }
 
     async fn latest_commit(&self, repo_path: &str, reference: &str) -> Result<String, DomainError> {

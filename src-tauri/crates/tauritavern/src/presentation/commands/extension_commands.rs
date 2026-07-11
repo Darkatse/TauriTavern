@@ -67,7 +67,7 @@ pub async fn install_extension(
     branch: Option<String>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<ExtensionInstallResult, CommandError> {
-    log_command(format!("install_extension {}", url));
+    log_command("install_extension");
 
     ensure_ios_policy_allows(
         &app_state.ios_policy,

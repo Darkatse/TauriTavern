@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tauri::AppHandle;
+use tokio::sync::Semaphore;
 
 use tt_adapter_storage_core::file_system::DataDirectory;
 use tt_adapter_sync::{
@@ -30,6 +31,7 @@ pub(super) fn build(
     data_directory: &DataDirectory,
     data_change_reconciler: Arc<dyn DataChangeReconciler>,
     ios_policy: &IosPolicyActivationReport,
+    local_mutation_gate: Arc<Semaphore>,
 ) -> SyncServices {
     let product_user_agent = crate::product::USER_AGENT;
     let lan_runtime_state = Arc::new(LanSyncRuntimeState::new());
@@ -56,6 +58,7 @@ pub(super) fn build(
         sync_job_executor,
         data_change_reconciler,
         sync_job_events,
+        local_mutation_gate,
     ));
     let lan_inbound_service = Arc::new(LanInboundService::new(
         lan_runtime_state.clone(),

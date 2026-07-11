@@ -53,6 +53,7 @@ impl From<DomainError> for CommandError {
         match error {
             DomainError::NotFound(msg) => CommandError::NotFound(msg),
             DomainError::InvalidData(msg) => CommandError::BadRequest(msg),
+            DomainError::Conflict(msg) => CommandError::Conflict(msg),
             DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
             DomainError::Cancelled(msg) => CommandError::Cancelled(msg),
             DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
@@ -107,6 +108,16 @@ mod tests {
         assert!(matches!(
             &error,
             CommandError::Cancelled(message) if message == "Job cancelled"
+        ));
+    }
+
+    #[test]
+    fn domain_conflict_maps_to_command_conflict() {
+        let error: CommandError = DomainError::Conflict("busy".to_string()).into();
+
+        assert!(matches!(
+            error,
+            CommandError::Conflict(message) if message == "busy"
         ));
     }
 }

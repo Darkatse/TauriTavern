@@ -384,6 +384,7 @@ impl IntoResponse for ApiError {
         let (status, message) = match self.error {
             DomainError::NotFound(message) => (StatusCode::NOT_FOUND, message),
             DomainError::InvalidData(message) => (StatusCode::BAD_REQUEST, message),
+            DomainError::Conflict(message) => (StatusCode::CONFLICT, message),
             DomainError::AuthenticationError(message) if message == PAIRING_REJECTED_MESSAGE => {
                 (StatusCode::FORBIDDEN, message)
             }

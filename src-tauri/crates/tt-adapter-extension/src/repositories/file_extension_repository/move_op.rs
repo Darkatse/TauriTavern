@@ -40,7 +40,7 @@ pub(super) async fn move_extension(
     }
 
     if destination_path.exists() {
-        return Err(DomainError::InvalidData(format!(
+        return Err(DomainError::Conflict(format!(
             "Destination extension already exists at '{}'",
             destination_path.display()
         )));

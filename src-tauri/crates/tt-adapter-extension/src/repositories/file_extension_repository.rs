@@ -14,14 +14,18 @@ use tt_ports::repositories::extension_repository::ExtensionRepository;
 mod archive_zip;
 mod delete;
 mod discovery;
+mod git_http;
+mod git_remote;
+mod git_worktree;
 mod install;
 mod move_op;
 mod providers;
-mod repo_url;
 mod source_store;
 mod update;
 mod version;
 
+#[cfg(test)]
+mod git_test_server;
 #[cfg(test)]
 mod tests;
 
@@ -32,6 +36,7 @@ use self::source_store::{ExtensionSourceMetadata, ExtensionSourceStore, Extensio
 pub struct FileExtensionRepository {
     user_extensions_dir: PathBuf,
     global_extensions_dir: PathBuf,
+    http_clients: Arc<HttpClientPool>,
     source_store: ExtensionSourceStore,
     providers: ExtensionSourceProviders,
 }
@@ -108,10 +113,11 @@ impl FileExtensionRepository {
         http_clients: Arc<HttpClientPool>,
     ) -> Result<Self, DomainError> {
         let source_store = ExtensionSourceStore::new(source_store_root);
-        let providers = ExtensionSourceProviders::new(http_clients);
+        let providers = ExtensionSourceProviders::new(http_clients.clone());
         let repository = Self {
             user_extensions_dir,
             global_extensions_dir,
+            http_clients,
             source_store,
             providers,
         };

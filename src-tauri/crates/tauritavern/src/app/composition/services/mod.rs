@@ -5,6 +5,7 @@ mod sync;
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
+use tokio::sync::Semaphore;
 
 use crate::app::{AppServices, StartupProfile};
 use crate::infrastructure::apis::http_external_import_downloader::HttpExternalImportDownloader;
@@ -66,8 +67,10 @@ pub(super) async fn build(
         repositories.asset_repository.clone(),
         external_import_downloader.clone(),
     ));
+    let local_mutation_gate = Arc::new(Semaphore::new(1));
     let extension_service = Arc::new(ExtensionService::new(
         repositories.extension_repository.clone(),
+        local_mutation_gate.clone(),
     ));
     let extension_store_service = Arc::new(ExtensionStoreService::new(
         repositories.extension_store_repository.clone(),
@@ -179,6 +182,7 @@ pub(super) async fn build(
         data_directory,
         data_change_reconciler,
         &ios_policy,
+        local_mutation_gate,
     );
 
     Ok(AppServices {

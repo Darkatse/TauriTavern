@@ -8,7 +8,9 @@ use url::Url;
 use tt_adapter_http::HttpClientPool;
 use tt_domain::errors::DomainError;
 
-use super::repo_url::{HOST_GITEE, HOST_GITHUB, HOST_GITLAB};
+pub(super) const HOST_GITHUB: &str = "github.com";
+pub(super) const HOST_GITLAB: &str = "gitlab.com";
+pub(super) const HOST_GITEE: &str = "gitee.com";
 
 pub(super) mod gitee;
 pub(super) mod github;
@@ -22,8 +24,6 @@ pub(super) struct ProviderHttpError {
 #[async_trait]
 pub(super) trait ExtensionSourceProvider: Send + Sync {
     fn host(&self) -> &'static str;
-
-    async fn default_branch(&self, repo_path: &str) -> Result<String, DomainError>;
 
     async fn latest_commit(&self, repo_path: &str, reference: &str) -> Result<String, DomainError>;
 

@@ -41,6 +41,7 @@ impl From<DomainError> for ApplicationError {
         match error {
             DomainError::NotFound(msg) => ApplicationError::NotFound(msg),
             DomainError::InvalidData(msg) => ApplicationError::ValidationError(msg),
+            DomainError::Conflict(msg) => ApplicationError::Conflict(msg),
             DomainError::AuthenticationError(msg) => ApplicationError::Unauthorized(msg),
             DomainError::Cancelled(msg) => ApplicationError::Cancelled(msg),
             DomainError::InternalError(msg) => ApplicationError::InternalError(msg),
@@ -70,6 +71,16 @@ mod tests {
         assert!(matches!(
             &error,
             ApplicationError::Cancelled(message) if message == GENERATION_CANCELLED_BY_USER_MESSAGE
+        ));
+    }
+
+    #[test]
+    fn domain_conflict_maps_to_application_conflict() {
+        let error: ApplicationError = DomainError::Conflict("busy".to_string()).into();
+
+        assert!(matches!(
+            error,
+            ApplicationError::Conflict(message) if message == "busy"
         ));
     }
 }

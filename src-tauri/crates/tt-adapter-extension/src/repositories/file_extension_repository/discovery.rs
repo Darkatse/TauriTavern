@@ -1,10 +1,12 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tt_domain::errors::DomainError;
 use tt_domain::models::extension::{Extension, ExtensionType};
 
 use super::FileExtensionRepository;
+use super::git_remote::open_embedded;
+use super::git_worktree::{has_standard_embedded_git, read_managed_state};
 use super::source_store::ExtensionStoreScope;
 
 pub(super) async fn discover_extensions(
@@ -13,7 +15,6 @@ pub(super) async fn discover_extensions(
     tracing::info!("Discovering extensions");
 
     let mut extensions = Vec::new();
-
     for &name in super::ENABLED_SYSTEM_EXTENSIONS {
         extensions.push(Extension {
             name: name.to_string(),
@@ -61,12 +62,10 @@ async fn discover_scoped_extensions(
                 error
             ))
         })?;
-
         let path = entry.path();
         if !path.is_dir() {
             continue;
         }
-
         let Some(file_name) = path.file_name() else {
             continue;
         };
@@ -84,29 +83,33 @@ async fn discover_scoped_extensions(
             continue;
         }
 
-        let source = repository
-            .resolve_source_metadata(scope, &extension_folder_name, &path)
-            .await?;
-
-        let (managed, remote_url, commit_hash, branch_name) = match source {
-            Some(source) => (
-                true,
-                Some(source.remote_url),
-                Some(source.installed_commit),
-                Some(source.reference),
-            ),
-            None => {
-                tracing::debug!(
-                    "Found unmanaged extension '{}' at '{}': missing source metadata and could not infer from git state",
+        let projection = git_projection(&path);
+        let (managed, remote_url, commit_hash, branch_name) = match projection {
+            Ok(Some(projection)) => projection,
+            Ok(None) => match repository
+                .resolve_source_metadata(scope, &extension_folder_name, &path)
+                .await?
+            {
+                Some(source) => (
+                    true,
+                    Some(source.remote_url),
+                    Some(source.installed_commit),
+                    Some(source.reference),
+                ),
+                None => (false, None, None, None),
+            },
+            Err(error) => {
+                tracing::warn!(
+                    "Failed to project embedded Git state for '{}' at '{}': {}",
                     extension_folder_name,
-                    path.display()
+                    path.display(),
+                    error
                 );
                 (false, None, None, None)
             }
         };
 
         let manifest = repository.read_manifest_metadata(&path).await?;
-
         extensions.push(Extension {
             name: extension_name,
             extension_type: match scope {
@@ -124,4 +127,20 @@ async fn discover_scoped_extensions(
     }
 
     Ok(())
+}
+
+type GitProjection = (bool, Option<String>, Option<String>, Option<String>);
+
+fn git_projection(path: &Path) -> Result<Option<GitProjection>, DomainError> {
+    if !has_standard_embedded_git(path)? {
+        return Ok(None);
+    }
+    let repo = open_embedded(path)?;
+    let state = read_managed_state(&repo)?;
+    Ok(Some((
+        true,
+        Some(state.remote_url),
+        Some(state.deployed.to_string()),
+        Some(state.selected.display_name().to_string()),
+    )))
 }

@@ -696,6 +696,7 @@ mod tests {
                 Arc::new(OutcomeExecutor),
                 Arc::new(NoopReconciler),
                 Arc::new(NoopJobEvents),
+                Arc::new(tokio::sync::Semaphore::new(1)),
             )),
         )
     }

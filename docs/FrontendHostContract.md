@@ -252,12 +252,15 @@
 这些路径必须能被浏览器**原生子资源加载**（`<img src>` / `<link href>` / `<script src>` / `CSS url()`），且 dev/prod 语义一致：
 
 - `/scripts/extensions/third-party/*`
+  - `.git` 是 SillyTavern 迁移兼容所需的普通路径组件；显式文件请求不得仅因任一组件名为 `.git` 而被拒绝。`.`、`..`、编码路径分隔符与路径逃逸仍必须拒绝。
 - `/css/user.css`
 - `/scripts/tauritavern/layout-kit.js`（ESM；扩展可选 DX 糖衣）
 - `/thumbnail?type={bg|avatar|persona}&file=...`
 - `/characters/*`、`/User Avatars/*`
 - `/backgrounds/*`、`/assets/*`
 - `/user/images/*`、`/user/files/*`
+
+第三方扩展管理 API 保持上游 install/update/version DTO 与 hook/event 语义，但 remote transport 已是 Rust gitoxide smart HTTP：扩展操作不再消费应用更新的 GitHub rate-limit stopper；mutating update 不使用前端 timeout/AbortSignal，因为 Tauri invoke 已进入 Rust 后不能据此取消磁盘写入。version 的 UI AbortSignal 仍可用于关闭只读检查结果。
 
 对这些端点的最小可观察语义：
 
@@ -349,7 +352,7 @@ header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免�
    - `/thumbnail?type=bg&file=<animated>&static=true` 对可解码动画返回 JPEG；MP4 的 raw `/backgrounds/*` Range 播放不受影响
    - `/css/user.css` 能从数据目录 `_css/user.css` 返回用户 CSS；不存在返回真实 `404`
    - `/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 作为子资源可直接加载
-   - `/scripts/extensions/third-party/*` 的 ESM/CSS/图片/字体均可加载，未命中返回 `404`
+   - `/scripts/extensions/third-party/*` 的 ESM/CSS/图片/字体均可加载，未命中返回 `404`；无秘密 fixture 的 `.git/HEAD` / `.git/config` 采用同一文件级路径语义
    - 媒体 Range 契约：`/backgrounds/<file>.mp4` 的 `Range: bytes=0-1` 返回 `206` 且包含 `Content-Range`
 
 任何涉及第 3/4 节契约的改动，都必须至少跑通以上 smoke tests。

@@ -45,7 +45,22 @@
 - `APP_READY` 发出后，晚加载的 third-party 扩展仍可依赖 `eventSource` 对 `APP_READY` 的 auto-fire 语义完成 ready 钩子
 - `EXTENSION_SETTINGS_LOADED` 在存在待激活 third-party 扩展时会延后到 deferred activation 完成后再发出
 
-### 2.2 前端资源加载
+### 2.2 安装、版本与更新
+
+第三方扩展管理已使用 Rust 原生 gitoxide 纵切面：
+
+- 新安装只接受匿名 `http(s)` Git remote；不限制 GitHub、GitLab、Gitee，也不接受 provider Web tree URL、query/fragment、URL userinfo、SSH 或 credential helper。
+- 未指定 ref 时使用 remote 的 born symbolic `HEAD`；显式 ref 按 branch-first、tag-second 解析。任意 revision expression/OID 不属于当前输入契约。
+- 新安装直接生成标准 non-bare embedded `.git/`，不再生成 `_tauritavern/extension-sources` JSON。branch 使用 symbolic HEAD + upstream；tag 使用 detached peeled HEAD + exact tag refspec。
+- version 只做 Git ref advertisement并比较 peeled remote OID 与 deployed HEAD，不 fetch、不写本地、不调用 provider REST API。
+- update 对 embedded repo 只做一次 exact depth-1 fetch；OID 相同不触碰 payload，OID 不同则先验证完整 candidate tree，再重建 payload/index，最后推进 branch ref 或 detached HEAD。
+- install/update/version 的 Git 错误不会回退到 REST/ZIP。legacy JSON extension 的 version 已走 Git advertisement；其 update 暂时保留 provider/ZIP，等待后续迁移阶段首次写转换。
+
+candidate preflight 会在删除活动 payload 之前验证完整 tree：portable UTF-8 path、大小写/NFC collision、file/directory shape、ODB object kind、根 `manifest.json`。checkout 不执行 external filter/LFS/submodule；symlink 以普通文件物化，gitlink 只生成空目录占位。
+
+install/update/delete/move 与 LAN/TT Sync 的本地写操作共享一个 application-layer fail-fast permit；busy 映射为 409。discovery/version 是只读操作，不占 permit。update 前端不会再用 AbortSignal 假取消已经进入 Rust 的磁盘写操作。
+
+### 2.3 前端资源加载
 
 资源 URL 由 `src/scripts/extensions/runtime/resource-paths.js` 统一生成：
 
@@ -69,7 +84,7 @@
   - 同源 iframe contract bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
 - `src/scripts/browser-fixes.js` 保持与上游同步（不再承载 Tauri mobile compat）
 
-### 2.3 后端资源提供
+### 2.4 后端资源提供
 
 生产/打包运行时：
 
@@ -82,13 +97,17 @@
 请求处理步骤：
 
 1. 校验请求方法，只接受 `GET` / `HEAD` / `OPTIONS`
-2. 通过 `src-tauri/crates/tt-application/src/client_asset_paths.rs` 解析并校验路径，再由 `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs` 分类到具体资源处理器
+2. 通过 `src-tauri/crates/tt-contracts/src/client_asset_paths.rs` 解析并校验路径，再由 `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs` 分类到具体资源处理器
 3. 通过 `src-tauri/crates/tt-adapter-media/src/host_resources.rs` 一次完成 local/global 选源、打开文件和 metadata/revision 构造
 4. 返回真实 bytes、正确 `Content-Type`、`Cache-Control: private, no-cache`、weak ETag 和 Last-Modified；条件命中时按 transport capability 返回 304 或完整 200（见 `docs/CurrentState/HostResourceCaching.md`）
    - 对用户静态资源端点（如 `/backgrounds/*`）若请求携带 `Range`，支持单范围并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
 5. 未命中时返回真正 `404`，不回退到 `index.html`
 
 Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 symlink 指向外部目录或文件。这样用户可以让 SillyTavern 与 TauriTavern 共享同一套数据目录布局。
+
+`.git` 是有意允许的路径组件，不是 Host Resource 或 TT-Sync 的名称级禁区。SillyTavern 迁移来的扩展可以携带标准 embedded `.git/`；显式请求 `/scripts/extensions/third-party/<folder>/.git/config`、`.git/HEAD` 等文件时走与其他扩展文件相同的 local-first、文件级读取与缓存流程，仍不提供目录浏览。TT-Sync 的 `extensions.local` / `extensions.third_party` 数据集也不会按 `.git` 名称排除这些路径。managed extension 根 `.git` 在仓库层是标准 Git 管理目录；这不改变路径层继续拒绝 `.`、`..`、编码分隔符、控制字符和路径逃逸。
+
+这项兼容语义不代表 remote URL 可以保存秘密。当前第三方扩展本来就是同源可执行代码；任何 embedded `.git/config` 都必须只持久化脱敏 URL，私有仓库认证若未来支持，应使用设备本地 secret store。
 
 开发态本地 Web 入口：
 
@@ -108,7 +127,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 
 - local third-party 扩展：`data/default-user/extensions/<folder>`
 - global third-party 扩展：`data/extensions/third-party/<folder>`
-- 扩展来源元数据：`data/_tauritavern/extension-sources/{local|global}/`
+- legacy 扩展来源元数据：`data/_tauritavern/extension-sources/{local|global}/`（新 embedded install 不再写入）
 
 当前优先级规则：
 
@@ -136,6 +155,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 - 拒绝缺失扩展目录、`.`、`..`
 - 拒绝编码后的路径分隔符等非法路径
 - 相对资源路径中的冗余 `/` 仅做等价归一化，不扩大访问范围
+- `.git`、`.Git` 等名称按普通路径段接受；不要与 `.` / `..` 混同
 - 只允许 third-party 前缀内的文件级读取，不提供目录浏览
 
 ## 5. 当前明确不支持或不承诺的内容
@@ -143,7 +163,8 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 - 不支持 SillyTavern 的 Node-only backend plugins
 - 不提供通用“前端伪静态服务器”或任意文件读取能力
 - `branches` / `switch` 路由在 Tauri 后端仍未实现
-- 没有来源元数据的扩展仍可被发现和加载，但不能可靠更新；`update` 会要求重新安装
+- 不支持 private auth、SSH、credential helper、Git hook/external filter/LFS/submodule执行或递归 clone
+- 根 `.git/` 和 legacy source JSON 均不存在的扩展仍可被发现和加载，但 `update` 会要求重新安装
 - third-party runtime 不再负责通用 JS 源码重写，不应再把它扩展回“大而全解释器”
 
 ## 6. 持续开发约束
@@ -161,7 +182,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 - 新兼容修复优先做成“最小能力补丁”，不要重新引入广泛源码扫描或 eager 预取
 - 若调整路径规则，至少同步检查：
   - `src/scripts/extensions/runtime/resource-paths.js`
-  - `src-tauri/crates/tt-application/src/client_asset_paths.rs`
+  - `src-tauri/crates/tt-contracts/src/client_asset_paths.rs`
   - `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs`
   - `src-tauri/crates/tt-application/src/services/host_resource_service/third_party.rs`
   - 相关测试
@@ -173,6 +194,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 
 - third-party 扩展可发现、可启用
 - `manifest.json`、JS、CSS、图片/字体资源都能正确加载
+- 显式 `.git/HEAD` 或无秘密 fixture 的 `.git/config` 与普通文件采用相同路径语义
 - 不存在的资源返回 404，而不是 HTML fallback
 - local/global 同名时仍保持 local 优先
 - 旧 WebView 下的 CSS `@layer` 降级没有回归

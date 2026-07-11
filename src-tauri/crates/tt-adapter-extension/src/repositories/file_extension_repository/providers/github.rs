@@ -8,18 +8,12 @@ use tt_adapter_http::github::classify_github_rate_limit;
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 
-use super::super::repo_url::HOST_GITHUB;
 use super::{
-    ExtensionSourceProvider, parse_bytes_or_error, parse_json_or_error,
+    ExtensionSourceProvider, HOST_GITHUB, parse_bytes_or_error, parse_json_or_error,
     provider_http_error_to_domain_error, read_provider_http_error, split_owner_repo,
 };
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
-
-#[derive(Debug, Deserialize)]
-struct GithubRepositoryInfo {
-    default_branch: String,
-}
 
 #[derive(Debug, Deserialize)]
 struct GithubCommit {
@@ -81,32 +75,6 @@ impl GithubProvider {
 impl ExtensionSourceProvider for GithubProvider {
     fn host(&self) -> &'static str {
         HOST_GITHUB
-    }
-
-    async fn default_branch(&self, repo_path: &str) -> Result<String, DomainError> {
-        let (owner, repo) = split_owner_repo(repo_path, self.host())?;
-        let url = self.build_api_url(&["repos", owner, repo])?;
-
-        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
-        let response = http_client
-            .get(url.clone())
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!("GitHub request failed: {}", error))
-            })?;
-
-        let response = self.ensure_success_response(response, &url).await?;
-        let info: GithubRepositoryInfo = parse_json_or_error(response, &url, "GitHub").await?;
-        if info.default_branch.trim().is_empty() {
-            return Err(DomainError::InternalError(format!(
-                "Repository '{}' has no default branch",
-                repo_path
-            )));
-        }
-
-        Ok(info.default_branch)
     }
 
     async fn latest_commit(&self, repo_path: &str, reference: &str) -> Result<String, DomainError> {

@@ -182,6 +182,7 @@ pub(crate) fn domain_error_to_sync(error: DomainError) -> SyncError {
     match error {
         DomainError::NotFound(message) => SyncError::NotFound(message),
         DomainError::InvalidData(message) => SyncError::InvalidData(message),
+        DomainError::Conflict(message) => SyncError::InvalidData(message),
         DomainError::AuthenticationError(message) => SyncError::Unauthorized(message),
         DomainError::Cancelled(message) => SyncError::Internal(message),
         DomainError::InternalError(message) => SyncError::Internal(message),

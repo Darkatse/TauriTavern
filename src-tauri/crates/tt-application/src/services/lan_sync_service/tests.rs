@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::sync::SyncMode;
 
@@ -279,6 +279,7 @@ fn inbound_service(
         Arc::new(RecordingExecutor { jobs }),
         Arc::new(NoopReconciler),
         Arc::new(NoopEvents),
+        Arc::new(Semaphore::new(1)),
     ));
 
     LanInboundService::new(
@@ -432,6 +433,7 @@ async fn accepted_stale_pairing_request_does_not_clear_new_session() {
             Arc::new(RecordingExecutor { jobs }),
             Arc::new(NoopReconciler),
             Arc::new(NoopEvents),
+            Arc::new(Semaphore::new(1)),
         )),
         Arc::new(ReplacingApproval {
             state: state.clone(),
@@ -540,6 +542,7 @@ async fn stop_server_does_not_abort_accepted_inbound_job() {
         Arc::new(RecordingEvents {
             events: completed_tx,
         }),
+        Arc::new(Semaphore::new(1)),
     ));
     let inbound = LanInboundService::new(
         state.clone(),

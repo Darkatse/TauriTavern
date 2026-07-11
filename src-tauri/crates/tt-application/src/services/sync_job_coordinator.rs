@@ -24,9 +24,10 @@ impl SyncJobCoordinator {
         executor: Arc<dyn SyncJobExecutor>,
         reconciler: Arc<dyn DataChangeReconciler>,
         events: Arc<dyn SyncJobEventPublisher>,
+        local_mutation_gate: Arc<Semaphore>,
     ) -> Self {
         Self {
-            gate: Arc::new(Semaphore::new(1)),
+            gate: local_mutation_gate,
             executor,
             reconciler,
             events,
@@ -48,7 +49,7 @@ impl SyncJobCoordinator {
                 Err(_) => {
                     return Err(SyncJobReport::failed_without_local_mutation(
                         job,
-                        "Sync job already running",
+                        "Another local mutation is already running",
                     ));
                 }
             };
@@ -363,7 +364,12 @@ mod tests {
         executor: Arc<dyn SyncJobExecutor>,
         reconciler: Arc<dyn DataChangeReconciler>,
     ) -> SyncJobCoordinator {
-        SyncJobCoordinator::new(executor, reconciler, Arc::new(NoopJobEvents))
+        SyncJobCoordinator::new(
+            executor,
+            reconciler,
+            Arc::new(NoopJobEvents),
+            Arc::new(Semaphore::new(1)),
+        )
     }
 
     fn request(intent: SyncIntent) -> SyncJobRequest {
@@ -419,6 +425,32 @@ mod tests {
                 .failure_message()
                 .unwrap()
                 .contains("already running")
+        );
+    }
+
+    #[test]
+    fn shared_local_mutation_gate_blocks_sync_but_not_remote_pull_request() {
+        let gate = Arc::new(Semaphore::new(1));
+        let external_permit = gate.clone().try_acquire_owned().unwrap();
+        let coordinator = SyncJobCoordinator::new(
+            Arc::new(NoopExecutor),
+            Arc::new(NoopReconciler),
+            Arc::new(NoopJobEvents),
+            gate,
+        );
+
+        assert!(
+            coordinator
+                .try_start(request(SyncIntent::PullToLocal))
+                .is_err()
+        );
+        assert!(coordinator.try_start(remote_pull_request()).is_ok());
+
+        drop(external_permit);
+        assert!(
+            coordinator
+                .try_start(request(SyncIntent::PullToLocal))
+                .is_ok()
         );
     }
 

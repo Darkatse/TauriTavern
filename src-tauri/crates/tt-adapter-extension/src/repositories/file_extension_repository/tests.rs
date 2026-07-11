@@ -10,6 +10,8 @@ use tt_domain::errors::DomainError;
 use tt_ports::repositories::extension_repository::ExtensionRepository;
 
 use super::FileExtensionRepository;
+use super::git_test_server::GitTestServer;
+use super::git_worktree::{ManagedRef, read_managed_state};
 
 const TEST_USER_AGENT: &str = "TauriTavern/test";
 
@@ -59,6 +61,218 @@ fn test_http_clients() -> Arc<HttpClientPool> {
 }
 
 #[tokio::test]
+async fn embedded_install_version_and_update_round_trip_over_smart_http() {
+    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let mut server = GitTestServer::start(root.join("git-origin"));
+    let first = server.write_main("1.0.0");
+    let remote_url = server.remote_url();
+    let repository = FileExtensionRepository::new(
+        user_extensions_dir.clone(),
+        global_extensions_dir.clone(),
+        source_store_root.clone(),
+        test_http_clients(),
+    )
+    .expect("create extension repository");
+
+    let installed = repository
+        .install_extension(&remote_url, false, None)
+        .await
+        .expect("install embedded extension");
+    assert_eq!(installed.folder_name, "repo");
+    assert_eq!(installed.version, "1.0.0");
+    let extension_path = user_extensions_dir.join("repo");
+    assert!(extension_path.join(".git").is_dir());
+    assert!(!source_store_root.join("local/repo.json").exists());
+
+    drop(repository);
+    let repository = FileExtensionRepository::new(
+        user_extensions_dir.clone(),
+        global_extensions_dir.clone(),
+        source_store_root.clone(),
+        test_http_clients(),
+    )
+    .expect("restart extension repository");
+    assert!(!source_store_root.join("local/repo.json").exists());
+
+    let discovered = repository
+        .discover_extensions()
+        .await
+        .expect("discover embedded extension")
+        .into_iter()
+        .find(|extension| extension.name == "third-party/repo")
+        .expect("installed extension projection");
+    let first_hex = first.to_string();
+    assert!(discovered.managed);
+    assert_eq!(discovered.commit_hash.as_deref(), Some(first_hex.as_str()));
+    assert_eq!(discovered.branch_name.as_deref(), Some("main"));
+    assert_eq!(discovered.remote_url.as_deref(), Some(remote_url.as_str()));
+
+    server.write_annotated_tag("main");
+    let explicit = repository
+        .install_extension(&remote_url, true, Some("main".to_string()))
+        .await
+        .expect("install explicit embedded branch");
+    assert_eq!(explicit.version, "1.0.0");
+    assert!(global_extensions_dir.join("repo/.git").is_dir());
+    assert!(!source_store_root.join("global/repo.json").exists());
+    let explicit_repo = super::git_remote::open_embedded(&global_extensions_dir.join("repo"))
+        .expect("open explicit branch installation");
+    assert!(matches!(
+        read_managed_state(&explicit_repo).unwrap().selected,
+        ManagedRef::Branch { .. }
+    ));
+
+    fs::create_dir(user_extensions_dir.join("legacy"))
+        .await
+        .expect("create legacy extension");
+    fs::write(
+        source_store_root.join("local/legacy.json"),
+        serde_json::to_vec_pretty(&json!({
+            "host": "legacy.invalid",
+            "repo_path": "unused/repo",
+            "reference": "main",
+            "remote_url": remote_url,
+            "installed_commit": first.to_string(),
+        }))
+        .unwrap(),
+    )
+    .await
+    .expect("write legacy source state");
+    assert!(
+        repository
+            .get_extension_version("legacy", false)
+            .await
+            .expect("legacy Git advertisement version")
+            .is_up_to_date
+    );
+
+    let current = repository
+        .get_extension_version("repo", false)
+        .await
+        .expect("read current version");
+    assert!(current.is_up_to_date);
+    assert_eq!(current.current_commit_hash, first.to_string());
+
+    fs::write(extension_path.join("obsolete.txt"), "obsolete")
+        .await
+        .expect("write obsolete payload");
+    let second = server.write_main("2.0.0");
+    let behind = repository
+        .get_extension_version("repo", false)
+        .await
+        .expect("read behind version");
+    assert!(!behind.is_up_to_date);
+    assert!(
+        !repository
+            .get_extension_version("legacy", false)
+            .await
+            .expect("legacy Git advertisement detects update")
+            .is_up_to_date
+    );
+
+    let updated = repository
+        .update_extension("repo", false)
+        .await
+        .expect("update embedded extension");
+    assert!(!updated.is_up_to_date);
+    assert_eq!(updated.short_commit_hash, second.to_string()[..7]);
+    assert!(!extension_path.join("obsolete.txt").exists());
+    assert_eq!(
+        fs::read_to_string(extension_path.join("payload.txt"))
+            .await
+            .unwrap(),
+        "payload-2.0.0"
+    );
+
+    let no_op = repository
+        .update_extension("repo", false)
+        .await
+        .expect("no-op embedded update");
+    assert!(no_op.is_up_to_date);
+
+    let status = std::process::Command::new("git")
+        .args([
+            "-C",
+            extension_path.to_str().unwrap(),
+            "status",
+            "--porcelain",
+        ])
+        .output()
+        .expect("run system Git status");
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    assert!(status.stdout.is_empty(), "worktree must be clean");
+    let fsck = std::process::Command::new("git")
+        .args([
+            "-C",
+            extension_path.to_str().unwrap(),
+            "fsck",
+            "--no-dangling",
+        ])
+        .output()
+        .expect("run system Git fsck");
+    assert!(
+        fsck.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fsck.stderr)
+    );
+
+    drop(explicit_repo);
+    drop(repository);
+    drop(server);
+    fs::remove_dir_all(root).await.expect("cleanup temp root");
+}
+
+#[tokio::test]
+async fn embedded_annotated_tag_install_and_moving_tag_update() {
+    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let mut server = GitTestServer::start(root.join("git-origin"));
+    let first = server.write_main("1.0.0");
+    server.write_annotated_tag("v1");
+    let remote_url = server.remote_url();
+    let repository = FileExtensionRepository::new(
+        user_extensions_dir.clone(),
+        global_extensions_dir,
+        source_store_root,
+        test_http_clients(),
+    )
+    .expect("create extension repository");
+
+    repository
+        .install_extension(&remote_url, false, Some("v1".to_string()))
+        .await
+        .expect("install annotated tag");
+    let version = repository
+        .get_extension_version("repo", false)
+        .await
+        .expect("read installed tag version");
+    assert_eq!(version.current_branch_name, "v1");
+    assert_eq!(version.current_commit_hash, first.to_string());
+    assert!(version.is_up_to_date);
+
+    let second = server.write_main("2.0.0");
+    server.write_annotated_tag("v1");
+    let updated = repository
+        .update_extension("repo", false)
+        .await
+        .expect("update moving annotated tag");
+    assert!(!updated.is_up_to_date);
+    let version = repository
+        .get_extension_version("repo", false)
+        .await
+        .expect("read updated tag version");
+    assert_eq!(version.current_commit_hash, second.to_string());
+    assert!(version.is_up_to_date);
+
+    drop(repository);
+    drop(server);
+    fs::remove_dir_all(root).await.expect("cleanup temp root");
+}
+
+#[tokio::test]
 async fn startup_migration_moves_legacy_source_state_into_new_store() {
     let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
     let extension_dir = user_extensions_dir.join("legacy-ext");
@@ -105,7 +319,7 @@ async fn startup_migration_moves_legacy_source_state_into_new_store() {
 }
 
 #[tokio::test]
-async fn startup_migration_rebuilds_missing_source_state_from_git_dir() {
+async fn corrupt_embedded_git_ignores_stale_legacy_source_state() {
     let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
     let extension_dir = user_extensions_dir.join("git-ext");
     fs::create_dir_all(extension_dir.join(".git").join("refs").join("heads"))
@@ -136,6 +350,12 @@ async fn startup_migration_rebuilds_missing_source_state_from_git_dir() {
     )
     .await
     .expect("write git ref commit");
+    fs::write(
+        extension_dir.join(".tauritavern-source.json"),
+        serde_json::to_vec_pretty(&legacy_source_metadata()).unwrap(),
+    )
+    .await
+    .expect("write stale legacy source state");
 
     let repository = FileExtensionRepository::new(
         user_extensions_dir.clone(),
@@ -146,12 +366,12 @@ async fn startup_migration_rebuilds_missing_source_state_from_git_dir() {
     .expect("create extension repository");
 
     assert!(
-        source_store_root
+        !source_store_root
             .join("local")
             .join("git-ext.json")
-            .exists(),
-        "recovered state file should exist"
+            .exists()
     );
+    assert!(extension_dir.join(".tauritavern-source.json").exists());
 
     let extensions = repository
         .discover_extensions()
@@ -161,149 +381,21 @@ async fn startup_migration_rebuilds_missing_source_state_from_git_dir() {
         .into_iter()
         .find(|extension| extension.name == "third-party/git-ext")
         .expect("git extension should be discoverable");
-    assert!(extension.managed, "git extension should be managed");
-    assert_eq!(
-        extension.remote_url.as_deref(),
-        Some("https://github.com/N0VI028/JS-Slash-Runner")
-    );
-
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
-}
-
-#[tokio::test]
-async fn startup_migration_rebuilds_missing_source_state_from_git_dir_for_gitlab() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
-    let extension_dir = user_extensions_dir.join("gitlab-ext");
-    fs::create_dir_all(extension_dir.join(".git").join("refs").join("heads"))
-        .await
-        .expect("create git refs directory");
-
-    let config = r#"[remote "origin"]
-    url = git@gitlab.com:my-group/subgroup/my-repo.git
-"#;
-    fs::write(extension_dir.join(".git").join("config"), config)
-        .await
-        .expect("write git config");
-
-    let commit = "abcdef1234567890abcdef1234567890abcdef12\n";
-    fs::write(
-        extension_dir.join(".git").join("HEAD"),
-        "ref: refs/heads/main\n",
-    )
-    .await
-    .expect("write git HEAD");
-    fs::write(
-        extension_dir
-            .join(".git")
-            .join("refs")
-            .join("heads")
-            .join("main"),
-        commit,
-    )
-    .await
-    .expect("write git ref commit");
-
-    let repository = FileExtensionRepository::new(
-        user_extensions_dir.clone(),
-        global_extensions_dir,
-        source_store_root.clone(),
-        test_http_clients(),
-    )
-    .expect("create extension repository");
-
+    assert!(!extension.managed, "corrupt git must remain unmanaged");
+    assert_eq!(extension.remote_url, None);
     assert!(
-        source_store_root
-            .join("local")
-            .join("gitlab-ext.json")
-            .exists(),
-        "recovered state file should exist"
+        repository
+            .get_extension_version("git-ext", false)
+            .await
+            .is_err()
     );
-
-    let extensions = repository
-        .discover_extensions()
-        .await
-        .expect("discover extensions");
-    let extension = extensions
-        .into_iter()
-        .find(|extension| extension.name == "third-party/gitlab-ext")
-        .expect("gitlab extension should be discoverable");
-    assert!(extension.managed, "gitlab extension should be managed");
-    assert_eq!(
-        extension.remote_url.as_deref(),
-        Some("https://gitlab.com/my-group/subgroup/my-repo")
-    );
+    assert!(repository.update_extension("git-ext", false).await.is_err());
 
     fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
 
 #[tokio::test]
-async fn startup_migration_rebuilds_missing_source_state_from_git_dir_for_gitee() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
-    let extension_dir = user_extensions_dir.join("gitee-ext");
-    fs::create_dir_all(extension_dir.join(".git").join("refs").join("heads"))
-        .await
-        .expect("create git refs directory");
-
-    let config = r#"[remote "origin"]
-    url = git@gitee.com:some-owner/some-repo.git
-"#;
-    fs::write(extension_dir.join(".git").join("config"), config)
-        .await
-        .expect("write git config");
-
-    let commit = "abcdef1234567890abcdef1234567890abcdef12\n";
-    fs::write(
-        extension_dir.join(".git").join("HEAD"),
-        "ref: refs/heads/main\n",
-    )
-    .await
-    .expect("write git HEAD");
-    fs::write(
-        extension_dir
-            .join(".git")
-            .join("refs")
-            .join("heads")
-            .join("main"),
-        commit,
-    )
-    .await
-    .expect("write git ref commit");
-
-    let repository = FileExtensionRepository::new(
-        user_extensions_dir.clone(),
-        global_extensions_dir,
-        source_store_root.clone(),
-        test_http_clients(),
-    )
-    .expect("create extension repository");
-
-    assert!(
-        source_store_root
-            .join("local")
-            .join("gitee-ext.json")
-            .exists(),
-        "recovered state file should exist"
-    );
-
-    let extensions = repository
-        .discover_extensions()
-        .await
-        .expect("discover extensions");
-    let extension = extensions
-        .into_iter()
-        .find(|extension| extension.name == "third-party/gitee-ext")
-        .expect("gitee extension should be discoverable");
-    assert!(extension.managed, "gitee extension should be managed");
-    assert_eq!(
-        extension.remote_url.as_deref(),
-        Some("https://gitee.com/some-owner/some-repo")
-    );
-
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
-}
-
-#[tokio::test]
-async fn startup_migration_rebuilds_missing_source_state_from_gitfile_commondir_layout() {
+async fn unsupported_gitfile_layout_is_not_converted_to_source_json() {
     let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
     let extension_dir = user_extensions_dir.join("gitfile-ext");
     fs::create_dir_all(&extension_dir)
@@ -351,11 +443,10 @@ async fn startup_migration_rebuilds_missing_source_state_from_gitfile_commondir_
     .expect("create extension repository");
 
     assert!(
-        source_store_root
+        !source_store_root
             .join("local")
             .join("gitfile-ext.json")
-            .exists(),
-        "recovered state file should exist"
+            .exists()
     );
 
     let extensions = repository
@@ -366,11 +457,11 @@ async fn startup_migration_rebuilds_missing_source_state_from_gitfile_commondir_
         .into_iter()
         .find(|extension| extension.name == "third-party/gitfile-ext")
         .expect("gitfile extension should be discoverable");
-    assert!(extension.managed, "gitfile extension should be managed");
-    assert_eq!(
-        extension.remote_url.as_deref(),
-        Some("https://github.com/N0VI028/JS-Slash-Runner")
+    assert!(
+        !extension.managed,
+        "unsupported gitfile must remain unmanaged"
     );
+    assert_eq!(extension.remote_url, None);
 
     fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
