@@ -8,17 +8,16 @@ use super::model_turn::{
 };
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
-use super::{AgentCancelReceiver, AgentRuntimeService};
+use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::{AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect, AgentToolSession};
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
-    AgentModelRequest, AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunStatus,
-    AgentToolResult, WorkspacePath,
+    AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunStatus, AgentToolResult,
+    WorkspacePath,
 };
-use tt_domain::models::skill::SkillIndexEntry;
 use tt_domain::text_metrics::TextMetrics;
 
 pub(super) enum AgentLoopExit {
@@ -29,19 +28,24 @@ pub(super) enum AgentLoopExit {
     },
 }
 
+pub(super) fn tool_after_finish_error(completion_tool: &str) -> ApplicationError {
+    ApplicationError::ValidationError(format!(
+        "agent.tool_after_finish: model requested additional tools after {completion_tool}"
+    ))
+}
+
 impl AgentRuntimeService {
     pub(super) async fn run_tool_loop(
         &self,
-        run_id: &str,
-        invocation_id: &str,
-        exit_policy: AgentInvocationExitPolicy,
-        mut request: AgentModelRequest,
-        profile: &ResolvedAgentProfile,
-        effective_skills: &[SkillIndexEntry],
+        prepared: &mut PreparedInvocation,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<Option<AgentLoopExit>, ApplicationError> {
-        let mut tool_session = AgentToolSession::new(effective_skills.to_vec());
+        let run_id = prepared.invocation.run_id.as_str();
+        let invocation_id = prepared.invocation.id.as_str();
+        let exit_policy = prepared.invocation.exit_policy;
+        let profile = &prepared.profile;
+        let mut tool_session = AgentToolSession::new(prepared.effective_skills.clone());
         let mut seen_child_result_task_ids = HashSet::new();
         // Counts soft drift recovery nudges for model-facing text and
         // journal events. It is intentionally not a separate budget: the
@@ -50,8 +54,13 @@ impl AgentRuntimeService {
         for round in 1..=profile.tools.max_rounds {
             let updates_run_status = exit_policy == AgentInvocationExitPolicy::RunFinishAllowed;
             if updates_run_status {
-                self.apply_pending_guidance_to_request(run_id, invocation_id, round, &mut request)
-                    .await?;
+                self.apply_pending_guidance_to_request(
+                    run_id,
+                    invocation_id,
+                    round,
+                    &mut prepared.request,
+                )
+                .await?;
             }
             if updates_run_status {
                 self.transition_status(run_id, AgentRunStatus::CallingModel)
@@ -64,7 +73,7 @@ impl AgentRuntimeService {
                 json!({
                     "round": round,
                     "invocationId": invocation_id,
-                    "request": request_summary(&request),
+                    "request": request_summary(&prepared.request),
                 }),
             )
             .await?;
@@ -74,7 +83,7 @@ impl AgentRuntimeService {
                     run_id,
                     invocation_id,
                     round,
-                    &request,
+                    &prepared.request,
                     &profile.run.model_retry,
                     cancel,
                 )
@@ -84,7 +93,7 @@ impl AgentRuntimeService {
             let model_response_path = self
                 .store_model_response(run_id, invocation_id, round, &response)
                 .await?;
-            request.provider_state = exchange.provider_state;
+            prepared.request.provider_state = exchange.provider_state;
             self.event(
                 run_id,
                 AgentRunEventLevel::Debug,
@@ -92,7 +101,7 @@ impl AgentRuntimeService {
                 json!({
                     "round": round,
                     "invocationId": invocation_id,
-                    "providerState": provider_state_summary(&request.provider_state),
+                    "providerState": provider_state_summary(&prepared.request.provider_state),
                 }),
             )
             .await?;
@@ -147,8 +156,8 @@ impl AgentRuntimeService {
                         exit_policy,
                         profile,
                     );
-                    request.messages.push(response.message.clone());
-                    request.messages.push(AgentModelMessage {
+                    prepared.request.messages.push(response.message.clone());
+                    prepared.request.messages.push(AgentModelMessage {
                         role: AgentModelRole::User,
                         parts: vec![AgentModelContentPart::Text { text: nudge_text }],
                         provider_metadata: Value::Null,
@@ -182,25 +191,21 @@ impl AgentRuntimeService {
             let mut tool_results = Vec::with_capacity(tool_calls.len());
             let mut finished = false;
             let mut handoff = None;
-            let mut completion_tool = completion_tool_name(exit_policy, profile);
+            let tool_call_count = tool_calls.len();
+            let completion_tool = completion_tool_name(exit_policy, profile);
 
-            for call in tool_calls {
+            for (index, call) in tool_calls.into_iter().enumerate() {
                 if finished {
-                    return Err(ApplicationError::ValidationError(format!(
-                        "agent.tool_after_finish: model requested additional tools after {}",
-                        completion_tool
-                    )));
+                    return Err(tool_after_finish_error(completion_tool));
                 }
 
                 let outcome = self
                     .dispatch_tool_call(
-                        run_id,
-                        invocation_id,
-                        exit_policy,
+                        prepared,
                         round,
                         &call,
                         &mut tool_session,
-                        profile,
+                        index + 1 == tool_call_count,
                         commit_ledger,
                         cancel,
                     )
@@ -309,7 +314,6 @@ impl AgentRuntimeService {
                             AgentInvocationStatus::Transferred,
                         )
                         .await?;
-                        completion_tool = "agent_handoff";
                         finished = true;
                     }
                     AgentToolEffect::None => {}
@@ -342,7 +346,7 @@ impl AgentRuntimeService {
             }
 
             remember_seen_child_results_from_await(&tool_results, &mut seen_child_result_task_ids);
-            append_tool_turn_to_request(&mut request, assistant_message, &tool_results)?;
+            append_tool_turn_to_request(&mut prepared.request, assistant_message, &tool_results)?;
             if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed
                 && let Some(message) = self
                     .completed_child_results_message(
@@ -354,7 +358,7 @@ impl AgentRuntimeService {
                     )
                     .await?
             {
-                request.messages.push(AgentModelMessage {
+                prepared.request.messages.push(AgentModelMessage {
                     role: AgentModelRole::User,
                     parts: vec![AgentModelContentPart::Text { text: message }],
                     provider_metadata: Value::Null,

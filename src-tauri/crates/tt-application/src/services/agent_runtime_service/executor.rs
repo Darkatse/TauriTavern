@@ -8,7 +8,7 @@ use super::error_payload::{run_failure_payload, run_partial_success_payload};
 use super::invocation::model_session_id;
 use super::loop_runner::AgentLoopExit;
 use super::prompt_snapshot::{prepare_agent_tool_request, request_summary};
-use super::{AgentCancelReceiver, AgentRuntimeService};
+use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::ensure_profile_model_configured;
@@ -65,7 +65,11 @@ impl AgentRuntimeService {
                     .await;
                 let _ = self.cancel_unfinished_child_tasks(run_id).await;
                 let _ = self
-                    .finish_root_invocation(run_id, AgentInvocationStatus::Cancelled)
+                    .finish_invocation(
+                        run_id,
+                        ROOT_AGENT_INVOCATION_ID,
+                        AgentInvocationStatus::Cancelled,
+                    )
                     .await;
                 self.clear_pending_host_requests_for_run(run_id).await;
                 let _ = self
@@ -96,7 +100,11 @@ impl AgentRuntimeService {
                     .await;
                 let _ = self.cancel_unfinished_child_tasks(run_id).await;
                 let _ = self
-                    .finish_root_invocation(run_id, AgentInvocationStatus::Failed)
+                    .finish_invocation(
+                        run_id,
+                        ROOT_AGENT_INVOCATION_ID,
+                        AgentInvocationStatus::Failed,
+                    )
                     .await;
                 self.clear_pending_host_requests_for_run(run_id).await;
                 if commit_ledger.is_empty() {
@@ -188,6 +196,10 @@ impl AgentRuntimeService {
         });
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "run bootstrap boundary keeps input snapshot, profile, skills, ledger, and cancellation explicit"
+    )]
     async fn execute_agent_loop_run_body(
         &self,
         run_id: &str,
@@ -218,7 +230,6 @@ impl AgentRuntimeService {
         self.ensure_root_invocation(run_id, &resolved_profile)
             .await?;
         let root_invocation = self.start_root_invocation(run_id).await?;
-        let invocation_id = root_invocation.id;
         let persistent_roots = manifest
             .roots
             .iter()
@@ -261,8 +272,12 @@ impl AgentRuntimeService {
             &resolved_profile,
             AgentInvocationExitPolicy::RunFinishAllowed,
         )?;
-        let request =
-            prepare_agent_tool_request(request, &visible_tools, run_id, invocation_id.as_str())?;
+        let request = prepare_agent_tool_request(
+            request,
+            &visible_tools,
+            run_id,
+            root_invocation.id.as_str(),
+        )?;
         self.transition_status(run_id, AgentRunStatus::AssemblingContext)
             .await?;
         self.event(
@@ -271,7 +286,7 @@ impl AgentRuntimeService {
             "context_assembled",
             json!({
                 "request": request_summary(&request),
-                "invocationId": invocation_id.as_str(),
+                "invocationId": root_invocation.id.as_str(),
                 "tools": &visible_tools,
                 "maxRounds": resolved_profile.tools.max_rounds,
                 "contextPolicy": &resolved_profile.context,
@@ -285,11 +300,13 @@ impl AgentRuntimeService {
         self.ensure_not_cancelled(cancel)?;
 
         self.execute_active_invocation_chain(
-            run_id,
-            invocation_id,
-            request,
-            resolved_profile,
-            effective_skills,
+            PreparedInvocation {
+                invocation: root_invocation,
+                delegation_task_id: None,
+                profile: resolved_profile,
+                request,
+                effective_skills,
+            },
             commit_ledger,
             cancel,
         )
@@ -301,39 +318,25 @@ impl AgentRuntimeService {
 
     async fn execute_active_invocation_chain(
         &self,
-        run_id: &str,
-        mut invocation_id: String,
-        mut request: tt_domain::models::agent::AgentModelRequest,
-        mut profile: ResolvedAgentProfile,
-        mut effective_skills: Vec<SkillIndexEntry>,
+        mut prepared: PreparedInvocation,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
-        let mut incoming_handoff_task_id: Option<String> = None;
         loop {
             let exit = match self
-                .run_tool_loop(
-                    run_id,
-                    invocation_id.as_str(),
-                    AgentInvocationExitPolicy::RunFinishAllowed,
-                    request,
-                    &profile,
-                    &effective_skills,
-                    commit_ledger,
-                    cancel,
-                )
+                .run_tool_loop(&mut prepared, commit_ledger, cancel)
                 .await
             {
                 Ok(Some(exit)) => exit,
                 Ok(None) => {
                     let error = ApplicationError::ValidationError(format!(
                         "agent.max_tool_rounds_exceeded: workspace.finish or agent.handoff was not called within {} rounds",
-                        profile.tools.max_rounds
+                        prepared.profile.tools.max_rounds
                     ));
                     self.mark_active_invocation_failed(
-                        run_id,
-                        invocation_id.as_str(),
-                        incoming_handoff_task_id.as_deref(),
+                        prepared.invocation.run_id.as_str(),
+                        prepared.invocation.id.as_str(),
+                        prepared.delegation_task_id.as_deref(),
                         &error,
                     )
                     .await?;
@@ -341,9 +344,9 @@ impl AgentRuntimeService {
                 }
                 Err(error) => {
                     self.mark_active_invocation_failed(
-                        run_id,
-                        invocation_id.as_str(),
-                        incoming_handoff_task_id.as_deref(),
+                        prepared.invocation.run_id.as_str(),
+                        prepared.invocation.id.as_str(),
+                        prepared.delegation_task_id.as_deref(),
                         &error,
                     )
                     .await?;
@@ -354,27 +357,23 @@ impl AgentRuntimeService {
             match exit {
                 AgentLoopExit::Finished => {
                     if let Err(error) = self
-                        .finish_run(run_id, invocation_id.as_str(), commit_ledger, cancel)
+                        .finish_run(
+                            prepared.invocation.run_id.as_str(),
+                            prepared.invocation.id.as_str(),
+                            prepared.delegation_task_id.as_deref(),
+                            commit_ledger,
+                            cancel,
+                        )
                         .await
                     {
                         self.mark_active_invocation_failed(
-                            run_id,
-                            invocation_id.as_str(),
-                            incoming_handoff_task_id.as_deref(),
+                            prepared.invocation.run_id.as_str(),
+                            prepared.invocation.id.as_str(),
+                            prepared.delegation_task_id.as_deref(),
                             &error,
                         )
                         .await?;
                         return Err(error);
-                    }
-                    if let Some(task_id) = incoming_handoff_task_id.as_deref() {
-                        self.transition_child_task(
-                            run_id,
-                            task_id,
-                            tt_domain::models::agent::AgentTaskStatus::Completed,
-                            None,
-                            None,
-                        )
-                        .await?;
                     }
                     return Ok(());
                 }
@@ -382,9 +381,9 @@ impl AgentRuntimeService {
                     task_id,
                     new_invocation_id,
                 } => {
-                    if let Some(incoming_task_id) = incoming_handoff_task_id.as_deref() {
+                    if let Some(incoming_task_id) = prepared.delegation_task_id.as_deref() {
                         self.transition_child_task(
-                            run_id,
+                            prepared.invocation.run_id.as_str(),
                             incoming_task_id,
                             tt_domain::models::agent::AgentTaskStatus::Completed,
                             None,
@@ -392,9 +391,9 @@ impl AgentRuntimeService {
                         )
                         .await?;
                     }
-                    let prepared = match self
+                    let next_prepared = match self
                         .prepare_handoff_invocation(
-                            run_id,
+                            prepared.invocation.run_id.as_str(),
                             task_id.as_str(),
                             new_invocation_id.as_str(),
                             cancel,
@@ -404,7 +403,7 @@ impl AgentRuntimeService {
                         Ok(prepared) => prepared,
                         Err(error) => {
                             self.mark_active_invocation_failed(
-                                run_id,
+                                prepared.invocation.run_id.as_str(),
                                 new_invocation_id.as_str(),
                                 Some(task_id.as_str()),
                                 &error,
@@ -413,11 +412,7 @@ impl AgentRuntimeService {
                             return Err(error);
                         }
                     };
-                    invocation_id = new_invocation_id;
-                    incoming_handoff_task_id = Some(task_id);
-                    request = prepared.request;
-                    profile = prepared.profile;
-                    effective_skills = prepared.effective_skills;
+                    prepared = next_prepared;
                 }
             }
         }

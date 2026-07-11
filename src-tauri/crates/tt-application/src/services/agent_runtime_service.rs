@@ -17,7 +17,10 @@ use crate::services::llm_connection_service::LlmConnectionService;
 use crate::services::prompt_assembly_service::PromptAssemblyService;
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentToolSpec};
+use tt_domain::models::agent::{
+    AgentInvocation, AgentInvocationExitPolicy, AgentModelRequest, AgentToolSpec,
+};
+use tt_domain::models::skill::SkillIndexEntry;
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
@@ -82,6 +85,14 @@ pub(super) struct PendingPersistentStateMetadataUpdate {
     pub(super) sender: oneshot::Sender<Result<(), String>>,
 }
 
+struct PreparedInvocation {
+    invocation: AgentInvocation,
+    delegation_task_id: Option<String>,
+    profile: ResolvedAgentProfile,
+    request: AgentModelRequest,
+    effective_skills: Vec<SkillIndexEntry>,
+}
+
 pub struct AgentRuntimeService {
     run_repository: Arc<dyn AgentRunRepository>,
     invocation_repository: Arc<dyn AgentInvocationRepository>,
@@ -92,7 +103,7 @@ pub struct AgentRuntimeService {
     model_gateway: Arc<dyn AgentModelGateway>,
     profile_service: Arc<AgentProfileService>,
     llm_connection_service: Arc<LlmConnectionService>,
-    prompt_assembly_service: Option<Arc<PromptAssemblyService>>,
+    prompt_assembly_service: Arc<PromptAssemblyService>,
     skill_service: Arc<SkillService>,
     tool_registry: BuiltinAgentToolRegistry,
     tool_dispatcher: AgentToolDispatcher,
@@ -104,7 +115,10 @@ pub struct AgentRuntimeService {
 }
 
 impl AgentRuntimeService {
-    #[cfg(feature = "test-support")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "composition boundary keeps concrete runtime dependencies explicit"
+    )]
     pub fn new(
         run_repository: Arc<dyn AgentRunRepository>,
         invocation_repository: Arc<dyn AgentInvocationRepository>,
@@ -116,62 +130,7 @@ impl AgentRuntimeService {
         model_gateway: Arc<dyn AgentModelGateway>,
         profile_service: Arc<AgentProfileService>,
         llm_connection_service: Arc<LlmConnectionService>,
-    ) -> Self {
-        Self::new_internal(
-            run_repository,
-            invocation_repository,
-            workspace_repository,
-            checkpoint_repository,
-            chat_repository,
-            group_chat_repository,
-            skill_service,
-            model_gateway,
-            profile_service,
-            llm_connection_service,
-            None,
-        )
-    }
-
-    pub fn new_with_prompt_assembly_service(
-        run_repository: Arc<dyn AgentRunRepository>,
-        invocation_repository: Arc<dyn AgentInvocationRepository>,
-        workspace_repository: Arc<dyn WorkspaceRepository>,
-        checkpoint_repository: Arc<dyn CheckpointRepository>,
-        chat_repository: Arc<dyn ChatRepository>,
-        group_chat_repository: Arc<dyn GroupChatRepository>,
-        skill_service: Arc<SkillService>,
-        model_gateway: Arc<dyn AgentModelGateway>,
-        profile_service: Arc<AgentProfileService>,
-        llm_connection_service: Arc<LlmConnectionService>,
         prompt_assembly_service: Arc<PromptAssemblyService>,
-    ) -> Self {
-        Self::new_internal(
-            run_repository,
-            invocation_repository,
-            workspace_repository,
-            checkpoint_repository,
-            chat_repository,
-            group_chat_repository,
-            skill_service,
-            model_gateway,
-            profile_service,
-            llm_connection_service,
-            Some(prompt_assembly_service),
-        )
-    }
-
-    fn new_internal(
-        run_repository: Arc<dyn AgentRunRepository>,
-        invocation_repository: Arc<dyn AgentInvocationRepository>,
-        workspace_repository: Arc<dyn WorkspaceRepository>,
-        checkpoint_repository: Arc<dyn CheckpointRepository>,
-        chat_repository: Arc<dyn ChatRepository>,
-        group_chat_repository: Arc<dyn GroupChatRepository>,
-        skill_service: Arc<SkillService>,
-        model_gateway: Arc<dyn AgentModelGateway>,
-        profile_service: Arc<AgentProfileService>,
-        llm_connection_service: Arc<LlmConnectionService>,
-        prompt_assembly_service: Option<Arc<PromptAssemblyService>>,
     ) -> Self {
         let tool_registry = BuiltinAgentToolRegistry::phase2c();
         let tool_dispatcher = AgentToolDispatcher::new(

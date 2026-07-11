@@ -106,6 +106,10 @@ impl AgentRuntimeService {
         })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "host commit boundary keeps tool call, artifact, journal, ledger, and cancellation inputs explicit"
+    )]
     pub(super) async fn perform_host_chat_commit(
         &self,
         run_id: &str,
@@ -334,6 +338,7 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
         final_invocation_id: &str,
+        incoming_handoff_task_id: Option<&str>,
         commit_ledger: &RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
@@ -386,6 +391,22 @@ impl AgentRuntimeService {
         )
         .await?;
 
+        if let Some(task_id) = incoming_handoff_task_id {
+            self.transition_child_task(
+                run_id,
+                task_id,
+                tt_domain::models::agent::AgentTaskStatus::Completed,
+                None,
+                None,
+            )
+            .await?;
+        }
+        self.finish_invocation(
+            run_id,
+            final_invocation_id,
+            AgentInvocationStatus::Completed,
+        )
+        .await?;
         self.transition_status(run_id, AgentRunStatus::Completed)
             .await?;
         self.event(
@@ -397,12 +418,6 @@ impl AgentRuntimeService {
         .await?;
         self.active_runs.write().await.remove(run_id);
         self.clear_pending_host_requests_for_run(run_id).await;
-        self.finish_invocation(
-            run_id,
-            final_invocation_id,
-            AgentInvocationStatus::Completed,
-        )
-        .await?;
 
         Ok(())
     }

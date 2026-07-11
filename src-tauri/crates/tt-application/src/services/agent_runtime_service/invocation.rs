@@ -1,5 +1,8 @@
+use std::collections::HashSet;
+
 use chrono::Utc;
 use serde_json::json;
+use uuid::Uuid;
 
 use super::AgentRuntimeService;
 use crate::errors::ApplicationError;
@@ -97,61 +100,20 @@ impl AgentRuntimeService {
         Ok(invocation)
     }
 
-    pub(super) async fn finish_root_invocation(
-        &self,
-        run_id: &str,
-        status: AgentInvocationStatus,
-    ) -> Result<(), ApplicationError> {
-        let mut invocation = match self
-            .invocation_repository
-            .load_invocation(run_id, ROOT_AGENT_INVOCATION_ID)
-            .await
-        {
-            Ok(invocation) => invocation,
-            Err(error) => return Err(error.into()),
-        };
-        invocation.status = status;
-        invocation.updated_at = Utc::now();
-        self.invocation_repository
-            .save_invocation(&invocation)
-            .await?;
-        self.event(
-            run_id,
-            AgentRunEventLevel::Info,
-            terminal_invocation_event_type(status),
-            json!({
-                "invocationId": invocation.id.as_str(),
-                "profileId": invocation.profile_id.as_str(),
-                "kind": invocation.kind,
-                "status": invocation.status,
-            }),
-        )
-        .await?;
-        Ok(())
-    }
-
     pub(super) async fn create_child_task(
         &self,
         run_id: &str,
         parent_invocation_id: &str,
-        child_invocation_id: String,
-        task_id: String,
-        target_profile_id: String,
-        workspace_key: String,
-        created_by_tool_call_id: String,
+        target_profile_id: &str,
+        created_by_tool_call_id: &str,
         task: serde_json::Value,
     ) -> Result<AgentTaskRecord, ApplicationError> {
         self.create_delegation_task(
             run_id,
             parent_invocation_id,
-            child_invocation_id,
-            task_id,
             target_profile_id,
-            workspace_key,
             created_by_tool_call_id,
             task,
-            AgentInvocationKind::Subagent,
-            AgentInvocationExitPolicy::TaskReturnRequired,
             AgentDelegationContinuation::ReturnToParent,
         )
         .await
@@ -161,24 +123,16 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
         parent_invocation_id: &str,
-        child_invocation_id: String,
-        task_id: String,
-        target_profile_id: String,
-        workspace_key: String,
-        created_by_tool_call_id: String,
+        target_profile_id: &str,
+        created_by_tool_call_id: &str,
         task: serde_json::Value,
     ) -> Result<AgentTaskRecord, ApplicationError> {
         self.create_delegation_task(
             run_id,
             parent_invocation_id,
-            child_invocation_id,
-            task_id,
             target_profile_id,
-            workspace_key,
             created_by_tool_call_id,
             task,
-            AgentInvocationKind::Handoff,
-            AgentInvocationExitPolicy::RunFinishAllowed,
             AgentDelegationContinuation::TransferControl,
         )
         .await
@@ -188,22 +142,34 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
         parent_invocation_id: &str,
-        child_invocation_id: String,
-        task_id: String,
-        target_profile_id: String,
-        workspace_key: String,
-        created_by_tool_call_id: String,
+        target_profile_id: &str,
+        created_by_tool_call_id: &str,
         task: serde_json::Value,
-        invocation_kind: AgentInvocationKind,
-        exit_policy: AgentInvocationExitPolicy,
         continuation: AgentDelegationContinuation,
     ) -> Result<AgentTaskRecord, ApplicationError> {
+        let (task_id_prefix, invocation_kind, exit_policy) = match continuation {
+            AgentDelegationContinuation::ReturnToParent => (
+                "task",
+                AgentInvocationKind::Subagent,
+                AgentInvocationExitPolicy::TaskReturnRequired,
+            ),
+            AgentDelegationContinuation::TransferControl => (
+                "handoff",
+                AgentInvocationKind::Handoff,
+                AgentInvocationExitPolicy::RunFinishAllowed,
+            ),
+        };
+        let task_id = format!("{task_id_prefix}_{}", Uuid::new_v4().simple());
+        let child_invocation_id = format!("inv_{}", Uuid::new_v4().simple());
+        let workspace_key = self
+            .allocate_child_workspace_key(run_id, target_profile_id)
+            .await?;
         let now = Utc::now();
         let invocation = AgentInvocation {
             id: child_invocation_id.clone(),
             run_id: run_id.to_string(),
             parent_invocation_id: Some(parent_invocation_id.to_string()),
-            profile_id: target_profile_id.clone(),
+            profile_id: target_profile_id.to_string(),
             kind: invocation_kind,
             status: AgentInvocationStatus::Created,
             exit_policy,
@@ -215,12 +181,12 @@ impl AgentRuntimeService {
             run_id: run_id.to_string(),
             parent_invocation_id: parent_invocation_id.to_string(),
             child_invocation_id,
-            target_profile_id,
+            target_profile_id: target_profile_id.to_string(),
             workspace_key,
             continuation,
             status: AgentTaskStatus::Queued,
             task,
-            created_by_tool_call_id: Some(created_by_tool_call_id),
+            created_by_tool_call_id: Some(created_by_tool_call_id.to_string()),
             result_ref: None,
             error: None,
             created_at: now,
@@ -263,6 +229,18 @@ impl AgentRuntimeService {
         .await?;
 
         Ok(task)
+    }
+
+    async fn allocate_child_workspace_key(
+        &self,
+        run_id: &str,
+        target_profile_id: &str,
+    ) -> Result<String, ApplicationError> {
+        let tasks = self.invocation_repository.list_tasks(run_id).await?;
+        Ok(next_child_workspace_key(
+            target_profile_id,
+            tasks.iter().map(|task| task.workspace_key.as_str()),
+        ))
     }
 
     pub(super) async fn start_child_invocation(
@@ -456,4 +434,40 @@ fn task_is_terminal_status(status: AgentTaskStatus) -> bool {
         status,
         AgentTaskStatus::Completed | AgentTaskStatus::Failed | AgentTaskStatus::Cancelled
     )
+}
+
+fn next_child_workspace_key<'a>(
+    target_profile_id: &str,
+    existing_keys: impl IntoIterator<Item = &'a str>,
+) -> String {
+    let existing_keys = existing_keys.into_iter().collect::<HashSet<_>>();
+    if !existing_keys.contains(target_profile_id) {
+        return target_profile_id.to_string();
+    }
+
+    for index in 2.. {
+        let candidate = format!("{target_profile_id}-{index:03}");
+        if !existing_keys.contains(candidate.as_str()) {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded workspace key allocation exhausted")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_child_workspace_key;
+
+    #[test]
+    fn child_workspace_key_uses_agent_id_then_numbered_suffixes() {
+        assert_eq!(next_child_workspace_key("scene-critic", []), "scene-critic");
+        assert_eq!(
+            next_child_workspace_key("scene-critic", ["scene-critic"]),
+            "scene-critic-002"
+        );
+        assert_eq!(
+            next_child_workspace_key("scene-critic", ["scene-critic", "scene-critic-002"]),
+            "scene-critic-003"
+        );
+    }
 }

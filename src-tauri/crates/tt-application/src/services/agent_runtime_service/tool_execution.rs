@@ -3,9 +3,9 @@ use std::time::Instant;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::AgentRuntimeService;
 use super::commit_ledger::RunCommitLedger;
 use super::delegation::workspace_policy::InvocationWorkspaceRepository;
+use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 
 use crate::services::agent_tools::{
@@ -21,18 +21,24 @@ use tt_domain::models::agent::{
 const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
 
 impl AgentRuntimeService {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "tool dispatch boundary keeps invocation, call position, session, ledger, and cancellation explicit"
+    )]
     pub(super) async fn dispatch_tool_call(
         &self,
-        run_id: &str,
-        invocation_id: &str,
-        exit_policy: AgentInvocationExitPolicy,
+        prepared: &PreparedInvocation,
         round: usize,
         call: &AgentToolCall,
         session: &mut AgentToolSession,
-        profile: &ResolvedAgentProfile,
+        is_last_call: bool,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut super::AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
+        let run_id = prepared.invocation.run_id.as_str();
+        let invocation_id = prepared.invocation.id.as_str();
+        let exit_policy = prepared.invocation.exit_policy;
+        let profile = &prepared.profile;
         let canonical_call = self
             .tool_registry
             .spec_by_name_or_model_name(&call.name)
@@ -169,11 +175,18 @@ impl AgentRuntimeService {
             )
             .await
         } else if call.name == AGENT_HANDOFF {
-            self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile)
+            self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile, is_last_call)
                 .await
         } else if call.name == TASK_RETURN {
-            self.dispatch_task_return_tool(run_id, invocation_id, call, exit_policy, profile)
-                .await
+            self.dispatch_task_return_tool(
+                run_id,
+                invocation_id,
+                call,
+                exit_policy,
+                profile,
+                is_last_call,
+            )
+            .await
         } else if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
             let workspace_repository =
                 InvocationWorkspaceRepository::new(self.workspace_repository.as_ref(), profile);

@@ -47,7 +47,7 @@ pub(super) fn build(
         repositories.preset_repository.clone(),
         llm_connection_service.clone(),
     ));
-    let agent_runtime_service = Arc::new(AgentRuntimeService::new_with_prompt_assembly_service(
+    let agent_runtime_service = Arc::new(AgentRuntimeService::new(
         repositories.agent_run_repository.clone(),
         repositories.agent_invocation_repository.clone(),
         repositories.workspace_repository.clone(),

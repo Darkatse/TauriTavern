@@ -2,13 +2,13 @@ use std::time::Instant;
 
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use uuid::Uuid;
 
 use super::policy::validate_handoff_target;
 use super::tool_error::tool_error_outcome;
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::AgentProfileResolveInput;
 use crate::services::agent_runtime_service::AgentRuntimeService;
+use crate::services::agent_runtime_service::loop_runner::tool_after_finish_error;
 use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
 use tt_domain::models::agent::profile::{AgentProfileId, ResolvedAgentProfile};
 use tt_domain::models::agent::{
@@ -39,6 +39,7 @@ impl AgentRuntimeService {
         invocation_id: &str,
         call: &AgentToolCall,
         profile: &ResolvedAgentProfile,
+        is_last_call: bool,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
         let args = match serde_json::from_value::<AgentHandoffArgs>(call.arguments.clone()) {
@@ -149,22 +150,17 @@ impl AgentRuntimeService {
                 started.elapsed().as_millis(),
             ));
         }
+        if !is_last_call {
+            return Err(tool_after_finish_error("agent_handoff"));
+        }
 
-        let task_id = format!("handoff_{}", Uuid::new_v4().simple());
-        let child_invocation_id = format!("inv_{}", Uuid::new_v4().simple());
-        let workspace_key = self
-            .allocate_child_workspace_key(run_id, target.id.as_str())
-            .await?;
         let task = self
             .create_handoff_task(
                 run_id,
                 invocation_id,
-                child_invocation_id.clone(),
-                task_id.clone(),
-                target.id.as_str().to_string(),
-                workspace_key,
-                call.id.clone(),
-                args.handoff.clone(),
+                target.id.as_str(),
+                call.id.as_str(),
+                args.handoff,
             )
             .await?;
         self.event(
@@ -201,8 +197,8 @@ impl AgentRuntimeService {
                 resource_refs: Vec::new(),
             },
             effect: AgentToolEffect::HandoffAccepted {
-                task_id,
-                new_invocation_id: child_invocation_id,
+                task_id: task.id,
+                new_invocation_id: task.child_invocation_id,
             },
             elapsed_ms: started.elapsed().as_millis(),
         })

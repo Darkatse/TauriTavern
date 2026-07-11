@@ -1,9 +1,7 @@
-use std::collections::HashSet;
 use std::time::Instant;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 use super::policy::validate_subagent_target;
 use super::tool_error::tool_error_outcome;
@@ -116,21 +114,13 @@ impl AgentRuntimeService {
             ));
         }
 
-        let task_id = format!("task_{}", Uuid::new_v4().simple());
-        let child_invocation_id = format!("inv_{}", Uuid::new_v4().simple());
-        let workspace_key = self
-            .allocate_child_workspace_key(run_id, target.id.as_str())
-            .await?;
         let task = self
             .create_child_task(
                 run_id,
                 invocation_id,
-                child_invocation_id.clone(),
-                task_id.clone(),
-                target.id.as_str().to_string(),
-                workspace_key,
-                call.id.clone(),
-                args.task.clone(),
+                target.id.as_str(),
+                call.id.as_str(),
+                args.task,
             )
             .await?;
         self.event(
@@ -152,7 +142,7 @@ impl AgentRuntimeService {
             .submit(task.id.clone(), task.child_invocation_id.clone())?;
 
         let structured = json!({
-            "taskId": task_id,
+            "taskId": task.id.as_str(),
             "status": task.status,
             "agentId": target.id.as_str(),
         });
@@ -211,18 +201,6 @@ impl AgentRuntimeService {
         }
         Ok(Ok(()))
     }
-
-    pub(in crate::services::agent_runtime_service) async fn allocate_child_workspace_key(
-        &self,
-        run_id: &str,
-        target_profile_id: &str,
-    ) -> Result<String, ApplicationError> {
-        let tasks = self.invocation_repository.list_tasks(run_id).await?;
-        Ok(next_child_workspace_key(
-            target_profile_id,
-            tasks.iter().map(|task| task.workspace_key.as_str()),
-        ))
-    }
 }
 
 fn validate_delegate_task_packet(task: &Value) -> Result<(), String> {
@@ -272,42 +250,11 @@ fn validate_task_string_len(value: &str, key: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn next_child_workspace_key<'a>(
-    target_profile_id: &str,
-    existing_keys: impl IntoIterator<Item = &'a str>,
-) -> String {
-    let existing_keys = existing_keys.into_iter().collect::<HashSet<_>>();
-    if !existing_keys.contains(target_profile_id) {
-        return target_profile_id.to_string();
-    }
-
-    for index in 2.. {
-        let candidate = format!("{target_profile_id}-{index:03}");
-        if !existing_keys.contains(candidate.as_str()) {
-            return candidate;
-        }
-    }
-    unreachable!("unbounded workspace key allocation exhausted")
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{next_child_workspace_key, validate_delegate_task_packet};
-
-    #[test]
-    fn child_workspace_key_uses_agent_id_then_numbered_suffixes() {
-        assert_eq!(next_child_workspace_key("scene-critic", []), "scene-critic");
-        assert_eq!(
-            next_child_workspace_key("scene-critic", ["scene-critic"]),
-            "scene-critic-002"
-        );
-        assert_eq!(
-            next_child_workspace_key("scene-critic", ["scene-critic", "scene-critic-002"]),
-            "scene-critic-003"
-        );
-    }
+    use super::validate_delegate_task_packet;
 
     #[test]
     fn delegate_task_packet_accepts_missing_title() {

@@ -24,7 +24,8 @@ use tt_adapter_storage_userdata::png_card_metadata::{
     read_character_data_from_png, write_character_data_to_png,
 };
 use tt_application::dto::agent_dto::{
-    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
+    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto, AgentRunHandleDto,
+    AgentSkillScopeRefsDto, AgentStartRunDto, AgentStartRunOptionsDto,
 };
 use tt_application::dto::character_dto::{
     BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataFilterDto,
@@ -48,6 +49,7 @@ use tt_application::services::agent_workspace_lifecycle_service::{
 };
 use tt_application::services::character_service::CharacterService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
+use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::{AgentDelegationPolicy, AgentProfileId};
@@ -55,6 +57,7 @@ use tt_domain::models::agent::{
     AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentRun, AgentRunEventLevel,
     AgentRunPresentation, AgentRunStatus, WorkspacePath,
 };
+use tt_domain::models::chat::Chat;
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
@@ -78,6 +81,7 @@ mod host_resources;
 struct AgentRuntimeFixture {
     service: Arc<AgentRuntimeService>,
     agent_repository: Arc<FileAgentRepository>,
+    chat_repository: Arc<FileChatRepository>,
     profile_service: Arc<AgentProfileService>,
     model_gateway: Arc<MockAgentModelGateway>,
 }
@@ -175,10 +179,11 @@ fn agent_runtime_fixture_with_results(
     let profile_repository: Arc<dyn AgentProfileRepository> = profile_file_repository.clone();
     let profile_health_repository: Arc<dyn AgentProfileStorageHealthRepository> =
         profile_file_repository;
+    let preset_repository = Arc::new(NullPresetRepository);
     let profile_service = Arc::new(AgentProfileService::new(
         profile_repository,
         profile_health_repository,
-        Arc::new(NullPresetRepository),
+        preset_repository.clone(),
     ));
     let skill_service = Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
         root.join("_tauritavern/skills"),
@@ -186,6 +191,11 @@ fn agent_runtime_fixture_with_results(
     let llm_connection_service = Arc::new(LlmConnectionService::new(Arc::new(
         FileLlmConnectionRepository::new(root.join("_tauritavern/llm-connections")),
     )));
+    let prompt_assembly_service = Arc::new(PromptAssemblyService::new(
+        profile_service.clone(),
+        preset_repository,
+        llm_connection_service.clone(),
+    ));
     let model_gateway = Arc::new(MockAgentModelGateway::with_results(responses));
     let service = Arc::new(AgentRuntimeService::new(
         agent_repository.clone() as Arc<dyn AgentRunRepository>,
@@ -193,16 +203,18 @@ fn agent_runtime_fixture_with_results(
         agent_repository.clone() as Arc<dyn WorkspaceRepository>,
         agent_repository.clone() as Arc<dyn CheckpointRepository>,
         chat_file_repository.clone() as Arc<dyn ChatRepository>,
-        chat_file_repository as Arc<dyn GroupChatRepository>,
+        chat_file_repository.clone() as Arc<dyn GroupChatRepository>,
         skill_service,
         model_gateway.clone(),
         profile_service.clone(),
         llm_connection_service,
+        prompt_assembly_service,
     ));
 
     AgentRuntimeFixture {
         service,
         agent_repository,
+        chat_repository: chat_file_repository,
         profile_service,
         model_gateway,
     }
@@ -257,6 +269,68 @@ async fn resolve_contract_profile(
         })
         .await
         .expect("resolve default profile")
+}
+
+async fn start_contract_agent_run(
+    fixture: &AgentRuntimeFixture,
+    profile: &tt_domain::models::agent::profile::ResolvedAgentProfile,
+    presentation: AgentRunPresentation,
+    label: &str,
+) -> AgentRunHandleDto {
+    let request = chat_request(label);
+    let file_name = format!("{label}.jsonl");
+    let mut chat = Chat::new("User", "Alice");
+    chat.file_name = Some(file_name.clone());
+    fixture
+        .chat_repository
+        .save(&chat)
+        .await
+        .expect("save empty contract chat");
+    fixture
+        .service
+        .start_run(AgentStartRunDto {
+            chat_ref: AgentChatRef::Character {
+                character_id: "Alice".to_string(),
+                file_name,
+            },
+            stable_chat_id: format!("stable-{label}"),
+            generation_type: "normal".to_string(),
+            profile_id: Some(profile.id.as_str().to_string()),
+            persist_base_state_id: None,
+            prompt_snapshot: Some(json!({
+                "contextPolicy": &profile.context,
+                "chatCompletionPayload": request.payload,
+            })),
+            frozen_run_input_snapshot: None,
+            generation_intent: None,
+            skill_scope_refs: AgentSkillScopeRefsDto::default(),
+            options: AgentStartRunOptionsDto {
+                stream: false,
+                presentation: Some(presentation),
+            },
+        })
+        .await
+        .expect("start contract Agent run")
+}
+
+async fn wait_for_terminal_agent_run(repository: &FileAgentRepository, run_id: &str) -> AgentRun {
+    tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
+        loop {
+            let run = repository.load_run(run_id).await.expect("load Agent run");
+            if matches!(
+                run.status,
+                AgentRunStatus::Completed
+                    | AgentRunStatus::PartialSuccess
+                    | AgentRunStatus::Cancelled
+                    | AgentRunStatus::Failed
+            ) {
+                return run;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("Agent run did not reach a terminal status")
 }
 
 fn contract_run(

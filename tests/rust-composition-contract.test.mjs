@@ -56,13 +56,17 @@ test('Rust sync composition keeps one shared coordinator and pairing approval', 
     );
 });
 
-test('Rust agent composition keeps Agent behind the chat completion service gateway', async () => {
+test('Rust agent composition keeps one complete runtime behind the chat completion service gateway', async () => {
     const source = await readRepoFile('src-tauri/crates/tauritavern/src/app/composition/services/agent.rs');
 
-    assert.match(source, /AgentRuntimeService::new_with_prompt_assembly_service\(/);
+    assert.equal(count(source, 'AgentRuntimeService::new('), 1);
     assert.match(
         source,
         /Arc::new\(ChatCompletionAgentModelGateway::new\(\s*chat_completion_service,\s*\)\)/,
     );
-    assert.doesNotMatch(source, /AgentRuntimeService::new\(/);
+    assert.match(
+        source,
+        /AgentRuntimeService::new\([\s\S]*?prompt_assembly_service\.clone\(\),[\s\S]*?\)\);/,
+    );
+    assert.doesNotMatch(source, /new_with_prompt_assembly_service/);
 });

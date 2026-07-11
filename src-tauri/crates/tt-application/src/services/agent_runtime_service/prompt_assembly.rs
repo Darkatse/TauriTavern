@@ -99,29 +99,28 @@ impl AgentRuntimeService {
         })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "prompt assembly boundary keeps profile, tools, snapshot, scope, and cancellation explicit"
+    )]
     pub(super) async fn assemble_invocation_prompt_snapshot(
         &self,
-        run_id: &str,
-        invocation_id: &str,
         profile: &ResolvedAgentProfile,
         visible_tools: &[AgentToolSpec],
         generation_type: &str,
         frozen_run_input_snapshot: Value,
-        scope: AgentPromptAssemblyScopeDto,
+        scope: &AgentPromptAssemblyScopeDto,
         agent_task_prompt: String,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<Option<Value>, ApplicationError> {
+        let run_id = scope.run_id.as_str();
+        let invocation_id = scope.invocation_id.as_str();
         if profile.preset.mode != AgentPresetBindingMode::Ref {
             return Ok(None);
         }
-        let prompt_assembly_service = self.prompt_assembly_service.as_ref().ok_or_else(|| {
-            ApplicationError::InternalError(
-                "agent.prompt_assembly_service_unavailable: AgentRuntimeService was not configured with PromptAssemblyService"
-                    .to_string(),
-            )
-        })?;
         let assembly_id = format!("prompt_assembly_{}", Uuid::new_v4().simple());
-        let prepared = prompt_assembly_service
+        let prepared = self
+            .prompt_assembly_service
             .prepare_invocation_frontend_prompt_assembly(
                 AgentPreparePromptAssemblyDto {
                     profile_id: Some(profile.id.as_str().to_string()),

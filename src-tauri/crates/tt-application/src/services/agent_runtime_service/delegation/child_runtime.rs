@@ -9,8 +9,6 @@ use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::{
     AgentProfileResolveInput, ensure_profile_model_configured, materialize_agent_system_prompt,
 };
-use crate::services::agent_runtime_service::AgentCancelReceiver;
-use crate::services::agent_runtime_service::AgentRuntimeService;
 use crate::services::agent_runtime_service::commit_ledger::RunCommitLedger;
 use crate::services::agent_runtime_service::prompt_snapshot::{
     prepare_agent_tool_request, request_from_prompt_snapshot, request_summary,
@@ -18,19 +16,15 @@ use crate::services::agent_runtime_service::prompt_snapshot::{
 use crate::services::agent_runtime_service::skill_scope::{
     skill_event_summary, skill_scope_order_for_profile,
 };
+use crate::services::agent_runtime_service::{
+    AgentCancelReceiver, AgentRuntimeService, PreparedInvocation,
+};
 use tt_domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
 use tt_domain::models::agent::{
-    AgentDelegationContinuation, AgentInvocationExitPolicy, AgentInvocationStatus,
-    AgentModelRequest, AgentRunEventLevel, AgentRunSkillScopeRefs, AgentTaskRecord,
-    AgentTaskStatus, WorkspacePath,
+    AgentDelegationContinuation, AgentInvocation, AgentInvocationStatus, AgentRunEventLevel,
+    AgentRunSkillScopeRefs, AgentTaskRecord, AgentTaskStatus, WorkspacePath,
 };
 use tt_domain::models::skill::{SkillIndexEntry, SkillScope};
-
-pub(in crate::services::agent_runtime_service) struct PreparedDelegatedInvocationContext {
-    pub(in crate::services::agent_runtime_service) profile: ResolvedAgentProfile,
-    pub(in crate::services::agent_runtime_service) request: AgentModelRequest,
-    pub(in crate::services::agent_runtime_service) effective_skills: Vec<SkillIndexEntry>,
-}
 
 impl AgentRuntimeService {
     pub(in crate::services::agent_runtime_service) async fn has_pending_child_tasks(
@@ -124,45 +118,18 @@ impl AgentRuntimeService {
                 "Delegated task `{task_id}` was cancelled before it started"
             )));
         }
-        self.start_child_invocation(run_id, invocation_id).await?;
-
-        let mut profile = self.resolve_task_profile(&task).await?;
-        ensure_profile_model_configured(&profile)?;
-        apply_child_invocation_policy(&mut profile);
-        let PreparedDelegatedInvocationContext {
-            profile,
-            request,
-            effective_skills,
-        } = self
-            .prepare_delegated_invocation_context(
-                run_id,
-                invocation_id,
-                &task,
-                profile,
-                AgentInvocationExitPolicy::TaskReturnRequired,
-                "subagent",
-                "taskReturnRequired",
-                render_child_task_prompt(&task),
-                cancel,
-            )
+        let invocation = self.start_child_invocation(run_id, invocation_id).await?;
+        let mut prepared = self
+            .prepare_delegated_invocation(invocation, &task, cancel)
             .await?;
         let mut child_commit_ledger = RunCommitLedger::default();
         let exit = self
-            .run_tool_loop(
-                run_id,
-                invocation_id,
-                AgentInvocationExitPolicy::TaskReturnRequired,
-                request,
-                &profile,
-                &effective_skills,
-                &mut child_commit_ledger,
-                cancel,
-            )
+            .run_tool_loop(&mut prepared, &mut child_commit_ledger, cancel)
             .await?
             .ok_or_else(|| {
                 ApplicationError::ValidationError(format!(
                     "agent.max_tool_rounds_exceeded: task.return was not called within {} rounds",
-                    profile.tools.max_rounds
+                    prepared.profile.tools.max_rounds
                 ))
             })?;
         if let AgentLoopExit::Transferred { .. } = exit {
@@ -203,7 +170,7 @@ impl AgentRuntimeService {
         task_id: &str,
         invocation_id: &str,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<PreparedDelegatedInvocationContext, ApplicationError> {
+    ) -> Result<PreparedInvocation, ApplicationError> {
         let task = self
             .transition_child_task(run_id, task_id, AgentTaskStatus::Running, None, None)
             .await?;
@@ -212,35 +179,36 @@ impl AgentRuntimeService {
                 "Handoff task `{task_id}` was cancelled before it started"
             )));
         }
-        self.start_invocation(run_id, invocation_id).await?;
-        let profile = self.resolve_task_profile(&task).await?;
-        ensure_profile_model_configured(&profile)?;
-        self.prepare_delegated_invocation_context(
-            run_id,
-            invocation_id,
-            &task,
-            profile,
-            AgentInvocationExitPolicy::RunFinishAllowed,
-            "handoff",
-            "runFinishAllowed",
-            render_handoff_task_prompt(&task),
-            cancel,
-        )
-        .await
+        let invocation = self.start_invocation(run_id, invocation_id).await?;
+        self.prepare_delegated_invocation(invocation, &task, cancel)
+            .await
     }
 
-    pub(in crate::services::agent_runtime_service) async fn prepare_delegated_invocation_context(
+    async fn prepare_delegated_invocation(
         &self,
-        run_id: &str,
-        invocation_id: &str,
+        invocation: AgentInvocation,
         task: &AgentTaskRecord,
-        profile: ResolvedAgentProfile,
-        exit_policy: AgentInvocationExitPolicy,
-        invocation_kind: &str,
-        exit_policy_label: &str,
-        task_prompt: String,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<PreparedDelegatedInvocationContext, ApplicationError> {
+    ) -> Result<PreparedInvocation, ApplicationError> {
+        let run_id = invocation.run_id.as_str();
+        let invocation_id = invocation.id.as_str();
+        let mut profile = self.resolve_task_profile(task).await?;
+        ensure_profile_model_configured(&profile)?;
+        let (invocation_kind, exit_policy_label, task_prompt) = match task.continuation {
+            AgentDelegationContinuation::ReturnToParent => {
+                apply_child_invocation_policy(&mut profile);
+                (
+                    "subagent",
+                    "taskReturnRequired",
+                    render_child_task_prompt(task),
+                )
+            }
+            AgentDelegationContinuation::TransferControl => (
+                "handoff",
+                "runFinishAllowed",
+                render_handoff_task_prompt(task),
+            ),
+        };
         let prompt_snapshot = self
             .workspace_repository
             .read_text(run_id, &WorkspacePath::parse("input/prompt_snapshot.json")?)
@@ -250,24 +218,24 @@ impl AgentRuntimeService {
                 "agent.invalid_prompt_snapshot: input/prompt_snapshot.json is invalid JSON: {error}"
             ))
         })?;
-        let visible_tools = self.visible_tool_specs_for_invocation(&profile, exit_policy)?;
+        let visible_tools =
+            self.visible_tool_specs_for_invocation(&profile, invocation.exit_policy)?;
         let run = self.run_repository.load_run(run_id).await?;
         let invocation_prompt_snapshot = if profile.preset.mode == AgentPresetBindingMode::Ref {
+            let scope = AgentPromptAssemblyScopeDto {
+                run_id: run_id.to_string(),
+                invocation_id: invocation_id.to_string(),
+                invocation_kind: invocation_kind.to_string(),
+                parent_invocation_id: Some(task.parent_invocation_id.clone()),
+                task_id: Some(task.id.clone()),
+                exit_policy: Some(exit_policy_label.to_string()),
+            };
             self.assemble_invocation_prompt_snapshot(
-                run_id,
-                invocation_id,
                 &profile,
                 &visible_tools,
                 run.generation_type.as_str(),
                 frozen_run_input_snapshot_from_prompt_snapshot(&prompt_snapshot)?,
-                AgentPromptAssemblyScopeDto {
-                    run_id: run_id.to_string(),
-                    invocation_id: invocation_id.to_string(),
-                    invocation_kind: invocation_kind.to_string(),
-                    parent_invocation_id: Some(task.parent_invocation_id.clone()),
-                    task_id: Some(task.id.clone()),
-                    exit_policy: Some(exit_policy_label.to_string()),
-                },
+                &scope,
                 task_prompt.clone(),
                 cancel,
             )
@@ -344,7 +312,9 @@ impl AgentRuntimeService {
         )
         .await?;
 
-        Ok(PreparedDelegatedInvocationContext {
+        Ok(PreparedInvocation {
+            invocation,
+            delegation_task_id: Some(task.id.clone()),
             profile,
             request,
             effective_skills,
