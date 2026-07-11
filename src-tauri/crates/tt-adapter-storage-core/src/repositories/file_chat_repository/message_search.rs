@@ -245,6 +245,15 @@ struct Candidate {
     match_byte: Option<usize>,
 }
 
+struct CandidateSearchPlan {
+    min_index: usize,
+    max_index: usize,
+    role_filter: Option<ChatMessageRole>,
+    tokens: Vec<String>,
+    needs_lowercase: bool,
+    limit: usize,
+}
+
 impl PartialEq for Candidate {
     fn eq(&self, other: &Self) -> bool {
         self.score.to_bits() == other.score.to_bits() && self.index == other.index
@@ -334,6 +343,14 @@ impl FileChatRepository {
         }
 
         let mut remaining_scan = resolve_scan_limit(total_count, filters)?;
+        let plan = CandidateSearchPlan {
+            min_index: start_index,
+            max_index: end_index,
+            role_filter,
+            tokens,
+            needs_lowercase,
+            limit: query.limit,
+        };
 
         let mut heap: BinaryHeap<Reverse<Candidate>> = BinaryHeap::new();
 
@@ -344,17 +361,7 @@ impl FileChatRepository {
 
         let mut window_start_index = total_count.saturating_sub(tail.lines.len());
 
-        self.collect_candidates_from_lines(
-            &tail.lines,
-            window_start_index,
-            start_index,
-            end_index,
-            role_filter,
-            &tokens,
-            needs_lowercase,
-            query.limit,
-            &mut heap,
-        )?;
+        collect_candidates_from_lines(&tail.lines, window_start_index, &plan, &mut heap)?;
 
         remaining_scan = remaining_scan.saturating_sub(tail.lines.len());
 
@@ -374,21 +381,11 @@ impl FileChatRepository {
             let chunk_end_index = window_start_index
                 .saturating_add(chunk.lines.len())
                 .saturating_sub(1);
-            if chunk.lines.is_empty() || chunk_end_index < start_index {
+            if chunk.lines.is_empty() || chunk_end_index < plan.min_index {
                 break;
             }
 
-            self.collect_candidates_from_lines(
-                &chunk.lines,
-                window_start_index,
-                start_index,
-                end_index,
-                role_filter,
-                &tokens,
-                needs_lowercase,
-                query.limit,
-                &mut heap,
-            )?;
+            collect_candidates_from_lines(&chunk.lines, window_start_index, &plan, &mut heap)?;
 
             remaining_scan = remaining_scan.saturating_sub(chunk.lines.len());
         }
@@ -433,6 +430,14 @@ impl FileChatRepository {
         }
 
         let mut remaining_scan = resolve_scan_limit(total_count, filters)?;
+        let plan = CandidateSearchPlan {
+            min_index: start_index,
+            max_index: end_index,
+            role_filter,
+            tokens,
+            needs_lowercase,
+            limit: query.limit,
+        };
 
         let mut heap: BinaryHeap<Reverse<Candidate>> = BinaryHeap::new();
 
@@ -443,17 +448,7 @@ impl FileChatRepository {
 
         let mut window_start_index = total_count.saturating_sub(tail.lines.len());
 
-        self.collect_candidates_from_lines(
-            &tail.lines,
-            window_start_index,
-            start_index,
-            end_index,
-            role_filter,
-            &tokens,
-            needs_lowercase,
-            query.limit,
-            &mut heap,
-        )?;
+        collect_candidates_from_lines(&tail.lines, window_start_index, &plan, &mut heap)?;
 
         remaining_scan = remaining_scan.saturating_sub(tail.lines.len());
 
@@ -473,84 +468,68 @@ impl FileChatRepository {
             let chunk_end_index = window_start_index
                 .saturating_add(chunk.lines.len())
                 .saturating_sub(1);
-            if chunk.lines.is_empty() || chunk_end_index < start_index {
+            if chunk.lines.is_empty() || chunk_end_index < plan.min_index {
                 break;
             }
 
-            self.collect_candidates_from_lines(
-                &chunk.lines,
-                window_start_index,
-                start_index,
-                end_index,
-                role_filter,
-                &tokens,
-                needs_lowercase,
-                query.limit,
-                &mut heap,
-            )?;
+            collect_candidates_from_lines(&chunk.lines, window_start_index, &plan, &mut heap)?;
 
             remaining_scan = remaining_scan.saturating_sub(chunk.lines.len());
         }
 
         Ok(finalize_candidates(heap))
     }
+}
 
-    fn collect_candidates_from_lines(
-        &self,
-        lines: &[String],
-        start_abs_index: usize,
-        min_index: usize,
-        max_index: usize,
-        role_filter: Option<ChatMessageRole>,
-        tokens: &[String],
-        needs_lowercase: bool,
-        limit: usize,
-        heap: &mut BinaryHeap<Reverse<Candidate>>,
-    ) -> Result<(), DomainError> {
-        for (offset, line) in lines.iter().enumerate() {
-            let index = start_abs_index.saturating_add(offset);
-            if index < min_index || index > max_index {
-                continue;
-            }
-
-            let message: SearchableChatMessage = serde_json::from_str(line).map_err(|error| {
-                DomainError::InvalidData(format!("Failed to parse chat message JSON: {}", error))
-            })?;
-
-            let role = role_from_message(&message);
-            if let Some(filter) = role_filter
-                && role != filter
-            {
-                continue;
-            }
-
-            let (score, match_byte) = score_text(&message.mes, tokens, needs_lowercase);
-            if score <= 0.0 {
-                continue;
-            }
-
-            let candidate = Candidate {
-                index,
-                score,
-                role,
-                text: message.mes,
-                match_byte,
-            };
-
-            if heap.len() < limit {
-                heap.push(Reverse(candidate));
-                continue;
-            }
-
-            let should_insert = heap.peek().map(|entry| candidate > entry.0).unwrap_or(true);
-            if should_insert {
-                heap.pop();
-                heap.push(Reverse(candidate));
-            }
+fn collect_candidates_from_lines(
+    lines: &[String],
+    start_abs_index: usize,
+    plan: &CandidateSearchPlan,
+    heap: &mut BinaryHeap<Reverse<Candidate>>,
+) -> Result<(), DomainError> {
+    for (offset, line) in lines.iter().enumerate() {
+        let index = start_abs_index.saturating_add(offset);
+        if index < plan.min_index || index > plan.max_index {
+            continue;
         }
 
-        Ok(())
+        let message: SearchableChatMessage = serde_json::from_str(line).map_err(|error| {
+            DomainError::InvalidData(format!("Failed to parse chat message JSON: {}", error))
+        })?;
+
+        let role = role_from_message(&message);
+        if let Some(filter) = plan.role_filter
+            && role != filter
+        {
+            continue;
+        }
+
+        let (score, match_byte) = score_text(&message.mes, &plan.tokens, plan.needs_lowercase);
+        if score <= 0.0 {
+            continue;
+        }
+
+        let candidate = Candidate {
+            index,
+            score,
+            role,
+            text: message.mes,
+            match_byte,
+        };
+
+        if heap.len() < plan.limit {
+            heap.push(Reverse(candidate));
+            continue;
+        }
+
+        let should_insert = heap.peek().map(|entry| candidate > entry.0).unwrap_or(true);
+        if should_insert {
+            heap.pop();
+            heap.push(Reverse(candidate));
+        }
     }
+
+    Ok(())
 }
 
 fn finalize_candidates(heap: BinaryHeap<Reverse<Candidate>>) -> Vec<ChatMessageSearchHit> {
