@@ -185,29 +185,6 @@ function normalizeExpectedWindowLineCount(value) {
     return normalized;
 }
 
-export async function saveCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, payload, expectedWindowLineCount, force = false }) {
-    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
-    const normalizedFile = normalizeChatFileName(fileName);
-    if (!Array.isArray(payload) || payload.length === 0 || !normalizedCharacter || !normalizedFile.trim()) {
-        throw new Error('Invalid chat payload');
-    }
-
-    const header = JSON.stringify(payload[0]);
-    const lines = payload.slice(1).map((entry) => JSON.stringify(entry));
-
-    return invoke('save_chat_payload_windowed', {
-        dto: {
-            ch_name: normalizedCharacter,
-            file_name: normalizedFile,
-            cursor,
-            header,
-            lines,
-            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
-            force,
-        },
-    });
-}
-
 export async function patchCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, header, patch, expectedWindowLineCount, force = false }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
@@ -347,27 +324,6 @@ export async function saveGroupChatPayload({ id, payload, force = false }) {
             force,
         },
     }));
-}
-
-export async function saveGroupChatPayloadWindowed({ id, cursor, payload, expectedWindowLineCount, force = false }) {
-    const normalizedId = normalizeChatFileName(id);
-    if (!Array.isArray(payload) || payload.length === 0 || !normalizedId.trim()) {
-        throw new Error('Invalid group chat payload');
-    }
-
-    const header = JSON.stringify(payload[0]);
-    const lines = payload.slice(1).map((entry) => JSON.stringify(entry));
-
-    return invoke('save_group_chat_payload_windowed', {
-        dto: {
-            id: normalizedId,
-            cursor,
-            header,
-            lines,
-            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
-            force,
-        },
-    });
 }
 
 export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch, expectedWindowLineCount, force = false }) {

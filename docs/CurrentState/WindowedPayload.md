@@ -1,6 +1,6 @@
 # Windowed Payload（分片读写）现状
 
-本文档描述 **当前已经落地** 的 windowed payload 机制：包括 tail 小窗口加载、向前分页（before/before_pages）、以及 windowed save/patch 写入链路；并覆盖 Prompt-backfill（生成时按需回填）与页缓存/批量 IPC 的现状。
+本文档描述 **当前已经落地** 的 windowed payload 机制：包括 tail 小窗口加载、向前分页（before/before_pages）、windowed patch 写入与全量保存回退；并覆盖 Prompt-backfill（生成时按需回填）与页缓存/批量 IPC 的现状。
 
 目标读者：后续要继续改“聊天记录分片读写/生成上下文”的开发者。
 
@@ -11,7 +11,7 @@
 windowed payload 的第一性原理是把“聊天记录的**常驻内存压力**”从前端移走：
 
 - **UI Window**：只在前端常驻一个小窗口（tail），保证低端 Android 的内存与渲染开销可控。
-- **Disk History**：更早消息留在 JSONL 文件里，通过 cursor 进行**分片读取**（before）与**增量写入**（patch/save）。
+- **Disk History**：更早消息留在 JSONL 文件里，通过 cursor 进行**分片读取**（before）与**增量写入**（patch）。
 - **Prompt Window**：生成时（`Generate()`）可短暂加载更多历史，但不写回 `chat`、不渲染、不扩大 UI window。
 
 当前实现已经做到：
@@ -37,7 +37,7 @@ windowed payload 的底层存储是 JSONL 文件：
 
 Rust 侧定义：`ChatPayloadCursor { offset, size, modified_millis }`（序列化为 camelCase）。见：
 
-- `src-tauri/crates/tt-ports/src/repositories/chat_repository.rs`
+- `src-tauri/crates/tt-contracts/src/chat.rs`
 
 含义：
 
@@ -51,7 +51,7 @@ Rust 侧定义：`ChatPayloadCursor { offset, size, modified_millis }`（序列�
 因此：
 
 - before 分页：只会把更早的消息“向前扩展”这段后缀。
-- windowed patch/save：只会覆盖/追加这个后缀，不会触碰 `cursor.offset` 之前的历史字节。
+- windowed patch：header 语义不变时不会触碰 `cursor.offset` 之前的字节；header 变化时只重写 header，header 后到窗口前的历史消息字节保持原样，返回 cursor 按 header 长度差平移。
 
 ---
 
@@ -242,11 +242,9 @@ group chat 保存：
 
 写入：
 
-- `save_chat_payload_windowed(dto) -> ChatPayloadCursor`
 - `patch_chat_payload_windowed(dto) -> ChatPayloadCursor`
 - `save_chat_payload_from_file(dto) -> ()`（全量保存回退路径）
 - group 对应：
-  - `save_group_chat_payload_windowed(dto)`
   - `patch_group_chat_payload_windowed(dto)`
   - `save_group_chat_from_file(dto)`
 
@@ -260,6 +258,7 @@ group chat 保存：
 
 - 维持参数校验（例如 `max_lines/max_pages > 0`）
 - before_pages 仅做循环聚合（不在这里引入缓存与复杂策略）
+- 以 `ChatPayloadWindowPatchRequest` 整体传递 cursor/header/op/baseline/force，不在跨 crate 边界重复平铺同一 CAS mutation
 
 ### 5.3 仓储层（Infrastructure）：FileChatRepository
 
@@ -282,14 +281,14 @@ group chat 保存：
 
 写语义要点：
 
-- patch/save 都会：
+- patch：
   - 获取写锁（同一 payload 序列化写入）
+  - 要求目标 payload 已存在；不存在时返回 `NotFound`，不会用局部窗口创建聊天
   - 校验 cursor 签名
+  - 校验 `expected_window_line_count` 与 cursor 到 EOF 的实际消息行数
   - 校验 integrity（除非 `force`；注意：`force` 只跳过 integrity，不跳过 cursor 校验）
   - 写入后更新 cursor（新的 size/modified_millis）
   - 清理相关缓存并写入备份（backup）
-- `save_*_payload_windowed`：
-  - 保留 `cursor.offset` 之前的原始字节，截断并用传入的 JSONL `lines` 覆盖/续写窗口后缀
 - `patch_*_payload_windowed`：
   - `Append`：追加 lines 到 EOF
   - `RewriteFromIndex(startIndex)`：从 `cursor.offset` 起第 `startIndex` 条 message 行开始截断并重写

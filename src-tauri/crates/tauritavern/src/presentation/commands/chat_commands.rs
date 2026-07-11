@@ -9,11 +9,11 @@ use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
     HideChatBeforeCursorDto, ImportCharacterChatsDto, ImportChatDto, PatchChatWindowedDto,
-    PinnedCharacterChatDto, RenameChatDto, SaveChatFromFileDto, SaveChatWindowedDto,
+    PinnedCharacterChatDto, RenameChatDto, SaveChatFromFileDto,
 };
 use tt_application::errors::ApplicationError;
 use tt_ports::repositories::chat_repository::{
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatPayloadWindowPatchRequest,
 };
 
 #[tauri::command]
@@ -431,53 +431,36 @@ pub async fn get_chat_payload_before_pages(
 }
 
 #[tauri::command]
-pub async fn save_chat_payload_windowed(
-    dto: SaveChatWindowedDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<ChatPayloadCursor, CommandError> {
-    log_command(format!(
-        "save_chat_payload_windowed {}/{}",
-        dto.character_name, dto.file_name
-    ));
-
-    app_state
-        .services
-        .chat_service
-        .save_chat_payload_windowed(
-            &dto.character_name,
-            &dto.file_name,
-            dto.cursor,
-            dto.header,
-            dto.lines,
-            dto.expected_window_line_count,
-            dto.force.unwrap_or(false),
-        )
-        .await
-        .map_err(map_command_error("Failed to save windowed chat payload"))
-}
-
-#[tauri::command]
 pub async fn patch_chat_payload_windowed(
     dto: PatchChatWindowedDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<ChatPayloadCursor, CommandError> {
+    let PatchChatWindowedDto {
+        character_name,
+        file_name,
+        cursor,
+        header,
+        patch,
+        expected_window_line_count,
+        force,
+    } = dto;
     log_command(format!(
         "patch_chat_payload_windowed {}/{}",
-        dto.character_name, dto.file_name
+        character_name, file_name
     ));
+
+    let request = ChatPayloadWindowPatchRequest {
+        cursor,
+        header,
+        op: patch,
+        expected_window_line_count,
+        force: force.unwrap_or(false),
+    };
 
     app_state
         .services
         .chat_service
-        .patch_chat_payload_windowed(
-            &dto.character_name,
-            &dto.file_name,
-            dto.cursor,
-            dto.header,
-            dto.patch,
-            dto.expected_window_line_count,
-            dto.force.unwrap_or(false),
-        )
+        .patch_chat_payload_windowed(&character_name, &file_name, request)
         .await
         .map_err(map_command_error("Failed to patch windowed chat payload"))
 }

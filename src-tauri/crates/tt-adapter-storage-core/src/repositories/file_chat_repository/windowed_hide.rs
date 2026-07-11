@@ -168,7 +168,7 @@ async fn hide_payload_before_cursor_internal(
     verify_cursor_offset_is_line_boundary(path, cursor.offset).await?;
 
     // Window baseline contract: same anchor validation as the windowed
-    // save/patch paths — a stale cursor must be rejected before any rewrite.
+    // Other windowed mutation paths follow the same rule: reject stale cursors before rewriting.
     verify_window_baseline(
         path,
         cursor.offset,

@@ -23,7 +23,7 @@ use tt_ports::repositories::character_repository::CharacterRepository;
 use tt_ports::repositories::chat_repository::{ChatExportFormat, ChatImportFormat, ChatRepository};
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
-    ChatPayloadPatchOp, ChatPayloadTail, FindLastMessageQuery, LocatedChatMessage,
+    ChatPayloadTail, ChatPayloadWindowPatchRequest, FindLastMessageQuery, LocatedChatMessage,
     PinnedCharacterChat,
 };
 
@@ -618,59 +618,18 @@ impl ChatService {
         Ok(pages)
     }
 
-    /// Save a windowed character chat payload by preserving bytes before cursor.offset and
-    /// overwriting from cursor.offset using the provided JSONL lines.
-    pub async fn save_chat_payload_windowed(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        lines: Vec<String>,
-        expected_window_line_count: usize,
-        force: bool,
-    ) -> Result<ChatPayloadCursor, ApplicationError> {
-        validate_character_path_component(character_name)?;
-        validate_chat_file_name(file_name, "Chat file name")?;
-
-        self.chat_repository
-            .save_chat_payload_windowed(
-                character_name,
-                file_name,
-                cursor,
-                header,
-                lines,
-                expected_window_line_count,
-                force,
-            )
-            .await
-            .map_err(Into::into)
-    }
-
     /// Patch a windowed character chat payload.
     pub async fn patch_chat_payload_windowed(
         &self,
         character_name: &str,
         file_name: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        op: ChatPayloadPatchOp,
-        expected_window_line_count: usize,
-        force: bool,
+        request: ChatPayloadWindowPatchRequest,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         validate_character_path_component(character_name)?;
         validate_chat_file_name(file_name, "Chat file name")?;
 
         self.chat_repository
-            .patch_chat_payload_windowed(
-                character_name,
-                file_name,
-                cursor,
-                header,
-                op,
-                expected_window_line_count,
-                force,
-            )
+            .patch_chat_payload_windowed(character_name, file_name, request)
             .await
             .map_err(Into::into)
     }

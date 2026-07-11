@@ -162,19 +162,6 @@ pub struct SaveChatFromFileDto {
     pub force: Option<bool>,
 }
 
-/// DTO for saving a windowed character chat payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SaveChatWindowedDto {
-    #[serde(rename = "ch_name")]
-    pub character_name: String,
-    pub file_name: String,
-    pub cursor: ChatPayloadCursor,
-    pub header: String,
-    pub lines: Vec<String>,
-    pub expected_window_line_count: usize,
-    pub force: Option<bool>,
-}
-
 /// DTO for patching a windowed character chat payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchChatWindowedDto {
@@ -215,17 +202,6 @@ pub struct HideGroupChatBeforeCursorDto {
 pub struct SaveGroupChatFromFileDto {
     pub id: String,
     pub file_path: String,
-    pub force: Option<bool>,
-}
-
-/// DTO for saving a windowed group chat payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SaveGroupChatWindowedDto {
-    pub id: String,
-    pub cursor: ChatPayloadCursor,
-    pub header: String,
-    pub lines: Vec<String>,
-    pub expected_window_line_count: usize,
     pub force: Option<bool>,
 }
 

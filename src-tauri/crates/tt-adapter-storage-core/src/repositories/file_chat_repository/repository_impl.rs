@@ -17,9 +17,9 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
 use tt_ports::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatMessageSearchHit, ChatMessageSearchQuery,
-    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp,
-    ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
-    PinnedCharacterChat,
+    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
+    ChatPayloadWindowPatchRequest, ChatRepository, ChatSearchResult, FindLastMessageQuery,
+    LocatedChatMessage, PinnedCharacterChat,
 };
 
 use super::FileChatRepository;
@@ -607,48 +607,14 @@ impl ChatRepository for FileChatRepository {
             .await
     }
 
-    async fn save_chat_payload_windowed(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        lines: Vec<String>,
-        expected_window_line_count: usize,
-        force: bool,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.save_character_payload_windowed(
-            character_name,
-            file_name,
-            cursor,
-            header,
-            lines,
-            expected_window_line_count,
-            force,
-        )
-        .await
-    }
-
     async fn patch_chat_payload_windowed(
         &self,
         character_name: &str,
         file_name: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        op: ChatPayloadPatchOp,
-        expected_window_line_count: usize,
-        force: bool,
+        request: ChatPayloadWindowPatchRequest,
     ) -> Result<ChatPayloadCursor, DomainError> {
-        self.patch_character_payload_windowed(
-            character_name,
-            file_name,
-            cursor,
-            header,
-            op,
-            expected_window_line_count,
-            force,
-        )
-        .await
+        self.patch_character_payload_windowed(character_name, file_name, request)
+            .await
     }
 
     async fn hide_chat_payload_before_cursor(

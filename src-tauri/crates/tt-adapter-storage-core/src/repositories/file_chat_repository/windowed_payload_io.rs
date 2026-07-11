@@ -175,51 +175,6 @@ pub(super) async fn ensure_parent_dir(path: &Path) -> Result<(), DomainError> {
     Ok(())
 }
 
-pub(super) async fn write_jsonl_lines_to_file(
-    file: &mut File,
-    first_line: &str,
-    lines: &[String],
-) -> Result<(), DomainError> {
-    if first_line.trim().is_empty() {
-        return Err(DomainError::InvalidData(
-            "Chat payload header line is empty".to_string(),
-        ));
-    }
-
-    file.write_all(first_line.as_bytes())
-        .await
-        .map_err(|error| {
-            DomainError::InternalError(format!("Failed to write chat payload header: {}", error))
-        })?;
-    file.write_all(b"\n").await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to write chat payload header: {}", error))
-    })?;
-
-    let mut first = true;
-    for line in lines {
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        if first {
-            first = false;
-        } else {
-            file.write_all(b"\n").await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to write chat payload newline: {}",
-                    error
-                ))
-            })?;
-        }
-
-        file.write_all(line.as_bytes()).await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to write chat payload line: {}", error))
-        })?;
-    }
-
-    Ok(())
-}
-
 pub(super) async fn write_jsonl_lines_at_end(
     file: &mut File,
     lines: &[String],

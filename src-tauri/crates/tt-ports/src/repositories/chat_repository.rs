@@ -7,8 +7,9 @@ use tt_domain::models::chat::{Chat, ChatMessage};
 pub use super::chat_types::{
     ChatExportFormat, ChatImportFormat, ChatMessageReadItem, ChatMessageRole,
     ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult,
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail, ChatSearchResult,
-    FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail,
+    ChatPayloadWindowPatchRequest, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
+    PinnedCharacterChat, PinnedGroupChat,
 };
 
 /// Repository interface for chat management
@@ -140,31 +141,13 @@ pub trait ChatRepository: Send + Sync {
         max_lines: usize,
     ) -> Result<ChatPayloadChunk, DomainError>;
 
-    /// Save a windowed character chat payload by preserving bytes before cursor.offset and
-    /// overwriting the tail from cursor.offset using the provided JSONL lines.
-    async fn save_chat_payload_windowed(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        lines: Vec<String>,
-        expected_window_line_count: usize,
-        force: bool,
-    ) -> Result<ChatPayloadCursor, DomainError>;
-
     /// Patch a windowed character chat payload by applying an operation at the tail.
-    /// `expected_window_line_count` is the window baseline contract: how many message
-    /// lines the caller's last successful load/save left between cursor.offset and EOF.
+    /// The request carries the cursor signature and window baseline for compare-and-swap.
     async fn patch_chat_payload_windowed(
         &self,
         character_name: &str,
         file_name: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        op: ChatPayloadPatchOp,
-        expected_window_line_count: usize,
-        force: bool,
+        request: ChatPayloadWindowPatchRequest,
     ) -> Result<ChatPayloadCursor, DomainError>;
 
     /// Set the hidden flag (`is_system`) on all messages stored before the window cursor.

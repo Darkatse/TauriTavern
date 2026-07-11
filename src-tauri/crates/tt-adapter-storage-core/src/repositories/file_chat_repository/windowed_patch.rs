@@ -1,11 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::Value;
-use tokio::fs::{self, File, OpenOptions};
+use tokio::fs::{File, OpenOptions};
 use tokio::io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::chat_repository::{ChatPayloadCursor, ChatPayloadPatchOp};
+use tt_ports::repositories::chat_repository::{
+    ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadWindowPatchRequest,
+};
 
 use super::FileChatRepository;
 use super::integrity::verify_integrity_match;
@@ -14,7 +16,7 @@ use super::windowed_payload_io::{
     extract_integrity_slug_from_header_line, map_open_existing_error, open_existing_payload_file,
     read_existing_payload_metadata, read_first_line_and_end_offset, replace_file,
     verify_cursor_offset_is_line_boundary, verify_cursor_signature, verify_window_baseline,
-    write_jsonl_lines_at_end, write_jsonl_lines_to_file,
+    write_jsonl_lines_at_end,
 };
 
 impl FileChatRepository {
@@ -22,11 +24,7 @@ impl FileChatRepository {
         &self,
         character_name: &str,
         file_name: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        op: ChatPayloadPatchOp,
-        expected_window_line_count: usize,
-        force: bool,
+        request: ChatPayloadWindowPatchRequest,
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.ensure_directory_exists().await?;
 
@@ -35,24 +33,8 @@ impl FileChatRepository {
             .await?;
         let backup_key = self.get_cache_key(character_name, file_name)?;
 
-        let character_dir = self.resolve_character_chat_dir(character_name).await?;
-        fs::create_dir_all(&character_dir).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to create character chat directory {:?}: {}",
-                character_dir, error
-            ))
-        })?;
-
         let _write_guard = self.acquire_payload_write_lock(&path).await;
-        let result = patch_payload_windowed_internal(
-            &path,
-            cursor,
-            header,
-            op,
-            expected_window_line_count,
-            force,
-        )
-        .await?;
+        let result = patch_payload_windowed_internal(&path, request).await?;
 
         {
             let mut cache = self.memory_cache.lock().await;
@@ -69,26 +51,14 @@ impl FileChatRepository {
     pub(super) async fn patch_group_payload_windowed(
         &self,
         chat_id: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        op: ChatPayloadPatchOp,
-        expected_window_line_count: usize,
-        force: bool,
+        request: ChatPayloadWindowPatchRequest,
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.ensure_directory_exists().await?;
 
         let path = self.get_group_chat_path(chat_id)?;
         let _write_guard = self.acquire_payload_write_lock(&path).await;
         let backup_key = Self::get_group_backup_key(chat_id)?;
-        let result = patch_payload_windowed_internal(
-            &path,
-            cursor,
-            header,
-            op,
-            expected_window_line_count,
-            force,
-        )
-        .await?;
+        let result = patch_payload_windowed_internal(&path, request).await?;
 
         self.remove_summary_cache_for_path(&path).await;
         self.backup_chat_file(&path, chat_id, &backup_key).await?;
@@ -177,57 +147,18 @@ async fn find_line_start_offset_from_cursor(
 }
 
 async fn patch_payload_windowed_internal(
-    path: &PathBuf,
-    cursor: ChatPayloadCursor,
-    header: String,
-    op: ChatPayloadPatchOp,
-    expected_window_line_count: usize,
-    force: bool,
+    path: &Path,
+    request: ChatPayloadWindowPatchRequest,
 ) -> Result<ChatPayloadCursor, DomainError> {
+    let ChatPayloadWindowPatchRequest {
+        cursor,
+        header,
+        op,
+        expected_window_line_count,
+        force,
+    } = request;
     let header_integrity = extract_integrity_slug_from_header_line(&header)?;
-
-    let existing_metadata = match read_existing_payload_metadata(path).await {
-        Ok(metadata) => Some(metadata),
-        Err(DomainError::NotFound(_)) => None,
-        Err(error) => return Err(error),
-    };
-
-    if existing_metadata.is_none() {
-        ensure_parent_dir(path).await?;
-
-        let (lines, start_index) = match op {
-            ChatPayloadPatchOp::Append { lines } => (lines, 0usize),
-            ChatPayloadPatchOp::RewriteFromIndex { start_index, lines } => (lines, start_index),
-        };
-
-        if start_index != 0 {
-            return Err(DomainError::InvalidData(format!(
-                "Start index {} is invalid for new chat payload {:?}",
-                start_index, path
-            )));
-        }
-
-        let temp_path = FileChatRepository::temp_payload_path(path);
-        let mut file = File::create(&temp_path).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to create chat payload file {:?}: {}",
-                temp_path, error
-            ))
-        })?;
-
-        write_jsonl_lines_to_file(&mut file, &header, &lines).await?;
-        file.flush().await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to flush chat payload file: {}", error))
-        })?;
-
-        replace_file(&temp_path, path).await?;
-
-        let metadata = read_existing_payload_metadata(path).await?;
-        let header_end_offset = (header.len() + 1) as u64;
-        return cursor_from_metadata(header_end_offset, &metadata);
-    }
-
-    let metadata = existing_metadata.unwrap();
+    let metadata = read_existing_payload_metadata(path).await?;
     verify_cursor_signature(path, cursor, &metadata)?;
 
     let (existing_header, existing_header_end_offset) =

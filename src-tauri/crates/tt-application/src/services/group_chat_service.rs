@@ -13,7 +13,8 @@ use crate::services::chat_file_validation::validate_chat_file_name;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
-    ChatPayloadPatchOp, ChatPayloadTail, FindLastMessageQuery, LocatedChatMessage, PinnedGroupChat,
+    ChatPayloadTail, ChatPayloadWindowPatchRequest, FindLastMessageQuery, LocatedChatMessage,
+    PinnedGroupChat,
 };
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 
@@ -291,53 +292,16 @@ impl GroupChatService {
         Ok(pages)
     }
 
-    /// Save a windowed group chat payload by preserving bytes before cursor.offset and
-    /// overwriting from cursor.offset using the provided JSONL lines.
-    pub async fn save_group_chat_payload_windowed(
-        &self,
-        chat_id: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        lines: Vec<String>,
-        expected_window_line_count: usize,
-        force: bool,
-    ) -> Result<ChatPayloadCursor, ApplicationError> {
-        validate_chat_file_name(chat_id, "Group chat id")?;
-
-        self.group_chat_repository
-            .save_group_chat_payload_windowed(
-                chat_id,
-                cursor,
-                header,
-                lines,
-                expected_window_line_count,
-                force,
-            )
-            .await
-            .map_err(Into::into)
-    }
-
     /// Patch a windowed group chat payload.
     pub async fn patch_group_chat_payload_windowed(
         &self,
         chat_id: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        op: ChatPayloadPatchOp,
-        expected_window_line_count: usize,
-        force: bool,
+        request: ChatPayloadWindowPatchRequest,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         validate_chat_file_name(chat_id, "Group chat id")?;
 
         self.group_chat_repository
-            .patch_group_chat_payload_windowed(
-                chat_id,
-                cursor,
-                header,
-                op,
-                expected_window_line_count,
-                force,
-            )
+            .patch_group_chat_payload_windowed(chat_id, request)
             .await
             .map_err(Into::into)
     }

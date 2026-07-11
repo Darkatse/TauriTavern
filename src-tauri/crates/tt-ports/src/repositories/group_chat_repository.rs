@@ -6,8 +6,8 @@ use tt_domain::errors::DomainError;
 
 use super::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
-    ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery,
-    LocatedChatMessage, PinnedGroupChat,
+    ChatPayloadCursor, ChatPayloadTail, ChatPayloadWindowPatchRequest, ChatSearchResult,
+    FindLastMessageQuery, LocatedChatMessage, PinnedGroupChat,
 };
 
 /// Repository interface for group chat (JSONL payload) management.
@@ -54,29 +54,12 @@ pub trait GroupChatRepository: Send + Sync {
         max_lines: usize,
     ) -> Result<ChatPayloadChunk, DomainError>;
 
-    /// Save a windowed group chat payload by preserving bytes before cursor.offset and
-    /// overwriting the tail from cursor.offset using the provided JSONL lines.
-    async fn save_group_chat_payload_windowed(
-        &self,
-        chat_id: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        lines: Vec<String>,
-        expected_window_line_count: usize,
-        force: bool,
-    ) -> Result<ChatPayloadCursor, DomainError>;
-
     /// Patch a windowed group chat payload by applying an operation at the tail.
-    /// `expected_window_line_count` is the window baseline contract: how many message
-    /// lines the caller's last successful load/save left between cursor.offset and EOF.
+    /// The request carries the cursor signature and window baseline for compare-and-swap.
     async fn patch_group_chat_payload_windowed(
         &self,
         chat_id: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        op: ChatPayloadPatchOp,
-        expected_window_line_count: usize,
-        force: bool,
+        request: ChatPayloadWindowPatchRequest,
     ) -> Result<ChatPayloadCursor, DomainError>;
 
     /// Set the hidden flag (`is_system`) on all messages stored before the window cursor.

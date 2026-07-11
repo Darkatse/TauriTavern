@@ -12,8 +12,8 @@ use tt_domain::models::chat::strip_jsonl_extension;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
-    ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery,
-    LocatedChatMessage, PinnedGroupChat,
+    ChatPayloadCursor, ChatPayloadTail, ChatPayloadWindowPatchRequest, ChatSearchResult,
+    FindLastMessageQuery, LocatedChatMessage, PinnedGroupChat,
 };
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 
@@ -155,44 +155,12 @@ impl GroupChatRepository for FileChatRepository {
             .await
     }
 
-    async fn save_group_chat_payload_windowed(
-        &self,
-        chat_id: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        lines: Vec<String>,
-        expected_window_line_count: usize,
-        force: bool,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.save_group_payload_windowed(
-            chat_id,
-            cursor,
-            header,
-            lines,
-            expected_window_line_count,
-            force,
-        )
-        .await
-    }
-
     async fn patch_group_chat_payload_windowed(
         &self,
         chat_id: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        op: ChatPayloadPatchOp,
-        expected_window_line_count: usize,
-        force: bool,
+        request: ChatPayloadWindowPatchRequest,
     ) -> Result<ChatPayloadCursor, DomainError> {
-        self.patch_group_payload_windowed(
-            chat_id,
-            cursor,
-            header,
-            op,
-            expected_window_line_count,
-            force,
-        )
-        .await
+        self.patch_group_payload_windowed(chat_id, request).await
     }
 
     async fn hide_group_chat_payload_before_cursor(

@@ -8,10 +8,11 @@ use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
     ChatSearchResultDto, DeleteGroupChatDto, HideGroupChatBeforeCursorDto, ImportGroupChatDto,
     PatchGroupChatWindowedDto, PinnedGroupChatDto, RenameGroupChatDto, SaveGroupChatFromFileDto,
-    SaveGroupChatWindowedDto,
 };
 use tt_application::errors::ApplicationError;
-use tt_ports::repositories::chat_types::{ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail};
+use tt_ports::repositories::chat_types::{
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatPayloadWindowPatchRequest,
+};
 
 #[tauri::command]
 pub async fn list_group_chat_summaries(
@@ -172,47 +173,32 @@ pub async fn get_group_chat_payload_before_pages(
 }
 
 #[tauri::command]
-pub async fn save_group_chat_payload_windowed(
-    dto: SaveGroupChatWindowedDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<ChatPayloadCursor, CommandError> {
-    log_command(format!("save_group_chat_payload_windowed {}", dto.id));
-
-    app_state
-        .services
-        .group_chat_service
-        .save_group_chat_payload_windowed(
-            &dto.id,
-            dto.cursor,
-            dto.header,
-            dto.lines,
-            dto.expected_window_line_count,
-            dto.force.unwrap_or(false),
-        )
-        .await
-        .map_err(map_command_error(
-            "Failed to save windowed group chat payload",
-        ))
-}
-
-#[tauri::command]
 pub async fn patch_group_chat_payload_windowed(
     dto: PatchGroupChatWindowedDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<ChatPayloadCursor, CommandError> {
-    log_command(format!("patch_group_chat_payload_windowed {}", dto.id));
+    let PatchGroupChatWindowedDto {
+        id,
+        cursor,
+        header,
+        patch,
+        expected_window_line_count,
+        force,
+    } = dto;
+    log_command(format!("patch_group_chat_payload_windowed {}", id));
+
+    let request = ChatPayloadWindowPatchRequest {
+        cursor,
+        header,
+        op: patch,
+        expected_window_line_count,
+        force: force.unwrap_or(false),
+    };
 
     app_state
         .services
         .group_chat_service
-        .patch_group_chat_payload_windowed(
-            &dto.id,
-            dto.cursor,
-            dto.header,
-            dto.patch,
-            dto.expected_window_line_count,
-            dto.force.unwrap_or(false),
-        )
+        .patch_group_chat_payload_windowed(&id, request)
         .await
         .map_err(map_command_error(
             "Failed to patch windowed group chat payload",

@@ -1,9 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str;
 
-use serde_json::Value;
-use tokio::fs::{self, File, OpenOptions};
-use tokio::io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_repository::{
@@ -11,7 +9,6 @@ use tt_ports::repositories::chat_repository::{
 };
 
 use super::FileChatRepository;
-use super::integrity::verify_integrity_match;
 use super::windowed_payload_io::*;
 
 async fn read_tail_lines_with_offsets(
@@ -161,54 +158,6 @@ impl FileChatRepository {
         read_payload_before_lines(&path, cursor, max_lines).await
     }
 
-    pub(super) async fn save_character_payload_windowed(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        lines: Vec<String>,
-        expected_window_line_count: usize,
-        force: bool,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.ensure_directory_exists().await?;
-
-        let path = self
-            .resolve_character_chat_path(character_name, file_name)
-            .await?;
-        let backup_key = self.get_cache_key(character_name, file_name)?;
-
-        let character_dir = self.resolve_character_chat_dir(character_name).await?;
-        fs::create_dir_all(&character_dir).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to create character chat directory {:?}: {}",
-                character_dir, error
-            ))
-        })?;
-
-        let _write_guard = self.acquire_payload_write_lock(&path).await;
-        let result = save_payload_windowed_internal(
-            &path,
-            cursor,
-            header,
-            lines,
-            expected_window_line_count,
-            force,
-        )
-        .await?;
-
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.remove(&backup_key);
-        }
-        self.remove_summary_cache_for_path(&path).await;
-
-        self.backup_chat_file(&path, character_name, &backup_key)
-            .await?;
-
-        Ok(result)
-    }
-
     pub(super) async fn get_group_payload_tail_lines(
         &self,
         chat_id: &str,
@@ -226,36 +175,6 @@ impl FileChatRepository {
     ) -> Result<ChatPayloadChunk, DomainError> {
         let path = self.get_group_chat_path(chat_id)?;
         read_payload_before_lines(&path, cursor, max_lines).await
-    }
-
-    pub(super) async fn save_group_payload_windowed(
-        &self,
-        chat_id: &str,
-        cursor: ChatPayloadCursor,
-        header: String,
-        lines: Vec<String>,
-        expected_window_line_count: usize,
-        force: bool,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.ensure_directory_exists().await?;
-
-        let path = self.get_group_chat_path(chat_id)?;
-        let _write_guard = self.acquire_payload_write_lock(&path).await;
-        let backup_key = Self::get_group_backup_key(chat_id)?;
-        let result = save_payload_windowed_internal(
-            &path,
-            cursor,
-            header,
-            lines,
-            expected_window_line_count,
-            force,
-        )
-        .await?;
-
-        self.remove_summary_cache_for_path(&path).await;
-        self.backup_chat_file(&path, chat_id, &backup_key).await?;
-
-        Ok(result)
     }
 }
 
@@ -328,218 +247,4 @@ async fn read_payload_before_lines(
         cursor: cursor_from_metadata(new_offset, &metadata)?,
         has_more_before: new_offset > header_end_offset,
     })
-}
-
-async fn save_payload_windowed_internal(
-    path: &PathBuf,
-    cursor: ChatPayloadCursor,
-    header: String,
-    lines: Vec<String>,
-    expected_window_line_count: usize,
-    force: bool,
-) -> Result<ChatPayloadCursor, DomainError> {
-    let header_integrity = extract_integrity_slug_from_header_line(&header)?;
-    let has_lines = lines.iter().any(|line| !line.trim().is_empty());
-
-    let existing_metadata = match read_existing_payload_metadata(path).await {
-        Ok(metadata) => Some(metadata),
-        Err(DomainError::NotFound(_)) => None,
-        Err(error) => return Err(error),
-    };
-
-    if existing_metadata.is_none() {
-        ensure_parent_dir(path).await?;
-
-        let temp_path = FileChatRepository::temp_payload_path(path);
-        let mut file = File::create(&temp_path).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to create chat payload file {:?}: {}",
-                temp_path, error
-            ))
-        })?;
-
-        write_jsonl_lines_to_file(&mut file, &header, &lines).await?;
-        file.flush().await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to flush chat payload file: {}", error))
-        })?;
-
-        replace_file(&temp_path, path).await?;
-
-        let metadata = read_existing_payload_metadata(path).await?;
-
-        let header_end_offset = (header.len() + 1) as u64;
-        return cursor_from_metadata(header_end_offset, &metadata);
-    }
-
-    let metadata = existing_metadata.unwrap();
-    verify_cursor_signature(path, cursor, &metadata)?;
-
-    let (existing_header, existing_header_end_offset) =
-        read_first_line_and_end_offset(path).await?;
-    let header_only = existing_header_end_offset == metadata.len();
-    if cursor.offset > metadata.len() {
-        return Err(DomainError::InvalidData(format!(
-            "Cursor offset is out of bounds for {:?}",
-            path
-        )));
-    }
-    if cursor.offset < existing_header_end_offset {
-        return Err(DomainError::InvalidData(format!(
-            "Cursor offset is before chat payload body for {:?}",
-            path
-        )));
-    }
-
-    if !force {
-        let existing = extract_integrity_slug_from_header_line(&existing_header)?;
-        verify_integrity_match(existing.as_deref(), header_integrity.as_deref())?;
-    }
-
-    let header_changed = match (
-        serde_json::from_str::<Value>(&existing_header),
-        serde_json::from_str::<Value>(&header),
-    ) {
-        (Ok(a), Ok(b)) => a != b,
-        _ => existing_header != header,
-    };
-
-    // Window baseline contract: reject stale cursors before truncating.
-    if !(header_only && cursor.offset == existing_header_end_offset) {
-        verify_cursor_offset_is_line_boundary(path, cursor.offset).await?;
-    }
-    verify_window_baseline(
-        path,
-        cursor.offset,
-        metadata.len(),
-        expected_window_line_count,
-    )
-    .await?;
-
-    if !header_changed {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .await
-            .map_err(|error| map_open_existing_error(path, error))?;
-
-        file.set_len(cursor.offset).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to truncate chat payload file {:?}: {}",
-                path, error
-            ))
-        })?;
-
-        let ends_with_newline = if cursor.offset == 0 {
-            true
-        } else {
-            file.seek(SeekFrom::Start(cursor.offset.saturating_sub(1)))
-                .await
-                .map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to seek chat payload file {:?}: {}",
-                        path, error
-                    ))
-                })?;
-
-            let mut byte = [0u8; 1];
-            file.read_exact(&mut byte).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to read chat payload file {:?}: {}",
-                    path, error
-                ))
-            })?;
-            byte[0] == b'\n'
-        };
-
-        file.seek(SeekFrom::End(0)).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to seek chat payload file {:?}: {}",
-                path, error
-            ))
-        })?;
-
-        if has_lines && !ends_with_newline {
-            if header_only && cursor.offset == existing_header_end_offset {
-                file.write_all(b"\n").await.map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to write chat payload newline {:?}: {}",
-                        path, error
-                    ))
-                })?;
-            } else {
-                return Err(DomainError::InvalidData(format!(
-                    "Truncated chat payload does not end with newline for {:?}",
-                    path
-                )));
-            }
-        }
-
-        write_jsonl_lines_at_end(&mut file, &lines).await?;
-        file.flush().await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to flush chat payload file: {}", error))
-        })?;
-    } else {
-        ensure_parent_dir(path).await?;
-
-        let temp_path = FileChatRepository::temp_payload_path(path);
-        let mut out = File::create(&temp_path).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to create chat payload file {:?}: {}",
-                temp_path, error
-            ))
-        })?;
-
-        out.write_all(header.as_bytes()).await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to write chat payload header: {}", error))
-        })?;
-        out.write_all(b"\n").await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to write chat payload header: {}", error))
-        })?;
-
-        if cursor.offset > existing_header_end_offset {
-            let mut source = open_existing_payload_file(path).await?;
-            source
-                .seek(SeekFrom::Start(existing_header_end_offset))
-                .await
-                .map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to seek chat payload file {:?}: {}",
-                        path, error
-                    ))
-                })?;
-
-            let len = cursor.offset - existing_header_end_offset;
-            let mut limited = source.take(len);
-            io::copy(&mut limited, &mut out).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to copy chat payload file {:?}: {}",
-                    path, error
-                ))
-            })?;
-        }
-
-        write_jsonl_lines_at_end(&mut out, &lines).await?;
-        out.flush().await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to flush chat payload file: {}", error))
-        })?;
-
-        replace_file(&temp_path, path).await?;
-    }
-
-    tracing::debug!("Saved windowed chat payload: {:?}", path);
-
-    let metadata = read_existing_payload_metadata(path).await?;
-
-    let new_cursor_offset = match (header_changed, header_only, has_lines) {
-        (true, _, _) => {
-            let new_header_end_offset = (header.len() + 1) as u64;
-            let preserved_prefix_bytes = cursor.offset.saturating_sub(existing_header_end_offset);
-            new_header_end_offset + preserved_prefix_bytes
-        }
-        (false, true, true) => cursor.offset + 1,
-        _ => cursor.offset,
-    };
-
-    cursor_from_metadata(new_cursor_offset, &metadata)
 }

@@ -111,6 +111,18 @@ pub enum ChatPayloadPatchOp {
     },
 }
 
+/// Atomic compare-and-swap request for patching a windowed chat payload.
+#[derive(Debug)]
+pub struct ChatPayloadWindowPatchRequest {
+    pub cursor: ChatPayloadCursor,
+    pub header: String,
+    pub op: ChatPayloadPatchOp,
+    pub expected_window_line_count: usize,
+    /// Only bypasses header integrity validation.
+    /// Payload existence, cursor signature, and window baseline remain mandatory.
+    pub force: bool,
+}
+
 /// Chat message role used for locate queries.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]

@@ -146,7 +146,7 @@ Agent commit 不能直接写 chat JSONL。
 
 - UI 只持有 tail window。
 - Prompt/history backfill 不扩大 UI chat。
-- windowed save/patch 保持 cursor CAS 保护。
+- windowed patch 保持 cursor signature 与 window baseline 的 CAS 保护；`force` 只跳过 integrity。
 - 应用内并发保存必须串行化。
 
 现有前端保存队列见 `src/script.js:536`。windowed payload 保存串行化要求见 `docs/CurrentState/WindowedPayload.md:151`。
