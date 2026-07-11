@@ -10,6 +10,17 @@ pub(super) use crate::services::agent_tools::common::{
     workspace_path_is_directory_message,
 };
 
+pub(super) struct WorkspaceToolError {
+    code: &'static str,
+    message: String,
+}
+
+impl WorkspaceToolError {
+    pub(super) fn into_tool_result(self, call: &AgentToolCall) -> AgentToolResult {
+        tool_error(call, self.code, &self.message)
+    }
+}
+
 /// Pattern-match helper used by every read/write entry point so they all
 /// surface filesystem errors raised by the workspace repository as
 /// recoverable model-facing tool errors instead of bubbling up as
@@ -55,30 +66,33 @@ pub(super) fn optional_list_path_arg(
         .map_err(|error| error.to_string())
 }
 
-pub(super) fn parse_workspace_path(
-    call: &AgentToolCall,
-    raw: &str,
-) -> Result<WorkspacePath, AgentToolResult> {
-    WorkspacePath::parse(raw)
-        .map_err(|error| tool_error(call, "workspace.invalid_path", &error.to_string()))
+pub(super) fn parse_workspace_path(raw: &str) -> Result<WorkspacePath, WorkspaceToolError> {
+    WorkspacePath::parse(raw).map_err(|error| WorkspaceToolError {
+        code: "workspace.invalid_path",
+        message: error.to_string(),
+    })
 }
 
 pub(super) fn ensure_visible_workspace_path(
-    call: &AgentToolCall,
     policy: &WorkspaceAccessPolicy,
     path: &WorkspacePath,
-) -> Result<(), AgentToolResult> {
+) -> Result<(), WorkspaceToolError> {
     policy
         .ensure_visible(path)
-        .map_err(|error| tool_error(call, "workspace.path_not_visible", &error.to_string()))
+        .map_err(|error| WorkspaceToolError {
+            code: "workspace.path_not_visible",
+            message: error.to_string(),
+        })
 }
 
 pub(super) fn ensure_writable_workspace_path(
-    call: &AgentToolCall,
     policy: &WorkspaceAccessPolicy,
     path: &WorkspacePath,
-) -> Result<(), AgentToolResult> {
+) -> Result<(), WorkspaceToolError> {
     policy
         .ensure_writable(path)
-        .map_err(|error| tool_error(call, "workspace.path_not_writable", &error.to_string()))
+        .map_err(|error| WorkspaceToolError {
+            code: "workspace.path_not_writable",
+            message: error.to_string(),
+        })
 }

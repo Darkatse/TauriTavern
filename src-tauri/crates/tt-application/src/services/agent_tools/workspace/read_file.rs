@@ -52,12 +52,12 @@ pub(in crate::services::agent_tools) async fn read_file(
             AgentToolEffect::None,
         ));
     };
-    let path = match parse_workspace_path(call, path) {
+    let path = match parse_workspace_path(path) {
         Ok(path) => path,
-        Err(result) => return Ok((result, AgentToolEffect::None)),
+        Err(error) => return Ok((error.into_tool_result(call), AgentToolEffect::None)),
     };
-    if let Err(result) = ensure_visible_workspace_path(call, &policy, &path) {
-        return Ok((result, AgentToolEffect::None));
+    if let Err(error) = ensure_visible_workspace_path(&policy, &path) {
+        return Ok((error.into_tool_result(call), AgentToolEffect::None));
     }
 
     let start_line = match optional_usize_arg(args, "start_line") {

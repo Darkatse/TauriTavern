@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use super::args::{classify_workspace_io_error, optional_list_path_arg};
 use super::policy::WorkspaceAccessPolicy;
 use super::{apply_patch, read_file, write_file};
-use crate::services::agent_tools::AgentToolSession;
+use crate::services::agent_tools::{AgentToolEffect, AgentToolSession};
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -133,6 +133,88 @@ fn classify_unknown_error_bubbles_up_for_host_failure() {
     assert!(
         result.is_err(),
         "infrastructural errors must remain host-level failures",
+    );
+}
+
+#[tokio::test]
+async fn workspace_read_invalid_path_returns_canonical_tool_error() {
+    let repository = TestWorkspaceRepository::with_file("output/main.md", "existing");
+    let mut session = AgentToolSession::default();
+    let call = workspace_call("workspace.read_file", json!({ "path": "../secrets.json" }));
+
+    let (result, effect) = read_file(&repository, "run", &call, &mut session)
+        .await
+        .expect("invalid model path must remain recoverable");
+
+    let message = "Invalid data: Workspace path cannot contain ..";
+    assert!(matches!(effect, AgentToolEffect::None));
+    assert_eq!(result.call_id, call.id);
+    assert_eq!(result.name, call.name);
+    assert_eq!(result.content, message);
+    assert_eq!(
+        result.structured,
+        json!({
+            "error": {
+                "code": "workspace.invalid_path",
+                "message": message,
+            }
+        })
+    );
+    assert!(result.is_error);
+    assert_eq!(result.error_code.as_deref(), Some("workspace.invalid_path"));
+    assert!(result.resource_refs.is_empty());
+}
+
+#[tokio::test]
+async fn workspace_read_hidden_path_returns_recoverable_tool_error() {
+    let repository = TestWorkspaceRepository::with_file("output/main.md", "existing");
+    let mut session = AgentToolSession::default();
+    let call = workspace_call(
+        "workspace.read_file",
+        json!({ "path": "input/prompt_snapshot.json" }),
+    );
+
+    let (result, effect) = read_file(&repository, "run", &call, &mut session)
+        .await
+        .expect("hidden model path must remain recoverable");
+
+    assert!(matches!(effect, AgentToolEffect::None));
+    assert!(result.is_error);
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("workspace.path_not_visible")
+    );
+    assert_eq!(
+        result.content,
+        "Permission denied: agent.workspace_read_denied: path `input/prompt_snapshot.json` is not visible in the current workspace policy"
+    );
+}
+
+#[tokio::test]
+async fn workspace_write_root_returns_recoverable_tool_error() {
+    let repository = TestWorkspaceRepository::with_file("output/main.md", "existing");
+    let mut session = AgentToolSession::default();
+    let call = workspace_call(
+        "workspace.write_file",
+        json!({
+            "path": "output",
+            "content": "replacement",
+        }),
+    );
+
+    let (result, effect) = write_file(&repository, "run", &call, &mut session)
+        .await
+        .expect("non-writable model path must remain recoverable");
+
+    assert!(matches!(effect, AgentToolEffect::None));
+    assert!(result.is_error);
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("workspace.path_not_writable")
+    );
+    assert_eq!(
+        result.content,
+        "Permission denied: agent.workspace_write_denied: path `output` is not writable in the current workspace policy"
     );
 }
 

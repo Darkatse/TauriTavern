@@ -92,12 +92,12 @@ pub(in crate::services::agent_tools) async fn apply_patch(
         ));
     }
 
-    let path = match parse_workspace_path(call, path) {
+    let path = match parse_workspace_path(path) {
         Ok(path) => path,
-        Err(result) => return Ok((result, AgentToolEffect::None)),
+        Err(error) => return Ok((error.into_tool_result(call), AgentToolEffect::None)),
     };
-    if let Err(result) = ensure_writable_workspace_path(call, &policy, &path) {
-        return Ok((result, AgentToolEffect::None));
+    if let Err(error) = ensure_writable_workspace_path(&policy, &path) {
+        return Ok((error.into_tool_result(call), AgentToolEffect::None));
     }
     let path_key = path.as_str().to_string();
     let Some(read_state) = session.read_state(&path_key).cloned() else {

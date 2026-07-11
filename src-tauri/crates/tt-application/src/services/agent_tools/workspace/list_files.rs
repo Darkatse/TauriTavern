@@ -55,9 +55,9 @@ pub(in crate::services::agent_tools) async fn list_files(
         }
     };
     if let Some(path) = &path
-        && let Err(result) = ensure_visible_workspace_path(call, &policy, path)
+        && let Err(error) = ensure_visible_workspace_path(&policy, path)
     {
-        return Ok((result, AgentToolEffect::None));
+        return Ok((error.into_tool_result(call), AgentToolEffect::None));
     }
     let depth = match optional_usize_arg(args, "depth") {
         Ok(depth) => depth.unwrap_or(DEFAULT_LIST_DEPTH),
