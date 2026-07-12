@@ -1619,6 +1619,7 @@ button {
     flex: 1;
     min-width: 0;
     order: 3;
+    grid-area: textarea;
 }
 
 .tt-chat-input-shell #send_textarea {
