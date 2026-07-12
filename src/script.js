@@ -677,13 +677,26 @@ export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 export const saveSettingsDebounced = debounce((loopCounter = 0) => saveSettings(loopCounter), DEFAULT_SAVE_EDIT_TIMEOUT);
 export const saveCharacterDebounced = debounce(() => $('#create_button').trigger('click'), DEFAULT_SAVE_EDIT_TIMEOUT);
 
+let sessionStateFlushPromise = null;
+
 function flushSessionState() {
+    if (sessionStateFlushPromise) {
+        return sessionStateFlushPromise;
+    }
+
     cancelDebounce(saveSettingsDebounced);
-    void saveSettings().catch(error => console.error('Error flushing settings during app lifecycle change:', error));
+    const saveTasks = [
+        saveSettings().catch(error => console.error('Error flushing settings during app lifecycle change:', error)),
+    ];
 
     if (getCurrentChatId()) {
-        void saveChatConditional().catch(error => console.error('Error flushing chat during app lifecycle change:', error));
+        saveTasks.push(saveChatConditional().catch(error => console.error('Error flushing chat during app lifecycle change:', error)));
     }
+
+    sessionStateFlushPromise = Promise.all(saveTasks).finally(() => {
+        sessionStateFlushPromise = null;
+    });
+    return sessionStateFlushPromise;
 }
 
 /**
@@ -14359,7 +14372,6 @@ jQuery(async function () {
     });
 
     $(window).on('beforeunload', () => {
-        flushSessionState();
         cancelTtsPlay();
         if (streamingProcessor) {
             console.log('Page reloaded. Aborting streaming...');
@@ -14507,7 +14519,9 @@ jQuery(async function () {
     });
 
     window.addEventListener('beforeunload', (e) => {
-        if (isChatSaving || this_edit_mes_id >= 0) {
+        const wasChatSaving = isChatSaving;
+        flushSessionState();
+        if (wasChatSaving || this_edit_mes_id >= 0) {
             e.preventDefault();
             e.returnValue = true;
         }

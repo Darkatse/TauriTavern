@@ -11,9 +11,22 @@ test('session state is flushed when the app is backgrounded or closed', async ()
 
     assert.match(source, /function flushSessionState\(\)/);
     assert.match(source, /cancelDebounce\(saveSettingsDebounced\)/);
+    assert.match(source, /if \(sessionStateFlushPromise\) \{\s*return sessionStateFlushPromise;\s*\}/);
     assert.match(source, /window\.addEventListener\('pagehide', flushSessionState\)/);
     assert.match(source, /document\.visibilityState === 'hidden'/);
-    assert.match(source, /flushSessionState\(\);\s*\n\s*cancelTtsPlay\(\)/);
+});
+
+test('lifecycle flush does not trigger its own beforeunload warning', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+    const cleanupHandler = source.match(/\$\(window\)\.on\('beforeunload',[\s\S]*?\n\s*\}\);/);
+    const warningHandler = source.match(/window\.addEventListener\('beforeunload', \(e\) => \{[\s\S]*?\n\s*\}\);/);
+
+    assert.ok(cleanupHandler, 'beforeunload cleanup handler not found');
+    assert.ok(warningHandler, 'beforeunload warning handler not found');
+    assert.doesNotMatch(cleanupHandler[0], /flushSessionState\(\)/);
+    assert.match(warningHandler[0], /const wasChatSaving = isChatSaving;\s*flushSessionState\(\);/);
+    assert.match(warningHandler[0], /if \(wasChatSaving \|\| this_edit_mes_id >= 0\)/);
+    assert.doesNotMatch(warningHandler[0], /if \(isChatSaving \|\|/);
 });
 
 test('character selection persists in the core selection flow without relying on a click handler', async () => {

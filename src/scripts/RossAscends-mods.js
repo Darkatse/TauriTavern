@@ -853,9 +853,7 @@ export function initRossMods() {
     $(SelectedCharacterTab).on('click', function () { accountStorage.setItem('SelectedNavTab', 'rm_button_selected_ch'); });
     $('#rm_button_characters').on('click', function () { accountStorage.setItem('SelectedNavTab', 'rm_button_characters'); });
 
-    // when a char is selected from the list, save them as the auto-load character for next page load
-
-    // when a char is selected from the list, save their name as the auto-load character for next page load
+    // Save the selected group for the next page load.
     $(document).on('click', '.group_select', function () {
         const groupId = $(this).attr('data-chid') || $(this).attr('data-grid');
         setActiveCharacter(null);
