@@ -225,6 +225,7 @@ import {
 } from './scripts/horde.js';
 
 import {
+    cancelDebounce,
     debounce,
     delay,
     trimToEndSentence,
@@ -675,6 +676,15 @@ export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 
 export const saveSettingsDebounced = debounce((loopCounter = 0) => saveSettings(loopCounter), DEFAULT_SAVE_EDIT_TIMEOUT);
 export const saveCharacterDebounced = debounce(() => $('#create_button').trigger('click'), DEFAULT_SAVE_EDIT_TIMEOUT);
+
+function flushSessionState() {
+    cancelDebounce(saveSettingsDebounced);
+    void saveSettings().catch(error => console.error('Error flushing settings during app lifecycle change:', error));
+
+    if (getCurrentChatId()) {
+        void saveChatConditional().catch(error => console.error('Error flushing chat during app lifecycle change:', error));
+    }
+}
 
 /**
  * Prints the character list in a debounced fashion without blocking, with a delay of 100 milliseconds.
@@ -1268,6 +1278,11 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
         switchMenu && (selected_button = 'character_edit');
         await unshallowCharacter(this_chid);
         select_selected_character(this_chid, { switchMenu });
+    }
+
+    if (!selected_group && String(this_chid) === String(id)) {
+        setActiveCharacter(characters[id]);
+        await saveSettings();
     }
 }
 
@@ -14344,10 +14359,18 @@ jQuery(async function () {
     });
 
     $(window).on('beforeunload', () => {
+        flushSessionState();
         cancelTtsPlay();
         if (streamingProcessor) {
             console.log('Page reloaded. Aborting streaming...');
             streamingProcessor.onStopStreaming();
+        }
+    });
+
+    window.addEventListener('pagehide', flushSessionState);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+            flushSessionState();
         }
     });
 
