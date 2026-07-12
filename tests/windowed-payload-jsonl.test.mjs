@@ -67,6 +67,32 @@ test('jsonl: payloadToJsonlByteChunks round-trips and respects maxChunkBytes', a
     assert.equal(combined.toString('utf8'), payloadToJsonl(payload));
 });
 
+test('jsonl: payloadToJsonlByteChunks splits an oversized UTF-8 record', async () => {
+    const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/jsonl.js'));
+    const { payloadToJsonl, payloadToJsonlByteChunks } = mod;
+
+    const payload = [{ h: 1 }, { mes: '😀'.repeat(12) }];
+    const maxChunkBytes = 17;
+    const chunks = Array.from(payloadToJsonlByteChunks(payload, { maxChunkBytes }));
+
+    assert.ok(chunks.length > 2);
+    assert.ok(chunks.every((chunk) => chunk.byteLength <= maxChunkBytes));
+    assert.deepEqual(
+        Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))),
+        Buffer.from(new TextEncoder().encode(payloadToJsonl(payload))),
+    );
+});
+
+test('jsonl: payloadToJsonlByteChunks rejects a non-positive chunk size', async () => {
+    const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/jsonl.js'));
+    const { payloadToJsonlByteChunks } = mod;
+
+    assert.throws(
+        () => Array.from(payloadToJsonlByteChunks([{ a: 1 }], { maxChunkBytes: 0 })),
+        /positive safe integer/i,
+    );
+});
+
 test('jsonl: round-trips large payloads (header + >= 100 messages)', async () => {
     const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/jsonl.js'));
     const { payloadToJsonl, jsonlToPayload } = mod;

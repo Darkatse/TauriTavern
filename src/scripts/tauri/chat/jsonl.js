@@ -166,6 +166,10 @@ export async function jsonlStreamToPayload(stream) {
 }
 
 function concatChunks(chunks, totalLength) {
+    if (chunks.length === 1) {
+        return chunks[0];
+    }
+
     const output = new Uint8Array(totalLength);
     let offset = 0;
 
@@ -179,6 +183,10 @@ function concatChunks(chunks, totalLength) {
 
 export function* payloadToJsonlByteChunks(payload, { maxChunkBytes = 4 * 1024 * 1024 } = {}) {
     const normalized = assertPayloadArray(payload);
+    if (!Number.isSafeInteger(maxChunkBytes) || maxChunkBytes <= 0) {
+        throw new Error('maxChunkBytes must be a positive safe integer');
+    }
+
     const chunks = [];
     let totalLength = 0;
     let isFirstLine = true;
@@ -193,6 +201,19 @@ export function* payloadToJsonlByteChunks(payload, { maxChunkBytes = 4 * 1024 * 
         const text = isFirstLine ? line : `\n${line}`;
         isFirstLine = false;
         const bytes = textEncoder.encode(text);
+
+        if (bytes.byteLength > maxChunkBytes) {
+            if (totalLength > 0) {
+                yield concatChunks(chunks, totalLength);
+                chunks.length = 0;
+                totalLength = 0;
+            }
+
+            for (let offset = 0; offset < bytes.byteLength; offset += maxChunkBytes) {
+                yield bytes.subarray(offset, offset + maxChunkBytes);
+            }
+            continue;
+        }
 
         if (totalLength > 0 && totalLength + bytes.byteLength > maxChunkBytes) {
             yield concatChunks(chunks, totalLength);

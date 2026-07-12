@@ -27,8 +27,8 @@ export function resolveCharacterDirectoryId(characterName, avatarUrl) {
     return String(characterName || '').trim();
 }
 
-async function withTempFile(bytesIterable, options, handler) {
-    const tempFile = await writeTempFileFromBytesIterable(bytesIterable, options);
+async function withTempFile(bytesIterable, handler) {
+    const tempFile = await writeTempFileFromBytesIterable(bytesIterable);
 
     let result;
     let handlerError;
@@ -164,10 +164,7 @@ export async function saveCharacterChatPayload({ characterName, avatarUrl, fileN
         throw new Error('Invalid chat payload');
     }
 
-    await withTempFile(payloadToJsonlByteChunks(payload), {
-        prefix: 'tauritavern-chat',
-        extension: 'jsonl',
-    }, (filePath) => invoke('save_chat_payload_from_file', {
+    await withTempFile(payloadToJsonlByteChunks(payload), (filePath) => invoke('save_chat_payload_from_file', {
         dto: {
             ch_name: normalizedCharacter,
             file_name: normalizedFile,
@@ -314,10 +311,7 @@ export async function saveGroupChatPayload({ id, payload, force = false }) {
         throw new Error('Invalid group chat payload');
     }
 
-    await withTempFile(payloadToJsonlByteChunks(payload), {
-        prefix: 'tauritavern-group-chat',
-        extension: 'jsonl',
-    }, (filePath) => invoke('save_group_chat_from_file', {
+    await withTempFile(payloadToJsonlByteChunks(payload), (filePath) => invoke('save_group_chat_from_file', {
         dto: {
             id: normalizedId,
             file_path: filePath,

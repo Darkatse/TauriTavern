@@ -443,5 +443,33 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 维护原则：
 
 - 不把 `content://` 透传到 Rust Skill repository；仓储层只处理真实路径与归档内容。
-- 不使用 base64 作为移动端大文件桥接方案，避免把内存占用放大到 JS heap 与 IPC payload。
+- 导入不把完整文件整体 base64 物化，避免把内存占用集中到 JS heap 与单个 IPC payload。
 - 选择器取消不是错误；staging、预览、安装、清理失败都应直接暴露，避免静默遗留坏状态。
+
+---
+
+## 11. Android 大型 byte ingress
+
+Tauri 2.10.2 在 Android 上不支持 `InvokeBody::Raw`。业务 payload 进入完整 invoke envelope 后，nested `Uint8Array` 会被 JSON serializer 展开为 `number[]`；大型 payload 会因此产生不可接受的逐 byte 对象化内存开销。
+
+聊天 full-save 的正式契约是：
+
+```text
+stage_upload_begin
+  -> bounded stage_upload_chunk
+     -> Android: { data: base64 }, one-in-flight
+     -> Desktop/iOS: root raw Uint8Array
+  -> stage_upload_finish
+  -> existing save_*_from_file
+  -> stage_upload_discard
+```
+
+维护原则：
+
+- Android 的大型 JS -> Rust bytes 不得以 raw/numeric-array payload 穿过 Tauri invoke。
+- base64 只能按 host 返回的 frame cap 逐帧生成和发送，不得先物化完整文件的 base64 表示。
+- 每个文件严格逐帧 await，并校验 raw byte offset ACK 与 finish size；失败不得回退旧 plugin-fs raw 路径。
+- chat writer 只负责 staging，最终聊天继续由现有 Rust repository 流程提交。
+- bounded base64 达到实机目标后即停止；只有 profile 证明其仍是主要热点时，才评估 text frame 或 AndroidX binary bridge。
+
+Tauri 版本升级后也必须重新验证运行时 envelope，不能仅凭 API 表面接受 `Uint8Array` 就假定 Android Raw IPC 已可用。

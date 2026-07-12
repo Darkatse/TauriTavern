@@ -211,23 +211,8 @@ fn chunk_bytes_from_request<'a>(
 fn chunk_bytes_from_body(body: &InvokeBody) -> Result<Cow<'_, [u8]>, CommandError> {
     match body {
         InvokeBody::Raw(data) => Ok(Cow::Borrowed(data)),
-        InvokeBody::Json(serde_json::Value::Array(values)) => {
-            let mut bytes = Vec::with_capacity(values.len());
-            for value in values {
-                let byte = value
-                    .as_u64()
-                    .filter(|byte| *byte <= u8::MAX as u64)
-                    .ok_or_else(|| {
-                        CommandError::BadRequest(
-                            "Upload staging JSON chunk body must contain bytes".to_string(),
-                        )
-                    })?;
-                bytes.push(byte as u8);
-            }
-            Ok(Cow::Owned(bytes))
-        }
         InvokeBody::Json(_) => Err(CommandError::BadRequest(
-            "Upload staging chunk body must be raw bytes or a byte array".to_string(),
+            "Upload staging chunk body must be raw bytes".to_string(),
         )),
     }
 }
@@ -242,10 +227,9 @@ fn chunk_base64_bytes_from_body(body: &InvokeBody) -> Result<Cow<'_, [u8]>, Comm
                     "Upload staging base64 chunk body must contain data".to_string(),
                 )
             })?,
-        InvokeBody::Json(serde_json::Value::String(value)) => value.as_str(),
         _ => {
             return Err(CommandError::BadRequest(
-                "Upload staging base64 chunk body must be a string".to_string(),
+                "Upload staging base64 chunk body must contain data".to_string(),
             ));
         }
     };
@@ -387,17 +371,9 @@ mod tests {
     }
 
     #[test]
-    fn chunk_bytes_from_body_accepts_json_byte_arrays_for_android_fallback() {
+    fn chunk_bytes_from_body_rejects_json_byte_arrays() {
         let body = InvokeBody::Json(serde_json::json!([0, 127, 255]));
-        let bytes = chunk_bytes_from_body(&body).expect("json byte array should parse");
-
-        assert_eq!(bytes.as_ref(), &[0, 127, 255]);
-    }
-
-    #[test]
-    fn chunk_bytes_from_body_rejects_non_byte_json_values() {
-        let body = InvokeBody::Json(serde_json::json!([256]));
-        let error = chunk_bytes_from_body(&body).expect_err("non-byte values must fail");
+        let error = chunk_bytes_from_body(&body).expect_err("json byte arrays must fail");
 
         assert!(matches!(error, CommandError::BadRequest(_)));
     }
@@ -408,6 +384,14 @@ mod tests {
         let bytes = chunk_base64_bytes_from_body(&body).expect("base64 bytes should parse");
 
         assert_eq!(bytes.as_ref(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn chunk_base64_bytes_from_body_rejects_top_level_strings() {
+        let body = InvokeBody::Json(serde_json::json!("AQIDBA=="));
+        let error = chunk_base64_bytes_from_body(&body).expect_err("top-level strings must fail");
+
+        assert!(matches!(error, CommandError::BadRequest(_)));
     }
 
     #[test]
