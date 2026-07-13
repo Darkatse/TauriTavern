@@ -47,3 +47,57 @@ test('windowed chat contract: cursor signature normalizes modifiedMillis and mod
     const promptBackfill = await readFile(path.join(REPO_ROOT, 'src/scripts/tauri/chat/prompt-backfill.js'), 'utf8');
     assert.match(promptBackfill, /modifiedMillis\s*\?\?\s*cursor\?\.\s*modified_millis/);
 });
+
+test('chat history off preserves the upstream full-data and truncated-DOM rendering baseline', async () => {
+    const script = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+    const groupChats = await readFile(path.join(REPO_ROOT, 'src/scripts/group-chats.js'), 'utf8');
+    const transport = await readFile(path.join(REPO_ROOT, 'src/scripts/tauri/chat/transport.js'), 'utf8');
+
+    assert.match(
+        transport,
+        /return\s+getChatHistoryBootstrapModeName\(\)\s*===\s*CHAT_HISTORY_MODE_WINDOWED\s*;/,
+    );
+
+    const getChat = script.slice(
+        script.indexOf('export async function getChat'),
+        script.indexOf('\nasync function getChatResult'),
+    );
+    assert.match(getChat, /if\s*\(usePayloadTransport\)[\s\S]*?loadCharacterChatPayloadTail\s*\(/);
+    assert.match(getChat, /else\s*\{\s*clearWindowedChatState\(\);[\s\S]*?fetch\(['"]\/api\/chats\/get['"]/);
+    assert.match(getChat, /data\s*=\s*await response\.json\(\)\s*;/);
+
+    const loadGroupChat = groupChats.slice(
+        groupChats.indexOf('async function loadGroupChat'),
+        groupChats.indexOf('\nasync function hasPersistedGroupChats'),
+    );
+    assert.match(loadGroupChat, /if\s*\(isTauriChatPayloadTransportEnabled\(\)\)[\s\S]*?loadGroupChatPayloadTail\s*\(/);
+    assert.match(loadGroupChat, /clearWindowedChatState\(\);[\s\S]*?fetch\(['"]\/api\/chats\/group\/get['"]/);
+    assert.match(loadGroupChat, /return\s+data\s*;/);
+
+    const printMessages = script.slice(
+        script.indexOf('export async function printMessages'),
+        script.indexOf('\n/**', script.indexOf('export async function printMessages')),
+    );
+    assert.match(printMessages, /const\s+count\s*=\s*power_user\.chat_truncation\s*\|\|\s*Number\.MAX_SAFE_INTEGER\s*;/);
+    assert.match(printMessages, /startIndex\s*=\s*chat\.length\s*-\s*count\s*;/);
+    assert.match(printMessages, /id=["']show_more_messages["']/);
+
+    const showMoreMessages = script.slice(
+        script.indexOf('export async function showMoreMessages'),
+        script.indexOf('\nexport async function printMessages'),
+    );
+    const upstreamShowMore = showMoreMessages.slice(showMoreMessages.indexOf('    const firstDisplayedMesId'));
+    assert.match(upstreamShowMore, /chat\.slice\(firstId,\s*messageId\)\.forEach\s*\(/);
+    assert.match(upstreamShowMore, /showMoreButton\.after\(messageElements\)\s*;/);
+    assert.match(upstreamShowMore, /chatElement\.prepend\(messageElements\)\s*;/);
+    assert.doesNotMatch(upstreamShowMore, /loadCharacterChatPayloadBefore|createDocumentFragment|applyCharacterTagsToMessageDivs/);
+
+    const redisplayChat = script.slice(
+        script.indexOf('export async function redisplayChat'),
+        script.indexOf('\nexport function scrollOnMediaLoad'),
+    );
+    assert.match(redisplayChat, /const\s+messages\s*=\s*targetChat\.slice\(startIndex\)\s*;/);
+    assert.match(redisplayChat, /const\s+newMessageElements\s*=\s*messages\.map\s*\(/);
+    assert.match(redisplayChat, /chatElement\.append\(newMessageElements\)\s*;/);
+    assert.doesNotMatch(redisplayChat, /requestAnimationFrame|batchSize|appendTarget/);
+});
