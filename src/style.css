@@ -1187,6 +1187,15 @@ body .panelControlBar {
     content-visibility: auto;
 }
 
+@supports (content-visibility: auto) and (contain-intrinsic-block-size: auto 200px) {
+    /* Keep the actively updating last message on the normal rendering path. */
+    #chat > .mes:not(.last_mes) {
+        content-visibility: auto;
+        contain-intrinsic-block-size: auto 200px;
+        flex-shrink: 0;
+    }
+}
+
 .mes {
     display: flex;
     align-items: flex-start;

@@ -48,6 +48,20 @@ test('windowed chat contract: cursor signature normalizes modifiedMillis and mod
     assert.match(promptBackfill, /modifiedMillis\s*\?\?\s*cursor\?\.\s*modified_millis/);
 });
 
+test('full-DOM chat progressively contains inactive message roots', async () => {
+    const style = await readFile(path.join(REPO_ROOT, 'src/style.css'), 'utf8');
+
+    assert.match(
+        style,
+        /@supports\s*\(content-visibility:\s*auto\)\s*and\s*\(contain-intrinsic-block-size:\s*auto 200px\)/,
+    );
+    assert.match(
+        style,
+        /#chat\s*>\s*\.mes:not\(\.last_mes\)\s*\{\s*content-visibility:\s*auto;\s*contain-intrinsic-block-size:\s*auto 200px;\s*flex-shrink:\s*0;/,
+    );
+    assert.match(style, /\.auto_hide\s*\{\s*content-visibility:\s*auto;/);
+});
+
 test('chat history off preserves the upstream full-data and truncated-DOM rendering baseline', async () => {
     const script = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
     const groupChats = await readFile(path.join(REPO_ROOT, 'src/scripts/group-chats.js'), 'utf8');
