@@ -64,6 +64,16 @@ export function installFakeDom(options = {}) {
             return node;
         }
 
+        /** @param {...FakeNode} nodes */
+        replaceChildren(...nodes) {
+            for (const child of this.childNodes.slice()) {
+                this.removeChild(child);
+            }
+            for (const node of nodes) {
+                this.appendChild(node);
+            }
+        }
+
         remove() {
             if (this.parentNode) {
                 this.parentNode.removeChild(this);
@@ -887,6 +897,12 @@ export function installFakeDom(options = {}) {
     patchGlobal('requestAnimationFrame', (fn) => {
         rafs.push(fn);
         return rafs.length;
+    });
+    patchGlobal('cancelAnimationFrame', (id) => {
+        const index = Number(id) - 1;
+        if (index >= 0 && index < rafs.length) {
+            rafs[index] = null;
+        }
     });
 
     const flushMicrotasks = () => {

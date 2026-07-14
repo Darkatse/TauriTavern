@@ -1958,9 +1958,16 @@ export async function showMoreMessages(messagesToLoad = null) {
     await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
 }
 
-export async function printMessages() {
+/**
+ * Renders the current chat window.
+ * @param {{ frontendSourceHandoffEvent?: string | null }} [options]
+ */
+export async function printMessages({ frontendSourceHandoffEvent = null } = {}) {
     const windowState = getWindowedChatState();
     const isWindowed = Boolean(windowState);
+    const effectiveHandoffEvent = frontendSourceHandoffEvent !== null && isCodeRenderDelegatedToThirdPartyRenderer()
+        ? frontendSourceHandoffEvent
+        : null;
 
     let startIndex = 0;
 
@@ -1977,7 +1984,7 @@ export async function printMessages() {
         }
     }
 
-    await redisplayChat({ startIndex, fade: false });
+    await redisplayChat({ startIndex, fade: false, frontendSourceHandoffEvent: effectiveHandoffEvent });
 
     scrollChatToBottom({ waitForFrame: true });
     delay(debounce_timeout.short).then(() => scrollOnMediaLoad());
@@ -1989,8 +1996,9 @@ export async function printMessages() {
  * @param {ChatMessage[]} [options.targetChat=chat] All messages in chat before startIndex will remain unchanged.
  * @param {Number} [options.startIndex=0] Everything including and after startIndex will be replaced.
  * @param {Boolean} [options.fade=true] When false, the swipe chevrons will not fade in.
+ * @param {string|null} [options.frontendSourceHandoffEvent=null] Event after which detached frontend source cover is released.
  */
-export async function redisplayChat({ targetChat = chat, startIndex = 0, fade = true } = {}) {
+export async function redisplayChat({ targetChat = chat, startIndex = 0, fade = true, frontendSourceHandoffEvent = null } = {}) {
     const messageElements = chatElement.find('.mes');
     messageElements.removeClass('last_mes');
 
@@ -2004,7 +2012,7 @@ export async function redisplayChat({ targetChat = chat, startIndex = 0, fade = 
     if (messages.length > 0) {
         const newMessageElements = messages.map((message, offset) => {
             const i = startIndex + offset;
-            const messageElement = updateMessageElement(message, { messageId: i });
+            const messageElement = updateMessageElement(message, { messageId: i, frontendSourceHandoffEvent });
 
             return messageElement[0];
         });
@@ -3188,9 +3196,10 @@ export function addOneMessage(mes, { type = undefined, insertAfter = null, scrol
  * @param {number} [options.messageId=chat.length - 1] Force the message ID
  * @param {JQuery<HTMLElement>} [options.messageElement=messageTemplate.clone()] This message element will be updated with the ChatMessage object.
  * @param {SCROLL_BEHAVIOR} [options.adjustMediaScroll=SCROLL_BEHAVIOR.NONE] Scroll behavior option passed to appendMediaToMessage.
+ * @param {string|null} [options.frontendSourceHandoffEvent=null] Event after which detached frontend source cover is released.
  * @returns {JQuery<HTMLElement>} Rendered HTMLElement.
  */
-export function updateMessageElement(mes, { messageId = chat.length - 1, messageElement = messageTemplate.clone(), adjustMediaScroll = SCROLL_BEHAVIOR.NONE } = {}) {
+export function updateMessageElement(mes, { messageId = chat.length - 1, messageElement = messageTemplate.clone(), adjustMediaScroll = SCROLL_BEHAVIOR.NONE, frontendSourceHandoffEvent = null } = {}) {
     let avatarImg = getThumbnailUrl('persona', user_avatar);
 
     //for non-user messages
@@ -3271,6 +3280,7 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
     replaceMesTextHtmlWithRuntimePolicy(
         /** @type {HTMLElement} */ (messageElement[0]),
         messageHTML,
+        { frontendSourceHandoffEvent },
     );
     addCopyToCodeBlocks(messageElement);
 
@@ -8890,7 +8900,7 @@ async function getChatResult({ allowNewChat = false } = {}) {
         await saveChatConditional();
     }
     await loadItemizedPrompts(getCurrentChatId());
-    await printMessages();
+    await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_LOADED });
     select_selected_character(this_chid);
 
     await eventSource.emit(event_types.CHAT_CHANGED, (getCurrentChatId()));

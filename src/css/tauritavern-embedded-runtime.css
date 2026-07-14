@@ -1,3 +1,7 @@
+#chat > .mes .mes_text pre[data-tt-frontend-source-handoff] {
+    display: none !important;
+}
+
 .tt-runtime-placeholder {
     display: flex;
     flex-direction: column;

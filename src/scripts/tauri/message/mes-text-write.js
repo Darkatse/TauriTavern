@@ -11,10 +11,11 @@ import { isEmbeddedRuntimeTakeoverDisabled } from '../../../tauri/main/services/
  *
  * @param {HTMLElement} messageElement `.mes` element.
  * @param {string} html New HTML for `.mes_text`.
+ * @param {{ frontendSourceHandoffEvent?: string | null }} [options]
  */
-export function replaceMesTextHtmlWithRuntimePolicy(messageElement, html) {
+export function replaceMesTextHtmlWithRuntimePolicy(messageElement, html, { frontendSourceHandoffEvent = null } = {}) {
     if (!isEmbeddedRuntimeTakeoverDisabled()) {
-        replaceMesTextHtmlPreservingEmbeddedRuntimes(messageElement, html);
+        replaceMesTextHtmlPreservingEmbeddedRuntimes(messageElement, html, { frontendSourceHandoffEvent });
         return;
     }
 

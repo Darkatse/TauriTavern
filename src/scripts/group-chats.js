@@ -403,7 +403,7 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
         chat.splice(0, chat.length, ...data);
         chat.forEach(ensureMessageMediaIsArray);
         chatElement.find('.mes').remove();
-        await printMessages();
+        await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_CHANGED });
         if (!isStillActive()) {
             return;
         }
