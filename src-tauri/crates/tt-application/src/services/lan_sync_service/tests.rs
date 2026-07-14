@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 use ttsync_contract::peer::DeviceId;
-use ttsync_contract::sync::SyncMode;
+use ttsync_contract::sync::{OverwritePolicy, SyncMode};
 
 use super::pairing_link::{default_lan_permissions, device_pubkey_b64url};
 use super::ports::LanPairingApprovalRequest;
@@ -22,7 +22,18 @@ use tt_domain::models::lan_sync::{
 };
 
 struct MemorySettingsRepository {
-    manual_default_mode: SyncMode,
+    preferences: Mutex<SyncPreferences>,
+}
+
+impl MemorySettingsRepository {
+    fn new(manual_default_mode: SyncMode) -> Self {
+        Self {
+            preferences: Mutex::new(SyncPreferences {
+                manual_default_mode,
+                overwrite_policy: OverwritePolicy::Exact,
+            }),
+        }
+    }
 }
 
 #[async_trait]
@@ -35,15 +46,14 @@ impl LanSyncSettingsRepository for MemorySettingsRepository {
     }
 
     async fn load_or_create_sync_preferences(&self) -> Result<SyncPreferences, DomainError> {
-        Ok(SyncPreferences {
-            manual_default_mode: self.manual_default_mode,
-        })
+        Ok(self.preferences.lock().await.clone())
     }
 
     async fn save_sync_preferences(
         &self,
-        _preferences: &SyncPreferences,
+        preferences: &SyncPreferences,
     ) -> Result<(), DomainError> {
+        *self.preferences.lock().await = preferences.clone();
         Ok(())
     }
 }
@@ -272,9 +282,7 @@ fn inbound_service(
     jobs: mpsc::UnboundedSender<SyncJob>,
     mode: SyncMode,
 ) -> LanInboundService {
-    let settings_repository = Arc::new(MemorySettingsRepository {
-        manual_default_mode: mode,
-    });
+    let settings_repository = Arc::new(MemorySettingsRepository::new(mode));
     let coordinator = Arc::new(SyncJobCoordinator::new(
         Arc::new(RecordingExecutor { jobs }),
         Arc::new(NoopReconciler),
@@ -289,6 +297,62 @@ fn inbound_service(
         coordinator,
         approval,
     )
+}
+
+#[tokio::test]
+async fn overwrite_policy_setter_updates_preferences_and_status() {
+    let state = Arc::new(LanSyncRuntimeState::new());
+    let settings_repository = Arc::new(MemorySettingsRepository::new(SyncMode::Incremental));
+    let peer_repository = Arc::new(MemoryPeerRepository {
+        identity: test_identity(
+            test_device_id("11111111-1111-4111-8111-111111111111"),
+            "server",
+        ),
+        paired_devices: Mutex::new(Vec::new()),
+    });
+    let approval = Arc::new(StaticApproval {
+        accept: true,
+        requests: Mutex::new(Vec::new()),
+    });
+    let (jobs, _job_rx) = mpsc::unbounded_channel();
+    let coordinator = Arc::new(SyncJobCoordinator::new(
+        Arc::new(RecordingExecutor { jobs }),
+        Arc::new(NoopReconciler),
+        Arc::new(NoopEvents),
+        Arc::new(Semaphore::new(1)),
+    ));
+    let service = LanSyncService::new(
+        state,
+        settings_repository.clone(),
+        peer_repository,
+        Arc::new(MemoryServerControl),
+        Arc::new(NoopAddressDiscovery),
+        Arc::new(NoopPairingClient),
+        approval,
+        coordinator,
+    );
+
+    service
+        .set_overwrite_policy(OverwritePolicy::PreferNewer)
+        .await
+        .expect("set overwrite policy");
+
+    assert_eq!(
+        settings_repository
+            .load_or_create_sync_preferences()
+            .await
+            .expect("load preferences")
+            .overwrite_policy,
+        OverwritePolicy::PreferNewer
+    );
+    assert_eq!(
+        service
+            .get_status()
+            .await
+            .expect("load status")
+            .overwrite_policy,
+        OverwritePolicy::PreferNewer
+    );
 }
 
 #[tokio::test]
@@ -425,9 +489,7 @@ async fn accepted_stale_pairing_request_does_not_clear_new_session() {
     let (jobs, _job_rx) = mpsc::unbounded_channel();
     let inbound = LanInboundService::new(
         state.clone(),
-        Arc::new(MemorySettingsRepository {
-            manual_default_mode: SyncMode::Incremental,
-        }),
+        Arc::new(MemorySettingsRepository::new(SyncMode::Incremental)),
         peer_repository.clone(),
         Arc::new(SyncJobCoordinator::new(
             Arc::new(RecordingExecutor { jobs }),
@@ -486,8 +548,10 @@ async fn inbound_pull_request_starts_remote_request_job() {
     let inbound = inbound_service(state, peer_repository, approval, jobs, SyncMode::Mirror);
     let peer_id = test_device_id("22222222-2222-4222-8222-222222222222");
 
+    let mut options = default_sync_operation_options();
+    options.overwrite_policy = OverwritePolicy::PreferNewer;
     inbound
-        .accept_pull_request(peer_id.clone(), default_sync_operation_options())
+        .accept_pull_request(peer_id.clone(), options)
         .await
         .expect("accept pull request");
 
@@ -508,7 +572,10 @@ async fn inbound_pull_request_starts_remote_request_job() {
         other => panic!("unexpected endpoint: {other:?}"),
     }
     match job.policy {
-        ResolvedSyncPolicy::Transfer { mode, .. } => assert_eq!(mode, SyncMode::Mirror),
+        ResolvedSyncPolicy::Transfer { mode, options } => {
+            assert_eq!(mode, SyncMode::Mirror);
+            assert_eq!(options.overwrite_policy, OverwritePolicy::PreferNewer);
+        }
         other => panic!("unexpected policy: {other:?}"),
     }
 }
@@ -516,9 +583,7 @@ async fn inbound_pull_request_starts_remote_request_job() {
 #[tokio::test]
 async fn stop_server_does_not_abort_accepted_inbound_job() {
     let state = Arc::new(LanSyncRuntimeState::new());
-    let settings_repository = Arc::new(MemorySettingsRepository {
-        manual_default_mode: SyncMode::Incremental,
-    });
+    let settings_repository = Arc::new(MemorySettingsRepository::new(SyncMode::Incremental));
     let peer_repository = Arc::new(MemoryPeerRepository {
         identity: test_identity(
             test_device_id("11111111-1111-4111-8111-111111111111"),

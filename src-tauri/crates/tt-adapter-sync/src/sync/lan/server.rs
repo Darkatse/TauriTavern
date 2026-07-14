@@ -33,6 +33,8 @@ use tt_ports::lan_sync::{LanInboundRequestHandler, LanServerErrorReporter, LanSe
 const LAN_HTTPS_FEATURE_V1: &str = "lan_https_v1";
 const LAN_SESSION_FEATURE_V1: &str = "lan_session_v1";
 pub(crate) const LAN_PULL_REQUEST_SELECTION_FEATURE_V1: &str = "lan_pull_request_selection_v1";
+pub(crate) const LAN_PULL_REQUEST_OVERWRITE_POLICY_FEATURE_V1: &str =
+    "lan_pull_request_overwrite_policy_v1";
 
 pub struct LanSyncServerHandle {
     pub addr: SocketAddr,
@@ -80,6 +82,10 @@ pub async fn spawn_lan_sync_server(
     append_feature(&mut status.features, LAN_HTTPS_FEATURE_V1);
     append_feature(&mut status.features, LAN_SESSION_FEATURE_V1);
     append_feature(&mut status.features, LAN_PULL_REQUEST_SELECTION_FEATURE_V1);
+    append_feature(
+        &mut status.features,
+        LAN_PULL_REQUEST_OVERWRITE_POLICY_FEATURE_V1,
+    );
 
     let shared_state = Arc::new(
         ServerState::new(
@@ -624,6 +630,12 @@ mod tests {
             status
                 .features
                 .iter()
+                .any(|item| item == LAN_PULL_REQUEST_OVERWRITE_POLICY_FEATURE_V1)
+        );
+        assert!(
+            status
+                .features
+                .iter()
                 .any(|item| item == DATASET_SCOPE_FEATURE_V1)
         );
         assert!(status.features.iter().any(|item| item == FEATURE_BUNDLE_V1));
@@ -784,6 +796,7 @@ mod tests {
             .pull_plan(
                 &session.session_token,
                 SyncMode::Incremental,
+                ttsync_contract::sync::OverwritePolicy::Exact,
                 tauri_tavern_default_selection(),
                 ManifestV2 { entries: vec![] },
             )

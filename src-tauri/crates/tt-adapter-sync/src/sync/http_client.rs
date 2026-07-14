@@ -68,11 +68,18 @@ impl SyncHttpClient {
         &self,
         session_token: &SessionToken,
         mode: ttsync_contract::sync::SyncMode,
+        overwrite_policy: ttsync_contract::sync::OverwritePolicy,
         selection: ttsync_contract::dataset::DatasetSelection,
         target_manifest: ttsync_contract::manifest::ManifestV2,
     ) -> Result<ttsync_contract::plan::SyncPlan, DomainError> {
         self.inner
-            .pull_plan(session_token, mode, selection, target_manifest)
+            .pull_plan(
+                session_token,
+                mode,
+                overwrite_policy,
+                selection,
+                target_manifest,
+            )
             .await
             .map_err(sync_error_to_domain)
     }

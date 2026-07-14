@@ -438,6 +438,39 @@ test('TauriTavern Sync Vue app stays presentation-only', async () => {
     assert.match(entry, /export\s+function\s+mountTauriTavernSyncProgressApp/);
 });
 
+test('TauriTavern Sync sends the selected overwrite policy through every operation', async () => {
+    const popup = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-popup.js');
+    const source = await readRepoFile('src/scripts/tauri/setting/sync-app/SyncApp.js');
+    const { createTauriTavernSyncApp } = await importSyncApp();
+    const noopFunctions = new Proxy({}, { get: () => () => {} });
+    const component = createTauriTavernSyncApp({
+        client: noopFunctions,
+        actions: noopFunctions,
+        tr: (key) => key,
+    });
+    const selection = { policy_version: 1, dataset_ids: ['chat.character.history'] };
+
+    assert.deepEqual(component.methods.syncOperationOptions.call({
+        syncSelection: selection,
+        status: { overwritePolicy: 'prefer-newer' },
+        tr: (key) => key,
+    }), {
+        selection,
+        overwrite_policy: 'prefer-newer',
+        require_bundle_zstd: true,
+    });
+    assert.match(popup, /lan_sync_set_overwrite_policy/);
+    assert.match(popup, /overwritePolicy !== 'exact' && overwritePolicy !== 'prefer-newer'/);
+    assert.match(source, /role="radiogroup"/);
+    assert.match(source, /type="radio"[\s\S]*?value="exact"/);
+    assert.match(source, /type="radio"[\s\S]*?value="prefer-newer"/);
+    assert.match(source, /fa-circle-question/);
+    assert.match(source, /actions\.showOverwritePolicyHelp\(\)/);
+    assert.match(popup, /showOverwritePolicyHelp:\s*\(\)\s*=>\s*runTaskOrPopup\(showOverwritePolicyHelp\)/);
+    assert.doesNotMatch(source, /tr\('File overwrite'\)/);
+    assert.match(source, /client\.setOverwritePolicy\(overwritePolicy\)/);
+});
+
 test('TauriTavern Sync pure state helpers keep pair URI validation explicit', async () => {
     const source = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-state.js');
 

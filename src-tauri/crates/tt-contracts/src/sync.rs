@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use ttsync_contract::dataset::DatasetSelection;
 use ttsync_contract::peer::DeviceId;
-use ttsync_contract::sync::{SyncMode, SyncPhase};
+use ttsync_contract::sync::{OverwritePolicy, SyncMode, SyncPhase};
 
 use tt_domain::errors::DomainError;
 
@@ -10,6 +10,8 @@ pub const PAIRING_REJECTED_MESSAGE: &str = "Pairing rejected";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncOperationOptions {
     pub selection: DatasetSelection,
+    #[serde(default)]
+    pub overwrite_policy: OverwritePolicy,
     #[serde(default)]
     pub require_bundle_zstd: bool,
 }
@@ -334,6 +336,7 @@ mod tests {
 
     use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DatasetSelection};
     use ttsync_contract::peer::DeviceId;
+    use ttsync_contract::sync::OverwritePolicy;
 
     fn options() -> SyncOperationOptions {
         SyncOperationOptions {
@@ -341,8 +344,23 @@ mod tests {
                 DATASET_POLICY_VERSION,
                 vec!["chat.character.history".to_string()],
             ),
+            overwrite_policy: OverwritePolicy::Exact,
             require_bundle_zstd: false,
         }
+    }
+
+    #[test]
+    fn operation_options_default_missing_overwrite_policy_to_exact() {
+        let value = serde_json::json!({
+            "selection": {
+                "policy_version": DATASET_POLICY_VERSION,
+                "dataset_ids": ["chat.character.history"]
+            },
+            "require_bundle_zstd": true
+        });
+        let options: SyncOperationOptions = serde_json::from_value(value).unwrap();
+
+        assert_eq!(options.overwrite_policy, OverwritePolicy::Exact);
     }
 
     fn job() -> SyncJob {

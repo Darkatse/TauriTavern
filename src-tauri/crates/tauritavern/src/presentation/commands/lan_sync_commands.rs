@@ -3,7 +3,7 @@ use std::sync::Arc;
 use qrcode::QrCode;
 use serde::Serialize;
 use tauri::State;
-use ttsync_contract::sync::SyncMode;
+use ttsync_contract::sync::{OverwritePolicy, SyncMode};
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{
@@ -278,6 +278,22 @@ pub async fn lan_sync_clear_sync_mode_override(
         .clear_sync_mode_override()
         .await;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn lan_sync_set_overwrite_policy(
+    app_state: State<'_, Arc<AppState>>,
+    overwrite_policy: OverwritePolicy,
+) -> Result<(), CommandError> {
+    log_command("lan_sync_set_overwrite_policy");
+    ensure_lan_sync_allowed(&app_state)?;
+
+    app_state
+        .services
+        .lan_sync_service
+        .set_overwrite_policy(overwrite_policy)
+        .await
+        .map_err(map_command_error("Failed to set sync overwrite policy"))
 }
 
 fn generate_qr_svg(text: &str) -> Result<String, tt_domain::errors::DomainError> {

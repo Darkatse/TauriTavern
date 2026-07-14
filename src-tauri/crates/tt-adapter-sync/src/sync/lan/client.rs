@@ -4,11 +4,14 @@ use reqwest::Response;
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::session::{SessionOpenResponse, SessionToken};
 use ttsync_contract::status::StatusResponse;
+use ttsync_contract::sync::OverwritePolicy;
 
 use crate::sync::http_client::{
     SyncHttpClient, bearer_auth_value, ensure_dataset_scope_v1, ensure_success,
 };
-use crate::sync::lan::server::LAN_PULL_REQUEST_SELECTION_FEATURE_V1;
+use crate::sync::lan::server::{
+    LAN_PULL_REQUEST_OVERWRITE_POLICY_FEATURE_V1, LAN_PULL_REQUEST_SELECTION_FEATURE_V1,
+};
 use crate::sync::lan::store::LanPeerStore;
 use tt_contracts::sync::SyncOperationOptions;
 use tt_domain::errors::DomainError;
@@ -74,11 +77,18 @@ impl LanSyncClient {
         &self,
         session_token: &SessionToken,
         mode: ttsync_contract::sync::SyncMode,
+        overwrite_policy: ttsync_contract::sync::OverwritePolicy,
         selection: ttsync_contract::dataset::DatasetSelection,
         target_manifest: ttsync_contract::manifest::ManifestV2,
     ) -> Result<ttsync_contract::plan::SyncPlan, DomainError> {
         self.inner
-            .pull_plan(session_token, mode, selection, target_manifest)
+            .pull_plan(
+                session_token,
+                mode,
+                overwrite_policy,
+                selection,
+                target_manifest,
+            )
             .await
     }
 
@@ -209,6 +219,7 @@ pub async fn request_peer_pull(
             "LAN Sync peer does not support scoped pull requests".to_string(),
         ));
     }
+    ensure_pull_request_overwrite_policy(&status, options.overwrite_policy)?;
     let session = api
         .open_session(&identity.device_id, &identity.ed25519_seed)
         .await?;
@@ -220,4 +231,43 @@ pub async fn request_peer_pull(
 
     api.notify_pull_request(&session.session_token, &options)
         .await
+}
+
+fn ensure_pull_request_overwrite_policy(
+    status: &StatusResponse,
+    overwrite_policy: OverwritePolicy,
+) -> Result<(), DomainError> {
+    if overwrite_policy == OverwritePolicy::PreferNewer
+        && !status
+            .features
+            .iter()
+            .any(|feature| feature == LAN_PULL_REQUEST_OVERWRITE_POLICY_FEATURE_V1)
+    {
+        return Err(DomainError::InvalidData(
+            "LAN Sync peer does not support prefer-newer pull requests".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_pull_request_overwrite_policy;
+    use crate::sync::lan::server::LAN_PULL_REQUEST_OVERWRITE_POLICY_FEATURE_V1;
+    use ttsync_contract::sync::OverwritePolicy;
+
+    #[test]
+    fn overwrite_policy_feature_is_only_required_for_prefer_newer() {
+        let mut status = ttsync_http::server::default_status_response();
+        status
+            .features
+            .retain(|feature| feature != LAN_PULL_REQUEST_OVERWRITE_POLICY_FEATURE_V1);
+
+        ensure_pull_request_overwrite_policy(&status, OverwritePolicy::Exact)
+            .expect("exact remains compatible with old LAN peers");
+        assert!(
+            ensure_pull_request_overwrite_policy(&status, OverwritePolicy::PreferNewer).is_err()
+        );
+    }
 }

@@ -16,6 +16,7 @@ const REQUIRED_CLIENT_METHODS = [
     'removeLanDevice',
     'pullLanDevice',
     'pushLanDevice',
+    'setOverwritePolicy',
     'removeTtSyncServer',
     'pullTtSyncServer',
     'pushTtSyncServer',
@@ -28,6 +29,7 @@ const REQUIRED_ACTIONS = [
     'scanPairUri',
     'changeSyncMode',
     'editSyncScope',
+    'showOverwritePolicyHelp',
     'renameTarget',
     'connectPairUri',
     'notifyLanPushRequested',
@@ -179,6 +181,11 @@ export function createTauriTavernSyncApp(options) {
             modeDanger() {
                 return this.status?.syncMode === 'Mirror';
             },
+            overwritePolicyDescription() {
+                return this.tr(this.status?.overwritePolicy === 'prefer-newer'
+                    ? 'Keep the copy with the later modification time.'
+                    : "Keep the initiator's copy.");
+            },
             pairingText() {
                 if (!this.pairingEnabled) {
                     return this.tr('Disabled');
@@ -327,6 +334,9 @@ export function createTauriTavernSyncApp(options) {
             reportError(error) {
                 void actions.reportError(error);
             },
+            showOverwritePolicyHelp() {
+                void actions.showOverwritePolicyHelp();
+            },
             async withBusy(name, task) {
                 const busyName = normalizeBusyName(name);
                 this.busy = busyName;
@@ -419,6 +429,22 @@ export function createTauriTavernSyncApp(options) {
                     }
                 });
             },
+            async setOverwritePolicy(overwritePolicy) {
+                if (!this.status) {
+                    return;
+                }
+
+                const previous = this.status.overwritePolicy;
+                this.status.overwritePolicy = overwritePolicy;
+                try {
+                    await this.withBusyStrict('overwrite-policy', () => (
+                        client.setOverwritePolicy(overwritePolicy)
+                    ));
+                } catch (error) {
+                    this.status.overwritePolicy = previous;
+                    this.reportError(error);
+                }
+            },
             syncOperationOptions() {
                 if (!this.syncSelection) {
                     throw new Error(this.tr('Sync content selection is unavailable'));
@@ -426,6 +452,7 @@ export function createTauriTavernSyncApp(options) {
 
                 return {
                     selection: this.syncSelection,
+                    overwrite_policy: this.status.overwritePolicy,
                     require_bundle_zstd: true,
                 };
             },
@@ -676,6 +703,71 @@ export function createTauriTavernSyncApp(options) {
                     </div>
                 </section>
 
+                <SyncSection :title="tr('Sync preferences')">
+                    <div class="tt-sync-preferences-card">
+                        <div class="tt-sync-preference-row">
+                            <div class="tt-sync-preference-copy">
+                                <b>{{ tr('Sync content') }}</b>
+                                <span class="tt-sync-muted">{{ scopeTitle }} · {{ scopeSubtitle }}</span>
+                            </div>
+                            <SyncButton
+                                :label="tr('Choose')"
+                                icon="fa-list-check"
+                                :disabled="isBusy || !datasetCatalog"
+                                @click="editSyncScope"
+                            />
+                        </div>
+                        <div class="tt-sync-preference-row tt-sync-overwrite-row">
+                            <div class="tt-sync-preference-copy">
+                                <div class="tt-sync-preference-title">
+                                    <b>{{ tr('When files conflict') }}</b>
+                                    <button
+                                        type="button"
+                                        class="tt-sync-help-button"
+                                        :title="tr('Learn more')"
+                                        :aria-label="tr('Learn more')"
+                                        @click="showOverwritePolicyHelp"
+                                    >
+                                        <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <span id="tt-sync-overwrite-description" class="tt-sync-muted" aria-live="polite">
+                                    {{ overwritePolicyDescription }}
+                                </span>
+                            </div>
+                            <div
+                                class="tt-sync-overwrite-options"
+                                role="radiogroup"
+                                :aria-label="tr('When files conflict')"
+                                aria-describedby="tt-sync-overwrite-description"
+                            >
+                                <label class="tt-sync-overwrite-option">
+                                    <input
+                                        type="radio"
+                                        name="tt-sync-overwrite-policy"
+                                        value="exact"
+                                        :checked="status?.overwritePolicy === 'exact'"
+                                        :disabled="isBusy || !status"
+                                        @change="setOverwritePolicy('exact')"
+                                    />
+                                    <span>{{ tr('Initiator wins (default)') }}</span>
+                                </label>
+                                <label class="tt-sync-overwrite-option">
+                                    <input
+                                        type="radio"
+                                        name="tt-sync-overwrite-policy"
+                                        value="prefer-newer"
+                                        :checked="status?.overwritePolicy === 'prefer-newer'"
+                                        :disabled="isBusy || !status"
+                                        @change="setOverwritePolicy('prefer-newer')"
+                                    />
+                                    <span>{{ tr('Newer copy wins') }}</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </SyncSection>
+
                 <section class="tt-sync-section tt-sync-automation-section">
                     <details
                         class="tt-sync-automation-disclosure"
@@ -768,21 +860,6 @@ export function createTauriTavernSyncApp(options) {
                         </div>
                     </details>
                 </section>
-
-                <SyncSection :title="tr('Sync content')">
-                    <div class="tt-sync-scope-row">
-                        <div class="tt-sync-scope-current">
-                            <b>{{ scopeTitle }}</b>
-                            <span class="tt-sync-muted">{{ scopeSubtitle }}</span>
-                        </div>
-                        <SyncButton
-                            :label="tr('Choose')"
-                            icon="fa-list-check"
-                            :disabled="isBusy || !datasetCatalog"
-                            @click="editSyncScope"
-                        />
-                    </div>
-                </SyncSection>
 
                 <SyncSection :title="tr('Pair via LAN QR')">
                     <div class="tt-sync-pair-grid">

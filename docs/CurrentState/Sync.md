@@ -20,6 +20,7 @@ TauriTavern 当前存在两种同步拓扑：
 3. **长期同步 scope 由 TT-Sync `DatasetPolicy` 定义**：LAN Sync 与 TT-Sync v2 消费同一份策略，不再存在独立的 LAN v1 allowlist。
 4. **v2 协议已落地 Bundle + zstd 传输形态**：把 N 个 per-file 请求收敛为 1 个 bundle 请求，并可选 zstd 压缩；旧的 per-file 端点仍保留作为 fallback。
 5. **Sync Panel 入口默认走 scoped sync**：前端持久化一份 `DatasetSelection` 作为后续 LAN Sync / TT-Sync v2 默认范围，并要求对端支持 `bundle_v1 + zstd_v1`；不再静默降级到旧 LAN v1。
+6. **覆盖策略由逻辑发起方逐作业决定**：`Exact`（默认）保持同步源权威；`PreferNewer` 仅保护目标端修改时间严格更新的同路径文件。该策略贯穿手动与自动、LAN 与 TT-Sync 作业，不属于同步服务端配置。
 
 ---
 
@@ -31,7 +32,7 @@ TauriTavern 当前存在两种同步拓扑：
 
 - LAN Sync 状态：`default-user/user/lan-sync/`
   - LAN server 配置：`server-settings.json`（由旧 `config.json.v2_port` 一次迁移；同时保存随 App 启动开启同步端口的 `auto_start`）
-  - Sync 偏好：`sync-preferences.json`（由旧 `config.json.sync_mode` 一次迁移；见 `src-tauri/crates/tt-adapter-sync/src/lan_sync/store.rs`）
+  - Sync 偏好：`sync-preferences.json`（保存手动默认 Sync mode 与全局 `overwrite_policy`；由旧 `config.json.sync_mode` 一次迁移，旧文件缺少策略时默认为 `Exact`；见 `src-tauri/crates/tt-adapter-sync/src/lan_sync/store.rs`）
   - 自动同步规则：`automation.json`（运行期自动上传开关、目标、间隔、显式 Sync mode、范围与 bundle 要求；见 `src-tauri/crates/tt-adapter-sync/src/sync_automation_store.rs`）
   - peer 状态：`v2/identity.json` / `v2/peers.json` / TLS 状态（见 `src-tauri/crates/tt-adapter-sync/src/sync/lan/store.rs`）
 - TT-Sync v2 状态：`default-user/user/lan-sync/tt-sync-v2/`
@@ -97,6 +98,7 @@ Sync Panel 是 TauriTavern 自有设置面板，不属于上游 SillyTavern 事�
 - `src/scripts/tauri/setting/setting-panel/sync-popup.js` 拥有 popup / Tauri invoke / QR 扫码能力，并负责把 UI 选择转换为命令参数。
 - `sync_get_dataset_catalog` 返回当前 `DatasetPolicy` 版本、支持的数据集 ID、profile ID 与 TauriTavern 默认范围；前端只持久化 dataset ID，不持久化路径。
 - “Sync content”是独立持久化设置，保存在 localStorage。保存后所有 Sync Panel 发起的 LAN Sync pull、LAN Sync push-request、TT-Sync pull/push 默认都携带同一份 `DatasetSelection`。
+- “File overwrite”是后端持久化的全局偏好，保存在 `sync-preferences.json`。所有新建的手动作业都会显式携带当前值；自动同步在每次创建作业时读取当前值，不把它复制进 `automation.json`。
 - 自动同步配置保存在后端本地 `automation.json`，不进入同步 scope。Sync Panel 保存自动同步设置或同步范围时，会把当前 `DatasetSelection` 写入这份本地配置，供面板关闭后的 Rust 调度器使用。
 - Sync Panel 展示并复制 LAN pairing URI/QR；粘贴 LAN pairing URI 时只接受 `tauritavern://lan-sync/pair?v=2`。旧 LAN v1 设备不会再作为可同步目标出现，需要重新配对。
 - Sync Panel 发起同步时传入 `require_bundle_zstd: true`。如果对端缺少 `bundle_v1` 或 `zstd_v1`，操作 fail-fast，不静默降级到 per-file 或旧 LAN v1。
@@ -151,10 +153,10 @@ LAN Sync 与 TT-Sync v2 共享 `/v2/*` 协议族：
 共同步骤由 `SyncJobCoordinator` 串行化，并通过 `ttsync_client::ClientSyncEngine` 执行共享 pull/direct-push 状态机：
 
 1. **全局 permit**：尝试获取同步许可；失败则直接返回失败 `SyncJobReport`。
-2. Status：读取 `GET /v2/status`，必须支持 `dataset_scope_v1` 且 `dataset_policy_version` 匹配；旧 server 会 fail-fast，避免静默漏同步 Agent 数据。
+2. Status：读取 `GET /v2/status`，必须支持 `dataset_scope_v1` 且 `dataset_policy_version` 匹配；选择 `PreferNewer` 时还必须支持 `overwrite_policy_v1`。能力不满足会在 session、扫描和 mutation 前 fail-fast。
 3. `POST /v2/session/open`：用 Ed25519 对 canonical request 签名，获得 `session_token` 与 `granted_permissions`。
 4. Scanning：按调用方显式传入的 `DatasetSelection` 扫描本地 manifest；缺失 selection 会 fail-fast，不再回退到旧固定范围或隐式默认范围。
-5. Diffing：携带同一份 `DatasetSelection` 请求 plan：
+5. Diffing：携带同一份 `DatasetSelection` 与作业的 `overwrite_policy` 请求 plan：
    - pull：`POST /v2/sync/pull-plan`
    - push：`POST /v2/sync/push-plan`
 6. Transfer：
@@ -180,7 +182,9 @@ push 的额外步骤：
 2. `lan_sync_enable_pairing` / `lan_sync_get_pairing_info` 返回当前 LAN pairing URI/QR；URI 包含 `base_url`、pair token、过期时间与 `spki_sha256`。
 3. `lan_sync_request_pairing` 只接受 `tauritavern://lan-sync/pair?v=2`，并通过 `POST /v2/lan/pair/complete` 建立 Ed25519 身份、SPKI pin 与 peer grant。
 4. `lan_sync_sync_from_device` 直接按 peer store 查找目标并走 LAN Sync pull；找不到 peer 时 fail-fast，不回退到旧 v1 pull。
-5. `lan_sync_push_to_device` 不直接上传文件，而是 `POST /v2/lan/pull-request` 请求对端回拉；pull-request body 会携带同一份 `SyncOperationOptions`，实际数据传输仍发生在对端的 pull 链路。对端需声明 `lan_pull_request_selection_v1` 才能接受 Sync Panel 的 scoped push-request。
+5. `lan_sync_push_to_device` 不直接上传文件，而是 `POST /v2/lan/pull-request` 请求对端回拉；pull-request body 会携带同一份 `SyncOperationOptions`，包括发起方选择的 `overwrite_policy`，实际数据传输仍发生在对端的 pull 链路。对端需声明 `lan_pull_request_selection_v1`；使用 `PreferNewer` 时还需声明 `lan_pull_request_overwrite_policy_v1`。
+
+LAN push 的覆盖策略仍归原始发起方所有，但实际回拉端继续使用自己的有效 Sync mode，因为 Mirror delete 发生在目标端。不要把这两个所有权合并。
 
 LAN Sync 默认权限是 `read: true`、`mirror_delete: true`、`write: false`。也就是说 peer 可以从本机读取并按 Mirror 语义计算删除，但不能直接向本机 PUT 写入；局域网“push”通过通知对端 pull 来保持写入方向清晰。
 
@@ -195,11 +199,14 @@ LAN Sync 默认权限是 `read: true`、`mirror_delete: true`、`write: false`�
 - `bundle_v1`：支持 bundle 端点
 - `zstd_v1`：支持 bundle 的 zstd 编解码
 - `dataset_scope_v1`：支持携带 `DatasetSelection` 的 scope-aware plan/delete
+- `overwrite_policy_v1`：plan request 支持按请求中的 `overwrite_policy` 计算计划
 - `lan_pull_request_selection_v1`：LAN peer 支持在 `/v2/lan/pull-request` body 中携带 `DatasetSelection`
+- `lan_pull_request_overwrite_policy_v1`：LAN peer 会在 pull-request 到回拉作业的两跳链路中保留 `overwrite_policy`
 
 客户端策略（见 `ttsync_client::ClientSyncEngine` 与 `src-tauri/crates/tt-adapter-sync/src/sync/job_executor.rs`）：
 
 - `dataset_scope_v1` 缺失或策略版本不匹配时直接报错。
+- `Exact` 与旧 v2 peer 保持原语义；`PreferNewer` 缺少相应通用能力（或 LAN pull-request 专属能力）时直接报错，不静默降级。
 - 未要求严格传输形态的旧调用：仅当存在 `bundle_v1` 才启用 bundle；仅当同时存在 `bundle_v1` + `zstd_v1` 才启用 zstd。
 - Sync Panel 调用：传入 `require_bundle_zstd: true`，缺少 `bundle_v1` 或 `zstd_v1` 都会 fail-fast。
 
@@ -263,6 +270,7 @@ wire framing（见 TT-Sync 的 `ttsync_core::bundle` / `ttsync_client::bundle`�
 - 同步 scope 内 **不支持 symlink**（扫描时直接报错，见 `src-tauri/crates/tt-adapter-sync/src/tt_sync/fs.rs`）。
 - v2 协议 **不提供** bundle 内的 byte-range/断点续传；重试依赖“自然续传”。
 - 不允许 LAN Sync 与 TT-Sync v2 并发执行（全局 permit 设计即为此）。
+- `PreferNewer` 不是双向 merge 或通用冲突解决：它只比较同路径文件的 `modified_ms`，依赖设备时钟基本同步；Mirror 仍会删除目标端独有文件。
 
 ---
 
@@ -276,3 +284,4 @@ wire framing（见 TT-Sync 的 `ttsync_core::bundle` / `ttsync_client::bundle`�
 6. **不要在 v2 链路重新引入手写 scope 数组**：新增同步目录必须先进入 TT-Sync `DatasetPolicy`，再由 LAN Sync/TT-Sync v2 消费。
 7. **不要把敏感/重型 Agent 数据默认并入无选择同步**：`model-responses/`、`checkpoints/` 与密钥文件需要保持独立数据集。
 8. **不要绕过 Sync Panel 的持久化 selection**：前端显示、保存、命令参数必须围绕 `DatasetSelection`；不要在 UI 中复制路径规则或用 manifest omission 伪装范围选择。
+9. **不要把覆盖策略移回服务端配置**：它是逻辑发起方的作业输入；LAN push 必须透传发起方策略，同时保留目标端对 Sync mode 的所有权。

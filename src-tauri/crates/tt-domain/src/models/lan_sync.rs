@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use ttsync_contract::peer::{DeviceId, PeerGrant, Permissions};
-use ttsync_contract::sync::SyncMode;
+use ttsync_contract::sync::{OverwritePolicy, SyncMode};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanServerSettings {
@@ -12,6 +12,8 @@ pub struct LanServerSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncPreferences {
     pub manual_default_mode: SyncMode,
+    #[serde(default)]
+    pub overwrite_policy: OverwritePolicy,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,6 +80,7 @@ pub struct LanSyncStatus {
     pub sync_mode: SyncMode,
     pub manual_default_mode: SyncMode,
     pub sync_mode_overridden: bool,
+    pub overwrite_policy: OverwritePolicy,
 }
 
 #[derive(Debug, Clone, Serialize)]
