@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use rand::Rng;
 use serde::Deserialize;
-use ttsync_contract::sync::SyncMode;
+use ttsync_contract::sync::{OverwritePolicy, SyncMode};
 
 use crate::json_file::{read_json_file, write_json_file};
 use tt_domain::errors::DomainError;
@@ -71,6 +71,7 @@ impl LanSyncStore {
 
         let preferences = SyncPreferences {
             manual_default_mode: SyncMode::Incremental,
+            overwrite_policy: OverwritePolicy::Exact,
         };
         write_json_file(&path, &preferences).await?;
         Ok(preferences)
@@ -102,6 +103,7 @@ impl LanSyncStore {
         };
         let preferences = SyncPreferences {
             manual_default_mode: legacy.sync_mode,
+            overwrite_policy: OverwritePolicy::Exact,
         };
         validate_server_settings(&settings)?;
 
@@ -140,6 +142,12 @@ impl SyncAutomationLanSettingsRepository for LanSyncStore {
         Ok(LanSyncStore::load_or_create_sync_preferences(self)
             .await?
             .manual_default_mode)
+    }
+
+    async fn load_overwrite_policy(&self) -> Result<OverwritePolicy, DomainError> {
+        Ok(LanSyncStore::load_or_create_sync_preferences(self)
+            .await?
+            .overwrite_policy)
     }
 }
 
@@ -183,7 +191,7 @@ fn validate_server_settings(settings: &LanServerSettings) -> Result<(), DomainEr
 #[cfg(test)]
 mod tests {
     use super::LanSyncStore;
-    use ttsync_contract::sync::SyncMode;
+    use ttsync_contract::sync::{OverwritePolicy, SyncMode};
 
     fn temp_default_user_dir() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("tauritavern-lan-store-{}", uuid::Uuid::new_v4()))
@@ -210,7 +218,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_preferences_round_trip_manual_default_mode() {
+    async fn sync_preferences_round_trip() {
         let default_user_dir = temp_default_user_dir();
         let store = LanSyncStore::new(default_user_dir.clone());
         let mut preferences = store
@@ -218,6 +226,7 @@ mod tests {
             .await
             .expect("create preferences");
         preferences.manual_default_mode = SyncMode::Mirror;
+        preferences.overwrite_policy = OverwritePolicy::PreferNewer;
 
         store
             .save_sync_preferences(&preferences)
@@ -229,6 +238,32 @@ mod tests {
             .expect("reload preferences");
 
         assert_eq!(reloaded.manual_default_mode, SyncMode::Mirror);
+        assert_eq!(reloaded.overwrite_policy, OverwritePolicy::PreferNewer);
+
+        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
+    }
+
+    #[tokio::test]
+    async fn old_sync_preferences_default_to_exact() {
+        let default_user_dir = temp_default_user_dir();
+        let config_dir = default_user_dir.join("user").join("lan-sync");
+        tokio::fs::create_dir_all(&config_dir)
+            .await
+            .expect("create config dir");
+        tokio::fs::write(
+            config_dir.join("sync-preferences.json"),
+            br#"{"manual_default_mode":"Mirror"}"#,
+        )
+        .await
+        .expect("write old preferences");
+
+        let preferences = LanSyncStore::new(default_user_dir.clone())
+            .load_or_create_sync_preferences()
+            .await
+            .expect("load old preferences");
+
+        assert_eq!(preferences.manual_default_mode, SyncMode::Mirror);
+        assert_eq!(preferences.overwrite_policy, OverwritePolicy::Exact);
 
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }

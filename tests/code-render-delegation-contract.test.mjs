@@ -154,4 +154,24 @@ test('message render path delegates code-render to known third-party renderers',
     assert.ok(suppressionIndex >= 0, 'message render path must sync code-render delegation');
     assert.ok(delegationIndex > suppressionIndex, 'delegation sync must consult known third-party renderers');
     assert.ok(renderIndex > suppressionIndex, 'delegation state must be synced before rendering previews');
+
+    const groupChatsSource = await readFile(path.join(REPO_ROOT, 'src/scripts/group-chats.js'), 'utf8');
+    const authorizedChatOpenCalls = `${scriptSource}\n${groupChatsSource}`
+        .match(/printMessages\(\{\s*frontendSourceHandoffEvent:/g) ?? [];
+    assert.equal(authorizedChatOpenCalls.length, 2, 'only character and group chat-open may authorize source handoff');
+    assert.match(
+        scriptSource,
+        /printMessages\(\{\s*frontendSourceHandoffEvent:\s*event_types\.CHAT_LOADED\s*\}\)/,
+        'character chat-open must settle against CHAT_LOADED',
+    );
+    assert.match(
+        groupChatsSource,
+        /printMessages\(\{\s*frontendSourceHandoffEvent:\s*event_types\.CHAT_CHANGED\s*\}\)/,
+        'group chat-open must settle against CHAT_CHANGED',
+    );
+
+    const printMessagesStart = scriptSource.indexOf('export async function printMessages');
+    const redisplayChatStart = scriptSource.indexOf('export async function redisplayChat', printMessagesStart);
+    const printMessagesSection = scriptSource.slice(printMessagesStart, redisplayChatStart);
+    assert.match(printMessagesSection, /isCodeRenderDelegatedToThirdPartyRenderer\(\)/);
 });

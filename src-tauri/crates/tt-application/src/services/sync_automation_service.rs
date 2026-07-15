@@ -317,8 +317,10 @@ impl SyncAutomationService {
             .target
             .as_ref()
             .ok_or_else(|| DomainError::InvalidData("Auto sync target is required".to_string()))?;
+        let overwrite_policy = self.lan_settings_repository.load_overwrite_policy().await?;
         let options = SyncOperationOptions {
             selection: rule.selection.clone(),
+            overwrite_policy,
             require_bundle_zstd: rule.require_bundle_zstd,
         };
 
@@ -489,7 +491,7 @@ mod tests {
         LocalAppliedChangeSummary, SyncExecutionFailure, SyncExecutionKind, SyncExecutionReport,
         SyncJob, SyncJobEvent, SyncJobSummary,
     };
-    use ttsync_contract::sync::SyncMode;
+    use ttsync_contract::sync::{OverwritePolicy, SyncMode};
 
     #[derive(Default)]
     struct RecordingEvents {
@@ -526,7 +528,7 @@ mod tests {
         }
     }
 
-    struct NoopLanSettingsRepository;
+    struct NoopLanSettingsRepository(OverwritePolicy);
 
     #[async_trait]
     impl SyncAutomationLanSettingsRepository for NoopLanSettingsRepository {
@@ -551,6 +553,10 @@ mod tests {
 
         async fn load_manual_default_sync_mode(&self) -> Result<SyncMode, DomainError> {
             Ok(SyncMode::Incremental)
+        }
+
+        async fn load_overwrite_policy(&self) -> Result<OverwritePolicy, DomainError> {
+            Ok(self.0)
         }
     }
 
@@ -625,6 +631,10 @@ mod tests {
         async fn load_manual_default_sync_mode(&self) -> Result<SyncMode, DomainError> {
             Ok(SyncMode::Mirror)
         }
+
+        async fn load_overwrite_policy(&self) -> Result<OverwritePolicy, DomainError> {
+            Ok(OverwritePolicy::Exact)
+        }
     }
 
     struct AllowEndpointCatalog;
@@ -657,11 +667,15 @@ mod tests {
         }
     }
 
-    struct OutcomeExecutor;
+    #[derive(Default)]
+    struct OutcomeExecutor {
+        jobs: Arc<StdMutex<Vec<SyncJob>>>,
+    }
 
     #[async_trait]
     impl SyncJobExecutor for OutcomeExecutor {
         async fn execute(&self, job: SyncJob) -> Result<SyncExecutionReport, SyncExecutionFailure> {
+            self.jobs.lock().unwrap().push(job.clone());
             if job.execution == SyncExecutionKind::RequestRemotePull {
                 return Ok(SyncExecutionReport::remote_request_accepted());
             }
@@ -693,7 +707,7 @@ mod tests {
             Arc::new(AllowEndpointCatalog),
             Arc::new(ReadyLanServer),
             Arc::new(SyncJobCoordinator::new(
-                Arc::new(OutcomeExecutor),
+                Arc::new(OutcomeExecutor::default()),
                 Arc::new(NoopReconciler),
                 Arc::new(NoopJobEvents),
                 Arc::new(tokio::sync::Semaphore::new(1)),
@@ -704,7 +718,7 @@ mod tests {
     fn service() -> SyncAutomationService {
         service_with_repositories(
             Arc::new(NoopRuleRepository),
-            Arc::new(NoopLanSettingsRepository),
+            Arc::new(NoopLanSettingsRepository(OverwritePolicy::Exact)),
         )
     }
 
@@ -808,5 +822,42 @@ mod tests {
         assert!(status.last_success_at_ms.is_some());
         assert!(status.last_request_accepted_at_ms.is_none());
         assert!(status.last_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn scheduled_job_uses_current_global_overwrite_policy() {
+        let jobs = Arc::new(StdMutex::new(Vec::new()));
+        let service = SyncAutomationService::new(
+            Arc::new(RecordingEvents::default()),
+            Arc::new(NoopRuleRepository),
+            Arc::new(NoopLanSettingsRepository(OverwritePolicy::PreferNewer)),
+            Arc::new(AllowEndpointCatalog),
+            Arc::new(ReadyLanServer),
+            Arc::new(SyncJobCoordinator::new(
+                Arc::new(OutcomeExecutor { jobs: jobs.clone() }),
+                Arc::new(NoopReconciler),
+                Arc::new(NoopJobEvents),
+                Arc::new(tokio::sync::Semaphore::new(1)),
+            )),
+        );
+        let rule = ScheduledSyncRule {
+            enabled: true,
+            target: Some(SyncAutomationTarget::Tt {
+                server_device_id: "22222222-2222-4222-8222-222222222222".to_string(),
+            }),
+            ..default_scheduled_sync_rule()
+        };
+
+        assert!(matches!(
+            service.run_scheduled_upload(rule).await,
+            Some(AutomationSuccess::Completed)
+        ));
+        let job = jobs.lock().unwrap().pop().expect("scheduled job");
+        match job.policy {
+            ResolvedSyncPolicy::Transfer { options, .. } => {
+                assert_eq!(options.overwrite_policy, OverwritePolicy::PreferNewer);
+            }
+            other => panic!("unexpected policy: {other:?}"),
+        }
     }
 }

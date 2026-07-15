@@ -9,7 +9,7 @@ import {
     TT_SYNC_SERVERS_CHANGED_EVENT,
 } from './constants.js';
 import { formatTimestamp } from './formatters.js';
-import { showErrorPopup } from './popup-utils.js';
+import { runTaskOrPopup, showErrorPopup } from './popup-utils.js';
 import { callTauriTavernPanelPopup } from '../panel-popup.js';
 import { showSyncReportResult } from './sync-listeners.js';
 import {
@@ -59,6 +59,36 @@ function createPopupColumn() {
     return root;
 }
 
+async function showOverwritePolicyHelp() {
+    const content = createPopupColumn();
+    const title = document.createElement('b');
+    title.textContent = translate('When files conflict');
+    content.appendChild(title);
+
+    for (const [labelKey, descriptionKey] of [
+        ['Initiator wins (default)', "The initiator's copy replaces the other side."],
+        ['Newer copy wins', 'Modification time decides which copy wins. Keep device clocks synchronized; Mirror can still delete destination-only files.'],
+    ]) {
+        const item = document.createElement('div');
+        item.className = 'flex-container flexFlowColumn';
+        item.style.gap = '2px';
+
+        const label = document.createElement('b');
+        label.textContent = translate(labelKey);
+        const description = document.createElement('div');
+        description.textContent = translate(descriptionKey);
+        item.append(label, description);
+        content.appendChild(item);
+    }
+
+    await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+        okButton: translate('Close'),
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+}
+
 function buildMirrorWarningContent(titleText, detailText) {
     const content = createPopupColumn();
 
@@ -87,6 +117,11 @@ function buildMirrorWarningContent(titleText, detailText) {
 }
 
 function normalizeStatus(status) {
+    const overwritePolicy = status?.overwrite_policy;
+    if (overwritePolicy !== 'exact' && overwritePolicy !== 'prefer-newer') {
+        throw new Error(`lan_sync_get_status returned invalid overwrite_policy: ${String(overwritePolicy)}`);
+    }
+
     return {
         running: Boolean(status?.running),
         address: String(status?.address || ''),
@@ -97,6 +132,7 @@ function normalizeStatus(status) {
         pairingExpiresAtMs: status?.pairing_expires_at_ms ?? null,
         syncMode: status?.sync_mode ?? 'Incremental',
         syncModeOverridden: Boolean(status?.sync_mode_overridden),
+        overwritePolicy,
     };
 }
 
@@ -295,6 +331,7 @@ function createSyncClient() {
         pushLanDevice: (deviceId, options) => invoke('lan_sync_push_to_device', { deviceId, options }),
         setLanSyncMode: (mode, persist) => invoke('lan_sync_set_sync_mode', { mode, persist }),
         clearLanSyncModeOverride: () => invoke('lan_sync_clear_sync_mode_override'),
+        setOverwritePolicy: (overwritePolicy) => invoke('lan_sync_set_overwrite_policy', { overwritePolicy }),
         pairTtSync: (pairUri) => invoke('tt_sync_pair', { pairUri }),
         removeTtSyncServer: async (serverDeviceId) => {
             await invoke('tt_sync_remove_server', { serverDeviceId });
@@ -477,6 +514,7 @@ function createSyncActions(client) {
         reportError: (error) => showErrorPopup(error),
         changeSyncMode: (status) => changeSyncMode(client, status),
         editSyncScope: ({ catalog, selection }) => editSyncScope(catalog, selection),
+        showOverwritePolicyHelp: () => runTaskOrPopup(showOverwritePolicyHelp),
         renameTarget: async ({ type, id, fallbackName }) => {
             const existing = getSyncTargetAlias(type, id);
             const result = await callGenericPopup(

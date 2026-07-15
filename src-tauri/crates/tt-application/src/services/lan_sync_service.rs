@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ttsync_contract::peer::{DeviceId, PeerGrant};
-use ttsync_contract::sync::SyncMode;
+use ttsync_contract::sync::{OverwritePolicy, SyncMode};
 
 use crate::services::sync_job_coordinator::SyncJobCoordinator;
 use crate::services::sync_policy::validate_sync_operation_options;
@@ -78,7 +78,8 @@ impl LanSyncService {
             .settings_repository
             .load_or_create_server_settings()
             .await?;
-        let (sync_mode, manual_default_mode, sync_mode_overridden) = self.sync_mode_state().await?;
+        let (sync_mode, manual_default_mode, sync_mode_overridden, overwrite_policy) =
+            self.sync_preference_state().await?;
 
         let pairing = self.state.get_pairing_session().await;
         let now_ms = now_ms();
@@ -108,6 +109,7 @@ impl LanSyncService {
             sync_mode,
             manual_default_mode,
             sync_mode_overridden,
+            overwrite_policy,
         })
     }
 
@@ -153,6 +155,20 @@ impl LanSyncService {
         self.state.set_sync_mode_override(None).await;
     }
 
+    pub async fn set_overwrite_policy(
+        &self,
+        overwrite_policy: OverwritePolicy,
+    ) -> Result<(), DomainError> {
+        let mut preferences = self
+            .settings_repository
+            .load_or_create_sync_preferences()
+            .await?;
+        preferences.overwrite_policy = overwrite_policy;
+        self.settings_repository
+            .save_sync_preferences(&preferences)
+            .await
+    }
+
     pub async fn effective_sync_mode(&self) -> Result<SyncMode, DomainError> {
         Ok(self
             .state
@@ -169,14 +185,20 @@ impl LanSyncService {
             .manual_default_mode)
     }
 
-    async fn sync_mode_state(&self) -> Result<(SyncMode, SyncMode, bool), DomainError> {
-        let manual_default_mode = self.manual_default_mode().await?;
+    async fn sync_preference_state(
+        &self,
+    ) -> Result<(SyncMode, SyncMode, bool, OverwritePolicy), DomainError> {
+        let preferences = self
+            .settings_repository
+            .load_or_create_sync_preferences()
+            .await?;
         let sync_mode_override = self.state.get_sync_mode_override().await;
         let sync_mode_overridden = sync_mode_override.is_some();
         Ok((
-            sync_mode_override.unwrap_or(manual_default_mode),
-            manual_default_mode,
+            sync_mode_override.unwrap_or(preferences.manual_default_mode),
+            preferences.manual_default_mode,
             sync_mode_overridden,
+            preferences.overwrite_policy,
         ))
     }
 

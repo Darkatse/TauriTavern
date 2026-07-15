@@ -7561,9 +7561,9 @@ dependencies = [
 
 [[package]]
 name = "ttsync-client"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f80e7a762a598b7a6e9720fc94b618846dc738e72e7ee7053583710217e051ab"
+checksum = "bebd52724f40ee4de7e65deea2dfb375e30a5de40560b46ef22122512863d54f"
 dependencies = [
  "async-compression",
  "futures-util",
@@ -7577,9 +7577,9 @@ dependencies = [
 
 [[package]]
 name = "ttsync-contract"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edd72eb37d15f07c0cf1778b8b04ee3e04ee1399ccc251e50a0f61d2fbb6f925"
+checksum = "a78eb0fbc1a4cf5950e258bfbd85316a531005fc369f0b6feea3f4a287452b45"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -7589,9 +7589,9 @@ dependencies = [
 
 [[package]]
 name = "ttsync-core"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c30da8b1d2d1c6fed1775b3d56bbc427f893094db08d93c6755da513e9649b"
+checksum = "a2e06f834754bf276f520ee4f73b9331eda40063a77aaa8cf1891994d01f0023"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -7608,9 +7608,9 @@ dependencies = [
 
 [[package]]
 name = "ttsync-http"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ad9228bce6a119e0c781b0e16eb1830968f830ac83c75951a81c8b1c37918e5"
+checksum = "d49ba2ccfd39a6e4c33111806e3d285ea24186c6a16ae7bc317a17fd959e4724"
 dependencies = [
  "async-compression",
  "axum",

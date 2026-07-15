@@ -4,7 +4,7 @@ use tt_contracts::sync_automation::{
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::lan_sync::LanServerSettings;
-use ttsync_contract::sync::SyncMode;
+use ttsync_contract::sync::{OverwritePolicy, SyncMode};
 
 #[async_trait]
 pub trait SyncAutomationRuleRepository: Send + Sync {
@@ -17,6 +17,7 @@ pub trait SyncAutomationLanSettingsRepository: Send + Sync {
     async fn load_or_create_server_settings(&self) -> Result<LoadedLanServerSettings, DomainError>;
     async fn save_server_settings(&self, settings: &LanServerSettings) -> Result<(), DomainError>;
     async fn load_manual_default_sync_mode(&self) -> Result<SyncMode, DomainError>;
+    async fn load_overwrite_policy(&self) -> Result<OverwritePolicy, DomainError>;
 }
 
 #[async_trait]

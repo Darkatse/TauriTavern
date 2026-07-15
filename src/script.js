@@ -679,6 +679,8 @@ export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 
 let settingsSavePending = false;
 let pendingSettingsLoopCounter = 0;
+let settingsSavePromise = null;
+let settingsSaveQueued = false;
 const scheduleSettingsSave = debounce((loopCounter = 0) => {
     settingsSavePending = false;
     return saveSettings(loopCounter);
@@ -2005,16 +2007,16 @@ export async function showMoreMessages(messagesToLoad = null) {
     const isButtonInView = isElementInViewport(showMoreButton[0]);
 
     const firstId = clamp(messageId - count, 0, Infinity);
-    const fragment = document.createDocumentFragment();
-    for (let id = firstId; id < messageId; id += 1) {
-        const messageElement = updateMessageElement(chat[id], { messageId: id });
-        fragment.appendChild(messageElement[0]);
-    }
-
+    const messageElements = [];
+    chat.slice(firstId, messageId).forEach((message, id) => {
+        messageElements.push(updateMessageElement(message, { messageId: firstId + id }));
+    });
+    // This could be faster: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentElement
+    // Fallback to chatElement if the button isn't where it's expected to be.
     if (showMoreButton[0]) {
-        showMoreButton[0].after(fragment);
+        showMoreButton.after(messageElements);
     } else {
-        chatElement[0].prepend(fragment);
+        chatElement.prepend(messageElements);
     }
 
     refreshSwipeButtons();
@@ -2029,13 +2031,19 @@ export async function showMoreMessages(messagesToLoad = null) {
     }
 
     applyStylePins();
-    applyCharacterTagsToMessageDivs();
     await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
 }
 
-export async function printMessages() {
+/**
+ * Renders the current chat window.
+ * @param {{ frontendSourceHandoffEvent?: string | null }} [options]
+ */
+export async function printMessages({ frontendSourceHandoffEvent = null } = {}) {
     const windowState = getWindowedChatState();
     const isWindowed = Boolean(windowState);
+    const effectiveHandoffEvent = frontendSourceHandoffEvent !== null && isCodeRenderDelegatedToThirdPartyRenderer()
+        ? frontendSourceHandoffEvent
+        : null;
 
     let startIndex = 0;
 
@@ -2052,7 +2060,7 @@ export async function printMessages() {
         }
     }
 
-    await redisplayChat({ startIndex, fade: false });
+    await redisplayChat({ startIndex, fade: false, frontendSourceHandoffEvent: effectiveHandoffEvent });
 
     scrollChatToBottom({ waitForFrame: true });
     delay(debounce_timeout.short).then(() => scrollOnMediaLoad());
@@ -2064,8 +2072,9 @@ export async function printMessages() {
  * @param {ChatMessage[]} [options.targetChat=chat] All messages in chat before startIndex will remain unchanged.
  * @param {Number} [options.startIndex=0] Everything including and after startIndex will be replaced.
  * @param {Boolean} [options.fade=true] When false, the swipe chevrons will not fade in.
+ * @param {string|null} [options.frontendSourceHandoffEvent=null] Event after which detached frontend source cover is released.
  */
-export async function redisplayChat({ targetChat = chat, startIndex = 0, fade = true } = {}) {
+export async function redisplayChat({ targetChat = chat, startIndex = 0, fade = true, frontendSourceHandoffEvent = null } = {}) {
     const messageElements = chatElement.find('.mes');
     messageElements.removeClass('last_mes');
 
@@ -2074,31 +2083,23 @@ export async function redisplayChat({ targetChat = chat, startIndex = 0, fade = 
 
     const t1 = performance.now();
 
-    if (startIndex < targetChat.length) {
-        const appendTarget = chatElement[0];
-        const batchSize = 20;
-        let lastMessageElement = null;
+    const messages = targetChat.slice(startIndex);
 
-        for (let batchStart = startIndex; batchStart < targetChat.length; batchStart += batchSize) {
-            const batchEnd = Math.min(batchStart + batchSize, targetChat.length);
-            const fragment = document.createDocumentFragment();
+    if (messages.length > 0) {
+        const newMessageElements = messages.map((message, offset) => {
+            const i = startIndex + offset;
+            const messageElement = updateMessageElement(message, { messageId: i, frontendSourceHandoffEvent });
 
-            for (let id = batchStart; id < batchEnd; id += 1) {
-                const messageElement = updateMessageElement(targetChat[id], { messageId: id });
-                const element = messageElement[0];
-                fragment.appendChild(element);
-                lastMessageElement = element;
-            }
+            return messageElement[0];
+        });
 
-            appendTarget.appendChild(fragment);
+        //The last_mes has been removed, add it to the new last message.
+        newMessageElements.at(-1).classList.add('last_mes');
 
-            if (batchEnd < targetChat.length) {
-                await new Promise((resolve) => requestAnimationFrame(resolve));
-            }
-        }
+        //Append to chat in one DOM update.
+        chatElement.append(newMessageElements);
 
-        lastMessageElement.classList.add('last_mes');
-        applyCharacterTagsToMessageDivs();
+        applyCharacterTagsToMessageDivs({ mesIds: lodash.range(startIndex, targetChat.length, 1) });
     }
 
     refreshSwipeButtons(false, fade);
@@ -3272,9 +3273,10 @@ export function addOneMessage(mes, { type = undefined, insertAfter = null, scrol
  * @param {number} [options.messageId=chat.length - 1] Force the message ID
  * @param {JQuery<HTMLElement>} [options.messageElement=messageTemplate.clone()] This message element will be updated with the ChatMessage object.
  * @param {SCROLL_BEHAVIOR} [options.adjustMediaScroll=SCROLL_BEHAVIOR.NONE] Scroll behavior option passed to appendMediaToMessage.
+ * @param {string|null} [options.frontendSourceHandoffEvent=null] Event after which detached frontend source cover is released.
  * @returns {JQuery<HTMLElement>} Rendered HTMLElement.
  */
-export function updateMessageElement(mes, { messageId = chat.length - 1, messageElement = messageTemplate.clone(), adjustMediaScroll = SCROLL_BEHAVIOR.NONE } = {}) {
+export function updateMessageElement(mes, { messageId = chat.length - 1, messageElement = messageTemplate.clone(), adjustMediaScroll = SCROLL_BEHAVIOR.NONE, frontendSourceHandoffEvent = null } = {}) {
     let avatarImg = getThumbnailUrl('persona', user_avatar);
 
     //for non-user messages
@@ -3355,6 +3357,7 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
     replaceMesTextHtmlWithRuntimePolicy(
         /** @type {HTMLElement} */ (messageElement[0]),
         messageHTML,
+        { frontendSourceHandoffEvent },
     );
     addCopyToCodeBlocks(messageElement);
 
@@ -8993,7 +8996,7 @@ async function getChatResult({ allowNewChat = false } = {}) {
         await saveChatConditional();
     }
     await loadItemizedPrompts(getCurrentChatId());
-    await printMessages();
+    await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_LOADED });
     select_selected_character(this_chid, { persistSettings: false });
 
     await eventSource.emit(event_types.CHAT_CHANGED, (getCurrentChatId()));
@@ -9359,9 +9362,6 @@ export async function getSettings(initLoaderHandle = null) {
 }
 
 //MARK: saveSettings()
-let settingsSavePromise = null;
-let settingsSaveQueued = false;
-
 export async function saveSettings(loopCounter = 0) {
     if (settingsSavePromise) {
         settingsSaveQueued = true;

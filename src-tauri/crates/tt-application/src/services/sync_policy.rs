@@ -1,5 +1,5 @@
 #[cfg(test)]
-use ttsync_contract::sync::SyncMode;
+use ttsync_contract::sync::{OverwritePolicy, SyncMode};
 use ttsync_core::dataset::ResolvedDatasetPolicy;
 #[cfg(test)]
 use ttsync_core::dataset::tauri_tavern_default_selection;
@@ -15,6 +15,7 @@ use tt_domain::errors::DomainError;
 pub fn default_sync_operation_options() -> SyncOperationOptions {
     SyncOperationOptions {
         selection: tauri_tavern_default_selection(),
+        overwrite_policy: OverwritePolicy::Exact,
         require_bundle_zstd: false,
     }
 }
@@ -88,6 +89,7 @@ mod tests {
     fn invalid_sync_selection_is_rejected() {
         let options = SyncOperationOptions {
             selection: DatasetSelection::new(DATASET_POLICY_VERSION, vec!["missing".to_string()]),
+            overwrite_policy: OverwritePolicy::Exact,
             require_bundle_zstd: false,
         };
 

@@ -300,6 +300,7 @@ fn client_options(
     file_concurrency: usize,
 ) -> ClientSyncOptions {
     let mut client_options = ClientSyncOptions::new(mode, options.selection);
+    client_options.overwrite_policy = options.overwrite_policy;
     client_options.require_bundle_zstd = options.require_bundle_zstd;
     client_options.file_concurrency = file_concurrency;
     client_options

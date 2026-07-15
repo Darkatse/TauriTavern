@@ -220,6 +220,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::lan_sync_commands::lan_sync_push_to_device,
         super::lan_sync_commands::lan_sync_set_sync_mode,
         super::lan_sync_commands::lan_sync_clear_sync_mode_override,
+        super::lan_sync_commands::lan_sync_set_overwrite_policy,
         // Sync automation commands
         super::sync_automation_commands::sync_automation_get_config,
         super::sync_automation_commands::sync_automation_update_config,

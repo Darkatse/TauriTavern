@@ -1187,6 +1187,15 @@ body .panelControlBar {
     content-visibility: auto;
 }
 
+@supports (content-visibility: auto) and (contain-intrinsic-block-size: auto 200px) {
+    /* Keep the actively updating last message on the normal rendering path. */
+    #chat > .mes:not(.last_mes) {
+        content-visibility: auto;
+        contain-intrinsic-block-size: auto 200px;
+        flex-shrink: 0;
+    }
+}
+
 .mes {
     display: flex;
     align-items: flex-start;
@@ -1609,32 +1618,20 @@ button {
     outline: 1px solid var(--interactable-outline-color-faint);
 }
 
-.tt-chat-input-shell {
+#nonQRFormItems {
     --tt-chat-input-expand-hit-size: clamp(20px, calc(var(--bottomFormIconSize) * 0.68), 24px);
     --tt-chat-input-expand-mark-size: clamp(11px, calc(var(--bottomFormIconSize) * 0.42), 14px);
     --tt-chat-input-expand-stroke: clamp(1.5px, calc(var(--mainFontSize) * 0.11), 2px);
-
-    position: relative;
-    display: flex;
-    flex: 1;
-    min-width: 0;
-    order: 3;
 }
 
-.tt-chat-input-shell #send_textarea {
-    flex: 1 1 auto;
-    width: 100%;
-    min-width: 0;
-}
-
-.tt-chat-input-shell--has-expand #send_textarea {
+#send_textarea.tt-chat-input--has-expand {
     padding-right: calc(var(--tt-chat-input-expand-hit-size) + 5px);
 }
 
 .tt-chat-input-expand-corner {
     position: absolute;
-    top: max(4px, calc(var(--progWidth, 3px) + 3px));
-    right: 6px;
+    top: calc(var(--tt-chat-input-expand-top-offset, 0px) + max(4px, calc(var(--progWidth, 3px) + 3px)));
+    right: calc(var(--tt-chat-input-expand-right-offset, 0px) + 6px);
     width: var(--tt-chat-input-expand-hit-size);
     height: var(--tt-chat-input-expand-hit-size);
     margin: 0;

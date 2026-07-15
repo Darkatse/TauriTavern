@@ -1,4 +1,5 @@
-import { convertFileSrc } from '../../../tauri-bridge.js';
+import { convertFileSrc, invoke } from '../../../tauri-bridge.js';
+import { encodeBytesToBase64 } from '../../../tauri/main/binary-utils.js';
 import { isAndroidRuntime } from './platform.js';
 
 function requireTauri() {
@@ -9,74 +10,84 @@ function requireTauri() {
     return window.__TAURI__;
 }
 
-async function resolveTempDir(pathApi) {
-    const candidates = isAndroidRuntime()
-        ? [pathApi.appCacheDir, pathApi.tempDir]
-        : [pathApi.tempDir, pathApi.appCacheDir];
+export async function writeTempFileFromBytesIterable(bytesIterable) {
+    let filePath = '';
 
-    for (const candidate of candidates) {
-        if (typeof candidate === 'function') {
-            return candidate();
-        }
-    }
-
-    throw new Error('No writable temp directory is available');
-}
-
-async function fsWriteFileChunk(invokeApi, filePath, bytes, { append }) {
-    const writeOptions = {
-        append: Boolean(append),
-        create: true,
-    };
-
-    await invokeApi('plugin:fs|write_file', bytes, {
-        headers: {
-            path: encodeURIComponent(filePath),
-            options: JSON.stringify(writeOptions),
-        },
-    });
-}
-
-export async function writeTempFileFromBytesIterable(bytesIterable, { prefix, extension = 'jsonl' } = {}) {
-    const normalizedPrefix = String(prefix || 'temp').trim() || 'temp';
-    const normalizedExtension = String(extension || '').trim().replace(/^\./, '');
-    const tauri = requireTauri();
-    const pathApi = tauri.path;
-    const invokeApi = tauri.core?.invoke;
-
-    if (!pathApi || typeof pathApi.join !== 'function') {
-        throw new Error('Tauri path API is unavailable');
-    }
-
-    if (typeof invokeApi !== 'function') {
-        throw new Error('Tauri invoke API is unavailable');
-    }
-
-    const tempDir = await resolveTempDir(pathApi);
-    const suffix = normalizedExtension ? `.${normalizedExtension}` : '';
-    const fileName = `${normalizedPrefix}-${Date.now()}-${Math.random().toString(16).slice(2)}${suffix}`;
-    const filePath = await pathApi.join(tempDir, fileName);
-
-    let append = false;
-    for (const chunk of bytesIterable) {
-        if (chunk.byteLength === 0) {
-            continue;
+    try {
+        const begin = await invoke('stage_upload_begin', {
+            dto: {
+                kind: 'chat-jsonl',
+                preferred_extension: 'jsonl',
+            },
+        });
+        filePath = String(begin?.file_path || '').trim();
+        if (!filePath) {
+            throw new Error('Host chat staging did not return a file path');
         }
 
-        await fsWriteFileChunk(invokeApi, filePath, chunk, { append });
-        append = true;
-    }
+        const chunkSize = Number(begin?.chunk_size);
+        if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) {
+            throw new Error('Host chat staging returned an invalid chunk size');
+        }
 
-    if (!append) {
-        await fsWriteFileChunk(invokeApi, filePath, new Uint8Array(0), { append: false });
-    }
+        const android = isAndroidRuntime();
+        let offset = 0;
 
-    return {
-        filePath,
-        cleanup: async () => {
-            await invokeApi('plugin:fs|remove', { path: filePath });
-        },
-    };
+        for (const inputChunk of bytesIterable) {
+            if (!(inputChunk instanceof Uint8Array)) {
+                throw new Error('Chat staging input must contain Uint8Array chunks');
+            }
+
+            for (let start = 0; start < inputChunk.byteLength; start += chunkSize) {
+                const frame = inputChunk.subarray(start, start + chunkSize);
+                const headers = {
+                    'file-path': encodeURIComponent(filePath),
+                    offset: String(offset),
+                };
+                const nextOffset = Number(await (android
+                    ? invoke('stage_upload_chunk', { data: encodeBytesToBase64(frame) }, {
+                        headers: {
+                            ...headers,
+                            'chunk-encoding': 'base64',
+                        },
+                    })
+                    : invoke('stage_upload_chunk', frame, { headers })));
+                const expectedNextOffset = offset + frame.byteLength;
+                if (nextOffset !== expectedNextOffset) {
+                    throw new Error(`Host chat staging returned unexpected offset ${nextOffset}`);
+                }
+                offset = nextOffset;
+            }
+        }
+
+        const finished = await invoke('stage_upload_finish', {
+            file_path: filePath,
+            expected_size: offset,
+        });
+        const finishedPath = String(finished?.file_path || '').trim();
+        if (!finishedPath) {
+            throw new Error('Host chat staging did not return a finished file path');
+        }
+        if (Number(finished?.size) !== offset) {
+            throw new Error(`Host chat staging returned unexpected size ${finished?.size}`);
+        }
+
+        return {
+            filePath: finishedPath,
+            cleanup: () => invoke('stage_upload_discard', {
+                file_path: finishedPath,
+            }),
+        };
+    } catch (error) {
+        if (filePath) {
+            try {
+                await invoke('stage_upload_discard', { file_path: filePath });
+            } catch {
+                // Preserve the staging error; an orphaned cache file is non-fatal.
+            }
+        }
+        throw error;
+    }
 }
 
 const FS_READ_CHUNK_BYTES = 512 * 1024;

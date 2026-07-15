@@ -1,7 +1,38 @@
 // @ts-check
 
+import { event_types } from '../../../../scripts/events.js';
+
 const JSR_WRAPPER_SELECTOR = '.TH-render';
 const LWB_WRAPPER_SELECTOR = '.xiaobaix-iframe-wrapper';
+export const FRONTEND_SOURCE_HANDOFF_ATTRIBUTE = 'data-tt-frontend-source-handoff';
+
+// Mirrors LittleWhiteBox's code-block acceptance boundary.
+const LWB_EXTERNAL_URL_PATTERN = /^https?:\/\/[^\s]+$/i;
+const LWB_XB_SRC_PATTERN = /<!--\s*xb-src:\s*(https?:\/\/[^\s>]+)\s*-->/i;
+const LWB_HTML_FRAGMENT_START_PATTERN = /^\s*(?:<!--[\s\S]*?-->\s*)*<(?:style|link|meta|svg|iframe|canvas|img|video|audio|picture|div|section|main|article|header|footer|nav|aside|p|span|button|input|textarea|select|label|ul|ol|li|table|thead|tbody|tr|td|th|form|figure|figcaption|details|summary|dialog|h[1-6])\b/i;
+
+const FRONTEND_SOURCE_HANDOFF_EVENTS = new Set([
+    event_types.CHAT_CHANGED,
+    event_types.CHAT_LOADED,
+]);
+
+/**
+ * @param {unknown} eventType
+ * @returns {asserts eventType is string}
+ */
+function assertFrontendSourceHandoffEvent(eventType) {
+    if (typeof eventType !== 'string' || !FRONTEND_SOURCE_HANDOFF_EVENTS.has(eventType)) {
+        throw new Error(`Unsupported frontend source handoff event: ${String(eventType)}`);
+    }
+}
+
+/**
+ * @param {unknown} eventType
+ */
+export function getFrontendSourceHandoffSelector(eventType) {
+    assertFrontendSourceHandoffEvent(eventType);
+    return `pre[${FRONTEND_SOURCE_HANDOFF_ATTRIBUTE}="${eventType}"]`;
+}
 
 /**
  * @param {unknown} text
@@ -16,15 +47,22 @@ function normalizeLineEndings(text) {
  * @returns {boolean}
  */
 function isFrontendCode(text) {
-    const s = normalizeLineEndings(text).toLowerCase();
-    return (
-        s.includes('html>') ||
-        s.includes('<head>') ||
-        s.includes('<body') ||
-        s.includes('<!doctype') ||
-        s.includes('<html') ||
-        s.includes('<script')
-    );
+    const source = normalizeLineEndings(text).trim();
+    const lower = source.toLowerCase();
+    if (
+        lower.includes('html>') ||
+        lower.includes('<head>') ||
+        lower.includes('<body') ||
+        lower.includes('<!doctype') ||
+        lower.includes('<html') ||
+        lower.includes('<script')
+    ) {
+        return true;
+    }
+
+    return LWB_EXTERNAL_URL_PATTERN.test(source) ||
+        LWB_XB_SRC_PATTERN.test(source) ||
+        LWB_HTML_FRAGMENT_START_PATTERN.test(source);
 }
 
 /**
@@ -86,6 +124,16 @@ function extractFrontendBlocks(root) {
     }
 
     return { blocks, pres };
+}
+
+/**
+ * @param {HTMLElement[]} pres
+ * @param {string} eventType
+ */
+function markFrontendSourceHandoff(pres, eventType) {
+    for (const pre of pres) {
+        pre.setAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE, eventType);
+    }
 }
 
 /**
@@ -151,9 +199,10 @@ function finalizeLittleWhiteBoxPre(pre, xbHash) {
  *
  * @param {HTMLElement} messageElement `.mes` element.
  * @param {string} html New HTML for `.mes_text`.
+ * @param {{ frontendSourceHandoffEvent?: string | null }} [options]
  */
-export function replaceMesTextHtmlPreservingJsSlashRunnerRuntimes(messageElement, html) {
-    replaceMesTextHtmlPreservingEmbeddedRuntimes(messageElement, html);
+export function replaceMesTextHtmlPreservingJsSlashRunnerRuntimes(messageElement, html, options) {
+    replaceMesTextHtmlPreservingEmbeddedRuntimes(messageElement, html, options);
 }
 
 /**
@@ -166,8 +215,9 @@ export function replaceMesTextHtmlPreservingJsSlashRunnerRuntimes(messageElement
  *
  * @param {HTMLElement} messageElement `.mes` element.
  * @param {string} html New HTML for `.mes_text`.
+ * @param {{ frontendSourceHandoffEvent?: string | null }} [options]
  */
-export function replaceMesTextHtmlPreservingEmbeddedRuntimes(messageElement, html) {
+export function replaceMesTextHtmlPreservingEmbeddedRuntimes(messageElement, html, { frontendSourceHandoffEvent = null } = {}) {
     if (!(messageElement instanceof HTMLElement)) {
         throw new Error('replaceMesTextHtmlPreservingEmbeddedRuntimes: messageElement must be an HTMLElement');
     }
@@ -176,27 +226,30 @@ export function replaceMesTextHtmlPreservingEmbeddedRuntimes(messageElement, htm
         throw new Error('replaceMesTextHtmlPreservingEmbeddedRuntimes: .mes_text not found');
     }
 
-    const { blocks: existingBlocks, pres: existingPres } = extractFrontendBlocks(mesText);
-    const template = document.createElement('template');
-    template.innerHTML = String(html ?? '');
-
-    const { blocks: nextBlocks } = extractFrontendBlocks(template.content);
-    const preserved = getPreservedWrappers(mesText, existingPres, existingBlocks);
-    if (preserved.length === 0) {
-        mesText.innerHTML = String(html ?? '');
-        return;
-    }
-
-    if (nextBlocks.length !== existingBlocks.length) {
-        mesText.innerHTML = String(html ?? '');
-        return;
-    }
-
-    for (let i = 0; i < existingBlocks.length; i += 1) {
-        if (existingBlocks[i] !== nextBlocks[i]) {
-            mesText.innerHTML = String(html ?? '');
-            return;
+    if (frontendSourceHandoffEvent !== null) {
+        assertFrontendSourceHandoffEvent(frontendSourceHandoffEvent);
+        if (messageElement.isConnected) {
+            throw new Error('replaceMesTextHtmlPreservingEmbeddedRuntimes: frontend source handoff requires a detached message');
         }
+    }
+
+    const { blocks: existingBlocks, pres: existingPres } = extractFrontendBlocks(mesText);
+    const stagingMesText = /** @type {HTMLElement} */ (mesText.cloneNode(false));
+    stagingMesText.innerHTML = String(html ?? '');
+
+    const { blocks: nextBlocks, pres: nextPres } = extractFrontendBlocks(stagingMesText);
+    if (frontendSourceHandoffEvent !== null) {
+        markFrontendSourceHandoff(nextPres, frontendSourceHandoffEvent);
+    }
+
+    const preserved = getPreservedWrappers(mesText, existingPres, existingBlocks);
+    const canPreserve = preserved.length > 0 &&
+        nextBlocks.length === existingBlocks.length &&
+        existingBlocks.every((block, index) => block === nextBlocks[index]);
+
+    if (!canPreserve) {
+        mesText.replaceChildren(...stagingMesText.childNodes);
+        return;
     }
 
     const stash = document.createElement('div');
@@ -212,12 +265,7 @@ export function replaceMesTextHtmlPreservingEmbeddedRuntimes(messageElement, htm
         stash.append(entry.wrapper);
     }
 
-    mesText.innerHTML = String(html ?? '');
-
-    const { pres: nextPres } = extractFrontendBlocks(mesText);
-    if (nextPres.length !== existingPres.length) {
-        throw new Error('replaceMesTextHtmlPreservingEmbeddedRuntimes: frontend <pre> count mismatch');
-    }
+    mesText.replaceChildren(...stagingMesText.childNodes);
 
     for (const entry of preserved) {
         const pre = nextPres[entry.index];
