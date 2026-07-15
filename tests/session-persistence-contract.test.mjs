@@ -6,43 +6,61 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-test('session state is flushed when the app is backgrounded or closed', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+test('session persistence uses the host lifecycle registry and flushes pending work only', async () => {
+    const scriptSource = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+    const contextSource = await readFile(path.join(REPO_ROOT, 'src/tauri/main/context/index.js'), 'utf8');
+    const invokeSource = await readFile(path.join(REPO_ROOT, 'src/tauri/main/services/invokes/invoke-service.js'), 'utf8');
 
-    assert.match(source, /function flushSessionState\(\)/);
-    assert.match(source, /cancelDebounce\(saveSettingsDebounced\)/);
-    assert.match(source, /if \(sessionStateFlushPromise\) \{\s*return sessionStateFlushPromise;\s*\}/);
-    assert.match(source, /window\.addEventListener\('pagehide', flushSessionState\)/);
-    assert.match(source, /document\.visibilityState === 'hidden'/);
+    assert.match(scriptSource, /registerLifecycleFlushHandler\('session-state', flushSessionState\)/);
+    assert.match(scriptSource, /flushPendingWorldInfoSettings\(\)/);
+    assert.match(scriptSource, /flushPendingSettingsSave\(worldInfoSettingsPending\)/);
+    assert.match(scriptSource, /flushDebouncedChatSave\(\)/);
+    assert.doesNotMatch(scriptSource, /window\.addEventListener\('pagehide', flushSessionState\)/);
+
+    const sessionFlush = scriptSource.match(/function flushSessionState\(\) \{[\s\S]*?registerLifecycleFlushHandler\('session-state', flushSessionState\);/);
+    assert.ok(sessionFlush, 'session lifecycle flush not found');
+    assert.doesNotMatch(sessionFlush[0], /saveChatConditional\(\)/);
+    assert.doesNotMatch(sessionFlush[0], /\bsaveSettings\(\)/);
+
+    assert.match(contextSource, /registerLifecycleFlushHandler\('invoke-broker', invokeService\.flushAllInvokes, \{ priority: 100 \}\)/);
+    assert.match(contextSource, /installLifecycleFlushHandlers\(\)/);
+    assert.doesNotMatch(invokeSource, /installFlushOnHide/);
 });
 
-test('lifecycle flush does not trigger its own beforeunload warning', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
-    const cleanupHandler = source.match(/\$\(window\)\.on\('beforeunload',[\s\S]*?\n\s*\}\);/);
-    const warningHandler = source.match(/window\.addEventListener\('beforeunload', \(e\) => \{[\s\S]*?\n\s*\}\);/);
+test('world info selection participates in the pending settings flush', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/world-info.js'), 'utf8');
+    const lifecycleHooks = source.match(/function installWorldInfoFlushHooks\(\) \{[\s\S]*?installWorldInfoFlushHooks\(\);/);
 
-    assert.ok(cleanupHandler, 'beforeunload cleanup handler not found');
-    assert.ok(warningHandler, 'beforeunload warning handler not found');
-    assert.doesNotMatch(cleanupHandler[0], /flushSessionState\(\)/);
-    assert.match(warningHandler[0], /const wasChatSaving = isChatSaving;\s*flushSessionState\(\);/);
-    assert.match(warningHandler[0], /if \(wasChatSaving \|\| this_edit_mes_id >= 0\)/);
-    assert.doesNotMatch(warningHandler[0], /if \(isChatSaving \|\|/);
+    assert.ok(lifecycleHooks, 'world info lifecycle hooks not found');
+    assert.match(source, /export function flushPendingWorldInfoSettings\(\)/);
+    assert.match(source, /registerLifecycleFlushHandler\('world-info', flushSoon\)/);
+    assert.doesNotMatch(lifecycleHooks[0], /window\.addEventListener\('pagehide'/);
+    assert.doesNotMatch(lifecycleHooks[0], /window\.addEventListener\('beforeunload'/);
+    assert.doesNotMatch(lifecycleHooks[0], /document\.addEventListener\('visibilitychange'/);
 });
 
-test('character selection persists in the core selection flow without relying on a click handler', async () => {
+test('character selection persists once after a successful core selection', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
     const selectionFlow = source.match(/export async function selectCharacterById\([\s\S]*?\n\}/);
 
     assert.ok(selectionFlow, 'core character selection flow not found');
-    assert.match(selectionFlow[0], /setActiveCharacter\(characters\[id\]\)/);
-    assert.match(selectionFlow[0], /await saveSettings\(\)/);
+    assert.match(source, /select_selected_character\(this_chid, \{ persistSettings: false \}\)/);
+    assert.match(selectionFlow[0], /const previousActiveCharacter = active_character;/);
+    assert.match(selectionFlow[0], /setActiveCharacter\(characters\[id\]\);/);
+    assert.match(selectionFlow[0], /if \(active_character !== previousActiveCharacter\) \{\s*saveSettingsDebounced\(\);\s*\}/);
+    assert.doesNotMatch(selectionFlow[0], /await saveSettings\(\)/);
+
+    const editorSelection = source.match(/export function select_selected_character\([\s\S]*?\n\}/);
+    assert.ok(editorSelection, 'character editor selection flow not found');
+    assert.match(editorSelection[0], /persistSettings = true/);
+    assert.match(editorSelection[0], /if \(persistSettings\) \{\s*saveSettingsDebounced\(\);\s*\}/);
 });
 
-test('group selection persists without a debounce exit window', async () => {
+test('group selection keeps one debounced persistence request', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/RossAscends-mods.js'), 'utf8');
     const groupHandler = source.match(/\$\(document\)\.on\('click', '\.group_select',[\s\S]*?\n\s*\}\);/);
 
     assert.ok(groupHandler, 'group selection handler not found');
-    assert.match(groupHandler[0], /void saveSettings\(\)/);
-    assert.doesNotMatch(groupHandler[0], /saveSettingsDebounced/);
+    assert.match(groupHandler[0], /saveSettingsDebounced\(\)/);
+    assert.doesNotMatch(groupHandler[0], /\bsaveSettings\(\)/);
 });

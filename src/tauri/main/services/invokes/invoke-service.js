@@ -232,18 +232,6 @@ export function createInvokeService({ invoke, policies }) {
         return invokeBroker.flushAll();
     }
 
-    function installFlushOnHide() {
-        const flush = () => flushAllInvokes();
-
-        window.addEventListener('pagehide', flush);
-        window.addEventListener('beforeunload', flush);
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'hidden') {
-                void flush();
-            }
-        });
-    }
-
     return {
         safeInvoke,
         invalidateInvoke,
@@ -257,6 +245,5 @@ export function createInvokeService({ invoke, policies }) {
             invokeTransportRef = next;
         },
         invokeBroker,
-        installFlushOnHide,
     };
 }

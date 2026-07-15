@@ -41,6 +41,7 @@ src/
 │       ├── context/           # Host Kernel facade + types（对外契约保持稳定）
 │       ├── kernel/            # 纯逻辑（策略/计算/键生成/追踪等）
 │       ├── services/          # 有状态能力（assets/thumbnails/characters/android…）
+│       │   └── lifecycle/     # 统一注册 pagehide/beforeunload/visibilitychange flush
 │       ├── adapters/          # 触碰 window/DOM/上游 ST 的适配层
 │       ├── download-bridge.js # 同源窗口下载桥接
 │       ├── http-utils.js      # URL/Body/Response 工具
@@ -75,6 +76,7 @@ src/
 - `safeInvoke` 具备可配置的 invoke 策略（dedupe / write-behind / TTL cache），集中在 `src/tauri/main/kernel/invokes/invoke-policies.js`。
 - Host 侧已知的 Rust 命令名收敛为类型：`src/tauri/main/kernel/invokes/tauri-commands.js`（`TauriInvokeCommand`）。
 - 与第三方直接交互的全局符号（如缩略图 helpers）属于 Public Contract（见 `docs/FrontendHostContract.md`）。
+- 页面隐藏和关闭时的持久化刷新统一注册到 `services/lifecycle/lifecycle-flush-service.js`；业务模块只注册有 pending 数据时才执行的 flush handler，不应重复安装全局生命周期监听。
 
 #### 4.2.1 `window.__TAURITAVERN__.api.chat`（扩展/记忆类插件 API）
 

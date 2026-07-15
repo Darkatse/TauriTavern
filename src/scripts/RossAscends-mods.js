@@ -9,7 +9,6 @@ import {
     isConnectionValidationSuspended,
     is_send_press,
     max_context,
-    saveSettings,
     saveSettingsDebounced,
     active_group,
     active_character,
@@ -858,7 +857,7 @@ export function initRossMods() {
         const groupId = $(this).attr('data-chid') || $(this).attr('data-grid');
         setActiveCharacter(null);
         setActiveGroup(groupId);
-        void saveSettings();
+        saveSettingsDebounced();
     });
 
     const cssAutofit = CSS.supports('field-sizing', 'content');
