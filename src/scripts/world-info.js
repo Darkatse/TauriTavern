@@ -25,6 +25,7 @@ import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
 import { normalizeWorldInfoActivationBatch } from './tauritavern/agent/world-info-activation.js';
+import { registerLifecycleFlushHandler } from '../tauri/main/services/lifecycle/lifecycle-flush-service.js';
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -144,24 +145,36 @@ function installWorldInfoFlushHooks() {
     /** @param {string} reason */
     const flushSoon = (reason) => {
         if (dirtyWorldInfos.size === 0) {
-            return;
+            return Promise.resolve();
         }
-        flushWorldInfoSaves(reason).catch((error) => console.error(error));
+        return flushWorldInfoSaves(reason).catch((error) => console.error(error));
     };
 
-    window.addEventListener('pagehide', () => flushSoon('pagehide'));
-    window.addEventListener('beforeunload', () => flushSoon('beforeunload'));
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') {
-            flushSoon('visibilitychange:hidden');
-        }
-    });
+    registerLifecycleFlushHandler('world-info', flushSoon);
 }
 installWorldInfoFlushHooks();
-const saveSettingsDebounced = debounce(() => {
+let worldInfoSettingsSavePending = false;
+const scheduleWorldInfoSettingsSave = debounce(() => {
+    worldInfoSettingsSavePending = false;
     Object.assign(world_info, { globalSelect: selected_world_info });
     saveSettings();
 }, debounce_timeout.relaxed);
+
+function saveSettingsDebounced() {
+    worldInfoSettingsSavePending = true;
+    scheduleWorldInfoSettingsSave();
+}
+
+export function flushPendingWorldInfoSettings() {
+    if (!worldInfoSettingsSavePending) {
+        return false;
+    }
+
+    worldInfoSettingsSavePending = false;
+    cancelDebounce(scheduleWorldInfoSettingsSave);
+    Object.assign(world_info, { globalSelect: selected_world_info });
+    return true;
+}
 const sortFn = (a, b) => b.order - a.order;
 let updateEditor = (navigation, flashOnNav = true) => { console.debug('Triggered WI navigation', navigation, flashOnNav); };
 

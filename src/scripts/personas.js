@@ -19,13 +19,14 @@ import {
     saveChatConditional,
     saveMetadata,
     saveSettings,
+    cancelPendingSettingsSave,
     saveSettingsDebounced,
     setUserName,
     this_chid,
 } from '../script.js';
 import { persona_description_positions, power_user } from './power-user.js';
 import { getTokenCountAsync } from './tokenizers.js';
-import { PAGINATION_TEMPLATE, addLongPressEvent, cancelDebounce, clearInfoBlock, debounce, delay, download, ensureImageFormatSupported, escapeHtml, flashHighlight, getBase64Async, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, parseJsonFile, setInfoBlock, localizePagination, renderPaginationDropdown, paginationDropdownChangeHandler, findPersona, resolveAvatarData, stringToRange, sortIgnoreCaseAndAccents, equalsIgnoreCaseAndAccents, uuidv4 } from './utils.js';
+import { PAGINATION_TEMPLATE, addLongPressEvent, clearInfoBlock, debounce, delay, download, ensureImageFormatSupported, escapeHtml, flashHighlight, getBase64Async, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, parseJsonFile, setInfoBlock, localizePagination, renderPaginationDropdown, paginationDropdownChangeHandler, findPersona, resolveAvatarData, stringToRange, sortIgnoreCaseAndAccents, equalsIgnoreCaseAndAccents, uuidv4 } from './utils.js';
 import { debounce_timeout } from './constants.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { groups, selected_group } from './group-chats.js';
@@ -98,7 +99,7 @@ async function reloadFrontendAfterPersonaMutation() {
         throw new Error('TauriTavern Host ABI is unavailable (invoke.flushAll)');
     }
 
-    cancelDebounce(saveSettingsDebounced);
+    cancelPendingSettingsSave();
     const saved = await saveSettings();
     if (!saved) {
         throw new Error('Settings could not be saved before reload');

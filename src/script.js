@@ -11,6 +11,7 @@ import {
 } from './lib.js';
 import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
+import { registerLifecycleFlushHandler } from './tauri/main/services/lifecycle/lifecycle-flush-service.js';
 import { replaceMesTextHtmlWithRuntimePolicy } from './scripts/tauri/message/mes-text-write.js';
 import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
 import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
@@ -125,6 +126,7 @@ import {
     initWorldInfo,
     charUpdatePrimaryWorld,
     charSetAuxWorlds,
+    flushPendingWorldInfoSettings,
 } from './scripts/world-info.js';
 
 import {
@@ -225,6 +227,7 @@ import {
 } from './scripts/horde.js';
 
 import {
+    cancelDebounce,
     debounce,
     delay,
     trimToEndSentence,
@@ -583,6 +586,7 @@ export let chat = [];
  */
 export let swipeState = SWIPE_STATE.NONE;
 let chatSaveTimeout;
+let pendingChatSaveTask = null;
 let importFlashTimeout;
 export let isChatSaving = false;
 let chatSaveQueue = Promise.resolve();
@@ -673,8 +677,72 @@ export const DEFAULT_SAVE_EDIT_TIMEOUT = debounce_timeout.relaxed;
 /** @type {debounce_timeout} The debounce timeout used for printing. debounce_timeout.quick: 100 ms */
 export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 
-export const saveSettingsDebounced = debounce((loopCounter = 0) => saveSettings(loopCounter), DEFAULT_SAVE_EDIT_TIMEOUT);
+let settingsSavePending = false;
+let pendingSettingsLoopCounter = 0;
+let settingsSavePromise = null;
+let settingsSaveQueued = false;
+const scheduleSettingsSave = debounce((loopCounter = 0) => {
+    settingsSavePending = false;
+    return saveSettings(loopCounter);
+}, DEFAULT_SAVE_EDIT_TIMEOUT);
+
+export function saveSettingsDebounced(loopCounter = 0) {
+    settingsSavePending = true;
+    pendingSettingsLoopCounter = loopCounter;
+    scheduleSettingsSave(loopCounter);
+}
+
+export function cancelPendingSettingsSave() {
+    settingsSavePending = false;
+    pendingSettingsLoopCounter = 0;
+    cancelDebounce(scheduleSettingsSave);
+}
+
 export const saveCharacterDebounced = debounce(() => $('#create_button').trigger('click'), DEFAULT_SAVE_EDIT_TIMEOUT);
+
+let sessionStateFlushPromise = null;
+let sessionFlushStartedWithChatSave = false;
+
+function flushPendingSettingsSave(force = false) {
+    if (!settingsSavePending && !force) {
+        return settingsSavePromise;
+    }
+
+    const loopCounter = pendingSettingsLoopCounter;
+    cancelPendingSettingsSave();
+    return saveSettings(loopCounter);
+}
+
+function flushSessionState() {
+    if (sessionStateFlushPromise) {
+        return sessionStateFlushPromise;
+    }
+
+    sessionFlushStartedWithChatSave = isChatSaving;
+    const worldInfoSettingsPending = flushPendingWorldInfoSettings();
+    const settingsTask = flushPendingSettingsSave(worldInfoSettingsPending);
+    const chatTask = flushDebouncedChatSave();
+    const saveTasks = [];
+
+    if (settingsTask) {
+        saveTasks.push(Promise.resolve(settingsTask).catch(error => console.error('Error flushing settings during app lifecycle change:', error)));
+    }
+    if (chatTask) {
+        saveTasks.push(Promise.resolve(chatTask).catch(error => console.error('Error flushing chat during app lifecycle change:', error)));
+    }
+    if (saveTasks.length === 0) {
+        sessionFlushStartedWithChatSave = false;
+        return Promise.resolve();
+    }
+
+    sessionStateFlushPromise = Promise.all(saveTasks).finally(() => {
+        sessionStateFlushPromise = null;
+        sessionFlushStartedWithChatSave = false;
+    });
+    return sessionStateFlushPromise;
+}
+
+registerLifecycleFlushHandler('session-state', flushSessionState);
 
 /**
  * Prints the character list in a debounced fashion without blocking, with a delay of 100 milliseconds.
@@ -1268,6 +1336,14 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
         switchMenu && (selected_button = 'character_edit');
         await unshallowCharacter(this_chid);
         select_selected_character(this_chid, { switchMenu });
+    }
+
+    if (!selected_group && String(this_chid) === String(id)) {
+        const previousActiveCharacter = active_character;
+        setActiveCharacter(characters[id]);
+        if (active_character !== previousActiveCharacter) {
+            saveSettingsDebounced();
+        }
     }
 }
 
@@ -2078,6 +2154,7 @@ export function cancelDebouncedChatSave() {
         clearTimeout(chatSaveTimeout);
         chatSaveTimeout = null;
     }
+    pendingChatSaveTask = null;
 }
 
 /**
@@ -8418,7 +8495,7 @@ export function saveChatDebounced() {
 
     cancelDebouncedChatSave();
 
-    chatSaveTimeout = setTimeout(async () => {
+    pendingChatSaveTask = async () => {
         if (selectedGroup !== selected_group) {
             console.warn('Chat save timeout triggered, but group changed. Aborting.');
             return;
@@ -8432,7 +8509,26 @@ export function saveChatDebounced() {
         console.debug('Chat save timeout triggered');
         await saveChatConditional();
         console.debug('Chat saved');
+    };
+
+    chatSaveTimeout = setTimeout(async () => {
+        const task = pendingChatSaveTask;
+        chatSaveTimeout = null;
+        pendingChatSaveTask = null;
+        await task?.();
     }, DEFAULT_SAVE_EDIT_TIMEOUT);
+}
+
+export function flushDebouncedChatSave() {
+    if (!chatSaveTimeout || !pendingChatSaveTask) {
+        return null;
+    }
+
+    const task = pendingChatSaveTask;
+    clearTimeout(chatSaveTimeout);
+    chatSaveTimeout = null;
+    pendingChatSaveTask = null;
+    return task();
 }
 
 export function markWindowedChatDirtyFromIndex(messageId) {
@@ -8901,7 +8997,7 @@ async function getChatResult({ allowNewChat = false } = {}) {
     }
     await loadItemizedPrompts(getCurrentChatId());
     await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_LOADED });
-    select_selected_character(this_chid);
+    select_selected_character(this_chid, { persistSettings: false });
 
     await eventSource.emit(event_types.CHAT_CHANGED, (getCurrentChatId()));
     if (freshChat) await eventSource.emit(event_types.CHAT_CREATED);
@@ -9266,9 +9362,6 @@ export async function getSettings(initLoaderHandle = null) {
 }
 
 //MARK: saveSettings()
-let settingsSavePromise = null;
-let settingsSaveQueued = false;
-
 export async function saveSettings(loopCounter = 0) {
     if (settingsSavePromise) {
         settingsSaveQueued = true;
@@ -10113,8 +10206,9 @@ export function select_rm_info(type, charId, previousCharId = null) {
  * @param {string} chid Character array index
  * @param {object} [param1] Options for the switch
  * @param {boolean} [param1.switchMenu=true] Whether to switch the menu
+ * @param {boolean} [param1.persistSettings=true] Whether to schedule a settings save
  */
-export function select_selected_character(chid, { switchMenu = true } = {}) {
+export function select_selected_character(chid, { switchMenu = true, persistSettings = true } = {}) {
     //character select
     //console.log('select_selected_character() -- starting with input of -- ' + chid + ' (name:' + characters[chid].name + ')');
     select_rm_create({ switchMenu });
@@ -10193,7 +10287,9 @@ export function select_selected_character(chid, { switchMenu = true } = {}) {
 
     eventSource.emit(event_types.CHARACTER_EDITOR_OPENED, chid);
 
-    saveSettingsDebounced();
+    if (persistSettings) {
+        saveSettingsDebounced();
+    }
 }
 
 /**
@@ -14352,7 +14448,6 @@ jQuery(async function () {
         }
     });
 
-
     var isManualInput = false;
     var valueBeforeManualInput;
 
@@ -14485,7 +14580,8 @@ jQuery(async function () {
     });
 
     window.addEventListener('beforeunload', (e) => {
-        if (isChatSaving || this_edit_mes_id >= 0) {
+        const lifecycleOwnsChatSave = Boolean(sessionStateFlushPromise) && !sessionFlushStartedWithChatSave;
+        if ((isChatSaving && !lifecycleOwnsChatSave) || this_edit_mes_id >= 0) {
             e.preventDefault();
             e.returnValue = true;
         }

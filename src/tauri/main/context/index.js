@@ -7,6 +7,7 @@ import { createCharacterCreateService } from '../services/characters/character-c
 import { createUploadService } from '../services/uploads/upload-service.js';
 import { createAndroidArchiveService } from '../services/android/android-archive-service.js';
 import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
+import { installLifecycleFlushHandlers, registerLifecycleFlushHandler } from '../services/lifecycle/lifecycle-flush-service.js';
 import { createHostInvokePolicies } from '../kernel/invokes/invoke-policies.js';
 import { installAssetPathHelpers } from './asset-path-helpers.js';
 import {
@@ -72,7 +73,8 @@ export function createTauriMainContext({ invoke }) {
     installAssetPathHelpers({
         thumbnailRouteTypes: THUMBNAIL_ROUTE_TYPES,
     });
-    invokeService.installFlushOnHide();
+    registerLifecycleFlushHandler('invoke-broker', invokeService.flushAllInvokes, { priority: 100 });
+    installLifecycleFlushHandlers();
 
     return {
         safeInvoke: invokeService.safeInvoke,
