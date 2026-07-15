@@ -1,0 +1,79 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { createLatestTaskScheduler } from '../src/scripts/util/latest-task-scheduler.js';
+
+function deferred() {
+    let resolve;
+    const promise = new Promise(resolvePromise => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
+}
+
+async function flushMicrotasks() {
+    await Promise.resolve();
+    await Promise.resolve();
+}
+
+test('requests during a running task coalesce into one latest rerun', async () => {
+    const runs = [];
+    const first = deferred();
+    const second = deferred();
+    const schedule = createLatestTaskScheduler(async () => {
+        const run = runs.length;
+        runs.push(run);
+        await [first, second][run].promise;
+    });
+
+    schedule();
+    schedule();
+    schedule();
+    assert.deepEqual(runs, [0]);
+
+    first.resolve();
+    await flushMicrotasks();
+    assert.deepEqual(runs, [0, 1]);
+
+    second.resolve();
+    await flushMicrotasks();
+    assert.deepEqual(runs, [0, 1]);
+});
+
+test('a request during the latest rerun schedules one more pass', async () => {
+    const gates = [deferred(), deferred(), deferred()];
+    let runCount = 0;
+    const schedule = createLatestTaskScheduler(async () => {
+        await gates[runCount++].promise;
+    });
+
+    schedule();
+    schedule();
+    gates[0].resolve();
+    await flushMicrotasks();
+    schedule();
+    gates[1].resolve();
+    await flushMicrotasks();
+
+    assert.equal(runCount, 3);
+    gates[2].resolve();
+    await flushMicrotasks();
+});
+
+test('task failures are reported without wedging future requests', async () => {
+    const errors = [];
+    let runCount = 0;
+    const schedule = createLatestTaskScheduler(async () => {
+        runCount += 1;
+        if (runCount === 1) throw new Error('expected failure');
+    }, error => errors.push(error));
+
+    schedule();
+    await flushMicrotasks();
+    schedule();
+    await flushMicrotasks();
+
+    assert.equal(runCount, 2);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0].message, /expected failure/);
+});

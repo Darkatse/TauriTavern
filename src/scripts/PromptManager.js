@@ -19,6 +19,7 @@ import {
     repairNullPromptManagerEntries,
     resolvePromptOrderFromDomIdentifiers,
 } from './prompt-manager-order-utils.js';
+import { createLatestTaskScheduler } from './util/latest-task-scheduler.js';
 
 function debouncePromise(func, delay) {
     let timeoutId;
@@ -425,6 +426,12 @@ class PromptManager {
 
         /** Debounced version of render */
         this.renderDebounced = debounce(this.render.bind(this), debounce_timeout.relaxed);
+
+        /** Coalesces prompt previews that arrive while a previous preview is still running. */
+        this.renderDryRunLatest = createLatestTaskScheduler(
+            () => this.#renderAfterTryGenerate(),
+            error => console.error('Prompt manager dry-run render failed', error),
+        );
     }
 
 
@@ -871,6 +878,46 @@ class PromptManager {
         document.getElementById(this.configuration.prefix + 'prompt_manager')?.closest('.scrollableInner')?.scrollTo(0, scrollPosition);
     }
 
+    async #renderPromptManagerUi() {
+        this.profileStart('render');
+        const scrollPosition = this.#getScrollPosition();
+        try {
+            await this.renderPromptManager();
+            await this.renderPromptManagerListItems();
+            this.makeDraggable();
+            this.#setScrollPosition(scrollPosition);
+        } finally {
+            this.profileEnd('render');
+        }
+    }
+
+    async #waitUntilGenerationIsIdle() {
+        try {
+            await waitUntilCondition(() => !is_send_press && !is_group_generating, 1024 * 1024, 100);
+            return true;
+        } catch {
+            console.log('Timeout while waiting for send press to be false');
+            return false;
+        }
+    }
+
+    async #renderAfterTryGenerate() {
+        if (!await this.#waitUntilGenerationIsIdle()) return;
+
+        this.profileStart('filling context');
+        try {
+            await this.tryGenerate();
+        } finally {
+            this.profileEnd('filling context');
+            await this.#renderPromptManagerUi();
+        }
+    }
+
+    async #renderWithoutTryGenerate() {
+        if (!await this.#waitUntilGenerationIsIdle()) return;
+        await this.#renderPromptManagerUi();
+    }
+
     /**
      * Main rendering function
      *
@@ -882,32 +929,13 @@ class PromptManager {
         if ('character' === this.configuration.promptOrder.strategy && null === this.activeCharacter) return;
         this.error = null;
 
-        waitUntilCondition(() => !is_send_press && !is_group_generating, 1024 * 1024, 100).then(async () => {
-            if (true === afterTryGenerate) {
-                // Executed during dry-run for determining context composition
-                this.profileStart('filling context');
-                this.tryGenerate().finally(async () => {
-                    this.profileEnd('filling context');
-                    this.profileStart('render');
-                    const scrollPosition = this.#getScrollPosition();
-                    await this.renderPromptManager();
-                    await this.renderPromptManagerListItems();
-                    this.makeDraggable();
-                    this.#setScrollPosition(scrollPosition);
-                    this.profileEnd('render');
-                });
-            } else {
-                // Executed during live communication
-                this.profileStart('render');
-                const scrollPosition = this.#getScrollPosition();
-                await this.renderPromptManager();
-                await this.renderPromptManagerListItems();
-                this.makeDraggable();
-                this.#setScrollPosition(scrollPosition);
-                this.profileEnd('render');
-            }
-        }).catch(() => {
-            console.log('Timeout while waiting for send press to be false');
+        if (afterTryGenerate === true) {
+            this.renderDryRunLatest();
+            return;
+        }
+
+        void this.#renderWithoutTryGenerate().catch(error => {
+            console.error('Prompt manager render failed', error);
         });
     }
 
