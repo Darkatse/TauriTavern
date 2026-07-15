@@ -66,6 +66,9 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     );
     let _main_window = super::window::create_main_window(app, host_resource_service)?;
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    super::shutdown::install_window_close_handler(&_main_window);
+
     #[cfg(target_os = "windows")]
     // Windows tray owns close-to-tray window behavior and keeps its managed state
     // alive for runtime settings updates.

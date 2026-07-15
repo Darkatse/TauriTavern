@@ -5,6 +5,7 @@ use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
 
+use crate::app::host::request_frontend_shutdown;
 use crate::presentation::main_window_presenter::present_main_window;
 
 const TRAY_ID: &str = "tauritavern-tray";
@@ -13,14 +14,12 @@ const MENU_EXIT_ID: &str = "tauritavern-tray:exit";
 
 pub struct WindowsTrayState {
     close_to_tray_on_close: AtomicBool,
-    quitting: AtomicBool,
 }
 
 impl WindowsTrayState {
     pub fn new(close_to_tray_on_close: bool) -> Self {
         Self {
             close_to_tray_on_close: AtomicBool::new(close_to_tray_on_close),
-            quitting: AtomicBool::new(false),
         }
     }
 
@@ -31,14 +30,6 @@ impl WindowsTrayState {
     pub fn set_close_to_tray_on_close(&self, enabled: bool) {
         self.close_to_tray_on_close
             .store(enabled, Ordering::Relaxed);
-    }
-
-    fn set_quitting(&self) {
-        self.quitting.store(true, Ordering::Relaxed);
-    }
-
-    fn is_quitting(&self) -> bool {
-        self.quitting.load(Ordering::Relaxed)
     }
 }
 
@@ -60,9 +51,7 @@ pub fn install_windows_tray(
         .cloned()
         .ok_or_else(|| tauri::Error::AssetNotFound("Default window icon is missing".into()))?;
 
-    let state_for_menu = state.clone();
     let main_window_for_menu = main_window.clone();
-    let app_handle_for_menu = app_handle.clone();
 
     let main_window_for_tray = main_window.clone();
 
@@ -77,8 +66,9 @@ pub fn install_windows_tray(
                 }
             }
             MENU_EXIT_ID => {
-                state_for_menu.set_quitting();
-                app_handle_for_menu.exit(0);
+                if let Err(error) = request_frontend_shutdown(&main_window_for_menu) {
+                    tracing::error!("Failed to request graceful shutdown: {error}");
+                }
             }
             _ => {}
         })
@@ -99,7 +89,11 @@ pub fn install_windows_tray(
             return;
         };
 
-        if state_for_close.is_quitting() || !state_for_close.close_to_tray_on_close() {
+        if !state_for_close.close_to_tray_on_close() {
+            match request_frontend_shutdown(&main_window_for_close) {
+                Ok(()) => api.prevent_close(),
+                Err(error) => tracing::error!("Failed to request graceful shutdown: {error}"),
+            }
             return;
         }
 

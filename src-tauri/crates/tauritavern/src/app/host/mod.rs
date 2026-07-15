@@ -15,6 +15,9 @@ mod window;
 
 use crate::presentation::commands::registry::invoke_handler;
 
+#[cfg(target_os = "windows")]
+pub(crate) use shutdown::request_frontend_shutdown;
+
 pub(crate) fn run() {
     // Builder order is part of the host contract: install native capabilities,
     // run setup to publish managed state and create the window, then expose the

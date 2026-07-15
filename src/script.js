@@ -725,10 +725,14 @@ function flushSessionState() {
     const saveTasks = [];
 
     if (settingsTask) {
-        saveTasks.push(Promise.resolve(settingsTask).catch(error => console.error('Error flushing settings during app lifecycle change:', error)));
+        saveTasks.push(Promise.resolve(settingsTask).then(saved => {
+            if (saved === false) {
+                throw new Error('Settings could not be flushed during app lifecycle change');
+            }
+        }));
     }
     if (chatTask) {
-        saveTasks.push(Promise.resolve(chatTask).catch(error => console.error('Error flushing chat during app lifecycle change:', error)));
+        saveTasks.push(Promise.resolve(chatTask));
     }
     if (saveTasks.length === 0) {
         sessionFlushStartedWithChatSave = false;
@@ -742,7 +746,7 @@ function flushSessionState() {
     return sessionStateFlushPromise;
 }
 
-registerLifecycleFlushHandler('session-state', flushSessionState);
+registerLifecycleFlushHandler('session-state', flushSessionState, { priority: -100 });
 
 /**
  * Prints the character list in a debounced fashion without blocking, with a delay of 100 milliseconds.
@@ -1339,11 +1343,7 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
     }
 
     if (!selected_group && String(this_chid) === String(id)) {
-        const previousActiveCharacter = active_character;
         setActiveCharacter(characters[id]);
-        if (active_character !== previousActiveCharacter) {
-            saveSettingsDebounced();
-        }
     }
 }
 
@@ -8997,7 +8997,7 @@ async function getChatResult({ allowNewChat = false } = {}) {
     }
     await loadItemizedPrompts(getCurrentChatId());
     await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_LOADED });
-    select_selected_character(this_chid, { persistSettings: false });
+    select_selected_character(this_chid);
 
     await eventSource.emit(event_types.CHAT_CHANGED, (getCurrentChatId()));
     if (freshChat) await eventSource.emit(event_types.CHAT_CREATED);
@@ -10206,9 +10206,8 @@ export function select_rm_info(type, charId, previousCharId = null) {
  * @param {string} chid Character array index
  * @param {object} [param1] Options for the switch
  * @param {boolean} [param1.switchMenu=true] Whether to switch the menu
- * @param {boolean} [param1.persistSettings=true] Whether to schedule a settings save
  */
-export function select_selected_character(chid, { switchMenu = true, persistSettings = true } = {}) {
+export function select_selected_character(chid, { switchMenu = true } = {}) {
     //character select
     //console.log('select_selected_character() -- starting with input of -- ' + chid + ' (name:' + characters[chid].name + ')');
     select_rm_create({ switchMenu });
@@ -10287,9 +10286,7 @@ export function select_selected_character(chid, { switchMenu = true, persistSett
 
     eventSource.emit(event_types.CHARACTER_EDITOR_OPENED, chid);
 
-    if (persistSettings) {
-        saveSettingsDebounced();
-    }
+    saveSettingsDebounced();
 }
 
 /**

@@ -4,9 +4,11 @@
  * @typedef {(reason: string) => unknown | Promise<unknown>} LifecycleFlushHandler
  */
 
+export const TAURI_GRACEFUL_EXIT_EVENT = 'tauritavern-graceful-exit-requested';
+
 /**
  * @param {{
- *   windowObject: Pick<Window, 'addEventListener' | 'removeEventListener'>;
+ *   windowObject: Pick<Window, 'addEventListener' | 'removeEventListener' | '__TAURI__'>;
  *   documentObject: Pick<Document, 'addEventListener' | 'removeEventListener' | 'visibilityState'>;
  *   logger?: Pick<Console, 'error'>;
  * }} deps
@@ -17,6 +19,9 @@ export function createLifecycleFlushService({ windowObject, documentObject, logg
     let installed = false;
     /** @type {Promise<void> | null} */
     let flushPromise = null;
+    /** @type {(() => void) | null} */
+    let nativeExitUnlisten = null;
+    let nativeExitPending = false;
 
     /**
      * @param {string} name
@@ -47,14 +52,18 @@ export function createLifecycleFlushService({ windowObject, documentObject, logg
 
         const orderedHandlers = Array.from(handlers.entries())
             .sort((left, right) => left[1].priority - right[1].priority);
+        /** @type {unknown[]} */
+        const failures = [];
         /** @param {[string, { handler: LifecycleFlushHandler; priority: number }]} entry */
         const runHandler = ([name, { handler }]) => {
             try {
                 return Promise.resolve(handler(reason)).then(() => {}).catch(error => {
                     logger.error(`Lifecycle flush handler failed: ${name}`, error);
+                    failures.push(error);
                 });
             } catch (error) {
                 logger.error(`Lifecycle flush handler failed: ${name}`, error);
+                failures.push(error);
                 return Promise.resolve();
             }
         };
@@ -63,19 +72,59 @@ export function createLifecycleFlushService({ windowObject, documentObject, logg
         for (const entry of orderedHandlers) {
             chain = chain.then(() => runHandler(entry));
         }
-        flushPromise = chain.finally(() => {
+        flushPromise = chain.then(() => {
+            if (failures.length > 0) {
+                throw failures[0];
+            }
+        }).finally(() => {
             flushPromise = null;
         });
         return flushPromise;
     }
 
-    const onPageHide = () => void flush('pagehide');
-    const onBeforeUnload = () => void flush('beforeunload');
+    /** @param {string} reason */
+    const flushInBackground = reason => void flush(reason).catch(error => {
+        logger.error(`Lifecycle flush failed: ${reason}`, error);
+    });
+
+    const onPageHide = () => flushInBackground('pagehide');
+    const onBeforeUnload = () => flushInBackground('beforeunload');
     const onVisibilityChange = () => {
         if (documentObject.visibilityState === 'hidden') {
-            void flush('visibilitychange:hidden');
+            flushInBackground('visibilitychange:hidden');
         }
     };
+
+    function installNativeExitHandler() {
+        const tauriEvent = windowObject.__TAURI__?.event;
+        const tauriWindow = windowObject.__TAURI__?.window;
+        if (typeof tauriEvent?.listen !== 'function' || typeof tauriWindow?.getCurrentWindow !== 'function') {
+            return;
+        }
+
+        void tauriEvent.listen(TAURI_GRACEFUL_EXIT_EVENT, async () => {
+            if (nativeExitPending) {
+                return;
+            }
+
+            nativeExitPending = true;
+            try {
+                await flush('tauri:exit-requested');
+                await tauriWindow.getCurrentWindow().destroy();
+            } catch (error) {
+                nativeExitPending = false;
+                logger.error('Lifecycle flush failed; keeping the app open', error);
+            }
+        }).then(/** @param {() => void} unlisten */ unlisten => {
+            if (installed) {
+                nativeExitUnlisten = unlisten;
+            } else {
+                unlisten();
+            }
+        }).catch(/** @param {unknown} error */ error => {
+            logger.error('Failed to install the native exit handler', error);
+        });
+    }
 
     function install() {
         if (installed) {
@@ -86,6 +135,7 @@ export function createLifecycleFlushService({ windowObject, documentObject, logg
         windowObject.addEventListener('pagehide', onPageHide);
         windowObject.addEventListener('beforeunload', onBeforeUnload);
         documentObject.addEventListener('visibilitychange', onVisibilityChange);
+        installNativeExitHandler();
     }
 
     function uninstall() {
@@ -97,6 +147,9 @@ export function createLifecycleFlushService({ windowObject, documentObject, logg
         windowObject.removeEventListener('pagehide', onPageHide);
         windowObject.removeEventListener('beforeunload', onBeforeUnload);
         documentObject.removeEventListener('visibilitychange', onVisibilityChange);
+        nativeExitUnlisten?.();
+        nativeExitUnlisten = null;
+        nativeExitPending = false;
     }
 
     return {

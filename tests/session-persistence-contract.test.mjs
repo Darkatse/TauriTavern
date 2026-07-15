@@ -11,14 +11,15 @@ test('session persistence uses the host lifecycle registry and flushes pending w
     const contextSource = await readFile(path.join(REPO_ROOT, 'src/tauri/main/context/index.js'), 'utf8');
     const invokeSource = await readFile(path.join(REPO_ROOT, 'src/tauri/main/services/invokes/invoke-service.js'), 'utf8');
 
-    assert.match(scriptSource, /registerLifecycleFlushHandler\('session-state', flushSessionState\)/);
+    assert.match(scriptSource, /registerLifecycleFlushHandler\('session-state', flushSessionState, \{ priority: -100 \}\)/);
     assert.match(scriptSource, /flushPendingWorldInfoSettings\(\)/);
     assert.match(scriptSource, /flushPendingSettingsSave\(worldInfoSettingsPending\)/);
     assert.match(scriptSource, /flushDebouncedChatSave\(\)/);
     assert.doesNotMatch(scriptSource, /window\.addEventListener\('pagehide', flushSessionState\)/);
 
-    const sessionFlush = scriptSource.match(/function flushSessionState\(\) \{[\s\S]*?registerLifecycleFlushHandler\('session-state', flushSessionState\);/);
+    const sessionFlush = scriptSource.match(/function flushSessionState\(\) \{[\s\S]*?registerLifecycleFlushHandler\('session-state', flushSessionState, \{ priority: -100 \}\);/);
     assert.ok(sessionFlush, 'session lifecycle flush not found');
+    assert.match(sessionFlush[0], /if \(saved === false\)/);
     assert.doesNotMatch(sessionFlush[0], /saveChatConditional\(\)/);
     assert.doesNotMatch(sessionFlush[0], /\bsaveSettings\(\)/);
 
@@ -39,21 +40,20 @@ test('world info selection participates in the pending settings flush', async ()
     assert.doesNotMatch(lifecycleHooks[0], /document\.addEventListener\('visibilitychange'/);
 });
 
-test('character selection persists once after a successful core selection', async () => {
+test('all character chat navigation shares one debounced persistence request', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
     const selectionFlow = source.match(/export async function selectCharacterById\([\s\S]*?\n\}/);
 
     assert.ok(selectionFlow, 'core character selection flow not found');
-    assert.match(source, /select_selected_character\(this_chid, \{ persistSettings: false \}\)/);
-    assert.match(selectionFlow[0], /const previousActiveCharacter = active_character;/);
+    assert.match(source, /select_selected_character\(this_chid\);/);
+    assert.doesNotMatch(source, /persistSettings/);
     assert.match(selectionFlow[0], /setActiveCharacter\(characters\[id\]\);/);
-    assert.match(selectionFlow[0], /if \(active_character !== previousActiveCharacter\) \{\s*saveSettingsDebounced\(\);\s*\}/);
+    assert.doesNotMatch(selectionFlow[0], /saveSettingsDebounced\(\)/);
     assert.doesNotMatch(selectionFlow[0], /await saveSettings\(\)/);
 
     const editorSelection = source.match(/export function select_selected_character\([\s\S]*?\n\}/);
     assert.ok(editorSelection, 'character editor selection flow not found');
-    assert.match(editorSelection[0], /persistSettings = true/);
-    assert.match(editorSelection[0], /if \(persistSettings\) \{\s*saveSettingsDebounced\(\);\s*\}/);
+    assert.match(editorSelection[0], /saveSettingsDebounced\(\);/);
 });
 
 test('group selection keeps one debounced persistence request', async () => {

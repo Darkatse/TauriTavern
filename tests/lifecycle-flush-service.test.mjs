@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createLifecycleFlushService } from '../src/tauri/main/services/lifecycle/lifecycle-flush-service.js';
+import {
+    createLifecycleFlushService,
+    TAURI_GRACEFUL_EXIT_EVENT,
+} from '../src/tauri/main/services/lifecycle/lifecycle-flush-service.js';
 
 class FakeEventTarget {
     constructor() {
@@ -91,10 +94,89 @@ test('one failing lifecycle flusher does not block the remaining handlers', asyn
     });
     service.register('healthy', reason => calls.push(reason));
 
-    await service.flush('test');
+    await assert.rejects(service.flush('test'), /broken/);
 
     assert.deepEqual(calls, ['test']);
     assert.equal(errors.length, 1);
+});
+
+test('native exit waits for a successful flush before destroying the window', async () => {
+    const windowObject = new FakeEventTarget();
+    const documentObject = new FakeEventTarget();
+    let nativeExitHandler;
+    let destroyed = false;
+    let releaseFlush;
+    const flushBlock = new Promise(resolve => {
+        releaseFlush = resolve;
+    });
+
+    windowObject.__TAURI__ = {
+        event: {
+            listen: async (event, handler) => {
+                assert.equal(event, TAURI_GRACEFUL_EXIT_EVENT);
+                nativeExitHandler = handler;
+                return () => {};
+            },
+        },
+        window: {
+            getCurrentWindow: () => ({
+                destroy: async () => {
+                    destroyed = true;
+                },
+            }),
+        },
+    };
+
+    const service = createLifecycleFlushService({ windowObject, documentObject, logger: { error() {} } });
+    service.register('settings', () => flushBlock);
+    service.install();
+    await Promise.resolve();
+
+    const exitTask = nativeExitHandler();
+    await Promise.resolve();
+    assert.equal(destroyed, false);
+
+    releaseFlush();
+    await exitTask;
+    assert.equal(destroyed, true);
+});
+
+test('native exit keeps the window open when persistence fails', async () => {
+    const windowObject = new FakeEventTarget();
+    const documentObject = new FakeEventTarget();
+    const errors = [];
+    let nativeExitHandler;
+    let destroyed = false;
+
+    windowObject.__TAURI__ = {
+        event: {
+            listen: async (_event, handler) => {
+                nativeExitHandler = handler;
+                return () => {};
+            },
+        },
+        window: {
+            getCurrentWindow: () => ({
+                destroy: async () => {
+                    destroyed = true;
+                },
+            }),
+        },
+    };
+
+    const service = createLifecycleFlushService({
+        windowObject,
+        documentObject,
+        logger: { error: (...args) => errors.push(args) },
+    });
+    service.register('settings', () => Promise.reject(new Error('disk full')));
+    service.install();
+    await Promise.resolve();
+
+    await nativeExitHandler();
+
+    assert.equal(destroyed, false);
+    assert.match(String(errors.at(-1)?.[0]), /keeping the app open/);
 });
 
 test('concurrent flush calls reuse the in-flight promise and run handlers once', async () => {

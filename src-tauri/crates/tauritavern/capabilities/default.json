@@ -7,6 +7,7 @@
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-destroy",
     "opener:default",
     "notification:allow-notify",
     "notification:allow-is-permission-granted",
