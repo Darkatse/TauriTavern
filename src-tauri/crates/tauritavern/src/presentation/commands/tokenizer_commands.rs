@@ -9,7 +9,7 @@ use tt_application::dto::tokenization_dto::{
     OpenAiDecodeRequestDto, OpenAiDecodeResponseDto, OpenAiEncodeRequestDto,
     OpenAiEncodeResponseDto, OpenAiLogitBiasRequestDto, OpenAiLogitBiasResponseDto,
     OpenAiTokenCountBatchRequestDto, OpenAiTokenCountBatchResponseDto, OpenAiTokenCountRequestDto,
-    OpenAiTokenCountResponseDto,
+    OpenAiTokenCountResponseDto, OpenAiTokenPrefixCountRequestDto,
 };
 
 #[tauri::command]
@@ -40,6 +40,21 @@ pub async fn count_openai_tokens_batch(
         .count_openai_tokens_batch(dto)
         .await
         .map_err(map_command_error("Failed to count OpenAI tokens batch"))
+}
+
+#[tauri::command]
+pub async fn count_openai_token_prefixes(
+    dto: OpenAiTokenPrefixCountRequestDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<OpenAiTokenCountBatchResponseDto, CommandError> {
+    log_command("count_openai_token_prefixes");
+
+    app_state
+        .services
+        .tokenization_service
+        .count_openai_token_prefixes(dto)
+        .await
+        .map_err(map_command_error("Failed to count OpenAI token prefixes"))
 }
 
 #[tauri::command]

@@ -6,7 +6,7 @@ use crate::dto::tokenization_dto::{
     LogitBiasEntryDto, OpenAiDecodeRequestDto, OpenAiDecodeResponseDto, OpenAiEncodeRequestDto,
     OpenAiEncodeResponseDto, OpenAiLogitBiasRequestDto, OpenAiLogitBiasResponseDto,
     OpenAiTokenCountBatchRequestDto, OpenAiTokenCountBatchResponseDto, OpenAiTokenCountRequestDto,
-    OpenAiTokenCountResponseDto,
+    OpenAiTokenCountResponseDto, OpenAiTokenPrefixCountRequestDto,
 };
 use crate::errors::ApplicationError;
 use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
@@ -67,6 +67,34 @@ impl TokenizationService {
         .await
         .map_err(|error| {
             ApplicationError::InternalError(format!("Token count batch task failed: {error}"))
+        })??;
+
+        Ok(OpenAiTokenCountBatchResponseDto { token_counts })
+    }
+
+    pub async fn count_openai_token_prefixes(
+        &self,
+        dto: OpenAiTokenPrefixCountRequestDto,
+    ) -> Result<OpenAiTokenCountBatchResponseDto, ApplicationError> {
+        let model = self.normalize_model(&dto.model);
+        self.tokenizer_repository
+            .ensure_model_ready(model.as_ref())
+            .await?;
+
+        let tokenizer_repository = Arc::clone(&self.tokenizer_repository);
+        let model = model.into_owned();
+        let base = dto.base;
+        let suffixes = dto.suffixes;
+        let stop_at = dto.stop_at;
+
+        let token_counts = tokio::task::spawn_blocking(move || {
+            tokenizer_repository
+                .count_system_message_prefixes(&model, &base, &suffixes, stop_at)
+                .map_err(ApplicationError::from)
+        })
+        .await
+        .map_err(|error| {
+            ApplicationError::InternalError(format!("Token prefix count task failed: {error}"))
         })??;
 
         Ok(OpenAiTokenCountBatchResponseDto { token_counts })

@@ -9,6 +9,7 @@ async-trait = "0.1"
 flate2 = "1.1.9"
 miktik = { version = "0.2.0", default-features = false, features = ["openai", "huggingface", "sentencepiece"] }
 serde_json = { workspace = true }
+tiktoken-rs = "0.9.1"
 tokio = { version = "1", default-features = false, features = ["fs", "rt", "sync"] }
 tt-adapter-http = { path = "../tt-adapter-http" }
 tt-domain = { path = "../tt-domain" }

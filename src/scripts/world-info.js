@@ -7,7 +7,7 @@ import { extension_settings, getContext } from './extensions.js';
 import { NOTE_MODULE_NAME, metadata_keys, shouldWIAddPrompt } from './authors-note.js';
 import { isMobile } from './RossAscends-mods.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
-import { getTokenCountAsync } from './tokenizers.js';
+import { getTokenCountAsync, getTokenPrefixCountsAsync } from './tokenizers.js';
 import { power_user } from './power-user.js';
 import { getTagKeyForEntity } from './tags.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS } from './constants.js';
@@ -26,6 +26,8 @@ import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
 import { normalizeWorldInfoActivationBatch } from './tauritavern/agent/world-info-activation.js';
 import { registerLifecycleFlushHandler } from '../tauri/main/services/lifecycle/lifecycle-flush-service.js';
+import { canPrefetchWorldInfoTokenCount, getWorldInfoTokenPrefetchBatch } from './world-info-token-prefetch.js';
+import { prepareWorldInfoEntries } from './world-info-entry-prepare.js';
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -1111,7 +1113,7 @@ export function setWorldInfoSettings(settings, data) {
         const hasWorldInfo = !!chat_metadata[METADATA_KEY] && world_names.includes(chat_metadata[METADATA_KEY]);
         $('.chat_lorebook_button').toggleClass('world_set', hasWorldInfo);
         // Pre-cache the world info data for the chat for quicker first prompt generation
-        await getSortedEntries();
+        await preloadWorldInfoEntries();
     });
 
     eventSource.on(event_types.WORLDINFO_FORCE_ACTIVATE, (entries) => {
@@ -4760,73 +4762,78 @@ async function getPersonaLore() {
     return entries;
 }
 
+async function collectWorldInfoEntries() {
+    const worldsToPrefetch = new Set();
+    for (const worldName of selected_world_info || []) {
+        worldsToPrefetch.add(worldName);
+    }
+
+    const { worldsToSearch } = collectCharacterWorldsToSearch();
+    for (const worldName of worldsToSearch) {
+        worldsToPrefetch.add(worldName);
+    }
+
+    const chatWorld = chat_metadata[METADATA_KEY];
+    if (chatWorld) {
+        worldsToPrefetch.add(chatWorld);
+    }
+
+    const personaWorld = power_user.persona_description_lorebook;
+    if (personaWorld) {
+        worldsToPrefetch.add(personaWorld);
+    }
+
+    await prefetchWorldInfos(worldsToPrefetch);
+
+    const [
+        globalLore,
+        characterLore,
+        chatLore,
+        personaLore,
+    ] = await Promise.all([
+        getGlobalLore(),
+        getCharacterLore(),
+        getChatLore(),
+        getPersonaLore(),
+    ]);
+
+    await eventSource.emit(event_types.WORLDINFO_ENTRIES_LOADED, { globalLore, characterLore, chatLore, personaLore });
+
+    return { globalLore, characterLore, chatLore, personaLore };
+}
+
+async function preloadWorldInfoEntries() {
+    try {
+        await collectWorldInfoEntries();
+    } catch (error) {
+        console.error(error);
+    }
+}
+
 export async function getSortedEntries() {
     try {
-        const worldsToPrefetch = new Set();
-        for (const worldName of selected_world_info || []) {
-            worldsToPrefetch.add(worldName);
-        }
+        const { globalLore, characterLore, chatLore, personaLore } = await collectWorldInfoEntries();
 
-        const { worldsToSearch } = collectCharacterWorldsToSearch();
-        for (const worldName of worldsToSearch) {
-            worldsToPrefetch.add(worldName);
-        }
-
-        const chatWorld = chat_metadata[METADATA_KEY];
-        if (chatWorld) {
-            worldsToPrefetch.add(chatWorld);
-        }
-
-        const personaWorld = power_user.persona_description_lorebook;
-        if (personaWorld) {
-            worldsToPrefetch.add(personaWorld);
-        }
-
-        await prefetchWorldInfos(worldsToPrefetch);
-
-        const [
-            globalLore,
-            characterLore,
-            chatLore,
-            personaLore,
-        ] = await Promise.all([
-            getGlobalLore(),
-            getCharacterLore(),
-            getChatLore(),
-            getPersonaLore(),
-        ]);
-
-        await eventSource.emit(event_types.WORLDINFO_ENTRIES_LOADED, { globalLore, characterLore, chatLore, personaLore });
-
-        let entries;
-
+        let sorted;
         switch (Number(world_info_character_strategy)) {
             case world_info_insertion_strategy.evenly:
-                entries = [...globalLore, ...characterLore].sort(sortFn);
+                sorted = [...globalLore, ...characterLore].sort(sortFn);
                 break;
             case world_info_insertion_strategy.character_first:
-                entries = [...characterLore.sort(sortFn), ...globalLore.sort(sortFn)];
+                sorted = [...characterLore.sort(sortFn), ...globalLore.sort(sortFn)];
                 break;
             case world_info_insertion_strategy.global_first:
-                entries = [...globalLore.sort(sortFn), ...characterLore.sort(sortFn)];
+                sorted = [...globalLore.sort(sortFn), ...characterLore.sort(sortFn)];
                 break;
             default:
                 console.error('[WI] Unknown WI insertion strategy:', world_info_character_strategy, 'defaulting to evenly');
-                entries = [...globalLore, ...characterLore].sort(sortFn);
+                sorted = [...globalLore, ...characterLore].sort(sortFn);
                 break;
         }
 
         // Chat lore always goes first, then persona lore, then the rest
-        entries = [...chatLore.sort(sortFn), ...personaLore.sort(sortFn), ...entries];
-
-        // Calculate hash and parse decorators. Split maps to preserve old hashes.
-        entries = entries.map((entry) => {
-            const [decorators, content] = parseDecorators(entry.content || '');
-            return { ...entry, decorators, content };
-        }).map((entry) => {
-            const hash = getStringHash(JSON.stringify(entry));
-            return { ...entry, hash };
-        });
+        let entries = [...chatLore.sort(sortFn), ...personaLore.sort(sortFn), ...sorted];
+        entries = prepareWorldInfoEntries(entries, parseDecorators, getStringHash);
 
         console.debug(`[WI] Found ${entries.length} world lore entries. Sorted by strategy`, Object.entries(world_info_insertion_strategy).find((x) => x[1] === world_info_character_strategy));
 
@@ -4905,6 +4912,10 @@ function parseDecorators(content) {
  */
 //MARK: checkWorldInfo
 export async function checkWorldInfo(chat, maxContext, isDryRun, globalScanData = defaultGlobalScanData) {
+    return checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData);
+}
+
+async function checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData) {
     const context = getContext();
     const buffer = new WorldInfoBuffer(chat, globalScanData);
 
@@ -4979,7 +4990,6 @@ export async function checkWorldInfo(chat, maxContext, isDryRun, globalScanData 
 
         // Loop and find all entries that can activate here
         let activatedNow = new Set();
-
         for (const entry of sortedEntries) {
             // Logging preparation
             let headerLogged = false;
@@ -5185,7 +5195,6 @@ export async function checkWorldInfo(chat, maxContext, isDryRun, globalScanData 
             activatedNow.add(entry);
             continue;
         }
-
         console.debug(`[WI] Search done. Found ${activatedNow.size} possible entries.`);
 
         // Sort the entries for the probability and the budget limit checks
@@ -5210,7 +5219,10 @@ export async function checkWorldInfo(chat, maxContext, isDryRun, globalScanData 
 
         let ignoresBudget = newEntries.filter(e => e.ignoreBudget).length;
 
-        for (const entry of newEntries) {
+        const prefetchedTokenCounts = new Map();
+
+        for (let entryIndex = 0; entryIndex < newEntries.length; entryIndex++) {
+            const entry = newEntries[entryIndex];
             ignoresBudget -= (entry.ignoreBudget ? 1 : 0);
             if (token_budget_overflowed && !entry.ignoreBudget) {
                 if (ignoresBudget > 0) {
@@ -5250,9 +5262,23 @@ export async function checkWorldInfo(chat, maxContext, isDryRun, globalScanData 
 
             // Substitute macros inline, for both this checking and also future processing
             entry.content = substituteParams(entry.content);
+            const batchBaseContent = newContent;
             newContent += `${entry.content}\n`;
 
-            if (!entry.ignoreBudget && (textToScanTokens + (await getTokenCountAsync(newContent))) >= budget) {
+            if (canPrefetchWorldInfoTokenCount(entry) && !prefetchedTokenCounts.has(entry)) {
+                const { entries: batchEntries, suffixes: batchSuffixes } = getWorldInfoTokenPrefetchBatch(newEntries, entryIndex);
+
+                const remainingBudget = budget - textToScanTokens;
+                const batchCounts = await getTokenPrefixCountsAsync(batchBaseContent, batchSuffixes, undefined, remainingBudget);
+                batchEntries.forEach((batchEntry, index) => prefetchedTokenCounts.set(batchEntry, batchCounts[index]));
+            }
+
+            const newContentTokens = entry.ignoreBudget
+                ? 0
+                : prefetchedTokenCounts.has(entry)
+                    ? prefetchedTokenCounts.get(entry)
+                    : await getTokenCountAsync(newContent);
+            if (!entry.ignoreBudget && (textToScanTokens + newContentTokens) >= budget) {
                 if (!token_budget_overflowed) {
                     console.debug('[WI] --- BUDGET OVERFLOW CHECK ---');
                     if (world_info_overflow_alert) {

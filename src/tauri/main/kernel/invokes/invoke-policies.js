@@ -44,6 +44,12 @@ function countOpenAiTokensBatchKey(args) {
     return fnv1a32(json);
 }
 
+/** @param {any} args */
+function exactTokenizerRequestKey(args) {
+    const dto = args?.dto ?? args ?? {};
+    return JSON.stringify(dto);
+}
+
 /**
  * @param {any} args
  * @returns {string}
@@ -88,6 +94,11 @@ export function createHostInvokePolicies() {
             cacheTtlMs: 2_000,
             cacheLimit: 50,
             key: countOpenAiTokensBatchKey,
+        },
+        count_openai_token_prefixes: {
+            kind: 'dedupe',
+            maxConcurrent: 1,
+            key: exactTokenizerRequestKey,
         },
         get_openrouter_model_providers: {
             kind: 'dedupe',

@@ -58,6 +58,23 @@ export function registerOpenAiTokenizerRoutes(router, context, { jsonResponse })
         }
     });
 
+    router.post('/api/tokenizers/openai/count-prefix-batch', async ({ body, url }) => {
+        const model = String(url?.searchParams?.get('model') || '');
+        const payload = asObject(body);
+        if (typeof payload.base !== 'string' || !Array.isArray(payload.suffixes) || payload.suffixes.some(suffix => typeof suffix !== 'string')) {
+            return jsonResponse({ error: 'OpenAI token prefix count body must contain a string base and string suffixes' }, 400);
+        }
+
+        const stopAt = Number.isSafeInteger(payload.stop_at) && payload.stop_at >= 0 ? payload.stop_at : null;
+        const dto = { model, base: payload.base, suffixes: payload.suffixes, stop_at: stopAt };
+        try {
+            return jsonResponse(await context.safeInvoke('count_openai_token_prefixes', { dto }));
+        } catch (error) {
+            console.warn('OpenAI token prefix count failed:', error);
+            return jsonResponse({ error: getErrorMessage(error) }, 500);
+        }
+    });
+
     router.post('/api/tokenizers/openai/encode', async ({ body, url }) => {
         const model = String(url?.searchParams?.get('model') || '');
         const payload = asObject(body);

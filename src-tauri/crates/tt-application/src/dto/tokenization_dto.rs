@@ -36,6 +36,18 @@ pub struct OpenAiTokenCountBatchResponseDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenAiTokenPrefixCountRequestDto {
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub base: String,
+    #[serde(default)]
+    pub suffixes: Vec<String>,
+    #[serde(default)]
+    pub stop_at: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpenAiEncodeRequestDto {
     #[serde(default)]
     pub model: String,

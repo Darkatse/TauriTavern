@@ -7484,6 +7484,7 @@ dependencies = [
  "flate2",
  "miktik",
  "serde_json",
+ "tiktoken-rs",
  "tokio",
  "tt-adapter-http",
  "tt-domain",
