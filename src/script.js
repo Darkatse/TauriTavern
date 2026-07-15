@@ -15,6 +15,7 @@ import { registerLifecycleFlushHandler } from './tauri/main/services/lifecycle/l
 import { replaceMesTextHtmlWithRuntimePolicy } from './scripts/tauri/message/mes-text-write.js';
 import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
 import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
+import { getMessageRenderBatches } from './scripts/tauri/perf/message-render-batches.js';
 import { getStreamingRenderInterval, shouldCommitStreamingMessage } from './scripts/tauri/perf/streaming-render-policy.js';
 import {
     CHAT_COMMIT_REASON,
@@ -1887,8 +1888,46 @@ export async function replaceCurrentChat() {
     }
 }
 
-/** @type {{ state: any, promise: Promise<void> } | null} */
+/** @type {{ key: string, promise: Promise<void> } | null} */
 let windowedShowMoreMessagesPending = null;
+
+async function prependWindowedMessageElements(messages, showMoreButton, prevHeight, keepAnchor, isCurrentWindow) {
+    const renderBatches = getMessageRenderBatches(messages.length);
+    let insertionAnchor = showMoreButton[0] ?? null;
+
+    for (const [batchIndex, batch] of renderBatches.entries()) {
+        if (!isCurrentWindow()) {
+            return false;
+        }
+
+        const fragment = document.createDocumentFragment();
+        let lastElement = null;
+        for (let id = batch.start; id < batch.end; id += 1) {
+            const messageElement = updateMessageElement(messages[id], { messageId: id });
+            lastElement = messageElement[0];
+            fragment.appendChild(lastElement);
+        }
+
+        if (insertionAnchor) {
+            insertionAnchor.after(fragment);
+        } else {
+            chatElement[0].prepend(fragment);
+        }
+        insertionAnchor = lastElement;
+
+        if (keepAnchor) {
+            const newHeight = chatElement.prop('scrollHeight');
+            chatElement.scrollTop(newHeight - prevHeight);
+        }
+
+        const yieldedFrame = batchIndex < renderBatches.length - 1;
+        if (yieldedFrame) {
+            await new Promise(resolve => requestAnimationFrame(resolve));
+        }
+    }
+
+    return isCurrentWindow();
+}
 
 export async function showMoreMessages(messagesToLoad = null) {
     const windowState = getWindowedChatState();
@@ -1897,8 +1936,9 @@ export async function showMoreMessages(messagesToLoad = null) {
             throw new Error('Windowed chat cursor is missing');
         }
 
+        const windowKey = getWindowedChatKey(windowState);
         const existingPending = windowedShowMoreMessagesPending;
-        if (existingPending?.state === windowState) {
+        if (existingPending?.key === windowKey) {
             return existingPending.promise;
         }
 
@@ -1906,21 +1946,20 @@ export async function showMoreMessages(messagesToLoad = null) {
         const prevHeight = chatElement.prop('scrollHeight');
         const showMoreButton = $('#show_more_messages');
         const isButtonInView = showMoreButton[0] && isElementInViewport(showMoreButton[0]);
-
         const run = (async () => {
-            const result = windowState.kind === 'group'
-                ? await loadGroupChatPayloadBefore({
+            const result = await (windowState.kind === 'group'
+                ? loadGroupChatPayloadBefore({
                     id: windowState.id,
                     cursor: windowState.cursor,
                     maxLines: count,
                 })
-                : await loadCharacterChatPayloadBefore({
+                : loadCharacterChatPayloadBefore({
                     characterName: windowState.characterName,
                     avatarUrl: windowState.avatarUrl,
                     fileName: windowState.fileName,
                     cursor: windowState.cursor,
                     maxLines: count,
-                });
+                }));
 
             if (getWindowedChatState() !== windowState) {
                 return;
@@ -1944,21 +1983,6 @@ export async function showMoreMessages(messagesToLoad = null) {
                 this_edit_mes_id = Number(this_edit_mes_id) + messages.length;
             }
 
-            const fragment = document.createDocumentFragment();
-            for (let id = 0; id < messages.length; id += 1) {
-                const messageElement = updateMessageElement(chat[id], { messageId: id });
-                fragment.appendChild(messageElement[0]);
-            }
-
-            if (showMoreButton[0]) {
-                showMoreButton[0].after(fragment);
-            } else {
-                chatElement[0].prepend(fragment);
-            }
-
-            updateViewMessageIds(0);
-            refreshSwipeButtons();
-
             const hasMoreBefore = Boolean(result?.hasMoreBefore);
             const shiftedState = shiftWindowedMessageSaveState(windowState, messages.length, 'chat');
             setWindowedChatState({
@@ -1967,13 +1991,23 @@ export async function showMoreMessages(messagesToLoad = null) {
                 hasMoreBefore,
             });
 
-            if (!hasMoreBefore) {
-                showMoreButton.remove();
+            updateViewMessageIds(messages.length);
+            const renderedCurrentWindow = await prependWindowedMessageElements(
+                messages,
+                showMoreButton,
+                prevHeight,
+                isButtonInView,
+                () => getWindowedChatKey(getWindowedChatState()) === windowKey,
+            );
+            if (!renderedCurrentWindow) {
+                return;
             }
 
-            if (isButtonInView) {
-                const newHeight = chatElement.prop('scrollHeight');
-                chatElement.scrollTop(newHeight - prevHeight);
+            updateViewMessageIds(0);
+            refreshSwipeButtons();
+
+            if (!hasMoreBefore) {
+                showMoreButton.remove();
             }
 
             applyStylePins();
@@ -1981,7 +2015,7 @@ export async function showMoreMessages(messagesToLoad = null) {
             await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
         })();
 
-        windowedShowMoreMessagesPending = { state: windowState, promise: run };
+        windowedShowMoreMessagesPending = { key: windowKey, promise: run };
 
         try {
             await run;

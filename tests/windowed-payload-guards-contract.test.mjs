@@ -46,27 +46,44 @@ function extractFunctionBody(source, marker) {
     throw new Error(`unbalanced braces from marker: ${marker}`);
 }
 
-test('windowed payload: showMoreMessages implements single-flight + CAS commit', async () => {
+test('windowed payload: showMoreMessages implements stable-key single-flight + stale-load guard', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
 
     assert.match(source, /\bwindowedShowMoreMessagesPending\b/);
-    assert.match(source, /existingPending\?\.\s*state\s*===\s*windowState/);
+    assert.match(source, /existingPending\?\.\s*key\s*===\s*windowKey/);
     assert.match(source, /getWindowedChatState\(\)\s*!==\s*windowState/);
 });
 
-test('windowed payload: showMoreMessages reindexes DOM and shifts windowed save counters after prepend', async () => {
+test('windowed payload: showMoreMessages commits prepend save state before yielding to DOM rendering', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
 
-    const showMoreStart = source.indexOf('export async function showMoreMessages');
-    assert.ok(showMoreStart >= 0);
-    const slice = source.slice(showMoreStart, showMoreStart + 3000);
+    const slice = extractFunctionBody(source, 'export async function showMoreMessages');
+    const prependIndex = slice.indexOf('chat.splice(0, 0, ...messages)');
+    const shiftIndex = slice.indexOf('shiftWindowedMessageSaveState', prependIndex);
+    const stateCommitIndex = slice.indexOf('setWindowedChatState({', shiftIndex);
+    const renderIndex = slice.indexOf('await prependWindowedMessageElements', stateCommitIndex);
 
+    assert.ok(prependIndex >= 0, 'chat prepend mutation not found');
+    assert.ok(shiftIndex > prependIndex, 'save counters must shift after the chat prepend');
+    assert.ok(stateCommitIndex > shiftIndex, 'shifted state must be committed');
+    assert.ok(renderIndex > stateCommitIndex, 'window state must be committed before the first render yield');
     assert.match(slice, /updateViewMessageIds\(\s*0\s*\)\s*;/);
     assert.match(
         slice,
         /const\s+shiftedState\s*=\s*shiftWindowedMessageSaveState\(\s*windowState\s*,\s*messages\.length\s*,\s*['"]chat['"]\s*\)\s*;/,
     );
     assert.match(slice, /\.\.\.\s*shiftedState\s*,/);
+    assert.doesNotMatch(slice.slice(renderIndex), /shiftWindowedMessageSaveState|setWindowedChatState/);
+});
+
+test('windowed payload: prepend batches use local messages and stop after a chat switch', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+    const slice = extractFunctionBody(source, 'async function prependWindowedMessageElements');
+
+    assert.match(slice, /updateMessageElement\(\s*messages\[id\]/);
+    assert.doesNotMatch(slice, /updateMessageElement\(\s*chat\[id\]/);
+    assert.match(slice, /if\s*\(\s*!isCurrentWindow\(\)\s*\)\s*\{\s*return false;/s);
+    assert.match(slice, /return isCurrentWindow\(\);/);
 });
 
 test('windowed payload: clearChat(clearData:true) invalidates windowed state immediately', async () => {

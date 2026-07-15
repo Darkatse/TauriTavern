@@ -200,6 +200,30 @@ test('windowed chat: showMore shifts dirtyFromIndex for unsaved edits (>= 100 me
     assertWindowInvariant(fileMessages, windowStartIndex, chatWindow);
 });
 
+test('windowed chat: prepend counters prevent a save during rendering from duplicating tail messages', async () => {
+    const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/windowed-state.js'));
+    const { buildWindowedPayloadPatch, shiftWindowedMessageSaveState } = mod;
+
+    const fileMessages = buildMessages(120);
+    const windowLines = 50;
+    const windowStartIndex = fileMessages.length - windowLines;
+    const chatWindow = cloneMessages(fileMessages.slice(windowStartIndex));
+    const windowState = { savedMessageCount: chatWindow.length, dirtyFromIndex: chatWindow.length };
+    const before = cloneMessages(fileMessages.slice(windowStartIndex - 20, windowStartIndex));
+
+    chatWindow.splice(0, 0, ...before);
+
+    const stalePatch = buildWindowedPayloadPatch(chatWindow, windowState, 'chat');
+    assert.equal(stalePatch.patch.kind, 'append');
+    assert.equal(stalePatch.patch.lines.length, before.length);
+    assert.deepEqual(JSON.parse(stalePatch.patch.lines[0]), chatWindow[windowState.savedMessageCount]);
+
+    const committedState = shiftWindowedMessageSaveState(windowState, before.length, 'chat');
+    const safePatch = buildWindowedPayloadPatch(chatWindow, committedState, 'chat');
+    assert.notEqual(safePatch.patch.kind, 'append');
+    assert.equal(safePatch.savedMessageCount, chatWindow.length);
+});
+
 test('windowed chat: truncate-at-end patch works for long windows (>= 100 messages)', async () => {
     const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/windowed-state.js'));
     const { buildWindowedPayloadPatch } = mod;
@@ -219,4 +243,3 @@ test('windowed chat: truncate-at-end patch works for long windows (>= 100 messag
     fileMessages = applyWindowedPatch(fileMessages, windowStartIndex, result.patch);
     assertWindowInvariant(fileMessages, windowStartIndex, chatWindow);
 });
-
