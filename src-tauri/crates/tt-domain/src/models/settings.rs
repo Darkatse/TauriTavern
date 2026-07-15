@@ -53,6 +53,9 @@ pub const MIN_LLM_API_KEEP: u32 = 1;
 pub const DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS: u32 = 100;
 pub const DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS: u32 = 20;
 pub const MAX_AGENT_RETENTION_KEEP_RUNS: u32 = 10_000;
+pub const DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX: i64 = 20;
+pub const DEFAULT_CHAT_BACKUP_MAX_TOTAL_FILES: i64 = 500;
+pub const DEFAULT_CHAT_BACKUP_MAX_TOTAL_BYTES: i64 = 1024 * 1024 * 1024;
 
 fn default_agent_retention_keep_recent_terminal_runs() -> u32 {
     DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS
@@ -254,6 +257,79 @@ impl AgentRunRetentionSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChatBackupSettings {
+    #[serde(default = "default_chat_backup_automatic_enabled")]
+    pub automatic_enabled: bool,
+    #[serde(default = "default_chat_backup_max_files_per_prefix")]
+    pub max_files_per_prefix: i64,
+    #[serde(default = "default_chat_backup_max_total_files")]
+    pub max_total_files: i64,
+    #[serde(default = "default_chat_backup_max_total_bytes")]
+    pub max_total_bytes: i64,
+}
+
+impl Default for ChatBackupSettings {
+    fn default() -> Self {
+        Self {
+            automatic_enabled: default_chat_backup_automatic_enabled(),
+            max_files_per_prefix: default_chat_backup_max_files_per_prefix(),
+            max_total_files: default_chat_backup_max_total_files(),
+            max_total_bytes: default_chat_backup_max_total_bytes(),
+        }
+    }
+}
+
+impl ChatBackupSettings {
+    pub fn validate(&self) -> Result<(), ChatBackupSettingsValidationError> {
+        for (field, value) in [
+            ("max_files_per_prefix", self.max_files_per_prefix),
+            ("max_total_files", self.max_total_files),
+            ("max_total_bytes", self.max_total_bytes),
+        ] {
+            if value < -1 {
+                return Err(ChatBackupSettingsValidationError { field });
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn history_disabled(&self) -> bool {
+        self.max_files_per_prefix == 0 || self.max_total_files == 0 || self.max_total_bytes == 0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatBackupSettingsValidationError {
+    field: &'static str,
+}
+
+impl ChatBackupSettingsValidationError {
+    pub fn message(self) -> String {
+        format!(
+            "chat_backups.{}_invalid: {} must be -1, 0, or a positive integer",
+            self.field, self.field
+        )
+    }
+}
+
+fn default_chat_backup_automatic_enabled() -> bool {
+    true
+}
+
+fn default_chat_backup_max_files_per_prefix() -> i64 {
+    DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX
+}
+
+fn default_chat_backup_max_total_files() -> i64 {
+    DEFAULT_CHAT_BACKUP_MAX_TOTAL_FILES
+}
+
+fn default_chat_backup_max_total_bytes() -> i64 {
+    DEFAULT_CHAT_BACKUP_MAX_TOTAL_BYTES
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernSettings {
     pub updates: TauriTavernUpdateSettings,
@@ -265,6 +341,8 @@ pub struct TauriTavernSettings {
     pub embedded_runtime_profile: String,
     #[serde(default = "default_chat_history_mode")]
     pub chat_history_mode: ChatHistoryMode,
+    #[serde(default)]
+    pub chat_backups: ChatBackupSettings,
     #[serde(default = "default_close_to_tray_on_close")]
     pub close_to_tray_on_close: bool,
     #[serde(default)]
@@ -303,6 +381,7 @@ impl Default for TauriTavernSettings {
             panel_runtime_profile: default_panel_runtime_profile(),
             embedded_runtime_profile: default_embedded_runtime_profile(),
             chat_history_mode: default_chat_history_mode(),
+            chat_backups: ChatBackupSettings::default(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             request_proxy: RequestProxySettings::default(),
             allow_keys_exposure: false,
@@ -380,8 +459,10 @@ impl Default for UserSettings {
 mod tests {
     use super::{
         AgentRunRetentionSettings, DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS,
-        DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS, DevLoggingSettings,
-        MAX_AGENT_RETENTION_KEEP_RUNS, TauriTavernSettings,
+        DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS,
+        DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX, DEFAULT_CHAT_BACKUP_MAX_TOTAL_BYTES,
+        DEFAULT_CHAT_BACKUP_MAX_TOTAL_FILES, DevLoggingSettings, MAX_AGENT_RETENTION_KEEP_RUNS,
+        TauriTavernSettings,
     };
 
     #[test]
@@ -451,6 +532,67 @@ mod tests {
             settings.agent.retention.keep_full_recent_runs,
             DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS
         );
+    }
+
+    #[test]
+    fn chat_backup_settings_default_when_loading_older_settings() {
+        let settings = TauriTavernSettings::from_json_str_with_compat(
+            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
+        )
+        .expect("parse settings");
+
+        assert!(settings.chat_backups.automatic_enabled);
+        assert_eq!(
+            settings.chat_backups.max_files_per_prefix,
+            DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX
+        );
+        assert_eq!(
+            settings.chat_backups.max_total_files,
+            DEFAULT_CHAT_BACKUP_MAX_TOTAL_FILES
+        );
+        assert_eq!(
+            settings.chat_backups.max_total_bytes,
+            DEFAULT_CHAT_BACKUP_MAX_TOTAL_BYTES
+        );
+    }
+
+    #[test]
+    fn chat_backup_settings_default_missing_nested_fields() {
+        let settings = TauriTavernSettings::from_json_str_with_compat(
+            r#"{
+                "updates":{"startup_popup":{"dismissed_release_token":null}},
+                "chat_backups":{"max_total_files":12}
+            }"#,
+        )
+        .expect("parse settings");
+
+        assert!(settings.chat_backups.automatic_enabled);
+        assert_eq!(
+            settings.chat_backups.max_files_per_prefix,
+            DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX
+        );
+        assert_eq!(settings.chat_backups.max_total_files, 12);
+        assert_eq!(
+            settings.chat_backups.max_total_bytes,
+            DEFAULT_CHAT_BACKUP_MAX_TOTAL_BYTES
+        );
+    }
+
+    #[test]
+    fn chat_backup_settings_accept_documented_sentinels_and_reject_lower_values() {
+        let mut settings = TauriTavernSettings::default().chat_backups;
+
+        settings.max_files_per_prefix = -1;
+        settings.max_total_files = 0;
+        settings.max_total_bytes = 1;
+        settings
+            .validate()
+            .expect("accept -1, 0, and positive limits");
+        assert!(settings.history_disabled());
+
+        settings.max_total_files = -2;
+        let error = settings.validate().expect_err("reject values below -1");
+        assert!(error.message().contains("max_total_files"));
     }
 
     #[test]

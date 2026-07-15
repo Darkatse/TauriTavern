@@ -42,8 +42,8 @@ impl FileChatRepository {
         }
         self.remove_summary_cache_for_path(&path).await;
 
-        self.backup_chat_file(&path, character_name, &backup_key)
-            .await?;
+        self.backup_chat_file_automatic(&path, character_name, &backup_key)
+            .await;
 
         Ok(result)
     }
@@ -61,7 +61,8 @@ impl FileChatRepository {
         let result = patch_payload_windowed_internal(&path, request).await?;
 
         self.remove_summary_cache_for_path(&path).await;
-        self.backup_chat_file(&path, chat_id, &backup_key).await?;
+        self.backup_chat_file_automatic(&path, chat_id, &backup_key)
+            .await;
 
         Ok(result)
     }

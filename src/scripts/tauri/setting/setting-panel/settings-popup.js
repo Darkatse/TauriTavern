@@ -5,7 +5,7 @@ import {
     setDataRoot,
     updateTauriTavernSettings,
 } from '../../../../tauri-bridge.js';
-import { runTaskOrPopup } from './popup-utils.js';
+import { runTaskOrPopup, showErrorPopup } from './popup-utils.js';
 import { loadTauriTavernSettingsViewModel } from './settings-view-model.js';
 import { buildTauriTavernSettingsUpdate } from './settings-patch.js';
 import { applyTauriTavernSettingsUpdateEffects } from './settings-effects.js';
@@ -230,6 +230,27 @@ async function showHelpTopic(topicId) {
     });
 }
 
+async function confirmChatBackupHistoryPurge() {
+    const content = createPopupColumn();
+    const title = document.createElement('b');
+    title.textContent = translate('Disable chat backup history?');
+    const explanation = document.createElement('div');
+    explanation.textContent = translate(
+        'Setting any chat backup limit to 0 deletes all existing chat backups in the background. This cannot be undone.',
+    );
+    content.append(title, explanation);
+
+    const result = await callGenericPopup(content, POPUP_TYPE.CONFIRM, '', {
+        okButton: translate('Disable and delete backups'),
+        cancelButton: translate('Cancel'),
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+
+    return result === POPUP_RESULT.AFFIRMATIVE;
+}
+
 async function chooseDataRoot() {
     const picked = await openDialog({
         directory: true,
@@ -322,6 +343,7 @@ export async function openTauriTavernSettingsPopup() {
         actions: createSettingsActions(backgroundModel.backgroundOptions),
         tr: translate,
     });
+    let pendingUpdate = null;
 
     try {
         const result = await callTauriTavernPanelPopup(mount, POPUP_TYPE.CONFIRM, '', {
@@ -331,13 +353,35 @@ export async function openTauriTavernSettingsPopup() {
             wider: true,
             wide: false,
             large: false,
+            onClosing: async (popup) => {
+                if (popup.result !== POPUP_RESULT.AFFIRMATIVE) {
+                    return true;
+                }
+
+                try {
+                    pendingUpdate = buildTauriTavernSettingsUpdate(viewModel.values, appHandle.getDraft());
+                } catch (error) {
+                    await showErrorPopup(error);
+                    return false;
+                }
+
+                if (
+                    pendingUpdate.requiresChatBackupPurgeConfirmation
+                    && !await confirmChatBackupHistoryPurge()
+                ) {
+                    return false;
+                }
+
+                return true;
+            },
         });
 
         if (result !== POPUP_RESULT.AFFIRMATIVE) {
             return;
         }
 
-        const update = buildTauriTavernSettingsUpdate(viewModel.values, appHandle.getDraft());
+        const update = pendingUpdate
+            ?? buildTauriTavernSettingsUpdate(viewModel.values, appHandle.getDraft());
         if (!update.hasChanges) {
             return;
         }

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono::Local;
+use chrono::{DateTime, Local};
 use tokio::fs;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
@@ -12,6 +12,7 @@ use tt_domain::models::chat::{normalize_chat_file_name, normalize_chat_file_stem
 use tt_domain::models::filename::sanitize_filename;
 
 use super::FileChatRepository;
+use super::backup_inventory::BACKUP_TEMP_PREFIX;
 
 impl FileChatRepository {
     /// Ensure the chats directory exists
@@ -115,12 +116,11 @@ impl FileChatRepository {
     }
 
     /// Build a timestamp that is safe to use in file names on all platforms.
-    fn backup_timestamp() -> String {
-        Local::now().format("%Y%m%d-%H%M%S").to_string()
+    fn backup_timestamp(at: DateTime<Local>) -> String {
+        at.format("%Y%m%d-%H%M%S").to_string()
     }
 
-    /// Mirrors SillyTavern backup name normalization:
-    /// sanitize(name).replace(/[^a-z0-9]/gi, '_').toLowerCase()
+    /// Keeps SillyTavern's readable backup key while preserving Unicode letters and numbers.
     pub(super) fn sanitize_backup_name_for_sillytavern(input: &str) -> String {
         let mut sanitized = String::with_capacity(input.len());
 
@@ -167,10 +167,19 @@ impl FileChatRepository {
             return String::new();
         }
 
-        lowered
-            .chars()
-            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-            .collect()
+        const FINAL_NAME_FIXED_BYTES: usize =
+            "chat_".len() + "_".len() + "YYYYMMDD-HHMMSS".len() + ".jsonl".len();
+        const MAX_SANITIZED_BYTES: usize = 255 - FINAL_NAME_FIXED_BYTES;
+
+        let mut result = String::with_capacity(lowered.len().min(MAX_SANITIZED_BYTES));
+        for ch in lowered.chars() {
+            let output = if ch.is_alphanumeric() { ch } else { '_' };
+            if result.len() + output.len_utf8() > MAX_SANITIZED_BYTES {
+                break;
+            }
+            result.push(output);
+        }
+        result
     }
 
     pub(super) fn backup_file_prefix(character_name: &str) -> String {
@@ -182,23 +191,31 @@ impl FileChatRepository {
     }
 
     /// Build backup file name in the form `chat_<sanitized_character>_<timestamp>.jsonl`.
-    pub(super) fn backup_file_name(character_name: &str) -> String {
+    pub(super) fn backup_file_name_at(character_name: &str, at: DateTime<Local>) -> String {
         format!(
             "{}{}.jsonl",
             Self::backup_file_prefix(character_name),
-            Self::backup_timestamp()
+            Self::backup_timestamp(at)
         )
+    }
+
+    #[cfg(test)]
+    pub(super) fn backup_file_name(character_name: &str) -> String {
+        Self::backup_file_name_at(character_name, Local::now())
+    }
+
+    pub(super) fn backup_temp_path(&self) -> PathBuf {
+        self.backups_dir.join(format!(
+            "{}{}",
+            BACKUP_TEMP_PREFIX,
+            uuid::Uuid::new_v4().simple()
+        ))
     }
 
     /// Get the path to a group chat file
     pub(super) fn get_group_chat_path(&self, chat_id: &str) -> Result<PathBuf, DomainError> {
         let normalized = Self::normalize_jsonl_file_name(chat_id)?;
         Ok(self.group_chats_dir.join(normalized))
-    }
-
-    /// Get the path to a chat backup file
-    pub(super) fn get_backup_path(&self, backup_name: &str) -> PathBuf {
-        self.backups_dir.join(Self::backup_file_name(backup_name))
     }
 
     pub(super) fn resolve_existing_backup_path(
@@ -238,7 +255,7 @@ impl FileChatRepository {
             ));
         }
 
-        if !sanitized.starts_with(Self::CHAT_BACKUP_PREFIX) {
+        if !sanitized.starts_with(Self::CHAT_BACKUP_PREFIX) || !sanitized.ends_with(".jsonl") {
             return Err(DomainError::InvalidData(
                 "Invalid chat backup file name".to_string(),
             ));

@@ -31,6 +31,12 @@ const PROMPT_CACHE_OPTIONS = [
     { value: '1h', labelKey: '1h (Extended)' },
 ];
 
+const CHAT_BACKUP_STORAGE_UNIT_BYTES = {
+    MiB: 1024 * 1024,
+    GiB: 1024 * 1024 * 1024,
+};
+const CHAT_BACKUP_STORAGE_UNIT_OPTIONS = Object.keys(CHAT_BACKUP_STORAGE_UNIT_BYTES);
+
 function cloneOptions(options) {
     return options.map((option) => ({
         value: String(option.value || ''),
@@ -53,11 +59,23 @@ function cloneDraft(values, themeOptions, backgroundOptions, currentBackground) 
     const fallbackBackground = backgroundOptions.some((option) => option.value === normalizedCurrentBackground)
         ? normalizedCurrentBackground
         : backgroundOptions[0]?.value || '';
+    const maxTotalBytes = values.chatBackups.maxTotalBytes;
+    const maxTotalUnit = maxTotalBytes >= CHAT_BACKUP_STORAGE_UNIT_BYTES.GiB ? 'GiB' : 'MiB';
+    const maxTotalValue = maxTotalBytes > 0
+        ? maxTotalBytes / CHAT_BACKUP_STORAGE_UNIT_BYTES[maxTotalUnit]
+        : maxTotalBytes;
 
     return {
         panelRuntimeProfile: values.panelRuntimeProfile,
         embeddedRuntimeProfile: values.embeddedRuntimeProfile,
         chatHistoryMode: values.chatHistoryMode,
+        chatBackups: {
+            automaticEnabled: values.chatBackups.automaticEnabled,
+            maxFilesPerPrefix: values.chatBackups.maxFilesPerPrefix,
+            maxTotalFiles: values.chatBackups.maxTotalFiles,
+            maxTotalValue,
+            maxTotalUnit,
+        },
         closeToTrayOnClose: values.closeToTrayOnClose,
         requestProxy: {
             enabled: values.requestProxy.enabled,
@@ -151,6 +169,14 @@ export function createTauriTavernSettingsApp(options) {
             },
             chatHistoryOptions() {
                 return translateOptions(CHAT_HISTORY_OPTIONS, this.tr);
+            },
+            chatBackupStorageUnitOptions() {
+                return CHAT_BACKUP_STORAGE_UNIT_OPTIONS;
+            },
+            chatBackupHistoryDisabled() {
+                return this.draft.chatBackups.maxFilesPerPrefix === 0
+                    || this.draft.chatBackups.maxTotalFiles === 0
+                    || this.draft.chatBackups.maxTotalValue === 0;
             },
             promptCacheOptions() {
                 return translateOptions(PROMPT_CACHE_OPTIONS, this.tr);
@@ -287,6 +313,20 @@ export function createTauriTavernSettingsApp(options) {
                 this.ensureWallpaperDefaults();
                 this.details.dynamicTheme = true;
             },
+            setChatBackupStorageUnit(unit) {
+                if (!Object.hasOwn(CHAT_BACKUP_STORAGE_UNIT_BYTES, unit)) {
+                    return;
+                }
+
+                const currentUnit = this.draft.chatBackups.maxTotalUnit;
+                const currentValue = Number(this.draft.chatBackups.maxTotalValue);
+                if (unit !== currentUnit && currentValue > 0) {
+                    this.draft.chatBackups.maxTotalValue = currentValue
+                        * CHAT_BACKUP_STORAGE_UNIT_BYTES[currentUnit]
+                        / CHAT_BACKUP_STORAGE_UNIT_BYTES[unit];
+                }
+                this.draft.chatBackups.maxTotalUnit = unit;
+            },
             async chooseWallpaper(targetKey) {
                 const selected = await requireAction(actions, 'chooseWallpaper')({
                     currentValue: this.draft.dynamicTheme[targetKey],
@@ -302,6 +342,7 @@ export function createTauriTavernSettingsApp(options) {
                     panelRuntimeProfile: this.draft.panelRuntimeProfile,
                     embeddedRuntimeProfile: this.draft.embeddedRuntimeProfile,
                     chatHistoryMode: this.draft.chatHistoryMode,
+                    chatBackups: { ...this.draft.chatBackups },
                     closeToTrayOnClose: this.draft.closeToTrayOnClose,
                     requestProxy: { ...this.draft.requestProxy },
                     allowKeysExposure: this.draft.allowKeysExposure,
@@ -368,6 +409,74 @@ export function createTauriTavernSettingsApp(options) {
                     </SettingRow>
 
                     <small class="tt-settings-section-note">{{ tr('Requires reload to apply.') }}</small>
+                </SettingsSection>
+
+                <SettingsSection :title="tr('Chat Backups')" icon="fa-clock-rotate-left">
+                    <SettingRow
+                        :label="tr('Automatic Chat Backups')"
+                        :hint="tr('Create a backup automatically when an eligible chat save completes.')"
+                    >
+                        <ToggleSwitch v-model="draft.chatBackups.automaticEnabled" />
+                    </SettingRow>
+
+                    <SettingRow
+                        :label="tr('Backups per character or group')"
+                        :hint="tr('Maximum backups sharing the same character or group name.')"
+                    >
+                        <input
+                            v-model.number="draft.chatBackups.maxFilesPerPrefix"
+                            class="text_pole tt-settings-input"
+                            type="number"
+                            min="-1"
+                            step="1"
+                        />
+                    </SettingRow>
+
+                    <SettingRow :label="tr('Total backup files')">
+                        <input
+                            v-model.number="draft.chatBackups.maxTotalFiles"
+                            class="text_pole tt-settings-input"
+                            type="number"
+                            min="-1"
+                            step="1"
+                        />
+                    </SettingRow>
+
+                    <SettingRow :label="tr('Backup storage limit')">
+                        <div class="tt-settings-number-with-unit">
+                            <input
+                                v-model.number="draft.chatBackups.maxTotalValue"
+                                class="text_pole tt-settings-input"
+                                type="number"
+                                min="-1"
+                                step="any"
+                            />
+                            <select
+                                class="text_pole tt-settings-select"
+                                :value="draft.chatBackups.maxTotalUnit"
+                                :aria-label="tr('Storage unit')"
+                                @change="setChatBackupStorageUnit($event.target.value)"
+                            >
+                                <option
+                                    v-for="unit in chatBackupStorageUnitOptions"
+                                    :key="unit"
+                                    :value="unit"
+                                >
+                                    {{ unit }}
+                                </option>
+                            </select>
+                        </div>
+                    </SettingRow>
+
+                    <small class="tt-settings-section-note">
+                        {{ tr('Use -1 for unlimited. Oldest backups are removed first when a limit is exceeded.') }}
+                    </small>
+                    <small
+                        v-if="chatBackupHistoryDisabled"
+                        class="tt-settings-warning"
+                    >
+                        {{ tr('A limit of 0 disables chat backup history and deletes all existing chat backups in the background.') }}
+                    </small>
                 </SettingsSection>
 
                 <SettingsSection v-if="systemVisible" :title="tr('System')" icon="fa-sliders">

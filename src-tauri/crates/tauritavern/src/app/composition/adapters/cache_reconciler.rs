@@ -52,6 +52,7 @@ impl DataChangeReconciler for ServiceCacheReconciler {
         self.group_service.clear_cache().await?;
         self.secret_service.clear_cache().await?;
         self.settings_service.clear_cache().await;
+        self.settings_service.reload_chat_backup_settings().await?;
 
         Ok(())
     }

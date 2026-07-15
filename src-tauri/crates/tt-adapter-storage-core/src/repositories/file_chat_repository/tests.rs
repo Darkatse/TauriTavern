@@ -10,14 +10,17 @@ use tokio::fs;
 use crate::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
+use tt_domain::models::settings::ChatBackupSettings;
 use tt_ports::repositories::chat_repository::{
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchQuery, ChatPayloadCursor,
     ChatPayloadPatchOp, ChatPayloadWindowPatchRequest, ChatRepository, PinnedCharacterChat,
     PinnedGroupChat,
 };
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
+use tt_ports::settings::ChatBackupRuntime;
 
 use super::FileChatRepository;
+use super::backup_inventory::BackupInventoryState;
 
 fn unique_temp_root() -> PathBuf {
     std::env::temp_dir().join(format!("tauritavern-chat-repo-{}", random::<u64>()))
@@ -43,6 +46,45 @@ fn repository_for_root(root: &Path) -> FileChatRepository {
         root.join("backups"),
         new_shared_chat_alias_store_for_user_dir(root),
     )
+}
+
+fn backup_policy(
+    max_files_per_prefix: i64,
+    max_total_files: i64,
+    max_total_bytes: i64,
+) -> ChatBackupSettings {
+    ChatBackupSettings {
+        automatic_enabled: true,
+        max_files_per_prefix,
+        max_total_files,
+        max_total_bytes,
+    }
+}
+
+async fn apply_and_reconcile_backups(repository: &FileChatRepository, policy: ChatBackupSettings) {
+    repository
+        .apply_chat_backup_settings(policy)
+        .await
+        .expect("apply backup policy");
+    repository
+        .reconcile_chat_backups()
+        .await
+        .expect("reconcile backup inventory");
+}
+
+async fn backup_file_names(root: &Path) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut entries = fs::read_dir(root.join("backups"))
+        .await
+        .expect("read backups directory");
+    while let Some(entry) = entries.next_entry().await.expect("read backup entry") {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("chat_") && name.ends_with(".jsonl") {
+            names.push(name);
+        }
+    }
+    names.sort();
+    names
 }
 
 fn payload_with_integrity(integrity: &str) -> Vec<Value> {
@@ -153,7 +195,16 @@ fn backup_name_matches_sillytavern_sanitization() {
     assert_eq!(key, "alice_name");
 
     let unicode = FileChatRepository::sanitize_backup_name_for_sillytavern("角色-A");
-    assert_eq!(unicode, "___a");
+    assert_eq!(unicode, "角色_a");
+}
+
+#[test]
+fn backup_file_name_preserves_unicode_within_component_limit() {
+    let name = FileChatRepository::backup_file_name(&"角色".repeat(200));
+
+    assert!(name.starts_with("chat_角色"));
+    assert!(name.len() <= 255);
+    assert!(name.is_char_boundary(name.len()));
 }
 
 #[test]
@@ -192,6 +243,290 @@ fn normalize_backup_file_name_uses_leaf_name() {
         FileChatRepository::normalize_backup_file_name("../chat_alice_20260101-000000.jsonl")
             .expect("normalize backup file name");
     assert_eq!(normalized, "chat_alice_20260101-000000.jsonl");
+}
+
+#[test]
+fn normalize_backup_file_name_rejects_non_finalized_suffix() {
+    let result =
+        FileChatRepository::normalize_backup_file_name("chat_alice_20260101-000000.jsonl.partial");
+    assert!(matches!(result, Err(DomainError::InvalidData(_))));
+}
+
+#[tokio::test]
+async fn explicit_backups_keep_readable_format_without_same_second_overwrite() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let source = root.join("source.jsonl");
+    fs::write(&source, payload_to_jsonl(&payload_with_integrity("unique")))
+        .await
+        .expect("write source");
+
+    repository
+        .backup_chat_file_explicit(&source, "角色-A")
+        .await
+        .expect("first backup");
+    repository
+        .backup_chat_file_explicit(&source, "角色-A")
+        .await
+        .expect("second backup");
+
+    let names = backup_file_names(&root).await;
+    assert_eq!(names.len(), 2);
+    assert_ne!(names[0], names[1]);
+    assert!(names.iter().all(|name| name.starts_with("chat_角色_a_")));
+}
+
+#[tokio::test]
+async fn inventory_enforces_prefix_and_global_file_limits() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(2, 3, -1)).await;
+    let source = root.join("source.jsonl");
+    fs::write(&source, payload_to_jsonl(&payload_with_integrity("quota")))
+        .await
+        .expect("write source");
+
+    for _ in 0..3 {
+        repository
+            .backup_chat_file_explicit(&source, "Alice")
+            .await
+            .expect("backup Alice");
+    }
+    for _ in 0..2 {
+        repository
+            .backup_chat_file_explicit(&source, "Bob")
+            .await
+            .expect("backup Bob");
+    }
+
+    let names = backup_file_names(&root).await;
+    assert_eq!(names.len(), 3);
+    assert!(
+        names
+            .iter()
+            .filter(|name| name.starts_with("chat_alice_"))
+            .count()
+            <= 2
+    );
+    assert!(
+        names
+            .iter()
+            .filter(|name| name.starts_with("chat_bob_"))
+            .count()
+            <= 2
+    );
+}
+
+#[tokio::test]
+async fn reconcile_prunes_legacy_overage_and_zero_limit_clears_history() {
+    let (repository, root) = setup_repository().await;
+    for index in 0..4 {
+        fs::write(
+            root.join("backups")
+                .join(format!("chat_alice_20260101-00000{index}.jsonl")),
+            payload_to_jsonl(&payload_with_integrity("legacy")),
+        )
+        .await
+        .expect("write legacy backup");
+    }
+
+    apply_and_reconcile_backups(&repository, backup_policy(2, 3, -1)).await;
+    assert_eq!(backup_file_names(&root).await.len(), 2);
+
+    apply_and_reconcile_backups(&repository, backup_policy(0, -1, -1)).await;
+    assert!(backup_file_names(&root).await.is_empty());
+}
+
+#[tokio::test]
+async fn reconcile_removes_only_reserved_stale_staging_names() {
+    let (repository, root) = setup_repository().await;
+    let staging = root.join("backups").join(format!(
+        ".tmp-chat-backup-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let unrelated = root
+        .join("backups")
+        .join(".tmp-chat-backup-not-a-valid-uuid");
+    fs::write(&staging, b"partial")
+        .await
+        .expect("write reserved staging");
+    fs::write(&unrelated, b"keep")
+        .await
+        .expect("write unrelated temp");
+
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+
+    assert!(!staging.exists());
+    assert!(unrelated.exists());
+}
+
+#[tokio::test]
+async fn automatic_quota_rejection_does_not_fail_current_save() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, 1)).await;
+    let source = root.join("source.jsonl");
+    let payload = payload_to_jsonl(&payload_with_integrity("too-large"));
+    fs::write(&source, &payload).await.expect("write source");
+
+    repository
+        .save_chat_payload_from_path("Alice", "session", &source, false)
+        .await
+        .expect("current save must succeed");
+    assert!(backup_file_names(&root).await.is_empty());
+
+    let error = repository
+        .backup_chat("Alice", "session")
+        .await
+        .expect_err("explicit backup must expose quota rejection");
+    assert!(matches!(error, DomainError::Conflict(_)));
+    assert_eq!(
+        repository
+            .get_chat_payload_bytes("Alice", "session")
+            .await
+            .expect("read committed current payload"),
+        payload.as_bytes()
+    );
+}
+
+#[tokio::test]
+async fn automatic_toggle_does_not_disable_explicit_backups() {
+    let (repository, root) = setup_repository().await;
+    let mut policy = backup_policy(-1, -1, -1);
+    policy.automatic_enabled = false;
+    apply_and_reconcile_backups(&repository, policy).await;
+    let source = root.join("source.jsonl");
+    fs::write(&source, payload_to_jsonl(&payload_with_integrity("manual")))
+        .await
+        .expect("write source");
+
+    repository
+        .save_chat_payload_from_path("Alice", "session", &source, false)
+        .await
+        .expect("save current chat");
+    assert!(backup_file_names(&root).await.is_empty());
+
+    repository
+        .backup_chat("Alice", "session")
+        .await
+        .expect("explicit backup remains enabled");
+    assert_eq!(backup_file_names(&root).await.len(), 1);
+}
+
+#[tokio::test]
+async fn manual_delete_updates_inventory_backed_list() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let source = root.join("source.jsonl");
+    fs::write(&source, payload_to_jsonl(&payload_with_integrity("delete")))
+        .await
+        .expect("write source");
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("create backup");
+    let file_name = repository
+        .list_chat_backup_files()
+        .await
+        .expect("list inventory")
+        .pop()
+        .expect("backup descriptor")
+        .file_name;
+
+    repository
+        .delete_chat_backup(&file_name)
+        .await
+        .expect("delete backup");
+
+    assert!(
+        repository
+            .list_chat_backup_files()
+            .await
+            .expect("list inventory after delete")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn backup_list_uses_inventory_until_an_explicit_reconcile() {
+    let (repository, root) = setup_repository().await;
+    let policy = backup_policy(-1, -1, -1);
+    apply_and_reconcile_backups(&repository, policy).await;
+    fs::write(
+        root.join("backups/chat_external_20260101-000000.jsonl"),
+        payload_to_jsonl(&payload_with_integrity("external")),
+    )
+    .await
+    .expect("write external backup");
+
+    assert!(
+        repository
+            .list_chat_backup_files()
+            .await
+            .expect("list cached inventory")
+            .is_empty()
+    );
+
+    repository
+        .reconcile_chat_backups()
+        .await
+        .expect("reconcile external change");
+    assert_eq!(
+        repository
+            .list_chat_backup_files()
+            .await
+            .expect("list rebuilt inventory")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn explicit_access_retries_a_failed_inventory_build() {
+    let (repository, root) = setup_repository().await;
+    fs::write(
+        root.join("backups/chat_external_20260101-000000.jsonl"),
+        payload_to_jsonl(&payload_with_integrity("external")),
+    )
+    .await
+    .expect("write external backup");
+    repository.backup_history.lock().await.inventory =
+        BackupInventoryState::Failed("transient scan failure".into());
+
+    assert_eq!(
+        repository
+            .list_chat_backup_files()
+            .await
+            .expect("retry inventory build")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn quota_cleanup_tolerates_an_externally_removed_backup() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(1, -1, -1)).await;
+    let source = root.join("source.jsonl");
+    fs::write(
+        &source,
+        payload_to_jsonl(&payload_with_integrity("missing")),
+    )
+    .await
+    .expect("write source");
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("create first backup");
+    let old_name = backup_file_names(&root).await.pop().expect("first backup");
+    fs::remove_file(root.join("backups").join(old_name))
+        .await
+        .expect("remove backup outside repository");
+
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("replace stale inventory entry");
+
+    assert_eq!(backup_file_names(&root).await.len(), 1);
 }
 
 #[tokio::test]

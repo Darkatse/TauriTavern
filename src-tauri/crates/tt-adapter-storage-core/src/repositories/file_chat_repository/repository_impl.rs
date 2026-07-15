@@ -478,8 +478,7 @@ impl ChatRepository for FileChatRepository {
         }
 
         let _write_guard = self.acquire_payload_write_lock(&chat_path).await;
-        let backup_key = self.get_cache_key(character_name, file_name)?;
-        self.backup_chat_file(&chat_path, character_name, &backup_key)
+        self.backup_chat_file_explicit(&chat_path, character_name)
             .await
     }
 
@@ -520,23 +519,8 @@ impl ChatRepository for FileChatRepository {
     }
 
     async fn delete_chat_backup(&self, backup_file_name: &str) -> Result<(), DomainError> {
-        self.ensure_directory_exists().await?;
-
-        let path = self.resolve_existing_backup_path(backup_file_name)?;
-        if !path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Chat backup not found: {}",
-                backup_file_name
-            )));
-        }
-
-        fs::remove_file(&path).await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to delete chat backup file: {}", error))
-        })?;
-
-        self.remove_summary_cache_for_path(&path).await;
-        self.flush_summary_index_if_needed().await?;
-        Ok(())
+        self.delete_chat_backup_from_inventory(backup_file_name)
+            .await
     }
 
     async fn get_chat_payload(

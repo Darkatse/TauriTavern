@@ -50,8 +50,12 @@ pub(super) async fn build(
     data_directory: &DataDirectory,
     startup_profile: &StartupProfile,
 ) -> Result<AppServices, DomainError> {
-    let repositories = repositories::build(app_handle, data_directory)?;
     let tauritavern_settings = &startup_profile.tauritavern_settings;
+    let repositories = repositories::build(
+        app_handle,
+        data_directory,
+        tauritavern_settings.chat_backups,
+    )?;
     let ios_policy = startup_profile.ios_policy.clone();
 
     let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
@@ -164,6 +168,7 @@ pub(super) async fn build(
     let settings_service = Arc::new(SettingsService::new(
         repositories.settings_repository.clone(),
         request_proxy_runtime,
+        repositories.chat_backup_runtime.clone(),
     ));
     let user_directory_service = Arc::new(UserDirectoryService::new(
         repositories.user_directory_repository.clone(),

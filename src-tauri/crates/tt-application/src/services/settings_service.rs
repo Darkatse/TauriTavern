@@ -12,18 +12,19 @@ use tokio::sync::Mutex;
 use super::settings_repair::repair_sillytavern_prompt_manager_settings;
 use crate::dto::settings_dto::{
     SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
-    UpdateAgentSettingsDto, UpdateTauriTavernSettingsDto, UserSettingsDto, UserSettingsPatchDto,
-    UserSettingsPatchOpDto, UserSettingsRevisionDto, UserSettingsSaveResultDto,
+    UpdateAgentSettingsDto, UpdateChatBackupSettingsDto, UpdateTauriTavernSettingsDto,
+    UserSettingsDto, UserSettingsPatchDto, UserSettingsPatchOpDto, UserSettingsRevisionDto,
+    UserSettingsSaveResultDto,
 };
 use crate::errors::ApplicationError;
 use tt_domain::models::settings::{
-    AgentRunRetentionSettings, AgentSettings, DevLoggingSettings, RequestProxySettings,
-    UserSettings,
+    AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, DevLoggingSettings,
+    RequestProxySettings, UserSettings,
 };
 use tt_ports::repositories::settings_repository::{
     SettingsAggregateSignature, SettingsRepository, UserSettingsRevision,
 };
-pub use tt_ports::settings::RequestProxyRuntime;
+pub use tt_ports::settings::{ChatBackupRuntime, RequestProxyRuntime};
 
 pub const USER_SETTINGS_HASH_ALGORITHM: &str = "tt-user-settings-stable-sha256-v1";
 
@@ -36,6 +37,7 @@ struct SettingsAggregateCacheEntry {
 pub struct SettingsService {
     settings_repository: Arc<dyn SettingsRepository>,
     request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
+    chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
     pending_user_settings_repair_writeback: Arc<AtomicBool>,
     sillytavern_settings_cache: Arc<Mutex<Option<SettingsAggregateCacheEntry>>>,
     user_settings_save_lock: Arc<Mutex<()>>,
@@ -45,10 +47,12 @@ impl SettingsService {
     pub fn new(
         settings_repository: Arc<dyn SettingsRepository>,
         request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
+        chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
     ) -> Self {
         Self {
             settings_repository,
             request_proxy_runtime,
+            chat_backup_runtime,
             pending_user_settings_repair_writeback: Arc::new(AtomicBool::new(false)),
             sillytavern_settings_cache: Arc::new(Mutex::new(None)),
             user_settings_save_lock: Arc::new(Mutex::new(())),
@@ -61,6 +65,37 @@ impl SettingsService {
 
     pub async fn clear_cache(&self) {
         self.clear_sillytavern_settings_cache().await;
+    }
+
+    pub async fn reload_chat_backup_settings(&self) -> Result<(), tt_domain::errors::DomainError> {
+        let settings = self.settings_repository.load_tauritavern_settings().await?;
+        self.chat_backup_runtime
+            .apply_chat_backup_settings(settings.chat_backups)
+            .await?;
+        self.schedule_chat_backup_reconciliation();
+        Ok(())
+    }
+
+    pub fn schedule_chat_backup_reconciliation(&self) {
+        const RETRY_DELAY: Duration = Duration::from_secs(1);
+
+        let runtime = Arc::clone(&self.chat_backup_runtime);
+        tokio::spawn(async move {
+            if let Err(first_error) = runtime.reconcile_chat_backups().await {
+                tracing::warn!(
+                    "Chat backup maintenance failed; retrying once: {}",
+                    first_error
+                );
+                tokio::time::sleep(RETRY_DELAY).await;
+                if let Err(error) = runtime.reconcile_chat_backups().await {
+                    tracing::error!(
+                        target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                        "Chat backup maintenance failed: {}",
+                        error
+                    );
+                }
+            }
+        });
     }
 
     fn schedule_delayed_user_settings_repair_writeback(&self) {
@@ -180,6 +215,11 @@ impl SettingsService {
             settings.chat_history_mode = chat_history_mode;
         }
 
+        let chat_backups_changed = dto.chat_backups.is_some();
+        if let Some(chat_backups) = dto.chat_backups {
+            Self::apply_chat_backup_settings_update(&mut settings.chat_backups, chat_backups)?;
+        }
+
         if let Some(close_to_tray_on_close) = dto.close_to_tray_on_close {
             settings.close_to_tray_on_close = close_to_tray_on_close;
         }
@@ -287,9 +327,27 @@ impl SettingsService {
             .save_tauritavern_settings(&settings)
             .await?;
 
-        if request_proxy_update.is_some() {
+        let request_proxy_result = request_proxy_update.is_some().then(|| {
             self.request_proxy_runtime
-                .apply_request_proxy_settings(&settings.request_proxy)?;
+                .apply_request_proxy_settings(&settings.request_proxy)
+        });
+        let chat_backup_result = if chat_backups_changed {
+            let result = self
+                .chat_backup_runtime
+                .apply_chat_backup_settings(settings.chat_backups)
+                .await;
+            if result.is_ok() {
+                self.schedule_chat_backup_reconciliation();
+            }
+            Some(result)
+        } else {
+            None
+        };
+        if let Some(result) = request_proxy_result {
+            result?;
+        }
+        if let Some(result) = chat_backup_result {
+            result?;
         }
 
         Ok(TauriTavernSettingsDto::from(settings))
@@ -318,6 +376,29 @@ impl SettingsService {
             settings.retention = next;
         }
 
+        Ok(())
+    }
+
+    fn apply_chat_backup_settings_update(
+        settings: &mut ChatBackupSettings,
+        dto: UpdateChatBackupSettingsDto,
+    ) -> Result<(), ApplicationError> {
+        let mut next = *settings;
+        if let Some(automatic_enabled) = dto.automatic_enabled {
+            next.automatic_enabled = automatic_enabled;
+        }
+        if let Some(max_files_per_prefix) = dto.max_files_per_prefix {
+            next.max_files_per_prefix = max_files_per_prefix;
+        }
+        if let Some(max_total_files) = dto.max_total_files {
+            next.max_total_files = max_total_files;
+        }
+        if let Some(max_total_bytes) = dto.max_total_bytes {
+            next.max_total_bytes = max_total_bytes;
+        }
+        next.validate()
+            .map_err(|error| ApplicationError::ValidationError(error.message()))?;
+        *settings = next;
         Ok(())
     }
 
@@ -886,6 +967,7 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::{Value, json};
     use std::sync::Mutex as StdMutex;
+    use std::sync::atomic::AtomicUsize;
     use tokio::sync::Mutex;
     use tt_domain::errors::DomainError;
     use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
@@ -973,11 +1055,46 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn chat_backup_update_applies_partial_settings_and_validates_sentinels() {
+        let mut settings = ChatBackupSettings::default();
+        SettingsService::apply_chat_backup_settings_update(
+            &mut settings,
+            UpdateChatBackupSettingsDto {
+                automatic_enabled: Some(false),
+                max_files_per_prefix: Some(-1),
+                max_total_files: Some(0),
+                max_total_bytes: None,
+            },
+        )
+        .expect("apply chat backup settings");
+
+        assert!(!settings.automatic_enabled);
+        assert_eq!(settings.max_files_per_prefix, -1);
+        assert_eq!(settings.max_total_files, 0);
+
+        let error = SettingsService::apply_chat_backup_settings_update(
+            &mut settings,
+            UpdateChatBackupSettingsDto {
+                automatic_enabled: None,
+                max_files_per_prefix: None,
+                max_total_files: None,
+                max_total_bytes: Some(-2),
+            },
+        )
+        .expect_err("reject invalid sentinel");
+        assert!(matches!(error, ApplicationError::ValidationError(_)));
+    }
+
     #[tokio::test]
     async fn tauritavern_settings_update_applies_request_proxy_runtime() {
         let repository = Arc::new(TestSettingsRepository::default());
         let runtime = Arc::new(TestRequestProxyRuntime::default());
-        let service = SettingsService::new(repository, runtime.clone());
+        let service = SettingsService::new(
+            repository,
+            runtime.clone(),
+            Arc::new(TestChatBackupRuntime::default()),
+        );
 
         let updated = service
             .update_tauritavern_settings(UpdateTauriTavernSettingsDto {
@@ -991,6 +1108,7 @@ mod tests {
                 panel_runtime_profile: None,
                 embedded_runtime_profile: None,
                 chat_history_mode: None,
+                chat_backups: None,
                 close_to_tray_on_close: None,
                 allow_keys_exposure: None,
                 avatar_persona_original_images_enabled: None,
@@ -1011,6 +1129,105 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tauritavern_settings_update_persists_and_applies_chat_backup_policy() {
+        let repository = Arc::new(TestSettingsRepository::default());
+        let backup_runtime = Arc::new(TestChatBackupRuntime::default());
+        let service = SettingsService::new(
+            repository,
+            Arc::new(TestRequestProxyRuntime::default()),
+            backup_runtime.clone(),
+        );
+
+        let updated = service
+            .update_tauritavern_settings(UpdateTauriTavernSettingsDto {
+                updates: None,
+                perf_profile: None,
+                panel_runtime_profile: None,
+                embedded_runtime_profile: None,
+                chat_history_mode: None,
+                chat_backups: Some(UpdateChatBackupSettingsDto {
+                    automatic_enabled: Some(false),
+                    max_files_per_prefix: Some(7),
+                    max_total_files: Some(-1),
+                    max_total_bytes: Some(0),
+                }),
+                close_to_tray_on_close: None,
+                request_proxy: None,
+                allow_keys_exposure: None,
+                avatar_persona_original_images_enabled: None,
+                native_regex_backend_enabled: None,
+                dev: None,
+                dynamic_theme: None,
+                models: None,
+                agent: None,
+            })
+            .await
+            .expect("update chat backup policy");
+
+        assert!(!updated.chat_backups.automatic_enabled);
+        assert_eq!(updated.chat_backups.max_files_per_prefix, 7);
+        assert_eq!(updated.chat_backups.max_total_files, -1);
+        assert_eq!(updated.chat_backups.max_total_bytes, 0);
+        assert_eq!(
+            backup_runtime.applied.lock().unwrap().as_slice(),
+            &[ChatBackupSettings {
+                automatic_enabled: false,
+                max_files_per_prefix: 7,
+                max_total_files: -1,
+                max_total_bytes: 0,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_backup_cleanup_failure_does_not_fail_settings_update() {
+        let repository = Arc::new(TestSettingsRepository::default());
+        let backup_runtime = Arc::new(TestChatBackupRuntime {
+            fail_reconciliation: AtomicBool::new(true),
+            ..Default::default()
+        });
+        let service = SettingsService::new(
+            repository,
+            Arc::new(TestRequestProxyRuntime::default()),
+            backup_runtime.clone(),
+        );
+
+        service
+            .update_tauritavern_settings(UpdateTauriTavernSettingsDto {
+                chat_backups: Some(UpdateChatBackupSettingsDto {
+                    automatic_enabled: Some(false),
+                    max_files_per_prefix: None,
+                    max_total_files: None,
+                    max_total_bytes: None,
+                }),
+                updates: None,
+                perf_profile: None,
+                panel_runtime_profile: None,
+                embedded_runtime_profile: None,
+                chat_history_mode: None,
+                close_to_tray_on_close: None,
+                request_proxy: None,
+                allow_keys_exposure: None,
+                avatar_persona_original_images_enabled: None,
+                native_regex_backend_enabled: None,
+                dev: None,
+                dynamic_theme: None,
+                models: None,
+                agent: None,
+            })
+            .await
+            .expect("settings update must not await cleanup");
+
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while backup_runtime.reconciliation_calls.load(Ordering::Acquire) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("background cleanup was scheduled");
+    }
+
+    #[tokio::test]
     async fn sillytavern_settings_aggregate_uses_cache_until_signature_changes() {
         let repository = Arc::new(TestSettingsRepository::default());
         repository
@@ -1020,6 +1237,7 @@ mod tests {
         let service = SettingsService::new(
             repository.clone(),
             Arc::new(TestRequestProxyRuntime::default()),
+            Arc::new(TestChatBackupRuntime::default()),
         );
 
         let first = service
@@ -1068,6 +1286,7 @@ mod tests {
         let service = SettingsService::new(
             repository.clone(),
             Arc::new(TestRequestProxyRuntime::default()),
+            Arc::new(TestChatBackupRuntime::default()),
         );
 
         let first = service
@@ -1100,6 +1319,7 @@ mod tests {
         let service = SettingsService::new(
             repository.clone(),
             Arc::new(TestRequestProxyRuntime::default()),
+            Arc::new(TestChatBackupRuntime::default()),
         );
 
         service
@@ -1163,6 +1383,7 @@ mod tests {
         let service = SettingsService::new(
             repository.clone(),
             Arc::new(TestRequestProxyRuntime::default()),
+            Arc::new(TestChatBackupRuntime::default()),
         );
 
         service
@@ -1198,6 +1419,7 @@ mod tests {
         let service = SettingsService::new(
             repository.clone(),
             Arc::new(TestRequestProxyRuntime::default()),
+            Arc::new(TestChatBackupRuntime::default()),
         );
 
         let result = service
@@ -1235,6 +1457,7 @@ mod tests {
         let service = SettingsService::new(
             repository.clone(),
             Arc::new(TestRequestProxyRuntime::default()),
+            Arc::new(TestChatBackupRuntime::default()),
         );
 
         let error = service
@@ -1294,6 +1517,7 @@ mod tests {
         let service = SettingsService::new(
             repository.clone(),
             Arc::new(TestRequestProxyRuntime::default()),
+            Arc::new(TestChatBackupRuntime::default()),
         );
 
         let result = service
@@ -1322,6 +1546,7 @@ mod tests {
         let service = SettingsService::new(
             repository.clone(),
             Arc::new(TestRequestProxyRuntime::default()),
+            Arc::new(TestChatBackupRuntime::default()),
         );
 
         let first = service
@@ -1529,6 +1754,35 @@ mod tests {
         ) -> Result<(), DomainError> {
             self.applied.lock().unwrap().push(settings.url.clone());
             Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct TestChatBackupRuntime {
+        applied: StdMutex<Vec<ChatBackupSettings>>,
+        reconciliation_calls: AtomicUsize,
+        fail_reconciliation: AtomicBool,
+    }
+
+    #[async_trait]
+    impl ChatBackupRuntime for TestChatBackupRuntime {
+        async fn apply_chat_backup_settings(
+            &self,
+            settings: ChatBackupSettings,
+        ) -> Result<(), DomainError> {
+            self.applied.lock().unwrap().push(settings);
+            Ok(())
+        }
+
+        async fn reconcile_chat_backups(&self) -> Result<(), DomainError> {
+            self.reconciliation_calls.fetch_add(1, Ordering::AcqRel);
+            if self.fail_reconciliation.load(Ordering::Acquire) {
+                Err(DomainError::InternalError(
+                    "simulated cleanup failure".into(),
+                ))
+            } else {
+                Ok(())
+            }
         }
     }
 }

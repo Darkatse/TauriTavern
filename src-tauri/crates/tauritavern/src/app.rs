@@ -49,6 +49,11 @@ pub fn spawn_initialization(
 
                 backend_readiness.mark_ready();
 
+                state
+                    .services
+                    .settings_service
+                    .schedule_chat_backup_reconciliation();
+
                 match state
                     .services
                     .content_service

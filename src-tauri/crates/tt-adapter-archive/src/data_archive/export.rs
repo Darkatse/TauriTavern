@@ -31,7 +31,7 @@ pub(crate) fn run_export_data_archive(
         data_root,
         output_path,
         "data",
-        &|_| true,
+        &|relative_path| !is_chat_backup_staging_entry(relative_path),
         report_progress,
         is_cancelled,
     )
@@ -266,6 +266,10 @@ fn archive_entry_path(archive_root_prefix: &str, archive_relative_path: &str) ->
 }
 
 fn should_include_user_backup_entry(relative_path: &Path, include_secrets: bool) -> bool {
+    if is_chat_backup_staging_entry(relative_path) {
+        return false;
+    }
+
     if include_secrets {
         return true;
     }
@@ -278,6 +282,23 @@ fn should_include_user_backup_entry(relative_path: &Path, include_secrets: bool)
         }
         _ => true,
     }
+}
+
+fn is_chat_backup_staging_entry(relative_path: &Path) -> bool {
+    const PREFIX: &str = ".tmp-chat-backup-";
+
+    let components = path_components(relative_path);
+    components.windows(2).any(|pair| {
+        let [directory, file_name] = pair else {
+            return false;
+        };
+        let Some(identifier) = file_name.strip_prefix(PREFIX) else {
+            return false;
+        };
+        directory == "backups"
+            && identifier.len() == 32
+            && uuid::Uuid::parse_str(identifier).is_ok()
+    })
 }
 
 fn report_export_progress(
@@ -348,6 +369,22 @@ mod tests {
             Path::new("backups/secrets_migration_123.json"),
             true
         ));
+    }
+
+    #[test]
+    fn archive_filters_chat_backup_staging_files_in_full_and_user_paths() {
+        let staging = format!(".tmp-chat-backup-{}", uuid::Uuid::nil().simple());
+
+        assert!(is_chat_backup_staging_entry(Path::new(&format!(
+            "default-user/backups/{staging}"
+        ))));
+        assert!(!should_include_user_backup_entry(
+            Path::new(&format!("backups/{staging}")),
+            true
+        ));
+        assert!(!is_chat_backup_staging_entry(Path::new(
+            "default-user/backups/.tmp-chat-backup-not-a-uuid"
+        )));
     }
 
     #[test]

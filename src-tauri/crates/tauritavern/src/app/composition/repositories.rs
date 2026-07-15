@@ -31,6 +31,7 @@ use tt_adapter_storage_userdata::FileSkillRepository;
 use tt_adapter_storage_userdata::FileWorldInfoRepository;
 use tt_adapter_tokenization::MiktikTokenizerRepository;
 use tt_domain::errors::DomainError;
+use tt_domain::models::settings::ChatBackupSettings;
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
@@ -67,11 +68,13 @@ use tt_ports::repositories::user_directory_repository::UserDirectoryRepository;
 use tt_ports::repositories::user_repository::UserRepository;
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 use tt_ports::repositories::world_info_repository::WorldInfoRepository;
+use tt_ports::settings::ChatBackupRuntime;
 
 pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) character_repository: Arc<dyn CharacterRepository>,
     pub(in crate::app::composition) chat_repository: Arc<dyn ChatRepository>,
     pub(in crate::app::composition) group_chat_repository: Arc<dyn GroupChatRepository>,
+    pub(in crate::app::composition) chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
     pub(in crate::app::composition) user_repository: Arc<dyn UserRepository>,
     pub(in crate::app::composition) settings_repository: Arc<dyn SettingsRepository>,
     pub(in crate::app::composition) prompt_cache_repository: Arc<dyn PromptCacheRepository>,
@@ -113,18 +116,20 @@ pub(in crate::app::composition) struct AppRepositories {
 pub(super) fn build(
     app_handle: &AppHandle,
     data_directory: &DataDirectory,
+    chat_backup_settings: ChatBackupSettings,
 ) -> Result<AppRepositories, DomainError> {
     let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
     let data_root = data_directory.root().to_path_buf();
     let default_user_dir = data_directory.default_user().to_path_buf();
     let chat_aliases = new_shared_chat_alias_store_for_user_dir(data_directory.default_user());
 
-    let file_chat_repository = Arc::new(FileChatRepository::with_chat_aliases(
+    let file_chat_repository = Arc::new(FileChatRepository::with_chat_aliases_and_backup_settings(
         data_directory.characters().to_path_buf(),
         data_directory.chats().to_path_buf(),
         data_directory.group_chats().to_path_buf(),
         data_directory.backups().to_path_buf(),
         chat_aliases.clone(),
+        chat_backup_settings,
     ));
     let character_repository: Arc<dyn CharacterRepository> =
         Arc::new(FileCharacterRepository::with_chat_repository(
@@ -135,6 +140,7 @@ pub(super) fn build(
             file_chat_repository.clone(),
         ));
     let chat_repository: Arc<dyn ChatRepository> = file_chat_repository.clone();
+    let chat_backup_runtime: Arc<dyn ChatBackupRuntime> = file_chat_repository.clone();
     let group_chat_repository: Arc<dyn GroupChatRepository> = file_chat_repository;
 
     let user_repository: Arc<dyn UserRepository> = Arc::new(FileUserRepository::new(
@@ -273,6 +279,7 @@ pub(super) fn build(
         character_repository,
         chat_repository,
         group_chat_repository,
+        chat_backup_runtime,
         user_repository,
         settings_repository,
         prompt_cache_repository,

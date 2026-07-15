@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 mod backup;
+mod backup_inventory;
 mod cache;
 mod chat_dir_resolver;
 mod extension_metadata;
@@ -29,6 +30,7 @@ mod windowed_payload_io;
 #[cfg(test)]
 mod tests;
 
+use self::backup_inventory::BackupHistoryState;
 use self::cache::{MemoryCache, ThrottledBackup};
 use self::summary::SummaryCache;
 use crate::chat_directory_identity::{
@@ -45,10 +47,8 @@ pub struct FileChatRepository {
     memory_cache: Arc<Mutex<MemoryCache>>,
     summary_cache: Arc<Mutex<SummaryCache>>,
     chat_aliases: SharedChatAliasStore,
-    throttled_backup: Arc<Mutex<ThrottledBackup>>,
-    max_backups_per_chat: usize,
-    max_total_backups: usize,
-    backup_enabled: bool,
+    backup_policy: Arc<RwLock<tt_domain::models::settings::ChatBackupSettings>>,
+    backup_history: Arc<Mutex<BackupHistoryState>>,
 }
 
 impl FileChatRepository {
@@ -92,6 +92,24 @@ impl FileChatRepository {
         backups_dir: PathBuf,
         chat_aliases: SharedChatAliasStore,
     ) -> Self {
+        Self::with_chat_aliases_and_backup_settings(
+            characters_dir,
+            chats_dir,
+            group_chats_dir,
+            backups_dir,
+            chat_aliases,
+            tt_domain::models::settings::ChatBackupSettings::default(),
+        )
+    }
+
+    pub fn with_chat_aliases_and_backup_settings(
+        characters_dir: PathBuf,
+        chats_dir: PathBuf,
+        group_chats_dir: PathBuf,
+        backups_dir: PathBuf,
+        chat_aliases: SharedChatAliasStore,
+        backup_settings: tt_domain::models::settings::ChatBackupSettings,
+    ) -> Self {
         // Create a memory cache with 100 chat capacity and 30 minute TTL
         let memory_cache = Arc::new(Mutex::new(MemoryCache::new(
             100,
@@ -108,8 +126,6 @@ impl FileChatRepository {
             .unwrap_or_else(|| backups_dir.join("chat_summary_index_v1.json"));
         let summary_cache = Arc::new(Mutex::new(SummaryCache::new(summary_index_path)));
 
-        // Match SillyTavern default: backups.chat.throttleInterval = 10_000ms
-        let throttled_backup = Arc::new(Mutex::new(ThrottledBackup::new(10)));
         let path_write_locks = Arc::new(Mutex::new(HashMap::new()));
 
         Self {
@@ -121,13 +137,10 @@ impl FileChatRepository {
             memory_cache,
             summary_cache,
             chat_aliases,
-            throttled_backup,
-            // Match SillyTavern defaults:
-            // - per-chat backups: 50
-            // - total backups: unlimited (-1 in SillyTavern config)
-            max_backups_per_chat: 50,
-            max_total_backups: usize::MAX,
-            backup_enabled: true,
+            backup_policy: Arc::new(RwLock::new(backup_settings)),
+            backup_history: Arc::new(Mutex::new(BackupHistoryState::new(ThrottledBackup::new(
+                10,
+            )))),
         }
     }
 }

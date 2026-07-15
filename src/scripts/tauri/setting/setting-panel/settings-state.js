@@ -12,6 +12,14 @@ import { readNativeRegexBackendEnabledFromSettings } from '../../regex/native-re
 
 export const PROMPT_CACHE_TTL_VALUES = ['off', '5m', '1h'];
 
+function requireChatBackupLimit(value, field) {
+    if (!Number.isSafeInteger(value) || value < -1) {
+        throw new Error(`TauriTavern settings: invalid chat backup ${field}`);
+    }
+
+    return value;
+}
+
 /**
  * @param {unknown} value
  * @returns {string[]}
@@ -74,6 +82,21 @@ export function createTauriTavernSettingsState(settings, options = {}) {
         throw new Error('TauriTavern settings: dynamic theme settings missing');
     }
 
+    const chatBackups = settings.chat_backups;
+    if (!chatBackups || typeof chatBackups !== 'object') {
+        throw new Error('TauriTavern settings: chat backup settings missing');
+    }
+    if (typeof chatBackups.automatic_enabled !== 'boolean') {
+        throw new Error('TauriTavern settings: automatic chat backup setting missing');
+    }
+
+    const maxFilesPerPrefix = requireChatBackupLimit(
+        chatBackups.max_files_per_prefix,
+        'per-character file limit',
+    );
+    const maxTotalFiles = requireChatBackupLimit(chatBackups.max_total_files, 'total file limit');
+    const maxTotalBytes = requireChatBackupLimit(chatBackups.max_total_bytes, 'storage limit');
+
     const rawPromptCacheTtl = typeof settings.models?.claude?.prompt_cache_ttl === 'string'
         ? settings.models.claude.prompt_cache_ttl
         : 'off';
@@ -84,6 +107,12 @@ export function createTauriTavernSettingsState(settings, options = {}) {
         configuredEmbeddedRuntimeProfile,
         embeddedRuntimeProfile,
         chatHistoryMode,
+        chatBackups: {
+            automaticEnabled: chatBackups.automatic_enabled,
+            maxFilesPerPrefix,
+            maxTotalFiles,
+            maxTotalBytes,
+        },
         closeToTrayOnClose: Boolean(settings.close_to_tray_on_close),
         requestProxy: {
             enabled: Boolean(settings.request_proxy?.enabled),

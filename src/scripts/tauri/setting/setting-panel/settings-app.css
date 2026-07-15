@@ -102,6 +102,19 @@
     margin: 0;
 }
 
+.tt-settings-number-with-unit {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(82px, 0.34fr);
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.tt-settings-warning {
+    color: var(--fullred);
+    font-weight: 600;
+}
+
 .tt-settings-switch {
     position: relative;
     display: inline-flex;

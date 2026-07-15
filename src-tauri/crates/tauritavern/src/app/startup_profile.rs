@@ -18,6 +18,10 @@ impl StartupProfile {
     pub(crate) fn load(data_root: &Path) -> Result<Self, DomainError> {
         let settings_repository = FileSettingsRepository::new(data_root.join("default-user"));
         let tauritavern_settings = settings_repository.load_tauritavern_settings_sync()?;
+        tauritavern_settings
+            .chat_backups
+            .validate()
+            .map_err(|error| DomainError::InvalidData(error.message()))?;
         let scope = IosPolicyScope::for_current_platform();
         let raw_policy = if scope == IosPolicyScope::Ios {
             resolve_effective_raw_policy_sync(data_root, tauritavern_settings.ios_policy.as_ref())?
@@ -38,7 +42,9 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(0);
 
     struct TestDir {
         path: PathBuf,
@@ -46,14 +52,10 @@ mod tests {
 
     impl TestDir {
         fn new() -> Self {
-            let suffix = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos();
             let path = std::env::temp_dir().join(format!(
                 "tauritavern-startup-profile-test-{}-{}",
                 std::process::id(),
-                suffix
+                NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir_all(&path).expect("failed to create temp dir");
 
@@ -86,6 +88,31 @@ mod tests {
             profile.ios_policy.scope,
             IosPolicyScope::for_current_platform()
         );
+    }
+
+    #[test]
+    fn load_rejects_invalid_chat_backup_limits() {
+        let dir = TestDir::new();
+        let default_user = dir.path().join("default-user");
+        fs::create_dir_all(&default_user).expect("create default user dir");
+        fs::write(
+            default_user.join("tauritavern-settings.json"),
+            r#"{
+                "updates":{"startup_popup":{"dismissed_release_token":null}},
+                "chat_backups":{
+                    "automatic_enabled":true,
+                    "max_files_per_prefix":20,
+                    "max_total_files":500,
+                    "max_total_bytes":-2
+                }
+            }"#,
+        )
+        .expect("write settings");
+
+        assert!(matches!(
+            StartupProfile::load(dir.path()),
+            Err(DomainError::InvalidData(message)) if message.contains("max_total_bytes")
+        ));
     }
 
     #[cfg(not(target_os = "ios"))]

@@ -187,7 +187,8 @@ impl FileChatRepository {
         self.verify_chat_integrity_if_needed(path, payload, force)
             .await?;
         write_jsonl_file(path, payload).await?;
-        self.backup_chat_file(path, backup_name, backup_key).await?;
+        self.backup_chat_file_automatic(path, backup_name, backup_key)
+            .await;
 
         Ok(())
     }
@@ -228,7 +229,8 @@ impl FileChatRepository {
         })?;
         replace_file_with_fallback(&temp_path, path).await?;
 
-        self.backup_chat_file(path, backup_name, backup_key).await?;
+        self.backup_chat_file_automatic(path, backup_name, backup_key)
+            .await;
         Ok(())
     }
 

@@ -212,12 +212,27 @@ mod tests {
     use std::path::PathBuf;
 
     use rand::random;
+    use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DatasetSelection};
     use ttsync_core::dataset::ResolvedDatasetPolicy;
 
     use super::scan_manifest_sync;
 
     fn unique_temp_root() -> PathBuf {
         std::env::temp_dir().join(format!("tauritavern-tt-sync-{}", random::<u64>()))
+    }
+
+    #[test]
+    fn sync_policy_excludes_chat_backup_staging_files() {
+        let policy = ResolvedDatasetPolicy::from_selection(&DatasetSelection::new(
+            DATASET_POLICY_VERSION,
+            vec!["backups".to_string()],
+        ))
+        .expect("resolve backups dataset");
+
+        assert!(policy.contains_path("default-user/backups/chat_alice_20260714-010203.jsonl"));
+        assert!(!policy.contains_path(
+            "default-user/backups/.tmp-chat-backup-00000000000000000000000000000000"
+        ));
     }
 
     #[test]

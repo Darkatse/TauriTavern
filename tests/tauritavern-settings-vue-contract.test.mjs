@@ -42,6 +42,9 @@ test('TauriTavern Settings popup is a host wrapper around the Vue bundle', async
     assert.doesNotMatch(source, /from\s+['"]vue(?:\/|['"])/);
     assert.match(source, /buildTauriTavernSettingsUpdate\(viewModel\.values,\s*appHandle\.getDraft\(\)\)/);
     assert.match(source, /applyTauriTavernSettingsUpdateEffects\(update,\s*updatedSettings\)/);
+    assert.match(source, /onClosing:\s*async\s*\(popup\)/);
+    assert.match(source, /requiresChatBackupPurgeConfirmation/);
+    assert.match(source, /confirmChatBackupHistoryPurge/);
 });
 
 test('TauriTavern Settings wallpaper options use the no-render background refresh', async () => {
@@ -87,6 +90,7 @@ test('TauriTavern Settings Vue app stays presentation-only', async () => {
     const app = await readRepoFile('src/scripts/tauri/setting/settings-app/SettingsApp.js');
     assert.match(app, /Dynamic Theme & Wallpaper/);
     assert.match(app, /WallpaperField/);
+    assert.match(app, /Chat Backups/);
 });
 
 test('TauriTavern Settings keeps mobile toggle rows inline', async () => {

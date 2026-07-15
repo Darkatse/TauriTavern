@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tt_domain::models::settings::{
-    AgentRunRetentionSettings, AgentSettings, ChatHistoryMode, ClaudeModelSettings,
-    DevLoggingSettings, DynamicThemeSettings, ModelSettings, PromptCacheTtl, RequestProxySettings,
-    SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings,
-    UserSettings,
+    AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, ChatHistoryMode,
+    ClaudeModelSettings, DevLoggingSettings, DynamicThemeSettings, ModelSettings, PromptCacheTtl,
+    RequestProxySettings, SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings,
+    TauriTavernUpdateSettings, UserSettings,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +14,7 @@ pub struct TauriTavernSettingsDto {
     pub panel_runtime_profile: String,
     pub embedded_runtime_profile: String,
     pub chat_history_mode: ChatHistoryMode,
+    pub chat_backups: ChatBackupSettingsDto,
     pub close_to_tray_on_close: bool,
     pub request_proxy: RequestProxySettingsDto,
     pub allow_keys_exposure: bool,
@@ -42,6 +43,7 @@ pub struct UpdateTauriTavernSettingsDto {
     pub panel_runtime_profile: Option<String>,
     pub embedded_runtime_profile: Option<String>,
     pub chat_history_mode: Option<ChatHistoryMode>,
+    pub chat_backups: Option<UpdateChatBackupSettingsDto>,
     pub close_to_tray_on_close: Option<bool>,
     pub request_proxy: Option<RequestProxySettingsDto>,
     pub allow_keys_exposure: Option<bool>,
@@ -51,6 +53,22 @@ pub struct UpdateTauriTavernSettingsDto {
     pub dynamic_theme: Option<UpdateDynamicThemeSettingsDto>,
     pub models: Option<UpdateModelSettingsDto>,
     pub agent: Option<UpdateAgentSettingsDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatBackupSettingsDto {
+    pub automatic_enabled: bool,
+    pub max_files_per_prefix: i64,
+    pub max_total_files: i64,
+    pub max_total_bytes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateChatBackupSettingsDto {
+    pub automatic_enabled: Option<bool>,
+    pub max_files_per_prefix: Option<i64>,
+    pub max_total_files: Option<i64>,
+    pub max_total_bytes: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +254,7 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             panel_runtime_profile: settings.panel_runtime_profile,
             embedded_runtime_profile: settings.embedded_runtime_profile,
             chat_history_mode: settings.chat_history_mode,
+            chat_backups: ChatBackupSettingsDto::from(settings.chat_backups),
             close_to_tray_on_close: settings.close_to_tray_on_close,
             request_proxy: RequestProxySettingsDto::from(settings.request_proxy),
             allow_keys_exposure: settings.allow_keys_exposure,
@@ -245,6 +264,17 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             dynamic_theme: DynamicThemeSettingsDto::from(settings.dynamic_theme),
             models: ModelSettingsDto::from(settings.models),
             agent: AgentSettingsDto::from(settings.agent),
+        }
+    }
+}
+
+impl From<ChatBackupSettings> for ChatBackupSettingsDto {
+    fn from(settings: ChatBackupSettings) -> Self {
+        Self {
+            automatic_enabled: settings.automatic_enabled,
+            max_files_per_prefix: settings.max_files_per_prefix,
+            max_total_files: settings.max_total_files,
+            max_total_bytes: settings.max_total_bytes,
         }
     }
 }
