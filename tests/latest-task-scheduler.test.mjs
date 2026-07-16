@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { createLatestTaskScheduler } from '../src/scripts/util/latest-task-scheduler.js';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function deferred() {
     let resolve;
@@ -76,4 +81,20 @@ test('task failures are reported without wedging future requests', async () => {
     assert.equal(runCount, 2);
     assert.equal(errors.length, 1);
     assert.match(errors[0].message, /expected failure/);
+});
+
+test('PromptManager keeps dry-run rendering wired through the latest-task scheduler', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/PromptManager.js'), 'utf8');
+    const renderStart = source.indexOf('    render(afterTryGenerate = true) {');
+    const renderEnd = source.indexOf('    updatePromptWithPromptEditForm(', renderStart);
+    const renderSource = source.slice(renderStart, renderEnd);
+
+    assert.match(source, /import \{ createLatestTaskScheduler \} from '\.\/util\/latest-task-scheduler\.js';/);
+    assert.match(
+        source,
+        /this\.renderDryRunLatest = createLatestTaskScheduler\(\s*\(\) => this\.#renderAfterTryGenerate\(\)/,
+    );
+    assert.ok(renderStart >= 0 && renderEnd > renderStart);
+    assert.match(renderSource, /if \(afterTryGenerate === true\) \{\s*this\.renderDryRunLatest\(\);\s*return;/);
+    assert.match(renderSource, /void this\.#renderWithoutTryGenerate\(\)\.catch/);
 });
