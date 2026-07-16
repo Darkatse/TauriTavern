@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, RwLock};
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::{
-    TokenizerRepository, count_system_message_prefixes_default,
+    TokenizerRepository, count_system_message_prefixes_default, has_reached_openai_text_token_limit,
 };
 
 const CLAUDE_JSON_GZIP_BYTES: &[u8] =
@@ -659,7 +659,7 @@ impl MiktikTokenizerRepository {
             let token_count = fixed_tokens.saturating_add(content_tokens).max(0) as usize;
             token_counts.push(token_count);
 
-            if stop_at.is_some_and(|limit| token_count.saturating_sub(1) >= limit) {
+            if has_reached_openai_text_token_limit(token_count, stop_at) {
                 token_counts.resize(suffixes.len(), token_count);
                 break;
             }
@@ -828,7 +828,9 @@ mod tests {
 
     use super::{MiktikTokenizerRepository, ModelSource, ResourceCompression};
     use tt_adapter_http::HttpClientPool;
-    use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
+    use tt_ports::repositories::tokenizer_repository::{
+        TokenizerRepository, openai_text_token_count,
+    };
 
     const TEST_USER_AGENT: &str = "TauriTavern/test";
     static NEXT_TEMP_CACHE_DIR_ID: AtomicU64 = AtomicU64::new(0);
@@ -1289,7 +1291,7 @@ mod tests {
             None,
         )
         .expect("full prefix counts should succeed");
-        let stop_at = full_counts[1].saturating_sub(1);
+        let stop_at = openai_text_token_count(full_counts[1]);
 
         let stopped_counts = TokenizerRepository::count_system_message_prefixes(
             &repository,
