@@ -129,10 +129,11 @@ group chat 进入聊天（tail）：
 Show more（向前分页）：
 
 - `src/script.js:showMoreMessages()`
-  - 调用 `load*ChatPayloadBefore({ cursor, maxLines })`
-  - 把返回的 `messages` **prepend** 到 `chat` 与 DOM
-  - `shiftWindowedMessageSaveState(windowState, messages.length)` 修正索引计数器
-  - 更新 `cursor/hasMoreBefore`
+  - 以 `getWindowedChatKey(windowState)` 作为同一聊天的 single-flight key；同一 key 的并发 Show more 复用正在执行的 promise
+  - 调用 `load*ChatPayloadBefore({ cursor, maxLines })`，返回后先确认当前 window state 仍是发起加载时的对象，丢弃切换聊天后的陈旧加载结果
+  - 在第一次 `requestAnimationFrame` yield 前，同步完成 `chat` prepend、编辑索引平移、`shiftWindowedMessageSaveState(...)`、`cursor` 与 `hasMoreBefore` 更新；此后任意保存看到的都是完整连续后缀及配套计数器
+  - DOM 使用本次加载得到的局部 `messages` 分批 prepend，不在异步批次中重新读取可能已经切换的全局 `chat`
+  - 每批渲染前及全部批次结束后，用稳定 window key 检查当前聊天；聊天切换只中止旧批次的 presentation，异步阶段不会把捕获的旧 window state 写回全局状态
 
 注意：UI 的 showMore 目前仍是 **单页 before**（未接入 before_pages，也未复用 Prompt-backfill 页缓存）。
 
@@ -331,6 +332,7 @@ Android 的 append body 是逐帧 base64 JSON；iOS 与桌面平台使用 root r
 4) `DEFAULT_CHAT_WINDOW_LINES_*` 是 windowed payload 的性能杠杆，修改必须通过 `windowed-defaults.js` 统一，避免 UI/Prompt-backfill 脱节。  
 5) cache key 必须使用 transport 标准化后的稳定 id（避免 avatarUrl 表现差异导致命中率下降）。
 6) 所有“保存聊天文件”的入口必须保持串行化：不要绕过 `enqueueChatSave()`、不要重新引入会丢保存的超时等待；否则很容易把 cursor mismatch 变成内部竞态，而不是正确的外部一致性告警。
+7) Show more 的数据事务必须在首次异步 DOM yield 前完成：`chat`、编辑索引、`savedMessageCount/dirtyFromIndex`、cursor 和 `hasMoreBefore` 必须一起提交。异步批次只能消费局部 messages，并通过稳定 window key 放弃陈旧 presentation；不得在 yield 后补写或恢复捕获的旧 window state。
 
 ---
 
@@ -339,5 +341,6 @@ Android 的 append body 是逐帧 base64 JSON；iOS 与桌面平台使用 root r
 - 进入 character chat：只加载 tail，滚动/渲染正常，windowState 被正确设置
 - 进入 group chat：同上
 - Show more：能向前分页插入消息；cursor/hasMoreBefore 正常推进；保存后不丢消息
+- Show more 竞态：分批渲染期间触发保存不会重复 append 旧尾部；切换聊天后旧批次停止渲染且不会覆盖新聊天的 window state
 - 保存：正常 patch 保存；触发 integrity 错误时弹窗逻辑正确；cursor 更新后继续可保存
 - 生成：在长聊天中 AI 能引用更早内容；cursor 失效时 toast 提示且仍可继续生成（但不会静默）
