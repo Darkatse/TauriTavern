@@ -4477,8 +4477,12 @@ class StreamingProcessor {
 
             const timePassed = formatGenerationTimer(this.timeStarted, currentTime, currentTokenCount, this.reasoningHandler.getDuration(), this.timeToFirstToken);
             if (this.messageTimerDom instanceof HTMLElement) {
-                this.messageTimerDom.textContent = timePassed.timerValue;
-                this.messageTimerDom.title = timePassed.timerTitle;
+                if (this.messageTimerDom.textContent !== timePassed.timerValue) {
+                    this.messageTimerDom.textContent = timePassed.timerValue;
+                }
+                if (this.messageTimerDom.title !== timePassed.timerTitle) {
+                    this.messageTimerDom.title = timePassed.timerTitle;
+                }
             }
 
             this.setFirstSwipe(messageId);

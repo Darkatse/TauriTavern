@@ -29,3 +29,9 @@ test('streaming DOM commits skip unchanged HTML but always commit final state', 
     assert.equal(shouldCommitStreamingMessage({ currentHtml: '<p>same</p>', nextHtml: '<p>same</p>', final: true, fadeIn: false }), true);
     assert.equal(shouldCommitStreamingMessage({ currentHtml: '<p>same</p>', nextHtml: '<p>same</p>', final: false, fadeIn: true }), true);
 });
+
+test('reasoning streaming can skip exact no-op HTML outside fade-in mode', () => {
+    assert.equal(shouldCommitStreamingMessage({ currentHtml: '', nextHtml: '', final: false, fadeIn: false }), false);
+    assert.equal(shouldCommitStreamingMessage({ currentHtml: '', nextHtml: '<p>thinking</p>', final: false, fadeIn: false }), true);
+    assert.equal(shouldCommitStreamingMessage({ currentHtml: '<p>thinking</p>', nextHtml: '<p>thinking</p>', final: false, fadeIn: true }), true);
+});

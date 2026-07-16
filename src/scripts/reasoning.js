@@ -14,9 +14,19 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { enumTypes, SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
+import { shouldCommitStreamingMessage } from './tauri/perf/streaming-render-policy.js';
 import { textgen_types, textgenerationwebui_settings } from './textgen-settings.js';
 import { applyStreamFadeIn } from './util/stream-fadein.js';
 import { copyText, escapeRegex, isFalseBoolean, isTrueBoolean, setDatasetProperty, stringToRange, trimSpaces } from './utils.js';
+
+function setDatasetPropertyIfChanged(element, name, value) {
+    const currentValue = element.dataset[name] ?? null;
+    if (currentValue === value) {
+        return;
+    }
+
+    setDatasetProperty(element, name, value);
+}
 
 /**
  * @typedef {object} ReasoningTemplate
@@ -559,27 +569,37 @@ export class ReasoningHandler {
         this.messageDom.classList.toggle('reasoning', this.state !== ReasoningState.None);
 
         // Update states to the relevant DOM elements
-        setDatasetProperty(this.messageDom, 'reasoningState', this.state !== ReasoningState.None ? this.state : null);
-        setDatasetProperty(this.messageReasoningDetailsDom, 'state', this.state);
-        setDatasetProperty(this.messageReasoningDetailsDom, 'type', this.type);
+        setDatasetPropertyIfChanged(this.messageDom, 'reasoningState', this.state !== ReasoningState.None ? this.state : null);
+        setDatasetPropertyIfChanged(this.messageReasoningDetailsDom, 'state', this.state);
+        setDatasetPropertyIfChanged(this.messageReasoningDetailsDom, 'type', this.type);
 
         // Update the reasoning message
         const reasoning = trimSpaces(this.reasoningDisplayText ?? this.reasoning);
         const displayReasoning = messageFormatting(reasoning, '', false, false, messageId, {}, true);
 
-        if (power_user.stream_fade_in) {
-            applyStreamFadeIn(this.messageReasoningContentDom, displayReasoning);
-        } else {
-            this.messageReasoningContentDom.innerHTML = displayReasoning;
+        if (shouldCommitStreamingMessage({
+            currentHtml: this.messageReasoningContentDom.innerHTML,
+            nextHtml: displayReasoning,
+            final: false,
+            fadeIn: power_user.stream_fade_in,
+        })) {
+            if (power_user.stream_fade_in) {
+                applyStreamFadeIn(this.messageReasoningContentDom, displayReasoning);
+            } else {
+                this.messageReasoningContentDom.innerHTML = displayReasoning;
+            }
         }
 
         // Update tooltip for hidden reasoning edit
         /** @type {HTMLElement} */
         const button = this.messageDom.querySelector('.mes_edit_add_reasoning');
-        button.title = this.state === ReasoningState.Hidden ? t`Hidden reasoning - Add reasoning block` : t`Add reasoning block`;
+        const buttonTitle = this.state === ReasoningState.Hidden ? t`Hidden reasoning - Add reasoning block` : t`Add reasoning block`;
+        if (button.title !== buttonTitle) {
+            button.title = buttonTitle;
+        }
 
         // Make sure that hidden reasoning headers are collapsed by default, to not show a useless edit button
-        if (this.state === ReasoningState.Hidden) {
+        if (this.state === ReasoningState.Hidden && this.messageReasoningDetailsDom.open) {
             this.messageReasoningDetailsDom.open = false;
         }
 
@@ -624,19 +644,20 @@ export class ReasoningHandler {
         const element = this.messageReasoningHeaderDom;
         const duration = this.getDuration();
         let data = null;
+        let text = '';
         let title = '';
         if (duration) {
             const seconds = moment.duration(duration).asSeconds();
 
             const durationStr = moment.duration(duration).locale(getCurrentLocale()).humanize({ s: 50, ss: 3 });
-            element.textContent = t`Thought for ${durationStr}`;
+            text = t`Thought for ${durationStr}`;
             data = String(seconds);
             title = `${seconds} seconds`;
         } else if ([ReasoningState.Done, ReasoningState.Hidden].includes(this.state)) {
-            element.textContent = t`Thought for some time`;
+            text = t`Thought for some time`;
             data = 'unknown';
         } else {
-            element.textContent = t`Thinking...`;
+            text = t`Thinking...`;
             data = null;
         }
 
@@ -644,10 +665,15 @@ export class ReasoningHandler {
             title += ` [${translate(this.type)}]`;
             title = title.trim();
         }
-        element.title = title;
+        if (element.textContent !== text) {
+            element.textContent = text;
+        }
+        if (element.title !== title) {
+            element.title = title;
+        }
 
-        setDatasetProperty(this.messageReasoningDetailsDom, 'duration', data);
-        setDatasetProperty(element, 'duration', data);
+        setDatasetPropertyIfChanged(this.messageReasoningDetailsDom, 'duration', data);
+        setDatasetPropertyIfChanged(element, 'duration', data);
     }
 }
 
