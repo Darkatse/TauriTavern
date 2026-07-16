@@ -701,7 +701,7 @@ export async function getTokenCountsAsync(strings, padding = undefined) {
  * @param {string} base Initial prefix shared by every result.
  * @param {string[]} suffixes Suffixes appended cumulatively in input order.
  * @param {number | undefined} padding Optional padding tokens.
- * @param {number | undefined} stopAt Stop after the first exact count at or above this value.
+ * @param {number | undefined} stopAt Caller-visible text token threshold; the single-message wrapper offset is excluded.
  * @returns {Promise<number[]>} Token counts for each cumulative prefix.
  */
 export async function getTokenPrefixCountsAsync(base, suffixes, padding = undefined, stopAt = undefined) {
