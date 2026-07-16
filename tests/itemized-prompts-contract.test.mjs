@@ -70,7 +70,7 @@ test('Chat rendering and generation rely on index presence, not whole records', 
     const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
     const saveConditionalFn = extractBetween(
         source,
-        'export async function saveChatConditional() {',
+        'export async function saveChatConditional(commitReason = CHAT_COMMIT_REASON.MUTATION) {',
         '/**\n * Saves the chat to the server.',
     );
 

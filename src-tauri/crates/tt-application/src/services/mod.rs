@@ -19,6 +19,7 @@ pub mod bundled_template_service;
 pub mod character_service;
 pub mod chat_completion_service;
 mod chat_file_validation;
+pub mod chat_history_coordinator;
 pub mod chat_service;
 pub mod content_service;
 pub mod data_archive_service;

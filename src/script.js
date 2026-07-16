@@ -9,13 +9,14 @@ import {
     default as libs,
     lodash,
 } from './lib.js';
-import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
+import { getClientVersion as getBridgeClientVersion, invoke } from './tauri-bridge.js';
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
 import { registerLifecycleFlushHandler } from './tauri/main/services/lifecycle/lifecycle-flush-service.js';
 import { replaceMesTextHtmlWithRuntimePolicy } from './scripts/tauri/message/mes-text-write.js';
 import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
 import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
 import {
+    CHAT_COMMIT_REASON,
     isTauriChatPayloadTransportEnabled,
     loadCharacterChatPayload,
     loadCharacterChatPayloadTail,
@@ -25,6 +26,7 @@ import {
     saveCharacterChatPayload,
     patchCharacterChatPayloadWindowed,
 } from './scripts/chat-payload-transport.js';
+import { getActiveChatSnapshot } from './tauri/main/adapters/st/active-chat-ref.js';
 import {
     buildWindowedPayloadPatch,
     clearWindowedChatState,
@@ -4554,7 +4556,9 @@ class StreamingProcessor {
         if (!isAborted && power_user.auto_swipe && generatedTextFiltered(text)) {
             return await swipe(null, SWIPE_DIRECTION.RIGHT, { source: SWIPE_SOURCE.AUTO_SWIPE, repeated: true, forceMesId: chat.length - 1 });
         }
-        await saveChatConditional();
+        await saveChatConditional(this.type === 'impersonate'
+            ? CHAT_COMMIT_REASON.MUTATION
+            : CHAT_COMMIT_REASON.GENERATION_CHECKPOINT);
 
         playMessageSound();
     }
@@ -5033,26 +5037,58 @@ function removeLastMessage() {
 
 const generationIdleGate = createGenerationIdleGate();
 let generationInFlightCount = 0;
+let generationHistoryLocator = null;
 
 export function waitForGenerationIdle() {
     return generationIdleGate.wait();
 }
 
-function enterGeneration() {
+async function enterGeneration(dryRun) {
     if (generationInFlightCount === 0) {
         generationIdleGate.markBusy();
+        generationInFlightCount = 1;
+        generationHistoryLocator = null;
+
+        // Prompt-assembly dry runs do not define a chat-history transaction.
+        if (dryRun) return;
+
+        try {
+            generationHistoryLocator = getActiveChatSnapshot().ref;
+        } catch (error) {
+            generationHistoryLocator = null;
+            console.warn('Failed to capture chat-history generation locator', error);
+        }
+
+        if (generationHistoryLocator) {
+            try {
+                await invoke('chat_history_generation_started', { locator: generationHistoryLocator });
+            } catch (error) {
+                console.error('Failed to report chat-history generation start', error);
+            }
+        }
+        return;
     }
     generationInFlightCount += 1;
 }
 
-function exitGeneration() {
+async function exitGeneration() {
     if (generationInFlightCount <= 0) {
         throw new Error('Generation in-flight counter underflow');
     }
 
     generationInFlightCount -= 1;
     if (generationInFlightCount === 0) {
-        generationIdleGate.markIdle();
+        const locator = generationHistoryLocator;
+        generationHistoryLocator = null;
+        try {
+            if (locator) {
+                await invoke('chat_history_generation_finished', { locator });
+            }
+        } catch (error) {
+            console.error('Failed to report chat-history generation finish', error);
+        } finally {
+            generationIdleGate.markIdle();
+        }
     }
 }
 
@@ -5065,14 +5101,14 @@ function exitGeneration() {
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
 export async function Generate(type, options = {}, dryRun = false) {
-    enterGeneration();
+    await enterGeneration(dryRun);
     try {
         return await GenerateInternal(type, options, dryRun);
     } catch (error) {
         cleanupGenerationAfterUnhandledError(type, dryRun);
         throw error;
     } finally {
-        exitGeneration();
+        await exitGeneration();
     }
 }
 
@@ -5259,11 +5295,11 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         if (messageBias && !removeMacros(textareaText)) {
             sendSystemMessage(system_message_types.GENERIC, ' ', { bias: messageBias });
         } else {
-            await sendMessageAsUser(textareaText, messageBias);
+            await sendMessageAsUserAtProviderBarrier(textareaText, messageBias);
         }
     } else if (textareaText == '' && !automatic_trigger && !dryRun && [undefined, 'normal'].includes(type) && main_api == 'openai' && oai_settings.send_if_empty.trim().length > 0 && !depth) {
         // Use send_if_empty if set and the user message is empty. Only when sending messages normally
-        await sendMessageAsUser(oai_settings.send_if_empty.trim(), messageBias);
+        await sendMessageAsUserAtProviderBarrier(oai_settings.send_if_empty.trim(), messageBias);
     }
 
     let {
@@ -6487,7 +6523,9 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         }
 
         console.debug('/api/chats/save called by /Generate');
-        await saveChatConditional();
+        await saveChatConditional(isImpersonate
+            ? CHAT_COMMIT_REASON.MUTATION
+            : CHAT_COMMIT_REASON.GENERATION_CHECKPOINT);
         unblockGeneration(type);
         streamingProcessor = null;
 
@@ -6955,9 +6993,10 @@ export function removeMacros(str) {
  * @param {boolean} [compact] Send as a compact display message.
  * @param {string} [name] Name of the user sending the message. Defaults to name1.
  * @param {string} [avatar] Avatar of the user sending the message. Defaults to user_avatar.
+ * @param {string} [commitReason] Current/history scheduling reason.
  * @returns {Promise<any>} A promise that resolves to the message when it is inserted.
  */
-export async function sendMessageAsUser(messageText, messageBias, insertAt = null, compact = false, name = name1, avatar = user_avatar) {
+export async function sendMessageAsUser(messageText, messageBias, insertAt = null, compact = false, name = name1, avatar = user_avatar, commitReason = CHAT_COMMIT_REASON.MUTATION) {
     messageText = getRegexedString(messageText, regex_placement.USER_INPUT);
 
     const message = {
@@ -6993,13 +7032,13 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
     if (typeof insertAt === 'number' && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
         markWindowedChatDirtyFromIndex(insertAt);
-        await saveChatConditional();
+        await saveChatConditional(commitReason);
         await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
         await reloadCurrentChat();
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, insertAt);
     } else {
         chat.push(message);
-        await saveChatConditional();
+        await saveChatConditional(commitReason);
         const chat_id = (chat.length - 1);
         await eventSource.emit(event_types.MESSAGE_SENT, chat_id);
         addOneMessage(message);
@@ -7007,6 +7046,18 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
     }
 
     return message;
+}
+
+export function sendMessageAsUserAtProviderBarrier(messageText, messageBias) {
+    return sendMessageAsUser(
+        messageText,
+        messageBias,
+        null,
+        false,
+        name1,
+        user_avatar,
+        CHAT_COMMIT_REASON.PROVIDER_BARRIER,
+    );
 }
 
 /**
@@ -8555,6 +8606,7 @@ export function markWindowedChatDirtyFromIndex(messageId) {
  * @param {number} [options.mesId] The message ID to save the chat up to
  * @param {boolean} [options.force] Force the saving despite the integrity check result
  * @param {ChatMessage[]} [options.chatData] Chat snapshot to save instead of the current in-memory chat
+ * @param {string} [options.commitReason] Current/history scheduling reason.
  *
  * @returns {Promise<void>}
  */
@@ -8567,7 +8619,7 @@ export async function saveChat(...args) {
     return enqueueChatSave(() => saveChatUnsafe(...args));
 }
 
-async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, chatData = undefined } = {}) {
+async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, chatData = undefined, commitReason = CHAT_COMMIT_REASON.MUTATION } = {}) {
     if (arguments.length > 0 && typeof arguments[0] !== 'object') {
         console.trace('saveChat called with positional arguments. Please use an object instead.');
         [chatName, withMetadata, mesId, force] = arguments;
@@ -8625,6 +8677,7 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
                     patch,
                     expectedWindowLineCount,
                     force: Boolean(force),
+                    commitReason,
                 });
 
                 const activeWindowState = getWindowedChatState();
@@ -8650,6 +8703,7 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
                     fileName,
                     payload,
                     force: Boolean(force),
+                    commitReason,
                 });
             }
             return;
@@ -8665,6 +8719,7 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
                 chat: payload,
                 avatar_url: characters[this_chid].avatar,
                 force: force,
+                commit_reason: commitReason,
             }),
         });
         const result = await fetch('/api/chats/save', saveChatRequest);
@@ -8708,7 +8763,7 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
             return;
         }
 
-        await saveChatUnsafe({ chatName, withMetadata, mesId, force: true });
+        await saveChatUnsafe({ chatName, withMetadata, mesId, force: true, chatData, commitReason });
     }
 }
 
@@ -8993,7 +9048,7 @@ async function getChatResult({ allowNewChat = false } = {}) {
             freshChat = true;
         }
         // Make sure the chat appears on the server
-        await saveChatConditional();
+        await saveChatConditional(CHAT_COMMIT_REASON.MAINTENANCE);
     }
     await loadItemizedPrompts(getCurrentChatId());
     await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_LOADED });
@@ -10859,13 +10914,13 @@ export async function saveMetadata() {
     return await saveChatConditional();
 }
 
-export async function saveChatConditional() {
+export async function saveChatConditional(commitReason = CHAT_COMMIT_REASON.MUTATION) {
     try {
         cancelDebouncedChatSave();
 
         const savePromise = selected_group
-            ? saveGroupChat(selected_group, true)
-            : saveChat();
+            ? saveGroupChat(selected_group, true, false, commitReason)
+            : saveChat({ commitReason });
 
         // Keep prompt/token persistence serialized with chat writes to avoid
         // chat switches corrupting per-chat IndexedDB state.

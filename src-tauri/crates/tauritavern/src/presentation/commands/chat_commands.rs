@@ -11,6 +11,7 @@ use tt_application::dto::chat_dto::{
     HideChatBeforeCursorDto, ImportCharacterChatsDto, ImportChatDto, PatchChatWindowedDto,
     PinnedCharacterChatDto, RenameChatDto, SaveChatFromFileDto,
 };
+use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_application::errors::ApplicationError;
 use tt_ports::repositories::chat_repository::{
     ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatPayloadWindowPatchRequest,
@@ -28,6 +29,32 @@ pub async fn get_all_chats(
         .get_all_chats()
         .await
         .map_err(map_command_error("Failed to get all chats"))
+}
+
+#[tauri::command]
+pub async fn chat_history_generation_started(
+    locator: ChatHistoryLocator,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    app_state
+        .services
+        .chat_history_coordinator
+        .generation_started(locator)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn chat_history_generation_finished(
+    locator: ChatHistoryLocator,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    app_state
+        .services
+        .chat_history_coordinator
+        .generation_finished(locator)
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -443,6 +470,7 @@ pub async fn patch_chat_payload_windowed(
         patch,
         expected_window_line_count,
         force,
+        commit_reason,
     } = dto;
     log_command(format!(
         "patch_chat_payload_windowed {}/{}",
@@ -460,7 +488,12 @@ pub async fn patch_chat_payload_windowed(
     app_state
         .services
         .chat_service
-        .patch_chat_payload_windowed(&character_name, &file_name, request)
+        .patch_chat_payload_windowed(
+            &character_name,
+            &file_name,
+            request,
+            commit_reason.unwrap_or_default(),
+        )
         .await
         .map_err(map_command_error("Failed to patch windowed chat payload"))
 }

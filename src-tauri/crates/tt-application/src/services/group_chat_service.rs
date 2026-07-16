@@ -7,9 +7,11 @@ use crate::dto::chat_dto::{
     ChatSearchResultDto, DeleteGroupChatDto, ImportGroupChatDto, RenameGroupChatDto,
     SaveGroupChatFromFileDto,
 };
+use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
 use crate::errors::ApplicationError;
 use crate::services::agent_workspace_lifecycle_service::AgentWorkspaceLifecycleService;
 use crate::services::chat_file_validation::validate_chat_file_name;
+use crate::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
@@ -22,16 +24,19 @@ use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 pub struct GroupChatService {
     group_chat_repository: Arc<dyn GroupChatRepository>,
     agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+    chat_history_coordinator: Arc<ChatHistoryCoordinator>,
 }
 
 impl GroupChatService {
     pub fn new(
         group_chat_repository: Arc<dyn GroupChatRepository>,
         agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+        chat_history_coordinator: Arc<ChatHistoryCoordinator>,
     ) -> Self {
         Self {
             group_chat_repository,
             agent_workspace_lifecycle_service,
+            chat_history_coordinator,
         }
     }
 
@@ -107,6 +112,8 @@ impl GroupChatService {
         self.group_chat_repository
             .set_group_chat_metadata_extension(chat_id, namespace, value)
             .await?;
+        self.note_current_committed(chat_id, CurrentCommitReason::Mutation)
+            .await;
         Ok(())
     }
 
@@ -297,13 +304,16 @@ impl GroupChatService {
         &self,
         chat_id: &str,
         request: ChatPayloadWindowPatchRequest,
+        commit_reason: CurrentCommitReason,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         validate_chat_file_name(chat_id, "Group chat id")?;
 
-        self.group_chat_repository
+        let cursor = self
+            .group_chat_repository
             .patch_group_chat_payload_windowed(chat_id, request)
-            .await
-            .map_err(Into::into)
+            .await?;
+        self.note_current_committed(chat_id, commit_reason).await;
+        Ok(cursor)
     }
 
     /// Set the hidden flag on all messages stored before the window cursor.
@@ -317,7 +327,8 @@ impl GroupChatService {
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         validate_chat_file_name(chat_id, "Group chat id")?;
 
-        self.group_chat_repository
+        let cursor = self
+            .group_chat_repository
             .hide_group_chat_payload_before_cursor(
                 chat_id,
                 cursor,
@@ -325,8 +336,10 @@ impl GroupChatService {
                 name_filter,
                 expected_window_line_count,
             )
-            .await
-            .map_err(Into::into)
+            .await?;
+        self.note_current_committed(chat_id, CurrentCommitReason::Mutation)
+            .await;
+        Ok(cursor)
     }
 
     /// Save a group chat payload from a JSONL file path.
@@ -336,14 +349,16 @@ impl GroupChatService {
     ) -> Result<(), ApplicationError> {
         validate_chat_file_name(&dto.id, "Group chat id")?;
 
+        let commit_reason = dto.commit_reason.unwrap_or_default();
         self.group_chat_repository
             .save_group_chat_payload_from_path(
                 &dto.id,
                 Path::new(&dto.file_path),
                 dto.force.unwrap_or(false),
             )
-            .await
-            .map_err(Into::into)
+            .await?;
+        self.note_current_committed(&dto.id, commit_reason).await;
+        Ok(())
     }
 
     /// Delete a group chat payload file.
@@ -358,6 +373,9 @@ impl GroupChatService {
         self.group_chat_repository
             .delete_group_chat_payload(&dto.id)
             .await?;
+        self.chat_history_coordinator
+            .invalidate(&group_locator(&dto.id))
+            .await;
         self.agent_workspace_lifecycle_service
             .delete_chat_workspace(&target)
             .await?;
@@ -376,6 +394,12 @@ impl GroupChatService {
             .group_chat_repository
             .rename_group_chat_payload(&dto.old_file_name, &dto.new_file_name)
             .await?;
+        self.chat_history_coordinator
+            .invalidate(&group_locator(&dto.old_file_name))
+            .await;
+        self.chat_history_coordinator
+            .invalidate(&group_locator(&committed_file_name))
+            .await;
         Ok(committed_file_name)
     }
 
@@ -388,5 +412,17 @@ impl GroupChatService {
             .import_group_chat_payload(Path::new(&dto.file_path))
             .await
             .map_err(Into::into)
+    }
+
+    async fn note_current_committed(&self, chat_id: &str, reason: CurrentCommitReason) {
+        self.chat_history_coordinator
+            .note_current_committed(group_locator(chat_id), reason)
+            .await;
+    }
+}
+
+fn group_locator(chat_id: &str) -> ChatHistoryLocator {
+    ChatHistoryLocator::Group {
+        chat_id: chat_id.to_string(),
     }
 }

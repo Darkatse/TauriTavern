@@ -20,40 +20,50 @@ impl FileChatRepository {
         &self,
         chat_path: &Path,
         backup_name: &str,
-        backup_key: &str,
-    ) {
-        let Ok(mut state) = self.backup_history.try_lock() else {
-            return;
+    ) -> Result<(), DomainError> {
+        let policy = match self.backup_policy.try_read() {
+            Ok(policy) => *policy,
+            Err(_) => {
+                return Err(DomainError::transient(
+                    "Chat backup policy is being updated",
+                ));
+            }
         };
-        let Ok(policy) = self.backup_policy.try_read() else {
-            return;
-        };
-        let policy = *policy;
-        if !policy.automatic_enabled
-            || policy.history_disabled()
-            || !state.throttle.should_backup(backup_key)
-        {
-            return;
+        if !policy.automatic_enabled || policy.history_disabled() {
+            return Ok(());
         }
 
-        let result = match &mut state.inventory {
-            BackupInventoryState::Ready(inventory) => {
-                self.publish_chat_backup(chat_path, backup_name, policy, inventory)
-                    .await
+        let Ok(mut state) = self.backup_history.try_lock() else {
+            return Err(DomainError::transient("Chat backup history is busy"));
+        };
+        let inventory = match &mut state.inventory {
+            BackupInventoryState::Ready(inventory) => inventory,
+            BackupInventoryState::Uninitialized => {
+                return Err(DomainError::transient(
+                    "Chat backup inventory is initializing",
+                ));
             }
-            BackupInventoryState::Uninitialized | BackupInventoryState::Failed(_) => return,
+            BackupInventoryState::Failed(message) => {
+                return Err(DomainError::InternalError(format!(
+                    "Chat backup inventory is unavailable: {}",
+                    message
+                )));
+            }
         };
 
-        match result {
-            Ok(()) => state.throttle.update(backup_key),
-            Err(DomainError::Conflict(message)) => {
-                tracing::warn!("Skipping automatic chat backup: {}", message)
+        match self
+            .publish_chat_backup(chat_path, backup_name, policy, inventory)
+            .await
+        {
+            Ok(()) => {
+                tracing::info!(source = ?chat_path, "Created automatic chat backup");
+                Ok(())
             }
-            Err(error) => tracing::error!(
-                target: tt_contracts::observability::USER_VISIBLE_ERROR,
-                "Automatic chat backup failed after the current chat was saved: {}",
-                error
-            ),
+            Err(DomainError::Conflict(message)) => {
+                tracing::warn!(reason = %message, "Skipping automatic chat backup");
+                Ok(())
+            }
+            Err(error) => Err(error),
         }
     }
 

@@ -57,33 +57,3 @@ impl MemoryCache {
         self.chats.clear();
     }
 }
-
-/// Throttled function for backups
-pub(super) struct ThrottledBackup {
-    last_backup: HashMap<String, Instant>,
-    interval: Duration,
-}
-
-impl ThrottledBackup {
-    /// Create a new throttled backup with the specified interval
-    pub(super) fn new(interval_seconds: u64) -> Self {
-        Self {
-            last_backup: HashMap::new(),
-            interval: Duration::from_secs(interval_seconds),
-        }
-    }
-
-    /// Check if a backup should be performed
-    pub(super) fn should_backup(&self, key: &str) -> bool {
-        if let Some(last) = self.last_backup.get(key) {
-            last.elapsed() >= self.interval
-        } else {
-            true
-        }
-    }
-
-    /// Update the last backup time
-    pub(super) fn update(&mut self, key: &str) {
-        self.last_backup.insert(key.to_string(), Instant::now());
-    }
-}

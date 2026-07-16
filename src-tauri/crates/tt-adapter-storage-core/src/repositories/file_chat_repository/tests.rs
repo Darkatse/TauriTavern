@@ -214,18 +214,6 @@ fn backup_name_reserved_windows_name_becomes_empty() {
 }
 
 #[test]
-fn group_backup_key_uses_committed_chat_file_stem() {
-    assert_eq!(
-        FileChatRepository::get_group_backup_key("group/name.jsonl").expect("group backup key"),
-        "group:groupname"
-    );
-    assert_eq!(
-        FileChatRepository::get_group_backup_key("Story.JSONL").expect("group backup key"),
-        "group:Story.JSONL"
-    );
-}
-
-#[test]
 fn backup_file_prefix_matches_sillytavern_pattern() {
     let prefix = FileChatRepository::backup_file_prefix("A:li*ce Name");
     assert_eq!(prefix, "chat_alice_name_");
@@ -373,6 +361,12 @@ async fn automatic_quota_rejection_does_not_fail_current_save() {
         .expect("current save must succeed");
     assert!(backup_file_names(&root).await.is_empty());
 
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("automatic quota rejection is an expected skip");
+    assert!(backup_file_names(&root).await.is_empty());
+
     let error = repository
         .backup_chat("Alice", "session")
         .await
@@ -385,6 +379,76 @@ async fn automatic_quota_rejection_does_not_fail_current_save() {
             .expect("read committed current payload"),
         payload.as_bytes()
     );
+}
+
+#[tokio::test]
+async fn automatic_character_and_group_snapshots_run_only_when_requested() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let source = root.join("source.jsonl");
+    fs::write(
+        &source,
+        payload_to_jsonl(&payload_with_integrity("automatic")),
+    )
+    .await
+    .expect("write source");
+
+    repository
+        .save_chat_payload_from_path("Alice", "session", &source, false)
+        .await
+        .expect("save character current");
+    repository
+        .save_group_chat_payload_from_path("group-session", &source, false)
+        .await
+        .expect("save group current");
+    assert!(backup_file_names(&root).await.is_empty());
+
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("automatic character snapshot");
+    repository
+        .backup_group_chat_automatic("group-session")
+        .await
+        .expect("automatic group snapshot");
+
+    assert_eq!(backup_file_names(&root).await.len(), 2);
+}
+
+#[tokio::test]
+async fn automatic_snapshot_defers_instead_of_waiting_for_a_busy_current() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let source = root.join("source.jsonl");
+    fs::write(
+        &source,
+        payload_to_jsonl(&payload_with_integrity("automatic-busy")),
+    )
+    .await
+    .expect("write source");
+    repository
+        .save_chat_payload_from_path("Alice", "session", &source, false)
+        .await
+        .expect("save character current");
+
+    let current_path = repository
+        .get_chat_payload_path("Alice", "session")
+        .await
+        .expect("resolve current path");
+    let current_guard = repository.acquire_payload_write_lock(&current_path).await;
+    let error = repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect_err("busy current should defer the automatic snapshot");
+    assert!(matches!(error, DomainError::Transient(_)));
+    assert!(backup_file_names(&root).await.is_empty());
+
+    drop(current_guard);
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("automatic snapshot after current writer finishes");
+    assert_eq!(backup_file_names(&root).await.len(), 1);
 }
 
 #[tokio::test]

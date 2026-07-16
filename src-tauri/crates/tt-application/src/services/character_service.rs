@@ -15,6 +15,7 @@ use crate::errors::ApplicationError;
 use crate::services::agent_workspace_lifecycle_service::{
     AgentChatWorkspaceTarget, AgentWorkspaceLifecycleService,
 };
+use crate::services::chat_history_coordinator::ChatHistoryCoordinator;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -38,6 +39,7 @@ pub struct CharacterService {
     chat_repository: Arc<dyn ChatRepository>,
     world_info_repository: Arc<dyn WorldInfoRepository>,
     agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+    chat_history_coordinator: Arc<ChatHistoryCoordinator>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,12 +61,14 @@ impl CharacterService {
         chat_repository: Arc<dyn ChatRepository>,
         world_info_repository: Arc<dyn WorldInfoRepository>,
         agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+        chat_history_coordinator: Arc<ChatHistoryCoordinator>,
     ) -> Self {
         Self {
             repository,
             chat_repository,
             world_info_repository,
             agent_workspace_lifecycle_service,
+            chat_history_coordinator,
         }
     }
 
@@ -471,7 +475,18 @@ impl CharacterService {
             .ensure_chat_workspaces_inactive(&workspace_targets)
             .await?;
 
+        let execution_guard = self
+            .chat_history_coordinator
+            .lock_snapshot_execution()
+            .await;
+        self.chat_history_coordinator
+            .invalidate_character(&dto.name)
+            .await;
         self.repository.delete(&dto.name, dto.delete_chats).await?;
+        self.chat_history_coordinator
+            .invalidate_character(&dto.name)
+            .await;
+        drop(execution_guard);
         self.agent_workspace_lifecycle_service
             .delete_chat_workspaces(&workspace_targets)
             .await?;
@@ -510,7 +525,24 @@ impl CharacterService {
         self.validate_character_name(&dto.new_name)?;
 
         tracing::debug!("Renaming character: {} -> {}", dto.old_name, dto.new_name);
+        let execution_guard = self
+            .chat_history_coordinator
+            .lock_snapshot_execution()
+            .await;
+        self.chat_history_coordinator
+            .invalidate_character(&dto.old_name)
+            .await;
+        self.chat_history_coordinator
+            .invalidate_character(&dto.new_name)
+            .await;
         let character = self.repository.rename(&dto.old_name, &dto.new_name).await?;
+        self.chat_history_coordinator
+            .invalidate_character(&dto.old_name)
+            .await;
+        self.chat_history_coordinator
+            .invalidate_character(&dto.new_name)
+            .await;
+        drop(execution_guard);
         Ok(CharacterDto::from(character))
     }
 

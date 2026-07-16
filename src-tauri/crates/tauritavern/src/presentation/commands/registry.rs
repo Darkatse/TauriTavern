@@ -22,6 +22,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::character_commands::get_character_chats_by_id,
         super::character_commands::clear_character_cache,
         // Chat commands
+        super::chat_commands::chat_history_generation_started,
+        super::chat_commands::chat_history_generation_finished,
         super::chat_commands::get_all_chats,
         super::chat_commands::get_chat,
         super::chat_commands::get_character_chats,

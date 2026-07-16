@@ -16,6 +16,7 @@ use tt_application::services::avatar_service::AvatarService;
 use tt_application::services::background_service::BackgroundService;
 use tt_application::services::character_service::CharacterService;
 use tt_application::services::chat_completion_service::ChatCompletionService;
+use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::content_service::ContentService;
 use tt_application::services::extension_service::ExtensionService;
@@ -141,24 +142,33 @@ pub(super) async fn build(
         crate::product::VERSION,
     ));
 
+    let chat_history_coordinator = Arc::new(ChatHistoryCoordinator::new(
+        repositories.chat_repository.clone(),
+        repositories.group_chat_repository.clone(),
+    ));
+
     let group_service = Arc::new(GroupService::new(
         repositories.group_repository.clone(),
         agent_services.agent_workspace_lifecycle_service.clone(),
+        chat_history_coordinator.clone(),
     ));
     let character_service = Arc::new(CharacterService::new(
         repositories.character_repository.clone(),
         repositories.chat_repository.clone(),
         repositories.world_info_repository.clone(),
         agent_services.agent_workspace_lifecycle_service.clone(),
+        chat_history_coordinator.clone(),
     ));
     let chat_service = Arc::new(ChatService::new(
         repositories.chat_repository.clone(),
         repositories.character_repository.clone(),
         agent_services.agent_workspace_lifecycle_service.clone(),
+        chat_history_coordinator.clone(),
     ));
     let group_chat_service = Arc::new(GroupChatService::new(
         repositories.group_chat_repository.clone(),
         agent_services.agent_workspace_lifecycle_service,
+        chat_history_coordinator.clone(),
     ));
     let secret_service = Arc::new(SecretService::new(
         repositories.secret_repository.clone(),
@@ -180,6 +190,7 @@ pub(super) async fn build(
         group_service.clone(),
         secret_service.clone(),
         settings_service.clone(),
+        chat_history_coordinator.clone(),
     );
     let data_archive_service = archive::build(app_handle, data_change_reconciler.clone());
     let sync_services = sync::build(
@@ -194,6 +205,7 @@ pub(super) async fn build(
         character_service,
         chat_service,
         group_chat_service,
+        chat_history_coordinator,
         user_service,
         settings_service,
         user_directory_service,

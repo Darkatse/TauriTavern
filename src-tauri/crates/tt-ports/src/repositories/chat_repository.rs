@@ -94,6 +94,16 @@ pub trait ChatRepository: Send + Sync {
     /// Backup a chat
     async fn backup_chat(&self, character_name: &str, file_name: &str) -> Result<(), DomainError>;
 
+    /// Create an automatic history snapshot for a character chat.
+    ///
+    /// Scheduling is owned by the application layer; the repository only
+    /// serializes the source payload and publishes the snapshot.
+    async fn backup_chat_automatic(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<(), DomainError>;
+
     /// List all chat backup files.
     async fn list_chat_backups(&self) -> Result<Vec<ChatSearchResult>, DomainError>;
 

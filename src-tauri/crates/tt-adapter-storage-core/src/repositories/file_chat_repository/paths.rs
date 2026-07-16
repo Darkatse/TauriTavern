@@ -53,11 +53,11 @@ impl FileChatRepository {
         sanitize_chat_dir_key(value, fallback)
     }
 
-    pub(super) async fn acquire_payload_write_lock(&self, path: &Path) -> OwnedMutexGuard<()> {
+    async fn payload_write_lock(&self, path: &Path) -> Arc<Mutex<()>> {
         const MAX_RETAINED_LOCK_ENTRIES: usize = 2048;
 
         let key = path.to_path_buf();
-        let lock = {
+        {
             let mut locks = self.path_write_locks.lock().await;
             if locks.len() > MAX_RETAINED_LOCK_ENTRIES {
                 locks.retain(|_, value| value.strong_count() > 0);
@@ -71,9 +71,18 @@ impl FileChatRepository {
                     created
                 }
             }
-        };
+        }
+    }
 
-        lock.lock_owned().await
+    pub(super) async fn acquire_payload_write_lock(&self, path: &Path) -> OwnedMutexGuard<()> {
+        self.payload_write_lock(path).await.lock_owned().await
+    }
+
+    pub(super) async fn try_acquire_payload_write_lock(
+        &self,
+        path: &Path,
+    ) -> Option<OwnedMutexGuard<()>> {
+        self.payload_write_lock(path).await.try_lock_owned().ok()
     }
 
     pub(super) async fn acquire_payload_rename_locks(
@@ -274,13 +283,6 @@ impl FileChatRepository {
             "{}:{}",
             Self::sanitize_path_component(character_name, "character"),
             Self::normalize_jsonl_file_stem(file_name)?
-        ))
-    }
-
-    pub(super) fn get_group_backup_key(chat_id: &str) -> Result<String, DomainError> {
-        Ok(format!(
-            "group:{}",
-            Self::normalize_jsonl_file_stem(chat_id)?
         ))
     }
 }

@@ -48,6 +48,7 @@ use tt_application::services::agent_workspace_lifecycle_service::{
     AgentRunActivity, AgentWorkspaceLifecycleService,
 };
 use tt_application::services::character_service::CharacterService;
+use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
@@ -127,7 +128,12 @@ async fn character_service_with_world_repository(
         aliases,
         file_chat_repository.clone(),
     ));
-    let chat_repository: Arc<dyn ChatRepository> = file_chat_repository;
+    let chat_repository: Arc<dyn ChatRepository> = file_chat_repository.clone();
+    let group_chat_repository: Arc<dyn GroupChatRepository> = file_chat_repository;
+    let chat_history_coordinator = Arc::new(ChatHistoryCoordinator::new(
+        chat_repository.clone(),
+        group_chat_repository,
+    ));
     let world_repository = Arc::new(FileWorldInfoRepository::new(default_user.join("worlds")));
     let agent_repository = Arc::new(FileAgentRepository::new(
         root.join("_tauritavern/agent-workspaces"),
@@ -144,6 +150,7 @@ async fn character_service_with_world_repository(
             chat_repository,
             world_repository.clone(),
             lifecycle_service,
+            chat_history_coordinator,
         ),
         world_repository,
     )

@@ -5,6 +5,8 @@ use tt_ports::repositories::chat_repository::{
     ChatPayloadCursor, ChatPayloadPatchOp, ChatSearchResult, PinnedCharacterChat, PinnedGroupChat,
 };
 
+use super::chat_history_dto::CurrentCommitReason;
+
 /// DTO for chat message extra data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageExtraDto {
@@ -160,6 +162,7 @@ pub struct SaveChatFromFileDto {
     pub file_name: String,
     pub file_path: String,
     pub force: Option<bool>,
+    pub commit_reason: Option<CurrentCommitReason>,
 }
 
 /// DTO for patching a windowed character chat payload.
@@ -173,6 +176,7 @@ pub struct PatchChatWindowedDto {
     pub patch: ChatPayloadPatchOp,
     pub expected_window_line_count: usize,
     pub force: Option<bool>,
+    pub commit_reason: Option<CurrentCommitReason>,
 }
 
 /// DTO for toggling the hidden flag on messages before the window cursor.
@@ -203,6 +207,7 @@ pub struct SaveGroupChatFromFileDto {
     pub id: String,
     pub file_path: String,
     pub force: Option<bool>,
+    pub commit_reason: Option<CurrentCommitReason>,
 }
 
 /// DTO for patching a windowed group chat payload.
@@ -214,6 +219,7 @@ pub struct PatchGroupChatWindowedDto {
     pub patch: ChatPayloadPatchOp,
     pub expected_window_line_count: usize,
     pub force: Option<bool>,
+    pub commit_reason: Option<CurrentCommitReason>,
 }
 
 /// DTO for deleting a group chat payload

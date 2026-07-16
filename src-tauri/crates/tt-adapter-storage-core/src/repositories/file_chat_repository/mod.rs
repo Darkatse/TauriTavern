@@ -31,7 +31,7 @@ mod windowed_payload_io;
 mod tests;
 
 use self::backup_inventory::BackupHistoryState;
-use self::cache::{MemoryCache, ThrottledBackup};
+use self::cache::MemoryCache;
 use self::summary::SummaryCache;
 use crate::chat_directory_identity::{
     SharedChatAliasStore, chat_alias_path_for_user_dir, new_shared_chat_alias_store,
@@ -138,9 +138,7 @@ impl FileChatRepository {
             summary_cache,
             chat_aliases,
             backup_policy: Arc::new(RwLock::new(backup_settings)),
-            backup_history: Arc::new(Mutex::new(BackupHistoryState::new(ThrottledBackup::new(
-                10,
-            )))),
+            backup_history: Arc::new(Mutex::new(BackupHistoryState::new())),
         }
     }
 }

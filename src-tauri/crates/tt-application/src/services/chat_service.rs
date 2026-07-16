@@ -7,6 +7,7 @@ use crate::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
     ImportCharacterChatsDto, ImportChatDto, RenameChatDto, SaveChatFromFileDto,
 };
+use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
 use crate::errors::ApplicationError;
 use crate::services::agent_workspace_lifecycle_service::{
     AgentChatWorkspaceTarget, AgentWorkspaceLifecycleService,
@@ -14,6 +15,7 @@ use crate::services::agent_workspace_lifecycle_service::{
 use crate::services::chat_file_validation::{
     validate_character_path_component, validate_chat_file_name,
 };
+use crate::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use tt_ports::repositories::agent_workspace_lifecycle_repository::{
@@ -32,6 +34,7 @@ pub struct ChatService {
     chat_repository: Arc<dyn ChatRepository>,
     character_repository: Arc<dyn CharacterRepository>,
     agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+    chat_history_coordinator: Arc<ChatHistoryCoordinator>,
 }
 
 impl ChatService {
@@ -40,11 +43,13 @@ impl ChatService {
         chat_repository: Arc<dyn ChatRepository>,
         character_repository: Arc<dyn CharacterRepository>,
         agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+        chat_history_coordinator: Arc<ChatHistoryCoordinator>,
     ) -> Self {
         Self {
             chat_repository,
             character_repository,
             agent_workspace_lifecycle_service,
+            chat_history_coordinator,
         }
     }
 
@@ -68,6 +73,14 @@ impl ChatService {
 
         // Save the chat
         self.chat_repository.save(&chat).await?;
+        if let Some(file_name) = chat.file_name.as_deref() {
+            self.note_current_committed(
+                &chat.character_name,
+                file_name,
+                CurrentCommitReason::Maintenance,
+            )
+            .await;
+        }
 
         Ok(ChatDto::from(chat))
     }
@@ -152,6 +165,12 @@ impl ChatService {
             .chat_repository
             .add_message(&dto.character_name, &dto.file_name, message)
             .await?;
+        self.note_current_committed(
+            &dto.character_name,
+            &dto.file_name,
+            CurrentCommitReason::Mutation,
+        )
+        .await;
 
         Ok(ChatDto::from(chat))
     }
@@ -174,6 +193,16 @@ impl ChatService {
             .chat_repository
             .rename_chat(&dto.character_name, &dto.old_file_name, &dto.new_file_name)
             .await?;
+
+        self.chat_history_coordinator
+            .invalidate(&character_locator(&dto.character_name, &dto.old_file_name))
+            .await;
+        self.chat_history_coordinator
+            .invalidate(&character_locator(
+                &dto.character_name,
+                &committed_file_name,
+            ))
+            .await;
 
         Ok(committed_file_name)
     }
@@ -207,6 +236,9 @@ impl ChatService {
         self.chat_repository
             .delete_chat(character_name, file_name)
             .await?;
+        self.chat_history_coordinator
+            .invalidate(&character_locator(character_name, file_name))
+            .await;
 
         if let Some(target) = target {
             self.agent_workspace_lifecycle_service
@@ -325,8 +357,8 @@ impl ChatService {
     ) -> Result<(), ApplicationError> {
         tracing::info!("Backing up chat: {}/{}", character_name, file_name);
 
-        self.chat_repository
-            .backup_chat(character_name, file_name)
+        self.chat_history_coordinator
+            .backup_character_explicit(character_name, file_name)
             .await?;
 
         Ok(())
@@ -405,6 +437,8 @@ impl ChatService {
         self.chat_repository
             .set_character_chat_metadata_extension(character_name, file_name, namespace, value)
             .await?;
+        self.note_current_committed(character_name, file_name, CurrentCommitReason::Mutation)
+            .await;
         Ok(())
     }
 
@@ -624,14 +658,18 @@ impl ChatService {
         character_name: &str,
         file_name: &str,
         request: ChatPayloadWindowPatchRequest,
+        commit_reason: CurrentCommitReason,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         validate_character_path_component(character_name)?;
         validate_chat_file_name(file_name, "Chat file name")?;
 
-        self.chat_repository
+        let cursor = self
+            .chat_repository
             .patch_chat_payload_windowed(character_name, file_name, request)
-            .await
-            .map_err(Into::into)
+            .await?;
+        self.note_current_committed(character_name, file_name, commit_reason)
+            .await;
+        Ok(cursor)
     }
 
     /// Set the hidden flag on all messages stored before the window cursor.
@@ -647,7 +685,8 @@ impl ChatService {
         validate_character_path_component(character_name)?;
         validate_chat_file_name(file_name, "Chat file name")?;
 
-        self.chat_repository
+        let cursor = self
+            .chat_repository
             .hide_chat_payload_before_cursor(
                 character_name,
                 file_name,
@@ -656,8 +695,10 @@ impl ChatService {
                 name_filter,
                 expected_window_line_count,
             )
-            .await
-            .map_err(Into::into)
+            .await?;
+        self.note_current_committed(character_name, file_name, CurrentCommitReason::Mutation)
+            .await;
+        Ok(cursor)
     }
 
     /// Save a character chat payload from a JSONL file path.
@@ -668,6 +709,7 @@ impl ChatService {
         validate_character_path_component(&dto.character_name)?;
         validate_chat_file_name(&dto.file_name, "Chat file name")?;
 
+        let commit_reason = dto.commit_reason.unwrap_or_default();
         self.chat_repository
             .save_chat_payload_from_path(
                 &dto.character_name,
@@ -675,8 +717,10 @@ impl ChatService {
                 Path::new(&dto.file_path),
                 dto.force.unwrap_or(false),
             )
-            .await
-            .map_err(Into::into)
+            .await?;
+        self.note_current_committed(&dto.character_name, &dto.file_name, commit_reason)
+            .await;
+        Ok(())
     }
 
     /// Import one or more character chats from an uploaded file.
@@ -711,5 +755,23 @@ impl ChatService {
             )
             .await
             .map_err(Into::into)
+    }
+
+    async fn note_current_committed(
+        &self,
+        character_id: &str,
+        file_name: &str,
+        reason: CurrentCommitReason,
+    ) {
+        self.chat_history_coordinator
+            .note_current_committed(character_locator(character_id, file_name), reason)
+            .await;
+    }
+}
+
+fn character_locator(character_id: &str, file_name: &str) -> ChatHistoryLocator {
+    ChatHistoryLocator::Character {
+        character_id: character_id.to_string(),
+        file_name: file_name.to_string(),
     }
 }

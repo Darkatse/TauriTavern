@@ -189,15 +189,33 @@ impl GroupChatRepository for FileChatRepository {
     ) -> Result<(), DomainError> {
         self.ensure_directory_exists().await?;
         let path = self.get_group_chat_path(chat_id)?;
-        let backup_key = Self::get_group_backup_key(chat_id)?;
-        self.write_payload_file_to_path(&path, source_path, force, chat_id, &backup_key)
+        self.write_payload_file_to_path(&path, source_path, force)
             .await?;
         self.remove_summary_cache_for_path(&path).await;
         Ok(())
     }
 
+    async fn backup_group_chat_automatic(&self, chat_id: &str) -> Result<(), DomainError> {
+        let path = self.get_group_chat_path(chat_id)?;
+        let Some(_write_guard) = self.try_acquire_payload_write_lock(&path).await else {
+            return Err(DomainError::transient(format!(
+                "Group chat current is busy: {}",
+                path.display()
+            )));
+        };
+        if !path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Group chat not found: {}",
+                chat_id
+            )));
+        }
+
+        self.backup_chat_file_automatic(&path, chat_id).await
+    }
+
     async fn delete_group_chat_payload(&self, chat_id: &str) -> Result<(), DomainError> {
         let path = self.get_group_chat_path(chat_id)?;
+        let _write_guard = self.acquire_payload_write_lock(&path).await;
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Group chat not found: {}",

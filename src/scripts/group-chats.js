@@ -88,6 +88,7 @@ import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import {
+    CHAT_COMMIT_REASON,
     isTauriChatPayloadTransportEnabled,
     loadGroupChatPayloadTail,
     saveGroupChatPayload,
@@ -395,7 +396,7 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
             addOneMessage(mes);
             await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'first_message');
         }
-        await saveGroupChat(groupId, false);
+        await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
     } else if (Array.isArray(data) && data.length) {
         if (!isStillActive()) {
             return;
@@ -731,13 +732,14 @@ function resetSelectedGroup() {
  * @param {string} groupId Group ID
  * @param {boolean} shouldSaveGroup Whether to save the group after saving the chat
  * @param {boolean} force Force the saving on integrity error
+ * @param {string} commitReason Current/history scheduling reason
  * @returns {Promise<void>} A promise that resolves when the group chat has been saved.
  */
-async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
-    return enqueueChatSave(() => saveGroupChatUnsafe(groupId, shouldSaveGroup, force));
+async function saveGroupChat(groupId, shouldSaveGroup, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION) {
+    return enqueueChatSave(() => saveGroupChatUnsafe(groupId, shouldSaveGroup, force, commitReason));
 }
 
-async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false) {
+async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION) {
     const group = groups.find(x => x.id == groupId);
     if (!group) {
         console.warn('Group not found', groupId);
@@ -778,6 +780,7 @@ async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false) {
 	                    patch,
 	                    expectedWindowLineCount,
 	                    force: Boolean(force),
+	                    commitReason,
 	                });
 
 	                const activeWindowState = getWindowedChatState();
@@ -800,13 +803,14 @@ async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false) {
 	                    id: chatId,
 	                    payload,
 	                    force: Boolean(force),
+                        commitReason,
                 });
             }
         } else {
             const response = await fetch('/api/chats/group/save', {
                 method: 'POST',
                 headers: getRequestHeaders(),
-                body: JSON.stringify({ id: chatId, chat: payload, force: force }),
+                body: JSON.stringify({ id: chatId, chat: payload, force: force, commit_reason: commitReason }),
             });
 
             if (response.ok) {
@@ -849,7 +853,7 @@ async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false) {
             return;
         }
 
-        await saveGroupChatUnsafe(groupId, shouldSaveGroup, true);
+        await saveGroupChatUnsafe(groupId, shouldSaveGroup, true, commitReason);
     }
 
     if (shouldSaveGroup) {

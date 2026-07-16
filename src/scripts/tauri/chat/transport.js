@@ -11,6 +11,13 @@ import {
     getChatHistoryBootstrapModeName,
 } from '../../../tauri/main/services/chat-history/chat-history-mode-state.js';
 
+export const CHAT_COMMIT_REASON = Object.freeze({
+    MUTATION: 'mutation',
+    PROVIDER_BARRIER: 'providerBarrier',
+    GENERATION_CHECKPOINT: 'generationCheckpoint',
+    MAINTENANCE: 'maintenance',
+});
+
 export function normalizeChatFileName(fileName) {
     return stripJsonl(fileName);
 }
@@ -157,7 +164,7 @@ export async function loadCharacterChatPayloadBeforePages({ characterName, avata
     });
 }
 
-export async function saveCharacterChatPayload({ characterName, avatarUrl, fileName, payload, force = false }) {
+export async function saveCharacterChatPayload({ characterName, avatarUrl, fileName, payload, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
     if (!Array.isArray(payload) || payload.length === 0 || !normalizedCharacter || !normalizedFile.trim()) {
@@ -170,6 +177,7 @@ export async function saveCharacterChatPayload({ characterName, avatarUrl, fileN
             file_name: normalizedFile,
             file_path: filePath,
             force,
+            commit_reason: commitReason,
         },
     }));
 }
@@ -182,7 +190,7 @@ function normalizeExpectedWindowLineCount(value) {
     return normalized;
 }
 
-export async function patchCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, header, patch, expectedWindowLineCount, force = false }) {
+export async function patchCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, header, patch, expectedWindowLineCount, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
     if (!normalizedCharacter || !normalizedFile.trim()) {
@@ -198,6 +206,7 @@ export async function patchCharacterChatPayloadWindowed({ characterName, avatarU
             patch,
             expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
             force,
+            commit_reason: commitReason,
         },
     });
 }
@@ -305,7 +314,7 @@ export async function loadGroupChatPayloadBeforePages({ id, cursor, maxLines, ma
     });
 }
 
-export async function saveGroupChatPayload({ id, payload, force = false }) {
+export async function saveGroupChatPayload({ id, payload, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {
     const normalizedId = normalizeChatFileName(id);
     if (!Array.isArray(payload) || payload.length === 0 || !normalizedId.trim()) {
         throw new Error('Invalid group chat payload');
@@ -316,11 +325,12 @@ export async function saveGroupChatPayload({ id, payload, force = false }) {
             id: normalizedId,
             file_path: filePath,
             force,
+            commit_reason: commitReason,
         },
     }));
 }
 
-export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch, expectedWindowLineCount, force = false }) {
+export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch, expectedWindowLineCount, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {
     const normalizedId = normalizeChatFileName(id);
     if (!normalizedId.trim()) {
         throw new Error('Invalid group chat payload patch request');
@@ -334,6 +344,7 @@ export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch,
             patch,
             expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
             force,
+            commit_reason: commitReason,
         },
     });
 }

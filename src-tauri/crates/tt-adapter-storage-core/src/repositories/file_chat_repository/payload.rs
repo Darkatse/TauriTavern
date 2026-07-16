@@ -174,8 +174,6 @@ impl FileChatRepository {
         path: &Path,
         payload: &[Value],
         force: bool,
-        backup_name: &str,
-        backup_key: &str,
     ) -> Result<(), DomainError> {
         if payload.is_empty() {
             return Err(DomainError::InvalidData(
@@ -187,8 +185,6 @@ impl FileChatRepository {
         self.verify_chat_integrity_if_needed(path, payload, force)
             .await?;
         write_jsonl_file(path, payload).await?;
-        self.backup_chat_file_automatic(path, backup_name, backup_key)
-            .await;
 
         Ok(())
     }
@@ -198,8 +194,6 @@ impl FileChatRepository {
         path: &Path,
         source_path: &Path,
         force: bool,
-        backup_name: &str,
-        backup_key: &str,
     ) -> Result<(), DomainError> {
         if !source_path.exists() {
             return Err(DomainError::NotFound(format!(
@@ -229,8 +223,6 @@ impl FileChatRepository {
         })?;
         replace_file_with_fallback(&temp_path, path).await?;
 
-        self.backup_chat_file_automatic(path, backup_name, backup_key)
-            .await;
         Ok(())
     }
 
@@ -295,8 +287,7 @@ impl FileChatRepository {
 
         let objects = Self::build_payload_from_chat(chat)?;
 
-        self.write_payload_to_path(&path, &objects, force, &chat.character_name, &backup_key)
-            .await?;
+        self.write_payload_to_path(&path, &objects, force).await?;
 
         // Update cache
         let mut cache = self.memory_cache.lock().await;

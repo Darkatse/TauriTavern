@@ -1,6 +1,7 @@
 // @ts-check
 
 import { resolveStableChatId } from './agent-chat-identity.js';
+import { CHAT_COMMIT_REASON } from '../../../scripts/chat-payload-transport.js';
 
 const activeCommitBridges = new Map();
 const TERMINAL_EVENTS = new Set(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
@@ -149,7 +150,7 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
             createdMessage: state.createdMessage,
             firstSwipeId: state.firstSwipeId,
         });
-        await state.persistChat(script);
+        await state.persistChat(script, CHAT_COMMIT_REASON.GENERATION_CHECKPOINT);
 
         await safeInvoke('resolve_agent_chat_commit', {
             dto: {
@@ -183,7 +184,7 @@ async function handlePersistentStateMetadataUpdateRequested({ state, event, safe
         const messageId = normalizeMessageId(payload.messageId ?? state.messageId);
         const stateId = requirePayloadString(payload, 'stateId');
         mergePersistentStateExtraIntoMessage(script.chat, messageId, payload, stateId);
-        await state.persistChat(script);
+        await state.persistChat(script, CHAT_COMMIT_REASON.MUTATION);
 
         await safeInvoke('resolve_agent_persistent_state_metadata_update', {
             dto: {
@@ -438,18 +439,23 @@ function isPlainObject(value) {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-async function persistActiveChat(script) {
+async function persistActiveChat(script, commitReason) {
     const groupChats = await import('../../../scripts/group-chats.js');
     if (groupChats.selected_group) {
         if (typeof groupChats.saveGroupChat !== 'function') {
             throw new Error('saveGroupChat is not available');
         }
-        await groupChats.saveGroupChat(groupChats.selected_group, true);
+        await groupChats.saveGroupChat(
+            groupChats.selected_group,
+            true,
+            false,
+            commitReason,
+        );
         return;
     }
 
     if (typeof script.saveChat !== 'function') {
         throw new Error('saveChat is not available');
     }
-    await script.saveChat();
+    await script.saveChat({ commitReason });
 }

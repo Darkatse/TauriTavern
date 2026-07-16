@@ -164,6 +164,7 @@ impl ChatRepository for FileChatRepository {
         let path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
+        let _write_guard = self.acquire_payload_write_lock(&path).await;
 
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
@@ -470,6 +471,7 @@ impl ChatRepository for FileChatRepository {
         let chat_path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
+        let _write_guard = self.acquire_payload_write_lock(&chat_path).await;
         if !chat_path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Chat not found: {}/{}",
@@ -477,8 +479,32 @@ impl ChatRepository for FileChatRepository {
             )));
         }
 
-        let _write_guard = self.acquire_payload_write_lock(&chat_path).await;
         self.backup_chat_file_explicit(&chat_path, character_name)
+            .await
+    }
+
+    async fn backup_chat_automatic(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<(), DomainError> {
+        let chat_path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
+        let Some(_write_guard) = self.try_acquire_payload_write_lock(&chat_path).await else {
+            return Err(DomainError::transient(format!(
+                "Chat current is busy: {}",
+                chat_path.display()
+            )));
+        };
+        if !chat_path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Chat not found: {}/{}",
+                character_name, file_name
+            )));
+        }
+
+        self.backup_chat_file_automatic(&chat_path, character_name)
             .await
     }
 
@@ -645,7 +671,7 @@ impl ChatRepository for FileChatRepository {
             })?;
         }
 
-        self.write_payload_file_to_path(&path, source_path, force, character_name, &backup_key)
+        self.write_payload_file_to_path(&path, source_path, force)
             .await?;
 
         {

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use tt_application::services::character_service::CharacterService;
+use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::group_chat_service::GroupChatService;
 use tt_application::services::group_service::GroupService;
@@ -18,6 +19,7 @@ pub(in crate::app::composition) fn data_change_reconciler(
     group_service: Arc<GroupService>,
     secret_service: Arc<SecretService>,
     settings_service: Arc<SettingsService>,
+    chat_history_coordinator: Arc<ChatHistoryCoordinator>,
 ) -> Arc<dyn DataChangeReconciler> {
     Arc::new(ServiceCacheReconciler {
         character_service,
@@ -26,6 +28,7 @@ pub(in crate::app::composition) fn data_change_reconciler(
         group_service,
         secret_service,
         settings_service,
+        chat_history_coordinator,
     })
 }
 
@@ -36,6 +39,7 @@ struct ServiceCacheReconciler {
     group_service: Arc<GroupService>,
     secret_service: Arc<SecretService>,
     settings_service: Arc<SettingsService>,
+    chat_history_coordinator: Arc<ChatHistoryCoordinator>,
 }
 
 #[async_trait]
@@ -45,6 +49,8 @@ impl DataChangeReconciler for ServiceCacheReconciler {
             reason = reason,
             "Refreshing runtime caches after external data change"
         );
+
+        self.chat_history_coordinator.invalidate_all_pending().await;
 
         self.character_service.clear_cache().await?;
         self.chat_service.clear_cache().await?;

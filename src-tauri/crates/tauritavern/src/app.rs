@@ -84,6 +84,12 @@ pub fn spawn_initialization(
                         .await;
                 });
 
+                let chat_history_coordinator = state.services.chat_history_coordinator.clone();
+                let chat_history_cancel = state.lifecycle.chat_history_cancel.clone();
+                tauri::async_runtime::spawn(async move {
+                    chat_history_coordinator.run(chat_history_cancel).await;
+                });
+
                 match app_handle.emit("app-ready", ()) {
                     Ok(_) => tracing::debug!("Application is ready"),
                     Err(error) => tracing::error!("Failed to emit app-ready event: {}", error),

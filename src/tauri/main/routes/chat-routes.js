@@ -77,7 +77,6 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         if (!characterId || !fileName.trim() || !Array.isArray(body?.chat)) {
             return jsonResponse({ error: 'Invalid chat payload' }, 400);
         }
-
         try {
             await saveCharacterChatPayload({
                 characterName: characterId,
@@ -85,6 +84,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                 fileName,
                 payload: body.chat,
                 force: Boolean(body?.force),
+                commitReason: body?.commit_reason,
             });
             return jsonResponse({ ok: true });
         } catch (error) {
@@ -431,6 +431,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                 id,
                 payload: body.chat,
                 force: Boolean(body?.force),
+                commitReason: body?.commit_reason,
             });
             return jsonResponse({ ok: true });
         } catch (error) {

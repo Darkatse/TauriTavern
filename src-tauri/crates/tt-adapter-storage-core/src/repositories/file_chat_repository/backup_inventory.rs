@@ -7,7 +7,6 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
 
 use super::FileChatRepository;
-use super::cache::ThrottledBackup;
 
 pub(super) const BACKUP_TEMP_PREFIX: &str = ".tmp-chat-backup-";
 
@@ -63,14 +62,12 @@ pub(super) enum BackupInventoryState {
 
 pub(super) struct BackupHistoryState {
     pub inventory: BackupInventoryState,
-    pub throttle: ThrottledBackup,
 }
 
 impl BackupHistoryState {
-    pub fn new(throttle: ThrottledBackup) -> Self {
+    pub fn new() -> Self {
         Self {
             inventory: BackupInventoryState::Uninitialized,
-            throttle,
         }
     }
 }

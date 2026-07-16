@@ -42,9 +42,6 @@ impl FileChatRepository {
         }
         self.remove_summary_cache_for_path(&path).await;
 
-        self.backup_chat_file_automatic(&path, character_name, &backup_key)
-            .await;
-
         Ok(result)
     }
 
@@ -57,12 +54,9 @@ impl FileChatRepository {
 
         let path = self.get_group_chat_path(chat_id)?;
         let _write_guard = self.acquire_payload_write_lock(&path).await;
-        let backup_key = Self::get_group_backup_key(chat_id)?;
         let result = patch_payload_windowed_internal(&path, request).await?;
 
         self.remove_summary_cache_for_path(&path).await;
-        self.backup_chat_file_automatic(&path, chat_id, &backup_key)
-            .await;
 
         Ok(result)
     }

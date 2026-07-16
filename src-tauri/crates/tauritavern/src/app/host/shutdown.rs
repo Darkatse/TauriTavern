@@ -60,6 +60,7 @@ pub(super) fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunE
             .lifecycle
             .agent_run_retention_automation_cancel
             .cancel();
+        state.lifecycle.chat_history_cancel.cancel();
         let lan_sync_service = state.services.lan_sync_service.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(error) = lan_sync_service.shutdown().await {

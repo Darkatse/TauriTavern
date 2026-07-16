@@ -184,6 +184,7 @@ pub async fn patch_group_chat_payload_windowed(
         patch,
         expected_window_line_count,
         force,
+        commit_reason,
     } = dto;
     log_command(format!("patch_group_chat_payload_windowed {}", id));
 
@@ -198,7 +199,7 @@ pub async fn patch_group_chat_payload_windowed(
     app_state
         .services
         .group_chat_service
-        .patch_group_chat_payload_windowed(&id, request)
+        .patch_group_chat_payload_windowed(&id, request, commit_reason.unwrap_or_default())
         .await
         .map_err(map_command_error(
             "Failed to patch windowed group chat payload",

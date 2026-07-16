@@ -80,6 +80,12 @@ pub trait GroupChatRepository: Send + Sync {
         force: bool,
     ) -> Result<(), DomainError>;
 
+    /// Create an automatic history snapshot for a group chat.
+    ///
+    /// Scheduling is owned by the application layer; the repository only
+    /// serializes the source payload and publishes the snapshot.
+    async fn backup_group_chat_automatic(&self, chat_id: &str) -> Result<(), DomainError>;
+
     /// Delete a group chat payload file.
     async fn delete_group_chat_payload(&self, chat_id: &str) -> Result<(), DomainError>;
 

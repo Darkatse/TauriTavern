@@ -1,5 +1,6 @@
 export { payloadToJsonl, jsonlToPayload } from './tauri/chat/jsonl.js';
 export {
+    CHAT_COMMIT_REASON,
     isTauriChatPayloadTransportEnabled,
     normalizeChatFileName,
     resolveCharacterDirectoryId,

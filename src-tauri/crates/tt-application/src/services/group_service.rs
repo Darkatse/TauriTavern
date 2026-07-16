@@ -1,9 +1,11 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::dto::chat_history_dto::ChatHistoryLocator;
 use crate::dto::group_dto::{CreateGroupDto, DeleteGroupDto, UpdateGroupDto};
 use crate::errors::ApplicationError;
 use crate::services::agent_workspace_lifecycle_service::AgentWorkspaceLifecycleService;
+use crate::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_domain::errors::DomainError;
 use tt_domain::models::group::Group;
 use tt_ports::repositories::group_repository::GroupRepository;
@@ -13,6 +15,7 @@ pub struct GroupService {
     /// Repository for group data
     repository: Arc<dyn GroupRepository>,
     agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+    chat_history_coordinator: Arc<ChatHistoryCoordinator>,
 }
 
 impl GroupService {
@@ -20,10 +23,12 @@ impl GroupService {
     pub fn new(
         repository: Arc<dyn GroupRepository>,
         agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+        chat_history_coordinator: Arc<ChatHistoryCoordinator>,
     ) -> Self {
         Self {
             repository,
             agent_workspace_lifecycle_service,
+            chat_history_coordinator,
         }
     }
 
@@ -112,7 +117,26 @@ impl GroupService {
             .ensure_chat_workspaces_inactive(&targets)
             .await?;
 
+        let execution_guard = self
+            .chat_history_coordinator
+            .lock_snapshot_execution()
+            .await;
+        for chat_id in &group.chats {
+            self.chat_history_coordinator
+                .invalidate(&ChatHistoryLocator::Group {
+                    chat_id: chat_id.clone(),
+                })
+                .await;
+        }
         self.repository.delete_group(&dto.id).await?;
+        for chat_id in &group.chats {
+            self.chat_history_coordinator
+                .invalidate(&ChatHistoryLocator::Group {
+                    chat_id: chat_id.clone(),
+                })
+                .await;
+        }
+        drop(execution_guard);
         self.agent_workspace_lifecycle_service
             .delete_chat_workspaces(&targets)
             .await?;
