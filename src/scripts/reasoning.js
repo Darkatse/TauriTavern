@@ -552,7 +552,7 @@ export class ReasoningHandler {
             await eventSource.emit(event_types.STREAM_REASONING_DONE, this.reasoning, this.getDuration(), messageId, this.state);
         }
 
-        this.updateDom(messageId);
+        this.updateDom(messageId, { final: true });
     }
 
     /**
@@ -561,8 +561,10 @@ export class ReasoningHandler {
      * Toggles the CSS class, updates states, reasoning message, and duration.
      *
      * @param {number} messageId - The ID of the message to update
+     * @param {object} [options] - Rendering options
+     * @param {boolean} [options.final=false] - Whether this is the final reasoning render
      */
-    updateDom(messageId) {
+    updateDom(messageId, { final = false } = {}) {
         this.#checkDomElements(messageId);
 
         // Main CSS class to show this message includes reasoning
@@ -580,7 +582,7 @@ export class ReasoningHandler {
         if (shouldCommitStreamingMessage({
             currentHtml: this.messageReasoningContentDom.innerHTML,
             nextHtml: displayReasoning,
-            final: false,
+            final,
             fadeIn: power_user.stream_fade_in,
         })) {
             if (power_user.stream_fade_in) {
