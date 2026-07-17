@@ -96,8 +96,9 @@ fn normalize_reasoning_effort(value: &str) -> Result<Option<&'static str>, Appli
         RequestedReasoningEffort::Minimal
         | RequestedReasoningEffort::Low
         | RequestedReasoningEffort::Medium
-        | RequestedReasoningEffort::High => Ok(Some("high")),
-        RequestedReasoningEffort::Max | RequestedReasoningEffort::XHigh => Ok(Some("max")),
+        | RequestedReasoningEffort::High
+        | RequestedReasoningEffort::XHigh => Ok(Some("high")),
+        RequestedReasoningEffort::Max => Ok(Some("max")),
     }
 }
 

@@ -2162,23 +2162,23 @@
                                                 <option data-i18n="openai_reasoning_effort_low" value="low">Low</option>
                                                 <option data-i18n="openai_reasoning_effort_medium" value="medium">Medium</option>
                                                 <option data-i18n="openai_reasoning_effort_high" value="high">High</option>
-                                                <option data-i18n="openai_reasoning_effort_maximum" value="max">Maximum</option>
                                                 <option data-i18n="openai_reasoning_effort_xhigh" value="xhigh">XHigh</option>
+                                                <option data-i18n="openai_reasoning_effort_maximum" value="max">Maximum</option>
                                             </select>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.">
-                                                OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.">
+                                                Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.">
-                                                DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.">
+                                                DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, Low and Medium request high effort, and XHigh requests max effort.">
-                                                Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, Low and Medium request high effort, and XHigh requests max effort.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.">
+                                                Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.
                                             </div>
                                             <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
                                                 Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
                                             </strong>
-                                            <div id="claude_reasoning_effort_description" class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai" data-i18n="Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on supported Claude models that are Opus 4.7 or newer; otherwise it behaves like Maximum. Auto does not request thinking.">
-                                                Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on supported Claude models that are Opus 4.7 or newer; otherwise it behaves like Maximum. Auto does not request thinking.
+                                            <div id="claude_reasoning_effort_description" class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai" data-i18n="Claude options: legacy thinking maps effort to a token budget. For adaptive thinking, Maximum selects the highest supported effort and XHigh the level below it. Auto does not request thinking.">
+                                                Claude options: legacy thinking maps effort to a token budget. For adaptive thinking, Maximum selects the highest supported effort and XHigh the level below it. Auto does not request thinking.
                                             </div>
                                             <div id="gemini_reasoning_effort_description" class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai">
                                                 <span data-i18n="Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.">
@@ -3058,6 +3058,12 @@
                             <div>
                                 <h4 data-i18n="OpenAI Model">OpenAI Model</h4>
                                 <select id="model_openai_select">
+                                    <optgroup label="GPT-5.6">
+                                        <option value="gpt-5.6">gpt-5.6</option>
+                                        <option value="gpt-5.6-sol">gpt-5.6-sol</option>
+                                        <option value="gpt-5.6-terra">gpt-5.6-terra</option>
+                                        <option value="gpt-5.6-luna">gpt-5.6-luna</option>
+                                    </optgroup>
                                     <optgroup label="GPT-5.5">
                                         <option value="gpt-5.5">gpt-5.5</option>
                                         <option value="gpt-5.5-2026-04-23">gpt-5.5-2026-04-23</option>

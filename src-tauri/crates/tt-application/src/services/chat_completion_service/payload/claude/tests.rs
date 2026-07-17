@@ -70,7 +70,7 @@ fn claude_reasoning_accepts_shared_minimal_alias() {
 fn claude_opus_4_5_uses_legacy_thinking_with_output_effort() {
     let mut payload = claude_payload("claude-opus-4-5");
     payload.insert("max_tokens".to_string(), json!(4096));
-    payload.insert("reasoning_effort".to_string(), json!("xhigh"));
+    payload.insert("reasoning_effort".to_string(), json!("max"));
 
     let (_, upstream) = build(payload).expect("build should succeed");
     let body = upstream.as_object().expect("body must be object");
@@ -87,8 +87,7 @@ fn claude_opus_4_5_uses_legacy_thinking_with_output_effort() {
             .and_then(Value::as_object)
             .and_then(|config| config.get("effort"))
             .and_then(Value::as_str),
-        Some("max"),
-        "Opus 4.5 supports output effort, but not xhigh"
+        Some("max")
     );
 }
 
@@ -801,7 +800,7 @@ fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
 }
 
 #[test]
-fn claude_adaptive_reasoning_supports_xhigh_on_new_adaptive_models() {
+fn claude_adaptive_reasoning_orders_project_extremes() {
     for model in [
         "claude-fable-5",
         "claude-mythos-5",
@@ -809,44 +808,48 @@ fn claude_adaptive_reasoning_supports_xhigh_on_new_adaptive_models() {
         "claude-opus-4-7",
         "claude-opus-4-8",
     ] {
-        let mut payload = claude_payload(model);
-        payload.insert("reasoning_effort".to_string(), json!("xhigh"));
+        for (requested, expected) in [("xhigh", "max"), ("max", "xhigh")] {
+            let mut payload = claude_payload(model);
+            payload.insert("reasoning_effort".to_string(), json!(requested));
 
-        let (_, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
+            let (_, upstream) = build(payload).expect("build should succeed");
+            let body = upstream.as_object().expect("body must be object");
 
-        assert_eq!(
-            body.get("thinking")
-                .and_then(Value::as_object)
-                .and_then(|thinking| thinking.get("type"))
-                .and_then(Value::as_str),
-            Some("adaptive")
-        );
-        assert_eq!(
-            body.get("output_config")
-                .and_then(Value::as_object)
-                .and_then(|config| config.get("effort"))
-                .and_then(Value::as_str),
-            Some("xhigh"),
-            "{model} should forward xhigh"
-        );
+            assert_eq!(
+                body.get("thinking")
+                    .and_then(Value::as_object)
+                    .and_then(|thinking| thinking.get("type"))
+                    .and_then(Value::as_str),
+                Some("adaptive")
+            );
+            assert_eq!(
+                body.get("output_config")
+                    .and_then(Value::as_object)
+                    .and_then(|config| config.get("effort"))
+                    .and_then(Value::as_str),
+                Some(expected),
+                "{model} should map project {requested} to {expected}"
+            );
+        }
     }
 
     for model in ["claude-opus-4-6", "claude-sonnet-4-6"] {
-        let mut payload = claude_payload(model);
-        payload.insert("reasoning_effort".to_string(), json!("xhigh"));
+        for (requested, expected) in [("xhigh", "high"), ("max", "max")] {
+            let mut payload = claude_payload(model);
+            payload.insert("reasoning_effort".to_string(), json!(requested));
 
-        let (_, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
+            let (_, upstream) = build(payload).expect("build should succeed");
+            let body = upstream.as_object().expect("body must be object");
 
-        assert_eq!(
-            body.get("output_config")
-                .and_then(Value::as_object)
-                .and_then(|config| config.get("effort"))
-                .and_then(Value::as_str),
-            Some("max"),
-            "{model} should treat unsupported xhigh as max"
-        );
+            assert_eq!(
+                body.get("output_config")
+                    .and_then(Value::as_object)
+                    .and_then(|config| config.get("effort"))
+                    .and_then(Value::as_str),
+                Some(expected),
+                "{model} should map project {requested} to {expected}"
+            );
+        }
     }
 }
 

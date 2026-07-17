@@ -318,13 +318,15 @@ const openrouter_middleout_types = {
 
 export const reasoning_effort_types = {
     auto: 'auto',
+    min: 'min',
     low: 'low',
     medium: 'medium',
     high: 'high',
-    min: 'min',
-    max: 'max',
     xhigh: 'xhigh',
+    max: 'max',
 };
+
+const OPENAI_GPT56_MODEL_PATTERN = /^gpt-5\.6(?:-(?:sol|terra|luna))?$/;
 
 export const verbosity_levels = {
     auto: 'auto',
@@ -3938,6 +3940,43 @@ function getZaiReasoningEffort(settings, model) {
     }
 }
 
+function supportsOpenAiMaxReasoningEffort(model) {
+    return OPENAI_GPT56_MODEL_PATTERN.test(String(model ?? '').trim().toLowerCase());
+}
+
+function supportsOpenAiXHighReasoningEffort(model) {
+    const normalizedModel = String(model ?? '').trim().toLowerCase();
+    if (/^gpt-5\.1-codex-max(?:$|-)/.test(normalizedModel)) {
+        return true;
+    }
+
+    const gpt5MinorMatch = /^gpt-5\.(\d+)/.exec(normalizedModel);
+    if (gpt5MinorMatch) {
+        return Number(gpt5MinorMatch[1]) >= 2;
+    }
+
+    const gptMajorMatch = /^gpt-(\d+)/.exec(normalizedModel);
+    return gptMajorMatch ? Number(gptMajorMatch[1]) > 5 : false;
+}
+
+function normalizeOpenAiReasoningEffort(effort, model) {
+    switch (effort) {
+        case reasoning_effort_types.auto:
+            return undefined;
+        case reasoning_effort_types.min:
+            return 'none';
+        case reasoning_effort_types.xhigh:
+            return supportsOpenAiMaxReasoningEffort(model) ? reasoning_effort_types.xhigh : reasoning_effort_types.high;
+        case reasoning_effort_types.max:
+            if (supportsOpenAiMaxReasoningEffort(model)) {
+                return reasoning_effort_types.max;
+            }
+            return supportsOpenAiXHighReasoningEffort(model) ? reasoning_effort_types.xhigh : reasoning_effort_types.high;
+        default:
+            return effort;
+    }
+}
+
 /**
  * Get the reasoning effort from chat completion settings
  * @param {ChatCompletionSettings} settings Chat completion settings
@@ -3980,6 +4019,10 @@ function getReasoningEffort(settings = null, model = null) {
                 : settings.reasoning_effort;
         }
 
+        if (isOpenAiReasoningFormat()) {
+            return normalizeOpenAiReasoningEffort(settings.reasoning_effort, model);
+        }
+
         function resolveMaximumReasoningEffort() {
             if (settings.chat_completion_source === chat_completion_sources.DEEPSEEK || settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
                 return reasoning_effort_types.max;
@@ -3987,33 +4030,17 @@ function getReasoningEffort(settings = null, model = null) {
             return reasoning_effort_types.high;
         }
 
-        function isOpenAiXHighReasoningModel(modelName) {
-            const normalizedModel = String(modelName ?? '').trim().toLowerCase();
-            if (/^gpt-5\.1-codex-max(?:$|-)/.test(normalizedModel)) {
-                return true;
-            }
-
-            const gpt5MinorMatch = /^gpt-5\.(\d+)/.exec(normalizedModel);
-            if (gpt5MinorMatch) {
-                return Number(gpt5MinorMatch[1]) >= 2;
-            }
-
-            const gptMajorMatch = /^gpt-(\d+)/.exec(normalizedModel);
-            return gptMajorMatch ? Number(gptMajorMatch[1]) > 5 : false;
-        }
-
         function isCustomOpenAiReasoningFormat() {
             const customApiFormat = settings.custom_api_format || custom_api_formats.OPENAI_COMPAT;
             return [custom_api_formats.OPENAI_COMPAT, custom_api_formats.OPENAI_RESPONSES].includes(customApiFormat);
         }
 
+        function isOpenAiReasoningFormat() {
+            return [chat_completion_sources.OPENAI, chat_completion_sources.AZURE_OPENAI].includes(settings.chat_completion_source)
+                || (settings.chat_completion_source === chat_completion_sources.CUSTOM && isCustomOpenAiReasoningFormat());
+        }
+
         function supportsXHighReasoningEffort() {
-            if ([chat_completion_sources.OPENAI, chat_completion_sources.AZURE_OPENAI].includes(settings.chat_completion_source)) {
-                return isOpenAiXHighReasoningModel(model);
-            }
-            if (settings.chat_completion_source === chat_completion_sources.CUSTOM && isCustomOpenAiReasoningFormat()) {
-                return isOpenAiXHighReasoningModel(model);
-            }
             if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
                 return /(?:^|\.)claude-(?:fable-5|sonnet-5|opus-4-(?:7|8))(?:\b|-)/.test(model);
             }
@@ -4027,15 +4054,13 @@ function getReasoningEffort(settings = null, model = null) {
             case reasoning_effort_types.auto:
                 return undefined;
             case reasoning_effort_types.min:
-                return [chat_completion_sources.OPENAI, chat_completion_sources.AZURE_OPENAI].includes(settings.chat_completion_source) && /^gpt-5/.test(model)
-                    ? reasoning_effort_types.min
-                    : reasoning_effort_types.low;
+                return reasoning_effort_types.low;
             case reasoning_effort_types.max:
                 return resolveMaximumReasoningEffort();
             case reasoning_effort_types.xhigh:
                 return supportsXHighReasoningEffort()
                     ? reasoning_effort_types.xhigh
-                    : resolveMaximumReasoningEffort();
+                    : reasoning_effort_types.high;
             default:
                 return settings.reasoning_effort;
         }
@@ -4482,7 +4507,7 @@ export async function createGenerationParameters(settings, model, type, messages
         if (/gpt-5-chat-latest/.test(model)) {
             delete generate_data.tools;
             delete generate_data.tool_choice;
-        } else if (/gpt-5.(1|2)/.test(model) && !/chat-latest/.test(model)) {
+        } else if (/gpt-5\.(1|2|3|4)/.test(model) && !/chat-latest/.test(model) && !generate_data.reasoning_effort) {
             delete generate_data.frequency_penalty;
             delete generate_data.presence_penalty;
             delete generate_data.logit_bias;
@@ -6697,6 +6722,9 @@ function onSettingsPresetChange() {
 function getMaxContextOpenAI(value) {
     if (oai_settings.max_context_unlocked) {
         return unlocked_max;
+    }
+    else if (/^gpt-5\.[45](?:$|-\d)/.test(value) || OPENAI_GPT56_MODEL_PATTERN.test(value)) {
+        return max_1mil;
     }
     else if (value.startsWith('gpt-5')) {
         return max_400k;

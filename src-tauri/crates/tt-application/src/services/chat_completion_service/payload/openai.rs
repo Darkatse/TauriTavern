@@ -167,7 +167,7 @@ fn build_chat_completion_payload(
         {
             request.insert(
                 "reasoning_effort".to_string(),
-                Value::String(reasoning_effort.into_owned()),
+                Value::String(reasoning_effort.to_owned()),
             );
         }
 
@@ -422,63 +422,30 @@ mod tests {
             body.get("reasoning_effort")
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
-            "minimal"
+            "none"
         );
     }
 
     #[test]
-    fn custom_payload_normalizes_xhigh_by_openai_model_support() {
-        let supported = json!({
-            "chat_completion_source": "custom",
-            "model": "gpt-5.2",
-            "messages": [{"role": "user", "content": "hello"}],
-            "reasoning_effort": "xhigh"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-        let (_endpoint, upstream) = build(supported).expect("build should succeed");
-        let body = upstream.as_object().expect("payload must be object");
-        assert_eq!(
-            body.get("reasoning_effort").and_then(Value::as_str),
-            Some("xhigh")
-        );
+    fn custom_payload_orders_openai_extremes() {
+        for (requested, expected) in [("xhigh", "high"), ("max", "xhigh")] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "model": "gpt-5.2",
+                "messages": [{"role": "user", "content": "hello"}],
+                "reasoning_effort": requested
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
 
-        let unsupported = json!({
-            "chat_completion_source": "custom",
-            "model": "gpt-5.1",
-            "messages": [{"role": "user", "content": "hello"}],
-            "reasoning_effort": "xhigh"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-        let (_endpoint, upstream) = build(unsupported).expect("build should succeed");
-        let body = upstream.as_object().expect("payload must be object");
-        assert_eq!(
-            body.get("reasoning_effort").and_then(Value::as_str),
-            Some("high")
-        );
-    }
-
-    #[test]
-    fn custom_payload_maps_project_maximum_to_openai_high() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "model": "gpt-5.2",
-            "messages": [{"role": "user", "content": "hello"}],
-            "reasoning_effort": "max"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("payload must be object");
-        assert_eq!(
-            body.get("reasoning_effort").and_then(Value::as_str),
-            Some("high")
-        );
+            let (_endpoint, upstream) = build(payload).expect("build should succeed");
+            let body = upstream.as_object().expect("payload must be object");
+            assert_eq!(
+                body.get("reasoning_effort").and_then(Value::as_str),
+                Some(expected)
+            );
+        }
     }
 
     #[test]

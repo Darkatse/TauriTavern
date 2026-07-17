@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use super::super::model_capabilities::RequestedReasoningEffort;
 
 const OPENAI_REASONING_EFFORT_MODELS: &[&str] = &[
@@ -34,6 +32,9 @@ const OPENAI_REASONING_EFFORT_MODELS: &[&str] = &[
     "gpt-5.5-2026-04-23",
 ];
 
+const OPENAI_MAX_REASONING_EFFORT_MODELS: &[&str] =
+    &["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
+
 // OpenAI documents xhigh as starting at gpt-5.1-codex-max and later GPT models.
 const OPENAI_XHIGH_REASONING_THRESHOLD: &str = "gpt-5.1-codex-max";
 
@@ -47,28 +48,38 @@ pub(super) fn should_forward_openai_reasoning_effort(source: &str, model: &str) 
 pub(super) fn normalize_openai_reasoning_effort<'a>(
     value: &'a str,
     model: &str,
-) -> Option<Cow<'a, str>> {
-    normalize_reasoning_effort(value, supports_openai_xhigh_reasoning_effort(model))
-}
-
-/// Maps project reasoning-effort aliases onto OpenAI's provider enum. `auto` is
-/// dropped, `min`/`minimum`/`minimal` become `minimal`, `max`/`maximum` become
-/// `high`, and `xhigh` is preserved only when `allow_xhigh` is set.
-pub(super) fn normalize_reasoning_effort(value: &str, allow_xhigh: bool) -> Option<Cow<'_, str>> {
+) -> Option<&'a str> {
     let value = value.trim();
     match RequestedReasoningEffort::parse(value) {
         Some(RequestedReasoningEffort::Auto) => None,
-        Some(RequestedReasoningEffort::None) => Some(Cow::Borrowed("none")),
-        Some(RequestedReasoningEffort::Minimal) => Some(Cow::Borrowed("minimal")),
-        Some(RequestedReasoningEffort::Low) => Some(Cow::Borrowed("low")),
-        Some(RequestedReasoningEffort::Medium) => Some(Cow::Borrowed("medium")),
-        Some(RequestedReasoningEffort::High) => Some(Cow::Borrowed("high")),
-        Some(RequestedReasoningEffort::Max) => Some(Cow::Borrowed("high")),
+        Some(RequestedReasoningEffort::None | RequestedReasoningEffort::Minimal) => Some("none"),
+        Some(RequestedReasoningEffort::Low) => Some("low"),
+        Some(RequestedReasoningEffort::Medium) => Some("medium"),
+        Some(RequestedReasoningEffort::High) => Some("high"),
         Some(RequestedReasoningEffort::XHigh) => {
-            Some(Cow::Borrowed(if allow_xhigh { "xhigh" } else { "high" }))
+            Some(if supports_openai_max_reasoning_effort(model) {
+                "xhigh"
+            } else {
+                "high"
+            })
         }
-        None => Some(Cow::Borrowed(value)),
+        Some(RequestedReasoningEffort::Max) => {
+            Some(if supports_openai_max_reasoning_effort(model) {
+                "max"
+            } else if supports_openai_xhigh_reasoning_effort(model) {
+                "xhigh"
+            } else {
+                "high"
+            })
+        }
+        None => Some(value),
     }
+}
+
+fn supports_openai_max_reasoning_effort(model: &str) -> bool {
+    OPENAI_MAX_REASONING_EFFORT_MODELS
+        .iter()
+        .any(|candidate| model.trim().eq_ignore_ascii_case(candidate))
 }
 
 fn supports_openai_xhigh_reasoning_effort(model: &str) -> bool {
@@ -107,7 +118,10 @@ fn parse_leading_digits(value: &str) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_openai_reasoning_effort, supports_openai_xhigh_reasoning_effort};
+    use super::{
+        normalize_openai_reasoning_effort, should_forward_openai_reasoning_effort,
+        supports_openai_xhigh_reasoning_effort,
+    };
 
     #[test]
     fn openai_xhigh_support_starts_at_codex_max_and_later_gpt_models() {
@@ -136,20 +150,41 @@ mod tests {
     #[test]
     fn openai_reasoning_normalizes_project_maximum_aliases_to_provider_values() {
         assert_eq!(
-            normalize_openai_reasoning_effort("max", "gpt-5.1").as_deref(),
+            normalize_openai_reasoning_effort("minimum", "unknown"),
+            Some("none")
+        );
+        assert_eq!(
+            normalize_openai_reasoning_effort("max", "gpt-5.1"),
             Some("high")
         );
         assert_eq!(
-            normalize_openai_reasoning_effort("minimum", "gpt-5.1").as_deref(),
-            Some("minimal")
-        );
-        assert_eq!(
-            normalize_openai_reasoning_effort("xhigh", "gpt-5.1").as_deref(),
+            normalize_openai_reasoning_effort("xhigh", "gpt-5.1"),
             Some("high")
         );
         assert_eq!(
-            normalize_openai_reasoning_effort("xhigh", "gpt-5.2").as_deref(),
+            normalize_openai_reasoning_effort("xhigh", "gpt-5.2"),
+            Some("high")
+        );
+        assert_eq!(
+            normalize_openai_reasoning_effort("max", "gpt-5.2"),
             Some("xhigh")
         );
+    }
+
+    #[test]
+    fn openai_reasoning_uses_current_family_extremes() {
+        for model in ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            assert!(should_forward_openai_reasoning_effort("openai", model));
+            assert_eq!(
+                normalize_openai_reasoning_effort("max", model),
+                Some("max"),
+                "{model} should preserve max"
+            );
+            assert_eq!(
+                normalize_openai_reasoning_effort("xhigh", model),
+                Some("xhigh"),
+                "{model} should preserve xhigh below max"
+            );
+        }
     }
 }

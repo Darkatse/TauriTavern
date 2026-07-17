@@ -300,9 +300,10 @@ fn claude_output_effort(
         RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => "low",
         RequestedReasoningEffort::Medium => "medium",
         RequestedReasoningEffort::High => "high",
+        RequestedReasoningEffort::XHigh if contract.supports_xhigh_output_effort => "max",
+        RequestedReasoningEffort::XHigh => "high",
+        RequestedReasoningEffort::Max if contract.supports_xhigh_output_effort => "xhigh",
         RequestedReasoningEffort::Max => "max",
-        RequestedReasoningEffort::XHigh if contract.supports_xhigh_output_effort => "xhigh",
-        RequestedReasoningEffort::XHigh => "max",
         RequestedReasoningEffort::Auto | RequestedReasoningEffort::None => {
             unreachable!("Claude reasoning parser excludes auto and none")
         }

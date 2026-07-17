@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(
             body.pointer("/output_config/effort")
                 .and_then(Value::as_str),
-            Some("xhigh")
+            Some("max")
         );
         assert!(body.get("temperature").is_none());
         assert!(body.get("top_p").is_none());
@@ -387,7 +387,7 @@ mod tests {
         assert_eq!(
             body.pointer("/output_config/effort")
                 .and_then(Value::as_str),
-            Some("xhigh")
+            Some("max")
         );
     }
 
@@ -437,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn bedrock_claude_maps_xhigh_by_normalized_model_contract() {
+    fn bedrock_claude_orders_extremes_by_normalized_model_contract() {
         let xhigh_payload = json!({
             "chat_completion_source": "aws_bedrock",
             "model": "us.anthropic.claude-opus-4-7",
@@ -453,15 +453,15 @@ mod tests {
         assert_eq!(
             body.pointer("/output_config/effort")
                 .and_then(Value::as_str),
-            Some("xhigh")
+            Some("max")
         );
 
         let max_payload = json!({
             "chat_completion_source": "aws_bedrock",
-            "model": "global.anthropic.claude-opus-4-6-v1",
+            "model": "global.anthropic.claude-opus-4-7-v1",
             "messages": [{ "role": "user", "content": "hi" }],
             "max_tokens": 4096,
-            "reasoning_effort": "xhigh",
+            "reasoning_effort": "max",
         })
         .as_object()
         .cloned()
@@ -471,7 +471,7 @@ mod tests {
         assert_eq!(
             body.pointer("/output_config/effort")
                 .and_then(Value::as_str),
-            Some("max")
+            Some("xhigh")
         );
     }
 }
