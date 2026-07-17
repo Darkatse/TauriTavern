@@ -22,7 +22,8 @@ const MODULE_NAME = 'tauritavern-version';
 const LINKS = Object.freeze({
     authorName: 'Darkatse',
     repositoryUrl: 'https://github.com/Darkatse/TauriTavern',
-    discordUrl: 'https://discord.com/channels/1134557553011998840/1472415443078742188',
+    discordUrl: 'https://discord.gg/hn57aFGe8h',
+    telegramUrl: 'https://t.me/TauriTavern',
 });
 
 const UNKNOWN_VALUE = 'UNKNOWN';
@@ -500,6 +501,12 @@ jQuery(async () => {
             throw new Error('[TauriTavern][iOSPolicy] ttv-discord-link not found');
         }
         discordLink.hidden = true;
+
+        const telegramLink = document.getElementById('ttv-telegram-link');
+        if (!(telegramLink instanceof HTMLElement)) {
+            throw new Error('[TauriTavern][iOSPolicy] ttv-telegram-link not found');
+        }
+        telegramLink.hidden = true;
     } else {
         $('#tauritavern_check_update').on('click', onCheckUpdateClick);
     }
