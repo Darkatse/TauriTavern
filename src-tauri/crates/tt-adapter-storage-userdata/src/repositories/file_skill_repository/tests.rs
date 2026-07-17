@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::path::Path;
 use std::path::PathBuf;
 
 use base64::Engine;

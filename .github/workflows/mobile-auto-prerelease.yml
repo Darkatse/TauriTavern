@@ -224,9 +224,6 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build frontend assets
-        run: pnpm run web:build
-
       - name: Setup Android signing
         if: matrix.mobile == 'android'
         shell: bash

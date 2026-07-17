@@ -218,9 +218,6 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build frontend assets
-        run: pnpm run web:build
-
       - name: Setup macOS signing and notarization
         if: matrix.platform == 'macos-latest'
         shell: bash
@@ -310,9 +307,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Build frontend assets
-        run: pnpm run web:build
 
       - name: Build and upload desktop portable pre-release
         uses: tauri-apps/tauri-action@v0.6.1
