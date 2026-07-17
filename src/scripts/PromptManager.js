@@ -904,9 +904,13 @@ class PromptManager {
     async #renderAfterTryGenerate() {
         if (!await this.#waitUntilGenerationIsIdle()) return;
 
+        this.error = null;
         this.profileStart('filling context');
         try {
             await this.tryGenerate();
+        } catch (error) {
+            this.error = error instanceof Error ? error.message : String(error || t`Unknown error`);
+            throw error;
         } finally {
             this.profileEnd('filling context');
             await this.#renderPromptManagerUi();
