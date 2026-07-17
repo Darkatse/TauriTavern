@@ -140,14 +140,27 @@ export function createChatScrollController({
                 return true;
             }
 
-            pendingFrame = requestFrame(() => {
-                pendingFrame = null;
-                pendingFrameForced = false;
-                if (canAutoScroll() && (force || generationFollowsOutput)) {
+            // Explicit navigation settles across two frames so last_mes / content-visibility
+            // remeasure after message insertion cannot leave the viewport on a collapsed height.
+            // Ordinary follow requests stay single-frame to avoid changing stream cadence.
+            const scheduleFrame = (remainingForceFrames) => {
+                pendingFrame = requestFrame(() => {
+                    pendingFrame = null;
+                    if (!canAutoScroll() || (!force && !generationFollowsOutput)) {
+                        pendingFrameForced = false;
+                        return;
+                    }
                     scrollToBottom();
-                }
-            });
-            pendingFrameForced = force;
+                    if (force && remainingForceFrames > 0) {
+                        pendingFrameForced = true;
+                        scheduleFrame(remainingForceFrames - 1);
+                        return;
+                    }
+                    pendingFrameForced = false;
+                });
+                pendingFrameForced = force;
+            };
+            scheduleFrame(force ? 1 : 0);
             return true;
         },
         cancelPending,

@@ -3301,7 +3301,9 @@ export function addOneMessage(mes, { type = undefined, insertAfter = null, scrol
     chatElement.find('.mes').last().addClass('last_mes');
 
     if (showSwipes) refreshSwipeButtons();
-    // Don't scroll if not inserting last
+    // Don't scroll if not inserting last.
+    // Force navigation is explicit and settles across frames inside the controller so
+    // last_mes transfer + content-visibility remeasure cannot leave a collapsed "false bottom".
     if (!insertAfter && !insertBefore && shouldScroll) {
         scrollChatToBottom({ waitForFrame: true, force: true });
     }

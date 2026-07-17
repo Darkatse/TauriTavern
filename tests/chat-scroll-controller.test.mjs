@@ -39,9 +39,12 @@ function createHarness(
         cancelled,
         get scrolls() { return scrolls; },
         flushFrames() {
-            for (const [id, callback] of [...frames]) {
-                frames.delete(id);
-                callback();
+            // Drain nested rAF work (e.g. force navigation settles across two frames).
+            while (frames.size > 0) {
+                for (const [id, callback] of [...frames]) {
+                    frames.delete(id);
+                    callback();
+                }
             }
         },
     };
@@ -228,7 +231,8 @@ test('queued explicit navigation survives a rejected follow request', () => {
     assert.equal(harness.controller.requestScroll({ waitForFrame: true }), false);
     harness.flushFrames();
 
-    assert.equal(harness.scrolls, 1);
+    // Force navigation settles on two frames after last_mes / content-visibility remeasure.
+    assert.equal(harness.scrolls, 2);
     assert.equal(harness.viewport.scrollTop, 600);
     harness.controller.endGeneration();
 });
@@ -246,8 +250,51 @@ test('queued explicit navigation is not downgraded by an allowed follow request'
     harness.flushFrames();
 
     assert.deepEqual(harness.cancelled, []);
-    assert.equal(harness.scrolls, 1);
+    assert.equal(harness.scrolls, 2);
     assert.equal(harness.viewport.scrollTop, 600);
+});
+
+test('forced navigation resamples bottom after a collapsed intermediate height', () => {
+    const frames = new Map();
+    const cancelled = [];
+    let nextFrameId = 1;
+    let scrolls = 0;
+    const viewport = { scrollHeight: 1000, clientHeight: 400, scrollTop: 200 };
+    const heights = [500, 1200];
+    let settleStep = 0;
+    const controller = createChatScrollController({
+        readViewport: () => viewport,
+        scrollToBottom: () => {
+            // Simulate the intermediate collapse on the first force settle frame.
+            viewport.scrollHeight = heights[Math.min(settleStep, heights.length - 1)];
+            settleStep += 1;
+            scrolls += 1;
+            viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+        },
+        requestFrame: callback => {
+            const id = nextFrameId++;
+            frames.set(id, callback);
+            return id;
+        },
+        cancelFrame: id => {
+            cancelled.push(id);
+            frames.delete(id);
+        },
+    });
+
+    assert.equal(controller.requestScroll({ waitForFrame: true, force: true }), true);
+
+    while (frames.size > 0) {
+        for (const [id, callback] of [...frames]) {
+            frames.delete(id);
+            callback();
+        }
+    }
+
+    assert.equal(scrolls, 2);
+    assert.equal(viewport.scrollHeight, 1200);
+    assert.equal(viewport.scrollTop, 800);
+    assert.deepEqual(cancelled, []);
 });
 
 test('global auto-scroll disable cancels a queued explicit navigation', () => {
