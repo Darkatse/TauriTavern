@@ -9,6 +9,7 @@ pub mod avatar_repository;
 pub mod background_repository;
 pub mod character_repository;
 pub mod chat_completion_repository;
+pub mod chat_payload_commit_repository;
 pub mod chat_repository;
 pub mod chat_types;
 pub mod checkpoint_repository;

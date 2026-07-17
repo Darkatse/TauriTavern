@@ -13,7 +13,7 @@ use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
 use crate::errors::ApplicationError;
 use crate::services::chat_file_validation::{
-    validate_character_path_component, validate_chat_file_name,
+    validate_character_path_component, validate_chat_file_name, validate_chat_history_locator,
 };
 
 const DEFAULT_QUIET_PERIOD: Duration = Duration::from_secs(2);
@@ -54,7 +54,7 @@ impl ChatHistoryCoordinator {
         &self,
         locator: ChatHistoryLocator,
     ) -> Result<(), ApplicationError> {
-        validate_locator(&locator)?;
+        validate_chat_history_locator(&locator)?;
         let mut state = self.state.lock().await;
         let replaced_stale_generation = state.begin_generation(locator);
         drop(state);
@@ -69,7 +69,7 @@ impl ChatHistoryCoordinator {
         &self,
         locator: ChatHistoryLocator,
     ) -> Result<(), ApplicationError> {
-        validate_locator(&locator)?;
+        validate_chat_history_locator(&locator)?;
         let mut state = self.state.lock().await;
         let outcome = state.finish_generation(
             &locator,
@@ -167,6 +167,11 @@ impl ChatHistoryCoordinator {
         state.invalidate_all_pending();
         drop(state);
         self.wake.notify_one();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn commit_sequence_for_test(&self) -> u64 {
+        self.state.lock().await.next_commit_seq
     }
 
     pub async fn lock_snapshot_execution(&self) -> MutexGuard<'_, ()> {
@@ -277,19 +282,6 @@ impl ChatHistoryCoordinator {
                     .await
             }
         }
-    }
-}
-
-fn validate_locator(locator: &ChatHistoryLocator) -> Result<(), ApplicationError> {
-    match locator {
-        ChatHistoryLocator::Character {
-            character_id,
-            file_name,
-        } => {
-            validate_character_path_component(character_id)?;
-            validate_chat_file_name(file_name, "Chat file name")
-        }
-        ChatHistoryLocator::Group { chat_id } => validate_chat_file_name(chat_id, "Group chat id"),
     }
 }
 

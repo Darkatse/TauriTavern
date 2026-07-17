@@ -19,7 +19,7 @@ test('Rust composition keeps repository sharing explicit', async () => {
 
     assert.match(
         source,
-        /let file_chat_repository = Arc::new\(FileChatRepository::with_chat_aliases_and_backup_settings\([\s\S]*?let chat_repository: Arc<dyn ChatRepository> = file_chat_repository\.clone\(\);[\s\S]*?let chat_backup_runtime: Arc<dyn ChatBackupRuntime> = file_chat_repository\.clone\(\);[\s\S]*?let group_chat_repository: Arc<dyn GroupChatRepository> = file_chat_repository;/,
+        /let file_chat_repository = Arc::new\(FileChatRepository::with_chat_aliases_and_backup_settings\([\s\S]*?cleanup_orphaned_chat_commit_staging\(\)[\s\S]*?let chat_repository: Arc<dyn ChatRepository> = file_chat_repository\.clone\(\);[\s\S]*?let chat_payload_commit_repository: Arc<dyn ChatPayloadCommitRepository> =\s*file_chat_repository\.clone\(\);[\s\S]*?let chat_backup_runtime: Arc<dyn ChatBackupRuntime> = file_chat_repository\.clone\(\);[\s\S]*?let group_chat_repository: Arc<dyn GroupChatRepository> = file_chat_repository;/,
     );
     assert.match(
         source,

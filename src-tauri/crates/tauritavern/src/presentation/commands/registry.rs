@@ -47,7 +47,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_commands::get_chat_payload_before_pages,
         super::chat_commands::patch_chat_payload_windowed,
         super::chat_commands::hide_chat_payload_before_cursor,
-        super::chat_commands::save_chat_payload_from_file,
         super::chat_commands::import_character_chats,
         // Group chat commands
         super::group_chat_commands::search_group_chats,
@@ -59,7 +58,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::group_chat_commands::get_group_chat_payload_before_pages,
         super::group_chat_commands::patch_group_chat_payload_windowed,
         super::group_chat_commands::hide_group_chat_payload_before_cursor,
-        super::group_chat_commands::save_group_chat_from_file,
         super::group_chat_commands::delete_group_chat,
         super::group_chat_commands::rename_group_chat,
         super::group_chat_commands::import_group_chat_payload,
@@ -240,6 +238,11 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::upload_staging_commands::stage_upload_chunk,
         super::upload_staging_commands::stage_upload_finish,
         super::upload_staging_commands::stage_upload_discard,
+        // Chat payload commit commands
+        super::chat_payload_commit_commands::begin_chat_commit,
+        super::chat_payload_commit_commands::append_chat_commit_chunk,
+        super::chat_payload_commit_commands::finish_chat_commit,
+        super::chat_payload_commit_commands::abort_chat_commit,
         // File commands
         super::file_commands::sanitize_filename,
         super::file_commands::upload_user_file,

@@ -9,6 +9,7 @@ mod backup;
 mod backup_inventory;
 mod cache;
 mod chat_dir_resolver;
+mod chat_payload_commit;
 mod extension_metadata;
 mod extension_store;
 mod group_chat_repository_impl;
@@ -43,6 +44,9 @@ pub struct FileChatRepository {
     chats_dir: PathBuf,
     group_chats_dir: PathBuf,
     backups_dir: PathBuf,
+    chat_commit_staging_dir: PathBuf,
+    chat_commit_sessions:
+        Mutex<HashMap<uuid::Uuid, Arc<Mutex<chat_payload_commit::CommitSession>>>>,
     path_write_locks: Arc<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>>,
     memory_cache: Arc<Mutex<MemoryCache>>,
     summary_cache: Arc<Mutex<SummaryCache>>,
@@ -110,6 +114,7 @@ impl FileChatRepository {
         chat_aliases: SharedChatAliasStore,
         backup_settings: tt_domain::models::settings::ChatBackupSettings,
     ) -> Self {
+        let chat_commit_staging_dir = backups_dir.with_file_name(".staging").join("chat-commits");
         // Create a memory cache with 100 chat capacity and 30 minute TTL
         let memory_cache = Arc::new(Mutex::new(MemoryCache::new(
             100,
@@ -133,6 +138,8 @@ impl FileChatRepository {
             chats_dir,
             group_chats_dir,
             backups_dir,
+            chat_commit_staging_dir,
+            chat_commit_sessions: Mutex::new(HashMap::new()),
             path_write_locks,
             memory_cache,
             summary_cache,

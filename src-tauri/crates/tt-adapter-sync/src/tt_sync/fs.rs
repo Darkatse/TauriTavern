@@ -233,6 +233,9 @@ mod tests {
         assert!(!policy.contains_path(
             "default-user/backups/.tmp-chat-backup-00000000000000000000000000000000"
         ));
+        assert!(ttsync_core::dataset::is_excluded(
+            "default-user/.staging/chat-commits/session.partial"
+        ));
     }
 
     #[test]
@@ -244,6 +247,12 @@ mod tests {
 
         std::fs::create_dir_all(root.join("default-user").join("chats"))
             .expect("create chats directory");
+        let chat_commit_staging = root
+            .join("default-user")
+            .join(".staging")
+            .join("chat-commits");
+        std::fs::create_dir_all(&chat_commit_staging)
+            .expect("create chat commit staging directory");
         std::fs::create_dir_all(lan_sync_dir.join("v2")).expect("create lan sync state directory");
         std::fs::create_dir_all(lan_sync_dir.join("tt-sync-v2"))
             .expect("create tt sync state directory");
@@ -254,6 +263,8 @@ mod tests {
             b"chat",
         )
         .expect("write included file");
+        std::fs::write(chat_commit_staging.join("session.partial"), b"partial")
+            .expect("write excluded chat commit stage");
         std::fs::write(lan_sync_dir.join("server-settings.json"), b"{}")
             .expect("write excluded server settings");
         std::fs::write(lan_sync_dir.join("sync-preferences.json"), b"{}")
@@ -468,6 +479,7 @@ mod tests {
             "default-user/user/lan-sync/tt-sync-v2/identity.json",
             "default-user/user/lan-sync/tt-sync-v2/paired-servers.json",
             "default-user/user/cache/settings_revision_v1.json",
+            "default-user/.staging/chat-commits/session.partial",
         ] {
             assert!(
                 !paths.contains(&state_path.to_string()),

@@ -1,6 +1,6 @@
 # Windowed Payload（分片读写）现状
 
-本文档描述 **当前已经落地** 的 windowed payload 机制：包括 tail 小窗口加载、向前分页（before/before_pages）、windowed patch 写入与全量保存回退；并覆盖 Prompt-backfill（生成时按需回填）与页缓存/批量 IPC 的现状。
+本文档描述 **当前已经落地** 的 windowed payload 机制：包括 tail 小窗口加载、向前分页（before/before_pages）、windowed patch 写入与 target-local commit 全量保存回退；并覆盖 Prompt-backfill（生成时按需回填）与页缓存/批量 IPC 的现状。
 
 目标读者：后续要继续改“聊天记录分片读写/生成上下文”的开发者。
 
@@ -145,7 +145,7 @@ character chat 保存：
     - `buildWindowedPayloadPatch(trimmedChat, windowState)` 推导最小 `patch`
     - 调用 `patchCharacterChatPayloadWindowed({ cursor, header, patch })`
     - 成功后用返回的新 cursor 更新 `windowState`，并更新 `savedMessageCount/dirtyFromIndex`
-  - 否则回退到全量保存：`saveCharacterChatPayload({ payload })`（临时文件 + `save_chat_payload_from_file`）
+  - 否则回退到全量保存：`saveCharacterChatPayload({ payload })`，由 target-local commit session 把 lazy JSONL frames 直接写入目标卷私有 staging，finish 后严格 rename 发布
   - integrity 错误会弹窗要求用户输入 `OVERWRITE` 决定是否强制覆盖；其它错误直接 toast/console（不静默）
 
 保存串行化（重要）：
@@ -229,6 +229,7 @@ group chat 保存：
 实现位置：
 
 - `src-tauri/crates/tauritavern/src/presentation/commands/chat_commands.rs`
+- `src-tauri/crates/tauritavern/src/presentation/commands/chat_payload_commit_commands.rs`
 
 读取：
 
@@ -243,22 +244,30 @@ group chat 保存：
 写入：
 
 - `patch_chat_payload_windowed(dto) -> ChatPayloadCursor`
-- `save_chat_payload_from_file(dto) -> ()`（全量保存回退路径）
 - group 对应：
   - `patch_group_chat_payload_windowed(dto)`
-  - `save_group_chat_from_file(dto)`
+- character/group 共用的全量提交协议：
+  - `begin_chat_commit(target, force) -> { sessionId, maxFrameBytes }`
+  - `append_chat_commit_chunk(session-id, offset, bytes) -> nextOffset`
+  - `finish_chat_commit(sessionId, expectedSize, commitReason) -> { size }`
+  - `abort_chat_commit(sessionId) -> ()`
+
+Android 的 append body 是逐帧 base64 JSON；iOS 与桌面平台使用 root raw body。每帧只有一个请求在途，renderer 必须校验 exact offset ACK。
 
 ### 5.2 应用层（Application）
 
 实现位置：
 
 - `src-tauri/crates/tt-application/src/services/chat_service.rs`
+- `src-tauri/crates/tt-application/src/services/group_chat_service.rs`
+- `src-tauri/crates/tt-application/src/services/chat_payload_commit_service.rs`
 
 职责：
 
 - 维持参数校验（例如 `max_lines/max_pages > 0`）
 - before_pages 仅做循环聚合（不在这里引入缓存与复杂策略）
 - 以 `ChatPayloadWindowPatchRequest` 整体传递 cursor/header/op/baseline/force，不在跨 crate 边界重复平铺同一 CAS mutation
+- full commit 成功后才把 committed target 与 `CurrentCommitReason` 通知 `ChatHistoryCoordinator`；begin/append/abort/失败 finish 均不通知
 
 ### 5.3 仓储层（Infrastructure）：FileChatRepository
 
@@ -266,6 +275,7 @@ group chat 保存：
 
 - 读取：`src-tauri/crates/tt-adapter-storage-core/src/repositories/file_chat_repository/windowed_payload.rs`
 - 写入 patch：`src-tauri/crates/tt-adapter-storage-core/src/repositories/file_chat_repository/windowed_patch.rs`
+- 全量 target-local commit：`src-tauri/crates/tt-adapter-storage-core/src/repositories/file_chat_repository/chat_payload_commit.rs`
 - cursor/IO 辅助：`src-tauri/crates/tt-adapter-storage-core/src/repositories/file_chat_repository/windowed_payload_io.rs`
 
 读语义要点：

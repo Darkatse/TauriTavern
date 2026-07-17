@@ -15,6 +15,7 @@ use tt_application::services::background_service::BackgroundService;
 use tt_application::services::character_service::CharacterService;
 use tt_application::services::chat_completion_service::ChatCompletionService;
 use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
+use tt_application::services::chat_payload_commit_service::ChatPayloadCommitService;
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::content_service::ContentService;
 use tt_application::services::data_archive_service::DataArchiveService;
@@ -76,6 +77,7 @@ pub(crate) struct AppServices {
     pub(crate) chat_service: Arc<ChatService>,
     pub(crate) group_chat_service: Arc<GroupChatService>,
     pub(crate) chat_history_coordinator: Arc<ChatHistoryCoordinator>,
+    pub(crate) chat_payload_commit_service: Arc<ChatPayloadCommitService>,
     pub(crate) user_service: Arc<UserService>,
     pub(crate) settings_service: Arc<SettingsService>,
     pub(crate) user_directory_service: Arc<UserDirectoryService>,

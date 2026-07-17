@@ -455,13 +455,12 @@ Tauri 2.10.2 在 Android 上不支持 `InvokeBody::Raw`。业务 payload 进入�
 聊天 full-save 的正式契约是：
 
 ```text
-stage_upload_begin
-  -> bounded stage_upload_chunk
+begin_chat_commit(logical target, force)
+  -> bounded append_chat_commit_chunk
      -> Android: { data: base64 }, one-in-flight
      -> Desktop/iOS: root raw Uint8Array
-  -> stage_upload_finish
-  -> existing save_*_from_file
-  -> stage_upload_discard
+  -> finish_chat_commit(expectedSize, commitReason)
+  -> target-local strict rename publish
 ```
 
 维护原则：
@@ -469,7 +468,9 @@ stage_upload_begin
 - Android 的大型 JS -> Rust bytes 不得以 raw/numeric-array payload 穿过 Tauri invoke。
 - base64 只能按 host 返回的 frame cap 逐帧生成和发送，不得先物化完整文件的 base64 表示。
 - 每个文件严格逐帧 await，并校验 raw byte offset ACK 与 finish size；失败不得回退旧 plugin-fs raw 路径。
-- chat writer 只负责 staging，最终聊天继续由现有 Rust repository 流程提交。
+- renderer 只持有 opaque session ID，不接收 staging/target host path；Rust repository 在目标卷的 `.staging/chat-commits` 内独占 staging 生命周期。
+- finish 只允许 strict rename；失败显式返回，不得 copy 到 current。启动时仅清理该专用 staging 子树。
+- generic `stage_upload_*` 继续服务 avatar、import 与普通 Blob 物化，不参与聊天 full-save。
 - bounded base64 达到实机目标后即停止；只有 profile 证明其仍是主要热点时，才评估 text frame 或 AndroidX binary bridge。
 
 Tauri 版本升级后也必须重新验证运行时 envelope，不能仅凭 API 表面接受 `Uint8Array` 就假定 Android Raw IPC 已可用。

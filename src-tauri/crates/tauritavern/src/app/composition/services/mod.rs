@@ -17,6 +17,7 @@ use tt_application::services::background_service::BackgroundService;
 use tt_application::services::character_service::CharacterService;
 use tt_application::services::chat_completion_service::ChatCompletionService;
 use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
+use tt_application::services::chat_payload_commit_service::ChatPayloadCommitService;
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::content_service::ContentService;
 use tt_application::services::extension_service::ExtensionService;
@@ -56,7 +57,8 @@ pub(super) async fn build(
         app_handle,
         data_directory,
         tauritavern_settings.chat_backups,
-    )?;
+    )
+    .await?;
     let ios_policy = startup_profile.ios_policy.clone();
 
     let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
@@ -146,6 +148,10 @@ pub(super) async fn build(
         repositories.chat_repository.clone(),
         repositories.group_chat_repository.clone(),
     ));
+    let chat_payload_commit_service = Arc::new(ChatPayloadCommitService::new(
+        repositories.chat_payload_commit_repository.clone(),
+        chat_history_coordinator.clone(),
+    ));
 
     let group_service = Arc::new(GroupService::new(
         repositories.group_repository.clone(),
@@ -206,6 +212,7 @@ pub(super) async fn build(
         chat_service,
         group_chat_service,
         chat_history_coordinator,
+        chat_payload_commit_service,
         user_service,
         settings_service,
         user_directory_service,

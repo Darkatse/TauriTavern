@@ -154,17 +154,6 @@ pub struct ExportChatDto {
     pub format: String,
 }
 
-/// DTO for saving a character chat payload from an existing JSONL file path.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SaveChatFromFileDto {
-    #[serde(rename = "ch_name")]
-    pub character_name: String,
-    pub file_name: String,
-    pub file_path: String,
-    pub force: Option<bool>,
-    pub commit_reason: Option<CurrentCommitReason>,
-}
-
 /// DTO for patching a windowed character chat payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchChatWindowedDto {
@@ -199,15 +188,6 @@ pub struct HideGroupChatBeforeCursorDto {
     pub hide: bool,
     pub name_filter: Option<String>,
     pub expected_window_line_count: usize,
-}
-
-/// DTO for saving a group chat payload from an existing JSONL file path.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SaveGroupChatFromFileDto {
-    pub id: String,
-    pub file_path: String,
-    pub force: Option<bool>,
-    pub commit_reason: Option<CurrentCommitReason>,
 }
 
 /// DTO for patching a windowed group chat payload.

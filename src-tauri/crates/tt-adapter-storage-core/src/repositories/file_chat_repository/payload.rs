@@ -3,7 +3,6 @@ use std::path::Path;
 use serde_json::Value;
 use tokio::fs;
 
-use crate::file_system::replace_file_with_fallback;
 use crate::jsonl_utils::{parse_jsonl_bytes, read_first_non_empty_jsonl_line, write_jsonl_file};
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, strip_jsonl_extension};
@@ -106,7 +105,7 @@ impl FileChatRepository {
         Ok(Self::extract_integrity_slug_from_header(&header))
     }
 
-    async fn read_integrity_slug_from_existing_file(
+    pub(super) async fn read_integrity_slug_from_existing_file(
         &self,
         path: &Path,
     ) -> Result<Option<String>, DomainError> {
@@ -142,7 +141,7 @@ impl FileChatRepository {
         verify_integrity_match(existing_integrity.as_deref(), incoming_integrity.as_deref())
     }
 
-    async fn read_incoming_integrity_from_file(
+    pub(super) async fn read_incoming_integrity_from_file(
         payload_path: &Path,
     ) -> Result<Option<String>, DomainError> {
         let Some(line) = read_first_non_empty_jsonl_line(payload_path).await? else {
@@ -151,22 +150,15 @@ impl FileChatRepository {
             ));
         };
 
-        Self::extract_integrity_slug_from_jsonl_line(&line)
-    }
-
-    async fn verify_chat_integrity_file_if_needed(
-        &self,
-        path: &Path,
-        payload_path: &Path,
-        force: bool,
-    ) -> Result<(), DomainError> {
-        if force {
-            return Ok(());
+        let header: Value = serde_json::from_str(&line).map_err(|error| {
+            DomainError::InvalidData(format!("Failed to parse chat payload header: {error}"))
+        })?;
+        if !header.is_object() {
+            return Err(DomainError::InvalidData(
+                "Chat payload header must be a JSON object".to_string(),
+            ));
         }
-
-        let incoming_integrity = Self::read_incoming_integrity_from_file(payload_path).await?;
-        let existing_integrity = self.read_integrity_slug_from_existing_file(path).await?;
-        verify_integrity_match(existing_integrity.as_deref(), incoming_integrity.as_deref())
+        Ok(Self::extract_integrity_slug_from_header(&header))
     }
 
     pub(super) async fn write_payload_to_path(
@@ -185,43 +177,6 @@ impl FileChatRepository {
         self.verify_chat_integrity_if_needed(path, payload, force)
             .await?;
         write_jsonl_file(path, payload).await?;
-
-        Ok(())
-    }
-
-    pub(super) async fn write_payload_file_to_path(
-        &self,
-        path: &Path,
-        source_path: &Path,
-        force: bool,
-    ) -> Result<(), DomainError> {
-        if !source_path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Chat payload source file not found: {:?}",
-                source_path
-            )));
-        }
-
-        let _write_guard = self.acquire_payload_write_lock(path).await;
-        self.verify_chat_integrity_file_if_needed(path, source_path, force)
-            .await?;
-
-        let temp_path = Self::temp_payload_path(path);
-        if let Some(parent) = path.parent()
-            && !parent.exists()
-        {
-            fs::create_dir_all(parent).await.map_err(|e| {
-                DomainError::InternalError(format!("Failed to create directory: {}", e))
-            })?;
-        }
-
-        fs::copy(source_path, &temp_path).await.map_err(|e| {
-            DomainError::InternalError(format!(
-                "Failed to copy chat payload file from {:?} to {:?}: {}",
-                source_path, temp_path, e
-            ))
-        })?;
-        replace_file_with_fallback(&temp_path, path).await?;
 
         Ok(())
     }

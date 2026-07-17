@@ -136,7 +136,7 @@ src/
   - 移动端（Android/iOS runtime）：`DEFAULT_CHAT_WINDOW_LINES_MOBILE = 50`
 - 初次加载：`load*PayloadTail({ maxLines }) -> { payload, cursor, hasMoreBefore }`。
 - 翻页：`load*PayloadBefore({ cursor, maxLines }) -> { messages, cursor, hasMoreBefore }`；prepend 后必须 `updateViewMessageIds(0)`。
-- 保存：`patch*ChatPayloadWindowed({ cursor, header, patch }) -> cursor` 并回写 window state；没有有效 window state 时走全量保存，保存前不要落盘 `chat_metadata.lastInContextMessageId`。
+- 保存：`patch*ChatPayloadWindowed({ cursor, header, patch }) -> cursor` 并回写 window state；没有有效 window state 时走 target-local commit session 全量保存（lazy JSONL frames，finish 原子发布），保存前不要落盘 `chat_metadata.lastInContextMessageId`。
 - 错误策略：cursor 签名/边界失效直接抛错；不要写“静默回退到全量加载/全量保存”的 fallback。
 
 ## 7. 插件系统前端适配

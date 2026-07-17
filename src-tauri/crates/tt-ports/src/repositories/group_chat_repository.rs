@@ -72,14 +72,6 @@ pub trait GroupChatRepository: Send + Sync {
         expected_window_line_count: usize,
     ) -> Result<ChatPayloadCursor, DomainError>;
 
-    /// Save raw JSONL bytes for a group chat payload from an existing file path.
-    async fn save_group_chat_payload_from_path(
-        &self,
-        chat_id: &str,
-        source_path: &Path,
-        force: bool,
-    ) -> Result<(), DomainError>;
-
     /// Create an automatic history snapshot for a group chat.
     ///
     /// Scheduling is owned by the application layer; the repository only

@@ -9,7 +9,7 @@ use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
     HideChatBeforeCursorDto, ImportCharacterChatsDto, ImportChatDto, PatchChatWindowedDto,
-    PinnedCharacterChatDto, RenameChatDto, SaveChatFromFileDto,
+    PinnedCharacterChatDto, RenameChatDto,
 };
 use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_application::errors::ApplicationError;
@@ -523,24 +523,6 @@ pub async fn hide_chat_payload_before_cursor(
         .map_err(map_command_error(
             "Failed to update hidden state before chat window",
         ))
-}
-
-#[tauri::command]
-pub async fn save_chat_payload_from_file(
-    dto: SaveChatFromFileDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    log_command(format!(
-        "save_chat_payload_from_file {}/{}",
-        dto.character_name, dto.file_name
-    ));
-
-    app_state
-        .services
-        .chat_service
-        .save_chat_from_file(dto)
-        .await
-        .map_err(map_command_error("Failed to save chat payload from file"))
 }
 
 #[tauri::command]

@@ -5,7 +5,6 @@ use serde_json::Value;
 
 use crate::dto::chat_dto::{
     ChatSearchResultDto, DeleteGroupChatDto, ImportGroupChatDto, RenameGroupChatDto,
-    SaveGroupChatFromFileDto,
 };
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
 use crate::errors::ApplicationError;
@@ -340,25 +339,6 @@ impl GroupChatService {
         self.note_current_committed(chat_id, CurrentCommitReason::Mutation)
             .await;
         Ok(cursor)
-    }
-
-    /// Save a group chat payload from a JSONL file path.
-    pub async fn save_group_chat_from_file(
-        &self,
-        dto: SaveGroupChatFromFileDto,
-    ) -> Result<(), ApplicationError> {
-        validate_chat_file_name(&dto.id, "Group chat id")?;
-
-        let commit_reason = dto.commit_reason.unwrap_or_default();
-        self.group_chat_repository
-            .save_group_chat_payload_from_path(
-                &dto.id,
-                Path::new(&dto.file_path),
-                dto.force.unwrap_or(false),
-            )
-            .await?;
-        self.note_current_committed(&dto.id, commit_reason).await;
-        Ok(())
     }
 
     /// Delete a group chat payload file.

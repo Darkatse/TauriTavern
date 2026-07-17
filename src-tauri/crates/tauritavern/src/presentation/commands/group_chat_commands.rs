@@ -7,7 +7,7 @@ use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
     ChatSearchResultDto, DeleteGroupChatDto, HideGroupChatBeforeCursorDto, ImportGroupChatDto,
-    PatchGroupChatWindowedDto, PinnedGroupChatDto, RenameGroupChatDto, SaveGroupChatFromFileDto,
+    PatchGroupChatWindowedDto, PinnedGroupChatDto, RenameGroupChatDto,
 };
 use tt_application::errors::ApplicationError;
 use tt_ports::repositories::chat_types::{
@@ -226,23 +226,6 @@ pub async fn hide_group_chat_payload_before_cursor(
         .await
         .map_err(map_command_error(
             "Failed to update hidden state before group chat window",
-        ))
-}
-
-#[tauri::command]
-pub async fn save_group_chat_from_file(
-    dto: SaveGroupChatFromFileDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    log_command(format!("save_group_chat_from_file {}", dto.id));
-
-    app_state
-        .services
-        .group_chat_service
-        .save_group_chat_from_file(dto)
-        .await
-        .map_err(map_command_error(
-            "Failed to save group chat payload from file",
         ))
 }
 

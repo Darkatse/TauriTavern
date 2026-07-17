@@ -31,7 +31,7 @@ pub(crate) fn run_export_data_archive(
         data_root,
         output_path,
         "data",
-        &|relative_path| !is_chat_backup_staging_entry(relative_path),
+        &|relative_path| !is_transient_chat_entry(relative_path),
         report_progress,
         is_cancelled,
     )
@@ -266,7 +266,7 @@ fn archive_entry_path(archive_root_prefix: &str, archive_relative_path: &str) ->
 }
 
 fn should_include_user_backup_entry(relative_path: &Path, include_secrets: bool) -> bool {
-    if is_chat_backup_staging_entry(relative_path) {
+    if is_transient_chat_entry(relative_path) {
         return false;
     }
 
@@ -299,6 +299,25 @@ fn is_chat_backup_staging_entry(relative_path: &Path) -> bool {
             && identifier.len() == 32
             && uuid::Uuid::parse_str(identifier).is_ok()
     })
+}
+
+fn is_chat_commit_staging_entry(relative_path: &Path) -> bool {
+    let components = path_components(relative_path);
+    matches!(
+        components.as_slice(),
+        [default_user, staging, chat_commits, ..]
+            if default_user == "default-user"
+                && staging == ".staging"
+                && chat_commits == "chat-commits"
+    ) || matches!(
+        components.as_slice(),
+        [staging, chat_commits, ..]
+            if staging == ".staging" && chat_commits == "chat-commits"
+    )
+}
+
+fn is_transient_chat_entry(relative_path: &Path) -> bool {
+    is_chat_backup_staging_entry(relative_path) || is_chat_commit_staging_entry(relative_path)
 }
 
 fn report_export_progress(
@@ -384,6 +403,22 @@ mod tests {
         ));
         assert!(!is_chat_backup_staging_entry(Path::new(
             "default-user/backups/.tmp-chat-backup-not-a-uuid"
+        )));
+    }
+
+    #[test]
+    fn archive_filters_only_the_chat_commit_staging_subtree() {
+        assert!(is_chat_commit_staging_entry(Path::new(
+            "default-user/.staging/chat-commits/session.partial"
+        )));
+        assert!(is_chat_commit_staging_entry(Path::new(
+            ".staging/chat-commits/session.partial"
+        )));
+        assert!(!is_chat_commit_staging_entry(Path::new(
+            "default-user/.staging/other-state/data.json"
+        )));
+        assert!(!is_chat_commit_staging_entry(Path::new(
+            "default-user/chats/.staging/chat-commits.jsonl"
         )));
     }
 

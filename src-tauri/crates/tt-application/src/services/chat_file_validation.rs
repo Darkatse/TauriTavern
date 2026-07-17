@@ -1,3 +1,4 @@
+use crate::dto::chat_history_dto::ChatHistoryLocator;
 use crate::errors::ApplicationError;
 use tt_domain::models::chat::normalize_chat_file_stem;
 use tt_domain::models::filename::sanitize_filename;
@@ -20,6 +21,21 @@ pub(super) fn validate_chat_file_name(value: &str, label: &str) -> Result<(), Ap
     }
 
     Ok(())
+}
+
+pub(super) fn validate_chat_history_locator(
+    locator: &ChatHistoryLocator,
+) -> Result<(), ApplicationError> {
+    match locator {
+        ChatHistoryLocator::Character {
+            character_id,
+            file_name,
+        } => {
+            validate_character_path_component(character_id)?;
+            validate_chat_file_name(file_name, "Chat file name")
+        }
+        ChatHistoryLocator::Group { chat_id } => validate_chat_file_name(chat_id, "Group chat id"),
+    }
 }
 
 #[cfg(test)]

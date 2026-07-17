@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
-    ImportCharacterChatsDto, ImportChatDto, RenameChatDto, SaveChatFromFileDto,
+    ImportCharacterChatsDto, ImportChatDto, RenameChatDto,
 };
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
 use crate::errors::ApplicationError;
@@ -699,28 +699,6 @@ impl ChatService {
         self.note_current_committed(character_name, file_name, CurrentCommitReason::Mutation)
             .await;
         Ok(cursor)
-    }
-
-    /// Save a character chat payload from a JSONL file path.
-    pub async fn save_chat_from_file(
-        &self,
-        dto: SaveChatFromFileDto,
-    ) -> Result<(), ApplicationError> {
-        validate_character_path_component(&dto.character_name)?;
-        validate_chat_file_name(&dto.file_name, "Chat file name")?;
-
-        let commit_reason = dto.commit_reason.unwrap_or_default();
-        self.chat_repository
-            .save_chat_payload_from_path(
-                &dto.character_name,
-                &dto.file_name,
-                Path::new(&dto.file_path),
-                dto.force.unwrap_or(false),
-            )
-            .await?;
-        self.note_current_committed(&dto.character_name, &dto.file_name, commit_reason)
-            .await;
-        Ok(())
     }
 
     /// Import one or more character chats from an uploaded file.

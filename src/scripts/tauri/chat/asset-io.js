@@ -1,5 +1,4 @@
-import { convertFileSrc, invoke } from '../../../tauri-bridge.js';
-import { encodeBytesToBase64 } from '../../../tauri/main/binary-utils.js';
+import { convertFileSrc } from '../../../tauri-bridge.js';
 import { isAndroidRuntime } from './platform.js';
 
 function requireTauri() {
@@ -8,86 +7,6 @@ function requireTauri() {
     }
 
     return window.__TAURI__;
-}
-
-export async function writeTempFileFromBytesIterable(bytesIterable) {
-    let filePath = '';
-
-    try {
-        const begin = await invoke('stage_upload_begin', {
-            dto: {
-                kind: 'chat-jsonl',
-                preferred_extension: 'jsonl',
-            },
-        });
-        filePath = String(begin?.file_path || '').trim();
-        if (!filePath) {
-            throw new Error('Host chat staging did not return a file path');
-        }
-
-        const chunkSize = Number(begin?.chunk_size);
-        if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) {
-            throw new Error('Host chat staging returned an invalid chunk size');
-        }
-
-        const android = isAndroidRuntime();
-        let offset = 0;
-
-        for (const inputChunk of bytesIterable) {
-            if (!(inputChunk instanceof Uint8Array)) {
-                throw new Error('Chat staging input must contain Uint8Array chunks');
-            }
-
-            for (let start = 0; start < inputChunk.byteLength; start += chunkSize) {
-                const frame = inputChunk.subarray(start, start + chunkSize);
-                const headers = {
-                    'file-path': encodeURIComponent(filePath),
-                    offset: String(offset),
-                };
-                const nextOffset = Number(await (android
-                    ? invoke('stage_upload_chunk', { data: encodeBytesToBase64(frame) }, {
-                        headers: {
-                            ...headers,
-                            'chunk-encoding': 'base64',
-                        },
-                    })
-                    : invoke('stage_upload_chunk', frame, { headers })));
-                const expectedNextOffset = offset + frame.byteLength;
-                if (nextOffset !== expectedNextOffset) {
-                    throw new Error(`Host chat staging returned unexpected offset ${nextOffset}`);
-                }
-                offset = nextOffset;
-            }
-        }
-
-        const finished = await invoke('stage_upload_finish', {
-            file_path: filePath,
-            expected_size: offset,
-        });
-        const finishedPath = String(finished?.file_path || '').trim();
-        if (!finishedPath) {
-            throw new Error('Host chat staging did not return a finished file path');
-        }
-        if (Number(finished?.size) !== offset) {
-            throw new Error(`Host chat staging returned unexpected size ${finished?.size}`);
-        }
-
-        return {
-            filePath: finishedPath,
-            cleanup: () => invoke('stage_upload_discard', {
-                file_path: finishedPath,
-            }),
-        };
-    } catch (error) {
-        if (filePath) {
-            try {
-                await invoke('stage_upload_discard', { file_path: filePath });
-            } catch {
-                // Preserve the staging error; an orphaned cache file is non-fatal.
-            }
-        }
-        throw error;
-    }
 }
 
 const FS_READ_CHUNK_BYTES = 512 * 1024;

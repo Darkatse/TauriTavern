@@ -42,6 +42,7 @@ use tt_ports::repositories::avatar_repository::AvatarRepository;
 use tt_ports::repositories::background_repository::BackgroundRepository;
 use tt_ports::repositories::character_repository::CharacterRepository;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionRepository;
+use tt_ports::repositories::chat_payload_commit_repository::ChatPayloadCommitRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::checkpoint_repository::CheckpointRepository;
 use tt_ports::repositories::content_repository::ContentRepository;
@@ -74,6 +75,8 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) character_repository: Arc<dyn CharacterRepository>,
     pub(in crate::app::composition) chat_repository: Arc<dyn ChatRepository>,
     pub(in crate::app::composition) group_chat_repository: Arc<dyn GroupChatRepository>,
+    pub(in crate::app::composition) chat_payload_commit_repository:
+        Arc<dyn ChatPayloadCommitRepository>,
     pub(in crate::app::composition) chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
     pub(in crate::app::composition) user_repository: Arc<dyn UserRepository>,
     pub(in crate::app::composition) settings_repository: Arc<dyn SettingsRepository>,
@@ -113,7 +116,7 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) update_repository: Arc<dyn UpdateRepository>,
 }
 
-pub(super) fn build(
+pub(super) async fn build(
     app_handle: &AppHandle,
     data_directory: &DataDirectory,
     chat_backup_settings: ChatBackupSettings,
@@ -131,6 +134,12 @@ pub(super) fn build(
         chat_aliases.clone(),
         chat_backup_settings,
     ));
+    if let Err(error) = file_chat_repository
+        .cleanup_orphaned_chat_commit_staging()
+        .await
+    {
+        tracing::warn!(%error, "Failed to clean orphaned chat commit staging");
+    }
     let character_repository: Arc<dyn CharacterRepository> =
         Arc::new(FileCharacterRepository::with_chat_repository(
             data_directory.characters().to_path_buf(),
@@ -140,6 +149,8 @@ pub(super) fn build(
             file_chat_repository.clone(),
         ));
     let chat_repository: Arc<dyn ChatRepository> = file_chat_repository.clone();
+    let chat_payload_commit_repository: Arc<dyn ChatPayloadCommitRepository> =
+        file_chat_repository.clone();
     let chat_backup_runtime: Arc<dyn ChatBackupRuntime> = file_chat_repository.clone();
     let group_chat_repository: Arc<dyn GroupChatRepository> = file_chat_repository;
 
@@ -279,6 +290,7 @@ pub(super) fn build(
         character_repository,
         chat_repository,
         group_chat_repository,
+        chat_payload_commit_repository,
         chat_backup_runtime,
         user_repository,
         settings_repository,

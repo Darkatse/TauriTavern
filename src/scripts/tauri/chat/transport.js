@@ -4,8 +4,9 @@ import {
     characterStemFromAvatarFileName,
     hasCharacterAvatarIdentity,
 } from '../../../tauri/main/services/characters/character-identity.js';
-import { fetchAssetStream, writeTempFileFromBytesIterable } from './asset-io.js';
-import { jsonlStreamToPayload, jsonlToPayload, payloadToJsonlByteChunks } from './jsonl.js';
+import { fetchAssetStream } from './asset-io.js';
+import { commitChatPayload } from './commit.js';
+import { jsonlStreamToPayload, jsonlToPayload } from './jsonl.js';
 import {
     CHAT_HISTORY_MODE_WINDOWED,
     getChatHistoryBootstrapModeName,
@@ -32,36 +33,6 @@ export function resolveCharacterDirectoryId(characterName, avatarUrl) {
     }
 
     return String(characterName || '').trim();
-}
-
-async function withTempFile(bytesIterable, handler) {
-    const tempFile = await writeTempFileFromBytesIterable(bytesIterable);
-
-    let result;
-    let handlerError;
-
-    try {
-        result = await handler(tempFile.filePath);
-    } catch (error) {
-        handlerError = error;
-    }
-
-    try {
-        await tempFile.cleanup();
-    } catch (cleanupError) {
-        if (handlerError) {
-            const handlerMessage = String(handlerError?.message || handlerError || 'Temp file handler failed');
-            throw new AggregateError([handlerError, cleanupError], handlerMessage);
-        }
-
-        throw cleanupError;
-    }
-
-    if (handlerError) {
-        throw handlerError;
-    }
-
-    return result;
 }
 
 export function isTauriChatPayloadTransportEnabled() {
@@ -171,15 +142,16 @@ export async function saveCharacterChatPayload({ characterName, avatarUrl, fileN
         throw new Error('Invalid chat payload');
     }
 
-    await withTempFile(payloadToJsonlByteChunks(payload), (filePath) => invoke('save_chat_payload_from_file', {
-        dto: {
-            ch_name: normalizedCharacter,
-            file_name: normalizedFile,
-            file_path: filePath,
-            force,
-            commit_reason: commitReason,
+    await commitChatPayload({
+        target: {
+            kind: 'character',
+            characterId: normalizedCharacter,
+            fileName: normalizedFile,
         },
-    }));
+        payload,
+        force,
+        commitReason,
+    });
 }
 
 function normalizeExpectedWindowLineCount(value) {
@@ -320,14 +292,15 @@ export async function saveGroupChatPayload({ id, payload, force = false, commitR
         throw new Error('Invalid group chat payload');
     }
 
-    await withTempFile(payloadToJsonlByteChunks(payload), (filePath) => invoke('save_group_chat_from_file', {
-        dto: {
-            id: normalizedId,
-            file_path: filePath,
-            force,
-            commit_reason: commitReason,
+    await commitChatPayload({
+        target: {
+            kind: 'group',
+            chatId: normalizedId,
         },
-    }));
+        payload,
+        force,
+        commitReason,
+    });
 }
 
 export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch, expectedWindowLineCount, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {

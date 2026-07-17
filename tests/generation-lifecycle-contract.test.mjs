@@ -28,10 +28,11 @@ test('Unhandled foreground Generate errors reuse the legacy unblock path', async
 });
 
 test('stable chat-history reasons cover provider, final, transport, and agent commits', async () => {
-    const [script, groups, transport, routes, agentBridge] = await Promise.all([
+    const [script, groups, transport, commit, routes, agentBridge] = await Promise.all([
         readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8'),
         readFile(path.join(REPO_ROOT, 'src/scripts/group-chats.js'), 'utf8'),
         readFile(path.join(REPO_ROOT, 'src/scripts/tauri/chat/transport.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/scripts/tauri/chat/commit.js'), 'utf8'),
         readFile(path.join(REPO_ROOT, 'src/tauri/main/routes/chat-routes.js'), 'utf8'),
         readFile(path.join(REPO_ROOT, 'src/tauri/main/api/agent-chat-commit-bridge.js'), 'utf8'),
     ]);
@@ -48,7 +49,9 @@ test('stable chat-history reasons cover provider, final, transport, and agent co
     assert.match(transport, /MAINTENANCE: 'maintenance'/);
 
     assert.match(transport, /commit_reason: commitReason/g);
-    assert.equal(transport.match(/commit_reason: commitReason/g)?.length, 4);
+    assert.equal(transport.match(/commit_reason: commitReason/g)?.length, 2);
+    assert.match(commit, /const normalizedCommitReason = commitReason \?\? 'mutation';/);
+    assert.match(commit, /invoke\('finish_chat_commit', \{\s*sessionId,\s*expectedSize: offset,\s*commitReason: normalizedCommitReason,/s);
     assert.equal(routes.match(/commitReason: body\?\.commit_reason/g)?.length, 2);
     assert.match(agentBridge, /handleChatCommitRequested[\s\S]*state\.persistChat\(script, CHAT_COMMIT_REASON\.GENERATION_CHECKPOINT\)/);
     assert.match(agentBridge, /handlePersistentStateMetadataUpdateRequested[\s\S]*state\.persistChat\(script, CHAT_COMMIT_REASON\.MUTATION\)/);

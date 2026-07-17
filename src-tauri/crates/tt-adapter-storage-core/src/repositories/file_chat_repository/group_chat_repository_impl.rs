@@ -181,20 +181,6 @@ impl GroupChatRepository for FileChatRepository {
         .await
     }
 
-    async fn save_group_chat_payload_from_path(
-        &self,
-        chat_id: &str,
-        source_path: &Path,
-        force: bool,
-    ) -> Result<(), DomainError> {
-        self.ensure_directory_exists().await?;
-        let path = self.get_group_chat_path(chat_id)?;
-        self.write_payload_file_to_path(&path, source_path, force)
-            .await?;
-        self.remove_summary_cache_for_path(&path).await;
-        Ok(())
-    }
-
     async fn backup_group_chat_automatic(&self, chat_id: &str) -> Result<(), DomainError> {
         let path = self.get_group_chat_path(chat_id)?;
         let Some(_write_guard) = self.try_acquire_payload_write_lock(&path).await else {

@@ -1,21 +1,18 @@
-use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use base64::Engine;
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, ipc::InvokeBody};
+use tauri::{AppHandle, Manager};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+use crate::presentation::commands::chunk_body::chunk_bytes_from_request;
 use crate::presentation::commands::helpers::log_command;
 use crate::presentation::errors::CommandError;
 
 const STAGING_ROOT_NAME: &str = "tauritavern-upload-staging";
 const DEFAULT_KIND: &str = "generic";
 const DATA_ARCHIVE_KIND: &str = "data-archive";
-const CHUNK_ENCODING_BASE64: &str = "base64";
-const HEADER_CHUNK_ENCODING: &str = "chunk-encoding";
 const HEADER_FILE_PATH: &str = "file-path";
 const HEADER_OFFSET: &str = "offset";
 const MOBILE_SMALL_ASSET_CHUNK_BYTES: u64 = 512 * 1024;
@@ -159,21 +156,6 @@ fn required_header(request: &tauri::ipc::Request<'_>, name: &str) -> Result<Stri
         .map_err(|_| CommandError::BadRequest(format!("Invalid upload staging header: {name}")))
 }
 
-fn optional_header(
-    request: &tauri::ipc::Request<'_>,
-    name: &str,
-) -> Result<Option<String>, CommandError> {
-    request
-        .headers()
-        .get(name)
-        .map(|value| {
-            value.to_str().map(str::to_string).map_err(|_| {
-                CommandError::BadRequest(format!("Invalid upload staging header: {name}"))
-            })
-        })
-        .transpose()
-}
-
 fn chunk_file_path_from_request(request: &tauri::ipc::Request<'_>) -> Result<String, CommandError> {
     let encoded = required_header(request, HEADER_FILE_PATH)?;
     percent_decode_str(&encoded)
@@ -189,57 +171,6 @@ fn chunk_offset_from_request(request: &tauri::ipc::Request<'_>) -> Result<u64, C
     offset.parse::<u64>().map_err(|_| {
         CommandError::BadRequest("Upload staging offset header is invalid".to_string())
     })
-}
-
-fn chunk_bytes_from_request<'a>(
-    request: &'a tauri::ipc::Request<'_>,
-) -> Result<Cow<'a, [u8]>, CommandError> {
-    match optional_header(request, HEADER_CHUNK_ENCODING)?.as_deref() {
-        Some(CHUNK_ENCODING_BASE64) => return chunk_base64_bytes_from_body(request.body()),
-        Some(encoding) => {
-            return Err(CommandError::BadRequest(format!(
-                "Unsupported upload staging chunk encoding: {}",
-                encoding
-            )));
-        }
-        None => {}
-    }
-
-    chunk_bytes_from_body(request.body())
-}
-
-fn chunk_bytes_from_body(body: &InvokeBody) -> Result<Cow<'_, [u8]>, CommandError> {
-    match body {
-        InvokeBody::Raw(data) => Ok(Cow::Borrowed(data)),
-        InvokeBody::Json(_) => Err(CommandError::BadRequest(
-            "Upload staging chunk body must be raw bytes".to_string(),
-        )),
-    }
-}
-
-fn chunk_base64_bytes_from_body(body: &InvokeBody) -> Result<Cow<'_, [u8]>, CommandError> {
-    let value = match body {
-        InvokeBody::Json(serde_json::Value::Object(values)) => values
-            .get("data")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                CommandError::BadRequest(
-                    "Upload staging base64 chunk body must contain data".to_string(),
-                )
-            })?,
-        _ => {
-            return Err(CommandError::BadRequest(
-                "Upload staging base64 chunk body must contain data".to_string(),
-            ));
-        }
-    };
-
-    base64::engine::general_purpose::STANDARD
-        .decode(value)
-        .map(Cow::Owned)
-        .map_err(|_| {
-            CommandError::BadRequest("Upload staging base64 chunk body is invalid".to_string())
-        })
 }
 
 #[tauri::command]
@@ -354,51 +285,5 @@ pub async fn stage_upload_discard(app: AppHandle, file_path: String) -> Result<(
             "Failed to remove upload staging file: {}",
             error
         ))),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn chunk_bytes_from_body_accepts_raw_bytes_without_copying() {
-        let body = InvokeBody::Raw(vec![1, 2, 3]);
-        let bytes = chunk_bytes_from_body(&body).expect("raw bytes should parse");
-
-        assert!(matches!(bytes, Cow::Borrowed(_)));
-        assert_eq!(bytes.as_ref(), &[1, 2, 3]);
-    }
-
-    #[test]
-    fn chunk_bytes_from_body_rejects_json_byte_arrays() {
-        let body = InvokeBody::Json(serde_json::json!([0, 127, 255]));
-        let error = chunk_bytes_from_body(&body).expect_err("json byte arrays must fail");
-
-        assert!(matches!(error, CommandError::BadRequest(_)));
-    }
-
-    #[test]
-    fn chunk_base64_bytes_from_body_accepts_android_payloads() {
-        let body = InvokeBody::Json(serde_json::json!({ "data": "AQIDBA==" }));
-        let bytes = chunk_base64_bytes_from_body(&body).expect("base64 bytes should parse");
-
-        assert_eq!(bytes.as_ref(), &[1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn chunk_base64_bytes_from_body_rejects_top_level_strings() {
-        let body = InvokeBody::Json(serde_json::json!("AQIDBA=="));
-        let error = chunk_base64_bytes_from_body(&body).expect_err("top-level strings must fail");
-
-        assert!(matches!(error, CommandError::BadRequest(_)));
-    }
-
-    #[test]
-    fn chunk_base64_bytes_from_body_rejects_invalid_payloads() {
-        let body = InvokeBody::Json(serde_json::json!({ "data": "***" }));
-        let error = chunk_base64_bytes_from_body(&body).expect_err("invalid base64 must fail");
-
-        assert!(matches!(error, CommandError::BadRequest(_)));
     }
 }

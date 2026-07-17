@@ -647,42 +647,6 @@ impl ChatRepository for FileChatRepository {
         .await
     }
 
-    async fn save_chat_payload_from_path(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        source_path: &Path,
-        force: bool,
-    ) -> Result<(), DomainError> {
-        self.ensure_directory_exists().await?;
-
-        let path = self
-            .resolve_character_chat_path(character_name, file_name)
-            .await?;
-        let backup_key = self.get_cache_key(character_name, file_name)?;
-
-        let character_dir = self.resolve_character_chat_dir(character_name).await?;
-        if !character_dir.exists() {
-            fs::create_dir_all(&character_dir).await.map_err(|e| {
-                DomainError::InternalError(format!(
-                    "Failed to create character chat directory: {}",
-                    e
-                ))
-            })?;
-        }
-
-        self.write_payload_file_to_path(&path, source_path, force)
-            .await?;
-
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.remove(&backup_key);
-        }
-        self.remove_summary_cache_for_path(&path).await;
-
-        Ok(())
-    }
-
     async fn import_chat_payload(
         &self,
         character_name: &str,

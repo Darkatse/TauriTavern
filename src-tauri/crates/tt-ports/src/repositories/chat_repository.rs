@@ -171,15 +171,6 @@ pub trait ChatRepository: Send + Sync {
         expected_window_line_count: usize,
     ) -> Result<ChatPayloadCursor, DomainError>;
 
-    /// Save raw JSONL bytes for a character chat payload from an existing file path.
-    async fn save_chat_payload_from_path(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        source_path: &Path,
-        force: bool,
-    ) -> Result<(), DomainError>;
-
     /// Import character chat file(s) and return created JSONL file names.
     async fn import_chat_payload(
         &self,
