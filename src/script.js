@@ -670,7 +670,6 @@ export let streamingProcessor = null;
 let crop_data = undefined;
 let is_delete_mode = false;
 let fav_ch_checked = false;
-let scrollLock = false;
 export let abortStatusCheck = new AbortController();
 // Automatic status checks are UI side effects; batch connection updates suspend them until the final state is coherent.
 let connectionValidationSuspensionDepth = 0;
@@ -3473,6 +3472,8 @@ function formatGenerationTimer(gen_started, gen_finished, tokenCount, reasoningD
 }
 
 const chatScrollIntent = createChatScrollIntentTracker();
+// Programmatic scrollTop writes must not be classified as user-initiated follow cancellation.
+let programmaticChatScroll = false;
 const chatScrollController = createChatScrollController({
     readViewport: () => chatElement[0],
     scrollToBottom: () => {
@@ -3486,7 +3487,13 @@ const chatScrollController = createChatScrollController({
             }
         }
 
-        chatElement.scrollTop(position);
+        programmaticChatScroll = true;
+        try {
+            chatElement.scrollTop(position);
+        } finally {
+            // The scroll event is dispatched synchronously for jQuery scrollTop.
+            programmaticChatScroll = false;
+        }
     },
     requestFrame: callback => requestAnimationFrame(callback),
     cancelFrame: id => cancelAnimationFrame(id),
@@ -4405,7 +4412,11 @@ class StreamingProcessor {
             this.markUIGenStarted();
         }
         hideSwipeButtons({ hideCounters: true });
-        scrollChatToBottom({ waitForFrame: true });
+        // Non-impersonate paths already inserted the message via addOneMessage({ scroll: true }),
+        // which schedules an explicit force scroll. A second non-force request would cancel that frame.
+        if (this.type == 'impersonate') {
+            scrollChatToBottom({ waitForFrame: true });
+        }
         return messageId;
     }
 
@@ -13196,23 +13207,11 @@ jQuery(async function () {
         }
     }, { passive: true });
     const chatScrollHandler = function () {
-        if (power_user.waifuMode) {
-            scrollLock = true;
-            return;
-        }
-
         const scrollIsAtBottom = Math.abs(chatElementScroll.scrollHeight - chatElementScroll.clientHeight - chatElementScroll.scrollTop) < 5;
-
-        // Resume autoscroll if the user scrolls to the bottom
-        if (scrollLock && scrollIsAtBottom) {
-            scrollLock = false;
-        }
-
-        // Cancel autoscroll if the user scrolls up
-        if (!scrollLock && !scrollIsAtBottom) {
-            scrollLock = true;
-        }
-        chatScrollController.onViewportChanged({ userInitiated: chatScrollIntent.isActive() });
+        // waifuMode only changes scroll geometry in scrollToBottom; viewport ownership stays on the controller.
+        // Programmatic bottom scrolls must not cancel a generation follow intent captured at send time.
+        const userInitiated = !programmaticChatScroll && chatScrollIntent.isActive();
+        chatScrollController.onViewportChanged({ userInitiated });
         if (scrollIsAtBottom) {
             chatScrollIntent.clear();
         }

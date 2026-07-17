@@ -218,3 +218,41 @@ test('explicit navigation can scroll while content following is disabled', () =>
     assert.equal(harness.controller.requestScroll({ force: true }), true);
     assert.equal(harness.scrolls, 1);
 });
+
+test('programmatic bottom jumps during generation do not cancel follow when marked non-user', () => {
+    const harness = createHarness();
+    harness.controller.beginGeneration();
+
+    // Simulate a force scroll that temporarily leaves the viewport off-bottom before the frame lands.
+    harness.viewport.scrollHeight += 120;
+    harness.viewport.scrollTop = 0;
+    harness.controller.onViewportChanged({ userInitiated: false });
+
+    assert.equal(harness.controller.shouldFollowOutput(), true);
+    assert.equal(harness.controller.requestScroll({ waitForFrame: true }), true);
+    harness.flushFrames();
+    assert.equal(
+        harness.viewport.scrollTop,
+        harness.viewport.scrollHeight - harness.viewport.clientHeight,
+    );
+    harness.controller.endGeneration();
+});
+
+test('stale user intent still cancels only when the viewport event is user initiated', () => {
+    const harness = createHarness();
+    harness.controller.beginGeneration();
+    harness.controller.requestScroll({ waitForFrame: true });
+
+    harness.viewport.scrollTop = 100;
+    // Message insertion / programmatic scroll should pass userInitiated=false even if a prior gesture is recent.
+    harness.controller.onViewportChanged({ userInitiated: false });
+    harness.flushFrames();
+
+    assert.equal(harness.controller.shouldFollowOutput(), true);
+    assert.equal(harness.scrolls, 1);
+
+    harness.viewport.scrollTop = 100;
+    harness.controller.onViewportChanged({ userInitiated: true });
+    assert.equal(harness.controller.shouldFollowOutput(), false);
+    harness.controller.endGeneration();
+});
