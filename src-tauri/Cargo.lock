@@ -3886,9 +3886,9 @@ dependencies = [
 
 [[package]]
 name = "miktik"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05f2404d749ecc2e98aa1a7f3f01104f26bb39b4d1bb499fedcc57dd8967a889"
+checksum = "6c50c206755571b6deb043b8465430cc14cf630b73c65fc5cb631aece1e28033"
 dependencies = [
  "sentencepiece-model",
  "thiserror 2.0.18",
@@ -7484,7 +7484,6 @@ dependencies = [
  "flate2",
  "miktik",
  "serde_json",
- "tiktoken-rs",
  "tokio",
  "tt-adapter-http",
  "tt-domain",

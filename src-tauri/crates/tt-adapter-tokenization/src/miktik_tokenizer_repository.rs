@@ -1,21 +1,20 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock as StdRwLock};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
 use miktik::{TokenizerError, TokenizerRegistry};
 use serde_json::Value;
-use tiktoken_rs::{CoreBPE, get_bpe_from_model};
 use tokio::sync::{Mutex, RwLock};
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::{
-    TokenizerRepository, count_system_message_prefixes_default, has_reached_openai_text_token_limit,
+    TokenizerRepository, has_reached_openai_text_token_limit, openai_text_token_count,
 };
 
 const CLAUDE_JSON_GZIP_BYTES: &[u8] =
@@ -24,6 +23,7 @@ const DEEPSEEK_JSON_GZIP_BYTES: &[u8] =
     include_bytes!("../../../resources/tokenizers/deepseek.json.gz");
 const GEMMA_MODEL_GZIP_BYTES: &[u8] =
     include_bytes!("../../../resources/tokenizers/gemma.model.gz");
+const PREFIX_EXACT_REFINEMENT_MARGIN: usize = 64;
 
 #[derive(Clone, Copy)]
 enum ResourceCompression {
@@ -53,7 +53,6 @@ pub struct MiktikTokenizerRepository {
     registry: Arc<TokenizerRegistry>,
     cache_dir: PathBuf,
     http_clients: Arc<HttpClientPool>,
-    openai_tokenizers: Arc<StdRwLock<HashMap<&'static str, Arc<CoreBPE>>>>,
     ready_models: RwLock<HashSet<&'static str>>,
     registration_guard: Mutex<()>,
 }
@@ -64,7 +63,6 @@ impl MiktikTokenizerRepository {
             registry: Arc::new(TokenizerRegistry::new()),
             cache_dir,
             http_clients,
-            openai_tokenizers: Arc::new(StdRwLock::new(HashMap::new())),
             ready_models: RwLock::new(HashSet::new()),
             registration_guard: Mutex::new(()),
         }
@@ -179,21 +177,6 @@ impl MiktikTokenizerRepository {
             return Ok(());
         }
 
-        if TokenizerRegistry::is_tiktoken_model(canonical) {
-            let tokenizers = Arc::clone(&self.openai_tokenizers);
-            tokio::task::spawn_blocking(move || {
-                Self::get_or_load_openai_tokenizer(&tokenizers, canonical)
-            })
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "OpenAI tokenizer warm-up task failed for '{canonical}': {error}"
-                ))
-            })??;
-            self.mark_model_ready(canonical).await;
-            return Ok(());
-        }
-
         if !TokenizerRegistry::is_huggingface_model(canonical) {
             self.warm_model(canonical).await?;
             self.mark_model_ready(canonical).await;
@@ -218,49 +201,6 @@ impl MiktikTokenizerRepository {
 
         self.mark_model_ready(canonical).await;
         Ok(())
-    }
-
-    fn get_openai_tokenizer(&self, canonical: &'static str) -> Result<Arc<CoreBPE>, DomainError> {
-        Self::get_or_load_openai_tokenizer(&self.openai_tokenizers, canonical)
-    }
-
-    fn get_or_load_openai_tokenizer(
-        tokenizers: &StdRwLock<HashMap<&'static str, Arc<CoreBPE>>>,
-        canonical: &'static str,
-    ) -> Result<Arc<CoreBPE>, DomainError> {
-        if let Some(tokenizer) = tokenizers
-            .read()
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "OpenAI tokenizer cache read lock failed for '{canonical}': {error}"
-                ))
-            })?
-            .get(canonical)
-        {
-            return Ok(Arc::clone(tokenizer));
-        }
-
-        let mut tokenizers = tokenizers.write().map_err(|error| {
-            DomainError::InternalError(format!(
-                "OpenAI tokenizer cache write lock failed for '{canonical}': {error}"
-            ))
-        })?;
-        if let Some(tokenizer) = tokenizers.get(canonical) {
-            return Ok(Arc::clone(tokenizer));
-        }
-
-        let runtime_model = if canonical == "o1" {
-            "gpt-4o"
-        } else {
-            canonical
-        };
-        let tokenizer = Arc::new(get_bpe_from_model(runtime_model).map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to load OpenAI tokenizer '{runtime_model}' for '{canonical}': {error}"
-            ))
-        })?);
-        tokenizers.insert(canonical, Arc::clone(&tokenizer));
-        Ok(tokenizer)
     }
 
     fn register_model_file(
@@ -597,7 +537,10 @@ impl MiktikTokenizerRepository {
         let is_legacy = canonical == "gpt-3.5-turbo-0301";
         let tokens_per_message = if is_legacy { 4_i32 } else { 3_i32 };
         let tokens_per_name = if is_legacy { -1_i32 } else { 1_i32 };
-        let tokenizer = self.get_openai_tokenizer(canonical)?;
+        let tokenizer = self
+            .registry
+            .get_canonical(canonical)
+            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
         let mut total = 0_i32;
 
         for message in messages {
@@ -607,7 +550,9 @@ impl MiktikTokenizerRepository {
                 Value::Object(map) => {
                     for (key, value) in map {
                         let text = Self::value_to_text(value);
-                        let count = tokenizer.encode_ordinary(text.as_ref()).len();
+                        let count = tokenizer.count_tokens(text.as_ref()).map_err(|error| {
+                            Self::map_tokenizer_error("count tokens", canonical, error)
+                        })?;
                         total += count as i32;
                         if key == "name" {
                             total += tokens_per_name;
@@ -616,7 +561,9 @@ impl MiktikTokenizerRepository {
                 }
                 _ => {
                     let text = Self::value_to_text(message);
-                    let count = tokenizer.encode_ordinary(text.as_ref()).len();
+                    let count = tokenizer.count_tokens(text.as_ref()).map_err(|error| {
+                        Self::map_tokenizer_error("count tokens", canonical, error)
+                    })?;
                     total += count as i32;
                 }
             }
@@ -629,105 +576,6 @@ impl MiktikTokenizerRepository {
 
         Ok(total.max(0) as usize)
     }
-
-    fn count_openai_system_message_prefixes(
-        &self,
-        canonical: &'static str,
-        base: &str,
-        suffixes: &[String],
-        stop_at: Option<usize>,
-    ) -> Result<Vec<usize>, DomainError> {
-        let is_legacy = canonical == "gpt-3.5-turbo-0301";
-        let tokenizer = self.get_openai_tokenizer(canonical)?;
-        let role_tokens = tokenizer.encode_ordinary("system").len() as i32;
-        let fixed_tokens = if is_legacy {
-            4 + role_tokens + 3 + 9
-        } else {
-            3 + role_tokens + 3
-        };
-
-        let (_, mut stable_tokens, stable_bytes) =
-            Self::openai_prefix_state(&tokenizer, base, canonical)?;
-        let mut unstable = base[stable_bytes..].to_string();
-
-        let mut token_counts = Vec::with_capacity(suffixes.len());
-        for suffix in suffixes {
-            unstable.push_str(suffix);
-            let (unstable_tokens, new_stable_tokens, new_stable_bytes) =
-                Self::openai_prefix_state(&tokenizer, &unstable, canonical)?;
-            let content_tokens = stable_tokens.saturating_add(unstable_tokens) as i32;
-            let token_count = fixed_tokens.saturating_add(content_tokens).max(0) as usize;
-            token_counts.push(token_count);
-
-            if has_reached_openai_text_token_limit(token_count, stop_at) {
-                token_counts.resize(suffixes.len(), token_count);
-                break;
-            }
-
-            stable_tokens = stable_tokens.saturating_add(new_stable_tokens);
-            if new_stable_bytes > 0 {
-                unstable = unstable[new_stable_bytes..].to_string();
-            }
-        }
-
-        Ok(token_counts)
-    }
-
-    fn openai_prefix_state(
-        tokenizer: &CoreBPE,
-        text: &str,
-        canonical: &str,
-    ) -> Result<(usize, usize, usize), DomainError> {
-        let (tokens, mut unstable_token_count) = tokenizer.encode(text, &HashSet::new());
-        let total_token_count = tokens.len();
-        if unstable_token_count == 0 {
-            return Ok((total_token_count, total_token_count, text.len()));
-        }
-
-        let token_is_all_space = |token| -> Result<bool, DomainError> {
-            let bytes = tokenizer
-                ._decode_native_and_split(vec![token])
-                .next()
-                .ok_or_else(|| {
-                    DomainError::InternalError(format!(
-                        "OpenAI tokenizer boundary was empty for '{canonical}'"
-                    ))
-                })?;
-            Ok(bytes
-                .iter()
-                .rev()
-                .all(|byte| matches!(byte, b' ' | b'\n' | b'\t')))
-        };
-
-        let first_unstable = tokens.len().saturating_sub(unstable_token_count);
-        if token_is_all_space(tokens[first_unstable])? {
-            while unstable_token_count < tokens.len()
-                && token_is_all_space(tokens[tokens.len() - unstable_token_count - 1])?
-            {
-                unstable_token_count += 1;
-            }
-        }
-
-        let mut stable_token_count = tokens.len().saturating_sub(unstable_token_count);
-        let decode_prefix = |count: usize| {
-            tokenizer
-                ._decode_native_and_split(tokens[..count].to_vec())
-                .flatten()
-                .collect::<Vec<_>>()
-        };
-        let mut stable_bytes = decode_prefix(stable_token_count);
-        while stable_token_count > 0 && !text.is_char_boundary(stable_bytes.len()) {
-            stable_token_count -= 1;
-            stable_bytes = decode_prefix(stable_token_count);
-        }
-        if !text.as_bytes().starts_with(&stable_bytes) {
-            return Err(DomainError::InternalError(format!(
-                "OpenAI tokenizer boundary did not match input for '{canonical}'"
-            )));
-        }
-
-        Ok((total_token_count, stable_token_count, stable_bytes.len()))
-    }
 }
 
 #[async_trait::async_trait]
@@ -739,9 +587,6 @@ impl TokenizerRepository for MiktikTokenizerRepository {
 
     fn encode(&self, model: &str, text: &str) -> Result<Vec<u32>, DomainError> {
         let canonical = Self::canonical_model(model);
-        if TokenizerRegistry::is_tiktoken_model(canonical) {
-            return Ok(self.get_openai_tokenizer(canonical)?.encode_ordinary(text));
-        }
         let tokenizer = self
             .registry
             .get_canonical(canonical)
@@ -754,16 +599,6 @@ impl TokenizerRepository for MiktikTokenizerRepository {
 
     fn decode(&self, model: &str, token_ids: &[u32]) -> Result<String, DomainError> {
         let canonical = Self::canonical_model(model);
-        if TokenizerRegistry::is_tiktoken_model(canonical) {
-            return self
-                .get_openai_tokenizer(canonical)?
-                .decode(token_ids.to_vec())
-                .map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to decode token ids for '{canonical}': {error}"
-                    ))
-                });
-        }
         let tokenizer = self
             .registry
             .get_canonical(canonical)
@@ -807,13 +642,118 @@ impl TokenizerRepository for MiktikTokenizerRepository {
         suffixes: &[String],
         stop_at: Option<usize>,
     ) -> Result<Vec<usize>, DomainError> {
-        let canonical = Self::canonical_model(model);
-
-        if !TokenizerRegistry::is_tiktoken_model(canonical) {
-            return count_system_message_prefixes_default(self, model, base, suffixes, stop_at);
+        if suffixes.is_empty() {
+            return Ok(Vec::new());
         }
 
-        self.count_openai_system_message_prefixes(canonical, base, suffixes, stop_at)
+        let canonical = Self::canonical_model(model);
+        let additions = suffixes.iter().map(String::as_str).collect::<Vec<_>>();
+
+        let mut token_counts = self
+            .registry
+            .estimate_cumulative_token_counts_canonical(canonical, base, &additions)
+            .map_err(|error| {
+                Self::map_tokenizer_error("estimate cumulative token counts", canonical, error)
+            })?;
+        if token_counts.len() != suffixes.len() {
+            return Err(DomainError::InternalError(format!(
+                "cumulative token estimate returned {} counts for {} suffixes on '{canonical}'",
+                token_counts.len(),
+                suffixes.len()
+            )));
+        }
+
+        // Calibrate the estimate against the first real system message so backend-specific
+        // wrapper boundaries remain aligned with the existing count_messages contract.
+        let first_prefix = format!("{base}{}", suffixes[0]);
+        let first_message_count = TokenizerRepository::count_messages(
+            self,
+            canonical,
+            &[serde_json::json!({
+                "role": "system",
+                "content": first_prefix,
+            })],
+        )?;
+        let first_estimate = token_counts[0];
+        let estimate_offset = i128::try_from(first_message_count)
+            .and_then(|message_count| {
+                i128::try_from(first_estimate).map(|estimate| message_count - estimate)
+            })
+            .map_err(|_| {
+                DomainError::InternalError(format!(
+                    "cumulative token estimate exceeded the supported range for '{canonical}'"
+                ))
+            })?;
+
+        for count in &mut token_counts {
+            let adjusted = i128::try_from(*count)
+                .ok()
+                .and_then(|value| value.checked_add(estimate_offset))
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| {
+                    DomainError::InternalError(format!(
+                        "cumulative token estimate overflowed for '{canonical}'"
+                    ))
+                })?;
+            *count = adjusted;
+        }
+
+        let Some(stop_at) = stop_at else {
+            return Ok(token_counts);
+        };
+
+        let content_capacity = suffixes.iter().fold(base.len(), |total, suffix| {
+            total.saturating_add(suffix.len())
+        });
+        let refinement_floor = stop_at.saturating_sub(PREFIX_EXACT_REFINEMENT_MARGIN);
+        let mut refinement_start = token_counts
+            .iter()
+            .position(|&count| openai_text_token_count(count) >= refinement_floor);
+
+        if refinement_start.is_none() {
+            let mut final_content = String::with_capacity(content_capacity);
+            final_content.push_str(base);
+            for suffix in suffixes {
+                final_content.push_str(suffix);
+            }
+            let final_count = TokenizerRepository::count_messages(
+                self,
+                canonical,
+                &[serde_json::json!({
+                    "role": "system",
+                    "content": final_content,
+                })],
+            )?;
+            if has_reached_openai_text_token_limit(final_count, Some(stop_at)) {
+                refinement_start = Some(0);
+            }
+        }
+
+        if let Some(refinement_start) = refinement_start {
+            let mut content = String::with_capacity(content_capacity);
+            content.push_str(base);
+            for suffix in &suffixes[..refinement_start] {
+                content.push_str(suffix);
+            }
+            for (index, suffix) in suffixes.iter().enumerate().skip(refinement_start) {
+                content.push_str(suffix);
+                let exact_count = TokenizerRepository::count_messages(
+                    self,
+                    canonical,
+                    &[serde_json::json!({
+                        "role": "system",
+                        "content": content,
+                    })],
+                )?;
+                token_counts[index] = exact_count;
+                if has_reached_openai_text_token_limit(exact_count, Some(stop_at)) {
+                    token_counts[index..].fill(exact_count);
+                    break;
+                }
+            }
+        }
+
+        Ok(token_counts)
     }
 }
 
@@ -1140,49 +1080,24 @@ mod tests {
     }
 
     #[test]
-    fn shared_openai_tokenizer_matches_miktik_registry() {
-        let cache_dir = unique_temp_cache_dir();
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
-        let samples = [
-            "plain ASCII text",
-            "世界设定与标点。",
-            "spaces  \n\tand emoji \u{1f642}",
-            "<|not-a-special-token|>",
-        ];
+    fn cumulative_prefix_counts_return_empty_without_loading_a_model() {
+        let repository =
+            MiktikTokenizerRepository::new(unique_temp_cache_dir(), test_http_clients());
 
-        for model in ["gpt-4o", "gpt-4", "gpt-3.5-turbo-0301", "o1"] {
-            let canonical = MiktikTokenizerRepository::canonical_model(model);
-            let shared = repository
-                .get_openai_tokenizer(canonical)
-                .expect("shared OpenAI tokenizer should load");
-            let registry = repository
-                .registry
-                .get_canonical(canonical)
-                .expect("Miktik tokenizer should load");
+        let counts = TokenizerRepository::count_system_message_prefixes(
+            &repository,
+            "missing-model",
+            "ignored",
+            &[],
+            Some(1),
+        )
+        .expect("empty suffixes should not load a tokenizer");
 
-            for sample in samples {
-                let shared_ids = shared.encode_ordinary(sample);
-                let registry_ids = registry
-                    .encode(sample)
-                    .expect("Miktik encode should succeed");
-                assert_eq!(shared_ids, registry_ids, "encoding changed for {model}");
-                assert_eq!(
-                    shared
-                        .decode(shared_ids.clone())
-                        .expect("shared decode should succeed"),
-                    registry
-                        .decode(&registry_ids)
-                        .expect("Miktik decode should succeed"),
-                    "decoding changed for {model}"
-                );
-            }
-        }
-
-        let _ = std::fs::remove_dir_all(cache_dir);
+        assert!(counts.is_empty());
     }
 
-    #[test]
-    fn openai_prefix_counts_match_individual_system_messages() {
+    #[tokio::test]
+    async fn cumulative_prefix_counts_match_individual_messages_across_backends() {
         let cache_dir = unique_temp_cache_dir();
         let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
         let base = "世界设定\n";
@@ -1192,7 +1107,16 @@ mod tests {
             "  whitespace and emoji: \u{1f642}\n".to_string(),
         ];
 
-        for model in ["gpt-4o", "gpt-3.5-turbo-0301"] {
+        for model in [
+            "gpt-4o",
+            "gpt-3.5-turbo-0301",
+            "claude",
+            "deepseek",
+            "gemma",
+        ] {
+            TokenizerRepository::ensure_model_ready(&repository, model)
+                .await
+                .expect("tokenizer should prepare");
             let actual = TokenizerRepository::count_system_message_prefixes(
                 &repository,
                 model,
@@ -1219,8 +1143,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(cache_dir);
     }
 
-    #[test]
-    fn openai_incremental_prefix_counts_match_boundary_corpus() {
+    #[tokio::test]
+    async fn cumulative_prefix_estimates_track_boundary_corpus_across_backends() {
         let cache_dir = unique_temp_cache_dir();
         let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
         let fragments = [
@@ -1238,10 +1162,19 @@ mod tests {
             "<|not-a-special-token|>",
         ];
 
-        for model in ["gpt-4o", "gpt-4", "gpt-3.5-turbo-0301", "o1"] {
+        for model in [
+            "gpt-4o",
+            "gpt-3.5-turbo-0301",
+            "claude",
+            "deepseek",
+            "gemma",
+        ] {
+            TokenizerRepository::ensure_model_ready(&repository, model)
+                .await
+                .expect("tokenizer should prepare");
             for base_index in 0..fragments.len() {
                 let base = fragments[..=base_index].concat();
-                let suffixes = (0..64)
+                let suffixes = (0..32)
                     .map(|index| fragments[(base_index + index + 1) % fragments.len()].to_string())
                     .collect::<Vec<_>>();
                 let actual = TokenizerRepository::count_system_message_prefixes(
@@ -1253,7 +1186,7 @@ mod tests {
                 )
                 .expect("incremental prefix counts should succeed");
 
-                let mut content = base;
+                let mut content = base.clone();
                 let expected = suffixes
                     .iter()
                     .map(|suffix| {
@@ -1267,15 +1200,70 @@ mod tests {
                     })
                     .collect::<Vec<_>>();
 
-                assert_eq!(actual, expected, "prefix counts changed for {model}");
+                if miktik::TokenizerRegistry::is_tiktoken_model(
+                    MiktikTokenizerRepository::canonical_model(model),
+                ) {
+                    assert_eq!(actual, expected, "prefix counts changed for {model}");
+                } else {
+                    for (estimate, exact) in actual.iter().zip(&expected) {
+                        assert!(
+                            estimate.abs_diff(*exact) <= 1,
+                            "prefix estimate drifted for {model}: estimate={estimate}, exact={exact}"
+                        );
+                    }
+                }
+
+                let max_visible_count = expected
+                    .iter()
+                    .copied()
+                    .map(openai_text_token_count)
+                    .max()
+                    .unwrap_or_default();
+                let mismatched_thresholds = (0..=max_visible_count)
+                    .filter(|&stop_at| {
+                        let estimated_index = actual
+                            .iter()
+                            .position(|&count| openai_text_token_count(count) >= stop_at);
+                        let exact_index = expected
+                            .iter()
+                            .position(|&count| openai_text_token_count(count) >= stop_at);
+                        estimated_index != exact_index
+                    })
+                    .collect::<Vec<_>>();
+                for stop_at in mismatched_thresholds
+                    .into_iter()
+                    .chain(std::iter::once(max_visible_count / 2))
+                {
+                    let stopped = TokenizerRepository::count_system_message_prefixes(
+                        &repository,
+                        model,
+                        &base,
+                        &suffixes,
+                        Some(stop_at),
+                    )
+                    .expect("threshold-refined prefix counts should succeed");
+                    let estimated_index = actual
+                        .iter()
+                        .position(|&count| openai_text_token_count(count) >= stop_at);
+                    let exact_index = expected
+                        .iter()
+                        .position(|&count| openai_text_token_count(count) >= stop_at);
+                    let stopped_index = stopped
+                        .iter()
+                        .position(|&count| openai_text_token_count(count) >= stop_at);
+                    assert_eq!(
+                        stopped_index, exact_index,
+                        "prefix threshold refinement failed for {model} at {stop_at}; estimate crossed at {estimated_index:?}"
+                    );
+                }
             }
         }
 
         let _ = std::fs::remove_dir_all(cache_dir);
     }
 
-    #[test]
-    fn openai_prefix_counts_preserve_stop_at_fill_semantics() {
+    #[tokio::test]
+    async fn cumulative_prefix_counts_preserve_stop_at_fill_across_backends() {
         let cache_dir = unique_temp_cache_dir();
         let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
         let suffixes = vec![
@@ -1283,29 +1271,100 @@ mod tests {
             "a considerably longer second entry\n".to_string(),
             "this entry must not need to be tokenized\n".to_string(),
         ];
-        let full_counts = TokenizerRepository::count_system_message_prefixes(
-            &repository,
-            "gpt-4o",
-            "base\n",
-            &suffixes,
-            None,
-        )
-        .expect("full prefix counts should succeed");
-        let stop_at = openai_text_token_count(full_counts[1]);
+        for model in ["gpt-4o", "claude", "deepseek", "gemma"] {
+            TokenizerRepository::ensure_model_ready(&repository, model)
+                .await
+                .expect("tokenizer should prepare");
+            let full_counts = TokenizerRepository::count_system_message_prefixes(
+                &repository,
+                model,
+                "base\n",
+                &suffixes,
+                None,
+            )
+            .expect("full prefix counts should succeed");
+            let stop_at = openai_text_token_count(full_counts[1]);
 
-        let stopped_counts = TokenizerRepository::count_system_message_prefixes(
-            &repository,
-            "gpt-4o",
-            "base\n",
-            &suffixes,
-            Some(stop_at),
-        )
-        .expect("stopped prefix counts should succeed");
+            let stopped_counts = TokenizerRepository::count_system_message_prefixes(
+                &repository,
+                model,
+                "base\n",
+                &suffixes,
+                Some(stop_at),
+            )
+            .expect("stopped prefix counts should succeed");
 
-        assert_eq!(
-            stopped_counts,
-            vec![full_counts[0], full_counts[1], full_counts[1]]
-        );
+            assert_eq!(
+                stopped_counts,
+                vec![full_counts[0], full_counts[1], full_counts[1]],
+                "stop/fill semantics changed for {model}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[tokio::test]
+    async fn cumulative_prefix_counts_preserve_large_world_info_thresholds() {
+        let cache_dir = unique_temp_cache_dir();
+        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+        let base =
+            "Stable world context with ordinary text, punctuation, and spacing.\n".repeat(120);
+        let suffixes = (0..32)
+            .map(|index| format!("Entry {index}: 世界设定 with details, spaces, and emoji 🙂.\n"))
+            .collect::<Vec<_>>();
+
+        for model in ["gpt-4o", "claude", "deepseek", "gemma"] {
+            TokenizerRepository::ensure_model_ready(&repository, model)
+                .await
+                .expect("tokenizer should prepare");
+
+            let mut content = base.clone();
+            let exact_counts = suffixes
+                .iter()
+                .map(|suffix| {
+                    content.push_str(suffix);
+                    TokenizerRepository::count_messages(
+                        &repository,
+                        model,
+                        &[json!({ "role": "system", "content": content })],
+                    )
+                    .expect("complete prefix count should succeed")
+                })
+                .collect::<Vec<_>>();
+            let stop_at = openai_text_token_count(exact_counts[20]);
+            let expected_index = exact_counts
+                .iter()
+                .position(|&count| openai_text_token_count(count) >= stop_at)
+                .expect("exact counts should reach the selected threshold");
+
+            let stopped_counts = TokenizerRepository::count_system_message_prefixes(
+                &repository,
+                model,
+                &base,
+                &suffixes,
+                Some(stop_at),
+            )
+            .expect("threshold-refined prefix counts should succeed");
+            let stopped_index = stopped_counts
+                .iter()
+                .position(|&count| openai_text_token_count(count) >= stop_at)
+                .expect("refined counts should reach the selected threshold");
+
+            assert_eq!(
+                stopped_index, expected_index,
+                "large world-info threshold crossing changed for {model}"
+            );
+            assert_eq!(
+                stopped_counts[expected_index], exact_counts[expected_index],
+                "large world-info terminal count changed for {model}"
+            );
+            assert!(
+                stopped_counts[expected_index..]
+                    .iter()
+                    .all(|&count| count == exact_counts[expected_index])
+            );
+        }
+
         let _ = std::fs::remove_dir_all(cache_dir);
     }
 }
