@@ -1917,7 +1917,8 @@ async function prependWindowedMessageElements(messages, showMoreButton, prevHeig
 
         if (keepAnchor) {
             const newHeight = chatElement.prop('scrollHeight');
-            chatElement.scrollTop(newHeight - prevHeight);
+            // Anchor compensation is programmatic; do not let async scroll events cancel generation follow.
+            setChatElementScrollTop(newHeight - prevHeight);
         }
 
         const yieldedFrame = batchIndex < renderBatches.length - 1;
@@ -2064,7 +2065,8 @@ export async function showMoreMessages(messagesToLoad = null) {
 
     if (isButtonInView) {
         const newHeight = chatElement.prop('scrollHeight');
-        chatElement.scrollTop(newHeight - prevHeight);
+        // Non-windowed Show More uses the same anchor compensation contract as windowed batches.
+        setChatElementScrollTop(newHeight - prevHeight);
     }
 
     applyStylePins();
@@ -2912,7 +2914,7 @@ export function appendMediaToMessage(mes, messageElement, scrollBehavior = SCROL
             return;
         }
         if (scrollBehavior === SCROLL_BEHAVIOR.KEEP) {
-            chatElement.scrollTop(scrollPosition);
+            setChatElementScrollTop(scrollPosition);
             return;
         }
         if (!chatScrollController.shouldFollowOutput()) {
@@ -2920,7 +2922,7 @@ export function appendMediaToMessage(mes, messageElement, scrollBehavior = SCROL
         }
         const newChatHeight = chatElement.prop('scrollHeight');
         const diff = newChatHeight - chatHeight;
-        chatElement.scrollTop(scrollPosition + diff);
+        setChatElementScrollTop(scrollPosition + diff);
     };
 
     // Set media display attribute
@@ -3476,6 +3478,17 @@ const chatProgrammaticScroll = createChatProgrammaticScrollTracker({
     requestFrame: callback => requestAnimationFrame(callback),
     cancelFrame: id => cancelAnimationFrame(id),
 });
+
+/**
+ * Writes chat scrollTop and marks the clamped target as programmatic.
+ * Browser scroll events are async relative to the write, so classification uses the expected target.
+ * @param {number} position Desired scroll top before browser clamping
+ */
+function setChatElementScrollTop(position) {
+    chatElement.scrollTop(position);
+    chatProgrammaticScroll.mark(chatElement[0].scrollTop);
+}
+
 const chatScrollController = createChatScrollController({
     readViewport: () => chatElement[0],
     scrollToBottom: () => {
@@ -3489,8 +3502,7 @@ const chatScrollController = createChatScrollController({
             }
         }
 
-        chatElement.scrollTop(position);
-        chatProgrammaticScroll.mark(chatElement[0].scrollTop);
+        setChatElementScrollTop(position);
     },
     requestFrame: callback => requestAnimationFrame(callback),
     cancelFrame: id => cancelAnimationFrame(id),
@@ -9789,7 +9801,7 @@ export async function messageEdit(editMessageId) {
     editTextArea.setSelectionRange(text.length, text.length);
 
     if (Number(this_edit_mes_id) === chat.length - 1) {
-        chatElement.scrollTop(chatScrollPosition);
+        setChatElementScrollTop(chatScrollPosition);
     }
 
     updateEditArrowClasses();
@@ -11825,12 +11837,12 @@ export async function swipe(event, direction, { source, repeated, message = chat
             duration: 0, //used to be 100 //Disabled on Cohee's request. https://github.com/SillyTavern/SillyTavern/pull/4610/files#r2408731744
             queue: false,
             progress: function (animation, progress, remainingMs) {
-                if (is_animation_scroll) chatElement.scrollTop(getMessageBottomHeight(thisMesDiv));
+                if (is_animation_scroll) setChatElementScrollTop(getMessageBottomHeight(thisMesDiv));
             },
             complete: function () {
                 thisMesDiv.css('height', 'auto');
                 //Correct height auto offset.
-                if (is_animation_scroll) chatElement.scrollTop(getMessageBottomHeight(thisMesDiv));
+                if (is_animation_scroll) setChatElementScrollTop(getMessageBottomHeight(thisMesDiv));
             },
         });
     }
@@ -13182,7 +13194,7 @@ jQuery(async function () {
             e.style.height = '0px';
             const newHeight = e.scrollHeight + 4;
             e.style.height = `${newHeight}px`;
-            chatElement.scrollTop(scrollTop);
+            setChatElementScrollTop(scrollTop);
         }
         const autoFitEditTextAreaDebounced = debounce(autoFitEditTextArea, debounce_timeout.short);
         document.addEventListener('input', e => {
@@ -13713,7 +13725,7 @@ jQuery(async function () {
             chat.length = this_del_mes;
             chat_metadata.tainted = true;
             await saveChatConditional();
-            chatElement.scrollTop(chatElement[0].scrollHeight);
+            setChatElementScrollTop(chatElement[0].scrollHeight);
             await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
             await pruneAgentPersistentStatesAfterDeletion(deletedAgentStateIds);
             chatElement.find('.mes').removeClass('last_mes');
@@ -13961,7 +13973,7 @@ jQuery(async function () {
 
         updateViewMessageIds();
         await saveChatConditional();
-        chatElement[0].scrollTop = oldScroll;
+        setChatElementScrollTop(oldScroll);
         showSwipeButtons();
     });
 

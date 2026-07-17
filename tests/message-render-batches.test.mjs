@@ -25,6 +25,7 @@ test('message insertion and generation delegate scrolling to one controller', as
     assert.match(source, /const chatScrollController = createChatScrollController\(/);
     assert.match(source, /const chatScrollIntent = createChatScrollIntentTracker\(\)/);
     assert.match(source, /const chatProgrammaticScroll = createChatProgrammaticScrollTracker\(/);
+    assert.match(source, /function setChatElementScrollTop\(position\) \{\s*chatElement\.scrollTop\(position\);\s*chatProgrammaticScroll\.mark\(chatElement\[0\]\.scrollTop\);\s*\}/);
     assert.match(source, /chatScrollController\.captureGenerationIntent\(\);\s*hideSwipeButtons\(\)/);
     assert.match(source, /finally \{\s*chatScrollController\.clearGenerationIntent\(\);\s*showSwipeButtons\(\)/);
     assert.match(source, /async function GenerateInternal\([^]*chatScrollController\.beginGeneration\(\)/);
@@ -38,7 +39,10 @@ test('message insertion and generation delegate scrolling to one controller', as
     assert.match(source, /chatElementScroll\.addEventListener\('pointermove', event =>/);
     assert.match(source, /chatScrollController\.requestScroll\(\{ waitForFrame, force \}\)/);
     assert.match(source, /let position = chatElement\[0\]\.scrollHeight;\s*if \(power_user\.waifuMode\) \{\s*const lastMessage = chatElement\.find\('\.mes'\)\.last\(\);/);
-    assert.match(source, /chatElement\.scrollTop\(position\);\s*chatProgrammaticScroll\.mark\(chatElement\[0\]\.scrollTop\);/);
+    assert.match(source, /setChatElementScrollTop\(position\);/);
+    assert.match(source, /setChatElementScrollTop\(newHeight - prevHeight\);/);
+    assert.match(source, /setChatElementScrollTop\(scrollPosition\);/);
+    assert.match(source, /setChatElementScrollTop\(scrollPosition \+ diff\);/);
     assert.match(source, /const shouldScroll = scroll;/);
     assert.match(source, /if \(!insertAfter && !insertBefore && shouldScroll\) \{\s*scrollChatToBottom\(\{ waitForFrame: true, force: true \}\)/);
     assert.match(source, /mediaScrollBehavior = chatScrollController\.shouldFollowOutput\(\)/);
