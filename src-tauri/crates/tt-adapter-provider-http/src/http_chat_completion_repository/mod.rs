@@ -44,7 +44,7 @@ struct SseEventAccumulator {
 }
 
 impl SseEventAccumulator {
-    fn on_line<F: FnMut(&[u8])>(
+    fn on_line<F: FnMut(&[u8]) -> Result<(), DomainError>>(
         &mut self,
         line: &[u8],
         sender: &ChatCompletionStreamSender,
@@ -69,7 +69,7 @@ impl SseEventAccumulator {
         Ok(())
     }
 
-    fn finish<F: FnMut(&[u8])>(
+    fn finish<F: FnMut(&[u8]) -> Result<(), DomainError>>(
         &mut self,
         sender: &ChatCompletionStreamSender,
         hook: &mut F,
@@ -77,7 +77,7 @@ impl SseEventAccumulator {
         self.dispatch(sender, hook)
     }
 
-    fn dispatch<F: FnMut(&[u8])>(
+    fn dispatch<F: FnMut(&[u8]) -> Result<(), DomainError>>(
         &mut self,
         sender: &ChatCompletionStreamSender,
         hook: &mut F,
@@ -87,7 +87,7 @@ impl SseEventAccumulator {
         }
 
         let payload = std::mem::take(&mut self.data);
-        hook(payload.as_slice());
+        hook(payload.as_slice())?;
 
         let payload = std::str::from_utf8(payload.as_slice()).map_err(|error| {
             DomainError::InternalError(format!("SSE payload is not valid UTF-8: {error}"))
@@ -288,7 +288,8 @@ impl HttpChatCompletionRepository {
         sender: ChatCompletionStreamSender,
         cancel: ChatCompletionCancelReceiver,
     ) -> Result<(), DomainError> {
-        Self::stream_sse_response_internal(provider_name, response, sender, cancel, |_| {}).await
+        Self::stream_sse_response_internal(provider_name, response, sender, cancel, |_| Ok(()))
+            .await
     }
 
     async fn stream_sse_response_internal<F>(
@@ -299,7 +300,7 @@ impl HttpChatCompletionRepository {
         mut hook: F,
     ) -> Result<(), DomainError>
     where
-        F: FnMut(&[u8]),
+        F: FnMut(&[u8]) -> Result<(), DomainError>,
     {
         let mut buffer = Vec::<u8>::new();
         let mut accumulator = SseEventAccumulator::default();
@@ -356,7 +357,7 @@ impl HttpChatCompletionRepository {
         Ok(())
     }
 
-    fn forward_sse_events<F: FnMut(&[u8])>(
+    fn forward_sse_events<F: FnMut(&[u8]) -> Result<(), DomainError>>(
         buffer: &mut Vec<u8>,
         accumulator: &mut SseEventAccumulator,
         sender: &ChatCompletionStreamSender,
@@ -387,7 +388,7 @@ impl HttpChatCompletionRepository {
         Ok(())
     }
 
-    fn forward_sse_line<F: FnMut(&[u8])>(
+    fn forward_sse_line<F: FnMut(&[u8]) -> Result<(), DomainError>>(
         line: &[u8],
         accumulator: &mut SseEventAccumulator,
         sender: &ChatCompletionStreamSender,
@@ -919,7 +920,9 @@ mod tests {
         let mut buffer =
             b"event: message\r\ndata: {\"chunk\":1}\n\n: ping\ndata: [DONE]\n\n".to_vec();
 
-        fn noop(_: &[u8]) {}
+        fn noop(_: &[u8]) -> Result<(), DomainError> {
+            Ok(())
+        }
         let mut hook = noop;
         let mut accumulator = super::SseEventAccumulator::default();
         let result = HttpChatCompletionRepository::forward_sse_events(
@@ -941,7 +944,9 @@ mod tests {
         let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
         let mut buffer = b"data: {\"chunk\":1}".to_vec();
 
-        fn noop(_: &[u8]) {}
+        fn noop(_: &[u8]) -> Result<(), DomainError> {
+            Ok(())
+        }
         let mut hook = noop;
         let mut accumulator = super::SseEventAccumulator::default();
         let result = HttpChatCompletionRepository::forward_sse_events(
@@ -960,7 +965,9 @@ mod tests {
         let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
         let mut buffer = b"data: first\ndata: second\n\n".to_vec();
 
-        fn noop(_: &[u8]) {}
+        fn noop(_: &[u8]) -> Result<(), DomainError> {
+            Ok(())
+        }
         let mut hook = noop;
         let mut accumulator = super::SseEventAccumulator::default();
         HttpChatCompletionRepository::forward_sse_events(
@@ -981,7 +988,9 @@ mod tests {
         let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
         let mut buffer = b"data: tail\n".to_vec();
 
-        fn noop(_: &[u8]) {}
+        fn noop(_: &[u8]) -> Result<(), DomainError> {
+            Ok(())
+        }
         let mut hook = noop;
         let mut accumulator = super::SseEventAccumulator::default();
         HttpChatCompletionRepository::forward_sse_events(
