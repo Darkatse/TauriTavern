@@ -10,7 +10,6 @@ import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, o
 import {
     getOpenAIConversationTokenCount,
     getOpenAITextTokenCount,
-    hasReachedOpenAITextTokenLimit,
 } from './util/openai-token-count.js';
 import { createSingleFlight } from './util/single-flight.js';
 
@@ -697,12 +696,12 @@ export async function getTokenCountsAsync(strings, padding = undefined) {
 }
 
 /**
- * Gets exact token counts for cumulative prefixes without sending every expanded prefix.
+ * Gets estimated token counts for cumulative prefixes without sending every expanded prefix.
  * @param {string} base Initial prefix shared by every result.
  * @param {string[]} suffixes Suffixes appended cumulatively in input order.
  * @param {number | undefined} padding Optional padding tokens.
  * @param {number | undefined} stopAt Caller-visible text token threshold; the single-message wrapper offset is excluded.
- * @returns {Promise<number[]>} Token counts for each cumulative prefix.
+ * @returns {Promise<number[]>} Estimated token counts for each cumulative prefix.
  */
 export async function getTokenPrefixCountsAsync(base, suffixes, padding = undefined, stopAt = undefined) {
     if (typeof base !== 'string' || !Array.isArray(suffixes)) {
@@ -711,31 +710,6 @@ export async function getTokenPrefixCountsAsync(base, suffixes, padding = undefi
 
     if (main_api === 'openai' && padding !== power_user.token_padding && globalThis.__TAURITAVERN__) {
         const model = getTokenizerModel();
-        const cacheState = getTokenCacheState(resolveTokenCacheChatId());
-        if (cacheState.loadPromise) {
-            await cacheState.loadPromise;
-        }
-
-        const cacheKeys = [];
-        const cachedCounts = [];
-        let prefix = base;
-        let allCached = true;
-        for (let index = 0; index < suffixes.length; index++) {
-            prefix += suffixes[index];
-            const message = { role: 'system', content: prefix };
-            const cacheKey = `${model}-${getStringHash(JSON.stringify(message))}`;
-            cacheKeys.push(cacheKey);
-            const cachedCount = cacheState.cache[cacheKey];
-            cachedCounts.push(cachedCount);
-            allCached &&= typeof cachedCount === 'number';
-            if (allCached && hasReachedOpenAITextTokenLimit(cachedCount, stopAt)) {
-                return suffixes.map((_, countIndex) => getOpenAITextTokenCount(cachedCounts[Math.min(countIndex, index)]));
-            }
-        }
-
-        if (allCached) {
-            return cachedCounts.map(getOpenAITextTokenCount);
-        }
 
         try {
             const requestBody = JSON.stringify({ base, suffixes, stop_at: stopAt });
@@ -750,17 +724,6 @@ export async function getTokenPrefixCountsAsync(base, suffixes, padding = undefi
             }));
 
             if (Array.isArray(data?.token_counts) && data.token_counts.length === suffixes.length) {
-                for (let index = 0; index < data.token_counts.length; index++) {
-                    const count = data.token_counts[index];
-                    const numericCount = Number(count);
-                    if (Number.isFinite(numericCount)) {
-                        cacheState.cache[cacheKeys[index]] = numericCount;
-                        cacheState.dirty = true;
-                    }
-                    if (hasReachedOpenAITextTokenLimit(numericCount, stopAt)) {
-                        break;
-                    }
-                }
                 return data.token_counts.map(getOpenAITextTokenCount);
             }
         } catch (error) {

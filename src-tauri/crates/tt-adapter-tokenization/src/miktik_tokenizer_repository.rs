@@ -14,7 +14,7 @@ use tokio::sync::{Mutex, RwLock};
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::{
-    TokenizerRepository, has_reached_openai_text_token_limit, openai_text_token_count,
+    TokenizerRepository, has_reached_openai_text_token_limit,
 };
 
 const CLAUDE_JSON_GZIP_BYTES: &[u8] =
@@ -23,7 +23,6 @@ const DEEPSEEK_JSON_GZIP_BYTES: &[u8] =
     include_bytes!("../../../resources/tokenizers/deepseek.json.gz");
 const GEMMA_MODEL_GZIP_BYTES: &[u8] =
     include_bytes!("../../../resources/tokenizers/gemma.model.gz");
-const PREFIX_EXACT_REFINEMENT_MARGIN: usize = 64;
 
 #[derive(Clone, Copy)]
 enum ResourceCompression {
@@ -663,94 +662,40 @@ impl TokenizerRepository for MiktikTokenizerRepository {
             )));
         }
 
-        // Calibrate the estimate against the first real system message so backend-specific
-        // wrapper boundaries remain aligned with the existing count_messages contract.
-        let first_prefix = format!("{base}{}", suffixes[0]);
-        let first_message_count = TokenizerRepository::count_messages(
+        let empty_text_count = self
+            .registry
+            .count_tokens_canonical(canonical, "")
+            .map_err(|error| Self::map_tokenizer_error("count empty text", canonical, error))?;
+        let empty_message_count = TokenizerRepository::count_messages(
             self,
             canonical,
             &[serde_json::json!({
                 "role": "system",
-                "content": first_prefix,
+                "content": "",
             })],
         )?;
-        let first_estimate = token_counts[0];
-        let estimate_offset = i128::try_from(first_message_count)
-            .and_then(|message_count| {
-                i128::try_from(first_estimate).map(|estimate| message_count - estimate)
-            })
-            .map_err(|_| {
+        let wrapper_tokens = empty_message_count
+            .checked_sub(empty_text_count)
+            .ok_or_else(|| {
                 DomainError::InternalError(format!(
-                    "cumulative token estimate exceeded the supported range for '{canonical}'"
+                    "system-message wrapper reduced the token count for '{canonical}'"
                 ))
             })?;
 
         for count in &mut token_counts {
-            let adjusted = i128::try_from(*count)
-                .ok()
-                .and_then(|value| value.checked_add(estimate_offset))
-                .and_then(|value| usize::try_from(value).ok())
-                .ok_or_else(|| {
-                    DomainError::InternalError(format!(
-                        "cumulative token estimate overflowed for '{canonical}'"
-                    ))
-                })?;
-            *count = adjusted;
+            *count = count.checked_add(wrapper_tokens).ok_or_else(|| {
+                DomainError::InternalError(format!(
+                    "cumulative token estimate overflowed for '{canonical}'"
+                ))
+            })?;
         }
 
-        let Some(stop_at) = stop_at else {
-            return Ok(token_counts);
-        };
-
-        let content_capacity = suffixes.iter().fold(base.len(), |total, suffix| {
-            total.saturating_add(suffix.len())
-        });
-        let refinement_floor = stop_at.saturating_sub(PREFIX_EXACT_REFINEMENT_MARGIN);
-        let mut refinement_start = token_counts
+        if let Some(index) = token_counts
             .iter()
-            .position(|&count| openai_text_token_count(count) >= refinement_floor);
-
-        if refinement_start.is_none() {
-            let mut final_content = String::with_capacity(content_capacity);
-            final_content.push_str(base);
-            for suffix in suffixes {
-                final_content.push_str(suffix);
-            }
-            let final_count = TokenizerRepository::count_messages(
-                self,
-                canonical,
-                &[serde_json::json!({
-                    "role": "system",
-                    "content": final_content,
-                })],
-            )?;
-            if has_reached_openai_text_token_limit(final_count, Some(stop_at)) {
-                refinement_start = Some(0);
-            }
-        }
-
-        if let Some(refinement_start) = refinement_start {
-            let mut content = String::with_capacity(content_capacity);
-            content.push_str(base);
-            for suffix in &suffixes[..refinement_start] {
-                content.push_str(suffix);
-            }
-            for (index, suffix) in suffixes.iter().enumerate().skip(refinement_start) {
-                content.push_str(suffix);
-                let exact_count = TokenizerRepository::count_messages(
-                    self,
-                    canonical,
-                    &[serde_json::json!({
-                        "role": "system",
-                        "content": content,
-                    })],
-                )?;
-                token_counts[index] = exact_count;
-                if has_reached_openai_text_token_limit(exact_count, Some(stop_at)) {
-                    token_counts[index..].fill(exact_count);
-                    break;
-                }
-            }
+            .position(|&count| has_reached_openai_text_token_limit(count, stop_at))
+        {
+            let terminal_count = token_counts[index];
+            token_counts[index..].fill(terminal_count);
         }
 
         Ok(token_counts)
@@ -1097,7 +1042,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cumulative_prefix_counts_match_individual_messages_across_backends() {
+    async fn cumulative_prefix_estimates_track_individual_messages_across_backends() {
         let cache_dir = unique_temp_cache_dir();
         let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
         let base = "世界设定\n";
@@ -1137,7 +1082,13 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
 
-            assert_eq!(actual, expected, "prefix counts changed for {model}");
+            for (estimate, exact) in actual.iter().zip(&expected) {
+                let tolerance = exact.div_ceil(20).max(1);
+                assert!(
+                    estimate.abs_diff(*exact) <= tolerance,
+                    "prefix estimate drifted for {model}: estimate={estimate}, exact={exact}"
+                );
+            }
         }
 
         let _ = std::fs::remove_dir_all(cache_dir);
@@ -1212,50 +1163,6 @@ mod tests {
                         );
                     }
                 }
-
-                let max_visible_count = expected
-                    .iter()
-                    .copied()
-                    .map(openai_text_token_count)
-                    .max()
-                    .unwrap_or_default();
-                let mismatched_thresholds = (0..=max_visible_count)
-                    .filter(|&stop_at| {
-                        let estimated_index = actual
-                            .iter()
-                            .position(|&count| openai_text_token_count(count) >= stop_at);
-                        let exact_index = expected
-                            .iter()
-                            .position(|&count| openai_text_token_count(count) >= stop_at);
-                        estimated_index != exact_index
-                    })
-                    .collect::<Vec<_>>();
-                for stop_at in mismatched_thresholds
-                    .into_iter()
-                    .chain(std::iter::once(max_visible_count / 2))
-                {
-                    let stopped = TokenizerRepository::count_system_message_prefixes(
-                        &repository,
-                        model,
-                        &base,
-                        &suffixes,
-                        Some(stop_at),
-                    )
-                    .expect("threshold-refined prefix counts should succeed");
-                    let estimated_index = actual
-                        .iter()
-                        .position(|&count| openai_text_token_count(count) >= stop_at);
-                    let exact_index = expected
-                        .iter()
-                        .position(|&count| openai_text_token_count(count) >= stop_at);
-                    let stopped_index = stopped
-                        .iter()
-                        .position(|&count| openai_text_token_count(count) >= stop_at);
-                    assert_eq!(
-                        stopped_index, exact_index,
-                        "prefix threshold refinement failed for {model} at {stop_at}; estimate crossed at {estimated_index:?}"
-                    );
-                }
             }
         }
 
@@ -1304,7 +1211,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cumulative_prefix_counts_preserve_large_world_info_thresholds() {
+    async fn cumulative_prefix_estimates_stay_close_on_large_world_info() {
         let cache_dir = unique_temp_cache_dir();
         let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
         let base =
@@ -1331,11 +1238,28 @@ mod tests {
                     .expect("complete prefix count should succeed")
                 })
                 .collect::<Vec<_>>();
-            let stop_at = openai_text_token_count(exact_counts[20]);
-            let expected_index = exact_counts
+            let estimated_counts = TokenizerRepository::count_system_message_prefixes(
+                &repository,
+                model,
+                &base,
+                &suffixes,
+                None,
+            )
+            .expect("cumulative prefix estimates should succeed");
+
+            for (estimate, exact) in estimated_counts.iter().zip(&exact_counts) {
+                let tolerance = exact.div_ceil(20).max(1);
+                assert!(
+                    estimate.abs_diff(*exact) <= tolerance,
+                    "large world-info estimate drifted for {model}: estimate={estimate}, exact={exact}"
+                );
+            }
+
+            let stop_at = openai_text_token_count(estimated_counts[20]);
+            let stop_index = estimated_counts
                 .iter()
                 .position(|&count| openai_text_token_count(count) >= stop_at)
-                .expect("exact counts should reach the selected threshold");
+                .expect("estimates should reach the selected threshold");
 
             let stopped_counts = TokenizerRepository::count_system_message_prefixes(
                 &repository,
@@ -1344,25 +1268,12 @@ mod tests {
                 &suffixes,
                 Some(stop_at),
             )
-            .expect("threshold-refined prefix counts should succeed");
-            let stopped_index = stopped_counts
-                .iter()
-                .position(|&count| openai_text_token_count(count) >= stop_at)
-                .expect("refined counts should reach the selected threshold");
+            .expect("stopped prefix estimates should succeed");
 
-            assert_eq!(
-                stopped_index, expected_index,
-                "large world-info threshold crossing changed for {model}"
-            );
-            assert_eq!(
-                stopped_counts[expected_index], exact_counts[expected_index],
-                "large world-info terminal count changed for {model}"
-            );
-            assert!(
-                stopped_counts[expected_index..]
-                    .iter()
-                    .all(|&count| count == exact_counts[expected_index])
-            );
+            let mut expected_stopped_counts = estimated_counts;
+            let terminal_count = expected_stopped_counts[stop_index];
+            expected_stopped_counts[stop_index..].fill(terminal_count);
+            assert_eq!(stopped_counts, expected_stopped_counts);
         }
 
         let _ = std::fs::remove_dir_all(cache_dir);

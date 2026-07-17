@@ -83,7 +83,7 @@ function evaluateWorldInfoBudget(inputEntries, { budget, textToScanTokens = 0, p
     return { activated, newContent, tokenBudgetOverflowed, batchSizes };
 }
 
-test('World info batches only exact safe token-count prefixes', async () => {
+test('World info batches only safe token-count prefixes', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/world-info.js'), 'utf8');
 
     assert.match(source, /getTokenCountAsync, getTokenPrefixCountsAsync/);
@@ -227,15 +227,17 @@ test('Batch token counts preserve individual OpenAI wrapper semantics', async ()
     assert.match(source, /Promise\.all\(strings\.map\(text => getTokenCountAsync\(text, padding\)\)\)/);
 });
 
-test('Prefix token counts use compact native payload with an exact fallback', async () => {
+test('Prefix token estimates use compact native payload without exact-cache coupling', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/tokenizers.js'), 'utf8');
+    const start = source.indexOf('export async function getTokenPrefixCountsAsync');
+    const end = source.indexOf('\nexport function getTokenizerModel', start);
+    const prefixSource = source.slice(start, end);
 
-    assert.match(source, /export async function getTokenPrefixCountsAsync/);
-    assert.match(source, /count-prefix-batch/);
-    assert.match(source, /const requestBody = JSON\.stringify\(\{ base, suffixes, stop_at: stopAt \}\)/);
-    assert.match(source, /countTokenPrefixesSingleFlight\(requestKey/);
-    assert.match(source, /data: requestBody/);
-    assert.match(source, /cacheState\.cache\[cacheKeys\[index\]\]/);
-    assert.match(source, /using exact batch fallback/);
-    assert.match(source, /return getTokenCountsAsync\(prefixes, padding\)/);
+    assert.match(prefixSource, /count-prefix-batch/);
+    assert.match(prefixSource, /const requestBody = JSON\.stringify\(\{ base, suffixes, stop_at: stopAt \}\)/);
+    assert.match(prefixSource, /countTokenPrefixesSingleFlight\(requestKey/);
+    assert.match(prefixSource, /data: requestBody/);
+    assert.doesNotMatch(prefixSource, /cacheState|cacheKeys|cachedCounts/);
+    assert.match(prefixSource, /using exact batch fallback/);
+    assert.match(prefixSource, /return getTokenCountsAsync\(prefixes, padding\)/);
 });

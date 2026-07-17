@@ -59,11 +59,9 @@ pub trait TokenizerRepository: Send + Sync {
 
     fn count_messages(&self, model: &str, messages: &[Value]) -> Result<usize, DomainError>;
 
-    /// Counts cumulative system-message prefixes and returns raw
-    /// wrapper-inclusive message counts. Backends may use cumulative estimates,
-    /// but must refine the threshold boundary when `stop_at` is present so the
-    /// caller-visible budget decision remains unchanged. `stop_at` excludes the
-    /// single-message wrapper offset.
+    /// Counts or estimates cumulative system-message prefixes and returns raw
+    /// wrapper-inclusive message counts. `stop_at` is applied to those counts and
+    /// excludes the single-message wrapper offset.
     fn count_system_message_prefixes(
         &self,
         model: &str,
