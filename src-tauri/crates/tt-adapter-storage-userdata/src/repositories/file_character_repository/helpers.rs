@@ -33,7 +33,7 @@ pub(crate) fn file_ctime_millis(metadata: &std::fs::Metadata) -> Option<i64> {
         let unix_ticks = metadata
             .creation_time()
             .checked_sub(WINDOWS_TICKS_TO_UNIX_EPOCH)?;
-        return Some((unix_ticks / 10_000) as i64);
+        Some((unix_ticks / 10_000) as i64)
     }
 
     #[cfg(not(any(unix, windows)))]

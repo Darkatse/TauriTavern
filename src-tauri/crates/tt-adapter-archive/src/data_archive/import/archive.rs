@@ -161,7 +161,7 @@ pub fn prepare_archive_for_import(
                 scanned_entries: scanned_archive.scanned_entries,
             }))
         }
-        Err(error) if bytes_read >= 2 && magic[..2] == [b'P', b'K'] => {
+        Err(error) if bytes_read >= 2 && magic[..2] == *b"PK" => {
             Err(invalid_archive_error("Failed to parse zip archive", error))
         }
         Err(_) => stage_tar_archive(

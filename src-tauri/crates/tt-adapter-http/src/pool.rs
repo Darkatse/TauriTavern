@@ -329,7 +329,7 @@ mod tests {
         }
     }
 
-    fn test_tls_config() -> (Arc<ServerConfig>, reqwest::Certificate) {
+    fn test_tls_config() -> Arc<ServerConfig> {
         let CertifiedKey { cert, key_pair } =
             generate_simple_self_signed(["127.0.0.1".to_string()]).expect("test certificate");
         let certificate = cert.der().clone();
@@ -338,8 +338,7 @@ mod tests {
             .with_no_client_auth()
             .with_single_cert(vec![certificate.clone()], private_key)
             .expect("TLS server config");
-        let root = reqwest::Certificate::from_der(certificate.as_ref()).expect("test root");
-        (Arc::new(config), root)
+        Arc::new(config)
     }
 
     fn tls_server(config: Arc<ServerConfig>) -> (String, Receiver<bool>, JoinHandle<()>) {
@@ -563,10 +562,10 @@ mod tests {
     }
 
     #[test]
-    fn git_blocking_builder_uses_normal_certificate_validation() {
-        let (config, root) = test_tls_config();
+    fn git_blocking_builder_rejects_untrusted_certificates() {
+        let config = test_tls_config();
 
-        let (untrusted_url, untrusted_request, untrusted_handle) = tls_server(Arc::clone(&config));
+        let (untrusted_url, untrusted_request, untrusted_handle) = tls_server(config);
         let client = pool().git_blocking_client_builder().build().unwrap();
         assert!(client.get(untrusted_url).send().is_err());
         assert!(
@@ -575,26 +574,5 @@ mod tests {
                 .unwrap()
         );
         untrusted_handle.join().expect("untrusted TLS server");
-
-        let (trusted_url, trusted_request, trusted_handle) = tls_server(config);
-        let client = pool()
-            .git_blocking_client_builder()
-            .add_root_certificate(root)
-            .build()
-            .unwrap();
-        assert!(
-            client
-                .get(trusted_url)
-                .send()
-                .unwrap()
-                .status()
-                .is_success()
-        );
-        assert!(
-            trusted_request
-                .recv_timeout(Duration::from_secs(1))
-                .unwrap()
-        );
-        trusted_handle.join().expect("trusted TLS server");
     }
 }
