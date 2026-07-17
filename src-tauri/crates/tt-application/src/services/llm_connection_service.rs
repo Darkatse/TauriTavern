@@ -78,6 +78,11 @@ const SOURCE_SPECIFIC_FIELD_SPECS: &[SourceSpecificFieldSpec] = &[
         kind: SourceSpecificValueKind::NonEmptyString,
     },
     SourceSpecificFieldSpec {
+        key: "moonshot_endpoint",
+        source: ChatCompletionSource::Moonshot,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
         key: "workers_ai_account_id",
         source: ChatCompletionSource::WorkersAi,
         kind: SourceSpecificValueKind::NonEmptyString,
@@ -692,7 +697,7 @@ fn trimmed_option(value: Option<&str>) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Map, json};
+    use serde_json::{Map, Value, json};
 
     use super::{LlmConnectionService, validate_connection};
     use tt_domain::models::llm_connection::{
@@ -737,6 +742,19 @@ mod tests {
             .endpoint
             .source_specific
             .insert("aws_bedrock_region".to_string(), json!("us-west-2"));
+        connection
+    }
+
+    fn moonshot_connection() -> LlmConnectionDefinition {
+        let mut connection = openrouter_connection();
+        connection.id = LlmConnectionId::parse("moonshot-main").unwrap();
+        connection.display_name = "Moonshot Main".to_string();
+        connection.provider.chat_completion_source = "moonshot".to_string();
+        connection.auth.secret_ref.key = "api_key_moonshot".to_string();
+        connection
+            .endpoint
+            .source_specific
+            .insert("moonshot_endpoint".to_string(), json!("cn"));
         connection
     }
 
@@ -905,5 +923,34 @@ mod tests {
         );
         assert!(payload.get("workers_ai_account_id").is_none());
         assert!(payload.get("nanogpt_payg_override").is_none());
+    }
+
+    #[tokio::test]
+    async fn moonshot_connection_accepts_and_overlays_endpoint() {
+        let connection = moonshot_connection();
+        validate_connection(&connection).expect("moonshot endpoint should validate");
+
+        let service = LlmConnectionService::new(std::sync::Arc::new(TestRepo { connection }));
+        let mut payload = json!({
+            "chat_completion_source": "minimax",
+            "minimax_endpoint": "global",
+            "moonshot_endpoint": "global",
+            "messages": []
+        })
+        .as_object()
+        .cloned()
+        .unwrap_or_else(Map::new);
+
+        let resolved = service
+            .apply_connection_to_payload("moonshot-main", "kimi-k3", &mut payload)
+            .await
+            .expect("connection overlay");
+
+        assert_eq!(resolved.chat_completion_source, "moonshot");
+        assert_eq!(
+            payload.get("moonshot_endpoint").and_then(Value::as_str),
+            Some("cn")
+        );
+        assert!(payload.get("minimax_endpoint").is_none());
     }
 }

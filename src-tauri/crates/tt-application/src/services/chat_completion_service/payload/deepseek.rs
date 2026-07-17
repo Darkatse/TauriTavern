@@ -7,6 +7,7 @@ use super::super::model_capabilities::{
 };
 use super::openai;
 use super::prompt_post_processing::{PromptNames, PromptProcessingType, post_process_prompt};
+use super::shared::add_assistant_prefix;
 use super::tool_calls;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,13 +34,25 @@ pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), 
         )?,
         _ => None,
     };
-    let tools_snapshot = payload.get("tools").cloned();
+    let has_tools = payload
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| !tools.is_empty());
 
     if let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) {
         let raw = std::mem::take(messages);
         let mut processed = post_process_prompt(raw, PromptProcessingType::SemiTools, &names);
+        let has_tool_messages = processed.iter().any(|message| {
+            message
+                .as_object()
+                .and_then(|object| object.get("role"))
+                .and_then(Value::as_str)
+                == Some("tool")
+        });
 
-        add_assistant_prefix(&mut processed, tools_snapshot.as_ref(), "prefix");
+        if !has_tools && !has_tool_messages {
+            add_assistant_prefix(&mut processed, "prefix");
+        }
 
         if thinking_mode == Some(DeepSeekThinkingMode::Enabled) {
             ensure_tool_context_reasoning_content(&mut processed)?;
@@ -180,37 +193,6 @@ fn ensure_tool_context_reasoning_content(messages: &mut [Value]) -> Result<(), A
     }
 
     Ok(())
-}
-
-fn add_assistant_prefix(messages: &mut [Value], tools: Option<&Value>, property: &str) {
-    if messages.is_empty() {
-        return;
-    }
-
-    let has_tools = tools
-        .and_then(Value::as_array)
-        .is_some_and(|tools| !tools.is_empty());
-    let has_tool_messages = messages.iter().any(|message| {
-        message
-            .as_object()
-            .and_then(|object| object.get("role"))
-            .and_then(Value::as_str)
-            == Some("tool")
-    });
-
-    if has_tools || has_tool_messages {
-        return;
-    }
-
-    let Some(last_message) = messages.last_mut().and_then(Value::as_object_mut) else {
-        return;
-    };
-
-    if last_message.get("role").and_then(Value::as_str) != Some("assistant") {
-        return;
-    }
-
-    last_message.insert(property.to_string(), Value::Bool(true));
 }
 
 fn strip_empty_required_arrays_from_tools(payload: &mut Map<String, Value>) {

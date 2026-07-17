@@ -20,6 +20,8 @@ pub struct ChatCompletionStatusRequestDto {
     #[serde(default)]
     pub minimax_endpoint: String,
     #[serde(default)]
+    pub moonshot_endpoint: String,
+    #[serde(default)]
     pub workers_ai_account_id: String,
     #[serde(default)]
     pub aws_bedrock_region: String,

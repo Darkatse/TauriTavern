@@ -67,6 +67,7 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
         "bypass_status_check",
         "siliconflow_endpoint",
         "minimax_endpoint",
+        "moonshot_endpoint",
         "workers_ai_account_id",
         "nanogpt_provider",
         "nanogpt_payg_override",
@@ -365,9 +366,10 @@ mod tests {
     use super::{build, strip_internal_fields};
 
     #[test]
-    fn strip_internal_fields_removes_secret_id_selector() {
+    fn strip_internal_fields_removes_internal_selectors() {
         let mut payload = json!({
             "secret_id": "profile-secret",
+            "moonshot_endpoint": "cn",
             "model": "gpt-4.1-mini"
         })
         .as_object()
@@ -377,6 +379,7 @@ mod tests {
         strip_internal_fields(&mut payload);
 
         assert!(payload.get("secret_id").is_none());
+        assert!(payload.get("moonshot_endpoint").is_none());
         assert_eq!(
             payload.get("model").and_then(Value::as_str),
             Some("gpt-4.1-mini")

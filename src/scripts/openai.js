@@ -362,6 +362,11 @@ export const MINIMAX_ENDPOINT = {
     CN: 'cn',
 };
 
+export const MOONSHOT_ENDPOINT = {
+    GLOBAL: 'global',
+    CN: 'cn',
+};
+
 export const AWS_BEDROCK_REGION_DEFAULT = 'us-east-1';
 
 export function getAwsBedrockModelMetadata(modelId = null) {
@@ -456,6 +461,7 @@ export const settingsToUpdate = {
     xai_model: ['#model_xai_select', 'xai_model', false, true],
     pollinations_model: ['#model_pollinations_select', 'pollinations_model', false, true],
     moonshot_model: ['#model_moonshot_select', 'moonshot_model', false, true],
+    moonshot_endpoint: ['#moonshot_endpoint', 'moonshot_endpoint', false, true],
     fireworks_model: ['#model_fireworks_select', 'fireworks_model', false, true],
     cometapi_model: ['#model_cometapi_select', 'cometapi_model', false, true],
     custom_model: ['#custom_model_id', 'custom_model', false, true],
@@ -583,7 +589,8 @@ const default_settings = {
     xai_model: 'grok-3-beta',
     pollinations_model: 'openai',
     cometapi_model: 'gpt-4o',
-    moonshot_model: 'kimi-latest',
+    moonshot_model: 'kimi-k3',
+    moonshot_endpoint: MOONSHOT_ENDPOINT.GLOBAL,
     fireworks_model: 'accounts/fireworks/models/kimi-k2-instruct',
     zai_model: 'glm-4.6',
     zai_endpoint: ZAI_ENDPOINT.COMMON,
@@ -4000,6 +4007,7 @@ function getReasoningEffort(settings = null, model = null) {
         chat_completion_sources.XAI,
         chat_completion_sources.AIMLAPI,
         chat_completion_sources.OPENROUTER,
+        chat_completion_sources.MOONSHOT,
         chat_completion_sources.POLLINATIONS,
         chat_completion_sources.PERPLEXITY,
         chat_completion_sources.COMETAPI,
@@ -4013,7 +4021,7 @@ function getReasoningEffort(settings = null, model = null) {
     }
 
     function resolveReasoningEffort() {
-        if (settings.chat_completion_source === chat_completion_sources.OPENROUTER) {
+        if ([chat_completion_sources.OPENROUTER, chat_completion_sources.MOONSHOT].includes(settings.chat_completion_source)) {
             return settings.reasoning_effort === reasoning_effort_types.auto
                 ? undefined
                 : settings.reasoning_effort;
@@ -4462,6 +4470,7 @@ export async function createGenerationParameters(settings, model, type, messages
 
     // https://platform.moonshot.ai/docs/api/chat#public-service-address
     if (settings.chat_completion_source === chat_completion_sources.MOONSHOT) {
+        generate_data.moonshot_endpoint = settings.moonshot_endpoint || MOONSHOT_ENDPOINT.GLOBAL;
         // >Kimi API is fully compatible with OpenAI's API format
         if (/kimi-k2.5/.test(model)) {
             delete generate_data.temperature;
@@ -6160,6 +6169,10 @@ async function getStatusOpen() {
         data.minimax_endpoint = oai_settings.minimax_endpoint;
     }
 
+    if (oai_settings.chat_completion_source === chat_completion_sources.MOONSHOT) {
+        data.moonshot_endpoint = oai_settings.moonshot_endpoint;
+    }
+
     if (oai_settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
         data.aws_bedrock_region = (oai_settings.aws_bedrock_region || AWS_BEDROCK_REGION_DEFAULT).trim();
     }
@@ -6964,6 +6977,10 @@ function getMoonshotMaxContext(model, isUnlocked) {
         'kimi-latest': max_256k,
         'kimi-thinking-preview': max_32k,
         'kimi-k2.5': max_256k,
+        'kimi-k2.6': max_256k,
+        'kimi-k2.7-code': max_256k,
+        'kimi-k2.7-code-highspeed': max_256k,
+        'kimi-k3': max_1mil,
         'kimi-k2-0905-preview': max_256k,
         'kimi-k2-turbo-preview': max_256k,
         'kimi-k2-thinking': max_256k,
@@ -9097,6 +9114,10 @@ export function initOpenAI() {
     });
     $('#minimax_endpoint').on('input', function () {
         oai_settings.minimax_endpoint = String($(this).val());
+        saveSettingsDebounced();
+    });
+    $('#moonshot_endpoint').on('input', function () {
+        oai_settings.moonshot_endpoint = String($(this).val());
         saveSettingsDebounced();
     });
     $('#aws_bedrock_region').on('input', function () {

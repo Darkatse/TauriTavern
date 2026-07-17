@@ -159,6 +159,26 @@ test('Agent model target conversion materializes LLM connection and profile bind
     }), target);
 });
 
+test('Agent model target conversion preserves Moonshot endpoint selection', async () => {
+    const { buildLlmConnectionFromModelTarget } = await importConversion();
+    const connection = buildLlmConnectionFromModelTarget(sampleTarget({
+        api: 'moonshot',
+        model: 'kimi-k3',
+        'api-url': 'cn',
+        secretRef: {
+            key: 'api_key_moonshot',
+            id: 'secret-moonshot',
+        },
+    }));
+
+    assert.equal(connection.provider.chatCompletionSource, 'moonshot');
+    assert.deepEqual(connection.endpoint, {
+        sourceSpecific: {
+            moonshot_endpoint: 'cn',
+        },
+    });
+});
+
 test('Agent run model target ensure materializes the current saved target state', async () => {
     const currentTarget = sampleTarget({
         secretRef: {

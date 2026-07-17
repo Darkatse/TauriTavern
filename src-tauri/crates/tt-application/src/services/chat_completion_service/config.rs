@@ -29,6 +29,7 @@ const COHERE_STATUS_API_BASE: &str = "https://api.cohere.ai/v1";
 const COHERE_API_BASE: &str = "https://api.cohere.ai/v2";
 const GROQ_API_BASE: &str = "https://api.groq.com/openai/v1";
 const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
+const MOONSHOT_API_BASE_CN: &str = "https://api.moonshot.cn/v1";
 const NANOGPT_API_BASE: &str = "https://nano-gpt.com/api/v1";
 const CHUTES_API_BASE: &str = "https://llm.chutes.ai/v1";
 const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
@@ -45,6 +46,7 @@ const OPENROUTER_CATEGORIES: &str = "roleplay,general-chat";
 
 const ZAI_ENDPOINT_CODING: &str = "coding";
 const MINIMAX_ENDPOINT_CN: &str = "cn";
+const MOONSHOT_ENDPOINT_CN: &str = "cn";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApiConfigPurpose {
@@ -57,6 +59,7 @@ struct ApiConfigHints<'a> {
     zai_endpoint: &'a str,
     siliconflow_endpoint: &'a str,
     minimax_endpoint: &'a str,
+    moonshot_endpoint: &'a str,
     workers_ai_account_id: &'a str,
     nanogpt_provider: &'a str,
     nanogpt_payg_override: bool,
@@ -93,6 +96,7 @@ pub(super) async fn resolve_status_api_config(
         ApiConfigHints {
             siliconflow_endpoint: dto.siliconflow_endpoint.trim(),
             minimax_endpoint: dto.minimax_endpoint.trim(),
+            moonshot_endpoint: dto.moonshot_endpoint.trim(),
             workers_ai_account_id: dto.workers_ai_account_id.trim(),
             aws_bedrock_region: dto.aws_bedrock_region.trim(),
             secret_id: normalize_secret_id(dto.secret_id.as_deref()),
@@ -117,6 +121,7 @@ pub(super) async fn resolve_generate_api_config(
     let zai_endpoint = get_payload_string(&dto.payload, "zai_endpoint")?;
     let siliconflow_endpoint = get_payload_string(&dto.payload, "siliconflow_endpoint")?;
     let minimax_endpoint = get_payload_string(&dto.payload, "minimax_endpoint")?;
+    let moonshot_endpoint = get_payload_string(&dto.payload, "moonshot_endpoint")?;
     let workers_ai_account_id = get_payload_string(&dto.payload, "workers_ai_account_id")?;
     let nanogpt_provider = get_payload_string(&dto.payload, "nanogpt_provider")?;
     let nanogpt_payg_override = get_payload_bool(&dto.payload, "nanogpt_payg_override")?;
@@ -158,6 +163,7 @@ pub(super) async fn resolve_generate_api_config(
             zai_endpoint: &zai_endpoint,
             siliconflow_endpoint: &siliconflow_endpoint,
             minimax_endpoint: &minimax_endpoint,
+            moonshot_endpoint: &moonshot_endpoint,
             workers_ai_account_id: &workers_ai_account_id,
             nanogpt_provider: &nanogpt_provider,
             nanogpt_payg_override,
@@ -432,7 +438,7 @@ fn default_base_url(
             ApiConfigPurpose::Generate => COHERE_API_BASE.to_string(),
         },
         ChatCompletionSource::Groq => GROQ_API_BASE.to_string(),
-        ChatCompletionSource::Moonshot => MOONSHOT_API_BASE.to_string(),
+        ChatCompletionSource::Moonshot => moonshot_base_url(hints.moonshot_endpoint)?.to_string(),
         ChatCompletionSource::NanoGpt => NANOGPT_API_BASE.to_string(),
         ChatCompletionSource::Chutes => CHUTES_API_BASE.to_string(),
         ChatCompletionSource::SiliconFlow => {
@@ -525,6 +531,16 @@ fn minimax_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
         MINIMAX_ENDPOINT_CN => Ok(MINIMAX_API_BASE_CN),
         other => Err(ApplicationError::ValidationError(format!(
             "Unsupported MiniMax endpoint: {other}"
+        ))),
+    }
+}
+
+fn moonshot_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
+    match endpoint.trim().to_ascii_lowercase().as_str() {
+        "" | "global" => Ok(MOONSHOT_API_BASE),
+        MOONSHOT_ENDPOINT_CN => Ok(MOONSHOT_API_BASE_CN),
+        other => Err(ApplicationError::ValidationError(format!(
+            "Unsupported Moonshot endpoint: {other}"
         ))),
     }
 }
@@ -744,9 +760,10 @@ mod tests {
     use super::super::additional_parameters::AdditionalParameters;
     use super::{
         ApiConfigHints, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, MINIMAX_API_BASE,
-        MINIMAX_API_BASE_CN, OPENROUTER_API_BASE, OPENROUTER_CATEGORIES, OPENROUTER_REFERER,
-        OPENROUTER_TITLE, ZAI_API_BASE_CODING, default_base_url, resolve_generate_api_config,
-        resolve_status_api_config, source_extra_headers, supports_reverse_proxy, vertexai_host,
+        MINIMAX_API_BASE_CN, MOONSHOT_API_BASE, MOONSHOT_API_BASE_CN, OPENROUTER_API_BASE,
+        OPENROUTER_CATEGORIES, OPENROUTER_REFERER, OPENROUTER_TITLE, ZAI_API_BASE_CODING,
+        default_base_url, resolve_generate_api_config, resolve_status_api_config,
+        source_extra_headers, supports_reverse_proxy, vertexai_host,
     };
 
     struct TestSecretRepository {
@@ -911,6 +928,69 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cn, MINIMAX_API_BASE_CN);
+    }
+
+    #[tokio::test]
+    async fn moonshot_endpoint_resolves_global_and_cn_and_rejects_unknown() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::MOONSHOT,
+            "moonshot-secret",
+        ));
+
+        let status = resolve_status_api_config(
+            ChatCompletionSource::Moonshot,
+            &ChatCompletionStatusRequestDto::default(),
+            &secret_repository,
+        )
+        .await
+        .expect("empty status endpoint should use the global base");
+        assert_eq!(status.base_url, MOONSHOT_API_BASE);
+
+        let global_payload = json!({ "moonshot_endpoint": "global" })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+        let global = resolve_generate_for_test(
+            ChatCompletionSource::Moonshot,
+            &ChatCompletionGenerateRequestDto {
+                payload: global_payload,
+            },
+            &secret_repository,
+        )
+        .await
+        .expect("global generate endpoint should resolve");
+        assert_eq!(global.base_url, MOONSHOT_API_BASE);
+
+        let cn_payload = json!({ "moonshot_endpoint": "cn" })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+        let cn = resolve_generate_for_test(
+            ChatCompletionSource::Moonshot,
+            &ChatCompletionGenerateRequestDto {
+                payload: cn_payload,
+            },
+            &secret_repository,
+        )
+        .await
+        .expect("cn generate endpoint should resolve");
+        assert_eq!(cn.base_url, MOONSHOT_API_BASE_CN);
+
+        let invalid = resolve_status_api_config(
+            ChatCompletionSource::Moonshot,
+            &ChatCompletionStatusRequestDto {
+                moonshot_endpoint: "invalid".to_string(),
+                ..Default::default()
+            },
+            &secret_repository,
+        )
+        .await
+        .expect_err("unknown endpoint should fail fast");
+        assert!(
+            invalid
+                .to_string()
+                .contains("Unsupported Moonshot endpoint")
+        );
     }
 
     #[test]
