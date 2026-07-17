@@ -19,6 +19,7 @@ export {};
  *   | 'cancel_data_archive_job'
  *   | 'cleanup_export_data_archive'
  *   | 'cleanup_user_backup_archive'
+ *   | 'count_openai_token_prefixes'
  *   | 'count_openai_tokens_batch'
  *   | 'assign_images_to_metadata_folder'
  *   | 'create_character'
