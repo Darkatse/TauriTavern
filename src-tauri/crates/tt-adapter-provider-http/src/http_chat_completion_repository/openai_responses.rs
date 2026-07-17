@@ -24,8 +24,7 @@ use super::response_body::{log_upstream_body_parse_failure, read_upstream_json_b
 
 type ResponsesWsStream = tokio_tungstenite::WebSocketStream<reqwest::Upgraded>;
 
-const OPERATION_GENERATE_WS: &str = "generate_ws";
-const OPERATION_GENERATE_STREAM_WS: &str = "generate_stream_ws";
+const OPERATION_GENERATE_STREAM_HTTP: &str = "generate_stream_http";
 const OPERATION_GENERATE_PERSISTENT_WS: &str = "generate_persistent_ws";
 
 #[derive(Default)]
@@ -81,12 +80,6 @@ impl ResponsesWsSessionPool {
     }
 }
 
-#[derive(Debug, Clone)]
-struct ToolCallDescriptor {
-    call_id: String,
-    name: Option<String>,
-}
-
 struct ResponsesStreamState {
     created: u64,
     model: String,
@@ -94,8 +87,6 @@ struct ResponsesStreamState {
     sent_role: bool,
     saw_tool_call: bool,
     done_sent: bool,
-    tool_call_by_item_id: HashMap<String, ToolCallDescriptor>,
-    tool_call_by_output_index: HashMap<usize, String>,
 }
 
 impl ResponsesStreamState {
@@ -107,23 +98,35 @@ impl ResponsesStreamState {
             sent_role: false,
             saw_tool_call: false,
             done_sent: false,
-            tool_call_by_item_id: HashMap::new(),
-            tool_call_by_output_index: HashMap::new(),
         }
     }
 
-    fn handle_event(&mut self, sender: &ChatCompletionStreamSender, raw_payload: &[u8]) {
+    fn handle_event(
+        &mut self,
+        sender: &ChatCompletionStreamSender,
+        event: &Value,
+    ) -> Result<(), DomainError> {
         if self.done_sent {
-            return;
+            return Ok(());
         }
 
-        let Ok(event) = serde_json::from_slice::<Value>(raw_payload) else {
-            return;
-        };
+        if terminal_response_from_event(event)?.is_some() {
+            let finish_reason = if self.saw_tool_call {
+                "tool_calls"
+            } else {
+                "stop"
+            };
+
+            self.send_delta(sender, json!({}), Some(finish_reason));
+            let _ = sender.send("[DONE]".to_string());
+            self.done_sent = true;
+            return Ok(());
+        }
 
         if let Some(response_id) = event
             .get("response_id")
             .and_then(Value::as_str)
+            .or_else(|| event.pointer("/response/id").and_then(Value::as_str))
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
@@ -132,7 +135,7 @@ impl ResponsesStreamState {
 
         if let Some(event_type) = event.get("type").and_then(Value::as_str) {
             match event_type {
-                "response.output_text.delta" | "response.text.delta" => {
+                "response.output_text.delta" | "response.text.delta" | "response.refusal.delta" => {
                     if let Some(delta) = event.get("delta").and_then(Value::as_str)
                         && !delta.is_empty()
                     {
@@ -148,27 +151,17 @@ impl ResponsesStreamState {
                         self.send_delta(sender, json!({ "reasoning_content": delta }), None);
                     }
                 }
-                "response.output_item.added" => {
+                "response.output_item.done" => {
                     let Some(item) = event.get("item").and_then(Value::as_object) else {
-                        return;
+                        return Ok(());
                     };
 
                     if item.get("type").and_then(Value::as_str) != Some("function_call") {
-                        return;
+                        return Ok(());
                     }
 
-                    let response_id = event
-                        .get("response_id")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty());
                     let call_id = item
                         .get("call_id")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty());
-                    let item_id = item
-                        .get("id")
                         .and_then(Value::as_str)
                         .map(str::trim)
                         .filter(|value| !value.is_empty());
@@ -177,30 +170,21 @@ impl ResponsesStreamState {
                         .and_then(Value::as_str)
                         .map(str::trim)
                         .filter(|value| !value.is_empty());
+                    let arguments = item
+                        .get("arguments")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
 
-                    let (Some(response_id), Some(call_id), Some(item_id)) =
-                        (response_id, call_id, item_id)
-                    else {
-                        return;
+                    let (Some(call_id), Some(name)) = (call_id, name) else {
+                        return Ok(());
                     };
 
-                    self.response_id = Some(response_id.to_string());
                     self.saw_tool_call = true;
 
                     let output_index = event
                         .get("output_index")
                         .and_then(Value::as_u64)
                         .unwrap_or(0) as usize;
-
-                    self.tool_call_by_item_id.insert(
-                        item_id.to_string(),
-                        ToolCallDescriptor {
-                            call_id: call_id.to_string(),
-                            name: name.map(str::to_string),
-                        },
-                    );
-                    self.tool_call_by_output_index
-                        .insert(output_index, call_id.to_string());
 
                     self.send_delta(
                         sender,
@@ -210,156 +194,29 @@ impl ResponsesStreamState {
                                 "id": call_id,
                                 "type": "function",
                                 "function": {
-                                    "name": name.unwrap_or("tool"),
-                                    "arguments": ""
+                                    "name": name,
+                                    "arguments": arguments
                                 }
                             }]
                         }),
                         None,
                     );
                 }
-                "response.function_call_arguments.delta" => {
-                    let delta = event
-                        .get("delta")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-                    if delta.is_empty() {
-                        return;
-                    }
-
-                    let output_index = event
-                        .get("output_index")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0) as usize;
-
-                    let call_id = event
-                        .get("item_id")
-                        .and_then(Value::as_str)
-                        .and_then(|item_id| self.tool_call_by_item_id.get(item_id))
-                        .map(|descriptor| descriptor.call_id.as_str())
-                        .or_else(|| {
-                            self.tool_call_by_output_index
-                                .get(&output_index)
-                                .map(|value| value.as_str())
-                        })
-                        .unwrap_or_default();
-
-                    if call_id.is_empty() {
-                        return;
-                    }
-
-                    self.send_delta(
-                        sender,
-                        json!({
-                            "tool_calls": [{
-                                "index": output_index,
-                                "id": call_id,
-                                "type": "function",
-                                "function": { "arguments": delta }
-                            }]
-                        }),
-                        None,
-                    );
-                }
-                "response.function_call_arguments.done" => {
-                    let output_index = event
-                        .get("output_index")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0) as usize;
-
-                    let item_id = event.get("item_id").and_then(Value::as_str);
-                    let call_id = item_id
-                        .and_then(|id| self.tool_call_by_item_id.get(id))
-                        .map(|descriptor| descriptor.call_id.as_str())
-                        .or_else(|| {
-                            event
-                                .get("call_id")
-                                .and_then(Value::as_str)
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())
-                        })
-                        .unwrap_or_default();
-
-                    if call_id.is_empty() {
-                        return;
-                    }
-
-                    let name = item_id
-                        .and_then(|id| self.tool_call_by_item_id.get(id))
-                        .and_then(|descriptor| descriptor.name.as_deref())
-                        .or_else(|| event.get("name").and_then(Value::as_str))
-                        .unwrap_or("tool");
-
-                    let arguments = event
-                        .get("arguments")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-
-                    if !arguments.is_empty() {
-                        self.send_delta(
-                            sender,
-                            json!({
-                                "tool_calls": [{
-                                    "index": output_index,
-                                    "id": call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": name,
-                                        "arguments": arguments
-                                    }
-                                }]
-                            }),
-                            None,
-                        );
-                    }
-                }
-                "response.completed" | "response.done" | "response.incomplete" => {
-                    let finish_reason = if self.saw_tool_call {
-                        "tool_calls"
-                    } else {
-                        "stop"
-                    };
-
-                    self.send_delta(sender, json!({}), Some(finish_reason));
-                    let _ = sender.send("[DONE]".to_string());
-                    self.done_sent = true;
-                }
-                "response.failed" => {
-                    let message = event
-                        .get("response")
-                        .and_then(|response| response.get("error"))
-                        .and_then(|error| error.get("message"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("OpenAI Responses stream failed");
-
-                    let _ = sender.send(
-                        serde_json::to_string(&json!({ "error": { "message": message } }))
-                            .unwrap_or_default(),
-                    );
-                    let _ = sender.send("[DONE]".to_string());
-                    self.done_sent = true;
-                }
-                "error" => {
-                    let message = event
-                        .get("error")
-                        .and_then(|error| error.get("message"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("OpenAI Responses stream failed");
-
-                    let _ = sender.send(
-                        serde_json::to_string(&json!({ "error": { "message": message } }))
-                            .unwrap_or_default(),
-                    );
-                    let _ = sender.send("[DONE]".to_string());
-                    self.done_sent = true;
-                }
                 _ => {}
             }
         }
+
+        Ok(())
     }
 
-    fn has_emitted(&self) -> bool {
-        self.sent_role || self.done_sent
+    fn ensure_completed(&self, cancelled: bool) -> Result<(), DomainError> {
+        if self.done_sent || cancelled {
+            return Ok(());
+        }
+
+        Err(DomainError::transient(
+            "OpenAI Responses stream closed before response.completed".to_string(),
+        ))
     }
 
     fn send_delta(
@@ -421,18 +278,7 @@ pub(super) async fn generate(
         .await;
     }
 
-    match generate_ws(repository, config, endpoint_path, payload).await {
-        Ok(response) => Ok(response),
-        Err(error) if is_cancelled(&error) => Err(error),
-        Err(error) => {
-            tracing::warn!(
-                provider = provider_name,
-                error = %error,
-                "OpenAI Responses WebSocket transport failed; falling back to HTTP"
-            );
-            generate_http(repository, config, endpoint_path, payload, provider_name).await
-        }
-    }
+    generate_http(repository, config, endpoint_path, payload, provider_name).await
 }
 
 async fn generate_http(
@@ -470,6 +316,7 @@ async fn generate_http(
     }
 
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
+    validate_terminal_response(&body)?;
 
     Ok(normalizers::normalize_openai_responses_response(body))
 }
@@ -483,37 +330,16 @@ pub(super) async fn generate_stream(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
-    match generate_stream_ws(
+    generate_stream_http(
         repository,
         config,
         endpoint_path,
         payload,
-        sender.clone(),
-        cancel.clone(),
+        provider_name,
+        sender,
+        cancel,
     )
     .await
-    {
-        Ok(()) => Ok(()),
-        Err(error) if is_cancelled(&error.error) => Err(error.error),
-        Err(error) if !error.emitted => {
-            tracing::warn!(
-                provider = provider_name,
-                error = %error.error,
-                "OpenAI Responses WebSocket stream failed before output; falling back to HTTP"
-            );
-            generate_stream_http(
-                repository,
-                config,
-                endpoint_path,
-                payload,
-                provider_name,
-                sender,
-                cancel,
-            )
-            .await
-        }
-        Err(error) => Err(error.error),
-    }
 }
 
 async fn generate_stream_http(
@@ -558,7 +384,7 @@ async fn generate_stream_http(
         .unwrap_or_default()
         .to_string();
     let mut state = ResponsesStreamState::new(model);
-    let out_sender = sender.clone();
+    let cancelled = cancel.clone();
 
     let (dummy_sender, dummy_receiver) = mpsc::unbounded_channel::<String>();
     drop(dummy_receiver);
@@ -568,16 +394,18 @@ async fn generate_stream_http(
         response,
         dummy_sender,
         cancel,
-        move |payload| {
-            state.handle_event(&out_sender, payload);
+        |payload| {
+            if payload == b"[DONE]" {
+                return Ok(());
+            }
+            let event = parse_sse_event(payload, OPERATION_GENERATE_STREAM_HTTP)?;
+            state.handle_event(&sender, &event)
         },
     )
-    .await
-}
+    .await?;
 
-struct ResponsesWsStreamError {
-    error: DomainError,
-    emitted: bool,
+    let was_cancelled = *cancelled.borrow();
+    state.ensure_completed(was_cancelled)
 }
 
 async fn generate_persistent_ws(
@@ -666,202 +494,6 @@ impl ResponsesWsSession {
             }
         }
     }
-}
-
-async fn generate_ws(
-    repository: &HttpChatCompletionRepository,
-    config: &ChatCompletionApiConfig,
-    endpoint_path: &str,
-    payload: &Value,
-) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    let (client, _transport_revision) = repository.websocket_client()?;
-    let mut socket = connect_responses_ws(client, config, endpoint_path).await?;
-    let event = response_create_event(payload)?;
-    socket
-        .send(Message::Text(event.to_string().into()))
-        .await
-        .map_err(|error| {
-            DomainError::transient(format!("OpenAI Responses WebSocket send failed: {error}"))
-        })?;
-
-    loop {
-        let Some(message) = socket.next().await else {
-            return Err(DomainError::transient(
-                "OpenAI Responses WebSocket closed before response.completed".to_string(),
-            ));
-        };
-        let message = message.map_err(|error| {
-            DomainError::transient(format!("OpenAI Responses WebSocket read failed: {error}"))
-        })?;
-
-        match message {
-            Message::Text(text) => {
-                if let Some(response) =
-                    response_from_ws_payload(text.as_str().as_bytes(), OPERATION_GENERATE_WS)?
-                {
-                    return Ok(normalizers::normalize_openai_responses_response(response));
-                }
-            }
-            Message::Binary(bytes) => {
-                if let Some(response) =
-                    response_from_ws_payload(bytes.as_ref(), OPERATION_GENERATE_WS)?
-                {
-                    return Ok(normalizers::normalize_openai_responses_response(response));
-                }
-            }
-            Message::Ping(bytes) => {
-                socket.send(Message::Pong(bytes)).await.map_err(|error| {
-                    DomainError::transient(format!(
-                        "OpenAI Responses WebSocket pong failed: {error}"
-                    ))
-                })?;
-            }
-            Message::Close(frame) => {
-                return Err(DomainError::transient(format!(
-                    "OpenAI Responses WebSocket closed before response.completed: {frame:?}"
-                )));
-            }
-            Message::Pong(_) | Message::Frame(_) => {}
-        }
-    }
-}
-
-async fn generate_stream_ws(
-    repository: &HttpChatCompletionRepository,
-    config: &ChatCompletionApiConfig,
-    endpoint_path: &str,
-    payload: &Value,
-    sender: ChatCompletionStreamSender,
-    mut cancel: ChatCompletionCancelReceiver,
-) -> Result<(), ResponsesWsStreamError> {
-    let (client, _transport_revision) =
-        repository
-            .websocket_client()
-            .map_err(|error| ResponsesWsStreamError {
-                error,
-                emitted: false,
-            })?;
-    let mut socket = connect_responses_ws(client, config, endpoint_path)
-        .await
-        .map_err(|error| ResponsesWsStreamError {
-            error,
-            emitted: false,
-        })?;
-    let event = response_create_event(payload).map_err(|error| ResponsesWsStreamError {
-        error,
-        emitted: false,
-    })?;
-    socket
-        .send(Message::Text(event.to_string().into()))
-        .await
-        .map_err(|error| ResponsesWsStreamError {
-            error: DomainError::transient(format!(
-                "OpenAI Responses WebSocket send failed: {error}"
-            )),
-            emitted: false,
-        })?;
-
-    let model = payload
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let mut state = ResponsesStreamState::new(model);
-
-    loop {
-        if *cancel.borrow() {
-            return Ok(());
-        }
-
-        let message = tokio::select! {
-            _ = cancel.changed() => {
-                if *cancel.borrow() {
-                    return Ok(());
-                }
-                continue;
-            }
-            message = socket.next() => message,
-        };
-
-        let Some(message) = message else {
-            return Err(ResponsesWsStreamError {
-                error: DomainError::transient(
-                    "OpenAI Responses WebSocket closed before response.completed".to_string(),
-                ),
-                emitted: state.has_emitted(),
-            });
-        };
-        let message = message.map_err(|error| ResponsesWsStreamError {
-            error: DomainError::transient(format!(
-                "OpenAI Responses WebSocket stream read failed: {error}"
-            )),
-            emitted: state.has_emitted(),
-        })?;
-
-        match message {
-            Message::Text(text) => {
-                forward_ws_stream_event(&mut state, &sender, text.as_str().as_bytes())?;
-            }
-            Message::Binary(bytes) => {
-                forward_ws_stream_event(&mut state, &sender, bytes.as_ref())?;
-            }
-            Message::Ping(bytes) => {
-                socket.send(Message::Pong(bytes)).await.map_err(|error| {
-                    ResponsesWsStreamError {
-                        error: DomainError::transient(format!(
-                            "OpenAI Responses WebSocket pong failed: {error}"
-                        )),
-                        emitted: state.has_emitted(),
-                    }
-                })?;
-            }
-            Message::Close(frame) => {
-                return Err(ResponsesWsStreamError {
-                    error: DomainError::transient(format!(
-                        "OpenAI Responses WebSocket closed before response.completed: {frame:?}"
-                    )),
-                    emitted: state.has_emitted(),
-                });
-            }
-            Message::Pong(_) | Message::Frame(_) => {}
-        }
-
-        if state.done_sent {
-            return Ok(());
-        }
-    }
-}
-
-fn forward_ws_stream_event(
-    state: &mut ResponsesStreamState,
-    sender: &ChatCompletionStreamSender,
-    payload: &[u8],
-) -> Result<(), ResponsesWsStreamError> {
-    let event = parse_ws_event(payload, OPERATION_GENERATE_STREAM_WS).map_err(|error| {
-        ResponsesWsStreamError {
-            error,
-            emitted: state.has_emitted(),
-        }
-    })?;
-    let event_type = event
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if matches!(event_type, "response.failed" | "error") {
-        return Err(ResponsesWsStreamError {
-            error: response_ws_event_error(&event),
-            emitted: state.has_emitted(),
-        });
-    }
-
-    let payload = serde_json::to_vec(&event).map_err(|error| ResponsesWsStreamError {
-        error: DomainError::InternalError(format!(
-            "OpenAI Responses WebSocket event serialization failed: {error}"
-        )),
-        emitted: state.has_emitted(),
-    })?;
-    state.handle_event(sender, &payload);
-    Ok(())
 }
 
 async fn connect_responses_ws(
@@ -1087,23 +719,64 @@ fn provider_session_id(payload: &Value) -> Result<Option<String>, DomainError> {
 
 fn response_from_ws_payload(payload: &[u8], operation: &str) -> Result<Option<Value>, DomainError> {
     let event = parse_ws_event(payload, operation)?;
+    terminal_response_from_event(&event).map(|response| response.cloned())
+}
+
+fn terminal_response_from_event(event: &Value) -> Result<Option<&Value>, DomainError> {
     let event_type = event
         .get("type")
         .and_then(Value::as_str)
         .unwrap_or_default();
 
     match event_type {
-        "response.completed" | "response.done" | "response.incomplete" => {
-            let response = event.get("response").cloned().ok_or_else(|| {
+        "response.completed" | "response.done" => {
+            let response = event.get("response").ok_or_else(|| {
                 DomainError::InternalError(
-                    "OpenAI Responses WebSocket completion event is missing response".to_string(),
+                    "OpenAI Responses completion event is missing response".to_string(),
                 )
             })?;
+            validate_terminal_response(response)?;
             Ok(Some(response))
         }
-        "response.failed" | "error" => Err(response_ws_event_error(&event)),
+        "response.incomplete" => Err(response_incomplete_error(
+            event.get("response").unwrap_or(event),
+        )),
+        "response.failed" | "error" => Err(response_failure_error(
+            event.get("response").unwrap_or(event),
+        )),
         _ => Ok(None),
     }
+}
+
+fn validate_terminal_response(response: &Value) -> Result<(), DomainError> {
+    match response.get("status").and_then(Value::as_str) {
+        None | Some("completed") => Ok(()),
+        Some("incomplete") => Err(response_incomplete_error(response)),
+        Some("failed") => Err(response_failure_error(response)),
+        Some(status) => Err(DomainError::InternalError(format!(
+            "OpenAI Responses response did not complete (status: {status})"
+        ))),
+    }
+}
+
+fn response_incomplete_error(response: &Value) -> DomainError {
+    let reason = response
+        .pointer("/incomplete_details/reason")
+        .and_then(Value::as_str)
+        .unwrap_or("unspecified reason");
+
+    DomainError::InternalError(format!("OpenAI Responses response incomplete: {reason}"))
+}
+
+fn response_failure_error(response: &Value) -> DomainError {
+    let message = response
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .or_else(|| response.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("OpenAI Responses response failed");
+
+    DomainError::InternalError(message.to_string())
 }
 
 fn parse_ws_event(payload: &[u8], operation: &str) -> Result<Value, DomainError> {
@@ -1122,24 +795,20 @@ fn parse_ws_event(payload: &[u8], operation: &str) -> Result<Value, DomainError>
     })
 }
 
-fn response_ws_event_error(event: &Value) -> DomainError {
-    let message = event
-        .get("error")
-        .and_then(|error| error.get("message"))
-        .or_else(|| {
-            event
-                .get("response")
-                .and_then(|response| response.get("error"))
-                .and_then(|error| error.get("message"))
-        })
-        .and_then(Value::as_str)
-        .unwrap_or("OpenAI Responses WebSocket response failed");
-
-    DomainError::InternalError(message.to_string())
-}
-
-fn is_cancelled(error: &DomainError) -> bool {
-    matches!(error, DomainError::Cancelled(_))
+fn parse_sse_event(payload: &[u8], operation: &str) -> Result<Value, DomainError> {
+    serde_json::from_slice(payload).map_err(|error| {
+        log_upstream_body_parse_failure(
+            "OpenAI Responses",
+            operation,
+            StatusCode::OK,
+            "text/event-stream",
+            payload,
+            &error,
+        );
+        DomainError::InternalError(format!(
+            "model.upstream_invalid_response: OpenAI Responses stream event is not valid JSON ({operation}): {error}"
+        ))
+    })
 }
 
 fn current_unix_timestamp() -> u64 {
@@ -1261,31 +930,120 @@ mod tests {
     }
 
     #[test]
-    fn ws_stream_error_events_surface_before_forwarding_chunks() {
-        let (sender, mut receiver) = mpsc::unbounded_channel();
-        let mut state = ResponsesStreamState::new("gpt-test".to_string());
+    fn non_completed_responses_fail() {
+        let incomplete = json!({
+            "status": "incomplete",
+            "incomplete_details": { "reason": "max_output_tokens" }
+        });
+        let error = validate_terminal_response(&incomplete).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Internal error: OpenAI Responses response incomplete: max_output_tokens"
+        );
 
-        let error = forward_ws_stream_event(
-            &mut state,
-            &sender,
-            br#"{"type":"error","error":{"message":"unsupported ws"}}"#,
-        )
-        .unwrap_err();
-
-        assert!(!error.emitted);
-        assert_eq!(error.error.to_string(), "Internal error: unsupported ws");
-        assert!(receiver.try_recv().is_err());
+        let failed = json!({
+            "status": "failed",
+            "error": { "message": "provider rejected the response" }
+        });
+        assert_eq!(
+            validate_terminal_response(&failed).unwrap_err().to_string(),
+            "Internal error: provider rejected the response"
+        );
     }
 
     #[test]
-    fn ws_invalid_json_event_is_transient_and_preserves_operation() {
-        let error = parse_ws_event(b"not-json", OPERATION_GENERATE_WS)
-            .expect_err("invalid websocket event should fail");
+    fn responses_stream_emits_each_completed_tool_call_once() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut state = ResponsesStreamState::new("gpt-5.6".to_string());
 
-        assert!(matches!(error, DomainError::Transient(_)));
+        state
+            .handle_event(
+                &sender,
+                &json!({
+                    "type": "response.created",
+                    "response": { "id": "resp_1" }
+                }),
+            )
+            .unwrap();
+        state
+            .handle_event(
+                &sender,
+                &json!({
+                    "type": "response.output_item.done",
+                    "output_index": 0,
+                    "item": {
+                        "type": "function_call",
+                        "call_id": "call_weather",
+                        "name": "weather",
+                        "arguments": "{\"city\":\"Paris\"}"
+                    }
+                }),
+            )
+            .unwrap();
+        state
+            .handle_event(
+                &sender,
+                &json!({
+                    "type": "response.completed",
+                    "response": { "id": "resp_1", "status": "completed" }
+                }),
+            )
+            .unwrap();
+
+        let mut tool_calls = Vec::new();
+        let mut saw_done = false;
+        while let Ok(payload) = receiver.try_recv() {
+            if payload == "[DONE]" {
+                saw_done = true;
+                continue;
+            }
+            let chunk: Value = serde_json::from_str(&payload).unwrap();
+            if let Some(tool_call) = chunk.pointer("/choices/0/delta/tool_calls/0") {
+                tool_calls.push(tool_call.clone());
+            }
+        }
+
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["id"], json!("call_weather"));
+        assert_eq!(tool_calls[0]["function"]["name"], json!("weather"));
         assert_eq!(
-            error.to_string(),
-            "model.upstream_invalid_response: OpenAI Responses WebSocket event is not valid JSON (generate_ws): expected ident at line 1 column 2"
+            tool_calls[0]["function"]["arguments"],
+            json!("{\"city\":\"Paris\"}")
         );
+        assert!(saw_done);
+        state.ensure_completed(false).unwrap();
+    }
+
+    #[test]
+    fn responses_stream_preserves_refusal_text() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut state = ResponsesStreamState::new("gpt-5.6".to_string());
+
+        state
+            .handle_event(
+                &sender,
+                &json!({ "type": "response.refusal.delta", "delta": "Cannot comply." }),
+            )
+            .unwrap();
+
+        let mut content = None;
+        while let Ok(payload) = receiver.try_recv() {
+            let chunk: Value = serde_json::from_str(&payload).unwrap();
+            content = content.or_else(|| {
+                chunk
+                    .pointer("/choices/0/delta/content")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            });
+        }
+        assert_eq!(content.as_deref(), Some("Cannot comply."));
+    }
+
+    #[test]
+    fn responses_stream_requires_a_terminal_event_unless_cancelled() {
+        let state = ResponsesStreamState::new("gpt-5.6".to_string());
+
+        assert!(state.ensure_completed(false).is_err());
+        state.ensure_completed(true).unwrap();
     }
 }

@@ -101,11 +101,10 @@ Connection Profiles（Connection Manager 扩展）：
 - 没有 `previous_response_id` 时，`function_call_output` 必须能在同次 transcript 中找到前置 `function_call`；否则 fail-fast
 - 有 `previous_response_id` 时，允许 orphan `function_call_output`，因为前置 function call 可由 provider previous response state 提供
 - `store` 默认 `false`；`include` 会保证包含 `reasoning.encrypted_content`，用于 reasoning/native continuation
-- `previous_response_id`、`max_tokens` / `max_completion_tokens`→`max_output_tokens`、`reasoning_effort`→`reasoning.effort`、`verbosity`、`metadata`、`parallel_tool_calls` 等字段按当前 payload builder 映射
+- `previous_response_id`、`max_tokens` / `max_completion_tokens`→`max_output_tokens`、`reasoning_effort`→`reasoning.effort`、`verbosity`→`text.verbosity`、`metadata`、`parallel_tool_calls` 等字段按当前 payload builder 映射
 
 传输侧（repository）：
-- 普通 Custom `/responses` 非流式请求当前会先尝试 WebSocket `response.create`，失败后回退 HTTP（取消错误不回退）
-- 普通 Custom `/responses` 流式请求当前会先尝试 WebSocket stream；若失败且尚未向前端发送 chunk，则回退 HTTP streaming
+- 普通 Custom `/responses` 非流式请求走 HTTP，流式请求走 SSE
 - 带内部 `_tauritavern_provider_state.sessionId` 的请求走 run-scoped persistent WebSocket session；该路径失败时不回退 HTTP
 - Responses WebSocket 建连通过 `HttpClientPool` 的 ChatCompletion WebSocket profile 发起 HTTP Upgrade，再交给 WebSocket frame stream；因此沿用现有代理、TLS/client 构建与连接超时契约
 - persistent session 的 connection key 包含 transport revision；request proxy / client 配置变更后会重建 session
@@ -113,11 +112,12 @@ Connection Profiles（Connection Manager 扩展）：
 - WebSocket `response.create` payload 会剥离 `_tauritavern_provider_state`、`stream` 与 `background`
 
 流式侧（repository）：
-- 解析 Responses 语义事件（如 `response.output_text.delta` / `response.output_item.added` / `response.function_call_arguments.delta`）
+- 解析 Responses 语义事件（如 `response.output_text.delta` / `response.refusal.delta` / `response.output_item.done`）
 - 输出 OpenAI `chat.completion.chunk`：
   - 文本 delta → `choices[0].delta.content`
   - 推理 delta → `choices[0].delta.reasoning_content`
-  - tool call delta → `choices[0].delta.tool_calls[]`（`id` 使用 Responses 的 `call_id`）
+  - 完成的 function call item → 单个 `choices[0].delta.tool_calls[]`（`id` 使用 Responses 的 `call_id`）
+- SSE 必须以 Responses terminal event 结束；连接提前关闭会 fail-fast，用户主动取消除外
 
 tool follow-up（关键契约）：
 - 普通 Custom Responses 不再依赖 repository 内存缓存。若没有 `previous_response_id`，请求必须通过 full transcript replay 或 native output replay 提供前置 `function_call`。
