@@ -24,6 +24,43 @@ export function createChatScrollIntentTracker({
     });
 }
 
+export function createChatProgrammaticScrollTracker({
+    requestFrame,
+    cancelFrame,
+    threshold = DEFAULT_BOTTOM_THRESHOLD,
+}) {
+    let expectedScrollTop = null;
+    let expiryFrame = null;
+
+    const clear = () => {
+        expectedScrollTop = null;
+        if (expiryFrame === null) {
+            return;
+        }
+        cancelFrame(expiryFrame);
+        expiryFrame = null;
+    };
+
+    return Object.freeze({
+        mark(scrollTop) {
+            clear();
+            expectedScrollTop = Number(scrollTop);
+            expiryFrame = requestFrame(() => {
+                expectedScrollTop = null;
+                expiryFrame = null;
+            });
+        },
+        consumeIfMatches(scrollTop) {
+            if (expectedScrollTop === null || Math.abs(Number(scrollTop) - expectedScrollTop) >= threshold) {
+                return false;
+            }
+            clear();
+            return true;
+        },
+        clear,
+    });
+}
+
 export function createChatScrollController({
     readViewport,
     scrollToBottom,
@@ -36,13 +73,16 @@ export function createChatScrollController({
     let generationFollowsOutput = true;
     let pendingGenerationFollowsOutput = null;
     let pendingFrame = null;
+    let pendingFrameForced = false;
 
     const cancelPending = () => {
         if (pendingFrame === null) {
+            pendingFrameForced = false;
             return;
         }
         cancelFrame(pendingFrame);
         pendingFrame = null;
+        pendingFrameForced = false;
     };
 
     const isAtBottom = () => isChatViewportAtBottom(readViewport(), bottomThreshold);
@@ -80,9 +120,18 @@ export function createChatScrollController({
             }
         },
         requestScroll({ waitForFrame = false, force = false } = {}) {
-            if (!canAutoScroll() || (!force && !generationFollowsOutput)) {
+            if (!canAutoScroll()) {
                 cancelPending();
                 return false;
+            }
+            if (!force && !generationFollowsOutput) {
+                if (!pendingFrameForced) {
+                    cancelPending();
+                }
+                return false;
+            }
+            if (pendingFrame !== null && pendingFrameForced && !force) {
+                return true;
             }
 
             cancelPending();
@@ -93,10 +142,12 @@ export function createChatScrollController({
 
             pendingFrame = requestFrame(() => {
                 pendingFrame = null;
+                pendingFrameForced = false;
                 if (canAutoScroll() && (force || generationFollowsOutput)) {
                     scrollToBottom();
                 }
             });
+            pendingFrameForced = force;
             return true;
         },
         cancelPending,

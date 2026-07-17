@@ -24,11 +24,13 @@ test('message insertion and generation delegate scrolling to one controller', as
 
     assert.match(source, /const chatScrollController = createChatScrollController\(/);
     assert.match(source, /const chatScrollIntent = createChatScrollIntentTracker\(\)/);
+    assert.match(source, /const chatProgrammaticScroll = createChatProgrammaticScrollTracker\(/);
     assert.match(source, /chatScrollController\.captureGenerationIntent\(\);\s*hideSwipeButtons\(\)/);
     assert.match(source, /finally \{\s*chatScrollController\.clearGenerationIntent\(\);\s*showSwipeButtons\(\)/);
     assert.match(source, /async function GenerateInternal\([^]*chatScrollController\.beginGeneration\(\)/);
     assert.match(source, /finally \{\s*chatScrollController\.endGeneration\(\)/);
-    assert.match(source, /const userInitiated = !programmaticChatScroll && chatScrollIntent\.isActive\(\)/);
+    assert.match(source, /const programmatic = chatProgrammaticScroll\.consumeIfMatches\(chatElementScroll\.scrollTop\)/);
+    assert.match(source, /const userInitiated = !programmatic && chatScrollIntent\.isActive\(\)/);
     assert.match(source, /chatScrollController\.onViewportChanged\(\{ userInitiated \}\)/);
     assert.match(source, /if \(scrollIsAtBottom\) \{\s*chatScrollIntent\.clear\(\);\s*\}/);
     assert.match(source, /chatElementScroll\.addEventListener\('wheel', markChatScrollIntent/);
@@ -36,7 +38,7 @@ test('message insertion and generation delegate scrolling to one controller', as
     assert.match(source, /chatElementScroll\.addEventListener\('pointermove', event =>/);
     assert.match(source, /chatScrollController\.requestScroll\(\{ waitForFrame, force \}\)/);
     assert.match(source, /let position = chatElement\[0\]\.scrollHeight;\s*if \(power_user\.waifuMode\) \{\s*const lastMessage = chatElement\.find\('\.mes'\)\.last\(\);/);
-    assert.match(source, /programmaticChatScroll = true;/);
+    assert.match(source, /chatElement\.scrollTop\(position\);\s*chatProgrammaticScroll\.mark\(chatElement\[0\]\.scrollTop\);/);
     assert.match(source, /const shouldScroll = scroll;/);
     assert.match(source, /if \(!insertAfter && !insertBefore && shouldScroll\) \{\s*scrollChatToBottom\(\{ waitForFrame: true, force: true \}\)/);
     assert.match(source, /mediaScrollBehavior = chatScrollController\.shouldFollowOutput\(\)/);
@@ -44,5 +46,6 @@ test('message insertion and generation delegate scrolling to one controller', as
     assert.match(source, /if \(this\.type == 'impersonate'\) \{\s*scrollChatToBottom\(\{ waitForFrame: true \}\);\s*\}/);
     assert.doesNotMatch(source, /followStreamingOutput/);
     assert.doesNotMatch(source, /scrollViewportToBottom/);
+    assert.doesNotMatch(source, /let programmaticChatScroll = false/);
     assert.doesNotMatch(source, /\bscrollLock\b/);
 });

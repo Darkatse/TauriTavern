@@ -15,7 +15,7 @@ import { registerLifecycleFlushHandler } from './tauri/main/services/lifecycle/l
 import { replaceMesTextHtmlWithRuntimePolicy } from './scripts/tauri/message/mes-text-write.js';
 import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
 import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
-import { createChatScrollController, createChatScrollIntentTracker } from './scripts/tauri/perf/chat-scroll-controller.js';
+import { createChatProgrammaticScrollTracker, createChatScrollController, createChatScrollIntentTracker } from './scripts/tauri/perf/chat-scroll-controller.js';
 import { getMessageRenderBatches } from './scripts/tauri/perf/message-render-batches.js';
 import { getStreamingRenderInterval, shouldCommitStreamingMessage } from './scripts/tauri/perf/streaming-render-policy.js';
 import {
@@ -3472,8 +3472,10 @@ function formatGenerationTimer(gen_started, gen_finished, tokenCount, reasoningD
 }
 
 const chatScrollIntent = createChatScrollIntentTracker();
-// Programmatic scrollTop writes must not be classified as user-initiated follow cancellation.
-let programmaticChatScroll = false;
+const chatProgrammaticScroll = createChatProgrammaticScrollTracker({
+    requestFrame: callback => requestAnimationFrame(callback),
+    cancelFrame: id => cancelAnimationFrame(id),
+});
 const chatScrollController = createChatScrollController({
     readViewport: () => chatElement[0],
     scrollToBottom: () => {
@@ -3487,13 +3489,8 @@ const chatScrollController = createChatScrollController({
             }
         }
 
-        programmaticChatScroll = true;
-        try {
-            chatElement.scrollTop(position);
-        } finally {
-            // The scroll event is dispatched synchronously for jQuery scrollTop.
-            programmaticChatScroll = false;
-        }
+        chatElement.scrollTop(position);
+        chatProgrammaticScroll.mark(chatElement[0].scrollTop);
     },
     requestFrame: callback => requestAnimationFrame(callback),
     cancelFrame: id => cancelAnimationFrame(id),
@@ -13209,8 +13206,9 @@ jQuery(async function () {
     const chatScrollHandler = function () {
         const scrollIsAtBottom = Math.abs(chatElementScroll.scrollHeight - chatElementScroll.clientHeight - chatElementScroll.scrollTop) < 5;
         // waifuMode only changes scroll geometry in scrollToBottom; viewport ownership stays on the controller.
-        // Programmatic bottom scrolls must not cancel a generation follow intent captured at send time.
-        const userInitiated = !programmaticChatScroll && chatScrollIntent.isActive();
+        // Programmatic scroll events arrive asynchronously and must not consume recent user intent.
+        const programmatic = chatProgrammaticScroll.consumeIfMatches(chatElementScroll.scrollTop);
+        const userInitiated = !programmatic && chatScrollIntent.isActive();
         chatScrollController.onViewportChanged({ userInitiated });
         if (scrollIsAtBottom) {
             chatScrollIntent.clear();

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    createChatProgrammaticScrollTracker,
     createChatScrollController,
     createChatScrollIntentTracker,
     isChatViewportAtBottom,
@@ -217,6 +218,117 @@ test('explicit navigation can scroll while content following is disabled', () =>
     assert.equal(harness.controller.requestScroll(), false);
     assert.equal(harness.controller.requestScroll({ force: true }), true);
     assert.equal(harness.scrolls, 1);
+});
+
+test('queued explicit navigation survives a rejected follow request', () => {
+    const harness = createHarness({ scrollHeight: 1000, clientHeight: 400, scrollTop: 200 });
+    harness.controller.beginGeneration();
+
+    assert.equal(harness.controller.requestScroll({ waitForFrame: true, force: true }), true);
+    assert.equal(harness.controller.requestScroll({ waitForFrame: true }), false);
+    harness.flushFrames();
+
+    assert.equal(harness.scrolls, 1);
+    assert.equal(harness.viewport.scrollTop, 600);
+    harness.controller.endGeneration();
+});
+
+test('queued explicit navigation is not downgraded by an allowed follow request', () => {
+    const harness = createHarness();
+    harness.controller.beginGeneration();
+
+    assert.equal(harness.controller.requestScroll({ waitForFrame: true, force: true }), true);
+    assert.equal(harness.controller.requestScroll({ waitForFrame: true }), true);
+
+    harness.controller.endGeneration();
+    harness.viewport.scrollTop = 200;
+    harness.controller.onViewportChanged({ userInitiated: false });
+    harness.flushFrames();
+
+    assert.deepEqual(harness.cancelled, []);
+    assert.equal(harness.scrolls, 1);
+    assert.equal(harness.viewport.scrollTop, 600);
+});
+
+test('global auto-scroll disable cancels a queued explicit navigation', () => {
+    let autoScrollEnabled = true;
+    const harness = createHarness(undefined, { canAutoScroll: () => autoScrollEnabled });
+
+    assert.equal(harness.controller.requestScroll({ waitForFrame: true, force: true }), true);
+    autoScrollEnabled = false;
+    assert.equal(harness.controller.requestScroll(), false);
+    harness.flushFrames();
+
+    assert.deepEqual(harness.cancelled, [1]);
+    assert.equal(harness.scrolls, 0);
+});
+
+test('programmatic scroll tracker consumes only the expected asynchronous scroll event', () => {
+    const frames = new Map();
+    const cancelled = [];
+    let nextFrameId = 1;
+    const tracker = createChatProgrammaticScrollTracker({
+        requestFrame: callback => {
+            const id = nextFrameId++;
+            frames.set(id, callback);
+            return id;
+        },
+        cancelFrame: id => {
+            cancelled.push(id);
+            frames.delete(id);
+        },
+    });
+
+    tracker.mark(600);
+    assert.equal(tracker.consumeIfMatches(300), false);
+    assert.equal(tracker.consumeIfMatches(600), true);
+    assert.equal(tracker.consumeIfMatches(600), false);
+    assert.deepEqual(cancelled, [1]);
+});
+
+test('programmatic scroll tracker expires an unobserved target on the next frame', () => {
+    const frames = new Map();
+    let nextFrameId = 1;
+    const tracker = createChatProgrammaticScrollTracker({
+        requestFrame: callback => {
+            const id = nextFrameId++;
+            frames.set(id, callback);
+            return id;
+        },
+        cancelFrame: id => frames.delete(id),
+    });
+
+    tracker.mark(600);
+    for (const [id, callback] of [...frames]) {
+        frames.delete(id);
+        callback();
+    }
+
+    assert.equal(tracker.consumeIfMatches(600), false);
+});
+
+test('new programmatic scroll target replaces the previous expiry frame', () => {
+    const frames = new Map();
+    const cancelled = [];
+    let nextFrameId = 1;
+    const tracker = createChatProgrammaticScrollTracker({
+        requestFrame: callback => {
+            const id = nextFrameId++;
+            frames.set(id, callback);
+            return id;
+        },
+        cancelFrame: id => {
+            cancelled.push(id);
+            frames.delete(id);
+        },
+    });
+
+    tracker.mark(500);
+    tracker.mark(600);
+
+    assert.deepEqual(cancelled, [1]);
+    assert.equal(tracker.consumeIfMatches(500), false);
+    assert.equal(tracker.consumeIfMatches(600), true);
 });
 
 test('programmatic bottom jumps during generation do not cancel follow when marked non-user', () => {
