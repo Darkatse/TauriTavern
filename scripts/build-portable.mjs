@@ -29,9 +29,9 @@ function quoteShellArgument(value) {
     return `"${value.replace(/"/gu, '\\"')}"`;
 }
 
-function run(command, args, cwd) {
+function run(command, args, cwd, env = process.env) {
     const commandLine = [command, ...args.map(quoteShellArgument)].join(" ");
-    const result = spawnSync(commandLine, { cwd, stdio: "inherit", shell: true });
+    const result = spawnSync(commandLine, { cwd, env, stdio: "inherit", shell: true });
     if (result.error) {
         throw result.error;
     }
@@ -163,10 +163,6 @@ function main() {
     const repoRoot = process.cwd();
     const options = parseArgs(process.argv.slice(2));
 
-    if (!options.skipWebBuild) {
-        run("pnpm", ["run", "web:build"], repoRoot);
-    }
-
     const tauriArgs = ["scripts/tauri-app.mjs", "build", "--no-bundle", "--features", "portable"];
     if (options.target) {
         tauriArgs.push("--target", options.target);
@@ -174,7 +170,10 @@ function main() {
     if (options.extraTauriArgs.length > 0) {
         tauriArgs.push(...options.extraTauriArgs);
     }
-    run("node", tauriArgs, repoRoot);
+    const tauriEnv = options.skipWebBuild
+        ? { ...process.env, TAURITAVERN_SKIP_WEB_BUILD: "1" }
+        : process.env;
+    run("node", tauriArgs, repoRoot, tauriEnv);
 
     const releaseDirectory = resolveReleaseDirectory(repoRoot, options.target);
     const binaryPath = resolvePortableBinary(releaseDirectory);

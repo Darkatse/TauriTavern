@@ -4,6 +4,10 @@
   "version": "2.1.1",
   "identifier": "com.tauritavern.client",
   "build": {
+    "beforeBuildCommand": {
+      "script": "node scripts/tauri-before-build.mjs",
+      "cwd": "../../.."
+    },
     "beforeDevCommand": {
       "script": "node scripts/tauri-dev-server.mjs",
       "cwd": "../../.."
