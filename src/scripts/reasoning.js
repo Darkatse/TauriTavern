@@ -313,6 +313,8 @@ export class ReasoningHandler {
         this.messageReasoningDetailsDom = null;
         /** @type {HTMLElement} Reasoning content DOM element `.mes_reasoning` */
         this.messageReasoningContentDom = null;
+        /** @type {string|null} Last canonical reasoning HTML committed during streaming. */
+        this.lastCommittedHtml = null;
         /** @type {HTMLElement} Reasoning header DOM element `.mes_reasoning_header_title` */
         this.messageReasoningHeaderDom = null;
     }
@@ -580,7 +582,7 @@ export class ReasoningHandler {
         const displayReasoning = messageFormatting(reasoning, '', false, false, messageId, {}, true);
 
         if (shouldCommitStreamingMessage({
-            currentHtml: this.messageReasoningContentDom.innerHTML,
+            lastCommittedHtml: this.lastCommittedHtml,
             nextHtml: displayReasoning,
             final,
             fadeIn: power_user.stream_fade_in,
@@ -590,6 +592,7 @@ export class ReasoningHandler {
             } else {
                 this.messageReasoningContentDom.innerHTML = displayReasoning;
             }
+            this.lastCommittedHtml = displayReasoning;
         }
 
         // Update tooltip for hidden reasoning edit
