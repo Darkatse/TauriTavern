@@ -42,6 +42,8 @@ LAN Sync 与 TT-Sync v2 的 manifest 扫描严格遵循 `ttsync_core::dataset::R
 
 `.git` 不是全局排除组件。`extensions.local` / `extensions.third_party` 中由 SillyTavern 迁移而来的 embedded `.git/**` 按普通数据路径参与所选 Dataset 同步；不要为 `.git` 新增名称级排除规则。`extensions.sources` 当前仍同步 `_tauritavern/extension-sources` 下的 source metadata，Gitoxide 扩展管理只把它作为 legacy JSON 的滚动兼容路径，不再在其中新增 bare repository。更早版本遗留在扩展根目录的 inline source JSON不再启动期搬迁，而是随扩展 Dataset保留到首次 Git写入转换。
 
+Mirror 删除计划文件后，文件系统适配器会继续清理因此变成 fileless 的父目录树，但永远保留 `ttsync-core` Dataset catalog 为 delete path 推导的最深匹配 `scan_root` boundary。清理会识别 gix 创建的 `objects/info`、`objects/pack`、`refs/heads`、`refs/tags` 等空 sibling 目录，只在候选子树完全由真实目录组成时按最深优先逐个调用 `remove_dir`；遍历时遇到 symlink、junction 或其他非目录节点会保留候选树，也不使用 `remove_dir_all`。file-only Dataset 只删除文件、不清理父目录；目录清理不新增 manifest entry、删除计数或进度事件。文件删除成功后的清理错误会按“目标已改变”fail-fast，并沿现有部分 mutation/reconcile 链路传播。
+
 默认 TauriTavern 数据集已经覆盖 Agent 连续性数据：
 
 - `_tauritavern/agent-profiles/profiles/**`
@@ -260,8 +262,9 @@ wire framing（见 TT-Sync 的 `ttsync_core::bundle` / `ttsync_client::bundle`�
 当前实现 **不做 byte-range resume**，但保证“断线不会破坏数据”，并提供可接受的重试语义：
 
 1. **每文件精确读取**：bundle 解包按 plan 的 `size_bytes` 精确读取；若底层流提前 EOF，会报错并中止（见 TT-Sync 的 `ExactSizeReader`）。
-2. **原子写入**：每文件都走 `tmp → rename → set mtime`；断线发生在写入过程中只会留下 tmp，不会覆盖目标文件（`src-tauri/crates/tt-adapter-sync/src/sync_fs.rs`）。
+2. **原子写入**：每文件都走 `tmp → set mtime → rename`；断线发生在写入过程中只会留下 tmp，不会覆盖目标文件（`src-tauri/crates/tt-adapter-sync/src/sync_fs.rs`）。
 3. **自然续传**：失败后重新扫描 manifest 并重新计算 plan；已成功写入的文件会因为 `(size_bytes, modified_ms)` 匹配而不再出现在新 plan.transfer 中。
+4. **Mirror 目录清理**：成功删除文件后只清理 Dataset boundary 内的 fileless 祖先树；候选树仍含文件或链接时停止，非 `DirectoryNotEmpty` I/O 错误直接失败。
 
 ---
 
@@ -285,3 +288,4 @@ wire framing（见 TT-Sync 的 `ttsync_core::bundle` / `ttsync_client::bundle`�
 7. **不要把敏感/重型 Agent 数据默认并入无选择同步**：`model-responses/`、`checkpoints/` 与密钥文件需要保持独立数据集。
 8. **不要绕过 Sync Panel 的持久化 selection**：前端显示、保存、命令参数必须围绕 `DatasetSelection`；不要在 UI 中复制路径规则或用 manifest omission 伪装范围选择。
 9. **不要把覆盖策略移回服务端配置**：它是逻辑发起方的作业输入；LAN push 必须透传发起方策略，同时保留目标端对 Sync mode 的所有权。
+10. **不要绕过 Dataset boundary 清理目录**：Mirror 删除只能清理 Dataset catalog 为 delete path 推导的 boundary 内的 fileless 祖先树；不得改用物理 data root、手写路径表或 `remove_dir_all`。
