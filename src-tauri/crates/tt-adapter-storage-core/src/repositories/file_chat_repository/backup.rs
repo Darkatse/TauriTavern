@@ -14,8 +14,18 @@ use super::backup_inventory::{
 };
 use super::summary::ChatFileDescriptor;
 
+enum BackupPublishOutcome {
+    Created {
+        byte_len: u64,
+        digest_available: bool,
+    },
+    DuplicateSkipped {
+        byte_len: u64,
+    },
+}
+
 impl FileChatRepository {
-    /// The caller must hold the source payload's write lock.
+    /// The caller must hold the source payload's snapshot lock.
     pub(super) async fn backup_chat_file_automatic(
         &self,
         chat_path: &Path,
@@ -52,11 +62,30 @@ impl FileChatRepository {
         };
 
         match self
-            .publish_chat_backup(chat_path, backup_name, policy, inventory)
+            .publish_chat_backup(chat_path, backup_name, policy, inventory, true)
             .await
         {
-            Ok(()) => {
-                tracing::info!(source = ?chat_path, "Created automatic chat backup");
+            Ok(BackupPublishOutcome::Created {
+                byte_len,
+                digest_available,
+            }) => {
+                tracing::info!(
+                    source = %chat_path.display(),
+                    outcome = "created",
+                    snapshot_bytes = byte_len,
+                    digest_available,
+                    "Created automatic chat backup"
+                );
+                Ok(())
+            }
+            Ok(BackupPublishOutcome::DuplicateSkipped { byte_len }) => {
+                tracing::info!(
+                    source = %chat_path.display(),
+                    outcome = "duplicate_skipped",
+                    snapshot_bytes = byte_len,
+                    avoided_bytes = byte_len,
+                    "Skipped duplicate automatic chat backup"
+                );
                 Ok(())
             }
             Err(DomainError::Conflict(message)) => {
@@ -67,7 +96,7 @@ impl FileChatRepository {
         }
     }
 
-    /// The caller must hold the source payload's write lock.
+    /// The caller must hold the source payload's snapshot lock.
     pub(super) async fn backup_chat_file_explicit(
         &self,
         chat_path: &Path,
@@ -77,8 +106,9 @@ impl FileChatRepository {
         self.ensure_backup_inventory_ready(&mut state).await?;
         let policy = *self.backup_policy.read().await;
         let inventory = ready_inventory_mut(&mut state.inventory)?;
-        self.publish_chat_backup(chat_path, backup_name, policy, inventory)
+        self.publish_chat_backup(chat_path, backup_name, policy, inventory, false)
             .await
+            .map(|_| ())
     }
 
     async fn publish_chat_backup(
@@ -87,7 +117,11 @@ impl FileChatRepository {
         backup_name: &str,
         policy: ChatBackupSettings,
         inventory: &mut BackupInventory,
-    ) -> Result<(), DomainError> {
+        suppress_duplicates: bool,
+    ) -> Result<BackupPublishOutcome, DomainError> {
+        policy
+            .validate()
+            .map_err(|error| DomainError::InvalidData(error.message()))?;
         let source_metadata = fs::metadata(chat_path).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to read chat file metadata before backup {:?}: {}",
@@ -102,6 +136,20 @@ impl FileChatRepository {
         }
 
         let prefix = Self::backup_file_prefix(backup_name);
+        let content_signature = self
+            .current_content_signature_for_size(chat_path, source_metadata.len())
+            .await;
+        if suppress_duplicates
+            && let Some(content_signature) = content_signature
+            && inventory
+                .latest_for_prefix(&prefix)
+                .is_some_and(|entry| entry.content_signature == Some(content_signature))
+        {
+            return Ok(BackupPublishOutcome::DuplicateSkipped {
+                byte_len: source_metadata.len(),
+            });
+        }
+
         let file_name = self.next_available_backup_file_name(backup_name).await?;
         let evictions = plan_evictions(
             inventory,
@@ -176,8 +224,24 @@ impl FileChatRepository {
             file_name,
             modified,
             byte_len: copied_bytes,
+            content_signature,
         })?;
-        Ok(())
+        Ok(BackupPublishOutcome::Created {
+            byte_len: copied_bytes,
+            digest_available: content_signature.is_some(),
+        })
+    }
+
+    pub(super) async fn invalidate_content_provenance(&self) {
+        let mut history = self.backup_history.lock().await;
+        let mut signatures = self.current_content_signatures.lock().await;
+
+        signatures.invalidate_all();
+        if let BackupInventoryState::Ready(inventory) = &mut history.inventory {
+            for entry in &mut inventory.entries {
+                entry.content_signature = None;
+            }
+        }
     }
 
     async fn next_available_backup_file_name(

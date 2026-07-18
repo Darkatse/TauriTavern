@@ -6,7 +6,7 @@ use tokio::fs;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
 
-use super::FileChatRepository;
+use super::{ContentSignature, FileChatRepository};
 
 pub(super) const BACKUP_TEMP_PREFIX: &str = ".tmp-chat-backup-";
 
@@ -16,6 +16,7 @@ pub(super) struct BackupEntry {
     pub parsed_prefix: Option<String>,
     pub modified: SystemTime,
     pub byte_len: u64,
+    pub content_signature: Option<ContentSignature>,
 }
 
 #[derive(Debug, Default)]
@@ -50,6 +51,17 @@ impl BackupInventory {
         self.entries
             .iter()
             .any(|entry| entry.file_name == file_name)
+    }
+
+    pub fn latest_for_prefix(&self, prefix: &str) -> Option<&BackupEntry> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.parsed_prefix.as_deref() == Some(prefix))
+            .max_by(|left, right| {
+                left.modified
+                    .cmp(&right.modified)
+                    .then_with(|| left.file_name.cmp(&right.file_name))
+            })
     }
 }
 
@@ -307,6 +319,7 @@ impl FileChatRepository {
                 file_name,
                 modified,
                 byte_len: metadata.len(),
+                content_signature: None,
             })?;
         }
 
@@ -326,6 +339,7 @@ mod tests {
             parsed_prefix: prefix.map(ToOwned::to_owned),
             modified: UNIX_EPOCH + Duration::from_secs(age),
             byte_len,
+            content_signature: None,
         }
     }
 

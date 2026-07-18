@@ -33,7 +33,7 @@ impl FileChatRepository {
             .await?;
         let backup_key = self.get_cache_key(character_name, file_name)?;
 
-        let _write_guard = self.acquire_payload_write_lock(&path).await;
+        let _write_guard = self.acquire_payload_mutation_lock(&path).await;
         let result = patch_payload_windowed_internal(&path, request).await?;
 
         {
@@ -53,7 +53,7 @@ impl FileChatRepository {
         self.ensure_directory_exists().await?;
 
         let path = self.get_group_chat_path(chat_id)?;
-        let _write_guard = self.acquire_payload_write_lock(&path).await;
+        let _write_guard = self.acquire_payload_mutation_lock(&path).await;
         let result = patch_payload_windowed_internal(&path, request).await?;
 
         self.remove_summary_cache_for_path(&path).await;

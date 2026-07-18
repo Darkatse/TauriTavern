@@ -164,7 +164,7 @@ impl ChatRepository for FileChatRepository {
         let path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
-        let _write_guard = self.acquire_payload_write_lock(&path).await;
+        let _write_guard = self.acquire_payload_mutation_lock(&path).await;
 
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
@@ -212,7 +212,7 @@ impl ChatRepository for FileChatRepository {
             .resolve_character_chat_path(character_name, new_file_name)
             .await?;
         let (_old_payload_guard, _new_payload_guard) = self
-            .acquire_payload_rename_locks(&old_path, &new_path)
+            .acquire_payload_rename_mutation_locks(&old_path, &new_path)
             .await;
 
         if !old_path.exists() {
@@ -471,7 +471,7 @@ impl ChatRepository for FileChatRepository {
         let chat_path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
-        let _write_guard = self.acquire_payload_write_lock(&chat_path).await;
+        let _write_guard = self.acquire_payload_snapshot_lock(&chat_path).await;
         if !chat_path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Chat not found: {}/{}",
@@ -491,7 +491,7 @@ impl ChatRepository for FileChatRepository {
         let chat_path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
-        let Some(_write_guard) = self.try_acquire_payload_write_lock(&chat_path).await else {
+        let Some(_write_guard) = self.try_acquire_payload_snapshot_lock(&chat_path).await else {
             return Err(DomainError::transient(format!(
                 "Chat current is busy: {}",
                 chat_path.display()
@@ -873,6 +873,7 @@ impl ChatRepository for FileChatRepository {
             let mut cache = self.memory_cache.lock().await;
             cache.clear();
         }
+        self.invalidate_content_provenance().await;
         self.clear_summary_cache().await;
         Ok(())
     }

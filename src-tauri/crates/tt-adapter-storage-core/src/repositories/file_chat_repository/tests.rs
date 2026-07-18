@@ -5,6 +5,7 @@ use std::time::Duration;
 use chrono::DateTime;
 use rand::random;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::sync::Barrier;
 
@@ -203,6 +204,79 @@ async fn chat_commit_preserves_exact_bytes_across_multiple_frames() {
             .expect("read multi-frame payload"),
         payload
     );
+    let path = repository
+        .get_chat_payload_path("alice", "multi-frame")
+        .await
+        .expect("resolve multi-frame payload path");
+    let signature = repository
+        .current_content_signature_for_size(&path, payload.len() as u64)
+        .await
+        .expect("successful commit records its content signature");
+    let expected_digest: [u8; 32] = Sha256::digest(payload).into();
+    assert_eq!(signature.sha256, expected_digest);
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn chat_commit_does_not_hash_when_automatic_history_is_disabled() {
+    let (repository, root) = setup_repository().await;
+    let payload = payload_to_jsonl(&payload_with_integrity("hash-policy"));
+
+    let mut automatic_disabled = backup_policy(-1, -1, -1);
+    automatic_disabled.automatic_enabled = false;
+    apply_and_reconcile_backups(&repository, automatic_disabled).await;
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "automatic-disabled"),
+        payload.as_bytes(),
+        false,
+    )
+    .await
+    .expect("commit with automatic history disabled");
+    let disabled_path = repository
+        .get_chat_payload_path("Alice", "automatic-disabled")
+        .await
+        .expect("resolve disabled current");
+    assert!(
+        repository
+            .current_content_signature_for_size(&disabled_path, payload.len() as u64)
+            .await
+            .is_none()
+    );
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn global_invalidation_prevents_an_inflight_commit_from_restoring_old_provenance() {
+    let (repository, root) = setup_repository().await;
+    let payload = payload_to_jsonl(&payload_with_integrity("signature-epoch"));
+    let session = repository
+        .begin(character_target("Alice", "session"), false)
+        .await
+        .expect("begin commit");
+    repository
+        .append(&session.session_id, 0, payload.as_bytes())
+        .await
+        .expect("append payload");
+
+    repository.invalidate_all_payload_signatures().await;
+    repository
+        .finish(&session.session_id, payload.len() as u64)
+        .await
+        .expect("publish current after invalidation");
+
+    let path = repository
+        .get_chat_payload_path("Alice", "session")
+        .await
+        .expect("resolve current");
+    assert!(
+        repository
+            .current_content_signature_for_size(&path, payload.len() as u64)
+            .await
+            .is_none()
+    );
 
     let _ = fs::remove_dir_all(root).await;
 }
@@ -224,7 +298,6 @@ async fn chat_commit_size_mismatch_preserves_current_and_consumes_session() {
     )
     .await
     .expect("commit old current");
-
     let new_payload = payload_to_jsonl(&payload_with_message(
         "same",
         "2026-01-01T00:00:01.000Z",
@@ -290,7 +363,6 @@ async fn streaming_chat_commit_keeps_old_current_visible_until_finish() {
     )
     .await
     .expect("commit old current");
-
     let new_payload = payload_to_jsonl(&payload_with_message(
         "same",
         "2026-01-01T00:00:01.000Z",
@@ -849,6 +921,303 @@ async fn automatic_character_and_group_snapshots_run_only_when_requested() {
 }
 
 #[tokio::test]
+async fn automatic_deduplication_preserves_prefix_and_latest_state() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let payload_a = payload_to_jsonl(&payload_with_message(
+        "timeline",
+        "2026-01-01T00:00:00.000Z",
+        "alpha",
+        "Assistant",
+    ));
+    let payload_b = payload_to_jsonl(&payload_with_message(
+        "timeline",
+        "2026-01-01T00:00:00.000Z",
+        "bravo",
+        "Assistant",
+    ));
+    assert_eq!(payload_a.len(), payload_b.len());
+
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session-one"),
+        payload_a.as_bytes(),
+        false,
+    )
+    .await
+    .expect("commit first state");
+    repository
+        .backup_chat_automatic("Alice", "session-one")
+        .await
+        .expect("create first automatic snapshot");
+    let first_names = backup_file_names(&root).await;
+    repository
+        .backup_chat_automatic("Alice", "session-one")
+        .await
+        .expect("skip unchanged automatic snapshot");
+    assert_eq!(backup_file_names(&root).await, first_names);
+
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session-two"),
+        payload_a.as_bytes(),
+        false,
+    )
+    .await
+    .expect("commit same bytes to another source");
+    repository
+        .backup_chat_automatic("Alice", "session-two")
+        .await
+        .expect("same bytes under the latest prefix remain redundant");
+    assert_eq!(backup_file_names(&root).await.len(), 1);
+
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session-one"),
+        payload_b.as_bytes(),
+        false,
+    )
+    .await
+    .expect("commit second state with the same length");
+    repository
+        .backup_chat_automatic("Alice", "session-one")
+        .await
+        .expect("changed digest creates a snapshot");
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session-one"),
+        payload_a.as_bytes(),
+        false,
+    )
+    .await
+    .expect("restore first state");
+    repository
+        .backup_chat_automatic("Alice", "session-one")
+        .await
+        .expect("A-B-A creates the third timeline state");
+    assert_eq!(backup_file_names(&root).await.len(), 3);
+
+    let current_path = repository
+        .get_chat_payload_path("Alice", "session-one")
+        .await
+        .expect("resolve current path");
+    let _snapshot_guard = repository
+        .acquire_payload_snapshot_lock(&current_path)
+        .await;
+    repository
+        .backup_chat_file_automatic(&current_path, "Bob")
+        .await
+        .expect("same source under a new prefix gets a snapshot");
+    assert_eq!(backup_file_names(&root).await.len(), 4);
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn explicit_and_reconciled_backups_remain_conservative() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let payload = payload_to_jsonl(&payload_with_integrity("explicit"));
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session"),
+        payload.as_bytes(),
+        false,
+    )
+    .await
+    .expect("commit current");
+
+    repository
+        .backup_chat("Alice", "session")
+        .await
+        .expect("first explicit snapshot");
+    repository
+        .backup_chat("Alice", "session")
+        .await
+        .expect("second explicit snapshot");
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("automatic snapshot reuses the latest explicit signature");
+    assert_eq!(backup_file_names(&root).await.len(), 2);
+
+    repository
+        .reconcile_chat_backups()
+        .await
+        .expect("rebuild inventory without hashing existing files");
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("unknown rebuilt entry causes one conservative snapshot");
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("newly tracked snapshot suppresses the next duplicate");
+    assert_eq!(backup_file_names(&root).await.len(), 3);
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn cache_reconcile_forgets_backup_provenance_before_the_background_rescan() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let payload = payload_to_jsonl(&payload_with_integrity("external-reconcile"));
+
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session"),
+        payload.as_bytes(),
+        false,
+    )
+    .await
+    .expect("commit current");
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("create tracked snapshot");
+    assert_eq!(backup_file_names(&root).await.len(), 1);
+
+    <FileChatRepository as ChatRepository>::clear_cache(&repository)
+        .await
+        .expect("clear external content provenance");
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session"),
+        payload.as_bytes(),
+        false,
+    )
+    .await
+    .expect("recommit current after cache reconcile");
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("unknown backup provenance creates conservatively");
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("newly tracked snapshot suppresses the next duplicate");
+    assert_eq!(backup_file_names(&root).await.len(), 2);
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn automatic_duplicate_skip_does_not_rotate_quota_entry() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(1, 1, -1)).await;
+    let payload = payload_to_jsonl(&payload_with_integrity("quota-duplicate"));
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session"),
+        payload.as_bytes(),
+        false,
+    )
+    .await
+    .expect("commit current");
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("create quota entry");
+    let names = backup_file_names(&root).await;
+
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("skip duplicate before eviction");
+    assert_eq!(backup_file_names(&root).await, names);
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn non_c2_mutation_fails_closed_and_group_uses_the_same_guard() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let payload = payload_with_integrity("mutation");
+    let jsonl = format!("{}\n", payload_to_jsonl(&payload));
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session"),
+        jsonl.as_bytes(),
+        false,
+    )
+    .await
+    .expect("commit current");
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("create tracked snapshot");
+
+    let current_path = repository
+        .get_chat_payload_path("Alice", "session")
+        .await
+        .expect("resolve current path");
+    repository
+        .write_payload_to_path(&current_path, &payload, false)
+        .await
+        .expect("rewrite the same bytes through a non-C2 mutation");
+    assert_eq!(
+        fs::read(&current_path)
+            .await
+            .expect("read rewritten current"),
+        jsonl.as_bytes()
+    );
+    assert!(
+        repository
+            .current_content_signature_for_size(&current_path, jsonl.len() as u64)
+            .await
+            .is_none()
+    );
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("unknown digest creates a conservative snapshot");
+    assert_eq!(backup_file_names(&root).await.len(), 2);
+
+    commit_payload_bytes(
+        &repository,
+        ChatPayloadTarget::Group {
+            chat_id: "group-session".to_string(),
+        },
+        jsonl.as_bytes(),
+        false,
+    )
+    .await
+    .expect("commit group current");
+    repository
+        .backup_group_chat_automatic("group-session")
+        .await
+        .expect("create group snapshot");
+    repository
+        .backup_group_chat_automatic("group-session")
+        .await
+        .expect("skip unchanged group snapshot");
+    assert_eq!(backup_file_names(&root).await.len(), 3);
+
+    let group_path = repository
+        .get_group_chat_path("group-session")
+        .expect("resolve group path");
+    assert!(
+        repository
+            .current_content_signature_for_size(&group_path, jsonl.len() as u64)
+            .await
+            .is_some()
+    );
+    <FileChatRepository as ChatRepository>::clear_cache(&repository)
+        .await
+        .expect("clear chat runtime cache");
+    assert!(
+        repository
+            .current_content_signature_for_size(&group_path, jsonl.len() as u64)
+            .await
+            .is_none()
+    );
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn automatic_snapshot_defers_instead_of_waiting_for_a_busy_current() {
     let (repository, root) = setup_repository().await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
@@ -867,7 +1236,9 @@ async fn automatic_snapshot_defers_instead_of_waiting_for_a_busy_current() {
         .get_chat_payload_path("Alice", "session")
         .await
         .expect("resolve current path");
-    let current_guard = repository.acquire_payload_write_lock(&current_path).await;
+    let current_guard = repository
+        .acquire_payload_mutation_lock(&current_path)
+        .await;
     let error = repository
         .backup_chat_automatic("Alice", "session")
         .await

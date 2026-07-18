@@ -11,8 +11,8 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{normalize_chat_file_name, normalize_chat_file_stem};
 use tt_domain::models::filename::sanitize_filename;
 
-use super::FileChatRepository;
 use super::backup_inventory::BACKUP_TEMP_PREFIX;
+use super::{ContentSignature, FileChatRepository};
 
 impl FileChatRepository {
     /// Ensure the chats directory exists
@@ -53,7 +53,7 @@ impl FileChatRepository {
         sanitize_chat_dir_key(value, fallback)
     }
 
-    async fn payload_write_lock(&self, path: &Path) -> Arc<Mutex<()>> {
+    async fn payload_lock(&self, path: &Path) -> Arc<Mutex<()>> {
         const MAX_RETAINED_LOCK_ENTRIES: usize = 2048;
 
         let key = path.to_path_buf();
@@ -74,35 +74,96 @@ impl FileChatRepository {
         }
     }
 
-    pub(super) async fn acquire_payload_write_lock(&self, path: &Path) -> OwnedMutexGuard<()> {
-        self.payload_write_lock(path).await.lock_owned().await
+    pub(super) async fn acquire_payload_snapshot_lock(&self, path: &Path) -> OwnedMutexGuard<()> {
+        self.payload_lock(path).await.lock_owned().await
     }
 
-    pub(super) async fn try_acquire_payload_write_lock(
+    pub(super) async fn try_acquire_payload_snapshot_lock(
         &self,
         path: &Path,
     ) -> Option<OwnedMutexGuard<()>> {
-        self.payload_write_lock(path).await.try_lock_owned().ok()
+        self.payload_lock(path).await.try_lock_owned().ok()
     }
 
-    pub(super) async fn acquire_payload_rename_locks(
+    pub(super) async fn acquire_payload_mutation_lock(&self, path: &Path) -> OwnedMutexGuard<()> {
+        let guard = self.acquire_payload_snapshot_lock(path).await;
+        self.current_content_signatures
+            .lock()
+            .await
+            .entries
+            .remove(path);
+        guard
+    }
+
+    pub(super) async fn acquire_payload_rename_mutation_locks(
         &self,
         old_path: &Path,
         new_path: &Path,
     ) -> (OwnedMutexGuard<()>, Option<OwnedMutexGuard<()>>) {
         if old_path == new_path {
-            return (self.acquire_payload_write_lock(old_path).await, None);
+            return (self.acquire_payload_mutation_lock(old_path).await, None);
         }
 
-        if old_path < new_path {
-            let old_guard = self.acquire_payload_write_lock(old_path).await;
-            let new_guard = self.acquire_payload_write_lock(new_path).await;
+        let guards = if old_path < new_path {
+            let old_guard = self.acquire_payload_snapshot_lock(old_path).await;
+            let new_guard = self.acquire_payload_snapshot_lock(new_path).await;
             (old_guard, Some(new_guard))
         } else {
-            let new_guard = self.acquire_payload_write_lock(new_path).await;
-            let old_guard = self.acquire_payload_write_lock(old_path).await;
+            let new_guard = self.acquire_payload_snapshot_lock(new_path).await;
+            let old_guard = self.acquire_payload_snapshot_lock(old_path).await;
             (old_guard, Some(new_guard))
+        };
+
+        let mut signatures = self.current_content_signatures.lock().await;
+        signatures.entries.remove(old_path);
+        signatures.entries.remove(new_path);
+        drop(signatures);
+        guards
+    }
+
+    pub(super) async fn current_content_signature_epoch(&self) -> u64 {
+        self.current_content_signatures.lock().await.epoch
+    }
+
+    pub(super) async fn record_current_content_signature(
+        &self,
+        path: &Path,
+        expected_epoch: u64,
+        signature: ContentSignature,
+    ) {
+        let mut signatures = self.current_content_signatures.lock().await;
+        if signatures.epoch == expected_epoch {
+            signatures.entries.insert(path.to_path_buf(), signature);
         }
+    }
+
+    pub(super) async fn current_content_signature_for_size(
+        &self,
+        path: &Path,
+        byte_len: u64,
+    ) -> Option<ContentSignature> {
+        let mut signatures = self.current_content_signatures.lock().await;
+        let signature = signatures.entries.get(path).copied()?;
+        if signature.byte_len == byte_len {
+            return Some(signature);
+        }
+
+        signatures.entries.remove(path);
+        tracing::error!(
+            source = %path.display(),
+            cached_bytes = signature.byte_len,
+            actual_bytes = byte_len,
+            "Discarded stale current content signature"
+        );
+        None
+    }
+
+    /// Invalidates path-bound signatures after whole-directory or external data changes.
+    pub async fn invalidate_all_payload_signatures(&self) {
+        self.current_content_signatures
+            .lock()
+            .await
+            .invalidate_all();
     }
 
     pub(super) fn temp_payload_path(path: &Path) -> PathBuf {
