@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use super::persistent_store::PersistentSnapshotFile;
+use crate::hashing::hex_lower;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::WorkspacePath;
 use tt_ports::repositories::workspace_repository::WorkspaceFile;
@@ -301,9 +302,5 @@ pub(super) fn workspace_path_from_run_dir(
 
 pub(super) fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        output.push_str(&format!("{byte:02x}"));
-    }
-    output
+    hex_lower(&digest)
 }

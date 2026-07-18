@@ -6,6 +6,7 @@ use url::Url;
 
 use crate::errors::ApplicationError;
 use crate::services::external_import_service::{DownloadByteLimit, ExternalImportDownloader};
+use crate::services::hashing::hex_lower;
 #[cfg(any(test, feature = "test-support"))]
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::AgentSkillPolicy;
@@ -262,7 +263,7 @@ fn sanitized_source_url(mut url: Url) -> String {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    hex_lower(&hasher.finalize())
 }
 
 #[cfg(any(test, feature = "test-support"))]

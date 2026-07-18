@@ -13,6 +13,7 @@ use crate::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService, ensure_profile_model_configured,
     materialize_agent_system_prompt,
 };
+use crate::services::hashing::hex_lower;
 use crate::services::llm_connection_service::{
     self, LlmConnectionService, ResolvedLlmModelBinding,
 };
@@ -824,14 +825,6 @@ fn sha256_string(value: &str) -> String {
 fn sha256_bytes(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     hex_lower(&digest)
-}
-
-fn hex_lower(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push_str(&format!("{byte:02x}"));
-    }
-    output
 }
 
 #[cfg(test)]

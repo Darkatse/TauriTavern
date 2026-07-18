@@ -10,6 +10,7 @@ use super::args::{classify_workspace_io_error, optional_list_path_arg};
 use super::policy::WorkspaceAccessPolicy;
 use super::{apply_patch, read_file, write_file};
 use crate::services::agent_tools::{AgentToolEffect, AgentToolSession};
+use crate::services::hashing::hex_lower;
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -560,5 +561,5 @@ fn test_manifest() -> WorkspaceManifest {
 
 fn sha256_hex(text: &str) -> String {
     let digest = Sha256::digest(text.as_bytes());
-    format!("{digest:x}")
+    hex_lower(&digest)
 }

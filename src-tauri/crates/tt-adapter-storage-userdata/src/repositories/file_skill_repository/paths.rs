@@ -1,5 +1,6 @@
 use sha2::{Digest, Sha256};
 
+use crate::hashing::hex_lower;
 use tt_domain::errors::DomainError;
 use tt_domain::models::skill::{SkillScope, SkillScopeFilter};
 
@@ -74,12 +75,7 @@ pub(super) fn skill_scope_storage_dir(scope: &SkillScope) -> Result<String, Doma
 
 fn scope_digest(scope: &SkillScope) -> String {
     let digest = Sha256::digest(scope.stable_key().as_bytes());
-    let mut output = String::with_capacity(16);
-    for byte in &digest[..8] {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
+    hex_lower(&digest[..8])
 }
 
 fn validate_scope_text(raw: &str, label: &str) -> Result<(), DomainError> {
@@ -181,5 +177,3 @@ pub(super) fn normalize_optional_string(value: Option<&str>) -> Option<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_string)
 }
-
-const HEX: &[u8; 16] = b"0123456789abcdef";

@@ -1,6 +1,5 @@
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::fmt::Write as _;
 use std::io::Write;
 use std::sync::{
     Arc,
@@ -17,6 +16,7 @@ use crate::dto::settings_dto::{
     UserSettingsSaveResultDto,
 };
 use crate::errors::ApplicationError;
+use crate::services::hashing::hex_lower;
 use tt_domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, DevLoggingSettings,
     RequestProxySettings, UserSettings,
@@ -678,16 +678,7 @@ impl SettingsService {
         let mut canonical = Vec::new();
         Self::write_canonical_json(value, &mut canonical)?;
         let digest = Sha256::digest(&canonical);
-        let mut output = String::with_capacity(64);
-        for byte in digest {
-            write!(&mut output, "{byte:02x}").map_err(|error| {
-                ApplicationError::InternalError(format!(
-                    "Failed to format settings hash: {}",
-                    error
-                ))
-            })?;
-        }
-        Ok(output)
+        Ok(hex_lower(&digest))
     }
 
     fn write_canonical_json<W: Write>(
