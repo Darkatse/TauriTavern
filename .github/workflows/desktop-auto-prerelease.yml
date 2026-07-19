@@ -230,7 +230,7 @@ jobs:
         run: ./scripts/ci/setup-macos-signing.sh
 
       - name: Build and upload desktop pre-release
-        uses: tauri-apps/tauri-action@v0.6.1
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_API_ISSUER: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_API_ISSUER || '' }}
@@ -309,7 +309,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build and upload desktop portable pre-release
-        uses: tauri-apps/tauri-action@v0.6.1
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -318,7 +318,7 @@ jobs:
           releaseId: ${{ needs.prepare-release.outputs.release_id }}
           tagName: ${{ needs.prepare-release.outputs.tag_name }}
           prerelease: true
-          includeUpdaterJson: false
+          uploadUpdaterJson: false
           args: ${{ matrix.args }} --no-bundle --features portable
           uploadPlainBinary: true
-          assetNamePattern: '[name]-[version]-[platform]-[arch]-portable[ext]'
+          releaseAssetNamePattern: '[name]-[version]-[platform]-[arch]-portable[ext]'

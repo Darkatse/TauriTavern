@@ -1,0 +1,67 @@
+name: 功能建议 / Feature request
+description: 提议一项有明确使用场景的改进 / Propose an improvement grounded in a concrete use case
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先说明需要解决的问题和希望得到的结果。实现思路可以作为参考，最终方案会结合项目架构、SillyTavern 生态和各平台约束评估。
+
+        Start with the problem and the outcome you want. Implementation ideas are useful context; the final design will also account for the project architecture, the SillyTavern ecosystem, and platform constraints.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题 / Problem to solve
+      description: 谁在什么情况下遇到了什么困难？现有行为为什么无法满足需要？ / Who encounters the problem, in what situation, and why does the current behavior fall short?
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 期望结果 / Desired outcome
+      description: 请描述用户最终应当能够完成什么。 / Describe what the user should be able to accomplish.
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_cases
+    attributes:
+      label: 使用场景 / Use cases
+      description: 请给出一两个具体例子，并说明涉及的平台或用户群体。 / Give one or two concrete examples and note the affected platforms or users.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 已有替代方式 / Current alternatives
+      description: 如果目前有临时办法，请说明它的局限。 / If a workaround exists, describe its limitations.
+    validations:
+      required: false
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: 兼容性与取舍 / Compatibility and tradeoffs
+      description: 如果建议可能影响现有数据、SillyTavern 扩展生态或特定平台，请在这里说明。 / Note any effects on existing data, the SillyTavern extension ecosystem, or particular platforms.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息 / Additional context
+      description: 可以添加草图、截图、公开参考链接或实现思路。 / Add sketches, screenshots, public references, or implementation ideas if useful.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认 / Before submitting
+      options:
+        - label: 我已搜索现有 Issue，未发现相同建议。 / I searched existing issues and did not find the same request.
+          required: true
