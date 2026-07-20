@@ -310,7 +310,7 @@ TauriTavern 私有状态放在 `_tauritavern` 下，例如 agent workspace、age
 | 前端 Host ABI、请求拦截、资源契约 | `docs/FrontendHostContract.md` |
 | 前端集成结构 | `docs/FrontendGuide.md` |
 | 扩展作者 API | `docs/API/README.md` |
-| Chat windowed payload | `docs/CurrentState/WindowedPayload.md` |
+| Chat payload（完整历史、原子提交、只读分页） | `docs/CurrentState/ChatPayload.md` |
 | Third-party extension 资源和发现 | `docs/CurrentState/ThirdPartyExtensions.md` |
 | 媒体 Range / browser resource contract | `docs/CurrentState/MediaAssetContract.md` |
 | Logging / Dev observability | `docs/CurrentState/LoggingObservability.md` |

@@ -1,7 +1,6 @@
 // @ts-check
 
 import { normalizeEmbeddedRuntimeProfileName } from '../../../../tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js';
-import { normalizeChatHistoryModeName } from '../../../../tauri/main/services/chat-history/chat-history-mode-state.js';
 import { arraysEqual, normalizeRequestProxyBypass } from './settings-state.js';
 
 const CHAT_BACKUP_STORAGE_UNIT_BYTES = {
@@ -63,7 +62,6 @@ function isChatBackupHistoryDisabled(settings) {
 export function buildTauriTavernSettingsUpdate(initial, draft) {
     const nextPanelRuntimeProfile = String(draft.panelRuntimeProfile || '').trim();
     const nextEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(draft.embeddedRuntimeProfile);
-    const nextChatHistoryMode = normalizeChatHistoryModeName(draft.chatHistoryMode);
     const nextChatBackupAutomaticEnabled = Boolean(draft.chatBackups?.automaticEnabled);
     const nextChatBackupMaxFilesPerPrefix = normalizeChatBackupLimit(draft.chatBackups?.maxFilesPerPrefix);
     const nextChatBackupMaxTotalFiles = normalizeChatBackupLimit(draft.chatBackups?.maxTotalFiles);
@@ -100,7 +98,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         initial.configuredEmbeddedRuntimeProfile !== initial.embeddedRuntimeProfile;
     const hasEmbeddedRuntimeChange = Boolean(nextEmbeddedRuntimeProfile)
         && (nextEmbeddedRuntimeProfile !== initial.embeddedRuntimeProfile || requiresEmbeddedRuntimeMigration);
-    const hasChatHistoryModeChange = nextChatHistoryMode !== initial.chatHistoryMode;
     const hasChatBackupAutomaticEnabledChange =
         nextChatBackupAutomaticEnabled !== initial.chatBackups.automaticEnabled;
     const hasChatBackupMaxFilesPerPrefixChange =
@@ -134,7 +131,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     const changes = {
         panelRuntimeProfile: hasPanelRuntimeChange,
         embeddedRuntimeProfile: hasEmbeddedRuntimeChange,
-        chatHistoryMode: hasChatHistoryModeChange,
         chatBackups: hasChatBackupsChange,
         closeToTrayOnClose: hasCloseToTrayOnCloseChange,
         dynamicTheme: hasDynamicThemeChange,
@@ -155,9 +151,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     }
     if (hasEmbeddedRuntimeChange) {
         patch.embedded_runtime_profile = nextEmbeddedRuntimeProfile;
-    }
-    if (hasChatHistoryModeChange) {
-        patch.chat_history_mode = nextChatHistoryMode;
     }
     if (hasChatBackupsChange) {
         /** @type {Record<string, unknown>} */
@@ -228,7 +221,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         next: {
             panelRuntimeProfile: nextPanelRuntimeProfile,
             embeddedRuntimeProfile: nextEmbeddedRuntimeProfile,
-            chatHistoryMode: nextChatHistoryMode,
             chatBackups: {
                 automaticEnabled: nextChatBackupAutomaticEnabled,
                 maxFilesPerPrefix: nextChatBackupMaxFilesPerPrefix,

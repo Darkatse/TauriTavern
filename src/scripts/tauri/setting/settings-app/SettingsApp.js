@@ -20,11 +20,6 @@ const EMBEDDED_RUNTIME_OPTIONS = [
     { value: 'off', labelKey: 'Off (Legacy)' },
 ];
 
-const CHAT_HISTORY_OPTIONS = [
-    { value: 'windowed', labelKey: 'Windowed (Recommended)' },
-    { value: 'off', labelKey: 'Off (Upstream full history)' },
-];
-
 const PROMPT_CACHE_OPTIONS = [
     { value: 'off', labelKey: 'Off' },
     { value: '5m', labelKey: '5m (Default TTL)' },
@@ -68,7 +63,6 @@ function cloneDraft(values, themeOptions, backgroundOptions, currentBackground) 
     return {
         panelRuntimeProfile: values.panelRuntimeProfile,
         embeddedRuntimeProfile: values.embeddedRuntimeProfile,
-        chatHistoryMode: values.chatHistoryMode,
         chatBackups: {
             automaticEnabled: values.chatBackups.automaticEnabled,
             maxFilesPerPrefix: values.chatBackups.maxFilesPerPrefix,
@@ -166,9 +160,6 @@ export function createTauriTavernSettingsApp(options) {
             },
             embeddedRuntimeOptions() {
                 return translateOptions(EMBEDDED_RUNTIME_OPTIONS, this.tr);
-            },
-            chatHistoryOptions() {
-                return translateOptions(CHAT_HISTORY_OPTIONS, this.tr);
             },
             chatBackupStorageUnitOptions() {
                 return CHAT_BACKUP_STORAGE_UNIT_OPTIONS;
@@ -341,7 +332,6 @@ export function createTauriTavernSettingsApp(options) {
                 return {
                     panelRuntimeProfile: this.draft.panelRuntimeProfile,
                     embeddedRuntimeProfile: this.draft.embeddedRuntimeProfile,
-                    chatHistoryMode: this.draft.chatHistoryMode,
                     chatBackups: { ...this.draft.chatBackups },
                     closeToTrayOnClose: this.draft.closeToTrayOnClose,
                     requestProxy: { ...this.draft.requestProxy },
@@ -393,15 +383,6 @@ export function createTauriTavernSettingsApp(options) {
                         @help="showHelp"
                     >
                         <SelectField v-model="draft.embeddedRuntimeProfile" :options="embeddedRuntimeOptions" />
-                    </SettingRow>
-
-                    <SettingRow
-                        :label="tr('Chat History')"
-                        help-topic="chatHistory"
-                        :help-title="tr('Learn more')"
-                        @help="showHelp"
-                    >
-                        <SelectField v-model="draft.chatHistoryMode" :options="chatHistoryOptions" />
                     </SettingRow>
 
                     <SettingRow :label="tr('Rust Regex Backend')">

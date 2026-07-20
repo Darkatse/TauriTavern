@@ -5,7 +5,6 @@ import {
     setEmbeddedRuntimeBootstrapProfileName,
 } from '../../../../tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js';
 import { DYNAMIC_THEME_CHANGED_EVENT } from '../../../../tauri/main/services/dynamic-theme/constants.js';
-import { setChatHistoryBootstrapModeName } from '../../../../tauri/main/services/chat-history/chat-history-mode-state.js';
 import { syncNativeRegexBackendEnabledFromSettings } from '../../regex/native-regex-settings.js';
 
 /**
@@ -40,14 +39,9 @@ export function applyTauriTavernSettingsUpdateEffects(update, updatedSettings) {
         clearLegacyEmbeddedRuntimeProfileName();
     }
 
-    if (changes.chatHistoryMode) {
-        setChatHistoryBootstrapModeName(next.chatHistoryMode);
-    }
-
     if (
         changes.panelRuntimeProfile
         || changes.embeddedRuntimeProfile
-        || changes.chatHistoryMode
         || changes.avatarPersonaOriginalImagesEnabled
     ) {
         window.location.reload();

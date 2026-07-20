@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tt_domain::models::settings::{
-    AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, ChatHistoryMode,
-    ClaudeModelSettings, DevLoggingSettings, DynamicThemeSettings, ModelSettings, PromptCacheTtl,
-    RequestProxySettings, SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings,
-    TauriTavernUpdateSettings, UserSettings,
+    AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, ClaudeModelSettings,
+    DevLoggingSettings, DynamicThemeSettings, ModelSettings, PromptCacheTtl, RequestProxySettings,
+    SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings,
+    UserSettings,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,7 +13,6 @@ pub struct TauriTavernSettingsDto {
     pub perf_profile: String,
     pub panel_runtime_profile: String,
     pub embedded_runtime_profile: String,
-    pub chat_history_mode: ChatHistoryMode,
     pub chat_backups: ChatBackupSettingsDto,
     pub close_to_tray_on_close: bool,
     pub request_proxy: RequestProxySettingsDto,
@@ -42,7 +41,6 @@ pub struct UpdateTauriTavernSettingsDto {
     pub perf_profile: Option<String>,
     pub panel_runtime_profile: Option<String>,
     pub embedded_runtime_profile: Option<String>,
-    pub chat_history_mode: Option<ChatHistoryMode>,
     pub chat_backups: Option<UpdateChatBackupSettingsDto>,
     pub close_to_tray_on_close: Option<bool>,
     pub request_proxy: Option<RequestProxySettingsDto>,
@@ -253,7 +251,6 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             perf_profile: settings.perf_profile,
             panel_runtime_profile: settings.panel_runtime_profile,
             embedded_runtime_profile: settings.embedded_runtime_profile,
-            chat_history_mode: settings.chat_history_mode,
             chat_backups: ChatBackupSettingsDto::from(settings.chat_backups),
             close_to_tray_on_close: settings.close_to_tray_on_close,
             request_proxy: RequestProxySettingsDto::from(settings.request_proxy),

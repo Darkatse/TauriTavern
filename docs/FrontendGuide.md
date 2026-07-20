@@ -78,7 +78,7 @@ src/
 
 #### 4.2.1 `window.__TAURITAVERN__.api.chat`（扩展/记忆类插件 API）
 
-> 这是 TauriTavern 独有 API 的**唯一入口**（刻意不做 alias），用于在 windowed payload 模式下仍然给扩展提供稳定、可维护的“历史/定位/检索/持久化”能力。
+> 这是 TauriTavern 独有 API 的**唯一入口**（刻意不做 alias），为扩展提供有界历史读取、后端定位、检索与持久化能力；它增强上游完整 `chat[]` 契约，不替代该契约。
 
 - 安装位置：`src/tauri/main/api/chat.js`（在 `src/tauri/main/bootstrap.js` 中安装到 `window.__TAURITAVERN__.api.chat`）。
 - 类型声明：`src/types.d.ts`（便于扩展作者用 TS/JSDoc 一键上手）。
@@ -126,18 +126,17 @@ src/
 | `chat-routes.js` | 聊天读写、搜索、最近记录、导出 |
 | `ai-routes.js` | Chat Completion（OpenAI / Claude / Gemini(MakerSuite)）与 tokenizer（count/encode/decode/bias） |
 
-## 6.1 聊天分段加载（Windowed Loading，Phase 2-C）
+## 6.1 聊天 payload 与 DOM 边界
 
-- 只在 Tauri 环境启用：以 `isTauriChatPayloadTransportEnabled()` 为准。
 - 上游接管点：`src/script.js`（character chat）与 `src/scripts/group-chats.js`（group chat）。
-- 统一入口：上游只 import `src/scripts/chat-payload-transport.js`（不要直接依赖 `src/scripts/tauri/chat/*`）。
-- window state：`src/scripts/tauri/chat/windowed-state.js`
-  - 桌面：`DEFAULT_CHAT_WINDOW_LINES_DESKTOP = 100`
-  - 移动端（Android/iOS runtime）：`DEFAULT_CHAT_WINDOW_LINES_MOBILE = 50`
-- 初次加载：`load*PayloadTail({ maxLines }) -> { payload, cursor, hasMoreBefore }`。
-- 翻页：`load*PayloadBefore({ cursor, maxLines }) -> { messages, cursor, hasMoreBefore }`；prepend 后必须 `updateViewMessageIds(0)`。
-- 保存：`patch*ChatPayloadWindowed({ cursor, header, patch }) -> cursor` 并回写 window state；没有有效 window state 时走 target-local commit session 全量保存（lazy JSONL frames，finish 原子发布），保存前不要落盘 `chat_metadata.lastInContextMessageId`。
-- 错误策略：cursor 签名/边界失效直接抛错；不要写“静默回退到全量加载/全量保存”的 fallback。
+- 统一入口：上游只 import `src/scripts/chat-payload-transport.js`，不要直接依赖 `src/scripts/tauri/chat/*`。
+- 当前聊天始终通过 `/api/chats/get` 或 `/api/chats/group/get` 加载完整 JSONL；header 与完整、有序的消息数组分离后，generation、扩展和保存共享同一个 canonical `chat[]`。
+- `chat_truncation` 只限制初始 DOM。Show More 从完整 `chat[]` 补挂楼层，不发起分页 I/O，不改变消息绝对索引。
+- 保存始终通过 `/api/chats/save` 或 `/api/chats/group/save`，并经过 `enqueueChatSave()` 与 target-local commit session 原子发布。保存前不要落盘 `chat_metadata.lastInContextMessageId`。
+- tail/before/beforePages 只属于 `api.chat.history` 与 Agent 的显式只读查询，不参与前端当前聊天状态。
+- 合法 JSONL 任一记录解析失败时整体加载失败；不得提交部分历史或静默降级。
+
+完整现状见 `docs/CurrentState/ChatPayload.md`。
 
 ## 7. 插件系统前端适配
 

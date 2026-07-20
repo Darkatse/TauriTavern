@@ -12,8 +12,8 @@ use tt_domain::models::chat::strip_jsonl_extension;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
-    ChatPayloadCursor, ChatPayloadTail, ChatPayloadWindowPatchRequest, ChatSearchResult,
-    FindLastMessageQuery, LocatedChatMessage, PinnedGroupChat,
+    ChatPayloadCursor, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
+    PinnedGroupChat,
 };
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 
@@ -153,32 +153,6 @@ impl GroupChatRepository for FileChatRepository {
     ) -> Result<ChatPayloadChunk, DomainError> {
         self.get_group_payload_before_lines(chat_id, cursor, max_lines)
             .await
-    }
-
-    async fn patch_group_chat_payload_windowed(
-        &self,
-        chat_id: &str,
-        request: ChatPayloadWindowPatchRequest,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.patch_group_payload_windowed(chat_id, request).await
-    }
-
-    async fn hide_group_chat_payload_before_cursor(
-        &self,
-        chat_id: &str,
-        cursor: ChatPayloadCursor,
-        hide: bool,
-        name_filter: Option<String>,
-        expected_window_line_count: usize,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.hide_group_payload_before_cursor(
-            chat_id,
-            cursor,
-            hide,
-            name_filter,
-            expected_window_line_count,
-        )
-        .await
     }
 
     async fn backup_group_chat_automatic(&self, chat_id: &str) -> Result<(), DomainError> {

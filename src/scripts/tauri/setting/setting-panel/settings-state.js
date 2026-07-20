@@ -4,10 +4,6 @@ import {
     normalizeEmbeddedRuntimeProfileName,
     resolveEffectiveEmbeddedRuntimeProfileName,
 } from '../../../../tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js';
-import {
-    CHAT_HISTORY_MODE_WINDOWED,
-    normalizeChatHistoryModeName,
-} from '../../../../tauri/main/services/chat-history/chat-history-mode-state.js';
 import { readNativeRegexBackendEnabledFromSettings } from '../../regex/native-regex-settings.js';
 
 export const PROMPT_CACHE_TTL_VALUES = ['off', '5m', '1h'];
@@ -66,12 +62,6 @@ export function createTauriTavernSettingsState(settings, options = {}) {
     const configuredEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(settings.embedded_runtime_profile);
     const embeddedRuntimeProfile = resolveEffectiveEmbeddedRuntimeProfileName(configuredEmbeddedRuntimeProfile);
 
-    const chatHistoryMode = normalizeChatHistoryModeName(
-        typeof settings.chat_history_mode === 'string' && settings.chat_history_mode
-            ? settings.chat_history_mode
-            : CHAT_HISTORY_MODE_WINDOWED,
-    );
-
     const avatarPersonaOriginalImagesEnabled = settings.avatar_persona_original_images_enabled;
     if (typeof avatarPersonaOriginalImagesEnabled !== 'boolean') {
         throw new Error('TauriTavern settings: avatar/persona original images setting missing');
@@ -106,7 +96,6 @@ export function createTauriTavernSettingsState(settings, options = {}) {
         panelRuntimeProfileSource: rawPanelRuntimeProfile,
         configuredEmbeddedRuntimeProfile,
         embeddedRuntimeProfile,
-        chatHistoryMode,
         chatBackups: {
             automaticEnabled: chatBackups.automatic_enabled,
             maxFilesPerPrefix,

@@ -1058,7 +1058,7 @@ type TauriTavernChatHistoryPage = {
 };
 
 type TauriTavernChatWindowInfo = {
-    mode: 'windowed' | 'off';
+    mode: 'off';
     chatKind: TauriTavernChatRef['kind'];
     chatRef: TauriTavernChatRef;
     totalCount: number;

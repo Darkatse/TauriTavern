@@ -2,10 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tt_domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use tt_ports::repositories::chat_repository::{
-    ChatPayloadCursor, ChatPayloadPatchOp, ChatSearchResult, PinnedCharacterChat, PinnedGroupChat,
+    ChatSearchResult, PinnedCharacterChat, PinnedGroupChat,
 };
-
-use super::chat_history_dto::CurrentCommitReason;
 
 /// DTO for chat message extra data
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,54 +150,6 @@ pub struct ExportChatDto {
     pub file_name: String,
     pub target_path: String,
     pub format: String,
-}
-
-/// DTO for patching a windowed character chat payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PatchChatWindowedDto {
-    #[serde(rename = "ch_name")]
-    pub character_name: String,
-    pub file_name: String,
-    pub cursor: ChatPayloadCursor,
-    pub header: String,
-    pub patch: ChatPayloadPatchOp,
-    pub expected_window_line_count: usize,
-    pub force: Option<bool>,
-    pub commit_reason: Option<CurrentCommitReason>,
-}
-
-/// DTO for toggling the hidden flag on messages before the window cursor.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HideChatBeforeCursorDto {
-    #[serde(rename = "ch_name")]
-    pub character_name: String,
-    pub file_name: String,
-    pub cursor: ChatPayloadCursor,
-    pub hide: bool,
-    pub name_filter: Option<String>,
-    pub expected_window_line_count: usize,
-}
-
-/// DTO for toggling the hidden flag on group chat messages before the window cursor.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HideGroupChatBeforeCursorDto {
-    pub id: String,
-    pub cursor: ChatPayloadCursor,
-    pub hide: bool,
-    pub name_filter: Option<String>,
-    pub expected_window_line_count: usize,
-}
-
-/// DTO for patching a windowed group chat payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PatchGroupChatWindowedDto {
-    pub id: String,
-    pub cursor: ChatPayloadCursor,
-    pub header: String,
-    pub patch: ChatPayloadPatchOp,
-    pub expected_window_line_count: usize,
-    pub force: Option<bool>,
-    pub commit_reason: Option<CurrentCommitReason>,
 }
 
 /// DTO for deleting a group chat payload

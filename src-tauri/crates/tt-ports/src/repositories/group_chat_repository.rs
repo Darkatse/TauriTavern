@@ -6,8 +6,8 @@ use tt_domain::errors::DomainError;
 
 use super::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
-    ChatPayloadCursor, ChatPayloadTail, ChatPayloadWindowPatchRequest, ChatSearchResult,
-    FindLastMessageQuery, LocatedChatMessage, PinnedGroupChat,
+    ChatPayloadCursor, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
+    PinnedGroupChat,
 };
 
 /// Repository interface for group chat (JSONL payload) management.
@@ -39,38 +39,20 @@ pub trait GroupChatRepository: Send + Sync {
     /// Get the absolute path to a group chat payload file.
     async fn get_group_chat_payload_path(&self, chat_id: &str) -> Result<PathBuf, DomainError>;
 
-    /// Get the tail window for a group chat JSONL payload (excluding the header line).
+    /// Get the tail page for a group chat JSONL payload (excluding the header line).
     async fn get_group_chat_payload_tail_lines(
         &self,
         chat_id: &str,
         max_lines: usize,
     ) -> Result<ChatPayloadTail, DomainError>;
 
-    /// Get JSONL lines before the current group chat window cursor (excluding the header line).
+    /// Get JSONL lines before the current group chat page cursor (excluding the header line).
     async fn get_group_chat_payload_before_lines(
         &self,
         chat_id: &str,
         cursor: ChatPayloadCursor,
         max_lines: usize,
     ) -> Result<ChatPayloadChunk, DomainError>;
-
-    /// Patch a windowed group chat payload by applying an operation at the tail.
-    /// The request carries the cursor signature and window baseline for compare-and-swap.
-    async fn patch_group_chat_payload_windowed(
-        &self,
-        chat_id: &str,
-        request: ChatPayloadWindowPatchRequest,
-    ) -> Result<ChatPayloadCursor, DomainError>;
-
-    /// Set the hidden flag (`is_system`) on all messages stored before the window cursor.
-    async fn hide_group_chat_payload_before_cursor(
-        &self,
-        chat_id: &str,
-        cursor: ChatPayloadCursor,
-        hide: bool,
-        name_filter: Option<String>,
-        expected_window_line_count: usize,
-    ) -> Result<ChatPayloadCursor, DomainError>;
 
     /// Create an automatic history snapshot for a group chat.
     ///

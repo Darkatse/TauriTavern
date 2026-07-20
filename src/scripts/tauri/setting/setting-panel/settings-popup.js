@@ -31,13 +31,6 @@ const HELP_TOPICS = {
             'Embedded Runtime help: saver',
         ],
     },
-    chatHistory: {
-        title: 'Chat History',
-        lines: [
-            'Chat History help: windowed',
-            'Chat History help: off',
-        ],
-    },
     closeToTray: {
         title: 'Minimize to tray on close (Windows)',
         lines: [

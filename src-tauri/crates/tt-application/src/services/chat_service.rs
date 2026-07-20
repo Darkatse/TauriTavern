@@ -25,8 +25,7 @@ use tt_ports::repositories::character_repository::CharacterRepository;
 use tt_ports::repositories::chat_repository::{ChatExportFormat, ChatImportFormat, ChatRepository};
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
-    ChatPayloadTail, ChatPayloadWindowPatchRequest, FindLastMessageQuery, LocatedChatMessage,
-    PinnedCharacterChat,
+    ChatPayloadTail, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat,
 };
 
 /// Service for managing chats
@@ -650,55 +649,6 @@ impl ChatService {
         }
 
         Ok(pages)
-    }
-
-    /// Patch a windowed character chat payload.
-    pub async fn patch_chat_payload_windowed(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        request: ChatPayloadWindowPatchRequest,
-        commit_reason: CurrentCommitReason,
-    ) -> Result<ChatPayloadCursor, ApplicationError> {
-        validate_character_path_component(character_name)?;
-        validate_chat_file_name(file_name, "Chat file name")?;
-
-        let cursor = self
-            .chat_repository
-            .patch_chat_payload_windowed(character_name, file_name, request)
-            .await?;
-        self.note_current_committed(character_name, file_name, commit_reason)
-            .await;
-        Ok(cursor)
-    }
-
-    /// Set the hidden flag on all messages stored before the window cursor.
-    pub async fn hide_chat_payload_before_cursor(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        cursor: ChatPayloadCursor,
-        hide: bool,
-        name_filter: Option<String>,
-        expected_window_line_count: usize,
-    ) -> Result<ChatPayloadCursor, ApplicationError> {
-        validate_character_path_component(character_name)?;
-        validate_chat_file_name(file_name, "Chat file name")?;
-
-        let cursor = self
-            .chat_repository
-            .hide_chat_payload_before_cursor(
-                character_name,
-                file_name,
-                cursor,
-                hide,
-                name_filter,
-                expected_window_line_count,
-            )
-            .await?;
-        self.note_current_committed(character_name, file_name, CurrentCommitReason::Mutation)
-            .await;
-        Ok(cursor)
     }
 
     /// Import one or more character chats from an uploaded file.

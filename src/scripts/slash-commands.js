@@ -67,7 +67,7 @@ import { extension_prompt_roles, extension_prompt_types } from './extension-prom
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommandParserError } from './slash-commands/SlashCommandParserError.js';
 import { getMessageTimeStamp, isMobile } from './RossAscends-mods.js';
-import { hideChatMessageRange, hideChatMessageScope } from './chats.js';
+import { hideChatMessageRange } from './chats.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { findGroupMemberId, groups, is_group_generating, openGroupById, regenerateGroup, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
@@ -1883,17 +1883,13 @@ export function initDefaultSlashCommands() {
         ],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
-                description: t`message index (starts with 0) or range, or "all" / "before" (messages before the loaded window), defaults to the last message index if not provided`,
-                typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE, ARGUMENT_TYPE.STRING],
+                description: t`message index (starts with 0) or range, defaults to the last message index if not provided`,
+                typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE],
                 isRequired: false,
-                enumProvider: (executor, scope) => [
-                    new SlashCommandEnumValue('all', t`every message in the chat, including unloaded ones`),
-                    new SlashCommandEnumValue('before', t`only unloaded messages before the current window`),
-                    ...commonEnumProviders.messages()(executor, scope),
-                ],
+                enumProvider: commonEnumProviders.messages(),
             }),
         ],
-        helpString: t`Hides a chat message from the prompt. Use <code>all</code> to hide the entire chat, or <code>before</code> to hide only the messages stored before the loaded window.`,
+        helpString: t`Hides a chat message from the prompt.`,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'unhide',
@@ -1910,17 +1906,13 @@ export function initDefaultSlashCommands() {
         ],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
-                description: t`message index (starts with 0) or range, or "all" / "before" (messages before the loaded window), defaults to the last message index if not provided`,
-                typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE, ARGUMENT_TYPE.STRING],
+                description: t`message index (starts with 0) or range, defaults to the last message index if not provided`,
+                typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE],
                 isRequired: false,
-                enumProvider: (executor, scope) => [
-                    new SlashCommandEnumValue('all', t`every message in the chat, including unloaded ones`),
-                    new SlashCommandEnumValue('before', t`only unloaded messages before the current window`),
-                    ...commonEnumProviders.messages()(executor, scope),
-                ],
+                enumProvider: commonEnumProviders.messages(),
             }),
         ],
-        helpString: t`Unhides a message from the prompt. Use <code>all</code> to unhide the entire chat, or <code>before</code> to unhide only the messages stored before the loaded window.`,
+        helpString: t`Unhides a message from the prompt.`,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'member-get',
@@ -4851,20 +4843,7 @@ async function askCharacter(args, text) {
     return await slashCommandReturnHelper.doReturn(args.return ?? 'pipe', message, { objectToStringFunc: x => x.mes });
 }
 
-function parseHideScopeKeyword(value) {
-    const keyword = String(value ?? '').trim().toLowerCase();
-    return keyword === 'all' || keyword === 'before' ? keyword : null;
-}
-
 async function hideMessageCallback(args, value) {
-    const nameFilter = String(args.name ?? '').trim();
-
-    const scope = parseHideScopeKeyword(value);
-    if (scope) {
-        await hideChatMessageScope(scope, false, nameFilter);
-        return '';
-    }
-
     const range = value ? stringToRange(value, 0, chat.length - 1) : { start: chat.length - 1, end: chat.length - 1 };
 
     if (!range) {
@@ -4872,19 +4851,12 @@ async function hideMessageCallback(args, value) {
         return '';
     }
 
+    const nameFilter = String(args.name ?? '').trim();
     await hideChatMessageRange(range.start, range.end, false, nameFilter);
     return '';
 }
 
 async function unhideMessageCallback(args, value) {
-    const nameFilter = String(args.name ?? '').trim();
-
-    const scope = parseHideScopeKeyword(value);
-    if (scope) {
-        await hideChatMessageScope(scope, true, nameFilter);
-        return '';
-    }
-
     const range = value ? stringToRange(value, 0, chat.length - 1) : { start: chat.length - 1, end: chat.length - 1 };
 
     if (!range) {
@@ -4892,6 +4864,7 @@ async function unhideMessageCallback(args, value) {
         return '';
     }
 
+    const nameFilter = String(args.name ?? '').trim();
     await hideChatMessageRange(range.start, range.end, true, nameFilter);
     return '';
 }

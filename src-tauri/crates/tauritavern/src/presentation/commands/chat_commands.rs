@@ -8,13 +8,12 @@ use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
-    HideChatBeforeCursorDto, ImportCharacterChatsDto, ImportChatDto, PatchChatWindowedDto,
-    PinnedCharacterChatDto, RenameChatDto,
+    ImportCharacterChatsDto, ImportChatDto, PinnedCharacterChatDto, RenameChatDto,
 };
 use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_application::errors::ApplicationError;
 use tt_ports::repositories::chat_repository::{
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatPayloadWindowPatchRequest,
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
 };
 
 #[tauri::command]
@@ -455,74 +454,6 @@ pub async fn get_chat_payload_before_pages(
             "Failed to get chat payload before pages {}/{}",
             character_name, file_name
         )))
-}
-
-#[tauri::command]
-pub async fn patch_chat_payload_windowed(
-    dto: PatchChatWindowedDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<ChatPayloadCursor, CommandError> {
-    let PatchChatWindowedDto {
-        character_name,
-        file_name,
-        cursor,
-        header,
-        patch,
-        expected_window_line_count,
-        force,
-        commit_reason,
-    } = dto;
-    log_command(format!(
-        "patch_chat_payload_windowed {}/{}",
-        character_name, file_name
-    ));
-
-    let request = ChatPayloadWindowPatchRequest {
-        cursor,
-        header,
-        op: patch,
-        expected_window_line_count,
-        force: force.unwrap_or(false),
-    };
-
-    app_state
-        .services
-        .chat_service
-        .patch_chat_payload_windowed(
-            &character_name,
-            &file_name,
-            request,
-            commit_reason.unwrap_or_default(),
-        )
-        .await
-        .map_err(map_command_error("Failed to patch windowed chat payload"))
-}
-
-#[tauri::command]
-pub async fn hide_chat_payload_before_cursor(
-    dto: HideChatBeforeCursorDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<ChatPayloadCursor, CommandError> {
-    log_command(format!(
-        "hide_chat_payload_before_cursor {}/{}",
-        dto.character_name, dto.file_name
-    ));
-
-    app_state
-        .services
-        .chat_service
-        .hide_chat_payload_before_cursor(
-            &dto.character_name,
-            &dto.file_name,
-            dto.cursor,
-            dto.hide,
-            dto.name_filter,
-            dto.expected_window_line_count,
-        )
-        .await
-        .map_err(map_command_error(
-            "Failed to update hidden state before chat window",
-        ))
 }
 
 #[tauri::command]

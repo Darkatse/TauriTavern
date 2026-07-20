@@ -229,7 +229,7 @@ fail
 - required component 超预算：fail-fast。
 - optional component 超预算：按 priority drop，并写 `context_component_skipped` event。
 - tool result 超预算：优先摘要。
-- chat history 超预算：使用 windowed read/search + summary。
+- chat history 超预算：使用 paged read/search + summary。
 
 ## 6. Tool Policy
 

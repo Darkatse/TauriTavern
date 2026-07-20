@@ -29,10 +29,6 @@ fn default_embedded_runtime_profile() -> String {
     "auto".to_string()
 }
 
-fn default_chat_history_mode() -> ChatHistoryMode {
-    ChatHistoryMode::Windowed
-}
-
 fn default_llm_api_keep() -> u32 {
     5
 }
@@ -127,13 +123,6 @@ fn default_request_proxy_bypass() -> Vec<String> {
         "169.254.0.0/16".to_string(),
         ".local".to_string(),
     ]
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ChatHistoryMode {
-    Windowed,
-    Off,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,8 +328,6 @@ pub struct TauriTavernSettings {
     pub panel_runtime_profile: String,
     #[serde(default = "default_embedded_runtime_profile")]
     pub embedded_runtime_profile: String,
-    #[serde(default = "default_chat_history_mode")]
-    pub chat_history_mode: ChatHistoryMode,
     #[serde(default)]
     pub chat_backups: ChatBackupSettings,
     #[serde(default = "default_close_to_tray_on_close")]
@@ -380,7 +367,6 @@ impl Default for TauriTavernSettings {
             perf_profile: default_perf_profile(),
             panel_runtime_profile: default_panel_runtime_profile(),
             embedded_runtime_profile: default_embedded_runtime_profile(),
-            chat_history_mode: default_chat_history_mode(),
             chat_backups: ChatBackupSettings::default(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             request_proxy: RequestProxySettings::default(),
@@ -499,6 +485,17 @@ mod tests {
         .expect("parse settings");
 
         assert!(settings.native_regex_backend_enabled);
+    }
+
+    #[test]
+    fn removed_chat_history_mode_is_ignored() {
+        let settings = TauriTavernSettings::from_json_str_with_compat(
+            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"chat_history_mode":"windowed"}"#,
+        )
+        .expect("parse settings with removed key");
+
+        let serialized = serde_json::to_value(settings).expect("serialize settings");
+        assert!(serialized.get("chat_history_mode").is_none());
     }
 
     #[test]

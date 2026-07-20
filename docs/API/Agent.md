@@ -459,7 +459,7 @@ type AgentPruneChatPersistentStatesResult = {
 
 `pruneChatPersistentStates()` 是消息/Swipe 删除后的 Host cleanup 入口，不是全量 GC。调用方必须显式传入从被删除消息或被删除 swipe metadata 中收集到的 `candidateStateIds`；缺失、非数组或空字符串 state id 必须 reject。
 
-后端会重新读取当前完整 chat payload，收集仍被当前聊天消息或 swipe 引用的 retained state ids，只删除 `candidateStateIds - retainedStateIds`。未被本次删除动作明确列为 candidate 的孤儿 state 必须保留，避免第三方总结、隐藏楼层、windowed mutation 或 metadata 损坏把整个 `persistent-states` 目录误清空。
+后端会重新读取当前完整 chat payload，收集仍被当前聊天消息或 swipe 引用的 retained state ids，只删除 `candidateStateIds - retainedStateIds`。未被本次删除动作明确列为 candidate 的孤儿 state 必须保留，避免第三方总结、隐藏楼层、并发消息修改或 metadata 损坏把整个 `persistent-states` 目录误清空。
 
 当前只支持 character chat；group chat persistent state prune 会 fail-fast。删除整个 chat / group chat 时，生命周期服务仍删除对应的完整 Agent chat workspace，这不是本方法的职责。
 

@@ -15,32 +15,8 @@ import { registerLifecycleFlushHandler } from './tauri/main/services/lifecycle/l
 import { replaceMesTextHtmlWithRuntimePolicy } from './scripts/tauri/message/mes-text-write.js';
 import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
 import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
-import {
-    CHAT_COMMIT_REASON,
-    isTauriChatPayloadTransportEnabled,
-    loadCharacterChatPayload,
-    loadCharacterChatPayloadTail,
-    loadCharacterChatPayloadBefore,
-    loadGroupChatPayload,
-    loadGroupChatPayloadBefore,
-    saveCharacterChatPayload,
-    patchCharacterChatPayloadWindowed,
-} from './scripts/chat-payload-transport.js';
+import { CHAT_COMMIT_REASON } from './scripts/chat-payload-transport.js';
 import { getActiveChatSnapshot } from './tauri/main/adapters/st/active-chat-ref.js';
-import {
-    buildWindowedPayloadPatch,
-    clearWindowedChatState,
-    DEFAULT_CHAT_WINDOW_LINES,
-    getWindowedChatState,
-    getWindowedChatKey,
-    mergeWindowedChatCursorOffset,
-    setWindowedChatState,
-    shiftWindowedMessageSaveState,
-} from './scripts/tauri/chat/windowed-state.js';
-import {
-    buildGenerationChatWithBackfill,
-    isWindowedCursorInvalidError,
-} from './scripts/tauri/chat/prompt-backfill.js';
 import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
 import { waitForTauriMainReady } from './scripts/extensions/runtime/tauri-ready.js';
 import {
@@ -195,7 +171,6 @@ import {
     selected_proxy,
     initOpenAI,
 } from './scripts/openai.js';
-import { stripCommandErrorPrefixes } from './scripts/util/command-error-utils.js';
 
 import {
     generateNovelWithStreaming,
@@ -599,8 +574,8 @@ function updateChatSaveBusyFlag() {
 }
 
 /**
- * Serialize all chat save operations (core + extensions) to prevent concurrent
- * writes and windowed cursor races.
+ * Serialize all chat save operations (core + extensions) so older snapshots
+ * cannot finish after and overwrite newer snapshots.
  *
  * Errors are propagated to the caller. The internal queue continues even if a
  * task fails (callers should handle/observe the rejection).
@@ -1886,113 +1861,7 @@ export async function replaceCurrentChat() {
     }
 }
 
-/** @type {{ state: any, promise: Promise<void> } | null} */
-let windowedShowMoreMessagesPending = null;
-
 export async function showMoreMessages(messagesToLoad = null) {
-    const windowState = getWindowedChatState();
-    if (windowState && isTauriChatPayloadTransportEnabled()) {
-        if (!windowState.cursor) {
-            throw new Error('Windowed chat cursor is missing');
-        }
-
-        const existingPending = windowedShowMoreMessagesPending;
-        if (existingPending?.state === windowState) {
-            return existingPending.promise;
-        }
-
-        const count = Number(messagesToLoad || DEFAULT_CHAT_WINDOW_LINES);
-        const prevHeight = chatElement.prop('scrollHeight');
-        const showMoreButton = $('#show_more_messages');
-        const isButtonInView = showMoreButton[0] && isElementInViewport(showMoreButton[0]);
-
-        const run = (async () => {
-            const result = windowState.kind === 'group'
-                ? await loadGroupChatPayloadBefore({
-                    id: windowState.id,
-                    cursor: windowState.cursor,
-                    maxLines: count,
-                })
-                : await loadCharacterChatPayloadBefore({
-                    characterName: windowState.characterName,
-                    avatarUrl: windowState.avatarUrl,
-                    fileName: windowState.fileName,
-                    cursor: windowState.cursor,
-                    maxLines: count,
-                });
-
-            if (getWindowedChatState() !== windowState) {
-                return;
-            }
-
-            const messages = result?.messages;
-            if (!Array.isArray(messages) || messages.length === 0) {
-                showMoreButton.remove();
-                setWindowedChatState({
-                    ...windowState,
-                    cursor: result?.cursor ?? windowState.cursor,
-                    hasMoreBefore: false,
-                });
-                await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
-                return;
-            }
-
-            messages.forEach(ensureMessageMediaIsArray);
-            chat.splice(0, 0, ...messages);
-            if (this_edit_mes_id >= 0) {
-                this_edit_mes_id = Number(this_edit_mes_id) + messages.length;
-            }
-
-            const fragment = document.createDocumentFragment();
-            for (let id = 0; id < messages.length; id += 1) {
-                const messageElement = updateMessageElement(chat[id], { messageId: id });
-                fragment.appendChild(messageElement[0]);
-            }
-
-            if (showMoreButton[0]) {
-                showMoreButton[0].after(fragment);
-            } else {
-                chatElement[0].prepend(fragment);
-            }
-
-            updateViewMessageIds(0);
-            refreshSwipeButtons();
-
-            const hasMoreBefore = Boolean(result?.hasMoreBefore);
-            const shiftedState = shiftWindowedMessageSaveState(windowState, messages.length, 'chat');
-            setWindowedChatState({
-                ...shiftedState,
-                cursor: result.cursor,
-                hasMoreBefore,
-            });
-
-            if (!hasMoreBefore) {
-                showMoreButton.remove();
-            }
-
-            if (isButtonInView) {
-                const newHeight = chatElement.prop('scrollHeight');
-                chatElement.scrollTop(newHeight - prevHeight);
-            }
-
-            applyStylePins();
-            applyCharacterTagsToMessageDivs();
-            await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
-        })();
-
-        windowedShowMoreMessagesPending = { state: windowState, promise: run };
-
-        try {
-            await run;
-        } finally {
-            if (windowedShowMoreMessagesPending?.promise === run) {
-                windowedShowMoreMessagesPending = null;
-            }
-        }
-
-        return;
-    }
-
     const firstDisplayedMesId = chatElement.children('.mes').first().attr('mesid');
     let messageId = Number(firstDisplayedMesId);
     let count = messagesToLoad || power_user.chat_truncation || Number.MAX_SAFE_INTEGER;
@@ -2041,25 +1910,16 @@ export async function showMoreMessages(messagesToLoad = null) {
  * @param {{ frontendSourceHandoffEvent?: string | null }} [options]
  */
 export async function printMessages({ frontendSourceHandoffEvent = null } = {}) {
-    const windowState = getWindowedChatState();
-    const isWindowed = Boolean(windowState);
     const effectiveHandoffEvent = frontendSourceHandoffEvent !== null && isCodeRenderDelegatedToThirdPartyRenderer()
         ? frontendSourceHandoffEvent
         : null;
 
     let startIndex = 0;
+    const count = power_user.chat_truncation || Number.MAX_SAFE_INTEGER;
 
-    if (isWindowed) {
-        if (windowState.hasMoreBefore) {
-            chatElement.append('<div id="show_more_messages">Show more messages</div>');
-        }
-    } else {
-        const count = power_user.chat_truncation || Number.MAX_SAFE_INTEGER;
-
-        if (chat.length > count) {
-            startIndex = chat.length - count;
-            chatElement.append('<div id="show_more_messages">Show more messages</div>');
-        }
+    if (chat.length > count) {
+        startIndex = chat.length - count;
+        chatElement.append('<div id="show_more_messages">Show more messages</div>');
     }
 
     await redisplayChat({ startIndex, fade: false, frontendSourceHandoffEvent: effectiveHandoffEvent });
@@ -2167,9 +2027,6 @@ export function cancelDebouncedChatSave() {
 export async function clearChat({ clearData = false } = {}) {
     cancelDebouncedChatSave();
     cancelDebouncedMetadataSave();
-    if (clearData) {
-        clearWindowedChatState();
-    }
     closeMessageEditor();
     getCodeHighlightCoordinator().reset();
     extension_prompts = {};
@@ -2193,7 +2050,6 @@ export async function deleteLastMessage() {
     const deletedAgentStateIds = collectAgentPersistStateIdsFromMessage(chat[chat.length - 1]);
     deleteItemizedPromptForMessage(chat.length - 1);
     chat.length = chat.length - 1;
-    markWindowedChatDirtyFromIndex(chat.length);
     chatElement.children('.mes').last().remove();
     await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
     if (deletedAgentStateIds.length > 0) {
@@ -2255,7 +2111,6 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     const startIndex = [0, minId].includes(id) ? id : null;
     deleteItemizedPromptForMessage(id);
     updateViewMessageIds(startIndex);
-    markWindowedChatDirtyFromIndex(id);
     saveChatDebounced();
 
     if (this_edit_mes_id === id) {
@@ -4420,7 +4275,6 @@ class StreamingProcessor {
             this.#updateMessageBlockVisibility();
             const currentTime = new Date();
             chat[messageId].mes = processedText;
-            markWindowedChatDirtyFromIndex(messageId);
             chat[messageId].gen_started = this.timeStarted;
             chat[messageId].gen_finished = currentTime;
             if (!chat[messageId].extra) {
@@ -5330,7 +5184,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         setExtensionPrompt(inject_ids.DEPTH_PROMPT, depthPromptText, extension_prompt_types.IN_CHAT, depthPromptDepth, extension_settings.note.allowWIScan, depthPromptRole);
     }
 
-    // Determine token limit (used for context backfill and interceptors).
+    // Determine token limit.
     let this_max_context = getMaxPromptTokens();
 
     // First message in fresh 1-on-1 chat reacts to user/character settings changes
@@ -5338,56 +5192,10 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         chat[0].mes = substituteParams(chat[0].mes);
     }
 
-    // Build a per-generation history that can extend beyond the UI window (Tauri windowed payload).
-    let generationChat = chat;
-
-    if (isTauriChatPayloadTransportEnabled()) {
-        const windowState = getWindowedChatState();
-
-        if (windowState?.cursor && windowState.hasMoreBefore) {
-            try {
-                const backfillResult = await buildGenerationChatWithBackfill({
-                    baseMessages: chat,
-                    windowState,
-                    contextBudgetTokens: this_max_context,
-                });
-
-                generationChat = backfillResult.chat;
-                backfillResult.added.forEach(ensureMessageMediaIsArray);
-            } catch (error) {
-                if (isWindowedCursorInvalidError(error)) {
-                    const rawMessage = error?.message ?? error;
-                    const details = stripCommandErrorPrefixes(rawMessage) || t`Windowed chat cursor is invalid`;
-                    const reloadHint = t`Reload the chat to resync.`;
-
-                    toastr.warning(
-                        `${details}. ${reloadHint}`,
-                        t`Context backfill failed`,
-                        { preventDuplicates: true },
-                    );
-                    console.error('Context backfill failed, continuing with current window:', {
-                        error,
-                        windowState: {
-                            kind: windowState.kind,
-                            id: windowState.id,
-                            characterName: windowState.characterName,
-                            fileName: windowState.fileName,
-                            cursor: windowState.cursor,
-                        },
-                    });
-
-                    generationChat = chat;
-                } else {
-                    throw error;
-                }
-            }
-        }
-    }
-
     // Collect messages with usable content
     const canUseTools = ToolManager.isToolCallingSupported();
     const canPerformToolCalls = !dryRun && ToolManager.canPerformToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
-    let coreChat = generationChat.filter(x => !x.is_system || (canUseTools && Array.isArray(x.extra?.tool_invocations)));
+    let coreChat = chat.filter(x => !x.is_system || (canUseTools && Array.isArray(x.extra?.tool_invocations)));
     if (type === 'swipe') {
         coreChat.pop();
     }
@@ -5499,7 +5307,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         }
     }
 
-    console.log(`Core/all messages: ${coreChat.length}/${generationChat.length}`);
+    console.log(`Core/all messages: ${coreChat.length}/${chat.length}`);
 
     if ((promptBias && !isUserPromptBias) || power_user.always_force_name2 || main_api == 'novel') {
         force_name2 = true;
@@ -7031,7 +6839,6 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
 
     if (typeof insertAt === 'number' && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
-        markWindowedChatDirtyFromIndex(insertAt);
         await saveChatConditional(commitReason);
         await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
         await reloadCurrentChat();
@@ -8468,31 +8275,17 @@ async function renamePastChats(oldAvatar, newAvatar, newName) {
     for (const { file_name } of pastChats) {
         try {
             const fileNameWithoutExtension = file_name.replace('.jsonl', '');
-            const currentChat = isTauriChatPayloadTransportEnabled()
-                ? await loadCharacterChatPayload({
-                    characterName: newName,
-                    avatarUrl: newAvatar,
-                    fileName: fileNameWithoutExtension,
-                    allowNotFound: true,
-                })
-                : await (async () => {
-                    const getChatResponse = await fetch('/api/chats/get', {
-                        method: 'POST',
-                        headers: getRequestHeaders(),
-                        body: JSON.stringify({
-                            ch_name: newName,
-                            file_name: fileNameWithoutExtension,
-                            avatar_url: newAvatar,
-                        }),
-                        cache: 'no-cache',
-                    });
-
-                    if (!getChatResponse.ok) {
-                        return [];
-                    }
-
-                    return getChatResponse.json();
-                })();
+            const getChatResponse = await fetch('/api/chats/get', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({
+                    ch_name: newName,
+                    file_name: fileNameWithoutExtension,
+                    avatar_url: newAvatar,
+                }),
+                cache: 'no-cache',
+            });
+            const currentChat = getChatResponse.ok ? await getChatResponse.json() : [];
 
             if (Array.isArray(currentChat) && currentChat.length) {
                 for (const message of currentChat) {
@@ -8507,30 +8300,21 @@ async function renamePastChats(oldAvatar, newAvatar, newName) {
 
                 await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, currentChat, oldAvatar, newAvatar);
 
-                if (isTauriChatPayloadTransportEnabled()) {
-                    await saveCharacterChatPayload({
-                        characterName: newName,
-                        avatarUrl: newAvatar,
-                        fileName: fileNameWithoutExtension,
-                        payload: currentChat,
-                    });
-                } else {
-                    const saveChatRequest = await compressRequest({
-                        method: 'POST',
-                        headers: getRequestHeaders(),
-                        body: JSON.stringify({
-                            ch_name: newName,
-                            file_name: fileNameWithoutExtension,
-                            chat: currentChat,
-                            avatar_url: newAvatar,
-                        }),
-                        cache: 'no-cache',
-                    });
-                    const saveChatResponse = await fetch('/api/chats/save', saveChatRequest);
+                const saveChatRequest = await compressRequest({
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({
+                        ch_name: newName,
+                        file_name: fileNameWithoutExtension,
+                        chat: currentChat,
+                        avatar_url: newAvatar,
+                    }),
+                    cache: 'no-cache',
+                });
+                const saveChatResponse = await fetch('/api/chats/save', saveChatRequest);
 
-                    if (!saveChatResponse.ok) {
-                        throw new Error('Could not save chat');
-                    }
+                if (!saveChatResponse.ok) {
+                    throw new Error('Could not save chat');
                 }
             }
         } catch (error) {
@@ -8580,22 +8364,6 @@ export function flushDebouncedChatSave() {
     chatSaveTimeout = null;
     pendingChatSaveTask = null;
     return task();
-}
-
-export function markWindowedChatDirtyFromIndex(messageId) {
-    const windowState = getWindowedChatState();
-    if (!windowState) {
-        return;
-    }
-
-    const normalized = Number(messageId);
-    if (!Number.isFinite(normalized) || normalized < 0) {
-        windowState.dirtyFromIndex = 0;
-        return;
-    }
-
-    const current = Number(windowState.dirtyFromIndex);
-    windowState.dirtyFromIndex = Number.isFinite(current) ? Math.min(current, normalized) : normalized;
 }
 
 /**
@@ -8656,59 +8424,6 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
     const payload = [chatHeader, ...trimmedChat];
 
     try {
-        if (isTauriChatPayloadTransportEnabled()) {
-            const windowState = getWindowedChatState();
-            if (windowState?.kind === 'character' && windowState.cursor && windowState.fileName === fileName) {
-                const expectedWindowKey = getWindowedChatKey(windowState);
-                const expectedCursorOffset = windowState.cursor.offset;
-                const {
-                    patch,
-                    savedMessageCount: nextSavedMessageCount,
-                    dirtyFromIndex: nextDirtyFromIndex,
-                    expectedWindowLineCount,
-                } = buildWindowedPayloadPatch(trimmedChat, windowState, 'chat');
-
-                const cursor = await patchCharacterChatPayloadWindowed({
-                    characterName: characters[this_chid].name,
-                    avatarUrl: characters[this_chid].avatar,
-                    fileName,
-                    cursor: windowState.cursor,
-                    header: JSON.stringify(chatHeader),
-                    patch,
-                    expectedWindowLineCount,
-                    force: Boolean(force),
-                    commitReason,
-                });
-
-                const activeWindowState = getWindowedChatState();
-                if (getWindowedChatKey(activeWindowState) === expectedWindowKey) {
-                    const shouldUpdateCounters = activeWindowState?.cursor?.offset === expectedCursorOffset;
-                    const mergedCursor = mergeWindowedChatCursorOffset(activeWindowState?.cursor, cursor, expectedCursorOffset);
-                    const nextWindowState = {
-                        ...activeWindowState,
-                        cursor: mergedCursor,
-                    };
-
-                    if (shouldUpdateCounters) {
-                        nextWindowState.savedMessageCount = nextSavedMessageCount;
-                        nextWindowState.dirtyFromIndex = nextDirtyFromIndex;
-                    }
-
-                    setWindowedChatState(nextWindowState);
-                }
-            } else {
-                await saveCharacterChatPayload({
-                    characterName: characters[this_chid].name,
-                    avatarUrl: characters[this_chid].avatar,
-                    fileName,
-                    payload,
-                    force: Boolean(force),
-                    commitReason,
-                });
-            }
-            return;
-        }
-
         const saveChatRequest = await compressRequest({
             method: 'POST',
             cache: 'no-cache',
@@ -8744,7 +8459,7 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
         if (!isIntegrityError) {
             console.error(error);
             toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be saved`);
-            return;
+            throw error;
         }
 
         const popupResult = await Popup.show.input(
@@ -8937,43 +8652,22 @@ export async function getChat({ allowNewChat = false } = {}) {
 
     try {
         await unshallowCharacter(startedChid);
-        const usePayloadTransport = isTauriChatPayloadTransportEnabled();
-        let data;
-        let windowedCursor = null;
-        let windowedHasMoreBefore = false;
+        const response = await fetch('/api/chats/get', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            cache: 'no-cache',
+            body: JSON.stringify({
+                ch_name: startedCharacter?.name,
+                file_name: startedChatFile,
+                avatar_url: startedCharacter?.avatar,
+                allow_not_found: allowNewChat,
+            }),
+        });
 
-        if (usePayloadTransport) {
-            const window = await loadCharacterChatPayloadTail({
-                characterName: startedCharacter?.name,
-                avatarUrl: startedCharacter?.avatar,
-                fileName: startedChatFile,
-                maxLines: DEFAULT_CHAT_WINDOW_LINES,
-                allowNotFound: allowNewChat,
-            });
-
-            data = window.payload;
-            windowedCursor = window.cursor ?? null;
-            windowedHasMoreBefore = Boolean(window.hasMoreBefore);
-        } else {
-            clearWindowedChatState();
-            const response = await fetch('/api/chats/get', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                cache: 'no-cache',
-                body: JSON.stringify({
-                    ch_name: startedCharacter?.name,
-                    file_name: startedChatFile,
-                    avatar_url: startedCharacter?.avatar,
-                    allow_not_found: allowNewChat,
-                }),
-            });
-
-            if (!response.ok) {
-                throw new Error('Chat could not be loaded');
-            }
-
-            data = await response.json();
+        if (!response.ok) {
+            throw new Error('Chat could not be loaded');
         }
+        const data = await response.json();
 
         const currentCharacter = startedChid !== undefined ? characters[startedChid] : null;
         const stillActive = startedSelectedGroup === selected_group
@@ -8996,20 +8690,6 @@ export async function getChat({ allowNewChat = false } = {}) {
             throw new Error('Chat payload is empty');
         }
 
-        if (usePayloadTransport && windowedCursor) {
-            setWindowedChatState({
-                kind: 'character',
-                characterName: currentCharacter.name,
-                avatarUrl: currentCharacter.avatar,
-                fileName: currentCharacter.chat,
-                cursor: windowedCursor,
-                hasMoreBefore: windowedHasMoreBefore,
-                savedMessageCount: chat.length,
-                dirtyFromIndex: chat.length,
-            });
-        } else if (usePayloadTransport) {
-            clearWindowedChatState();
-        }
         if (!chat_metadata.integrity) {
             chat_metadata.integrity = uuidv4();
         }
@@ -9598,7 +9278,6 @@ function updateMessage(div) {
     }
 
     chat_metadata.tainted = true;
-    markWindowedChatDirtyFromIndex(mesElement.attr('mesid'));
 
     return { mesBlock, text, mes, bias };
 }
@@ -9857,7 +9536,6 @@ async function messageEditMove(sourceId, targetId) {
     swapItemizedPrompts(sourceId, targetId);
     updateViewMessageIds();
     refreshSwipeButtons();
-    markWindowedChatDirtyFromIndex(Math.min(sourceId, targetId));
     await saveChatConditional();
     return true;
 }
@@ -9942,37 +9620,21 @@ export async function getChatsFromFiles(data, isGroupChat) {
         return new Promise(async (res, rej) => {
             try {
                 const endpoint = isGroupChat ? '/api/chats/group/get' : '/api/chats/get';
-                const currentChat = isTauriChatPayloadTransportEnabled()
-                    ? (isGroupChat
-                        ? await loadGroupChatPayload({ id: file_name, allowNotFound: true })
-                        : await loadCharacterChatPayload({
-                            characterName: characters[context.characterId].name,
-                            avatarUrl: characters[context.characterId].avatar,
-                            fileName: file_name.replace('.jsonl', ''),
-                            allowNotFound: true,
-                        }))
-                    : await (async () => {
-                        const requestBody = isGroupChat
-                            ? JSON.stringify({ id: file_name })
-                            : JSON.stringify({
-                                ch_name: characters[context.characterId].name,
-                                file_name: file_name.replace('.jsonl', ''),
-                                avatar_url: characters[context.characterId].avatar,
-                            });
+                const requestBody = isGroupChat
+                    ? JSON.stringify({ id: file_name })
+                    : JSON.stringify({
+                        ch_name: characters[context.characterId].name,
+                        file_name: file_name.replace('.jsonl', ''),
+                        avatar_url: characters[context.characterId].avatar,
+                    });
 
-                        const chatResponse = await fetch(endpoint, {
-                            method: 'POST',
-                            headers: getRequestHeaders(),
-                            body: requestBody,
-                            cache: 'no-cache',
-                        });
-
-                        if (!chatResponse.ok) {
-                            return null;
-                        }
-
-                        return chatResponse.json();
-                    })();
+                const chatResponse = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: requestBody,
+                    cache: 'no-cache',
+                });
+                const currentChat = chatResponse.ok ? await chatResponse.json() : null;
 
                 if (!Array.isArray(currentChat)) {
                     return res();
@@ -10915,31 +10577,26 @@ export async function saveMetadata() {
 }
 
 export async function saveChatConditional(commitReason = CHAT_COMMIT_REASON.MUTATION) {
-    try {
-        cancelDebouncedChatSave();
+    cancelDebouncedChatSave();
 
-        const savePromise = selected_group
-            ? saveGroupChat(selected_group, true, false, commitReason)
-            : saveChat({ commitReason });
+    const savePromise = selected_group
+        ? saveGroupChat(selected_group, true, false, commitReason)
+        : saveChat({ commitReason });
 
-        // Keep prompt/token persistence serialized with chat writes to avoid
-        // chat switches corrupting per-chat IndexedDB state.
-        const chatId = getCurrentChatId();
-        const tokenCacheSaveState = captureTokenCacheSaveState(chatId);
-        const itemizedPromptsSnapshot = captureItemizedPromptsSaveSnapshot(chatId);
-        const postSavePromise = enqueueChatSave(async () => {
-            await saveTokenCache(tokenCacheSaveState);
-            await saveItemizedPrompts(chatId, {
-                entriesSnapshot: itemizedPromptsSnapshot,
-                cloneFromActive: false,
-            });
+    // Keep prompt/token persistence serialized with chat writes to avoid
+    // chat switches corrupting per-chat IndexedDB state.
+    const chatId = getCurrentChatId();
+    const tokenCacheSaveState = captureTokenCacheSaveState(chatId);
+    const itemizedPromptsSnapshot = captureItemizedPromptsSaveSnapshot(chatId);
+    const postSavePromise = enqueueChatSave(async () => {
+        await saveTokenCache(tokenCacheSaveState);
+        await saveItemizedPrompts(chatId, {
+            entriesSnapshot: itemizedPromptsSnapshot,
+            cloneFromActive: false,
         });
+    });
 
-        await savePromise;
-        await postSavePromise;
-    } catch (error) {
-        console.error('Error saving chat', error);
-    }
+    await Promise.all([savePromise, postSavePromise]);
 }
 
 /**
@@ -11603,7 +11260,6 @@ export async function swipe(event, direction, { source, repeated, message = chat
             //Out of bounds swipes should not be saved.
         } else if (source != SWIPE_SOURCE.BACK) {
             //Save the chat if swipe_id has changed.
-            markWindowedChatDirtyFromIndex(mesId);
             saveChatDebounced();
         }
 

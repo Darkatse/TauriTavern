@@ -17,9 +17,8 @@ use tt_ports::repositories::chat_payload_commit_repository::{
     ChatPayloadCommitRepository, ChatPayloadTarget, CommittedChatPayload,
 };
 use tt_ports::repositories::chat_repository::{
-    ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchQuery, ChatPayloadCursor,
-    ChatPayloadPatchOp, ChatPayloadWindowPatchRequest, ChatRepository, PinnedCharacterChat,
-    PinnedGroupChat,
+    ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchQuery, ChatRepository,
+    PinnedCharacterChat, PinnedGroupChat,
 };
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::settings::ChatBackupRuntime;
@@ -4199,665 +4198,71 @@ async fn save_chat_payload_from_values(
 }
 
 #[tokio::test]
-async fn patch_chat_payload_windowed_appends_and_rewrites_tail() {
+async fn chat_payload_paging_returns_tail_and_before_for_character_and_group() {
     let (repository, root) = setup_repository().await;
-
-    let character_name = "alice";
-    let file_name = "session";
-
-    let payload = vec![
-        payload_with_integrity("patch-a")[0].clone(),
-        json!({
-            "name": "User",
-            "is_user": true,
-            "send_date": "2026-01-01T00:00:00.000Z",
-            "mes": "hello",
-            "extra": {},
-        }),
-        json!({
-            "name": "Alice",
-            "is_user": false,
-            "send_date": "2026-01-01T00:00:01.000Z",
-            "mes": "hi",
-            "extra": {},
-        }),
-    ];
-
-    save_chat_payload_from_values(
-        &repository,
-        &root,
-        character_name,
-        file_name,
-        &payload,
-        false,
-    )
-    .await
-    .expect("save initial payload");
-
-    let tail = repository
-        .get_chat_payload_tail_lines(character_name, file_name, 100)
-        .await
-        .expect("get tail");
-    assert_eq!(tail.lines.len(), 2);
-
-    let new_message = json!({
-        "name": "User",
-        "is_user": true,
-        "send_date": "2026-01-01T00:00:02.000Z",
-        "mes": "more",
-        "extra": {},
-    });
-    let new_line = serde_json::to_string(&new_message).expect("serialize new line");
-
-    let cursor = repository
-        .patch_chat_payload_windowed(
-            character_name,
-            file_name,
-            ChatPayloadWindowPatchRequest {
-                cursor: tail.cursor,
-                header: tail.header.clone(),
-                op: ChatPayloadPatchOp::Append {
-                    lines: vec![new_line.clone()],
-                },
-                expected_window_line_count: 2,
-                force: false,
-            },
-        )
-        .await
-        .expect("append patch");
-
-    let bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("read patched payload bytes");
-    let text = String::from_utf8(bytes).expect("payload should be utf8");
-    let values = text
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).expect("parse json line"))
-        .collect::<Vec<_>>();
-    assert_eq!(values.len(), 4);
-    assert_eq!(values[3], new_message);
-
-    let updated_message = json!({
-        "name": "User",
-        "is_user": true,
-        "send_date": "2026-01-01T00:00:02.000Z",
-        "mes": "more!",
-        "extra": {},
-    });
-    let updated_line = serde_json::to_string(&updated_message).expect("serialize updated line");
-
-    let cursor = repository
-        .patch_chat_payload_windowed(
-            character_name,
-            file_name,
-            ChatPayloadWindowPatchRequest {
-                cursor,
-                header: tail.header,
-                op: ChatPayloadPatchOp::RewriteFromIndex {
-                    start_index: 2,
-                    lines: vec![updated_line],
-                },
-                expected_window_line_count: 3,
-                force: false,
-            },
-        )
-        .await
-        .expect("rewrite tail from index");
-
-    let bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("read rewritten payload bytes");
-    let text = String::from_utf8(bytes).expect("payload should be utf8");
-    let values = text
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).expect("parse json line"))
-        .collect::<Vec<_>>();
-    assert_eq!(values.len(), 4);
-    assert_eq!(values[3], updated_message);
-
-    repository
-        .patch_chat_payload_windowed(
-            character_name,
-            file_name,
-            ChatPayloadWindowPatchRequest {
-                cursor,
-                header: serde_json::to_string(&values[0]).expect("serialize header"),
-                op: ChatPayloadPatchOp::RewriteFromIndex {
-                    start_index: 1,
-                    lines: Vec::new(),
-                },
-                expected_window_line_count: 3,
-                force: false,
-            },
-        )
-        .await
-        .expect("truncate tail from index");
-
-    let bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("read truncated payload bytes");
-    let text = String::from_utf8(bytes).expect("payload should be utf8");
-    let values = text
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).expect("parse json line"))
-        .collect::<Vec<_>>();
-    assert_eq!(values.len(), 2);
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn hide_chat_payload_before_cursor_rewrites_only_lines_before_window() {
-    let (repository, root) = setup_repository().await;
-
-    let character_name = "alice";
-    let file_name = "session";
-
-    let mut payload = vec![payload_with_integrity("hide-a")[0].clone()];
-    for index in 0..6 {
-        let is_user = index % 2 == 0;
-        payload.push(json!({
-            "name": if is_user { "User" } else { "Alice" },
-            "is_user": is_user,
-            "send_date": format!("2026-01-01T00:00:0{}.000Z", index),
-            "mes": format!("message {}", index),
-            "extra": {},
-        }));
+    let mut payload = vec![payload_with_integrity("paging-a")[0].clone()];
+    for index in 0..4 {
+        payload.push(json!({ "mes": format!("message {index}") }));
     }
 
-    save_chat_payload_from_values(
-        &repository,
-        &root,
-        character_name,
-        file_name,
-        &payload,
-        false,
-    )
-    .await
-    .expect("save initial payload");
-
-    let tail = repository
-        .get_chat_payload_tail_lines(character_name, file_name, 2)
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
         .await
-        .expect("get tail");
-    assert_eq!(tail.lines.len(), 2);
-    assert!(tail.has_more_before);
-    let window_lines = tail.lines.clone();
-    let stale_cursor = tail.cursor;
-
-    let cursor = repository
-        .hide_chat_payload_before_cursor(character_name, file_name, tail.cursor, true, None, 2)
+        .expect("save character payload");
+    save_group_chat_payload_from_values(&repository, &root, "group-session", &payload, false)
         .await
-        .expect("hide before cursor");
+        .expect("save group payload");
 
-    let bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
+    let character_tail = repository
+        .get_chat_payload_tail_lines("alice", "session", 2)
         .await
-        .expect("read payload bytes");
-    let text = String::from_utf8(bytes).expect("payload should be utf8");
-    let lines = text.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 7);
-    for line in &lines[1..5] {
-        let value = serde_json::from_str::<Value>(line).expect("parse json line");
-        assert_eq!(value.get("is_system").and_then(Value::as_bool), Some(true));
-    }
-    assert_eq!(lines[5], window_lines[0]);
-    assert_eq!(lines[6], window_lines[1]);
+        .expect("read character tail");
+    assert_eq!(
+        character_tail
+            .lines
+            .iter()
+            .map(|line| serde_json::from_str::<Value>(line).expect("parse tail line"))
+            .collect::<Vec<_>>(),
+        payload[3..5]
+    );
+    assert!(character_tail.has_more_before);
 
-    let chunk = repository
-        .get_chat_payload_before_lines(character_name, file_name, cursor, 100)
+    let character_before = repository
+        .get_chat_payload_before_lines("alice", "session", character_tail.cursor, 2)
         .await
-        .expect("read lines before returned cursor");
-    assert_eq!(chunk.lines.len(), 4);
-    assert!(!chunk.has_more_before);
+        .expect("read character prefix");
+    assert_eq!(
+        character_before
+            .lines
+            .iter()
+            .map(|line| serde_json::from_str::<Value>(line).expect("parse prefix line"))
+            .collect::<Vec<_>>(),
+        payload[1..3]
+    );
+    assert!(!character_before.has_more_before);
 
+    let group_tail = repository
+        .get_group_chat_payload_tail_lines("group-session", 2)
+        .await
+        .expect("read group tail");
+    assert_eq!(group_tail.lines, character_tail.lines);
+    assert!(group_tail.has_more_before);
+
+    let group_before = repository
+        .get_group_chat_payload_before_lines("group-session", group_tail.cursor, 2)
+        .await
+        .expect("read group prefix");
+    assert_eq!(group_before.lines, character_before.lines);
+    assert!(!group_before.has_more_before);
+
+    let stale_cursor = character_tail.cursor;
+    payload.push(json!({ "mes": "message 4" }));
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
+        .await
+        .expect("replace character payload");
     let stale = repository
-        .hide_chat_payload_before_cursor(character_name, file_name, stale_cursor, true, None, 2)
+        .get_chat_payload_before_lines("alice", "session", stale_cursor, 1)
         .await;
-    assert!(stale.is_err(), "stale cursor should be rejected");
-
-    let baseline_mismatch = repository
-        .hide_chat_payload_before_cursor(character_name, file_name, cursor, true, None, 5)
-        .await;
-    assert!(
-        baseline_mismatch.is_err(),
-        "window baseline mismatch should be rejected"
-    );
-
-    let cursor = repository
-        .hide_chat_payload_before_cursor(
-            character_name,
-            file_name,
-            cursor,
-            false,
-            Some("User".to_string()),
-            2,
-        )
-        .await
-        .expect("unhide filtered by name");
-
-    let bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("read payload bytes after filtered unhide");
-    let text_after_filter = String::from_utf8(bytes).expect("payload should be utf8");
-    let lines = text_after_filter.lines().collect::<Vec<_>>();
-    for (message_index, line) in lines[1..5].iter().enumerate() {
-        let value = serde_json::from_str::<Value>(line).expect("parse json line");
-        let expected_hidden = message_index % 2 != 0;
-        assert_eq!(
-            value.get("is_system").and_then(Value::as_bool),
-            Some(expected_hidden),
-            "message {} hidden state",
-            message_index
-        );
-    }
-
-    repository
-        .hide_chat_payload_before_cursor(
-            character_name,
-            file_name,
-            cursor,
-            false,
-            Some("User".to_string()),
-            2,
-        )
-        .await
-        .expect("no-op unhide");
-
-    let bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("read payload bytes after no-op");
-    let text_after_noop = String::from_utf8(bytes).expect("payload should be utf8");
-    assert_eq!(text_after_noop, text_after_filter);
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn hide_chat_payload_before_cursor_rejects_non_object_lines() {
-    let (repository, root) = setup_repository().await;
-
-    let character_name = "alice";
-    let file_name = "session";
-
-    let payload = vec![
-        payload_with_integrity("hide-b")[0].clone(),
-        json!(123),
-        json!({
-            "name": "User",
-            "is_user": true,
-            "send_date": "2026-01-01T00:00:00.000Z",
-            "mes": "before window",
-            "extra": {},
-        }),
-        json!({
-            "name": "Alice",
-            "is_user": false,
-            "send_date": "2026-01-01T00:00:01.000Z",
-            "mes": "in window",
-            "extra": {},
-        }),
-    ];
-
-    save_chat_payload_from_values(
-        &repository,
-        &root,
-        character_name,
-        file_name,
-        &payload,
-        false,
-    )
-    .await
-    .expect("save initial payload");
-
-    let original_bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("read original payload bytes");
-
-    let tail = repository
-        .get_chat_payload_tail_lines(character_name, file_name, 1)
-        .await
-        .expect("get tail");
-    assert_eq!(tail.lines.len(), 1);
-
-    let error = repository
-        .hide_chat_payload_before_cursor(character_name, file_name, tail.cursor, true, None, 1)
-        .await
-        .expect_err("hide should reject a non-object payload line");
-    assert!(matches!(error, DomainError::InvalidData(_)));
-
-    let bytes_after = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("read payload bytes after rejected hide");
-    assert_eq!(
-        bytes_after, original_bytes,
-        "rejected hide must leave the file untouched"
-    );
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn patch_chat_payload_windowed_rejects_missing_integrity_when_existing_has_one() {
-    let (repository, root) = setup_repository().await;
-
-    let character_name = "alice";
-    let file_name = "session";
-    let payload = payload_with_integrity("patch-a");
-
-    save_chat_payload_from_values(
-        &repository,
-        &root,
-        character_name,
-        file_name,
-        &payload,
-        false,
-    )
-    .await
-    .expect("save initial payload");
-
-    let tail = repository
-        .get_chat_payload_tail_lines(character_name, file_name, 100)
-        .await
-        .expect("get tail");
-    let missing_integrity_header =
-        serde_json::to_string(&payload_without_integrity()[0]).expect("serialize header");
-
-    let error = repository
-        .patch_chat_payload_windowed(
-            character_name,
-            file_name,
-            ChatPayloadWindowPatchRequest {
-                cursor: tail.cursor,
-                header: missing_integrity_header,
-                op: ChatPayloadPatchOp::Append { lines: Vec::new() },
-                expected_window_line_count: tail.lines.len(),
-                force: false,
-            },
-        )
-        .await
-        .expect_err("patch should fail when incoming integrity is missing");
-    assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn patch_chat_payload_windowed_updates_header_without_rewriting_prefix() {
-    let (repository, root) = setup_repository().await;
-
-    let character_name = "alice";
-    let file_name = "session";
-    let payload = vec![
-        payload_with_integrity("header-a")[0].clone(),
-        json!({ "mes": "before window 1" }),
-        json!({ "mes": "before window 2" }),
-        json!({ "mes": "in window" }),
-    ];
-
-    save_chat_payload_from_values(
-        &repository,
-        &root,
-        character_name,
-        file_name,
-        &payload,
-        false,
-    )
-    .await
-    .expect("save initial payload");
-
-    let original_bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("read original payload bytes");
-    let old_header_end = original_bytes
-        .iter()
-        .position(|byte| *byte == b'\n')
-        .expect("header newline")
-        + 1;
-    let tail = repository
-        .get_chat_payload_tail_lines(character_name, file_name, 1)
-        .await
-        .expect("get windowed tail");
-    let old_cursor = tail.cursor;
-    let prefix = original_bytes[old_header_end..old_cursor.offset as usize].to_vec();
-
-    let mut updated_header = payload[0].clone();
-    updated_header["chat_metadata"]["integrity"] = json!("header-b-with-a-new-length");
-    let updated_header = serde_json::to_string(&updated_header).expect("serialize updated header");
-
-    let new_cursor = repository
-        .patch_chat_payload_windowed(
-            character_name,
-            file_name,
-            ChatPayloadWindowPatchRequest {
-                cursor: old_cursor,
-                header: updated_header.clone(),
-                op: ChatPayloadPatchOp::Append { lines: Vec::new() },
-                expected_window_line_count: tail.lines.len(),
-                force: true,
-            },
-        )
-        .await
-        .expect("force patch with changed integrity");
-
-    let updated_bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("read updated payload bytes");
-    let new_header_end = updated_bytes
-        .iter()
-        .position(|byte| *byte == b'\n')
-        .expect("updated header newline")
-        + 1;
-    assert_eq!(
-        new_cursor.offset,
-        new_header_end as u64 + (old_cursor.offset - old_header_end as u64)
-    );
-    assert_eq!(
-        &updated_bytes[new_header_end..new_cursor.offset as usize],
-        prefix.as_slice()
-    );
-
-    let error = repository
-        .patch_chat_payload_windowed(
-            character_name,
-            file_name,
-            ChatPayloadWindowPatchRequest {
-                cursor: old_cursor,
-                header: updated_header,
-                op: ChatPayloadPatchOp::Append { lines: Vec::new() },
-                expected_window_line_count: tail.lines.len(),
-                force: true,
-            },
-        )
-        .await
-        .expect_err("force must not bypass a stale cursor signature");
-    assert!(format!("{}", error).contains("Cursor signature mismatch"));
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn patch_chat_payload_windowed_rejects_missing_payload() {
-    let (repository, root) = setup_repository().await;
-
-    let character_name = "alice";
-    let file_name = "missing";
-    let path = repository
-        .resolve_character_chat_path(character_name, file_name)
-        .await
-        .expect("resolve missing payload path");
-    let header =
-        serde_json::to_string(&payload_with_integrity("missing-a")[0]).expect("serialize header");
-
-    let error = repository
-        .patch_chat_payload_windowed(
-            character_name,
-            file_name,
-            ChatPayloadWindowPatchRequest {
-                cursor: ChatPayloadCursor {
-                    offset: 0,
-                    size: 0,
-                    modified_millis: 0,
-                },
-                header,
-                op: ChatPayloadPatchOp::Append {
-                    lines: vec![json!({ "mes": "partial" }).to_string()],
-                },
-                expected_window_line_count: 0,
-                force: false,
-            },
-        )
-        .await
-        .expect_err("patch must not create a missing payload");
-
-    assert!(matches!(error, DomainError::NotFound(_)));
-    assert!(!path.exists(), "missing payload must remain absent");
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn patch_chat_payload_windowed_rejects_window_baseline_mismatch() {
-    let (repository, root) = setup_repository().await;
-
-    let character_name = "alice";
-    let file_name = "session";
-
-    let mut payload = vec![payload_with_integrity("baseline-a")[0].clone()];
-    for index in 0..5 {
-        payload.push(json!({
-            "name": "User",
-            "is_user": true,
-            "send_date": format!("2026-01-01T00:00:0{}.000Z", index),
-            "mes": format!("message {}", index),
-            "extra": {},
-        }));
-    }
-
-    save_chat_payload_from_values(
-        &repository,
-        &root,
-        character_name,
-        file_name,
-        &payload,
-        false,
-    )
-    .await
-    .expect("save initial payload");
-
-    let windowed_tail = repository
-        .get_chat_payload_tail_lines(character_name, file_name, 2)
-        .await
-        .expect("get windowed tail");
-    assert_eq!(windowed_tail.lines.len(), 2);
-
-    let full_tail = repository
-        .get_chat_payload_tail_lines(character_name, file_name, 100)
-        .await
-        .expect("get full tail");
-    assert_eq!(full_tail.lines.len(), 5);
-
-    let new_line = serde_json::to_string(&json!({
-        "name": "User",
-        "is_user": true,
-        "send_date": "2026-01-01T00:00:09.000Z",
-        "mes": "appended",
-        "extra": {},
-    }))
-    .expect("serialize new line");
-
-    // Append with a stale full-mode offset but a valid file signature: before the
-    // baseline contract this passed silently and returned the bad offset re-signed
-    // with the new file signature.
-    let error = repository
-        .patch_chat_payload_windowed(
-            character_name,
-            file_name,
-            ChatPayloadWindowPatchRequest {
-                cursor: full_tail.cursor,
-                header: windowed_tail.header.clone(),
-                op: ChatPayloadPatchOp::Append {
-                    lines: vec![new_line.clone()],
-                },
-                expected_window_line_count: windowed_tail.lines.len(),
-                force: false,
-            },
-        )
-        .await
-        .expect_err("append with stale offset must be rejected");
-    assert!(
-        format!("{}", error).contains("Window baseline mismatch"),
-        "error should mention the window baseline, got: {}",
-        error
-    );
-
-    // RewriteFromIndex with a wrong declared baseline is rejected too.
-    let error = repository
-        .patch_chat_payload_windowed(
-            character_name,
-            file_name,
-            ChatPayloadWindowPatchRequest {
-                cursor: windowed_tail.cursor,
-                header: windowed_tail.header.clone(),
-                op: ChatPayloadPatchOp::RewriteFromIndex {
-                    start_index: 0,
-                    lines: vec![new_line.clone()],
-                },
-                expected_window_line_count: 4,
-                force: true,
-            },
-        )
-        .await
-        .expect_err("rewrite with wrong baseline must be rejected");
-    assert!(
-        format!("{}", error).contains("Window baseline mismatch"),
-        "error should mention the window baseline, got: {}",
-        error
-    );
-
-    // File untouched by the rejected writes.
-    let bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("read payload bytes");
-    assert_eq!(
-        String::from_utf8(bytes).expect("utf8").lines().count(),
-        6,
-        "rejected writes must not modify the file"
-    );
-
-    // The same append with the correct baseline succeeds.
-    repository
-        .patch_chat_payload_windowed(
-            character_name,
-            file_name,
-            ChatPayloadWindowPatchRequest {
-                cursor: windowed_tail.cursor,
-                header: windowed_tail.header,
-                op: ChatPayloadPatchOp::Append {
-                    lines: vec![new_line],
-                },
-                expected_window_line_count: windowed_tail.lines.len(),
-                force: false,
-            },
-        )
-        .await
-        .expect("append with correct baseline");
-
-    let bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("read payload bytes after append");
-    assert_eq!(String::from_utf8(bytes).expect("utf8").lines().count(), 7);
+    assert!(stale.is_err(), "stale paging cursor must be rejected");
 
     let _ = fs::remove_dir_all(&root).await;
 }

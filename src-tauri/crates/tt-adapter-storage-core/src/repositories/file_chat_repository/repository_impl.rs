@@ -17,9 +17,8 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
 use tt_ports::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatMessageSearchHit, ChatMessageSearchQuery,
-    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
-    ChatPayloadWindowPatchRequest, ChatRepository, ChatSearchResult, FindLastMessageQuery,
-    LocatedChatMessage, PinnedCharacterChat,
+    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatRepository,
+    ChatSearchResult, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat,
 };
 
 use super::FileChatRepository;
@@ -615,36 +614,6 @@ impl ChatRepository for FileChatRepository {
     ) -> Result<ChatPayloadChunk, DomainError> {
         self.get_character_payload_before_lines(character_name, file_name, cursor, max_lines)
             .await
-    }
-
-    async fn patch_chat_payload_windowed(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        request: ChatPayloadWindowPatchRequest,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.patch_character_payload_windowed(character_name, file_name, request)
-            .await
-    }
-
-    async fn hide_chat_payload_before_cursor(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        cursor: ChatPayloadCursor,
-        hide: bool,
-        name_filter: Option<String>,
-        expected_window_line_count: usize,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.hide_character_payload_before_cursor(
-            character_name,
-            file_name,
-            cursor,
-            hide,
-            name_filter,
-            expected_window_line_count,
-        )
-        .await
     }
 
     async fn import_chat_payload(

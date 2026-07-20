@@ -211,10 +211,6 @@ impl SettingsService {
             settings.embedded_runtime_profile = embedded_runtime_profile;
         }
 
-        if let Some(chat_history_mode) = dto.chat_history_mode {
-            settings.chat_history_mode = chat_history_mode;
-        }
-
         let chat_backups_changed = dto.chat_backups.is_some();
         if let Some(chat_backups) = dto.chat_backups {
             Self::apply_chat_backup_settings_update(&mut settings.chat_backups, chat_backups)?;
@@ -1098,7 +1094,6 @@ mod tests {
                 perf_profile: None,
                 panel_runtime_profile: None,
                 embedded_runtime_profile: None,
-                chat_history_mode: None,
                 chat_backups: None,
                 close_to_tray_on_close: None,
                 allow_keys_exposure: None,
@@ -1135,7 +1130,6 @@ mod tests {
                 perf_profile: None,
                 panel_runtime_profile: None,
                 embedded_runtime_profile: None,
-                chat_history_mode: None,
                 chat_backups: Some(UpdateChatBackupSettingsDto {
                     automatic_enabled: Some(false),
                     max_files_per_prefix: Some(7),
@@ -1195,7 +1189,6 @@ mod tests {
                 perf_profile: None,
                 panel_runtime_profile: None,
                 embedded_runtime_profile: None,
-                chat_history_mode: None,
                 close_to_tray_on_close: None,
                 request_proxy: None,
                 allow_keys_exposure: None,

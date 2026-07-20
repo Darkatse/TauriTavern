@@ -12,7 +12,7 @@ const api = window.__TAURITAVERN__.api.chat;
 const handle = api.current.handle();
 ```
 
-> **窗口化聊天**：TauriTavern 前端只加载最近 N 条消息（windowed payload），`getContext().chat` 仅反映当前窗口。下面的 API 会透明地穿越窗口边界，在 Rust 后端访问完整历史——你无需关心分页细节。
+> TauriTavern 遵循 SillyTavern 的完整历史契约：`getContext().chat` 是当前聊天的完整、有序消息数组。下面的增强 API 适合在 Rust 后端执行有界读取、定位、检索与独立状态持久化，避免扩展重复实现重扫描或复制大数据。
 
 ## 1. 核心入口
 
@@ -21,7 +21,7 @@ const handle = api.current.handle();
 | `api.chat.open(ref)` | `ChatHandle` | 打开指定聊天 |
 | `api.chat.current.ref()` | `ChatRef` | 当前聊天的引用 |
 | `api.chat.current.handle()` | `ChatHandle` | 当前聊天的操作句柄 |
-| `api.chat.current.windowInfo()` | `Promise<WindowInfo>` | 当前窗口状态信息 |
+| `api.chat.current.windowInfo()` | `Promise<WindowInfo>` | 当前完整历史的兼容状态信息 |
 
 **`ChatRef` 类型**：
 
@@ -32,16 +32,18 @@ const handle = api.current.handle();
 
 | 字段 | 说明 |
 | --- | --- |
-| `mode` | `'windowed' \| 'off'` |
+| `mode` | 固定为 `'off'` |
+| `chatKind` | `'character' \| 'group'` |
+| `chatRef` | 当前 `ChatRef` |
 | `totalCount` | 聊天总消息数（不含 header） |
-| `windowStartIndex` | 当前窗口起始的绝对索引（0-based） |
-| `windowLength` | 当前窗口消息数 |
+| `windowStartIndex` | 固定为 `0` |
+| `windowLength` | 完整消息数，与 `totalCount` 相同 |
 
-**索引映射示例**：
+`windowInfo()` 保留 Promise 与字段形状是为了稳定公开 ABI；它不触发后端 summary 查询，也不对应可配置加载模式。消息数组索引就是绝对索引：
 
 ```js
 const info = await api.current.windowInfo();
-const absIndex = info.windowStartIndex + windowIndex;
+const absIndex = info.windowStartIndex + chatIndex; // 等同于 chatIndex
 ```
 
 ## 2. ChatHandle 能力
@@ -52,7 +54,7 @@ const absIndex = info.windowStartIndex + windowIndex;
 
 ### `locate.findLastMessage()` — 精准定位，不再手动遍历
 
-> 💡 **解决的痛点**：SillyTavern 中定位最后一条包含特定数据的消息，需要 `chat.slice().reverse().find(...)` 手动遍历，耗时且存在窗口边界问题。
+> 💡 **解决的痛点**：定位最后一条包含特定数据的消息通常需要 `chat.slice().reverse().find(...)` 手动遍历；后端定位可以限定扫描范围，避免扩展重复复制和扫描长数组。
 
 ```js
 const hit = await handle.locate.findLastMessage({
@@ -177,7 +179,7 @@ const id = await handle.stableId();
 
 ### `history.*` — 按需分页读取
 
-需要遍历历史消息时使用（不会一次性把全量数据载入 JS）：
+扩展希望以有界页面处理历史、避免再创建一份全量数组时使用：
 
 ```js
 let page = await handle.history.tail({ limit: 100 });

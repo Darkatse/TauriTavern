@@ -12,7 +12,6 @@ function createSettings(overrides = {}) {
     return {
         panel_runtime_profile: 'off',
         embedded_runtime_profile: 'off',
-        chat_history_mode: 'windowed',
         chat_backups: {
             automatic_enabled: true,
             max_files_per_prefix: 20,

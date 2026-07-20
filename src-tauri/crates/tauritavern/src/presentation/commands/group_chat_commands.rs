@@ -6,13 +6,11 @@ use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
-    ChatSearchResultDto, DeleteGroupChatDto, HideGroupChatBeforeCursorDto, ImportGroupChatDto,
-    PatchGroupChatWindowedDto, PinnedGroupChatDto, RenameGroupChatDto,
+    ChatSearchResultDto, DeleteGroupChatDto, ImportGroupChatDto, PinnedGroupChatDto,
+    RenameGroupChatDto,
 };
 use tt_application::errors::ApplicationError;
-use tt_ports::repositories::chat_types::{
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatPayloadWindowPatchRequest,
-};
+use tt_ports::repositories::chat_types::{ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail};
 
 #[tauri::command]
 pub async fn list_group_chat_summaries(
@@ -170,63 +168,6 @@ pub async fn get_group_chat_payload_before_pages(
             "Failed to get group chat payload before pages {}",
             id
         )))
-}
-
-#[tauri::command]
-pub async fn patch_group_chat_payload_windowed(
-    dto: PatchGroupChatWindowedDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<ChatPayloadCursor, CommandError> {
-    let PatchGroupChatWindowedDto {
-        id,
-        cursor,
-        header,
-        patch,
-        expected_window_line_count,
-        force,
-        commit_reason,
-    } = dto;
-    log_command(format!("patch_group_chat_payload_windowed {}", id));
-
-    let request = ChatPayloadWindowPatchRequest {
-        cursor,
-        header,
-        op: patch,
-        expected_window_line_count,
-        force: force.unwrap_or(false),
-    };
-
-    app_state
-        .services
-        .group_chat_service
-        .patch_group_chat_payload_windowed(&id, request, commit_reason.unwrap_or_default())
-        .await
-        .map_err(map_command_error(
-            "Failed to patch windowed group chat payload",
-        ))
-}
-
-#[tauri::command]
-pub async fn hide_group_chat_payload_before_cursor(
-    dto: HideGroupChatBeforeCursorDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<ChatPayloadCursor, CommandError> {
-    log_command(format!("hide_group_chat_payload_before_cursor {}", dto.id));
-
-    app_state
-        .services
-        .group_chat_service
-        .hide_group_chat_payload_before_cursor(
-            &dto.id,
-            dto.cursor,
-            dto.hide,
-            dto.name_filter,
-            dto.expected_window_line_count,
-        )
-        .await
-        .map_err(map_command_error(
-            "Failed to update hidden state before group chat window",
-        ))
 }
 
 #[tauri::command]

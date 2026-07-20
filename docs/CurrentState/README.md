@@ -35,9 +35,9 @@
    - 开屏启动优化（Shell/Core/Full 分阶段启动）的当前实现快照
    - 包含前端启动编排、bootstrap 快照、扩展发现/激活、按需加载与可观测性约束
 
-5. `docs/CurrentState/WindowedPayload.md`
-   - windowed payload（聊天记录分片读写）现状：tail 小窗口、before 分页、windowed patch 与全量保存回退
-   - 包含 Prompt-backfill（生成时按需回填）、页缓存与批量 IPC 的端到端链路与持续开发约束
+5. `docs/CurrentState/ChatPayload.md`
+   - 聊天 payload 现状：canonical 完整历史、受限 DOM、完整原子提交与独立只读分页
+   - 包含上游索引契约、扩展 API、fail-fast 错误边界与回归重点
 
 6. `docs/CurrentState/MemoryExtensionApi.md`
    - 记忆类扩展 API（`window.__TAURITAVERN__.api.chat`）的当前落地状态：楼层语义、按需历史、后端定位、纯文本检索与持久化

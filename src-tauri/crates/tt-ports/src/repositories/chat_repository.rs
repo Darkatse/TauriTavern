@@ -7,9 +7,8 @@ use tt_domain::models::chat::{Chat, ChatMessage};
 pub use super::chat_types::{
     ChatExportFormat, ChatImportFormat, ChatMessageReadItem, ChatMessageRole,
     ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult,
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail,
-    ChatPayloadWindowPatchRequest, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
-    PinnedCharacterChat, PinnedGroupChat,
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery,
+    LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
 };
 
 /// Repository interface for chat management
@@ -134,7 +133,7 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
     ) -> Result<PathBuf, DomainError>;
 
-    /// Get the tail window for a character chat JSONL payload (excluding the header line).
+    /// Get the tail page for a character chat JSONL payload (excluding the header line).
     async fn get_chat_payload_tail_lines(
         &self,
         character_name: &str,
@@ -142,7 +141,7 @@ pub trait ChatRepository: Send + Sync {
         max_lines: usize,
     ) -> Result<ChatPayloadTail, DomainError>;
 
-    /// Get JSONL lines before the current window cursor (excluding the header line).
+    /// Get JSONL lines before the current page cursor (excluding the header line).
     async fn get_chat_payload_before_lines(
         &self,
         character_name: &str,
@@ -150,26 +149,6 @@ pub trait ChatRepository: Send + Sync {
         cursor: ChatPayloadCursor,
         max_lines: usize,
     ) -> Result<ChatPayloadChunk, DomainError>;
-
-    /// Patch a windowed character chat payload by applying an operation at the tail.
-    /// The request carries the cursor signature and window baseline for compare-and-swap.
-    async fn patch_chat_payload_windowed(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        request: ChatPayloadWindowPatchRequest,
-    ) -> Result<ChatPayloadCursor, DomainError>;
-
-    /// Set the hidden flag (`is_system`) on all messages stored before the window cursor.
-    async fn hide_chat_payload_before_cursor(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        cursor: ChatPayloadCursor,
-        hide: bool,
-        name_filter: Option<String>,
-        expected_window_line_count: usize,
-    ) -> Result<ChatPayloadCursor, DomainError>;
 
     /// Import character chat file(s) and return created JSONL file names.
     async fn import_chat_payload(
@@ -287,28 +266,4 @@ pub trait ChatRepository: Send + Sync {
 
     /// Clear the chat cache
     async fn clear_cache(&self) -> Result<(), DomainError>;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ChatPayloadPatchOp;
-    use serde_json::json;
-
-    #[test]
-    fn chat_payload_patch_op_deserializes_camel_case_start_index() {
-        let op: ChatPayloadPatchOp = serde_json::from_value(json!({
-            "kind": "rewriteFromIndex",
-            "startIndex": 7,
-            "lines": ["{\"hello\":\"world\"}"],
-        }))
-        .unwrap();
-
-        match op {
-            ChatPayloadPatchOp::RewriteFromIndex { start_index, lines } => {
-                assert_eq!(start_index, 7);
-                assert_eq!(lines, vec![String::from("{\"hello\":\"world\"}")]);
-            }
-            _ => panic!("Expected rewriteFromIndex op"),
-        }
-    }
 }

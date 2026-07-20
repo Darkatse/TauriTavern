@@ -397,8 +397,6 @@ export function bootstrapTauriMain() {
         .catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
     runAfterTauriReady(() => import('../../scripts/tauri/regex/native-regex-settings.js')
         .then(({ installNativeRegexBackendSetting }) => installNativeRegexBackendSetting()));
-    runAfterTauriReady(() => import('./services/chat-history/install.js')
-        .then(({ installChatHistoryMode }) => installChatHistoryMode()));
     runAfterTauriReady(() => import('./services/dynamic-theme/install.js')
         .then(({ installDynamicTheme }) => installDynamicTheme()));
     if (!isEmbeddedRuntimeTakeoverDisabled()) {
