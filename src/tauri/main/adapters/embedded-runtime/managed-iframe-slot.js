@@ -4,7 +4,7 @@
  * @typedef {import('../../services/embedded-runtime/types.js').EmbeddedRuntimeSlot} EmbeddedRuntimeSlot
  */
 
-import { parkManagedIframe, takeParkedManagedIframe } from './managed-iframe-parking-lot.js';
+import { dropParkedManagedIframe, parkManagedIframe, takeParkedManagedIframe } from './managed-iframe-parking-lot.js';
 
 const BUDGET_PLACEHOLDER_CLASS = 'tt-runtime-placeholder';
 const GHOST_PLACEHOLDER_CLASS = 'tt-runtime-ghost';
@@ -330,10 +330,8 @@ export function createManagedIframeSlot({
             removeIframeNow();
         },
         dispose: () => {
-            const iframe = findHostIframe(host);
-            if (iframe) {
-                softParkIframe(iframe);
-            }
+            removeIframeNow();
+            dropParkedManagedIframe(id);
             removePlaceholdersNow();
         },
     };

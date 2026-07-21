@@ -49,6 +49,7 @@
   - budget park：替换为 `.tt-runtime-placeholder`（可点击恢复）
   - visibility park：替换为 `.tt-runtime-ghost`（占位但不可交互）
   - cold start：当软停车池无可复用 iframe 时，交还给上游渲染管线重建（避免复用已失效的 `blob:` URL）
+  - `dehydrate()` 只在同一 slot owner 内临时 park；`dispose()` 同步销毁 active 与 parked iframe，不允许跨 content/chat owner 复用
 - 软停车池：`src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js`
   - 目标：尽量复用 browsing context，避免 iframe 重载/白屏
 
@@ -167,6 +168,7 @@ reconcile 后 manager 会根据 profile 预算与可见性选择：
 3) 不要把“自愈”做成大量 try/catch 的吞错链路：当前策略是让错误暴露，方便定位；自愈只处理少数结构化事件（外部移除 iframe）。
 4) 不要根据 `!messageElement.isConnected` 自动启用 source handoff。只有能明确指出后续 release event 的 chat-open 批次可以授权；其他 detached render 路径没有该结算契约。
 5) 不要把 source handoff 扩展成社区私有状态探测或 timer/observer 等待器。宿主只负责首次布局遮罩，并在框架事件后的一个 rAF 无条件撤销自己的 marker。
+6) `dispose()` 是 slot ownership 的终点，必须同步释放 host 与 parking lot 中的 iframe；不要用 chat epoch、延迟事件或 TTL 替代 terminal cleanup。
 
 ---
 
