@@ -21,7 +21,7 @@
     "check:rust:all-targets": "cargo check --manifest-path src-tauri/Cargo.toml --workspace --no-default-features --all-targets",
     "check:rust:release-path": "cargo check --manifest-path src-tauri/Cargo.toml --workspace",
     "test": "pnpm run test:contracts",
-    "test:contracts": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\"",
+    "test:contracts": "pnpm run web:build && node --test --test-concurrency=1 \"tests/**/*.test.mjs\"",
     "test:rust:split-crates": "cargo test --manifest-path src-tauri/Cargo.toml --workspace --exclude tauritavern --no-default-features",
     "test:rust:host-resources": "cargo test --manifest-path src-tauri/Cargo.toml -p tauritavern --no-default-features app::contract_tests::host_resources",
     "web:build": "rspack build --config rspack.config.js",
