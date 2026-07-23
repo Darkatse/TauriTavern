@@ -4440,22 +4440,22 @@ class StreamingProcessor {
             message.swipe_info.push(...swipeInfoArray);
         }
 
+        if (this.type !== 'impersonate') {
+            // Store provider metadata before syncing the active swipe.
+            if (this.reasoningSignature) {
+                message.extra.reasoning_signature = this.reasoningSignature;
+            }
+            if (this.native) {
+                message.extra.native = this.native;
+            }
+        }
+
         syncMesToSwipe(messageId);
         saveLogprobsForActiveMessage(this.messageLogprobs.filter(Boolean), this.continueMessage);
 
         if (Array.isArray(this.images) && this.images.length > 0) {
             await processImageAttachment(message, { imageUrls: this.images });
             appendMediaToMessage(message, $(this.messageDom));
-        }
-
-        // Store reasoning signature for models that support multi-turn context
-        if (this.reasoningSignature) {
-            message.extra = message.extra || {};
-            message.extra.reasoning_signature = this.reasoningSignature;
-        }
-        if (this.native) {
-            message.extra = message.extra || {};
-            message.extra.native = this.native;
         }
 
         if (unlockUI) {
@@ -9349,11 +9349,10 @@ function updateMessage(div) {
     if (bias) {
         text = removeMacros(text);
     }
-    mes.mes = text;
-    if (mes.swipe_id !== undefined) {
-        ensureSwipes(mes);
-        mes.swipes[mes.swipe_id] = text;
+    if (mes.mes !== text) {
+        delete mes.extra.reasoning_signature;
     }
+    mes.mes = text;
 
     if (mes?.is_system || mes?.is_user || mes.extra?.type === system_message_types.NARRATOR) {
         mes.extra.bias = bias ?? null;
@@ -9362,6 +9361,10 @@ function updateMessage(div) {
     }
 
     chat_metadata.tainted = true;
+    if (mes.swipe_id !== undefined) {
+        ensureSwipes(mes);
+        syncMesToSwipe(this_edit_mes_id);
+    }
 
     return { mesBlock, text, mes, bias };
 }

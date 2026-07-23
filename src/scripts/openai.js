@@ -986,7 +986,7 @@ function setOpenAIMessages(chat) {
         const originApi = chat[j]?.extra?.api;
         const originModel = chat[j]?.extra?.model;
         const isSameModel = originApi === currentApi && originModel === currentModel;
-        const isOtherGroupMember = selected_group && chat[j].name !== name2;
+        const isOtherGroupMember = selected_group && chat[j].name !== name2 && !Array.isArray(invocations);
         const canReplayProviderTurnMetadata = isSameModel && !isOtherGroupMember;
         const signature = canReplayProviderTurnMetadata ? chat[j]?.extra?.reasoning_signature : null;
         const reasoning = canReplayProviderTurnMetadata ? String(chat[j]?.extra?.reasoning ?? '') : '';
@@ -4658,21 +4658,21 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, mo
         }
         return data?.delta?.text || '';
     } else if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(chat_completion_source)) {
-        const inlineData = data?.candidates?.[0]?.content?.parts?.filter(x => x.inlineData && !x.thought)?.map(x => x.inlineData) || [];
-        if (Array.isArray(inlineData) && inlineData.length > 0) {
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        const inlineData = parts.filter(x => x.inlineData && !x.thought).map(x => x.inlineData);
+        if (inlineData.length > 0) {
             state.images.push(...inlineData.map(x => `data:${x.mimeType};base64,${x.data}`).filter(isDataURL));
         }
         if (show_thoughts) {
-            state.reasoning += (data?.candidates?.[0]?.content?.parts?.filter(x => x.thought)?.map(x => x.text)?.[0] || '');
+            state.reasoning += parts.filter(x => x.thought && x.text).map(x => x.text).join('\n\n');
         }
         // Extract thought signatures from streaming chunks (typically in final chunk)
-        const parts = data?.candidates?.[0]?.content?.parts || [];
         parts.forEach((part) => {
-            if (part.thoughtSignature && typeof part.text === 'string') {
+            if (!part.thought && part.thoughtSignature && typeof part.text === 'string') {
                 state.signature = part.thoughtSignature;
             }
         });
-        return data?.candidates?.[0]?.content?.parts?.filter(x => !x.thought)?.map(x => x.text)?.[0] || '';
+        return parts.filter(x => !x.thought && x.text).map(x => x.text).join('\n\n');
     } else if (chat_completion_source === chat_completion_sources.COHERE) {
         return data?.delta?.message?.content?.text || data?.delta?.message?.tool_plan || '';
     } else if (chat_completion_source === chat_completion_sources.DEEPSEEK) {
@@ -8204,14 +8204,24 @@ function getEffectiveToolReasoningMode(settings = oai_settings) {
 }
 
 /**
+ * Check whether the selected source uses Gemini's native GenerateContent protocol.
+ * @param {ChatCompletionSettings} settings Settings object to use
+ * @returns {boolean} True for direct Gemini providers
+ */
+function isDirectGeminiSource(settings = oai_settings) {
+    return settings.chat_completion_source === chat_completion_sources.MAKERSUITE
+        || (settings.chat_completion_source === chat_completion_sources.VERTEXAI
+            && !isVertexAiClaudeModelId(getChatCompletionModel(settings) ?? ''));
+}
+
+/**
  * Check if the model supports encrypted reasoning signatures.
  * @param {ChatCompletionSettings} settings Settings object to use
  * @returns {boolean} True if reasoning signatures should be included in the request
  */
 export function isReasoningSignatureSupported(settings = oai_settings) {
     // If it's Vertex AI Gemini or Makersuite, that's OK - convertGooglePrompt() will handle it later
-    const isGoogle = settings.chat_completion_source === chat_completion_sources.MAKERSUITE
-        || (settings.chat_completion_source === chat_completion_sources.VERTEXAI && !isVertexAiClaudeModelId(settings.vertexai_model ?? ''));
+    const isGoogle = isDirectGeminiSource(settings);
     // Need a more crunchy check for OpenRouter: look for Gemini models
     const isOpenRouterGemini = settings.chat_completion_source === chat_completion_sources.OPENROUTER && /google\/gemini/i.test(settings.openrouter_model);
     return isGoogle || isOpenRouterGemini;
@@ -8489,6 +8499,8 @@ function updateFeatureSupportFlags() {
         }
     }
 
+    const model = getChatCompletionModel();
+    $('#continue_prefill_block').toggle(!isDirectGeminiSource() || !['gemini-3.5-flash-lite', 'gemini-3.6-flash'].includes(model));
     updateReasoningEffortControlVisibility();
     updateVertexAiClaudeControlVisibility();
 }

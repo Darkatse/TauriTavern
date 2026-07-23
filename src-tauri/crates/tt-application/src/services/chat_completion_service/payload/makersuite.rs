@@ -107,14 +107,16 @@ fn build_google_payload(
         && !enable_image_modality
         && !is_gemma;
 
-    let (contents, system_prompt) =
-        convert_messages(payload.get("messages"), model, use_system_prompt)?;
+    let (contents, system_prompt) = convert_messages(
+        payload.get("messages"),
+        model,
+        use_system_prompt,
+        use_vertex_ai,
+    )?;
 
     let mut generation_config = Map::new();
-    generation_config.insert(
-        "candidateCount".to_string(),
-        Value::Number(serde_json::Number::from(1)),
-    );
+    let has_fixed_sampling_parameters =
+        matches!(model, "gemini-3.5-flash-lite" | "gemini-3.6-flash");
 
     if let Some(value) = payload.get("max_tokens").filter(|value| !value.is_null()) {
         generation_config.insert("maxOutputTokens".to_string(), value.clone());
@@ -126,6 +128,10 @@ fn build_google_payload(
         ("top_k", "topK"),
         ("seed", "seed"),
     ] {
+        if has_fixed_sampling_parameters && source_key != "seed" {
+            continue;
+        }
+
         if source_key == "top_k"
             && payload
                 .get(source_key)
@@ -291,6 +297,7 @@ fn convert_messages(
     messages: Option<&Value>,
     model: &str,
     use_system_prompt: bool,
+    use_vertex_ai: bool,
 ) -> Result<(Vec<Value>, String), ApplicationError> {
     let mut contents = Vec::new();
     let mut system_parts = Vec::new();
@@ -316,6 +323,7 @@ fn convert_messages(
     let supports_signatures =
         model_lower.contains("gemini-3") || model_lower.contains("gemini-2.5");
     let is_gemini3 = model_lower.contains("gemini-3");
+    let supports_function_call_ids = is_gemini3 && !use_vertex_ai;
     let is_image_model = model_lower.contains("-image");
     let skip_signature_magic = "skip_thought_signature_validator";
 
@@ -361,6 +369,7 @@ fn convert_messages(
             .unwrap_or("user")
             .trim()
             .to_lowercase();
+        let mut merge_with_previous = matches!(role.as_str(), "tool" | "function");
 
         let mut parts = if matches!(role.as_str(), "tool" | "function") {
             let tool_call_id = message_tool_call_id(message);
@@ -373,7 +382,12 @@ fn convert_messages(
                 })
                 .unwrap_or_else(|| fallback_tool_name().to_string());
             let content = message_tool_result_text(message);
-            vec![build_tool_response_part(&name, &content)]
+            let response_id = if supports_function_call_ids {
+                tool_call_id.as_deref()
+            } else {
+                None
+            };
+            vec![build_tool_response_part(&name, &content, response_id)]
         } else {
             let native_gemini_parts = if role == "assistant" {
                 message_native_gemini_parts(message)
@@ -389,11 +403,15 @@ fn convert_messages(
             if role == "assistant" {
                 let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
                 if !tool_calls.is_empty() {
+                    merge_with_previous = true;
                     for tool_call in &tool_calls {
                         tool_name_by_id.insert(tool_call.id.clone(), tool_call.name.clone());
                     }
                     if native_gemini_parts.is_none() {
-                        parts.extend(convert_openai_tool_calls_to_parts(&tool_calls));
+                        parts.extend(convert_openai_tool_calls_to_parts(
+                            &tool_calls,
+                            supports_function_call_ids,
+                        ));
                     }
                 }
             }
@@ -454,10 +472,25 @@ fn convert_messages(
             }
         }
 
-        contents.push(json!({
-            "role": target_role,
-            "parts": parts,
-        }));
+        if merge_with_previous
+            && contents
+                .last()
+                .and_then(|content| content.get("role"))
+                .and_then(Value::as_str)
+                == Some(target_role)
+        {
+            contents
+                .last_mut()
+                .and_then(|content| content.get_mut("parts"))
+                .and_then(Value::as_array_mut)
+                .expect("Google content parts must be an array")
+                .extend(parts);
+        } else {
+            contents.push(json!({
+                "role": target_role,
+                "parts": parts,
+            }));
+        }
     }
 
     Ok((contents, system_parts.join("\n\n")))
@@ -644,16 +677,21 @@ fn message_native_gemini_parts(message: &Map<String, Value>) -> Option<Vec<Value
         .cloned()
 }
 
-fn convert_openai_tool_calls_to_parts(tool_calls: &[OpenAiToolCall]) -> Vec<Value> {
+fn convert_openai_tool_calls_to_parts(
+    tool_calls: &[OpenAiToolCall],
+    supports_function_call_ids: bool,
+) -> Vec<Value> {
     tool_calls
         .iter()
         .map(|tool_call| {
-            let mut part = json!({
-                "functionCall": {
-                    "name": tool_call.name,
-                    "args": tool_call.arguments,
-                }
+            let mut function_call = json!({
+                "name": tool_call.name,
+                "args": tool_call.arguments,
             });
+            if supports_function_call_ids {
+                function_call["id"] = Value::String(tool_call.id.clone());
+            }
+            let mut part = json!({ "functionCall": function_call });
 
             if let Some(signature) = tool_call.signature.as_ref()
                 && let Some(part_object) = part.as_object_mut()
@@ -669,13 +707,15 @@ fn convert_openai_tool_calls_to_parts(tool_calls: &[OpenAiToolCall]) -> Vec<Valu
         .collect()
 }
 
-fn build_tool_response_part(name: &str, content: &str) -> Value {
-    json!({
-        "functionResponse": {
-            "name": name,
-            "response": normalize_tool_result_payload(content),
-        }
-    })
+fn build_tool_response_part(name: &str, content: &str, id: Option<&str>) -> Value {
+    let mut function_response = json!({
+        "name": name,
+        "response": normalize_tool_result_payload(content),
+    });
+    if let Some(id) = id {
+        function_response["id"] = Value::String(id.to_string());
+    }
+    json!({ "functionResponse": function_response })
 }
 
 fn split_openai_tools(tools: &Value) -> (Vec<Value>, Vec<Value>) {
@@ -894,6 +934,44 @@ mod tests {
         .expect("payload must be object");
 
         build(payload).expect("build should succeed").1
+    }
+
+    #[test]
+    fn makersuite_fixed_sampling_models_only_forward_seed() {
+        let build_config = |model: &str| {
+            let payload = json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "top_k": 40,
+                "seed": 17
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            build(payload)
+                .expect("build should succeed")
+                .1
+                .get("generationConfig")
+                .and_then(Value::as_object)
+                .cloned()
+                .expect("generationConfig must be object")
+        };
+
+        for model in ["gemini-3.5-flash-lite", "gemini-3.6-flash"] {
+            let config = build_config(model);
+            for key in ["candidateCount", "temperature", "topP", "topK"] {
+                assert!(config.get(key).is_none(), "{model} must omit {key}");
+            }
+            assert_eq!(config.get("seed").and_then(Value::as_i64), Some(17));
+        }
+
+        let config = build_config("gemini-2.5-flash");
+        assert_eq!(config.get("temperature").and_then(Value::as_f64), Some(0.7));
+        assert_eq!(config.get("topP").and_then(Value::as_f64), Some(0.9));
+        assert_eq!(config.get("topK").and_then(Value::as_i64), Some(40));
     }
 
     #[test]
@@ -1470,7 +1548,7 @@ mod tests {
     #[test]
     fn makersuite_tool_result_uses_previous_tool_call_name() {
         let payload = json!({
-            "model": "gemini-2.5-flash",
+            "model": "gemini-3.6-flash",
             "messages": [
                 {
                     "role": "assistant",
@@ -1494,7 +1572,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_, upstream) = build(payload).expect("build should succeed");
+        let (_, upstream) = build(payload.clone()).expect("build should succeed");
         let body = upstream.as_object().expect("body must be object");
         let contents = body
             .get("contents")
@@ -1518,6 +1596,10 @@ mod tests {
                 .unwrap_or_default(),
             "weather"
         );
+        assert_eq!(
+            model_part.get("id").and_then(Value::as_str),
+            Some("call_weather")
+        );
 
         let user_part = contents
             .get(1)
@@ -1537,6 +1619,10 @@ mod tests {
             "weather"
         );
         assert_eq!(
+            user_part.get("id").and_then(Value::as_str),
+            Some("call_weather")
+        );
+        assert_eq!(
             user_part
                 .get("response")
                 .and_then(Value::as_object)
@@ -1545,6 +1631,59 @@ mod tests {
                 .unwrap_or_default(),
             20
         );
+
+        let mut legacy_payload = payload.clone();
+        legacy_payload.insert(
+            "model".to_string(),
+            Value::String("gemini-2.5-flash".to_string()),
+        );
+        let (_, legacy) = build(legacy_payload).expect("legacy build should succeed");
+        let (_, vertex) = build_vertexai(payload).expect("Vertex build should succeed");
+        for body in [&legacy, &vertex] {
+            assert!(
+                body.pointer("/contents/0/parts/0/functionCall/id")
+                    .is_none()
+            );
+            assert!(
+                body.pointer("/contents/1/parts/0/functionResponse/id")
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn makersuite_merges_parallel_tool_turns() {
+        let upstream = build_with_messages(
+            "gemini-3.6-flash",
+            json!([
+                { "role": "assistant", "content": "Visible canonical text" },
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        { "id": "call_weather", "function": { "name": "weather", "arguments": "{}" } },
+                        { "id": "call_time", "function": { "name": "local_time", "arguments": "{}" } }
+                    ]
+                },
+                { "role": "tool", "tool_call_id": "call_weather", "content": "sunny" },
+                { "role": "tool", "tool_call_id": "call_time", "content": "12:00" }
+            ]),
+        );
+
+        let contents = upstream
+            .get("contents")
+            .and_then(Value::as_array)
+            .expect("contents must be array");
+        assert_eq!(contents.len(), 2, "consecutive model and tool turns merge");
+
+        let model_parts = contents[0]["parts"].as_array().expect("model parts");
+        assert_eq!(model_parts[0]["text"], "Visible canonical text");
+        assert_eq!(model_parts[1]["functionCall"]["id"], "call_weather");
+        assert_eq!(model_parts[2]["functionCall"]["id"], "call_time");
+
+        let tool_parts = contents[1]["parts"].as_array().expect("tool parts");
+        assert_eq!(tool_parts.len(), 2, "parallel tool results share one turn");
+        assert_eq!(tool_parts[0]["functionResponse"]["id"], "call_weather");
+        assert_eq!(tool_parts[1]["functionResponse"]["id"], "call_time");
     }
 
     #[test]

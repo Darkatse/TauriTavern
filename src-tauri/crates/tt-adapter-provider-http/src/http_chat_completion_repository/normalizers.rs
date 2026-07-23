@@ -984,12 +984,13 @@ mod tests {
     #[test]
     fn normalize_gemini_function_call_maps_thought_signature() {
         let response = json!({
-            "modelVersion": "gemini-2.5-flash",
+            "modelVersion": "gemini-3.6-flash",
             "candidates": [{
                 "finishReason": "STOP",
                 "content": {
                     "parts": [{
                         "functionCall": {
+                            "id": "call_weather",
                             "name": "weather",
                             "args": { "city": "Paris" }
                         },
@@ -1021,6 +1022,10 @@ mod tests {
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
             "weather"
+        );
+        assert_eq!(
+            tool_call.get("id").and_then(Value::as_str),
+            Some("call_weather")
         );
         assert_eq!(
             tool_call
