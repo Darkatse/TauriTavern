@@ -229,7 +229,7 @@ fail
 - required component 超预算：fail-fast。
 - optional component 超预算：按 priority drop，并写 `context_component_skipped` event。
 - tool result 超预算：优先摘要。
-- chat history 超预算：使用 windowed read/search + summary。
+- chat history 超预算：使用 paged read/search + summary。
 
 ## 6. Tool Policy
 
@@ -403,7 +403,7 @@ profile_switch_denied
 
 ## 12. MVP Profile
 
-当前状态（2026-05-04）：Phase 3 Profile 基线已实现 profile resolution，但尚未实现 profile routing、Plan Mode runtime、provider/model switch 或 ContextFrame 预算。`profileId` 会驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds、model retry 与 model-facing prompt/tool descriptions。`preset.ref` 目前只做校验/记录，不隐式切换 model。
+当前状态（2026-05-04）：Profile 基线已实现 profile resolution，但尚未实现 profile routing、Plan Mode runtime、provider/model switch 或 ContextFrame 预算。`profileId` 会驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds、model retry 与 model-facing prompt/tool descriptions。`preset.ref` 目前只做校验/记录，不隐式切换 model。
 
 当前最小 built-in profile 是 `default-writer`，缺省 `profileId` 时使用它：
 

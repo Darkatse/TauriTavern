@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DEEPSEEK_REASONING_EFFORT_I18N_KEY = 'DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.';
+const DEEPSEEK_REASONING_EFFORT_I18N_KEY = 'DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.';
 
 function readProjectFile(relativePath) {
     return readFile(path.join(REPO_ROOT, relativePath), 'utf8');
@@ -33,12 +33,12 @@ test('DeepSeek reasoning controls match the v4 request contract', async () => {
     assert.match(openaiSource, /chat_completion_sources\.DEEPSEEK/);
     assert.match(openaiSource, /function resolveMaximumReasoningEffort\(\)\s*{[\s\S]*chat_completion_sources\.DEEPSEEK[\s\S]*return reasoning_effort_types\.max;[\s\S]*return reasoning_effort_types\.high;/);
     assert.match(openaiSource, /case reasoning_effort_types\.max:\s*return resolveMaximumReasoningEffort\(\);/);
-    assert.match(openaiSource, /case reasoning_effort_types\.xhigh:\s*return supportsXHighReasoningEffort\(\)\s*\?\s*reasoning_effort_types\.xhigh\s*:\s*resolveMaximumReasoningEffort\(\);/);
+    assert.match(openaiSource, /case reasoning_effort_types\.xhigh:[\s\S]*return supportsXHighReasoningEffort\(\)[\s\S]*:\s*reasoning_effort_types\.high;/);
     assert.match(indexHtml, /data-source="[^"]*\bdeepseek\b[^"]*"[\s\S]*?<select id="openai_reasoning_effort">/);
     assert.match(indexHtml, /data-source-mode="except" data-source="deepseek,zai,moonshot"/);
     assert.match(indexHtml, new RegExp(`data-i18n="${DEEPSEEK_REASONING_EFFORT_I18N_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
-    assert.equal(zhCn[DEEPSEEK_REASONING_EFFORT_I18N_KEY], 'DeepSeek 选项：自动不会发送推理强度字段；极低到高都会请求 high 推理强度；极高会请求 max 推理强度。');
-    assert.equal(zhTw[DEEPSEEK_REASONING_EFFORT_I18N_KEY], 'DeepSeek 選項：自動不會傳送推理耗費欄位；最小到高都會請求 high 推理耗費；最大會請求 max 推理耗費。');
+    assert.equal(zhCn[DEEPSEEK_REASONING_EFFORT_I18N_KEY], 'DeepSeek 选项：自动不会发送推理强度字段；极低到超高都会请求 high 推理强度；最大会请求 max 推理强度。');
+    assert.equal(zhTw[DEEPSEEK_REASONING_EFFORT_I18N_KEY], 'DeepSeek 選項：自動不會傳送推理耗費欄位；最小到超高都會請求 high 推理耗費；最大會請求 max 推理耗費。');
 });
 
 test('DeepSeek tool-call reasoning is persisted and replayed only for the same DeepSeek model turn owner', async () => {

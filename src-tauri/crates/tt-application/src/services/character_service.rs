@@ -16,6 +16,7 @@ use crate::services::agent_workspace_lifecycle_service::{
     AgentChatWorkspaceTarget, AgentWorkspaceLifecycleService,
 };
 use crate::services::chat_history_coordinator::ChatHistoryCoordinator;
+use crate::services::hashing::hex_lower;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -966,7 +967,7 @@ impl CharacterService {
             })?);
         }
 
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(hex_lower(&hasher.finalize()))
     }
 
     async fn resolve_lorebook_conflict_with_current_world(

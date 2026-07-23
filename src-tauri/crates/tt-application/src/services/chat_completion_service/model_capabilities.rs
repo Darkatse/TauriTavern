@@ -11,8 +11,8 @@ pub(super) enum RequestedReasoningEffort {
     Low,
     Medium,
     High,
-    Max,
     XHigh,
+    Max,
 }
 
 impl RequestedReasoningEffort {
@@ -24,8 +24,8 @@ impl RequestedReasoningEffort {
             "low" => Some(Self::Low),
             "medium" => Some(Self::Medium),
             "high" => Some(Self::High),
-            "max" | "maximum" => Some(Self::Max),
             "xhigh" => Some(Self::XHigh),
+            "max" | "maximum" => Some(Self::Max),
             _ => None,
         }
     }
@@ -79,8 +79,8 @@ pub(super) fn map_openrouter_reasoning_effort(
         RequestedReasoningEffort::Low => Ok(Some("low")),
         RequestedReasoningEffort::Medium => Ok(Some("medium")),
         RequestedReasoningEffort::High => Ok(Some("high")),
-        RequestedReasoningEffort::Max => Ok(Some("high")),
-        RequestedReasoningEffort::XHigh => Ok(Some("xhigh")),
+        RequestedReasoningEffort::XHigh => Ok(Some("high")),
+        RequestedReasoningEffort::Max => Ok(Some("xhigh")),
     }
 }
 
@@ -103,8 +103,8 @@ pub(super) fn map_zai_reasoning_effort(
         RequestedReasoningEffort::Low => Ok(Some("low")),
         RequestedReasoningEffort::Medium => Ok(Some("medium")),
         RequestedReasoningEffort::High => Ok(Some("high")),
-        RequestedReasoningEffort::Max => Ok(Some("max")),
-        RequestedReasoningEffort::XHigh => Ok(Some("xhigh")),
+        RequestedReasoningEffort::XHigh => Ok(Some("max")),
+        RequestedReasoningEffort::Max => Ok(Some("xhigh")),
     }
 }
 
@@ -306,9 +306,9 @@ mod tests {
             ("low", Some(RequestedReasoningEffort::Low)),
             ("medium", Some(RequestedReasoningEffort::Medium)),
             ("high", Some(RequestedReasoningEffort::High)),
+            ("xhigh", Some(RequestedReasoningEffort::XHigh)),
             ("max", Some(RequestedReasoningEffort::Max)),
             ("maximum", Some(RequestedReasoningEffort::Max)),
-            ("xhigh", Some(RequestedReasoningEffort::XHigh)),
             ("turbo", None),
         ] {
             assert_eq!(RequestedReasoningEffort::parse(input), expected);
@@ -335,9 +335,9 @@ mod tests {
             ("low", Some("low")),
             ("medium", Some("medium")),
             ("high", Some("high")),
-            ("max", Some("high")),
-            ("maximum", Some("high")),
-            ("xhigh", Some("xhigh")),
+            ("xhigh", Some("high")),
+            ("max", Some("xhigh")),
+            ("maximum", Some("xhigh")),
         ] {
             assert_eq!(
                 map_openrouter_reasoning_effort(input).expect("known effort must map"),
@@ -376,9 +376,9 @@ mod tests {
             ("low", Some("low")),
             ("medium", Some("medium")),
             ("high", Some("high")),
-            ("max", Some("max")),
-            ("maximum", Some("max")),
-            ("xhigh", Some("xhigh")),
+            ("xhigh", Some("max")),
+            ("max", Some("xhigh")),
+            ("maximum", Some("xhigh")),
         ] {
             assert_eq!(
                 map_zai_reasoning_effort("glm-5.2", input).expect("known effort must map"),

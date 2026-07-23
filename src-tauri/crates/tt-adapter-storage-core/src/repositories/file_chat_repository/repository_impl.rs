@@ -17,9 +17,8 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
 use tt_ports::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatMessageSearchHit, ChatMessageSearchQuery,
-    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
-    ChatPayloadWindowPatchRequest, ChatRepository, ChatSearchResult, FindLastMessageQuery,
-    LocatedChatMessage, PinnedCharacterChat,
+    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatRepository,
+    ChatSearchResult, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat,
 };
 
 use super::FileChatRepository;
@@ -164,7 +163,7 @@ impl ChatRepository for FileChatRepository {
         let path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
-        let _write_guard = self.acquire_payload_write_lock(&path).await;
+        let _write_guard = self.acquire_payload_mutation_lock(&path).await;
 
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
@@ -212,7 +211,7 @@ impl ChatRepository for FileChatRepository {
             .resolve_character_chat_path(character_name, new_file_name)
             .await?;
         let (_old_payload_guard, _new_payload_guard) = self
-            .acquire_payload_rename_locks(&old_path, &new_path)
+            .acquire_payload_rename_mutation_locks(&old_path, &new_path)
             .await;
 
         if !old_path.exists() {
@@ -471,7 +470,7 @@ impl ChatRepository for FileChatRepository {
         let chat_path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
-        let _write_guard = self.acquire_payload_write_lock(&chat_path).await;
+        let _write_guard = self.acquire_payload_snapshot_lock(&chat_path).await;
         if !chat_path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Chat not found: {}/{}",
@@ -491,7 +490,7 @@ impl ChatRepository for FileChatRepository {
         let chat_path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
-        let Some(_write_guard) = self.try_acquire_payload_write_lock(&chat_path).await else {
+        let Some(_write_guard) = self.try_acquire_payload_snapshot_lock(&chat_path).await else {
             return Err(DomainError::transient(format!(
                 "Chat current is busy: {}",
                 chat_path.display()
@@ -530,18 +529,29 @@ impl ChatRepository for FileChatRepository {
         Ok(results)
     }
 
-    async fn get_chat_backup_bytes(&self, backup_file_name: &str) -> Result<Vec<u8>, DomainError> {
-        self.ensure_directory_exists().await?;
+    async fn materialize_chat_backup(
+        &self,
+        backup_file_name: &str,
+    ) -> Result<std::path::PathBuf, DomainError> {
+        self.materialize_chat_backup_file(backup_file_name).await
+    }
 
-        let path = self.resolve_existing_backup_path(backup_file_name)?;
-        if !path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Chat backup not found: {}",
-                backup_file_name
-            )));
-        }
+    async fn discard_chat_backup_materialization(&self, path: &Path) -> Result<(), DomainError> {
+        self.discard_chat_backup_materialization_file(path).await
+    }
 
-        self.read_payload_bytes_from_path(&path).await
+    async fn restore_character_chat_backup(
+        &self,
+        backup_file_name: &str,
+        character_name: &str,
+        character_display_name: &str,
+    ) -> Result<Vec<String>, DomainError> {
+        self.restore_character_chat_backup_file(
+            backup_file_name,
+            character_name,
+            character_display_name,
+        )
+        .await
     }
 
     async fn delete_chat_backup(&self, backup_file_name: &str) -> Result<(), DomainError> {
@@ -615,36 +625,6 @@ impl ChatRepository for FileChatRepository {
     ) -> Result<ChatPayloadChunk, DomainError> {
         self.get_character_payload_before_lines(character_name, file_name, cursor, max_lines)
             .await
-    }
-
-    async fn patch_chat_payload_windowed(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        request: ChatPayloadWindowPatchRequest,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.patch_character_payload_windowed(character_name, file_name, request)
-            .await
-    }
-
-    async fn hide_chat_payload_before_cursor(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        cursor: ChatPayloadCursor,
-        hide: bool,
-        name_filter: Option<String>,
-        expected_window_line_count: usize,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.hide_character_payload_before_cursor(
-            character_name,
-            file_name,
-            cursor,
-            hide,
-            name_filter,
-            expected_window_line_count,
-        )
-        .await
     }
 
     async fn import_chat_payload(
@@ -873,6 +853,7 @@ impl ChatRepository for FileChatRepository {
             let mut cache = self.memory_cache.lock().await;
             cache.clear();
         }
+        self.invalidate_content_provenance().await;
         self.clear_summary_cache().await;
         Ok(())
     }

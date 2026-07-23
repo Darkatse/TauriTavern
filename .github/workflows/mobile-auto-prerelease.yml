@@ -156,11 +156,11 @@ jobs:
           - name: android
             platform: ubuntu-latest
             mobile: android
-            args: --verbose --apk
+            args: --verbose --apk --split-per-abi --target aarch64 armv7
           - name: ios
             platform: macos-latest
             mobile: ios
-            args: --verbose --debug
+            args: --verbose
 
     runs-on: ${{ matrix.platform }}
     name: build-${{ matrix.name }}
@@ -191,7 +191,7 @@ jobs:
         if: matrix.mobile == 'android'
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi
 
       - name: Install Rust toolchain (iOS target)
         if: matrix.mobile == 'ios'
@@ -224,9 +224,6 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build frontend assets
-        run: pnpm run web:build
-
       - name: Setup Android signing
         if: matrix.mobile == 'android'
         shell: bash
@@ -254,7 +251,7 @@ jobs:
           echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
 
       - name: Build and upload mobile pre-release
-        uses: tauri-apps/tauri-action@97cef2bd32ead607bcc2c6af5b40ce2f25d48e77
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NDK_HOME: ${{ matrix.mobile == 'android' && steps.setup-ndk.outputs.ndk-path || '' }}

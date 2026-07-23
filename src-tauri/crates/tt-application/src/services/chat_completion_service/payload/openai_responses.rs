@@ -90,7 +90,7 @@ fn build_openai_responses_payload(
     {
         request.insert(
             "reasoning".to_string(),
-            json!({ "effort": reasoning_effort.as_ref() }),
+            json!({ "effort": reasoning_effort }),
         );
     }
 
@@ -100,10 +100,7 @@ fn build_openai_responses_payload(
         .map(str::trim)
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("auto"))
     {
-        request.insert(
-            "verbosity".to_string(),
-            Value::String(verbosity.to_string()),
-        );
+        request.insert("text".to_string(), json!({ "verbosity": verbosity }));
     }
 
     if let Some(tools) = payload.get("tools").and_then(Value::as_array)
@@ -1040,64 +1037,56 @@ mod tests {
     }
 
     #[test]
-    fn openai_responses_payload_normalizes_xhigh_reasoning_effort() {
-        let supported = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5.1-codex-max",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "reasoning_effort": "xhigh"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-        let (_endpoint, upstream) = build(supported).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .pointer("/reasoning/effort")
-                .and_then(Value::as_str),
-            Some("xhigh")
-        );
-
-        let unsupported = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5.1",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "reasoning_effort": "xhigh"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-        let (_endpoint, upstream) = build(unsupported).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .pointer("/reasoning/effort")
-                .and_then(Value::as_str),
-            Some("high")
-        );
+    fn openai_responses_payload_orders_pre56_extremes() {
+        for (requested, expected) in [("xhigh", "high"), ("max", "xhigh")] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": "openai_responses",
+                "model": "gpt-5.2",
+                "messages": [{ "role": "user", "content": "hi" }],
+                "reasoning_effort": requested
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+            let (_endpoint, upstream) = build(payload).expect("build should succeed");
+            assert_eq!(
+                upstream
+                    .pointer("/reasoning/effort")
+                    .and_then(Value::as_str),
+                Some(expected)
+            );
+        }
     }
 
     #[test]
-    fn openai_responses_payload_maps_project_maximum_to_openai_high() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5.2",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "reasoning_effort": "max"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
+    fn openai_responses_payload_uses_gpt56_extremes_and_text_verbosity() {
+        for (requested, expected) in [("min", "none"), ("xhigh", "xhigh"), ("max", "max")] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": "openai_responses",
+                "model": "gpt-5.6-terra",
+                "messages": [{ "role": "user", "content": "hi" }],
+                "reasoning_effort": requested,
+                "verbosity": "high"
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
 
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .pointer("/reasoning/effort")
-                .and_then(Value::as_str),
-            Some("high")
-        );
+            let (_endpoint, upstream) = build(payload).expect("build should succeed");
+            assert_eq!(
+                upstream
+                    .pointer("/reasoning/effort")
+                    .and_then(Value::as_str),
+                Some(expected)
+            );
+            assert_eq!(
+                upstream.pointer("/text/verbosity").and_then(Value::as_str),
+                Some("high")
+            );
+            assert!(upstream.get("verbosity").is_none());
+        }
     }
 
     #[test]

@@ -12,7 +12,7 @@ async function importFresh(modulePath) {
     return import(url);
 }
 
-test('managed iframe parking-lot keeps browsing contexts alive in a hidden container', async () => {
+test('managed iframe parking-lot keeps iframe elements attached in a hidden container', async () => {
     const dom = installFakeDom();
     try {
         const lotMod = await importFresh(
@@ -97,4 +97,3 @@ test('managed iframe parking-lot dropParkedManagedIframe hard-evicts an entry', 
         dom.cleanup();
     }
 });
-

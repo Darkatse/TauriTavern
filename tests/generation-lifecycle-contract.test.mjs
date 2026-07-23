@@ -48,8 +48,9 @@ test('stable chat-history reasons cover provider, final, transport, and agent co
     assert.match(groups, /saveGroupChat\(groupId, false, false, CHAT_COMMIT_REASON\.MAINTENANCE\)/);
     assert.match(transport, /MAINTENANCE: 'maintenance'/);
 
-    assert.match(transport, /commit_reason: commitReason/g);
-    assert.equal(transport.match(/commit_reason: commitReason/g)?.length, 2);
+    assert.match(script, /commit_reason:\s*commitReason/);
+    assert.match(groups, /commit_reason:\s*commitReason/);
+    assert.equal(transport.match(/commit_reason: commitReason/g)?.length ?? 0, 0);
     assert.match(commit, /const normalizedCommitReason = commitReason \?\? 'mutation';/);
     assert.match(commit, /invoke\('finish_chat_commit', \{\s*sessionId,\s*expectedSize: offset,\s*commitReason: normalizedCommitReason,/s);
     assert.equal(routes.match(/commitReason: body\?\.commit_reason/g)?.length, 2);

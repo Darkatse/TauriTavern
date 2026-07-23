@@ -356,12 +356,13 @@ pub(super) fn normalize_openai_responses_response(
                         continue;
                     };
 
-                    if part_object.get("type").and_then(Value::as_str) != Some("output_text") {
-                        continue;
-                    }
+                    let text = match part_object.get("type").and_then(Value::as_str) {
+                        Some("output_text") => part_object.get("text"),
+                        Some("refusal") => part_object.get("refusal"),
+                        _ => None,
+                    };
 
-                    if let Some(text) = part_object
-                        .get("text")
+                    if let Some(text) = text
                         .and_then(Value::as_str)
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
@@ -1147,6 +1148,30 @@ mod tests {
                 .and_then(|item| item.get("call_id"))
                 .and_then(Value::as_str),
             Some("call_weather")
+        );
+    }
+
+    #[test]
+    fn normalize_openai_responses_preserves_refusal_text() {
+        let response = json!({
+            "id": "resp_1",
+            "model": "gpt-5.6",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{
+                    "type": "refusal",
+                    "refusal": "Cannot comply."
+                }]
+            }]
+        });
+
+        let normalized = normalize_openai_responses_response(response).body;
+        assert_eq!(
+            normalized
+                .pointer("/choices/0/message/content")
+                .and_then(Value::as_str),
+            Some("Cannot comply.")
         );
     }
 

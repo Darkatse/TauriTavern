@@ -16,7 +16,7 @@ Host Resource Service 提供：
 - `/user/images/*`
 - `/user/files/*`
 
-上游前端和第三方扩展可以继续把这些路径当作普通浏览器子资源 URL 使用。P1 不改变 URL 形态、查询参数意义或角色数据事件语义。
+上游前端和第三方扩展可以继续把这些路径当作普通浏览器子资源 URL 使用。Host Resource Service 不改变 URL 形态、查询参数意义或角色数据事件语义。
 
 ## 2. 架构模型
 
@@ -29,7 +29,7 @@ Representation 浏览器实际观察到的 bytes + metadata
 Delivery       当前 Tauri/Wry/IPC 入口能承载的响应形式
 ```
 
-缓存职责也按层分离：filesystem 是资源事实，Rust thumbnail cache 是由 source revision 与 recipe 标识的派生产物，P1 是 WebView 可见表示的唯一 freshness validator，WebView cache 只做机会性存储。mutation 不维护第二套 revision registry，也不依赖 WebView 是否真的保存 synthetic response 才能保证正确性。
+缓存职责也按层分离：filesystem 是资源事实，Rust thumbnail cache 是由 source revision 与 recipe 标识的派生产物，Host Resource Service 是 WebView 可见表示的新鲜度权威，WebView cache 只做机会性存储。mutation 不维护第二套 revision registry，也不依赖 WebView 是否真的保存 synthetic response 才能保证正确性。
 
 `tt-ports::HostResourceAssetStore::open` 一次完成选源和打开文件，返回：
 
@@ -145,7 +145,7 @@ presentation 在路由前精确校验 scheme 和完整 authority；relative URI�
 
 开发态 `tt-ext` 是独立注册的 trusted scheme。Production `tauri` protocol 与 dev `tt-ext` 都由 Wry 交付，因此共享同一个 delivery capability。直接 `fetch(tt-ext)` 时保留 `Request.cache` 和 `Range`；所有入口都保留 Host Resource 使用的 `Range`、`If-Range`、`If-None-Match`、`If-Modified-Since` 请求语义。`tt-ext` 对跨源 fetch 显式暴露响应头，避免 ETag、Range metadata 和 trace header 被 CORS 过滤。
 
-跨源 custom scheme fetch 无法可靠承载会触发 CORS preflight 的条件头，因此 `If-Range`、`If-None-Match`、`If-Modified-Since` 请求直接走 IPC；无条件请求和单一 `Range` 继续走 `tt-ext` Wry。WebKit 的 Service Worker 上下文无法直接 fetch custom scheme 时，client bridge 改由 window 上下文 fetch 同一个 `tt-ext` endpoint，并用 transferable `ArrayBuffer` 回传正文；普通二进制资源不得降级为 serde JSON IPC。条件请求 IPC 通过通用 header wire 调用同一个 Host Resource Service，在非 Android 原样代理调用方显式条件请求的 304，在 Android 按 release 的平台约束返回完整 200；IPC 不启用仅属于 Wry Android 的二次 Range workaround。204/205/304 在 JavaScript `Response` 中统一使用 null body。P1 不引入 Service Worker Cache API，也不声称 IPC 会自行生成浏览器缓存 validator；dev/release 共享的是资源表示与条件请求契约，自动缓存存储仍由各自 transport 负责。
+跨源 custom scheme fetch 无法可靠承载会触发 CORS preflight 的条件头，因此 `If-Range`、`If-None-Match`、`If-Modified-Since` 请求直接走 IPC；无条件请求和单一 `Range` 继续走 `tt-ext` Wry。WebKit 的 Service Worker 上下文无法直接 fetch custom scheme 时，client bridge 改由 window 上下文 fetch 同一个 `tt-ext` endpoint，并用 transferable `ArrayBuffer` 回传正文；普通二进制资源不得降级为 serde JSON IPC。条件请求 IPC 通过通用 header wire 调用同一个 Host Resource Service，在非 Android 原样代理调用方显式条件请求的 304，在 Android 按 release 的平台约束返回完整 200；IPC 不启用仅属于 Wry Android 的二次 Range workaround。204/205/304 在 JavaScript `Response` 中统一使用 null body。当前契约不引入 Service Worker Cache API，也不声称 IPC 会自行生成浏览器缓存 validator；dev/release 共享的是资源表示与条件请求契约，自动缓存存储仍由各自 transport 负责。
 
 ## 8. 持续开发约束
 
@@ -153,7 +153,7 @@ presentation 在路由前精确校验 scheme 和完整 authority；relative URI�
 - 不在 presentation 或 route handler 手写字符串 status/header DTO；
 - 新派生表示必须把变换 variant 纳入 ETag，且不能伪造未知 Content-Length；
 - thumbnail recipe 或单文件缓存格式发生任何可观察变化时必须升级 generator schema；JPEG COM identity 与 generated Host revision 必须继续使用同一身份；
-- data-root-backed mutable Host Resource 长期保持稳定 URL + `private, no-cache`；P1 是 WebView 可见表示的唯一 freshness validator，不是 immutable 前的临时 fallback；
+- data-root-backed mutable Host Resource 长期保持稳定 URL + `private, no-cache`；Host Resource Service 是 WebView 可见表示的新鲜度权威，这不是采用 immutable 前的临时 fallback；
 - 不为 mutable Host Resource 建 mutation revision registry 或 `immutable` URL。data root 允许外部/symlink writer；fresh immutable hit 会绕过 Host Resource，令外部变化无法被发现；
 - 第一方普通 browser resource 不得通过 Tauri asset protocol、base64 read command 或 server-thumbnail Blob cache 绕过本服务；
 - mutation 只建立文件事实，既不维护/删除 Rust derived cache，也不预热 WebView cache；随后只负责触发稳定 URL 的真实 consumer demand，刷新不是 commit 的组成部分，也不得用随机 query 伪造 revision；

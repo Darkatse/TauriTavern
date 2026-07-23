@@ -55,6 +55,12 @@ pub struct ChatSearchResult {
     pub chat_metadata: Option<Value>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChatBackupStorageStats {
+    pub original_bytes: u64,
+    pub stored_bytes: u64,
+}
+
 /// Pinned character chat reference used by recent-chat queries.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct PinnedCharacterChat {
@@ -68,7 +74,7 @@ pub struct PinnedGroupChat {
     pub chat_id: String,
 }
 
-/// Cursor for windowed JSONL chat payload operations.
+/// Cursor for paged JSONL chat payload reads.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatPayloadCursor {
@@ -77,7 +83,7 @@ pub struct ChatPayloadCursor {
     pub modified_millis: i64,
 }
 
-/// Tail window for a chat JSONL payload.
+/// Tail page for a chat JSONL payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatPayloadTail {
@@ -87,40 +93,13 @@ pub struct ChatPayloadTail {
     pub has_more_before: bool,
 }
 
-/// Window chunk returned for pagination requests.
+/// Chunk returned for pagination requests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatPayloadChunk {
     pub lines: Vec<String>,
     pub cursor: ChatPayloadCursor,
     pub has_more_before: bool,
-}
-
-/// Operation-based patch for windowed JSONL payload writes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
-pub enum ChatPayloadPatchOp {
-    /// Append message lines at the end of the payload (excluding the header line).
-    Append { lines: Vec<String> },
-    /// Rewrite the payload tail starting at `start_index` (0-based, relative to cursor.offset),
-    /// replacing everything from that line through EOF with `lines`.
-    RewriteFromIndex {
-        #[serde(rename = "startIndex")]
-        start_index: usize,
-        lines: Vec<String>,
-    },
-}
-
-/// Atomic compare-and-swap request for patching a windowed chat payload.
-#[derive(Debug)]
-pub struct ChatPayloadWindowPatchRequest {
-    pub cursor: ChatPayloadCursor,
-    pub header: String,
-    pub op: ChatPayloadPatchOp,
-    pub expected_window_line_count: usize,
-    /// Only bypasses header integrity validation.
-    /// Payload existence, cursor signature, and window baseline remain mandatory.
-    pub force: bool,
 }
 
 /// Chat message role used for locate queries.

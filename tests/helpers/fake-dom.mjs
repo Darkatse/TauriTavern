@@ -31,6 +31,7 @@ export function installFakeDom(options = {}) {
 
     const createdMutationObservers = [];
     const createdIntersectionObservers = [];
+    const createdResizeObservers = [];
 
     class FakeNode {
         /** @type {FakeNode | null} */
@@ -47,6 +48,32 @@ export function installFakeDom(options = {}) {
             }
             node.parentNode = this;
             this.childNodes.push(node);
+            if (this._connected) {
+                node._setConnected(true);
+            }
+            return node;
+        }
+
+        /** @param {FakeNode} node @param {FakeNode | null} reference */
+        insertBefore(node, reference) {
+            if (reference === null) {
+                return this.appendChild(node);
+            }
+            let index = this.childNodes.indexOf(reference);
+            if (index < 0) {
+                throw new Error('insertBefore reference is not a child');
+            }
+            if (node.parentNode) {
+                if (node.parentNode === this) {
+                    const currentIndex = this.childNodes.indexOf(node);
+                    if (currentIndex >= 0 && currentIndex < index) {
+                        index -= 1;
+                    }
+                }
+                node.parentNode.removeChild(node);
+            }
+            node.parentNode = this;
+            this.childNodes.splice(index, 0, node);
             if (this._connected) {
                 node._setConnected(true);
             }
@@ -403,6 +430,57 @@ export function installFakeDom(options = {}) {
         /** @type {number} */
         tabIndex = -1;
 
+        /** @type {number} */
+        offsetWidth = 0;
+
+        /** @type {number} */
+        offsetHeight = 0;
+
+        /** @type {number} */
+        clientWidth = 0;
+
+        /** @type {number} */
+        clientHeight = 0;
+
+        /** @type {number} */
+        scrollWidth = 0;
+
+        /** @type {number} */
+        scrollTop = 0;
+
+        /** @type {number} */
+        scrollLeft = 0;
+
+        /** @type {number | null} */
+        _scrollHeightOverride = null;
+
+        get ownerDocument() {
+            return globalThis.document ?? null;
+        }
+
+        get scrollHeight() {
+            if (this._scrollHeightOverride !== null) {
+                return this._scrollHeightOverride;
+            }
+            const gap = Number.parseFloat(String(this.style.rowGap || '0')) || 0;
+            const flowChildren = this.children.filter((child) => {
+                const position = String(child.style.position || 'static');
+                const display = String(child.style.display || 'block');
+                return position !== 'fixed' && position !== 'absolute' && display !== 'none';
+            });
+            return flowChildren.reduce((height, child, index) => {
+                const styledHeight = Number.parseFloat(String(child.style.height || ''));
+                const childHeight = Number.isFinite(styledHeight)
+                    ? styledHeight
+                    : child.getBoundingClientRect().height || child.offsetHeight || 0;
+                return height + childHeight + (index > 0 ? gap : 0);
+            }, 0);
+        }
+
+        set scrollHeight(value) {
+            this._scrollHeightOverride = Number(value);
+        }
+
         get className() {
             return [...this._classes.values()].join(' ');
         }
@@ -521,6 +599,15 @@ export function installFakeDom(options = {}) {
             return this._attrs.has(key) ? this._attrs.get(key) : null;
         }
 
+        getAttributeNames() {
+            return [...this._attrs.keys()];
+        }
+
+        /** @param {string} name */
+        hasAttribute(name) {
+            return this._attrs.has(String(name));
+        }
+
         /** @param {string} name */
         removeAttribute(name) {
             const key = String(name);
@@ -598,6 +685,15 @@ export function installFakeDom(options = {}) {
             return true;
         }
 
+        scrollTo(options = {}) {
+            const top = typeof options === 'number' ? options : Number(options.top ?? this.scrollTop);
+            const left = typeof options === 'number' ? this.scrollLeft : Number(options.left ?? this.scrollLeft);
+            const maxTop = Math.max(this.scrollHeight - this.clientHeight, 0);
+            this.scrollTop = Math.min(Math.max(Number.isFinite(top) ? top : 0, 0), maxTop);
+            this.scrollLeft = Number.isFinite(left) ? left : 0;
+            this.dispatchEvent({ type: 'scroll', target: this });
+        }
+
         set textContent(value) {
             this._textContent = value === null ? null : String(value);
         }
@@ -641,6 +737,20 @@ export function installFakeDom(options = {}) {
         /** @param {Partial<{ top: number; right: number; bottom: number; left: number; width: number; height: number }>} rect */
         _setRect(rect) {
             this._rect = { ...this._rect, ...rect };
+            if ((rect.top !== undefined || rect.height !== undefined) && rect.bottom === undefined) {
+                this._rect.bottom = this._rect.top + this._rect.height;
+            }
+            if ((rect.left !== undefined || rect.width !== undefined) && rect.right === undefined) {
+                this._rect.right = this._rect.left + this._rect.width;
+            }
+            if (rect.width !== undefined) {
+                this.offsetWidth = rect.width;
+                this.clientWidth ||= rect.width;
+            }
+            if (rect.height !== undefined) {
+                this.offsetHeight = rect.height;
+                this.clientHeight ||= rect.height;
+            }
         }
 
         /** @param {...FakeNode} nodes */
@@ -649,12 +759,13 @@ export function installFakeDom(options = {}) {
             if (!(parent instanceof FakeNode)) return;
             const idx = parent.childNodes.indexOf(this);
             if (idx < 0) return;
-            for (const node of nodes) {
+            for (let offset = 0; offset < nodes.length; offset += 1) {
+                const node = nodes[offset];
                 if (node.parentNode) {
                     node.parentNode.removeChild(node);
                 }
                 node.parentNode = parent;
-                parent.childNodes.splice(idx, 0, node);
+                parent.childNodes.splice(idx + offset, 0, node);
                 if (parent._connected) {
                     node._setConnected(true);
                 }
@@ -783,6 +894,10 @@ export function installFakeDom(options = {}) {
             return new HTMLElement(tag);
         }
 
+        createDocumentFragment() {
+            return new DocumentFragment();
+        }
+
         /** @param {string} id */
         getElementById(id) {
             const target = String(id);
@@ -851,13 +966,55 @@ export function installFakeDom(options = {}) {
         }
     }
 
+    class ResizeObserver {
+        /** @param {(entries: any[]) => void} callback */
+        constructor(callback) {
+            this._callback = callback;
+            this._targets = new Set();
+            createdResizeObservers.push(this);
+        }
+
+        observe(target) {
+            this._targets.add(target);
+        }
+
+        unobserve(target) {
+            this._targets.delete(target);
+        }
+
+        disconnect() {
+            this._targets.clear();
+        }
+
+        /** @param {any[]} entries */
+        _trigger(entries) {
+            this._callback(entries);
+        }
+    }
+
     const document = new Document();
     const window = {
         innerWidth,
         innerHeight,
         addEventListener() {},
         removeEventListener() {},
+        document,
+        ResizeObserver,
+        performance: { now: () => nowMs },
+        requestAnimationFrame: (fn) => {
+            rafs.push(fn);
+            return rafs.length;
+        },
+        cancelAnimationFrame: (id) => {
+            const index = Number(id) - 1;
+            if (index >= 0 && index < rafs.length) {
+                rafs[index] = null;
+            }
+        },
+        setTimeout: globalThis.setTimeout.bind(globalThis),
+        clearTimeout: globalThis.clearTimeout.bind(globalThis),
     };
+    document.defaultView = window;
 
     const localStorageMap = new Map();
     const localStorage = {
@@ -883,13 +1040,29 @@ export function installFakeDom(options = {}) {
     patchGlobal('HTMLPreElement', HTMLPreElement);
     patchGlobal('HTMLTemplateElement', HTMLTemplateElement);
     patchGlobal('HTMLIFrameElement', HTMLIFrameElement);
+    patchGlobal('DocumentFragment', DocumentFragment);
     patchGlobal('MutationObserver', MutationObserver);
     patchGlobal('IntersectionObserver', IntersectionObserver);
+    patchGlobal('ResizeObserver', ResizeObserver);
     patchGlobal('innerWidth', innerWidth);
     patchGlobal('innerHeight', innerHeight);
     patchGlobal('performance', { now: () => nowMs });
     patchGlobal('navigator', { userAgent, platform, maxTouchPoints });
     patchGlobal('localStorage', localStorage);
+    patchGlobal('getComputedStyle', (element) => ({
+        ...element.style,
+        paddingBlockStart: element.style.paddingBlockStart ?? element.style.paddingTop ?? '0px',
+        paddingBlockEnd: element.style.paddingBlockEnd ?? element.style.paddingBottom ?? '0px',
+        paddingTop: element.style.paddingTop ?? '0px',
+        paddingBottom: element.style.paddingBottom ?? '0px',
+        marginBlockStart: element.style.marginBlockStart ?? element.style.marginTop ?? '0px',
+        marginBlockEnd: element.style.marginBlockEnd ?? element.style.marginBottom ?? '0px',
+        marginTop: element.style.marginTop ?? '0px',
+        marginBottom: element.style.marginBottom ?? '0px',
+        rowGap: element.style.rowGap ?? '0px',
+        position: element.style.position ?? 'static',
+        display: element.style.display ?? 'block',
+    }));
 
     patchGlobal('queueMicrotask', (fn) => {
         microtasks.push(fn);
@@ -926,6 +1099,7 @@ export function installFakeDom(options = {}) {
         window,
         createdMutationObservers,
         createdIntersectionObservers,
+        createdResizeObservers,
         flushMicrotasks,
         flushRaf,
         setNowMs: (value) => {

@@ -543,7 +543,7 @@ async fn save_profile_with_preset_ref(
     profile.preset.mode = AgentPresetBindingMode::Ref;
     profile.preset.ref_ = Some(preset_ref(api_id, preset_name));
     profile.preset.required = true;
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     profile_service
         .save_profile(profile, registry.specs())
         .await

@@ -2,6 +2,18 @@ use serde_json::{Map, Value};
 
 use super::content_parts::openai_chat_content_to_lossy_text;
 
+pub(super) fn add_assistant_prefix(messages: &mut [Value], property: &str) {
+    let Some(last_message) = messages.last_mut().and_then(Value::as_object_mut) else {
+        return;
+    };
+
+    if last_message.get("role").and_then(Value::as_str) != Some("assistant") {
+        return;
+    }
+
+    last_message.insert(property.to_string(), Value::Bool(true));
+}
+
 pub(super) fn insert_if_present(dst: &mut Map<String, Value>, src: &Map<String, Value>, key: &str) {
     if let Some(value) = src.get(key).filter(|value| !value.is_null()) {
         dst.insert(key.to_string(), value.clone());

@@ -30,6 +30,7 @@ pub mod extension_store_service;
 pub mod external_import_service;
 pub mod group_chat_service;
 pub mod group_service;
+mod hashing;
 pub mod host_resource_service;
 pub mod image_metadata_service;
 pub mod lan_sync_service;

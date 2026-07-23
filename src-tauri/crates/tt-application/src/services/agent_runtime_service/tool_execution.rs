@@ -7,6 +7,7 @@ use super::commit_ledger::RunCommitLedger;
 use super::delegation::workspace_policy::InvocationWorkspaceRepository;
 use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
+use crate::services::hashing::hex_lower;
 
 use crate::services::agent_tools::{
     AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, AgentToolDispatchOutcome,
@@ -371,18 +372,8 @@ fn tool_call_audit_file_stem(call_id: &str) -> String {
     let digest = Sha256::digest(call_id.as_bytes());
     format!(
         "call_{}",
-        hex_encode(&digest[..TOOL_CALL_AUDIT_DIGEST_BYTES])
+        hex_lower(&digest[..TOOL_CALL_AUDIT_DIGEST_BYTES])
     )
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
 }
 
 fn tool_is_visible(

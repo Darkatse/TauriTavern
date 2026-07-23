@@ -563,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn git_blocking_builder_uses_normal_certificate_validation() {
+    fn git_blocking_builder_validates_server_certificates() {
         let (config, root) = test_tls_config();
 
         let (untrusted_url, untrusted_request, untrusted_handle) = tls_server(Arc::clone(&config));
@@ -579,7 +579,7 @@ mod tests {
         let (trusted_url, trusted_request, trusted_handle) = tls_server(config);
         let client = pool()
             .git_blocking_client_builder()
-            .add_root_certificate(root)
+            .tls_certs_only([root])
             .build()
             .unwrap();
         assert!(

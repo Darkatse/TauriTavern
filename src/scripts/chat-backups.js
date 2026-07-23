@@ -1,8 +1,9 @@
 import { t } from './i18n.js';
 import { callGenericPopup, Popup, POPUP_TYPE } from './popup.js';
-import { getFileExtension, sortMoments, timestampToMoment } from './utils.js';
+import { sortMoments, timestampToMoment } from './utils.js';
 import { displayPastChats, getRequestHeaders, importCharacterChat } from '/script.js';
 import { importGroupChat } from './group-chats.js';
+import { visitJsonlStream } from './tauri/chat/jsonl.js';
 
 class BackupsBrowser {
     /** @type {HTMLElement} */
@@ -39,24 +40,16 @@ class BackupsBrowser {
         }
 
         try {
-            /** @type {ChatMessage[]} */
-            const parsedLines = [];
-            const fileText = await response.text();
-            fileText.split('\n').forEach(line => {
-                try {
-                    /** @type {ChatMessage} */
-                    const lineData = JSON.parse(line);
-                    if (lineData?.mes) {
-                        parsedLines.push(lineData);
-                    }
-                } catch (error) {
-                    console.error('Failed to parse chat backup line:', error);
+            const formattedMessages = [];
+            await visitJsonlStream(response.body, (lineData) => {
+                if (lineData?.mes) {
+                    formattedMessages.push(`${lineData.name} [${timestampToMoment(lineData.send_date).format('lll')}]\n${lineData.mes}`);
                 }
             });
             const textArea = document.createElement('textarea');
             textArea.classList.add('text_pole', 'monospace', 'textarea_compact', 'margin0', 'height100p');
             textArea.readOnly = true;
-            textArea.value = parsedLines.map(l => `${l.name} [${timestampToMoment(l.send_date).format('lll')}]\n${l.mes}`).join('\n\n\n');
+            textArea.value = formattedMessages.join('\n\n\n');
             await callGenericPopup(textArea, POPUP_TYPE.TEXT, '', { allowVerticalScrolling: true, large: true, wide: true });
         } catch (error) {
             console.error('Failed to parse chat backup content:', error);
@@ -71,33 +64,11 @@ class BackupsBrowser {
      * @returns {Promise<void>}
      */
     async restoreBackup(name) {
-        const response = await fetch('/api/backups/chat/download', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ name: name }),
-        });
-
-        if (!response.ok) {
-            toastr.error(t`Failed to download backup, try again later.`);
-            console.error('Failed to download chat backup:', response.statusText);
-            return;
-        }
-
-        const blob = await response.blob();
-        const file = new File([blob], name, { type: 'application/octet-stream' });
-
-        const extension = getFileExtension(file);
-
-        if (extension !== 'jsonl') {
-            toastr.warning(t`Only .jsonl files are supported for chat imports.`);
-            return;
-        }
-
         const context = SillyTavern.getContext();
 
         const formData = new FormData();
-        formData.set('file_type', extension);
-        formData.set('avatar', file);
+        formData.set('backup_name', name);
+        formData.set('file_type', 'jsonl');
         formData.set('avatar_url', context.characters[context.characterId]?.avatar || '');
         formData.set('user_name', context.name1);
         formData.set('character_name', context.name2);

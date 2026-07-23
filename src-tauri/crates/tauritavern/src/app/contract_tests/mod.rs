@@ -268,7 +268,7 @@ fn default_agent_responses() -> Vec<Value> {
 async fn resolve_contract_profile(
     fixture: &AgentRuntimeFixture,
 ) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     fixture
         .profile_service
         .resolve_profile(AgentProfileResolveInput {

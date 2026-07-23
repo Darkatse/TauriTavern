@@ -166,6 +166,7 @@ const coreConfig = {
     filename: '[name].bundle.js',
     path: path.resolve(__dirname, 'src/dist'),
     module: true,
+    clean: true,
     library: {
       type: 'module'
     }

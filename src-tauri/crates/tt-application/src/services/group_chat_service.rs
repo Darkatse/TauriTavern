@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::dto::chat_dto::{
     ChatSearchResultDto, DeleteGroupChatDto, ImportGroupChatDto, RenameGroupChatDto,
+    RestoreGroupChatBackupDto,
 };
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
 use crate::errors::ApplicationError;
@@ -14,8 +15,7 @@ use crate::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
-    ChatPayloadTail, ChatPayloadWindowPatchRequest, FindLastMessageQuery, LocatedChatMessage,
-    PinnedGroupChat,
+    ChatPayloadTail, FindLastMessageQuery, LocatedChatMessage, PinnedGroupChat,
 };
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 
@@ -298,49 +298,6 @@ impl GroupChatService {
         Ok(pages)
     }
 
-    /// Patch a windowed group chat payload.
-    pub async fn patch_group_chat_payload_windowed(
-        &self,
-        chat_id: &str,
-        request: ChatPayloadWindowPatchRequest,
-        commit_reason: CurrentCommitReason,
-    ) -> Result<ChatPayloadCursor, ApplicationError> {
-        validate_chat_file_name(chat_id, "Group chat id")?;
-
-        let cursor = self
-            .group_chat_repository
-            .patch_group_chat_payload_windowed(chat_id, request)
-            .await?;
-        self.note_current_committed(chat_id, commit_reason).await;
-        Ok(cursor)
-    }
-
-    /// Set the hidden flag on all messages stored before the window cursor.
-    pub async fn hide_group_chat_payload_before_cursor(
-        &self,
-        chat_id: &str,
-        cursor: ChatPayloadCursor,
-        hide: bool,
-        name_filter: Option<String>,
-        expected_window_line_count: usize,
-    ) -> Result<ChatPayloadCursor, ApplicationError> {
-        validate_chat_file_name(chat_id, "Group chat id")?;
-
-        let cursor = self
-            .group_chat_repository
-            .hide_group_chat_payload_before_cursor(
-                chat_id,
-                cursor,
-                hide,
-                name_filter,
-                expected_window_line_count,
-            )
-            .await?;
-        self.note_current_committed(chat_id, CurrentCommitReason::Mutation)
-            .await;
-        Ok(cursor)
-    }
-
     /// Delete a group chat payload file.
     pub async fn delete_group_chat(&self, dto: DeleteGroupChatDto) -> Result<(), ApplicationError> {
         validate_chat_file_name(&dto.id, "Group chat id")?;
@@ -390,6 +347,23 @@ impl GroupChatService {
     ) -> Result<String, ApplicationError> {
         self.group_chat_repository
             .import_group_chat_payload(Path::new(&dto.file_path))
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Restore a group chat directly from a history backup.
+    pub async fn restore_group_chat_backup(
+        &self,
+        dto: RestoreGroupChatBackupDto,
+    ) -> Result<String, ApplicationError> {
+        if dto.backup_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Backup file name cannot be empty".to_string(),
+            ));
+        }
+
+        self.group_chat_repository
+            .restore_group_chat_backup(&dto.backup_name)
             .await
             .map_err(Into::into)
     }

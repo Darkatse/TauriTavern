@@ -568,6 +568,9 @@ impl CharacterRepository for FileCharacterRepository {
                     DomainError::InternalError(format!("Failed to delete chat directory: {}", e))
                 })?;
             }
+            self.chat_repository
+                .invalidate_all_payload_signatures()
+                .await;
             self.chat_repository.clear_chat_summary_index().await?;
         }
 
@@ -716,6 +719,9 @@ impl CharacterRepository for FileCharacterRepository {
                     tracing::error!("Failed to rename chat directory: {}", e);
                     DomainError::InternalError(format!("Failed to rename chat directory: {}", e))
                 })?;
+            self.chat_repository
+                .invalidate_all_payload_signatures()
+                .await;
             self.chat_repository.clear_chat_summary_index().await?;
         }
 

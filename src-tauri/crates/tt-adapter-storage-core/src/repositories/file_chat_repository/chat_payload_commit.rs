@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -12,18 +13,51 @@ use tt_ports::repositories::chat_payload_commit_repository::{
 };
 use uuid::Uuid;
 
-use super::FileChatRepository;
 use super::integrity::verify_integrity_match;
+use super::{ContentSignature, FileChatRepository};
 
 const MOBILE_MAX_FRAME_BYTES: u64 = 1024 * 1024;
 const DESKTOP_MAX_FRAME_BYTES: u64 = 4 * 1024 * 1024;
 pub(super) const MAX_ACTIVE_CHAT_COMMIT_SESSIONS: usize = 8;
+
+// Keep digest semantics deterministic in unit tests; production only hashes on hardware backends.
+#[cfg(test)]
+fn new_content_hasher() -> Option<Sha256> {
+    Some(Sha256::new())
+}
+
+#[cfg(all(not(test), target_arch = "aarch64", not(target_os = "windows")))]
+fn new_content_hasher() -> Option<Sha256> {
+    std::arch::is_aarch64_feature_detected!("sha2").then(Sha256::new)
+}
+
+#[cfg(all(not(test), any(target_arch = "x86", target_arch = "x86_64")))]
+fn new_content_hasher() -> Option<Sha256> {
+    (std::arch::is_x86_feature_detected!("sha")
+        && std::arch::is_x86_feature_detected!("sse2")
+        && std::arch::is_x86_feature_detected!("ssse3")
+        && std::arch::is_x86_feature_detected!("sse4.1"))
+    .then(Sha256::new)
+}
+
+#[cfg(all(
+    not(test),
+    not(any(
+        all(target_arch = "aarch64", not(target_os = "windows")),
+        target_arch = "x86",
+        target_arch = "x86_64"
+    ))
+))]
+fn new_content_hasher() -> Option<Sha256> {
+    None
+}
 
 pub(super) struct CommitSession {
     target: ChatPayloadTarget,
     target_path: PathBuf,
     stage_path: PathBuf,
     file: Option<fs::File>,
+    content_hasher: Option<(u64, Sha256)>,
     accepted_offset: u64,
     force: bool,
 }
@@ -142,11 +176,24 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                 ))
             })?;
         let max_frame_bytes = Self::chat_commit_max_frame_bytes();
+        let should_hash = self
+            .backup_policy
+            .try_read()
+            .is_ok_and(|policy| policy.automatic_enabled && !policy.history_disabled());
+        let content_hasher = if should_hash {
+            match new_content_hasher() {
+                Some(hasher) => Some((self.current_content_signature_epoch().await, hasher)),
+                None => None,
+            }
+        } else {
+            None
+        };
         let session = Arc::new(Mutex::new(CommitSession {
             target,
             target_path,
             stage_path: stage_path.clone(),
             file: Some(file),
+            content_hasher,
             accepted_offset: 0,
             force,
         }));
@@ -216,6 +263,9 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                 "Failed to append chat commit session {session_id}: {error}"
             ))
         })?;
+        if let Some((_, content_hasher)) = session.content_hasher.as_mut() {
+            content_hasher.update(bytes);
+        }
         session.accepted_offset += bytes.len() as u64;
         Ok(session.accepted_offset)
     }
@@ -239,6 +289,7 @@ impl ChatPayloadCommitRepository for FileChatRepository {
         let target_path = session.target_path.clone();
         let stage_path = session.stage_path.clone();
         let accepted_offset = session.accepted_offset;
+        let content_hasher = session.content_hasher.take();
         let force = session.force;
         let mut file = session
             .file
@@ -269,6 +320,15 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                     "Chat commit size mismatch: expected {expected_size}, accepted {accepted_offset}, staged {actual_size}"
                 )));
             }
+            let content_signature = content_hasher.map(|(epoch, content_hasher)| {
+                (
+                    epoch,
+                    ContentSignature {
+                        byte_len: accepted_offset,
+                        sha256: content_hasher.finalize().into(),
+                    },
+                )
+            });
 
             let incoming_integrity =
                 Self::read_incoming_integrity_from_file(&stage_path).await?;
@@ -280,7 +340,7 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                 ChatPayloadTarget::Group { .. } => None,
             };
 
-            let _write_guard = self.acquire_payload_write_lock(&target_path).await;
+            let _write_guard = self.acquire_payload_mutation_lock(&target_path).await;
             if !force {
                 let existing_integrity = self
                     .read_integrity_slug_from_existing_file(&target_path)
@@ -292,6 +352,10 @@ impl ChatPayloadCommitRepository for FileChatRepository {
             }
 
             Self::strict_publish_chat_payload(&stage_path, &target_path).await?;
+            if let Some((epoch, content_signature)) = content_signature {
+                self.record_current_content_signature(&target_path, epoch, content_signature)
+                    .await;
+            }
             drop(_write_guard);
 
             if let Some(cache_key) = character_cache_key {

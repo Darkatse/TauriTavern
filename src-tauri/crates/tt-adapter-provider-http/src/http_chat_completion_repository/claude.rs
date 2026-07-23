@@ -159,7 +159,7 @@ pub(super) async fn generate_stream(
             cancel,
             move |payload| {
                 if logged {
-                    return;
+                    return Ok(());
                 }
 
                 if !payload
@@ -169,11 +169,11 @@ pub(super) async fn generate_stream(
                         .windows(b"cache_creation_input_tokens".len())
                         .any(|window| window == b"cache_creation_input_tokens")
                 {
-                    return;
+                    return Ok(());
                 }
 
                 let Ok(value) = serde_json::from_slice::<Value>(payload) else {
-                    return;
+                    return Ok(());
                 };
 
                 logged = super::log_prompt_cache_performance_if_present(
@@ -181,6 +181,7 @@ pub(super) async fn generate_stream(
                     Some(model.as_str()),
                     &value,
                 );
+                Ok(())
             },
         )
         .await

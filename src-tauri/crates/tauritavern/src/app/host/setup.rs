@@ -63,7 +63,7 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
         &app_handle,
         &runtime_paths,
         &startup_profile,
-    );
+    )?;
     let _main_window = super::window::create_main_window(app, host_resource_service)?;
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]

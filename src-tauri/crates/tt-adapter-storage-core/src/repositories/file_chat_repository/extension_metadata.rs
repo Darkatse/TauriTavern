@@ -86,7 +86,7 @@ impl FileChatRepository {
         namespace: &str,
         value: Value,
     ) -> Result<(), DomainError> {
-        let _write_guard = self.acquire_payload_write_lock(path).await;
+        let _write_guard = self.acquire_payload_mutation_lock(path).await;
 
         let (header, header_end_offset) = read_first_line_and_end_offset(path).await?;
         let mut header_value = parse_header_json(&header)?;

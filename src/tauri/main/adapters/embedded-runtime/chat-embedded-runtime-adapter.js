@@ -5,10 +5,6 @@ import { scanForHosts, unregisterSlotsInSubtree } from './dom-runtime-adapter.js
 import { createJsSlashRunnerRuntimeAdapter } from './js-slash-runner-runtime-adapter.js';
 import { createLittleWhiteBoxRuntimeAdapter } from './littlewhitebox-runtime-adapter.js';
 import { parkManagedIframe } from './managed-iframe-parking-lot.js';
-import {
-    FRONTEND_SOURCE_HANDOFF_ATTRIBUTE,
-    getFrontendSourceHandoffSelector,
-} from './message-render-transaction.js';
 
 /**
  * @typedef {import('../../services/embedded-runtime/embedded-runtime-manager.js').createEmbeddedRuntimeManager} createEmbeddedRuntimeManager
@@ -101,40 +97,7 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
 
     /** @type {WeakSet<HTMLElement>} */
     let scannedMessages = new WeakSet();
-    /** @type {Set<HTMLElement>} */
-    const frontendSourcesAwaitingRelease = new Set();
-    /** @type {number|null} */
-    let frontendSourceReleaseFrame = null;
     let disposed = false;
-
-    /** @param {Iterable<HTMLElement>} sources */
-    const releaseFrontendSources = (sources) => {
-        for (const source of sources) {
-            source.removeAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE);
-        }
-    };
-
-    /** @param {string} eventType */
-    const scheduleFrontendSourceRelease = (eventType) => {
-        // KISS: event-scoped rather than batch-exact; add batch tokens only if
-        // rapid chat switching proves this best-effort boundary insufficient.
-        const selector = getFrontendSourceHandoffSelector(eventType);
-        for (const source of chat.querySelectorAll(selector)) {
-            if (source instanceof HTMLElement) {
-                frontendSourcesAwaitingRelease.add(source);
-            }
-        }
-
-        if (frontendSourcesAwaitingRelease.size === 0 || frontendSourceReleaseFrame !== null) {
-            return;
-        }
-
-        frontendSourceReleaseFrame = requestAnimationFrame(() => {
-            frontendSourceReleaseFrame = null;
-            releaseFrontendSources(frontendSourcesAwaitingRelease);
-            frontendSourcesAwaitingRelease.clear();
-        });
-    };
 
     /** @param {HTMLElement} messageElement */
     const scanMessageElement = (messageElement) => {
@@ -301,14 +264,12 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
         }
         scannedMessages = new WeakSet();
         scanUnseenMessages();
-        scheduleFrontendSourceRelease(event_types.CHAT_CHANGED);
     };
     const onChatLoaded = () => {
         if (disposed) {
             return;
         }
         scanUnseenMessages();
-        scheduleFrontendSourceRelease(event_types.CHAT_LOADED);
     };
     const onMoreMessagesLoaded = () => {
         scanUnseenMessages();
@@ -357,14 +318,6 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
     return {
         dispose: () => {
             disposed = true;
-            if (frontendSourceReleaseFrame !== null) {
-                cancelAnimationFrame(frontendSourceReleaseFrame);
-                frontendSourceReleaseFrame = null;
-            }
-            releaseFrontendSources(frontendSourcesAwaitingRelease);
-            frontendSourcesAwaitingRelease.clear();
-            releaseFrontendSources(/** @type {NodeListOf<HTMLElement>} */ (chat.querySelectorAll(`[${FRONTEND_SOURCE_HANDOFF_ATTRIBUTE}]`)));
-
             observer.disconnect();
             chat.removeEventListener('click', onClick, true);
 

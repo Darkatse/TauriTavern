@@ -1,7 +1,7 @@
 import {
     moment,
 } from '../lib.js';
-import { chat, closeMessageEditor, event_types, eventSource, main_api, messageFormatting, saveChatConditional, saveChatDebounced, saveSettingsDebounced, substituteParams, syncMesToSwipe, updateMessageBlock } from '../script.js';
+import { chat, closeMessageEditor, event_types, eventSource, getChatScrollTop, main_api, messageFormatting, offsetChatScrollTop, saveChatConditional, saveChatDebounced, saveSettingsDebounced, setChatScrollTop, substituteParams, syncChatSurfaceProjectionHold, syncMesToSwipe, updateMessageBlock } from '../script.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { getCurrentLocale, t, translate } from './i18n.js';
 import { macros, MacroCategory } from './macros/macro-system.js';
@@ -1279,13 +1279,14 @@ function setReasoningEventHandlers() {
         textarea.classList.add('reasoning_edit_textarea');
         textarea.value = reasoning;
         $(textarea).insertBefore(reasoningBlock);
+        syncChatSurfaceProjectionHold();
 
         if (!CSS.supports('field-sizing', 'content')) {
             const resetHeight = function () {
-                const scrollTop = chatElement.scrollTop;
+                const scrollTop = getChatScrollTop();
                 textarea.style.height = '0px';
                 textarea.style.height = `${textarea.scrollHeight}px`;
-                chatElement.scrollTop = scrollTop;
+                setChatScrollTop(scrollTop);
             };
 
             textarea.addEventListener('input', resetHeight);
@@ -1301,7 +1302,7 @@ function setReasoningEventHandlers() {
         // Scroll if textarea bottom is below visible area
         if (textareaRect.bottom > chatRect.bottom) {
             const scrollOffset = textareaRect.bottom - chatRect.bottom;
-            chatElement.scrollTop += scrollOffset;
+            offsetChatScrollTop(scrollOffset);
         }
     });
 
@@ -1324,6 +1325,7 @@ function setReasoningEventHandlers() {
         let newReasoning = String(textarea.val());
         newReasoning = substituteParams(newReasoning);
         textarea.remove();
+        syncChatSurfaceProjectionHold();
         if (newReasoning === message.extra.reasoning) {
             return;
         }
@@ -1342,6 +1344,7 @@ function setReasoningEventHandlers() {
         const { messageBlock } = getMessageFromJquery(this);
         const textarea = messageBlock.find('.reasoning_edit_textarea');
         textarea.remove();
+        syncChatSurfaceProjectionHold();
 
         messageBlock.find('.mes_reasoning_edit_cancel:visible').trigger('click');
 

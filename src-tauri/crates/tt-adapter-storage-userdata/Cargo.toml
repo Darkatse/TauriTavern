@@ -15,7 +15,7 @@ mime_guess = "2.0.5"
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = "0.9"
-sha2 = "0.10"
+sha2 = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "rt", "sync"] }
 tracing = "0.1"
 typed-path = "0.12"

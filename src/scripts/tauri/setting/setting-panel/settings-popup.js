@@ -6,7 +6,10 @@ import {
     updateTauriTavernSettings,
 } from '../../../../tauri-bridge.js';
 import { runTaskOrPopup, showErrorPopup } from './popup-utils.js';
-import { loadTauriTavernSettingsViewModel } from './settings-view-model.js';
+import {
+    loadChatBackupStorageStats,
+    loadTauriTavernSettingsViewModel,
+} from './settings-view-model.js';
 import { buildTauriTavernSettingsUpdate } from './settings-patch.js';
 import { applyTauriTavernSettingsUpdateEffects } from './settings-effects.js';
 import { callTauriTavernPanelPopup } from '../panel-popup.js';
@@ -31,11 +34,19 @@ const HELP_TOPICS = {
             'Embedded Runtime help: saver',
         ],
     },
-    chatHistory: {
-        title: 'Chat History',
+    chatVirtualization: {
+        title: 'Chat DOM Virtualization',
         lines: [
-            'Chat History help: windowed',
-            'Chat History help: off',
+            'Chat DOM virtualization fully solves the performance problems caused by rendering many messages in very long chats.',
+            'When enabled, only messages near the viewport and the newest message stay mounted. Turn it off to use upstream SillyTavern chat rendering. Renderer extensions must support ChatSurface.',
+        ],
+    },
+    zstdCompression: {
+        title: 'zstd Compression',
+        lines: [
+            'zstd compression applies to all chat backups.',
+            'When this setting changes, existing backups are converted in the background.',
+            'TauriTavern can read zstd backups directly. SillyTavern does not support this backup format.',
         ],
     },
     closeToTray: {
@@ -230,6 +241,44 @@ async function showHelpTopic(topicId) {
     });
 }
 
+async function showChatVirtualizationCompatibility() {
+    const content = createPopupColumn();
+    const title = document.createElement('b');
+    title.textContent = translate('Compatible renderer extensions');
+    const explanation = document.createElement('div');
+    explanation.textContent = translate(
+        'If you use either renderer extension below, you can temporarily install its compatible version for Chat DOM virtualization:',
+    );
+    content.append(title, explanation);
+
+    for (const [labelKey, repository, href] of [
+        ['JS-Slash-Runner compatible version:', 'Darkatse/JS-Slash-Runner', 'https://github.com/Darkatse/JS-Slash-Runner'],
+        ['LittleWhiteBox compatible version:', 'Darkatse/LittleWhiteBox', 'https://github.com/Darkatse/LittleWhiteBox'],
+    ]) {
+        const line = document.createElement('div');
+        const link = document.createElement('a');
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = repository;
+        line.append(`${translate(labelKey)} `, link);
+        content.appendChild(line);
+    }
+
+    const status = document.createElement('div');
+    status.textContent = translate(
+        'These compatibility changes are currently being submitted to the original extension authors as pull requests.',
+    );
+    content.appendChild(status);
+
+    await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+        okButton: translate('Close'),
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+}
+
 async function confirmChatBackupHistoryPurge() {
     const content = createPopupColumn();
     const title = document.createElement('b');
@@ -346,7 +395,7 @@ export async function openTauriTavernSettingsPopup() {
     let pendingUpdate = null;
 
     try {
-        const result = await callTauriTavernPanelPopup(mount, POPUP_TYPE.CONFIRM, '', {
+        const popupPromise = callTauriTavernPanelPopup(mount, POPUP_TYPE.CONFIRM, '', {
             okButton: translate('Save'),
             cancelButton: translate('Close'),
             allowVerticalScrolling: true,
@@ -372,9 +421,23 @@ export async function openTauriTavernSettingsPopup() {
                     return false;
                 }
 
+                if (
+                    pendingUpdate.changes.chatVirtualizationEnabled
+                    && pendingUpdate.next.chatVirtualizationEnabled
+                ) {
+                    await showChatVirtualizationCompatibility();
+                }
+
                 return true;
             },
         });
+        if (viewModel.values.chatBackups.zstdCompressionEnabled) {
+            void loadChatBackupStorageStats()
+                .then(appHandle.setChatBackupStorageStats)
+                .catch(error => console.warn('Chat backup storage stats are unavailable:', error));
+        }
+
+        const result = await popupPromise;
 
         if (result !== POPUP_RESULT.AFFIRMATIVE) {
             return;

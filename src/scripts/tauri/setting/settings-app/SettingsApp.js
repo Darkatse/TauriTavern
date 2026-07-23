@@ -6,6 +6,7 @@ import {
     ToggleSwitch,
     WallpaperField,
 } from './components.js';
+import { formatBytes } from '../format-bytes.js';
 
 const PANEL_RUNTIME_OPTIONS = [
     { value: 'compat', labelKey: 'Compact (Recommended)' },
@@ -18,11 +19,6 @@ const EMBEDDED_RUNTIME_OPTIONS = [
     { value: 'compat', labelKey: 'Balanced' },
     { value: 'mobile-safe', labelKey: 'Power Saver' },
     { value: 'off', labelKey: 'Off (Legacy)' },
-];
-
-const CHAT_HISTORY_OPTIONS = [
-    { value: 'windowed', labelKey: 'Windowed (Recommended)' },
-    { value: 'off', labelKey: 'Off (Upstream full history)' },
 ];
 
 const PROMPT_CACHE_OPTIONS = [
@@ -68,9 +64,10 @@ function cloneDraft(values, themeOptions, backgroundOptions, currentBackground) 
     return {
         panelRuntimeProfile: values.panelRuntimeProfile,
         embeddedRuntimeProfile: values.embeddedRuntimeProfile,
-        chatHistoryMode: values.chatHistoryMode,
+        chatVirtualizationEnabled: values.chatVirtualizationEnabled,
         chatBackups: {
             automaticEnabled: values.chatBackups.automaticEnabled,
+            zstdCompressionEnabled: values.chatBackups.zstdCompressionEnabled,
             maxFilesPerPrefix: values.chatBackups.maxFilesPerPrefix,
             maxTotalFiles: values.chatBackups.maxTotalFiles,
             maxTotalValue,
@@ -129,6 +126,7 @@ export function createTauriTavernSettingsApp(options) {
     const capabilities = { ...viewModel.capabilities };
     const initialDraft = cloneDraft(viewModel.values, themeOptions, backgroundOptions, currentBackground);
     const initialDataRoot = cloneDataRoot(viewModel.dataRoot);
+    const chatBackupStorageStats = viewModel.chatBackupStorageStats ?? null;
 
     return {
         name: 'TauriTavernSettingsApp',
@@ -147,6 +145,7 @@ export function createTauriTavernSettingsApp(options) {
                 backgroundOptions,
                 draft: initialDraft,
                 dataRoot: initialDataRoot,
+                chatBackupStorageStats,
                 details: {
                     dataRoot: false,
                     requestProxy: initialDraft.requestProxy.enabled,
@@ -167,9 +166,6 @@ export function createTauriTavernSettingsApp(options) {
             embeddedRuntimeOptions() {
                 return translateOptions(EMBEDDED_RUNTIME_OPTIONS, this.tr);
             },
-            chatHistoryOptions() {
-                return translateOptions(CHAT_HISTORY_OPTIONS, this.tr);
-            },
             chatBackupStorageUnitOptions() {
                 return CHAT_BACKUP_STORAGE_UNIT_OPTIONS;
             },
@@ -177,6 +173,32 @@ export function createTauriTavernSettingsApp(options) {
                 return this.draft.chatBackups.maxFilesPerPrefix === 0
                     || this.draft.chatBackups.maxTotalFiles === 0
                     || this.draft.chatBackups.maxTotalValue === 0;
+            },
+            zstdCompressionHint() {
+                const base = this.tr(
+                    'Saves substantial space, but SillyTavern cannot read this format.',
+                );
+                const originalBytes = this.chatBackupStorageStats?.originalBytes ?? 0;
+                const storedBytes = this.chatBackupStorageStats?.storedBytes ?? 0;
+                if (
+                    !this.draft.chatBackups.zstdCompressionEnabled
+                    || originalBytes <= storedBytes
+                ) {
+                    return { summary: base, before: '', saved: '', after: '' };
+                }
+
+                const ratio = Math.round(storedBytes / originalBytes * 100);
+                const [before, after] = this.tr(
+                    'Compressed backups currently use about {ratio}% of their original size and have saved about {saved}.',
+                )
+                    .replace('{ratio}', String(ratio))
+                    .split('{saved}');
+                return {
+                    summary: base,
+                    before,
+                    saved: formatBytes(originalBytes - storedBytes),
+                    after,
+                };
             },
             promptCacheOptions() {
                 return translateOptions(PROMPT_CACHE_OPTIONS, this.tr);
@@ -341,7 +363,7 @@ export function createTauriTavernSettingsApp(options) {
                 return {
                     panelRuntimeProfile: this.draft.panelRuntimeProfile,
                     embeddedRuntimeProfile: this.draft.embeddedRuntimeProfile,
-                    chatHistoryMode: this.draft.chatHistoryMode,
+                    chatVirtualizationEnabled: this.draft.chatVirtualizationEnabled,
                     chatBackups: { ...this.draft.chatBackups },
                     closeToTrayOnClose: this.draft.closeToTrayOnClose,
                     requestProxy: { ...this.draft.requestProxy },
@@ -392,16 +414,20 @@ export function createTauriTavernSettingsApp(options) {
                         :help-title="tr('Learn more')"
                         @help="showHelp"
                     >
-                        <SelectField v-model="draft.embeddedRuntimeProfile" :options="embeddedRuntimeOptions" />
+                        <SelectField
+                            v-model="draft.embeddedRuntimeProfile"
+                            :options="embeddedRuntimeOptions"
+                            :disabled="draft.chatVirtualizationEnabled"
+                        />
                     </SettingRow>
 
                     <SettingRow
-                        :label="tr('Chat History')"
-                        help-topic="chatHistory"
+                        :label="tr('Chat DOM Virtualization')"
+                        help-topic="chatVirtualization"
                         :help-title="tr('Learn more')"
                         @help="showHelp"
                     >
-                        <SelectField v-model="draft.chatHistoryMode" :options="chatHistoryOptions" />
+                        <ToggleSwitch v-model="draft.chatVirtualizationEnabled" />
                     </SettingRow>
 
                     <SettingRow :label="tr('Rust Regex Backend')">
@@ -417,6 +443,21 @@ export function createTauriTavernSettingsApp(options) {
                         :hint="tr('Create a backup automatically when an eligible chat save completes.')"
                     >
                         <ToggleSwitch v-model="draft.chatBackups.automaticEnabled" />
+                    </SettingRow>
+
+                    <SettingRow
+                        :label="tr('zstd Compression')"
+                        help-topic="zstdCompression"
+                        :help-title="tr('Learn more')"
+                        @help="showHelp"
+                    >
+                        <template #hint>
+                            {{ zstdCompressionHint.summary }}<br v-if="zstdCompressionHint.saved" />{{ zstdCompressionHint.before }}<strong
+                                v-if="zstdCompressionHint.saved"
+                                class="tt-settings-hint-accent"
+                            >{{ zstdCompressionHint.saved }}</strong>{{ zstdCompressionHint.after }}
+                        </template>
+                        <ToggleSwitch v-model="draft.chatBackups.zstdCompressionEnabled" />
                     </SettingRow>
 
                     <SettingRow

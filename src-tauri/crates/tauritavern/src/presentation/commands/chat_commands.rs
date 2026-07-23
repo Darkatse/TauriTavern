@@ -1,20 +1,19 @@
 use std::sync::Arc;
 
 use tauri::State;
-use tauri::ipc::Response as InvokeResponse;
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
-    HideChatBeforeCursorDto, ImportCharacterChatsDto, ImportChatDto, PatchChatWindowedDto,
-    PinnedCharacterChatDto, RenameChatDto,
+    ImportCharacterChatsDto, ImportChatDto, PinnedCharacterChatDto, RenameChatDto,
+    RestoreCharacterChatBackupDto,
 };
 use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_application::errors::ApplicationError;
 use tt_ports::repositories::chat_repository::{
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatPayloadWindowPatchRequest,
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
 };
 
 #[tauri::command]
@@ -294,19 +293,53 @@ pub async fn list_chat_backups(
 }
 
 #[tauri::command]
-pub async fn get_chat_backup_raw(
+pub async fn materialize_chat_backup(
     name: String,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<InvokeResponse, CommandError> {
-    log_command(format!("get_chat_backup_raw {}", name));
+) -> Result<String, CommandError> {
+    log_command(format!("materialize_chat_backup {}", name));
 
     app_state
         .services
         .chat_service
-        .get_chat_backup_bytes(&name)
+        .materialize_chat_backup(&name)
         .await
-        .map(InvokeResponse::new)
-        .map_err(map_command_error("Failed to get chat backup content"))
+        .map_err(map_command_error("Failed to materialize chat backup"))
+}
+
+#[tauri::command]
+pub async fn discard_chat_backup_materialization(
+    path: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("discard_chat_backup_materialization");
+
+    app_state
+        .services
+        .chat_service
+        .discard_chat_backup_materialization(&path)
+        .await
+        .map_err(map_command_error(
+            "Failed to discard chat backup materialization",
+        ))
+}
+
+#[tauri::command]
+pub async fn restore_character_chat_backup(
+    dto: RestoreCharacterChatBackupDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<String>, CommandError> {
+    log_command(format!(
+        "restore_character_chat_backup {} for {}",
+        dto.backup_name, dto.character_name
+    ));
+
+    app_state
+        .services
+        .chat_service
+        .restore_character_chat_backup(dto)
+        .await
+        .map_err(map_command_error("Failed to restore character chat backup"))
 }
 
 #[tauri::command]
@@ -455,74 +488,6 @@ pub async fn get_chat_payload_before_pages(
             "Failed to get chat payload before pages {}/{}",
             character_name, file_name
         )))
-}
-
-#[tauri::command]
-pub async fn patch_chat_payload_windowed(
-    dto: PatchChatWindowedDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<ChatPayloadCursor, CommandError> {
-    let PatchChatWindowedDto {
-        character_name,
-        file_name,
-        cursor,
-        header,
-        patch,
-        expected_window_line_count,
-        force,
-        commit_reason,
-    } = dto;
-    log_command(format!(
-        "patch_chat_payload_windowed {}/{}",
-        character_name, file_name
-    ));
-
-    let request = ChatPayloadWindowPatchRequest {
-        cursor,
-        header,
-        op: patch,
-        expected_window_line_count,
-        force: force.unwrap_or(false),
-    };
-
-    app_state
-        .services
-        .chat_service
-        .patch_chat_payload_windowed(
-            &character_name,
-            &file_name,
-            request,
-            commit_reason.unwrap_or_default(),
-        )
-        .await
-        .map_err(map_command_error("Failed to patch windowed chat payload"))
-}
-
-#[tauri::command]
-pub async fn hide_chat_payload_before_cursor(
-    dto: HideChatBeforeCursorDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<ChatPayloadCursor, CommandError> {
-    log_command(format!(
-        "hide_chat_payload_before_cursor {}/{}",
-        dto.character_name, dto.file_name
-    ));
-
-    app_state
-        .services
-        .chat_service
-        .hide_chat_payload_before_cursor(
-            &dto.character_name,
-            &dto.file_name,
-            dto.cursor,
-            dto.hide,
-            dto.name_filter,
-            dto.expected_window_line_count,
-        )
-        .await
-        .map_err(map_command_error(
-            "Failed to update hidden state before chat window",
-        ))
 }
 
 #[tauri::command]

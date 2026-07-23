@@ -1,7 +1,6 @@
 // @ts-check
 
 import { normalizeEmbeddedRuntimeProfileName } from '../../../../tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js';
-import { normalizeChatHistoryModeName } from '../../../../tauri/main/services/chat-history/chat-history-mode-state.js';
 import { arraysEqual, normalizeRequestProxyBypass } from './settings-state.js';
 
 const CHAT_BACKUP_STORAGE_UNIT_BYTES = {
@@ -63,8 +62,12 @@ function isChatBackupHistoryDisabled(settings) {
 export function buildTauriTavernSettingsUpdate(initial, draft) {
     const nextPanelRuntimeProfile = String(draft.panelRuntimeProfile || '').trim();
     const nextEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(draft.embeddedRuntimeProfile);
-    const nextChatHistoryMode = normalizeChatHistoryModeName(draft.chatHistoryMode);
+    const nextChatVirtualizationEnabled = draft.chatVirtualizationEnabled;
+    if (typeof nextChatVirtualizationEnabled !== 'boolean') {
+        throw new TypeError('Chat virtualization setting must be a boolean');
+    }
     const nextChatBackupAutomaticEnabled = Boolean(draft.chatBackups?.automaticEnabled);
+    const nextChatBackupZstdCompressionEnabled = Boolean(draft.chatBackups?.zstdCompressionEnabled);
     const nextChatBackupMaxFilesPerPrefix = normalizeChatBackupLimit(draft.chatBackups?.maxFilesPerPrefix);
     const nextChatBackupMaxTotalFiles = normalizeChatBackupLimit(draft.chatBackups?.maxTotalFiles);
     const nextChatBackupMaxTotalUnit = draft.chatBackups?.maxTotalUnit;
@@ -100,9 +103,12 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         initial.configuredEmbeddedRuntimeProfile !== initial.embeddedRuntimeProfile;
     const hasEmbeddedRuntimeChange = Boolean(nextEmbeddedRuntimeProfile)
         && (nextEmbeddedRuntimeProfile !== initial.embeddedRuntimeProfile || requiresEmbeddedRuntimeMigration);
-    const hasChatHistoryModeChange = nextChatHistoryMode !== initial.chatHistoryMode;
+    const hasChatVirtualizationEnabledChange =
+        nextChatVirtualizationEnabled !== initial.chatVirtualizationEnabled;
     const hasChatBackupAutomaticEnabledChange =
         nextChatBackupAutomaticEnabled !== initial.chatBackups.automaticEnabled;
+    const hasChatBackupZstdCompressionEnabledChange =
+        nextChatBackupZstdCompressionEnabled !== initial.chatBackups.zstdCompressionEnabled;
     const hasChatBackupMaxFilesPerPrefixChange =
         nextChatBackupMaxFilesPerPrefix !== initial.chatBackups.maxFilesPerPrefix;
     const hasChatBackupMaxTotalFilesChange =
@@ -110,6 +116,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     const hasChatBackupMaxTotalBytesChange =
         nextChatBackupMaxTotalBytes !== initial.chatBackups.maxTotalBytes;
     const hasChatBackupsChange = hasChatBackupAutomaticEnabledChange
+        || hasChatBackupZstdCompressionEnabledChange
         || hasChatBackupMaxFilesPerPrefixChange
         || hasChatBackupMaxTotalFilesChange
         || hasChatBackupMaxTotalBytesChange;
@@ -134,7 +141,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     const changes = {
         panelRuntimeProfile: hasPanelRuntimeChange,
         embeddedRuntimeProfile: hasEmbeddedRuntimeChange,
-        chatHistoryMode: hasChatHistoryModeChange,
+        chatVirtualizationEnabled: hasChatVirtualizationEnabledChange,
         chatBackups: hasChatBackupsChange,
         closeToTrayOnClose: hasCloseToTrayOnCloseChange,
         dynamicTheme: hasDynamicThemeChange,
@@ -156,14 +163,17 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     if (hasEmbeddedRuntimeChange) {
         patch.embedded_runtime_profile = nextEmbeddedRuntimeProfile;
     }
-    if (hasChatHistoryModeChange) {
-        patch.chat_history_mode = nextChatHistoryMode;
+    if (hasChatVirtualizationEnabledChange) {
+        patch.chat_virtualization_enabled = nextChatVirtualizationEnabled;
     }
     if (hasChatBackupsChange) {
         /** @type {Record<string, unknown>} */
         const chatBackups = {};
         if (hasChatBackupAutomaticEnabledChange) {
             chatBackups.automatic_enabled = nextChatBackupAutomaticEnabled;
+        }
+        if (hasChatBackupZstdCompressionEnabledChange) {
+            chatBackups.zstd_compression_enabled = nextChatBackupZstdCompressionEnabled;
         }
         if (hasChatBackupMaxFilesPerPrefixChange) {
             chatBackups.max_files_per_prefix = nextChatBackupMaxFilesPerPrefix;
@@ -228,9 +238,10 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         next: {
             panelRuntimeProfile: nextPanelRuntimeProfile,
             embeddedRuntimeProfile: nextEmbeddedRuntimeProfile,
-            chatHistoryMode: nextChatHistoryMode,
+            chatVirtualizationEnabled: nextChatVirtualizationEnabled,
             chatBackups: {
                 automaticEnabled: nextChatBackupAutomaticEnabled,
+                zstdCompressionEnabled: nextChatBackupZstdCompressionEnabled,
                 maxFilesPerPrefix: nextChatBackupMaxFilesPerPrefix,
                 maxTotalFiles: nextChatBackupMaxTotalFiles,
                 maxTotalBytes: nextChatBackupMaxTotalBytes,

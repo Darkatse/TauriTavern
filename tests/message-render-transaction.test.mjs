@@ -48,10 +48,10 @@ test('replaceMesTextHtmlPreservingEmbeddedRuntimes fails fast on invalid DOM', a
 test('render transaction marks only frontend source during an explicitly authorized detached handoff', async () => {
     const dom = installFakeDom();
     try {
-        const {
-            FRONTEND_SOURCE_HANDOFF_ATTRIBUTE,
-            replaceMesTextHtmlPreservingEmbeddedRuntimes,
-        } = await importFresh(
+        const { FRONTEND_SOURCE_HANDOFF_ATTRIBUTE } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
+        );
+        const { replaceMesTextHtmlPreservingEmbeddedRuntimes } = await importFresh(
             path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/message-render-transaction.js'),
         );
 
@@ -170,6 +170,41 @@ test('render transaction preserves JS-Slash-Runner wrappers when frontend blocks
     }
 });
 
+test('prepared legacy transaction cannot resurrect a wrapper removed by participant cleanup', async () => {
+    const dom = installFakeDom();
+    try {
+        const { prepareMesTextHtmlPreservingEmbeddedRuntimes } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/message-render-transaction.js'),
+        );
+        const message = document.createElement('div');
+        message.classList.add('mes');
+        document.body.append(message);
+        const mesText = document.createElement('div');
+        mesText.classList.add('mes_text');
+        message.append(mesText);
+
+        const frontend = '<html><body>managed</body></html>';
+        const source = createFrontendPre(frontend);
+        const wrapper = document.createElement('div');
+        wrapper.classList.add('TH-render');
+        wrapper.append(document.createElement('iframe'), source);
+        mesText.append(wrapper);
+
+        const transaction = prepareMesTextHtmlPreservingEmbeddedRuntimes(
+            message,
+            `<pre><code>${frontend.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre>`,
+        );
+        wrapper.replaceWith(source);
+        transaction.commit();
+
+        assert.equal(mesText.querySelector('.TH-render'), null);
+        assert.equal(wrapper.isConnected, false);
+        assert.equal(mesText.querySelector('pre')?.textContent, frontend);
+    } finally {
+        dom.cleanup();
+    }
+});
+
 test('render transaction preserves LittleWhiteBox wrappers and finalizes the new <pre>', async () => {
     const dom = installFakeDom();
     try {
@@ -242,6 +277,34 @@ test('render transaction commits the parsed replacement when frontend blocks cha
 
         assert.equal(mesText.querySelector('.TH-render'), null);
         assert.equal(wrapper.isConnected, false);
+    } finally {
+        dom.cleanup();
+    }
+});
+
+test('prepared content commits participant mutations and exact staged nodes once', async () => {
+    const dom = installFakeDom();
+    try {
+        const { prepareMesTextHtmlPreservingEmbeddedRuntimes } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/message-render-transaction.js'),
+        );
+        const message = document.createElement('div');
+        message.classList.add('mes');
+        const mesText = document.createElement('div');
+        mesText.classList.add('mes_text');
+        message.append(mesText);
+
+        const transaction = prepareMesTextHtmlPreservingEmbeddedRuntimes(
+            message,
+            '<pre><code>next</code></pre>',
+        );
+        transaction.content.setAttribute('data-participant-prepared', 'true');
+        const stagedPre = transaction.content.querySelector('pre');
+        transaction.commit();
+
+        assert.equal(mesText.getAttribute('data-participant-prepared'), 'true');
+        assert.equal(mesText.querySelector('pre'), stagedPre);
+        assert.throws(() => transaction.commit(), /already committed/);
     } finally {
         dom.cleanup();
     }

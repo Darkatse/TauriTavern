@@ -1,6 +1,6 @@
 // @ts-check
 
-import { addCopyToCodeBlocks, chat, characters, eventSource, event_types, getCurrentChatId, getMessageFormattingRegexContext, messageFormatting, this_chid } from '../../../script.js';
+import { chat, characters, eventSource, event_types, getCurrentChatId, getMessageFormattingRegexContext, messageFormatting, this_chid } from '../../../script.js';
 import { getRegexedStringBatchAsync } from '../../extensions/regex/engine.js';
 import { replaceMesTextHtmlWithRuntimePolicy } from '../message/mes-text-write.js';
 
@@ -25,7 +25,7 @@ function createRegexRefreshCoordinator() {
     /** @type {{ resolve: (value?: unknown) => void, reject: (reason?: unknown) => void }[]} */
     const waiters = [];
 
-    /** @type {{ messageId: number; message: any; element: HTMLElement }[]} */
+    /** @type {{ messageId: number; message: any }[]} */
     let queue = [];
     let queueIndex = 0;
     /** @type {Map<number, string>} */
@@ -112,10 +112,10 @@ function createRegexRefreshCoordinator() {
     }
 
     function collectQueue() {
-        /** @type {{ messageId: number; message: any; element: HTMLElement }[]} */
+        /** @type {{ messageId: number; message: any }[]} */
         const next = [];
 
-        for (const node of document.querySelectorAll('#chat .mes[mesid]')) {
+        for (const node of document.querySelectorAll('#chat > .mes[mesid]')) {
             if (!(node instanceof HTMLElement)) {
                 continue;
             }
@@ -131,7 +131,7 @@ function createRegexRefreshCoordinator() {
                 throw new Error(`RegexRefreshCoordinator: missing chat message for id ${messageId}`);
             }
 
-            next.push({ messageId, message, element: node });
+            next.push({ messageId, message });
         }
 
         return next;
@@ -181,17 +181,23 @@ function createRegexRefreshCoordinator() {
     }
 
     /**
-     * @param {{ messageId: number; message: any; element: HTMLElement }} entry
+     * @param {{ messageId: number; message: any }} entry
      */
     function refreshMessage(entry) {
+        if (chat[entry.messageId] !== entry.message) {
+            return;
+        }
+        const element = document.querySelector(`#chat > .mes[mesid="${entry.messageId}"]`);
+        if (!(element instanceof HTMLElement)) {
+            return;
+        }
         const message = entry.message;
         const hasRegexedText = regexedTextByMessageId.has(entry.messageId);
         const text = hasRegexedText ? regexedTextByMessageId.get(entry.messageId) : (message?.extra?.display_text ?? message.mes);
         replaceMesTextHtmlWithRuntimePolicy(
-            entry.element,
+            element,
             messageFormatting(text, message.name, message.is_system, message.is_user, entry.messageId, {}, false, { skipRegex: hasRegexedText }),
         );
-        addCopyToCodeBlocks(entry.element);
     }
 
     /**
@@ -233,7 +239,7 @@ function createRegexRefreshCoordinator() {
                 const entry = queue[queueIndex];
                 queueIndex += 1;
 
-                refreshMessage(/** @type {{ messageId: number; message: any; element: HTMLElement }} */ (entry));
+                refreshMessage(/** @type {{ messageId: number; message: any }} */ (entry));
 
                 if (deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() < 1) {
                     break;

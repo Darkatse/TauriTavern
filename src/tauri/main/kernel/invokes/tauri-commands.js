@@ -5,8 +5,8 @@ export {};
 /**
  * Host-known backend invoke command names.
  *
- * Phase 3 goal: make the invoke surface searchable and typo-resistant without
- * forcing a TS build. Keep this list scoped to commands referenced by the host
+ * Keep the invoke surface searchable and typo-resistant without forcing a TS
+ * build. This list stays scoped to commands referenced by the host
  * kernel (`src/tauri/main/**`).
  *
  * @typedef {(
@@ -42,6 +42,7 @@ export {};
  *   | 'delete_character'
  *   | 'delete_chat'
  *   | 'delete_chat_backup'
+ *   | 'discard_chat_backup_materialization'
  *   | 'delete_extension'
  *   | 'delete_group'
  *   | 'delete_group_chat'
@@ -79,11 +80,11 @@ export {};
  *   | 'get_group_chat_summary'
  *   | 'get_character_chat_metadata'
  *   | 'get_group_chat_metadata'
- *   | 'get_chat_backup_raw'
  *   | 'get_chat_completions_status'
  *   | 'get_chat_payload_tail'
  *   | 'get_chat_payload_before'
  *   | 'get_chat_payload_before_pages'
+ *   | 'get_chat_backup_storage_stats'
  *   | 'get_bootstrap_snapshot'
  *   | 'get_client_version'
  *   | 'get_data_archive_job_status'
@@ -129,6 +130,7 @@ export {};
  *   | 'load_settings_snapshot'
  *   | 'load_agent_profile'
  *   | 'load_llm_connection'
+ *   | 'materialize_chat_backup'
  *   | 'move_extension'
  *   | 'move_skill'
  *   | 'normalize_world_info_name'
@@ -150,6 +152,8 @@ export {};
  *   | 'retarget_agent_profile_preset_refs'
  *   | 'retarget_skill_scope'
  *   | 'restore_preset'
+ *   | 'restore_character_chat_backup'
+ *   | 'restore_group_chat_backup'
  *   | 'restore_settings_snapshot'
  *   | 'rotate_secret'
  *   | 'cancel_agent_run'

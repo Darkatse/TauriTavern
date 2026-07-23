@@ -119,6 +119,60 @@ test('managed iframe slot: visibility park switches from budget placeholder to g
     }
 });
 
+test('managed iframe slot: dispose destroys active and parked iframe ownership', async () => {
+    const dom = installFakeDom();
+    const activeId = 'slot:test:dispose-active';
+    const parkedId = 'slot:test:dispose-parked';
+    try {
+        const { createManagedIframeSlot } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-slot.js'),
+        );
+        const lot = await importStable(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js'),
+        );
+
+        const createSlot = (id) => {
+            const host = document.createElement('div');
+            const iframe = document.createElement('iframe');
+            host.append(iframe);
+            document.body.append(host);
+            return {
+                host,
+                iframe,
+                slot: createManagedIframeSlot({
+                    id,
+                    kind: 'k',
+                    host,
+                    maxSoftParkedIframes: 2,
+                    softParkTtlMs: 1000,
+                }),
+            };
+        };
+
+        const active = createSlot(activeId);
+        active.slot.dispose();
+        assert.equal(active.host.querySelector('iframe'), null);
+        assert.equal(active.iframe.isConnected, false);
+        assert.equal(lot.takeParkedManagedIframe(activeId), null);
+
+        const parked = createSlot(parkedId);
+        parked.slot.dehydrate('visibility');
+        assert.equal(parked.iframe.isConnected, true);
+        parked.slot.dispose();
+        parked.slot.dispose();
+        assert.equal(parked.host.querySelector('.tt-runtime-ghost'), null);
+        assert.equal(parked.iframe.isConnected, false);
+        assert.equal(lot.takeParkedManagedIframe(parkedId), null);
+    } finally {
+        const lot = await importStable(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js'),
+        );
+        lot.dropParkedManagedIframe(activeId);
+        lot.dropParkedManagedIframe(parkedId);
+        dom.cleanup();
+    }
+});
+
 test('managed iframe slot: cold start calls requestColdRebuild instead of cloning a stale template', async () => {
     const dom = installFakeDom();
     const id = 'slot:test:cold-rebuild';
@@ -207,4 +261,3 @@ test('managed iframe slot: cold start clones the template when no requestColdReb
         dom.cleanup();
     }
 });
-

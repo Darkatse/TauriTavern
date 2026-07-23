@@ -9,6 +9,7 @@ use crate::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
 };
 use crate::errors::ApplicationError;
+use crate::services::hashing::hex_lower;
 use tt_domain::errors::DomainError;
 use tt_domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use tt_domain::models::claude_model::supports_one_hour_prompt_cache;
@@ -691,7 +692,7 @@ fn apply_vertexai_prompt_cache_session_header(
 
     let digest_input = format!("{}|{:?}", config.base_url.trim(), key);
     let digest = Sha256::digest(digest_input.as_bytes());
-    let session_id = format!("tt-pc-{}", &encode_hex(&digest)[..32]);
+    let session_id = format!("tt-pc-{}", &hex_lower(&digest)[..32]);
     config
         .extra_headers
         .insert(VERTEXAI_PROMPT_CACHE_SESSION_HEADER.to_string(), session_id);
@@ -710,17 +711,6 @@ fn has_configured_header(config: &ChatCompletionApiConfig, header_name: &str) ->
         .keys()
         .chain(config.additional_headers.keys())
         .any(|key| key.eq_ignore_ascii_case(header_name))
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
 }
 
 fn resolve_status_model_list_source(

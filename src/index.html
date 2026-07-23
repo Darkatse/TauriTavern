@@ -2150,7 +2150,7 @@
                                             </strong>
                                         </div>
                                     </div>
-                                    <div id="openai_reasoning_effort_block" class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,claude,aws_bedrock,xai,makersuite,vertexai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek,zai">
+                                    <div id="openai_reasoning_effort_block" class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,claude,aws_bedrock,xai,makersuite,vertexai,aimlapi,openrouter,moonshot,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek,zai">
                                         <div class="flex-container oneline-dropdown" title="Constrains effort on reasoning for reasoning models.&#10;Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning in a response." data-i18n="[title]Constrains effort on reasoning for reasoning models.">
                                             <label for="openai_reasoning_effort">
                                                 <span data-i18n="Reasoning Effort">Reasoning Effort</span>
@@ -2162,23 +2162,23 @@
                                                 <option data-i18n="openai_reasoning_effort_low" value="low">Low</option>
                                                 <option data-i18n="openai_reasoning_effort_medium" value="medium">Medium</option>
                                                 <option data-i18n="openai_reasoning_effort_high" value="high">High</option>
-                                                <option data-i18n="openai_reasoning_effort_maximum" value="max">Maximum</option>
                                                 <option data-i18n="openai_reasoning_effort_xhigh" value="xhigh">XHigh</option>
+                                                <option data-i18n="openai_reasoning_effort_maximum" value="max">Maximum</option>
                                             </select>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.">
-                                                OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.">
+                                                Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.">
-                                                DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.">
+                                                DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, Low and Medium request high effort, and XHigh requests max effort.">
-                                                Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, Low and Medium request high effort, and XHigh requests max effort.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.">
+                                                Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.
                                             </div>
                                             <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
                                                 Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
                                             </strong>
-                                            <div id="claude_reasoning_effort_description" class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai" data-i18n="Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on supported Claude models that are Opus 4.7 or newer; otherwise it behaves like Maximum. Auto does not request thinking.">
-                                                Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on supported Claude models that are Opus 4.7 or newer; otherwise it behaves like Maximum. Auto does not request thinking.
+                                            <div id="claude_reasoning_effort_description" class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai" data-i18n="Claude options: legacy thinking maps effort to a token budget. For adaptive thinking, Maximum selects the highest supported effort and XHigh the level below it. Auto does not request thinking.">
+                                                Claude options: legacy thinking maps effort to a token budget. For adaptive thinking, Maximum selects the highest supported effort and XHigh the level below it. Auto does not request thinking.
                                             </div>
                                             <div id="gemini_reasoning_effort_description" class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai">
                                                 <span data-i18n="Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.">
@@ -3058,6 +3058,12 @@
                             <div>
                                 <h4 data-i18n="OpenAI Model">OpenAI Model</h4>
                                 <select id="model_openai_select">
+                                    <optgroup label="GPT-5.6">
+                                        <option value="gpt-5.6">gpt-5.6</option>
+                                        <option value="gpt-5.6-sol">gpt-5.6-sol</option>
+                                        <option value="gpt-5.6-terra">gpt-5.6-terra</option>
+                                        <option value="gpt-5.6-luna">gpt-5.6-luna</option>
+                                    </optgroup>
                                     <optgroup label="GPT-5.5">
                                         <option value="gpt-5.5">gpt-5.5</option>
                                         <option value="gpt-5.5-2026-04-23">gpt-5.5-2026-04-23</option>
@@ -4027,18 +4033,18 @@
                             <div data-for="api_key_moonshot" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you click 'Connect'.">
                                 For privacy reasons, your API key will be hidden after you click 'Connect'.
                             </div>
+                            <h4 data-i18n="Moonshot Endpoint">Moonshot Endpoint</h4>
+                            <select id="moonshot_endpoint">
+                                <option value="global" data-i18n="Global (moonshot.ai)">Global (moonshot.ai)</option>
+                                <option value="cn" data-i18n="China (moonshot.cn)">China (moonshot.cn)</option>
+                            </select>
                             <h4 data-i18n="Moonshot AI Model">Moonshot AI Model</h4>
                             <select id="model_moonshot_select">
-                                <option value="kimi-k2-0711-preview">kimi-k2-0711-preview</option>
-                                <option value="moonshot-v1-8k">moonshot-v1-8k</option>
-                                <option value="moonshot-v1-32k">moonshot-v1-32k</option>
-                                <option value="moonshot-v1-128k">moonshot-v1-128k</option>
-                                <option value="moonshot-v1-auto">moonshot-v1-auto</option>
-                                <option value="kimi-latest">kimi-latest</option>
-                                <option value="moonshot-v1-8k-vision-preview">moonshot-v1-8k-vision-preview</option>
-                                <option value="moonshot-v1-32k-vision-preview">moonshot-v1-32k-vision-preview</option>
-                                <option value="moonshot-v1-128k-vision-preview">moonshot-v1-128k-vision-preview</option>
-                                <option value="kimi-thinking-preview">kimi-thinking-preview</option>
+                                <option value="kimi-k2.5">kimi-k2.5</option>
+                                <option value="kimi-k2.6">kimi-k2.6</option>
+                                <option value="kimi-k2.7-code">kimi-k2.7-code</option>
+                                <option value="kimi-k2.7-code-highspeed">kimi-k2.7-code-highspeed</option>
+                                <option value="kimi-k3">kimi-k3</option>
                             </select>
                         </div>
                         <div id="zai_form" data-source="zai">

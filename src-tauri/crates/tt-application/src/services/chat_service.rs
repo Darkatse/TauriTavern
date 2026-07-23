@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
-    ImportCharacterChatsDto, ImportChatDto, RenameChatDto,
+    ImportCharacterChatsDto, ImportChatDto, RenameChatDto, RestoreCharacterChatBackupDto,
 };
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
 use crate::errors::ApplicationError;
@@ -25,8 +25,7 @@ use tt_ports::repositories::character_repository::CharacterRepository;
 use tt_ports::repositories::chat_repository::{ChatExportFormat, ChatImportFormat, ChatRepository};
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
-    ChatPayloadTail, ChatPayloadWindowPatchRequest, FindLastMessageQuery, LocatedChatMessage,
-    PinnedCharacterChat,
+    ChatPayloadTail, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat,
 };
 
 /// Service for managing chats
@@ -372,19 +371,68 @@ impl ChatService {
         Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
     }
 
-    /// Get raw bytes of a chat backup file.
-    pub async fn get_chat_backup_bytes(
+    /// Decode a chat backup into a temporary JSONL file for streaming consumers.
+    pub async fn materialize_chat_backup(
         &self,
         backup_file_name: &str,
-    ) -> Result<Vec<u8>, ApplicationError> {
+    ) -> Result<String, ApplicationError> {
         if backup_file_name.trim().is_empty() {
             return Err(ApplicationError::ValidationError(
                 "Backup file name cannot be empty".to_string(),
             ));
         }
 
+        let path = self
+            .chat_repository
+            .materialize_chat_backup(backup_file_name)
+            .await?;
+        path.into_os_string().into_string().map_err(|_| {
+            ApplicationError::InternalError(
+                "Chat backup materialization path is not valid UTF-8".to_string(),
+            )
+        })
+    }
+
+    /// Remove a temporary JSONL backup materialization.
+    pub async fn discard_chat_backup_materialization(
+        &self,
+        path: &str,
+    ) -> Result<(), ApplicationError> {
+        if path.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Backup materialization path cannot be empty".to_string(),
+            ));
+        }
+
         self.chat_repository
-            .get_chat_backup_bytes(backup_file_name)
+            .discard_chat_backup_materialization(Path::new(path))
+            .await?;
+        Ok(())
+    }
+
+    /// Restore a character chat directly from a history backup.
+    pub async fn restore_character_chat_backup(
+        &self,
+        dto: RestoreCharacterChatBackupDto,
+    ) -> Result<Vec<String>, ApplicationError> {
+        if dto.backup_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Backup file name cannot be empty".to_string(),
+            ));
+        }
+        validate_character_path_component(&dto.character_name)?;
+        if dto.character_display_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Character display name cannot be empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .restore_character_chat_backup(
+                &dto.backup_name,
+                &dto.character_name,
+                &dto.character_display_name,
+            )
             .await
             .map_err(Into::into)
     }
@@ -650,55 +698,6 @@ impl ChatService {
         }
 
         Ok(pages)
-    }
-
-    /// Patch a windowed character chat payload.
-    pub async fn patch_chat_payload_windowed(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        request: ChatPayloadWindowPatchRequest,
-        commit_reason: CurrentCommitReason,
-    ) -> Result<ChatPayloadCursor, ApplicationError> {
-        validate_character_path_component(character_name)?;
-        validate_chat_file_name(file_name, "Chat file name")?;
-
-        let cursor = self
-            .chat_repository
-            .patch_chat_payload_windowed(character_name, file_name, request)
-            .await?;
-        self.note_current_committed(character_name, file_name, commit_reason)
-            .await;
-        Ok(cursor)
-    }
-
-    /// Set the hidden flag on all messages stored before the window cursor.
-    pub async fn hide_chat_payload_before_cursor(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        cursor: ChatPayloadCursor,
-        hide: bool,
-        name_filter: Option<String>,
-        expected_window_line_count: usize,
-    ) -> Result<ChatPayloadCursor, ApplicationError> {
-        validate_character_path_component(character_name)?;
-        validate_chat_file_name(file_name, "Chat file name")?;
-
-        let cursor = self
-            .chat_repository
-            .hide_chat_payload_before_cursor(
-                character_name,
-                file_name,
-                cursor,
-                hide,
-                name_filter,
-                expected_window_line_count,
-            )
-            .await?;
-        self.note_current_committed(character_name, file_name, CurrentCommitReason::Mutation)
-            .await;
-        Ok(cursor)
     }
 
     /// Import one or more character chats from an uploaded file.

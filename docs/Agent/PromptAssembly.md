@@ -138,22 +138,22 @@ fingerprint { presetSha256, frozenRunInputSnapshotSha256, agentTaskPromptSha256?
 
 runtime-time `prompt_assembly_requested` event 不携带完整 request，只包含 `assemblyId`、`scope`、`requestKind`、`requestSchemaVersion` 与 `requestFingerprint`。完整 request 存在 runtime pending map 中，前端 bridge 只能在该 assembly 仍 pending 时读取。这样 event journal 保持轻量，低端移动端轮询不会反复搬运 frozen input、settings 与 prompt 文本。
 
-## Model 解耦与双阶段覆盖
+## Model 解耦与两次覆盖
 
-第一阶段发生在 `PromptAssemblyService`：
+`PromptAssemblyService` 先处理 preset 与 model binding：
 
 1. 加载 `preset.ref` 的原始 preset settings。
 2. 若 `model.mode = connectionRef`，解析 connection 和 `modelId`；若 `model.mode = currentPromptSnapshot`，读取 `FrozenRunInputSnapshot.currentModelConnection`。
 3. 删除 preset 中 connection-owned fields：`chat_completion_source`、各 source model key、`custom_url`、`secret_id`、reverse proxy、source-specific endpoint、OpenRouter routing、adapter hints 等。
 4. 写入 broker 组装所需的连接字段。`connectionRef` 写入解析出的 source/model；`currentPromptSnapshot` 重放本轮冻结的 current connection，避免 preset 保存的旧 endpoint 或旧 key 污染当前模型。
 
-第二阶段发生在 Agent runtime，适用于 `model.mode = connectionRef`：
+Agent runtime 随后再次覆盖连接字段，仅适用于 `model.mode = connectionRef`：
 
 1. `start_agent_run` 收到 broker 产出的 `promptSnapshot.chatCompletionPayload`。
 2. executor 在 tool loop 前调用 `apply_connection_to_payload(connectionRef, modelId, payload)`。
 3. 最终 payload 的 source、model、endpoint、secret、reverse proxy、adapter hints 以 LLM Connection 为权威。
 
-这两个阶段都需要存在于 `connectionRef` 路径：前端组装阶段需要正确 source/model 计算 PromptManager 与 generation parameters；runtime 阶段需要保证真正发送请求时不受 preset 中旧连接信息污染。`currentPromptSnapshot` 没有可重解析的 LLM Connection，因此它在 run 输入冻结阶段捕获 current connection，并通过生成 payload 中的 `secret_id` 避免运行时回退到“当前 active secret”。
+`connectionRef` 路径需要这两次覆盖：前端组装时根据正确的 source/model 计算 PromptManager 与 generation parameters；runtime 发送请求前再排除 preset 中旧连接信息的影响。`currentPromptSnapshot` 没有可重解析的 LLM Connection，因此它在 run 输入冻结时捕获 current connection，并通过生成 payload 中的 `secret_id` 避免运行时回退到“当前 active secret”。
 
 ## 关键文件
 

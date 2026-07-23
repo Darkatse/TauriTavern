@@ -13,6 +13,7 @@ use tt_application::dto::settings_dto::{
     UpdateTauriTavernSettingsDto, UserSettingsDto, UserSettingsPatchDto, UserSettingsSaveResultDto,
 };
 use tt_application::services::host_resource_service::HostResourceService;
+use tt_contracts::chat::ChatBackupStorageStats;
 
 #[tauri::command]
 pub async fn get_tauritavern_settings(
@@ -26,6 +27,20 @@ pub async fn get_tauritavern_settings(
         .get_tauritavern_settings()
         .await
         .map_err(map_command_error("Failed to get TauriTavern settings"))
+}
+
+#[tauri::command]
+pub async fn get_chat_backup_storage_stats(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Option<ChatBackupStorageStats>, CommandError> {
+    log_command("get_chat_backup_storage_stats");
+
+    app_state
+        .services
+        .settings_service
+        .get_chat_backup_storage_stats()
+        .await
+        .map_err(map_command_error("Failed to get chat backup storage stats"))
 }
 
 #[cfg(target_os = "windows")]

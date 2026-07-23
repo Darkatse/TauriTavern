@@ -505,7 +505,7 @@ async function onCopyToSystemBackgroundClick(e) {
 
 /**
  * Gets a frontend-derived preview for a custom background.
- * Same-origin Host resources are validated by P1 before a cached preview is reused.
+ * Same-origin Host resources are validated against their ETag before a cached preview is reused.
  * @param {string} bg Custom background URL
  * @returns {Promise<string>} Blob URL of the thumbnail
  */

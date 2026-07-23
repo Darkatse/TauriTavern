@@ -16,6 +16,15 @@ export function isSegmenterSupported() {
  */
 export function segmentTextInElement(htmlElement, htmlContent, granularity = 'word') {
     htmlElement.innerHTML = htmlContent;
+    segmentExistingTextInElement(htmlElement, granularity);
+}
+
+/**
+ * Segments an already-parsed tree without parsing its HTML a second time.
+ * @param {HTMLElement} htmlElement
+ * @param {'word'|'grapheme'|'sentence'} [granularity='word']
+ */
+export function segmentExistingTextInElement(htmlElement, granularity = 'word') {
 
     if (!isSegmenterSupported()) {
         return;

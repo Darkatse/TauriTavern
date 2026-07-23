@@ -1,3 +1,5 @@
+import { getChatSurfaceParticipantRegistry } from '../tauri/main/services/chat-surface/runtime.js';
+
 const PREVIEW_CONTAINER_CLASS = 'mes-code-preview';
 const PREVIEW_FRAME_WRAP_CLASS = 'mes-code-preview-frame-wrap';
 const PREVIEW_FRAME_CLASS = 'mes-code-preview-frame';
@@ -5,6 +7,7 @@ const PREVIEW_TOGGLE_BUTTON_CLASS = 'mes-code-preview-toggle';
 const PREVIEW_RELOCATED_CLASS = 'mes-code-preview-relocated';
 const PREVIEW_ACTIVE_HOST_CLASS = 'mes-code-preview-host-active';
 const PREVIEW_PLACEHOLDER_CLASS = 'mes-code-preview-placeholder';
+const PREVIEW_PENDING_CLASS = 'mes-code-preview-pending';
 const PREVIEW_MESSAGE_TYPE = 'tauritavern_html_code_preview_height';
 const PREVIEW_HEIGHT_FALLBACK = 220;
 const LAST_MESSAGE_SELECTOR = '.mes.last_mes.swipes_visible, .mes.last_mes';
@@ -14,9 +17,6 @@ const RESTORE_ICON_CLASS = 'fa-down-left-and-up-right-to-center';
 const HTML_ROOT_PATTERN = /<\s*html[\s>]/i;
 const DOCTYPE_PATTERN = /<!doctype\b/i;
 const SCRIPT_PATTERN = /<\s*script\b/i;
-let htmlCodeRenderEnabled = false;
-let htmlCodeRenderSuppressedByExternalRenderer = false;
-let replaceLastMessageByDefault = false;
 let previewCounter = 0;
 let isPreviewMessageListenerBound = false;
 /** @type {Map<string, HTMLIFrameElement>} */
@@ -34,8 +34,6 @@ let activeExpandedPreview = null;
  * @property {string} sourceMessageMinHeight
  * @property {HTMLElement | null} sourcePlaceholder
  * @property {HTMLElement | null} targetMessageText
- * @property {string} targetMessageMinHeight
- * @property {DocumentFragment | null} targetContent
  */
 
 /**
@@ -91,32 +89,6 @@ function buildPreviewSource(sourceCode) {
 function createPreviewId() {
     previewCounter += 1;
     return `tt-code-preview-${Date.now()}-${previewCounter}`;
-}
-
-/**
- * Removes disconnected iframes from registry.
- * @returns {void}
- */
-function cleanupPreviewFrames() {
-    for (const [previewId, frame] of previewFrames.entries()) {
-        if (!frame.isConnected) {
-            previewFrames.delete(previewId);
-        }
-    }
-
-    if (activeExpandedPreview && !activeExpandedPreview.isConnected) {
-        const state = previewExpansionStates.get(activeExpandedPreview);
-        if (state?.targetMessageText instanceof HTMLElement) {
-            state.targetMessageText.closest('.mes')?.classList.remove(PREVIEW_ACTIVE_HOST_CLASS);
-            if (state.targetContent instanceof DocumentFragment) {
-                state.targetMessageText.replaceChildren();
-                state.targetMessageText.append(state.targetContent);
-                state.targetMessageText.style.minHeight = state.targetMessageMinHeight;
-            }
-        }
-
-        activeExpandedPreview = null;
-    }
 }
 
 /**
@@ -197,6 +169,9 @@ function bindPreviewMessageListener() {
         if (!iframe) {
             return;
         }
+        if (event.source !== iframe.contentWindow) {
+            return;
+        }
 
         if (!iframe.isConnected) {
             previewFrames.delete(data.previewId);
@@ -213,40 +188,8 @@ function bindPreviewMessageListener() {
         const frameWrap = iframe.parentElement;
         if (frameWrap instanceof HTMLElement) {
             frameWrap.style.height = `${nextHeight}px`;
-            syncMessageTextHeight(frameWrap, nextHeight);
         }
     });
-}
-
-/**
- * Expands the host message text area so iframe previews are fully visible.
- * @param {HTMLElement} frameWrap
- * @param {number} previewHeight
- * @returns {void}
- */
-function syncMessageTextHeight(frameWrap, previewHeight) {
-    if (!Number.isFinite(previewHeight) || previewHeight <= 0) {
-        return;
-    }
-
-    const messageText = frameWrap.closest('.mes_text');
-    if (!(messageText instanceof HTMLElement)) {
-        return;
-    }
-
-    const wrapRect = frameWrap.getBoundingClientRect();
-    const messageRect = messageText.getBoundingClientRect();
-    const requiredHeight = Math.ceil(wrapRect.bottom - messageRect.top);
-    if (requiredHeight <= 0) {
-        return;
-    }
-
-    const currentMinHeight = Number.parseFloat(messageText.style.minHeight);
-    const nextMinHeight = Number.isFinite(currentMinHeight)
-        ? Math.max(currentMinHeight, requiredHeight)
-        : requiredHeight;
-
-    messageText.style.minHeight = `${nextMinHeight}px`;
 }
 
 /**
@@ -261,35 +204,6 @@ function findLastMessageTextContainer() {
 
     const messageText = hostMessage.querySelector('.mes_text');
     return messageText instanceof HTMLElement ? messageText : null;
-}
-
-/**
- * Returns the current frame height for a preview container.
- * @param {HTMLElement} container
- * @returns {number}
- */
-function getPreviewHeight(container) {
-    const iframe = container.querySelector(`.${PREVIEW_FRAME_CLASS}`);
-    if (!(iframe instanceof HTMLIFrameElement)) {
-        return PREVIEW_HEIGHT_FALLBACK;
-    }
-
-    const height = Number.parseFloat(iframe.style.height);
-    return Number.isFinite(height) ? Math.max(PREVIEW_HEIGHT_FALLBACK, Math.ceil(height)) : PREVIEW_HEIGHT_FALLBACK;
-}
-
-/**
- * Keeps the current message text block sized correctly after preview moves.
- * @param {HTMLElement} container
- * @returns {void}
- */
-function syncPreviewContainerHeight(container) {
-    const frameWrap = container.querySelector(`.${PREVIEW_FRAME_WRAP_CLASS}`);
-    if (!(frameWrap instanceof HTMLElement)) {
-        return;
-    }
-
-    syncMessageTextHeight(frameWrap, getPreviewHeight(container));
 }
 
 /**
@@ -329,8 +243,6 @@ function ensurePreviewExpansionState(container) {
         sourceMessageMinHeight: '',
         sourcePlaceholder: null,
         targetMessageText: null,
-        targetMessageMinHeight: '',
-        targetContent: null,
     };
 
     previewExpansionStates.set(container, state);
@@ -361,21 +273,9 @@ function expandPreviewToLastMessage(container) {
     state.sourceMessageText = sourceMessageText;
     state.sourceMessageMinHeight = sourceMessageText.style.minHeight || '';
 
-    if (sourceMessageText === targetMessageText) {
-        const hostMessage = sourceMessageText.closest('.mes');
-        if (hostMessage instanceof HTMLElement) {
-            hostMessage.classList.add(PREVIEW_ACTIVE_HOST_CLASS);
-        }
-
-        container.classList.add(PREVIEW_RELOCATED_CLASS);
-        state.expanded = true;
-        updateToggleButtonState(state, true);
-        syncPreviewContainerHeight(container);
-        return true;
-    }
-
     const sourceParent = container.parentElement;
-    if (!(sourceParent instanceof HTMLElement)) {
+    const targetMessageBlock = targetMessageText.parentElement;
+    if (!(sourceParent instanceof HTMLElement) || !(targetMessageBlock instanceof HTMLElement)) {
         return false;
     }
 
@@ -384,18 +284,12 @@ function expandPreviewToLastMessage(container) {
     placeholder.hidden = true;
     sourceParent.insertBefore(placeholder, container);
 
-    const preservedTargetContent = document.createDocumentFragment();
-    while (targetMessageText.firstChild) {
-        preservedTargetContent.append(targetMessageText.firstChild);
-    }
-
     state.sourcePlaceholder = placeholder;
     state.targetMessageText = targetMessageText;
-    state.targetMessageMinHeight = targetMessageText.style.minHeight || '';
-    state.targetContent = preservedTargetContent;
 
     sourceMessageText.style.minHeight = '';
-    targetMessageText.append(container);
+    const targetSiblings = [...targetMessageBlock.childNodes];
+    targetMessageBlock.insertBefore(container, targetSiblings[targetSiblings.indexOf(targetMessageText) + 1] ?? null);
 
     const hostMessage = targetMessageText.closest('.mes');
     if (hostMessage instanceof HTMLElement) {
@@ -405,7 +299,6 @@ function expandPreviewToLastMessage(container) {
     container.classList.add(PREVIEW_RELOCATED_CLASS);
     state.expanded = true;
     updateToggleButtonState(state, true);
-    syncPreviewContainerHeight(container);
     return true;
 }
 
@@ -420,15 +313,9 @@ function collapseExpandedPreview(container) {
         return;
     }
 
-    const hostMessage = container.closest('.mes');
+    const hostMessage = state.targetMessageText?.closest('.mes');
     if (hostMessage instanceof HTMLElement) {
         hostMessage.classList.remove(PREVIEW_ACTIVE_HOST_CLASS);
-    }
-
-    if (state.targetMessageText instanceof HTMLElement && state.targetContent instanceof DocumentFragment) {
-        state.targetMessageText.replaceChildren();
-        state.targetMessageText.append(state.targetContent);
-        state.targetMessageText.style.minHeight = state.targetMessageMinHeight;
     }
 
     if (state.sourcePlaceholder?.parentNode) {
@@ -448,15 +335,12 @@ function collapseExpandedPreview(container) {
     state.sourceMessageMinHeight = '';
     state.sourcePlaceholder = null;
     state.targetMessageText = null;
-    state.targetMessageMinHeight = '';
-    state.targetContent = null;
 
     if (activeExpandedPreview === container) {
         activeExpandedPreview = null;
     }
 
     updateToggleButtonState(state, false);
-    syncPreviewContainerHeight(container);
 }
 
 /**
@@ -506,15 +390,15 @@ function createPreviewToggleButton(container) {
 /**
  * Applies default replacement behavior if enabled.
  * @param {HTMLElement} container
- * @returns {void}
+ * @returns {() => void}
  */
-function scheduleDefaultReplacement(container) {
-    if (!replaceLastMessageByDefault) {
-        return;
+function scheduleDefaultReplacement(container, shouldReplaceLastMessageByDefault) {
+    if (!shouldReplaceLastMessageByDefault()) {
+        return () => {};
     }
 
-    requestAnimationFrame(() => {
-        if (!replaceLastMessageByDefault || !container.isConnected) {
+    const frameId = requestAnimationFrame(() => {
+        if (!shouldReplaceLastMessageByDefault() || !container.isConnected) {
             return;
         }
 
@@ -530,6 +414,7 @@ function scheduleDefaultReplacement(container) {
 
         togglePreviewReplacement(container);
     });
+    return () => cancelAnimationFrame(frameId);
 }
 
 /**
@@ -556,7 +441,7 @@ function createPreviewIframe(srcdoc, previewId) {
 /**
  * Creates an interactive preview container for a code block.
  * @param {string} sourceCode
- * @returns {HTMLDivElement}
+ * @returns {{ container: HTMLDivElement; iframe: HTMLIFrameElement; previewId: string }}
  */
 function createPreviewContainer(sourceCode) {
     const previewSource = buildPreviewSource(sourceCode);
@@ -570,91 +455,164 @@ function createPreviewContainer(sourceCode) {
     frameWrap.className = PREVIEW_FRAME_WRAP_CLASS;
     frameWrap.style.height = `${PREVIEW_HEIGHT_FALLBACK}px`;
 
-    const iframe = createPreviewIframe(previewSource, previewId);
-    previewFrames.set(previewId, iframe);
-    frameWrap.append(iframe);
-
-    const toggleButton = createPreviewToggleButton(container);
-
-    container.append(frameWrap);
-    container.append(toggleButton);
-
-    return container;
+    /** @type {HTMLIFrameElement | null} */
+    let iframe = null;
+    try {
+        iframe = createPreviewIframe(previewSource, previewId);
+        frameWrap.append(iframe);
+        const toggleButton = createPreviewToggleButton(container);
+        container.append(frameWrap, toggleButton);
+        return { container, iframe, previewId };
+    } catch (error) {
+        if (iframe) {
+            iframe.srcdoc = '';
+            iframe.removeAttribute('srcdoc');
+        }
+        previewExpansionStates.delete(container);
+        throw error;
+    }
 }
 
-/**
- * Returns true if the current root belongs to a chat message block.
- * @param {JQuery<HTMLElement>} $root
- * @returns {boolean}
- */
-function isMessageContext($root) {
-    return $root.is('.mes') || $root.closest('.mes').length > 0;
+/** @param {HTMLElement} preBlock @param {() => boolean} shouldReplaceLastMessageByDefault */
+function activatePreview(preBlock, shouldReplaceLastMessageByDefault) {
+    const codeBlock = preBlock.querySelector('code');
+    const sourceCode = codeBlock?.textContent ?? '';
+    const { container, iframe, previewId } = createPreviewContainer(sourceCode);
+    const sourceWasHidden = preBlock.hidden === true;
+    let cancelDefaultReplacement = () => {};
+    try {
+        preBlock.before(container);
+        preBlock.hidden = true;
+        previewFrames.set(previewId, iframe);
+        cancelDefaultReplacement = scheduleDefaultReplacement(container, shouldReplaceLastMessageByDefault);
+    } catch (error) {
+        cancelDefaultReplacement();
+        previewFrames.delete(previewId);
+        iframe.srcdoc = '';
+        iframe.removeAttribute('srcdoc');
+        container.remove();
+        preBlock.hidden = sourceWasHidden;
+        throw error;
+    }
+    let disposed = false;
+
+    return () => {
+        if (disposed) {
+            return;
+        }
+        disposed = true;
+        cancelDefaultReplacement();
+        collapseExpandedPreview(container);
+        previewFrames.delete(previewId);
+        iframe.srcdoc = '';
+        iframe.removeAttribute('srcdoc');
+        container.remove();
+        preBlock.hidden = sourceWasHidden;
+        previewExpansionStates.delete(container);
+    };
 }
 
-/**
- * Enables or disables chat HTML code rendering.
- * @param {boolean} enabled
- * @returns {void}
- */
-export function setHtmlCodeRenderEnabled(enabled) {
-    htmlCodeRenderEnabled = !!enabled;
-}
-
-/**
- * Suppresses the built-in renderer while a richer third-party renderer owns code blocks.
- * @param {boolean} suppressed
- * @returns {void}
- */
-export function setHtmlCodeRenderSuppressedByExternalRenderer(suppressed) {
-    htmlCodeRenderSuppressedByExternalRenderer = !!suppressed;
-}
-
-/**
- * Configures whether the newest rendered preview should replace the last message by default.
- * @param {boolean} enabled
- * @returns {void}
- */
-export function setHtmlCodeRenderReplaceLastMessageByDefault(enabled) {
-    replaceLastMessageByDefault = !!enabled;
-}
-
-/**
- * Adds interactive preview controls for renderable HTML/script code blocks in chat messages.
- * @param {JQuery<HTMLElement> | HTMLElement} messageElement
- * @returns {void}
- */
-export function renderInteractiveHtmlCodeBlocks(messageElement) {
-    if (!htmlCodeRenderEnabled || htmlCodeRenderSuppressedByExternalRenderer) {
+/** @param {HTMLElement} messageElement */
+function releaseRelocatedPreviewForMessage(messageElement) {
+    const container = activeExpandedPreview;
+    if (!(container instanceof HTMLElement)) {
         return;
     }
+    const state = previewExpansionStates.get(container);
+    const sourceMessage = state?.sourceMessageText?.closest('.mes');
+    const targetMessage = state?.targetMessageText?.closest('.mes');
+    if (sourceMessage === messageElement || targetMessage === messageElement || container.closest('.mes') === messageElement) {
+        collapseExpandedPreview(container);
+    }
+}
 
-    bindPreviewMessageListener();
-    cleanupPreviewFrames();
-
-    const $root = $(messageElement);
-    if (!$root.length || !isMessageContext($root)) {
-        return;
+/**
+ * First-party ChatSurface participant. Runtime claims remain inert until the
+ * host grants activation after the message is connected.
+ *
+ * @param {{
+ *   decorateCodeBlocks: (element: HTMLElement) => void;
+ *   releaseCodeBlocks: (element: HTMLElement) => void;
+ *   isEnabled: () => boolean;
+ *   isSuppressed: () => boolean;
+ *   shouldReplaceLastMessageByDefault: () => boolean;
+ * }} deps
+ */
+export function createHtmlCodePreviewParticipant({
+    decorateCodeBlocks,
+    releaseCodeBlocks,
+    isEnabled,
+    isSuppressed,
+    shouldReplaceLastMessageByDefault,
+}) {
+    if ([decorateCodeBlocks, releaseCodeBlocks, isEnabled, isSuppressed, shouldReplaceLastMessageByDefault]
+        .some(callback => typeof callback !== 'function')) {
+        throw new TypeError('HTML code preview participant requires code decoration callbacks');
     }
 
-    const codeBlocks = $root.find('pre > code');
-    for (let i = 0; i < codeBlocks.length; i++) {
-        const codeBlock = codeBlocks.get(i);
-        const preBlock = codeBlock?.closest('pre');
-        if (!(preBlock instanceof HTMLElement)) {
-            continue;
-        }
+    const didCommitContent = ({ element }) => {
+        bindPreviewMessageListener();
+        decorateCodeBlocks(element);
+        return () => {
+            releaseRelocatedPreviewForMessage(element);
+            releaseCodeBlocks(element);
+        };
+    };
 
-        const sourceCode = codeBlock.textContent ?? '';
-        if (!isInteractiveHtmlSnippet(sourceCode)) {
-            continue;
-        }
+    return Object.freeze({
+        id: 'tauritavern/html-code-preview',
+        protocolVersion: 1,
+        prepareContent({ content }, claims) {
+            if (!isEnabled() || isSuppressed()) {
+                return;
+            }
+            for (const codeBlock of content.querySelectorAll('pre code')) {
+                const preBlock = codeBlock.parentElement;
+                if (!(preBlock instanceof HTMLElement) || !preBlock.matches('pre')) {
+                    continue;
+                }
+                if (!isInteractiveHtmlSnippet(codeBlock.textContent ?? '')) {
+                    continue;
+                }
+                const sourceWasHidden = preBlock.hidden === true;
+                const pending = document.createElement('div');
+                pending.className = PREVIEW_PENDING_CLASS;
+                pending.textContent = 'Interactive preview paused';
+                preBlock.before(pending);
+                preBlock.hidden = true;
+                claims.claim(preBlock, ({ source, element }) => {
+                    pending.remove();
+                    releaseCodeBlocks(/** @type {HTMLElement} */ (source));
+                    let disposePreview;
+                    try {
+                        disposePreview = activatePreview(
+                            /** @type {HTMLElement} */ (source),
+                            shouldReplaceLastMessageByDefault,
+                        );
+                    } catch (error) {
+                        preBlock.hidden = sourceWasHidden;
+                        decorateCodeBlocks(element);
+                        throw error;
+                    }
+                    return () => {
+                        disposePreview();
+                        if (element.isConnected) {
+                            preBlock.hidden = true;
+                            preBlock.before(pending);
+                            decorateCodeBlocks(element);
+                        }
+                    };
+                });
+            }
+        },
+        didMount({ element }) {
+            return () => releaseRelocatedPreviewForMessage(element);
+        },
+        didCommitContent,
+    });
+}
 
-        const previewContainer = createPreviewContainer(sourceCode);
-        preBlock.replaceWith(previewContainer);
-        const frameWrap = previewContainer.querySelector(`.${PREVIEW_FRAME_WRAP_CLASS}`);
-        if (frameWrap instanceof HTMLElement) {
-            syncMessageTextHeight(frameWrap, PREVIEW_HEIGHT_FALLBACK);
-        }
-        scheduleDefaultReplacement(previewContainer);
-    }
+/** @param {Parameters<typeof createHtmlCodePreviewParticipant>[0]} deps */
+export function registerHtmlCodePreviewParticipant(deps) {
+    return getChatSurfaceParticipantRegistry().register(createHtmlCodePreviewParticipant(deps));
 }

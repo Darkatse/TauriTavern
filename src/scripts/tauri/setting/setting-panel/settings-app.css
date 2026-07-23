@@ -84,6 +84,10 @@
     opacity: 0.82;
 }
 
+.tt-settings-hint-accent {
+    color: var(--SmartThemeQuoteColor);
+}
+
 .tt-settings-status {
     white-space: pre-wrap;
 }
@@ -100,6 +104,11 @@
     width: 100%;
     min-width: 0;
     margin: 0;
+}
+
+.tt-settings-select:disabled {
+    cursor: not-allowed;
+    opacity: 0.64;
 }
 
 .tt-settings-number-with-unit {

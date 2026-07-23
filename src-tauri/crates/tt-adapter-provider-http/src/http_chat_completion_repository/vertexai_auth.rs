@@ -85,8 +85,15 @@ fn service_account_cache() -> &'static RwLock<HashMap<String, CachedServiceAccou
 }
 
 fn sha256_hex(input: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
     let digest = Sha256::digest(input.as_bytes());
-    format!("{digest:x}")
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 async fn build_service_account_authenticator(

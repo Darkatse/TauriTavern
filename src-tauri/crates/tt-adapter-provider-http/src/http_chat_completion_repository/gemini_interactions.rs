@@ -448,6 +448,7 @@ pub(super) async fn generate_stream(
         cancel,
         move |payload| {
             state.handle_event(&out_sender, payload);
+            Ok(())
         },
     )
     .await

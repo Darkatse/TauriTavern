@@ -1,5 +1,6 @@
 pub mod png_card_metadata;
 
+mod hashing;
 mod repositories;
 mod zipkit;
 

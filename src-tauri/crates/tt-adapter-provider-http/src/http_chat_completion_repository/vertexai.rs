@@ -243,7 +243,7 @@ async fn generate_claude_stream(
             cancel,
             move |payload| {
                 if logged {
-                    return;
+                    return Ok(());
                 }
 
                 if !payload
@@ -253,11 +253,11 @@ async fn generate_claude_stream(
                         .windows(b"cache_creation_input_tokens".len())
                         .any(|window| window == b"cache_creation_input_tokens")
                 {
-                    return;
+                    return Ok(());
                 }
 
                 let Ok(value) = serde_json::from_slice::<Value>(payload) else {
-                    return;
+                    return Ok(());
                 };
 
                 logged = super::log_prompt_cache_performance_if_present(
@@ -265,6 +265,7 @@ async fn generate_claude_stream(
                     Some(model),
                     &value,
                 );
+                Ok(())
             },
         )
         .await

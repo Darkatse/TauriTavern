@@ -125,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn zai_glm52_forwards_native_reasoning_effort() {
+    fn zai_glm52_maps_project_maximum_to_xhigh() {
         let payload = payload(json!({
             "model": "glm-5.2",
             "messages": [{"role": "user", "content": "hello"}],
@@ -140,7 +140,7 @@ mod tests {
             body(&upstream)
                 .get("reasoning_effort")
                 .and_then(Value::as_str),
-            Some("max")
+            Some("xhigh")
         );
     }
 

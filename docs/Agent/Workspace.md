@@ -282,7 +282,7 @@ Commit 是 workspace 到 chat 的边界。
 禁止：
 
 - 直接写 JSONL。
-- 绕过 windowed payload cursor 保护。
+- 绕过正式 chat save contract 或 integrity 校验。
 - 由工具自行 commit。
 - commit 半成品 artifact。
 
@@ -379,7 +379,7 @@ rollbackCommittedMessage(runId, checkpointId)
   -> append rollback committed event
 ```
 
-必须遵守 windowed payload 保存串行化。
+必须遵守完整 chat payload 保存串行化。
 
 ## 11. Retention
 

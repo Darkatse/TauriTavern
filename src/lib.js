@@ -31,6 +31,10 @@ import libCoreBundle, {
     gzipSync,
     gzip,
     sha256,
+    Virtualizer,
+    defaultRangeExtractor,
+    observeElementOffset,
+    observeElementRect,
 } from './dist/lib.core.bundle.js';
 
 let optionalBundlePromise = null;
@@ -190,6 +194,10 @@ export {
     gzipSync,
     gzip,
     sha256,
+    Virtualizer,
+    defaultRangeExtractor,
+    observeElementOffset,
+    observeElementRect,
 };
 
 export default libCoreBundle;

@@ -2,6 +2,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::errors::ApplicationError;
+use crate::services::hashing::hex_lower;
 use tt_ports::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
 };
@@ -139,7 +140,7 @@ fn vertexai_claude_prompt_cache_scope(
     let base_url = config.base_url.trim().trim_end_matches('/');
     let endpoint_path = endpoint_path.trim();
     let digest = Sha256::digest(format!("{base_url}|{endpoint_path}").as_bytes());
-    encode_hex(&digest)
+    hex_lower(&digest)
 }
 
 fn is_openrouter_claude_model(payload: &Value) -> bool {
@@ -162,18 +163,7 @@ fn is_nanogpt_claude_payload(payload: &Value) -> bool {
 fn custom_prompt_cache_scope(base_url: &str) -> String {
     let normalized = base_url.trim().trim_end_matches('/');
     let digest = Sha256::digest(normalized.as_bytes());
-    encode_hex(&digest)
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
+    hex_lower(&digest)
 }
 
 #[cfg(test)]

@@ -4,14 +4,14 @@
  * @typedef {import('../../services/embedded-runtime/types.js').EmbeddedRuntimeSlot} EmbeddedRuntimeSlot
  */
 
-import { parkManagedIframe, takeParkedManagedIframe } from './managed-iframe-parking-lot.js';
+import { dropParkedManagedIframe, parkManagedIframe, takeParkedManagedIframe } from './managed-iframe-parking-lot.js';
 
 const BUDGET_PLACEHOLDER_CLASS = 'tt-runtime-placeholder';
 const GHOST_PLACEHOLDER_CLASS = 'tt-runtime-ghost';
 
 /**
  * Marks an iframe mutation as managed by TauriTavern embedded-runtime so that
- * chat-level observers can ignore it (ER-3.2 self-heal).
+ * chat-level self-healing observers can ignore it.
  *
  * @param {HTMLIFrameElement} iframe
  */
@@ -330,10 +330,8 @@ export function createManagedIframeSlot({
             removeIframeNow();
         },
         dispose: () => {
-            const iframe = findHostIframe(host);
-            if (iframe) {
-                softParkIframe(iframe);
-            }
+            removeIframeNow();
+            dropParkedManagedIframe(id);
             removePlaceholdersNow();
         },
     };

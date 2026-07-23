@@ -2,6 +2,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::errors::ApplicationError;
+use crate::services::hashing::hex_lower;
 use tt_domain::models::agent::AgentChatRef;
 
 pub(crate) fn workspace_id_for_stable_chat_id(
@@ -20,10 +21,7 @@ pub(crate) fn workspace_id_for_stable_chat_id(
         ApplicationError::ValidationError(format!("agent.invalid_chat_ref: {error}"))
     })?;
     let digest = Sha256::digest(json);
-    let mut suffix = String::with_capacity(16);
-    for byte in digest.iter().take(8) {
-        suffix.push_str(&format!("{byte:02x}"));
-    }
+    let suffix = hex_lower(&digest[..8]);
     Ok(format!("chat_{suffix}"))
 }
 

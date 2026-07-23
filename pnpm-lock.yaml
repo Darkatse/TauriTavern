@@ -20,6 +20,9 @@ importers:
       '@popperjs/core':
         specifier: ^2.11.8
         version: 2.11.8
+      '@tanstack/virtual-core':
+        specifier: 3.17.6
+        version: 3.17.6
       bowser:
         specifier: ^2.12.1
         version: 2.14.1
@@ -260,6 +263,9 @@ packages:
         optional: true
       '@swc/helpers':
         optional: true
+
+  '@tanstack/virtual-core@3.17.6':
+    resolution: {integrity: sha512-h0/Ebo18CkOrChlQIhNtQkM5ySUnh/GumQ/D1st3hG2HWUPEF+ILUc2k29UtivCi/9G7w7G3/f7Xyd5cCFbKBw==}
 
   '@tauri-apps/cli-darwin-arm64@2.10.0':
     resolution: {integrity: sha512-avqHD4HRjrMamE/7R/kzJPcAJnZs0IIS+1nkDP5b+TNBn3py7N2aIo9LIpy+VQq0AkN8G5dDpZtOOBkmWt/zjA==}
@@ -664,6 +670,8 @@ snapshots:
   '@rspack/core@2.0.8':
     dependencies:
       '@rspack/binding': 2.0.8
+
+  '@tanstack/virtual-core@3.17.6': {}
 
   '@tauri-apps/cli-darwin-arm64@2.10.0':
     optional: true

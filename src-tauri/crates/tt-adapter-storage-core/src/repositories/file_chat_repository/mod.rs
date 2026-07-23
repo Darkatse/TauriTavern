@@ -6,7 +6,9 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 
 mod backup;
+mod backup_codec;
 mod backup_inventory;
+mod backup_restore;
 mod cache;
 mod chat_dir_resolver;
 mod chat_payload_commit;
@@ -23,8 +25,6 @@ mod payload;
 mod recent_selection;
 mod repository_impl;
 mod summary;
-mod windowed_hide;
-mod windowed_patch;
 mod windowed_payload;
 mod windowed_payload_io;
 
@@ -38,6 +38,25 @@ use crate::chat_directory_identity::{
     SharedChatAliasStore, chat_alias_path_for_user_dir, new_shared_chat_alias_store,
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ContentSignature {
+    pub byte_len: u64,
+    pub sha256: [u8; 32],
+}
+
+#[derive(Debug, Default)]
+struct ContentSignatureState {
+    epoch: u64,
+    entries: HashMap<PathBuf, ContentSignature>,
+}
+
+impl ContentSignatureState {
+    fn invalidate_all(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        self.entries.clear();
+    }
+}
+
 /// File-based chat repository implementation
 pub struct FileChatRepository {
     characters_dir: PathBuf,
@@ -48,6 +67,7 @@ pub struct FileChatRepository {
     chat_commit_sessions:
         Mutex<HashMap<uuid::Uuid, Arc<Mutex<chat_payload_commit::CommitSession>>>>,
     path_write_locks: Arc<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>>,
+    current_content_signatures: Mutex<ContentSignatureState>,
     memory_cache: Arc<Mutex<MemoryCache>>,
     summary_cache: Arc<Mutex<SummaryCache>>,
     chat_aliases: SharedChatAliasStore,
@@ -141,6 +161,7 @@ impl FileChatRepository {
             chat_commit_staging_dir,
             chat_commit_sessions: Mutex::new(HashMap::new()),
             path_write_locks,
+            current_content_signatures: Mutex::new(ContentSignatureState::default()),
             memory_cache,
             summary_cache,
             chat_aliases,

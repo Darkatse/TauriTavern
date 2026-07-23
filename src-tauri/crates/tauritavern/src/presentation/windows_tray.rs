@@ -72,13 +72,15 @@ pub fn install_windows_tray(
             }
             _ => {}
         })
-        .on_tray_icon_event(move |_tray, event| match event {
-            TrayIconEvent::DoubleClick { button, .. } if button == MouseButton::Left => {
-                if let Err(error) = present_main_window(&main_window_for_tray) {
-                    tracing::warn!("Failed to show main window from tray icon: {}", error);
-                }
+        .on_tray_icon_event(move |_tray, event| {
+            if let TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } = event
+                && let Err(error) = present_main_window(&main_window_for_tray)
+            {
+                tracing::warn!("Failed to show main window from tray icon: {}", error);
             }
-            _ => {}
         })
         .build(app_handle)?;
 

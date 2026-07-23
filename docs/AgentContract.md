@@ -142,14 +142,14 @@ Plan policy violation 必须显式记录。模型可修正的工具请求可以�
 
 Agent commit 不能直接写 chat JSONL。
 
-必须通过现有 ChatService/ChatRepository 或前端既有保存队列等价路径保存，并遵守 windowed payload 语义：
+必须通过现有 ChatService/ChatRepository 或前端既有保存队列等价路径保存，并遵守完整 payload 语义：
 
-- UI 只持有 tail window。
-- Prompt/history backfill 不扩大 UI chat。
-- windowed patch 保持 cursor signature 与 window baseline 的 CAS 保护；`force` 只跳过 integrity。
+- 前端 canonical `chat[]` 是完整、有序历史，Agent commit 不得建立第二套局部消息模型。
+- UI 的 DOM truncation 不改变数组内容或绝对索引。
+- 保存提交完整 header + 消息数组，并保留 integrity 校验与原子发布。
 - 应用内并发保存必须串行化。
 
-现有前端保存队列见 `src/script.js:536`。windowed payload 保存串行化要求见 `docs/CurrentState/WindowedPayload.md:151`。
+现有前端保存队列见 `src/script.js`。完整链路见 `docs/CurrentState/ChatPayload.md`。
 
 ### 1.8 Fail Fast，不静默降级
 
@@ -161,7 +161,7 @@ Agent commit 不能直接写 chat JSONL。
 - denied tool requested
 - plan locked node 被修改
 - hidden resource 被请求进入 context
-- cursor integrity conflict
+- chat payload integrity conflict
 - MCP stdio command 不在 allowlist
 - provider/source 被平台 policy 禁用
 - provider native metadata、tool call id 或 reasoning signature 被丢弃
@@ -171,7 +171,7 @@ Agent commit 不能直接写 chat JSONL。
 
 ### 1.9 LLM 调用必须复用现有服务边界
 
-Agent 第一阶段的 LLM 调用必须经过 `ChatCompletionService` 或它的正式 gateway wrapper。
+Agent 的 LLM 调用必须经过 `ChatCompletionService` 或它的正式 gateway wrapper。
 
 禁止：
 
@@ -305,9 +305,9 @@ dryRun 不能被视为纯函数。它仍会触发上游事件、prompt 组合、
 
 Agent run/timeline/tool event 不得伪装成上游 `GENERATION_*` 或 `TOOL_CALLS_*` 事件。上游事件属于 Legacy Generate 兼容面。
 
-## 5. Windowed Payload Contract
+## 5. Chat History 与 Save Contract
 
-Agent 读取历史必须优先使用后端 chat repository/windowed payload/search 能力。
+Agent 构建有界 context 时应优先使用后端 chat repository 的分页、定位与搜索能力，不应复制完整 JSONL 到 workspace。
 
 当前已落地的聊天上下文工具必须遵守：
 
@@ -315,14 +315,14 @@ Agent 读取历史必须优先使用后端 chat repository/windowed payload/sear
 - `chat.read_messages` 使用 0-based message index；JSONL header 不计入 index。
 - 两个工具必须读取 run 创建时冻结的输入历史前缀；`swipe` / `regenerate` 的目标楼层和本 run 后续写入楼层不得对当前 run 可见。
 - 长消息读取必须支持字符范围，不能强行把整条超长消息塞回 prompt。
-- 搜索/读取结果可以返回 snippet、text slice 与 stable ref，但不能扩大前端常驻 chat window。
+- 搜索/读取结果可以返回 snippet、text slice 与 stable ref，但不能另建一份前端 canonical chat。
 
 禁止：
 
-- 把完整 chat history 注入前端常驻 `chat`。
-- 为了 Agent 生成而扩大 UI window。
+- 用局部历史替换或裁剪前端 canonical `chat[]`。
+- 为了 Agent 生成而改变 UI 的 DOM truncation 状态。
 - 在 workspace 中复制完整 JSONL 作为默认行为。
-- 绕过 cursor integrity 直接覆盖聊天文件。
+- 绕过正式保存边界直接覆盖聊天文件。
 
 允许：
 
@@ -330,7 +330,7 @@ Agent 读取历史必须优先使用后端 chat repository/windowed payload/sear
 - 按 token budget 读取 tail/before/search。
 - 在 ContextFrame 中放入历史摘要或检索片段。
 
-`force` 只能用于既有 integrity 覆盖语义，不能跳过 cursor 签名校验。Cursor mismatch 代表 CAS 保护正在阻止不安全写入，不能被静默忽略。
+`force` 只能用于既有 integrity 覆盖语义。任何完整保存、原子发布或 integrity 错误都必须传播，不能被静默忽略。
 
 ## 6. Workspace Contract
 

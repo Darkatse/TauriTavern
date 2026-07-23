@@ -13,10 +13,8 @@ import {
     getCurrentChatId,
     printCharactersDebounced,
     setCharacterId,
-    setEditedMessageId,
     chat,
     getFirstDisplayedMessageId,
-    showMoreMessages,
     saveSettings,
     saveChatConditional,
     setAnimationDuration,
@@ -68,6 +66,9 @@ import { IMAGE_OVERSWIPE, MEDIA_DISPLAY } from './constants.js';
 import { t } from './i18n.js';
 import { extractDominantColor, generateThemePalette, deriveBackgroundName } from './util/ThemeGenerator.js';
 import { getBackgroundPath, isCustomBackgroundUrl } from './backgrounds.js';
+import { CHAT_LAYOUT_CHANGED_EVENT } from '../tauri/main/services/chat-surface/install.js';
+
+export { CHAT_LAYOUT_CHANGED_EVENT };
 
 export const toastPositionClasses = [
     'toast-top-left',
@@ -91,6 +92,10 @@ const defaultExampleSeparator = '***';
 const defaultChatStart = '***';
 const defaultToastPosition = 'toast-top-center';
 const MOBILE_PORTRAIT_CHAT_WIDTH_VW = 100;
+
+function notifyChatLayoutChanged() {
+    window.dispatchEvent(new Event(CHAT_LAYOUT_CHANGED_EVENT));
+}
 
 const avatar_styles = {
     ROUND: 0,
@@ -491,32 +496,38 @@ function switchTimer() {
 function switchTimestamps() {
     $('body').toggleClass('no-timestamps', !power_user.timestamps_enabled);
     $('#messageTimestampsEnabled').prop('checked', power_user.timestamps_enabled);
+    notifyChatLayoutChanged();
 }
 
 function switchIcons() {
     $('body').toggleClass('no-modelIcons', !power_user.timestamp_model_icon);
     $('#messageModelIconEnabled').prop('checked', power_user.timestamp_model_icon);
+    notifyChatLayoutChanged();
 }
 
 function switchTokenCount() {
     $('body').toggleClass('no-tokenCount', !power_user.message_token_count_enabled);
     $('#messageTokensEnabled').prop('checked', power_user.message_token_count_enabled);
+    notifyChatLayoutChanged();
 }
 
 function switchMesIDDisplay() {
     $('body').toggleClass('no-mesIDDisplay', !power_user.mesIDDisplay_enabled);
     $('#mesIDDisplayEnabled').prop('checked', power_user.mesIDDisplay_enabled);
+    notifyChatLayoutChanged();
 }
 
 function switchHideChatAvatars() {
     $('body').toggleClass('hideChatAvatars', power_user.hideChatAvatars_enabled);
     $('#hideChatAvatarsEnabled').prop('checked', power_user.hideChatAvatars_enabled);
+    notifyChatLayoutChanged();
 }
 
 function switchMessageActions() {
     $('body').toggleClass('expandMessageActions', power_user.expand_message_actions);
     $('#expandMessageActions').prop('checked', power_user.expand_message_actions);
     $('.extraMesButtons, .extraMesButtonsHint').removeAttr('style');
+    notifyChatLayoutChanged();
 }
 
 function switchReducedMotion() {
@@ -1052,6 +1063,7 @@ function applyAvatarStyle() {
     $('body').toggleClass('square-avatars', power_user.avatar_style === avatar_styles.SQUARE);
     $('body').toggleClass('rounded-avatars', power_user.avatar_style === avatar_styles.ROUNDED);
     $('#avatar_style').val(power_user.avatar_style).prop('selected', true);
+    notifyChatLayoutChanged();
 }
 
 function applyChatDisplay() {
@@ -1082,6 +1094,7 @@ function applyChatDisplay() {
             break;
         }
     }
+    notifyChatLayoutChanged();
 }
 
 function applyToastrPosition() {
@@ -1114,6 +1127,7 @@ function applyChatWidth(type) {
         const rootStyle = document.documentElement.style;
         rootStyle.setProperty('--sheldWidth', `${effectiveChatWidth}vw`);
         //document.documentElement.style.setProperty('--sheldWidth', power_user.chat_width);
+        notifyChatLayoutChanged();
     } else {
         //this is to prevent the slider from updating page in real time
         chatWidthSlider.off('mouseup touchend').on('mouseup touchend', async () => {
@@ -1122,6 +1136,7 @@ function applyChatWidth(type) {
             await delay(1);
             document.documentElement.style.setProperty('--sheldWidth', `${getEffectiveChatWidth()}vw`);
             await delay(1);
+            notifyChatLayoutChanged();
         });
     }
 
@@ -1208,6 +1223,7 @@ function applyCustomCSS() {
         document.head.appendChild(style);
     }
     style.innerHTML = power_user.custom_css;
+    notifyChatLayoutChanged();
 }
 
 function applyBlurStrength() {
@@ -1227,10 +1243,12 @@ function applyFontScale(type) {
     //this is to allow forced setting on page load, theme swap, etc
     if (type === 'forced') {
         document.documentElement.style.setProperty('--fontScale', String(power_user.font_scale));
+        notifyChatLayoutChanged();
     } else {
         //this is to prevent the slider from updating page in real time
         $('#font_scale').off('mouseup touchend').on('mouseup touchend', () => {
             document.documentElement.style.setProperty('--fontScale', String(power_user.font_scale));
+            notifyChatLayoutChanged();
         });
     }
 
@@ -2944,32 +2962,6 @@ async function doRandomChat(_, tagName) {
     return characters[characterId]?.name;
 }
 
-/**
- * Loads the chat until the given message ID is displayed.
- * @param {number} mesId
- * @returns JQuery<HTMLElement>
- */
-async function loadUntilMesId(mesId) {
-    let target;
-
-    while (getFirstDisplayedMessageId() > mesId && getFirstDisplayedMessageId() !== 0) {
-        await showMoreMessages();
-        await delay(1);
-        target = $('#chat').find(`.mes[mesid="${mesId}"]`);
-
-        if (target.length) {
-            break;
-        }
-    }
-
-    if (!target.length) {
-        toastr.error(`Could not find message with ID: ${mesId}`);
-        return target;
-    }
-
-    return target;
-}
-
 async function doMesCut(_, text) {
     console.debug(`was asked to cut message id #${text}`);
     const range = stringToRange(text, 0, chat.length - 1);
@@ -2980,23 +2972,12 @@ async function doMesCut(_, text) {
         return;
     }
 
-    let totalMesToCut = (range.end - range.start) + 1;
-    let mesIDToCut = range.start;
+    const totalMesToCut = (range.end - range.start) + 1;
+    const mesIDToCut = range.start;
     let cutText = '';
 
     for (let i = 0; i < totalMesToCut; i++) {
         cutText += (chat[mesIDToCut]?.mes || '') + '\n';
-        let mesToCut = $('#chat').find(`.mes[mesid=${mesIDToCut}]`);
-
-        if (!mesToCut.length) {
-            mesToCut = await loadUntilMesId(mesIDToCut);
-
-            if (!mesToCut || !mesToCut.length) {
-                return;
-            }
-        }
-
-        setEditedMessageId(mesIDToCut);
         await deleteMessage(mesIDToCut, null, false);
     }
 

@@ -67,6 +67,7 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
         "bypass_status_check",
         "siliconflow_endpoint",
         "minimax_endpoint",
+        "moonshot_endpoint",
         "workers_ai_account_id",
         "nanogpt_provider",
         "nanogpt_payg_override",
@@ -167,7 +168,7 @@ fn build_chat_completion_payload(
         {
             request.insert(
                 "reasoning_effort".to_string(),
-                Value::String(reasoning_effort.into_owned()),
+                Value::String(reasoning_effort.to_owned()),
             );
         }
 
@@ -365,9 +366,10 @@ mod tests {
     use super::{build, strip_internal_fields};
 
     #[test]
-    fn strip_internal_fields_removes_secret_id_selector() {
+    fn strip_internal_fields_removes_internal_selectors() {
         let mut payload = json!({
             "secret_id": "profile-secret",
+            "moonshot_endpoint": "cn",
             "model": "gpt-4.1-mini"
         })
         .as_object()
@@ -377,6 +379,7 @@ mod tests {
         strip_internal_fields(&mut payload);
 
         assert!(payload.get("secret_id").is_none());
+        assert!(payload.get("moonshot_endpoint").is_none());
         assert_eq!(
             payload.get("model").and_then(Value::as_str),
             Some("gpt-4.1-mini")
@@ -422,63 +425,30 @@ mod tests {
             body.get("reasoning_effort")
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
-            "minimal"
+            "none"
         );
     }
 
     #[test]
-    fn custom_payload_normalizes_xhigh_by_openai_model_support() {
-        let supported = json!({
-            "chat_completion_source": "custom",
-            "model": "gpt-5.2",
-            "messages": [{"role": "user", "content": "hello"}],
-            "reasoning_effort": "xhigh"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-        let (_endpoint, upstream) = build(supported).expect("build should succeed");
-        let body = upstream.as_object().expect("payload must be object");
-        assert_eq!(
-            body.get("reasoning_effort").and_then(Value::as_str),
-            Some("xhigh")
-        );
+    fn custom_payload_orders_openai_extremes() {
+        for (requested, expected) in [("xhigh", "high"), ("max", "xhigh")] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "model": "gpt-5.2",
+                "messages": [{"role": "user", "content": "hello"}],
+                "reasoning_effort": requested
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
 
-        let unsupported = json!({
-            "chat_completion_source": "custom",
-            "model": "gpt-5.1",
-            "messages": [{"role": "user", "content": "hello"}],
-            "reasoning_effort": "xhigh"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-        let (_endpoint, upstream) = build(unsupported).expect("build should succeed");
-        let body = upstream.as_object().expect("payload must be object");
-        assert_eq!(
-            body.get("reasoning_effort").and_then(Value::as_str),
-            Some("high")
-        );
-    }
-
-    #[test]
-    fn custom_payload_maps_project_maximum_to_openai_high() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "model": "gpt-5.2",
-            "messages": [{"role": "user", "content": "hello"}],
-            "reasoning_effort": "max"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("payload must be object");
-        assert_eq!(
-            body.get("reasoning_effort").and_then(Value::as_str),
-            Some("high")
-        );
+            let (_endpoint, upstream) = build(payload).expect("build should succeed");
+            let body = upstream.as_object().expect("payload must be object");
+            assert_eq!(
+                body.get("reasoning_effort").and_then(Value::as_str),
+                Some(expected)
+            );
+        }
     }
 
     #[test]

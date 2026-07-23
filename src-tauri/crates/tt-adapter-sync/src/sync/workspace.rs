@@ -51,21 +51,23 @@ impl ClientWorkspace for TauriTavernSyncWorkspace {
     ) -> Result<(), WorkspaceWriteError> {
         sync_fs::write_file_atomic(&self.resolve(path), data, modified_ms)
             .await
-            .map_err(|error| {
-                let target_changed = error.target_changed();
-                let error = domain_error_to_sync(error.into_error());
-                if target_changed {
-                    WorkspaceWriteError::changed(error)
-                } else {
-                    WorkspaceWriteError::unchanged(error)
-                }
-            })
+            .map_err(workspace_write_error)
     }
 
     async fn delete_file(&self, path: &SyncPath) -> Result<(), WorkspaceWriteError> {
-        tokio::fs::remove_file(self.resolve(path))
+        sync_fs::delete_sync_file(&self.sync_root, path)
             .await
-            .map_err(|error| WorkspaceWriteError::unchanged(SyncError::Io(error.to_string())))
+            .map_err(workspace_write_error)
+    }
+}
+
+fn workspace_write_error(error: sync_fs::FileMutationError) -> WorkspaceWriteError {
+    let target_changed = error.target_changed();
+    let error = error.into_error();
+    if target_changed {
+        WorkspaceWriteError::changed(error)
+    } else {
+        WorkspaceWriteError::unchanged(error)
     }
 }
 
@@ -86,10 +88,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_round_trips_file_operations() {
+    async fn workspace_round_trips_file_operations_and_prunes_empty_parents() {
         let root = temp_root();
         let workspace = TauriTavernSyncWorkspace::new(root.clone());
-        let path = SyncPath::new("default-user/chats/hello.json".to_string()).unwrap();
+        let path = SyncPath::new("default-user/chats/thread/hello.json".to_string()).unwrap();
         let mut source = Cursor::new(br#"{"hello":true}"#.to_vec());
 
         workspace
@@ -103,7 +105,8 @@ mod tests {
         assert_eq!(&bytes, br#"{"hello":true}"#);
 
         workspace.delete_file(&path).await.unwrap();
-        assert!(!root.join("default-user/chats/hello.json").exists());
+        assert!(!root.join("default-user/chats/thread").exists());
+        assert!(root.join("default-user/chats").exists());
 
         let _ = tokio::fs::remove_dir_all(root).await;
     }

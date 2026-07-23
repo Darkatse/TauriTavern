@@ -215,7 +215,7 @@ impl ManifestStore for LanManifestStore {
             let full_path = sync_transfer::resolve_to_local(&sync_root, &path);
             sync_fs::write_file_atomic(&full_path, data, modified_ms)
                 .await
-                .map_err(|error| domain_error_to_sync(error.into_error()))
+                .map_err(|error| error.into_error())
         }
     }
 
@@ -226,10 +226,9 @@ impl ManifestStore for LanManifestStore {
         let sync_root = self.sync_root.clone();
         let path = path.clone();
         async move {
-            let full_path = sync_transfer::resolve_to_local(&sync_root, &path);
-            tokio::fs::remove_file(&full_path)
+            sync_fs::delete_sync_file(&sync_root, &path)
                 .await
-                .map_err(|error| SyncError::Io(error.to_string()))
+                .map_err(|error| error.into_error())
         }
     }
 }
@@ -440,6 +439,7 @@ mod tests {
     use ttsync_client::{ClientSyncEngine, ClientSyncOptions, ClientSyncTarget, NoopSyncObserver};
     use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1};
     use ttsync_contract::manifest::ManifestV2;
+    use ttsync_contract::path::SyncPath;
     use ttsync_contract::peer::Permissions;
     use ttsync_contract::sync::SyncMode;
     use ttsync_core::bundle::{FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1};
@@ -581,6 +581,29 @@ mod tests {
             ApiError::from(DomainError::cancelled("Pairing request cancelled")).into_response();
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn manifest_store_delete_prunes_fileless_parents() {
+        let sync_root = temp_default_user_dir();
+        let git = sync_root.join("extensions/third-party/example/.git");
+        tokio::fs::create_dir_all(git.join("objects/info"))
+            .await
+            .expect("create git directories");
+        tokio::fs::write(git.join("HEAD"), b"ref: refs/heads/main\n")
+            .await
+            .expect("write HEAD");
+
+        let store = LanManifestStore::new(sync_root.clone());
+        let path = SyncPath::new("extensions/third-party/example/.git/HEAD".to_string()).unwrap();
+        store.delete_file(&path).await.expect("delete file");
+
+        assert!(!sync_root.join("extensions/third-party/example").exists());
+        assert!(sync_root.join("extensions/third-party").exists());
+
+        tokio::fs::remove_dir_all(sync_root)
+            .await
+            .expect("remove temp root");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

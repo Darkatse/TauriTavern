@@ -12,9 +12,10 @@ function createSettings(overrides = {}) {
     return {
         panel_runtime_profile: 'off',
         embedded_runtime_profile: 'off',
-        chat_history_mode: 'windowed',
+        chat_virtualization_enabled: false,
         chat_backups: {
             automatic_enabled: true,
+            zstd_compression_enabled: false,
             max_files_per_prefix: 20,
             max_total_files: 500,
             max_total_bytes: 1024 * 1024 * 1024,
@@ -54,6 +55,7 @@ function createDraft(initial, overrides = {}) {
         ...overrides,
         chatBackups: {
             automaticEnabled: initial.chatBackups.automaticEnabled,
+            zstdCompressionEnabled: initial.chatBackups.zstdCompressionEnabled,
             maxFilesPerPrefix: initial.chatBackups.maxFilesPerPrefix,
             maxTotalFiles: initial.chatBackups.maxTotalFiles,
             maxTotalValue: maxTotalBytes > 0
@@ -84,6 +86,37 @@ test('buildTauriTavernSettingsUpdate returns an empty patch for unchanged settin
 
     assert.equal(update.hasChanges, false);
     assert.deepEqual(update.patch, {});
+});
+
+test('buildTauriTavernSettingsUpdate persists the chat virtualization switch', () => {
+    const initial = createTauriTavernSettingsState(createSettings());
+    const update = buildTauriTavernSettingsUpdate(initial, createDraft(initial, {
+        chatVirtualizationEnabled: true,
+    }));
+
+    assert.equal(update.hasChanges, true);
+    assert.deepEqual(update.patch, { chat_virtualization_enabled: true });
+    assert.equal(update.changes.chatVirtualizationEnabled, true);
+});
+
+test('createTauriTavernSettingsState requires the canonical chat virtualization switch', () => {
+    const settings = createSettings();
+    delete settings.chat_virtualization_enabled;
+
+    assert.throws(
+        () => createTauriTavernSettingsState(settings),
+        /chat virtualization setting missing/,
+    );
+});
+
+test('createTauriTavernSettingsState requires the canonical Zstandard backup switch', () => {
+    const settings = createSettings();
+    delete settings.chat_backups.zstd_compression_enabled;
+
+    assert.throws(
+        () => createTauriTavernSettingsState(settings),
+        /Zstandard chat backup setting missing/,
+    );
 });
 
 test('buildTauriTavernSettingsUpdate preserves minimal nested patch semantics', () => {
@@ -188,10 +221,33 @@ test('buildTauriTavernSettingsUpdate preserves minimal chat backup patch semanti
     });
 });
 
+test('buildTauriTavernSettingsUpdate persists only the Zstandard backup switch', () => {
+    const initial = createTauriTavernSettingsState(createSettings(), {
+        nativeRegexBackendEnabled: true,
+    });
+
+    const update = buildTauriTavernSettingsUpdate(initial, createDraft(initial, {
+        chatBackups: {
+            zstdCompressionEnabled: true,
+        },
+    }));
+
+    assert.equal(update.hasChanges, true);
+    assert.equal(update.changes.chatBackups, true);
+    assert.equal(update.requiresChatBackupPurgeConfirmation, false);
+    assert.equal(update.next.chatBackups.zstdCompressionEnabled, true);
+    assert.deepEqual(update.patch, {
+        chat_backups: {
+            zstd_compression_enabled: true,
+        },
+    });
+});
+
 test('unchanged storage display does not rewrite a non-MiB-aligned byte limit', () => {
     const initial = createTauriTavernSettingsState(createSettings({
         chat_backups: {
             automatic_enabled: true,
+            zstd_compression_enabled: false,
             max_files_per_prefix: 20,
             max_total_files: 500,
             max_total_bytes: 1024 * 1024 + 1,
@@ -329,4 +385,43 @@ test('chat backup storage unit selector converts the displayed value without cha
     component.methods.setChatBackupStorageUnit.call(state, 'GiB');
     assert.equal(state.draft.chatBackups.maxTotalUnit, 'GiB');
     assert.equal(state.draft.chatBackups.maxTotalValue, 1);
+});
+
+test('zstd backup hint updates when aggregate storage stats arrive later', () => {
+    const settings = createSettings();
+    settings.chat_backups.zstd_compression_enabled = true;
+    const values = createTauriTavernSettingsState(settings);
+    const component = createTauriTavernSettingsApp({
+        viewModel: {
+            capabilities: {},
+            dataRoot: null,
+            values,
+        },
+        actions: {},
+        tr: (key) => key,
+    });
+    const state = component.data();
+    const context = { ...state, tr: (key) => key };
+
+    assert.equal(component.computed.zstdCompressionHint.call(context).saved, '');
+    context.chatBackupStorageStats = {
+        originalBytes: GIBIBYTE_BYTES,
+        storedBytes: 256 * MEBIBYTE_BYTES,
+    };
+    const compressedHint = component.computed.zstdCompressionHint.call(context);
+    assert.match(compressedHint.summary, /Saves substantial space/);
+    assert.match(compressedHint.before, /25%/);
+    assert.equal(compressedHint.saved, '768.0 MB');
+    assert.equal(compressedHint.after, '.');
+
+    context.draft.chatBackups.zstdCompressionEnabled = false;
+    assert.deepEqual(
+        component.computed.zstdCompressionHint.call(context),
+        {
+            summary: 'Saves substantial space, but SillyTavern cannot read this format.',
+            before: '',
+            saved: '',
+            after: '',
+        },
+    );
 });

@@ -104,7 +104,7 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 
 - `Invalid data: Archive layout is ambiguous`
 
-当前实现会在 **布局扫描** 与 **解压归一化** 两阶段一致忽略 `__MACOSX` 条目，保证这类 zip 可正常导入：
+当前实现会在 **布局扫描** 与 **解压归一化** 时忽略 `__MACOSX` 条目，保证这类 zip 可正常导入：
 
 - `src-tauri/crates/tt-adapter-archive/src/data_archive/import/layout.rs`
 - `src-tauri/crates/tt-adapter-archive/src/data_archive/import/extract.rs`

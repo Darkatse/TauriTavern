@@ -29,10 +29,6 @@ fn default_embedded_runtime_profile() -> String {
     "auto".to_string()
 }
 
-fn default_chat_history_mode() -> ChatHistoryMode {
-    ChatHistoryMode::Windowed
-}
-
 fn default_llm_api_keep() -> u32 {
     5
 }
@@ -127,13 +123,6 @@ fn default_request_proxy_bypass() -> Vec<String> {
         "169.254.0.0/16".to_string(),
         ".local".to_string(),
     ]
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ChatHistoryMode {
-    Windowed,
-    Off,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,6 +250,8 @@ impl AgentRunRetentionSettings {
 pub struct ChatBackupSettings {
     #[serde(default = "default_chat_backup_automatic_enabled")]
     pub automatic_enabled: bool,
+    #[serde(default)]
+    pub zstd_compression_enabled: bool,
     #[serde(default = "default_chat_backup_max_files_per_prefix")]
     pub max_files_per_prefix: i64,
     #[serde(default = "default_chat_backup_max_total_files")]
@@ -273,6 +264,7 @@ impl Default for ChatBackupSettings {
     fn default() -> Self {
         Self {
             automatic_enabled: default_chat_backup_automatic_enabled(),
+            zstd_compression_enabled: false,
             max_files_per_prefix: default_chat_backup_max_files_per_prefix(),
             max_total_files: default_chat_backup_max_total_files(),
             max_total_bytes: default_chat_backup_max_total_bytes(),
@@ -339,8 +331,8 @@ pub struct TauriTavernSettings {
     pub panel_runtime_profile: String,
     #[serde(default = "default_embedded_runtime_profile")]
     pub embedded_runtime_profile: String,
-    #[serde(default = "default_chat_history_mode")]
-    pub chat_history_mode: ChatHistoryMode,
+    #[serde(default)]
+    pub chat_virtualization_enabled: bool,
     #[serde(default)]
     pub chat_backups: ChatBackupSettings,
     #[serde(default = "default_close_to_tray_on_close")]
@@ -380,7 +372,7 @@ impl Default for TauriTavernSettings {
             perf_profile: default_perf_profile(),
             panel_runtime_profile: default_panel_runtime_profile(),
             embedded_runtime_profile: default_embedded_runtime_profile(),
-            chat_history_mode: default_chat_history_mode(),
+            chat_virtualization_enabled: false,
             chat_backups: ChatBackupSettings::default(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             request_proxy: RequestProxySettings::default(),
@@ -502,6 +494,35 @@ mod tests {
     }
 
     #[test]
+    fn chat_virtualization_defaults_to_disabled_and_accepts_enabled() {
+        let older = TauriTavernSettings::from_json_str_with_compat(
+            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
+        )
+        .expect("parse older settings");
+        assert!(!older.chat_virtualization_enabled);
+
+        let enabled = TauriTavernSettings::from_json_str_with_compat(
+            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"chat_virtualization_enabled":true}"#,
+        )
+        .expect("parse enabled chat virtualization");
+        assert!(enabled.chat_virtualization_enabled);
+
+        let serialized = serde_json::to_value(enabled).expect("serialize chat virtualization");
+        assert_eq!(serialized["chat_virtualization_enabled"], true);
+    }
+
+    #[test]
+    fn removed_chat_history_mode_is_ignored() {
+        let settings = TauriTavernSettings::from_json_str_with_compat(
+            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"chat_history_mode":"windowed"}"#,
+        )
+        .expect("parse settings with removed key");
+
+        let serialized = serde_json::to_value(settings).expect("serialize settings");
+        assert!(serialized.get("chat_history_mode").is_none());
+    }
+
+    #[test]
     fn agent_retention_defaults_to_recent_terminal_history_policy() {
         let settings = TauriTavernSettings::default();
 
@@ -542,6 +563,7 @@ mod tests {
         .expect("parse settings");
 
         assert!(settings.chat_backups.automatic_enabled);
+        assert!(!settings.chat_backups.zstd_compression_enabled);
         assert_eq!(
             settings.chat_backups.max_files_per_prefix,
             DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX
@@ -567,6 +589,7 @@ mod tests {
         .expect("parse settings");
 
         assert!(settings.chat_backups.automatic_enabled);
+        assert!(!settings.chat_backups.zstd_compression_enabled);
         assert_eq!(
             settings.chat_backups.max_files_per_prefix,
             DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX

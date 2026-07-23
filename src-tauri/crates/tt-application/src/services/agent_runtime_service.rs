@@ -132,7 +132,7 @@ impl AgentRuntimeService {
         llm_connection_service: Arc<LlmConnectionService>,
         prompt_assembly_service: Arc<PromptAssemblyService>,
     ) -> Self {
-        let tool_registry = BuiltinAgentToolRegistry::phase2c();
+        let tool_registry = BuiltinAgentToolRegistry::all();
         let tool_dispatcher = AgentToolDispatcher::new(
             run_repository.clone(),
             chat_repository.clone(),

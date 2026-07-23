@@ -107,7 +107,6 @@
 		581C420CD09C276B28F81159 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
 		587E57153E0CFEF6B2A5E484 /* tauritavern_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = tauritavern_iOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A3FBEDC64C404548142ABD8 /* group_commands.rs */ = {isa = PBXFileReference; path = group_commands.rs; sourceTree = "<group>"; };
-		5AA9A8319D536D5AC7AEF2C7 /* windowed_patch.rs */ = {isa = PBXFileReference; path = windowed_patch.rs; sourceTree = "<group>"; };
 		5B5F1B1920F1B63EAC1B4FCD /* chat_completion_dto.rs */ = {isa = PBXFileReference; path = chat_completion_dto.rs; sourceTree = "<group>"; };
 		5CBFF1A0A8A3166F97FC1616 /* theme_repository.rs */ = {isa = PBXFileReference; path = theme_repository.rs; sourceTree = "<group>"; };
 		5D28227B235D0FC7F053D008 /* tests.rs */ = {isa = PBXFileReference; path = tests.rs; sourceTree = "<group>"; };
@@ -679,7 +678,6 @@
 				4B7AE22B1FA325CA3718B0BB /* repository_impl.rs */,
 				9C17D6564425A172908D66E1 /* summary.rs */,
 				A011E3E73743CE64D727D818 /* tests.rs */,
-				5AA9A8319D536D5AC7AEF2C7 /* windowed_patch.rs */,
 				7B2DCBCF24D6C1A50D37D3B0 /* windowed_payload_io.rs */,
 				01C695690B7213E87EE96492 /* windowed_payload.rs */,
 			);

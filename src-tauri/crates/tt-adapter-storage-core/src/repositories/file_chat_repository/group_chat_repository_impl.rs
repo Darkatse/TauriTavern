@@ -12,8 +12,8 @@ use tt_domain::models::chat::strip_jsonl_extension;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
-    ChatPayloadCursor, ChatPayloadTail, ChatPayloadWindowPatchRequest, ChatSearchResult,
-    FindLastMessageQuery, LocatedChatMessage, PinnedGroupChat,
+    ChatPayloadCursor, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
+    PinnedGroupChat,
 };
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 
@@ -155,35 +155,9 @@ impl GroupChatRepository for FileChatRepository {
             .await
     }
 
-    async fn patch_group_chat_payload_windowed(
-        &self,
-        chat_id: &str,
-        request: ChatPayloadWindowPatchRequest,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.patch_group_payload_windowed(chat_id, request).await
-    }
-
-    async fn hide_group_chat_payload_before_cursor(
-        &self,
-        chat_id: &str,
-        cursor: ChatPayloadCursor,
-        hide: bool,
-        name_filter: Option<String>,
-        expected_window_line_count: usize,
-    ) -> Result<ChatPayloadCursor, DomainError> {
-        self.hide_group_payload_before_cursor(
-            chat_id,
-            cursor,
-            hide,
-            name_filter,
-            expected_window_line_count,
-        )
-        .await
-    }
-
     async fn backup_group_chat_automatic(&self, chat_id: &str) -> Result<(), DomainError> {
         let path = self.get_group_chat_path(chat_id)?;
-        let Some(_write_guard) = self.try_acquire_payload_write_lock(&path).await else {
+        let Some(_write_guard) = self.try_acquire_payload_snapshot_lock(&path).await else {
             return Err(DomainError::transient(format!(
                 "Group chat current is busy: {}",
                 path.display()
@@ -201,7 +175,7 @@ impl GroupChatRepository for FileChatRepository {
 
     async fn delete_group_chat_payload(&self, chat_id: &str) -> Result<(), DomainError> {
         let path = self.get_group_chat_path(chat_id)?;
-        let _write_guard = self.acquire_payload_write_lock(&path).await;
+        let _write_guard = self.acquire_payload_mutation_lock(&path).await;
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Group chat not found: {}",
@@ -225,7 +199,7 @@ impl GroupChatRepository for FileChatRepository {
         let old_path = self.get_group_chat_path(old_file_name)?;
         let new_path = self.get_group_chat_path(new_file_name)?;
         let (_old_payload_guard, _new_payload_guard) = self
-            .acquire_payload_rename_locks(&old_path, &new_path)
+            .acquire_payload_rename_mutation_locks(&old_path, &new_path)
             .await;
 
         if !old_path.exists() {
@@ -263,6 +237,13 @@ impl GroupChatRepository for FileChatRepository {
         self.remove_summary_cache_for_path(&target_path).await;
 
         Ok(chat_id)
+    }
+
+    async fn restore_group_chat_backup(
+        &self,
+        backup_file_name: &str,
+    ) -> Result<String, DomainError> {
+        self.restore_group_chat_backup_file(backup_file_name).await
     }
 
     async fn get_group_chat_summary(

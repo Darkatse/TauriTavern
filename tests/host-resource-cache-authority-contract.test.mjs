@@ -107,7 +107,7 @@ function createCustomPreviewHarness(source, sourceResponse) {
     return { getPreview, memory, records, requests, revoked };
 }
 
-test('first-party normal reads never override P1 with force-cache', async () => {
+test('first-party normal reads never override Host Resource cache policy with force-cache', async () => {
     const files = await firstPartyJavaScriptFiles(path.join(REPO_ROOT, 'src'));
     const violations = [];
     for (const file of files) {
@@ -120,7 +120,7 @@ test('first-party normal reads never override P1 with force-cache', async () => 
     assert.deepEqual(violations, []);
 });
 
-test('background previews use stable P1 representations without a server Blob cache', async () => {
+test('background previews use stable Host Resource representations without a server Blob cache', async () => {
     const [source, settingsSource] = await Promise.all([
         readProjectFile('src/scripts/backgrounds.js'),
         readProjectFile('src/scripts/tauri/setting/setting-panel/settings-popup.js'),
@@ -139,7 +139,7 @@ test('background previews use stable P1 representations without a server Blob ca
     assert.match(settingsSource, /endsWith\('\.mp4'\)[\s\S]+No-Image-Placeholder\.svg/);
 });
 
-test('same-origin custom previews bind candidate reuse to P1 ETag', async () => {
+test('same-origin custom previews bind candidate reuse to the Host Resource ETag', async () => {
     const source = await readProjectFile('src/scripts/backgrounds.js');
     let etag = '"source-v1"';
     const harness = createCustomPreviewHarness(source, async () => ({
@@ -170,7 +170,7 @@ test('same-origin custom previews bind candidate reuse to P1 ETag', async () => 
     assert.deepEqual(harness.revoked, [cold]);
 });
 
-test('same-origin custom preview fails fast when P1 omits ETag', async () => {
+test('same-origin custom preview fails fast when the Host Resource omits ETag', async () => {
     const source = await readProjectFile('src/scripts/backgrounds.js');
     const harness = createCustomPreviewHarness(source, async () => ({
         ok: true,

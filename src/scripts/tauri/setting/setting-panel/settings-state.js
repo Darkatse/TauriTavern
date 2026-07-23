@@ -4,10 +4,6 @@ import {
     normalizeEmbeddedRuntimeProfileName,
     resolveEffectiveEmbeddedRuntimeProfileName,
 } from '../../../../tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js';
-import {
-    CHAT_HISTORY_MODE_WINDOWED,
-    normalizeChatHistoryModeName,
-} from '../../../../tauri/main/services/chat-history/chat-history-mode-state.js';
 import { readNativeRegexBackendEnabledFromSettings } from '../../regex/native-regex-settings.js';
 
 export const PROMPT_CACHE_TTL_VALUES = ['off', '5m', '1h'];
@@ -65,12 +61,10 @@ export function createTauriTavernSettingsState(settings, options = {}) {
 
     const configuredEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(settings.embedded_runtime_profile);
     const embeddedRuntimeProfile = resolveEffectiveEmbeddedRuntimeProfileName(configuredEmbeddedRuntimeProfile);
-
-    const chatHistoryMode = normalizeChatHistoryModeName(
-        typeof settings.chat_history_mode === 'string' && settings.chat_history_mode
-            ? settings.chat_history_mode
-            : CHAT_HISTORY_MODE_WINDOWED,
-    );
+    const chatVirtualizationEnabled = settings.chat_virtualization_enabled;
+    if (typeof chatVirtualizationEnabled !== 'boolean') {
+        throw new Error('TauriTavern settings: chat virtualization setting missing');
+    }
 
     const avatarPersonaOriginalImagesEnabled = settings.avatar_persona_original_images_enabled;
     if (typeof avatarPersonaOriginalImagesEnabled !== 'boolean') {
@@ -89,6 +83,9 @@ export function createTauriTavernSettingsState(settings, options = {}) {
     if (typeof chatBackups.automatic_enabled !== 'boolean') {
         throw new Error('TauriTavern settings: automatic chat backup setting missing');
     }
+    if (typeof chatBackups.zstd_compression_enabled !== 'boolean') {
+        throw new Error('TauriTavern settings: Zstandard chat backup setting missing');
+    }
 
     const maxFilesPerPrefix = requireChatBackupLimit(
         chatBackups.max_files_per_prefix,
@@ -106,9 +103,10 @@ export function createTauriTavernSettingsState(settings, options = {}) {
         panelRuntimeProfileSource: rawPanelRuntimeProfile,
         configuredEmbeddedRuntimeProfile,
         embeddedRuntimeProfile,
-        chatHistoryMode,
+        chatVirtualizationEnabled,
         chatBackups: {
             automaticEnabled: chatBackups.automatic_enabled,
+            zstdCompressionEnabled: chatBackups.zstd_compression_enabled,
             maxFilesPerPrefix,
             maxTotalFiles,
             maxTotalBytes,

@@ -39,7 +39,7 @@ MCP / Tool Direct Call
   非 Agent 模式下也可显式调用 MCP 或工具，但不拥有 Agent Run
 ```
 
-三条路径可以共享 LLM gateway、tool registry、MCP client、chat repository、windowed payload 和 tokenization service，但不能互相污染。
+三条路径可以共享 LLM gateway、tool registry、MCP client、chat repository、只读历史查询和 tokenization service，但不能互相污染。
 
 ## 2. Ground of Truth
 
@@ -49,7 +49,7 @@ MCP / Tool Direct Call
 - 应用服务由 `AppState` 管理并在 `composition::build_services()` 装配。见 `src-tauri/crates/tauritavern/src/app.rs`、`src-tauri/crates/tauritavern/src/app/composition.rs`。
 - 当前 LLM 请求经过 `ChatCompletionService`，该服务负责 provider 解析、iOS policy、endpoint override policy、payload build、prompt caching 和取消注册。见 `src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:32`、`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:302`、`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs:358`。
 - 当前 LLM API 日志依赖 composition root 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、secret 或 policy。Responses WebSocket 建连已复用 `HttpClientPool` 的 ChatCompletion WebSocket profile，不应扩散成第二套 LLM 调用链。见 `src-tauri/crates/tauritavern/src/app/composition/repositories.rs`。
-- 当前 chat payload 分片读写由 `ChatService` 和 `ChatRepository` 承担；windowed patch 使用 `ChatPayloadWindowPatchRequest` 作为内部 CAS mutation 契约，没有有效 cursor 时回退到完整保存。见 `src-tauri/crates/tt-application/src/services/chat_service.rs`、`src-tauri/crates/tt-ports/src/repositories/chat_repository.rs`。
+- 当前聊天遵循完整 payload 保存契约；`ChatService` / `GroupChatService` 通过正式 repository 边界提交，前端保存经过统一队列。tail/before 是与写入解耦的只读历史查询。见 `docs/CurrentState/ChatPayload.md`。
 - 前端 Public ABI 的统一入口是 `window.__TAURITAVERN__`，应保持小而稳定。见 `docs/FrontendHostContract.md` 第 3.6 节、`src/tauri/main/bootstrap.js:139`。
 - 当前 `Generate()` 支持 dryRun，并在 `GENERATE_AFTER_DATA` 提供生成请求数据。见 `src/script.js:4660`、`src/script.js:5743`。
 - 当前 SillyTavern 工具调用会递归回 `Generate()`，并把工具调用结果保存成 `is_system` chat message。这是 Agent 必须摆脱的旧结构。见 `src/script.js:5826`、`src/script.js:5847`、`src/script.js:5959`、`src/scripts/tool-calling.js:868`、`src/scripts/tool-calling.js:887`。
@@ -111,7 +111,7 @@ Agent Run State Machine
   ↓
 ArtifactAssembler
   ↓
-Committer 通过 chat service/windowed payload 保存
+Committer 通过正式 chat save contract 保存
   ↓
 聊天 UI 展示最终消息，timeline 展示 Agent 过程
 ```
@@ -122,7 +122,7 @@ Committer 通过 chat service/windowed payload 保存
 GenerationIntent
   ↓
 Rust ContextAssemblyService
-  ├─ chat history windowed read/search
+  ├─ chat history paged read/search
   ├─ world info activation result
   ├─ preset/character/user profile
   ├─ workspace files
@@ -312,9 +312,9 @@ Gateway 代码已拆成 `agent_model_gateway/` 模块目录：`mod.rs` 保留 tr
 - 通过现有 chat 保存路径提交。
 - commit 后写入 `agentRunId`、`agentCheckpointId`、`agentArtifacts` 等 metadata。
 
-Commit 必须遵守 windowed payload 与保存串行化契约，不能直接写 JSONL 文件。
+Commit 必须遵守完整 chat payload 与保存串行化契约，不能直接写 JSONL 文件。
 
-如果第一期由前端完成 commit，必须复用现有 `enqueueChatSave()` 串行化路径。如果后续改为后端直接 commit，后端必须提供等价的 per-chat 串行化、cursor/CAS/resync 语义，并仍通过 ChatService/GroupChatService 的正式保存边界。
+如果第一期由前端完成 commit，必须复用现有 `enqueueChatSave()` 串行化路径。如果后续改为后端直接 commit，后端必须提供等价的 per-chat 串行化、integrity 校验与原子发布语义，并仍通过 ChatService/GroupChatService 的正式保存边界。
 
 ## 8. 前端边界
 
@@ -404,7 +404,7 @@ SillyTavern 上游的事件和 chat message 结构仍是兼容层的基础。Age
 
 ## 11. 性能策略
 
-- Chat history 默认是 virtual resource，通过 Rust chat repository/windowed payload 按需读取。
+- Agent context 中的 chat history 默认是 virtual resource，通过 Rust chat repository 的分页、定位与搜索能力按需读取。
 - Workspace 不复制完整历史、完整世界书、完整记忆库。
 - Context assembly 必须有 token/resource budget。
 - Tool result 进入 journal 后，进入 prompt 前可以摘要、裁剪或按需读取。

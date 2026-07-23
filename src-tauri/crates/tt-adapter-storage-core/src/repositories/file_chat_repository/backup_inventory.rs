@@ -6,16 +6,20 @@ use tokio::fs;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
 
-use super::FileChatRepository;
+use super::backup_codec::{BackupFormat, set_backup_modified};
+use super::{ContentSignature, FileChatRepository};
 
 pub(super) const BACKUP_TEMP_PREFIX: &str = ".tmp-chat-backup-";
 
 #[derive(Clone, Debug)]
 pub(super) struct BackupEntry {
+    pub logical_file_name: String,
     pub file_name: String,
+    pub format: BackupFormat,
     pub parsed_prefix: Option<String>,
     pub modified: SystemTime,
     pub byte_len: u64,
+    pub content_signature: Option<ContentSignature>,
 }
 
 #[derive(Debug, Default)]
@@ -46,10 +50,21 @@ impl BackupInventory {
         Some(entry)
     }
 
-    pub fn contains(&self, file_name: &str) -> bool {
+    pub fn find_by_logical_name(&self, logical_file_name: &str) -> Option<&BackupEntry> {
         self.entries
             .iter()
-            .any(|entry| entry.file_name == file_name)
+            .find(|entry| entry.logical_file_name == logical_file_name)
+    }
+
+    pub fn latest_for_prefix(&self, prefix: &str) -> Option<&BackupEntry> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.parsed_prefix.as_deref() == Some(prefix))
+            .max_by(|left, right| {
+                left.modified
+                    .cmp(&right.modified)
+                    .then_with(|| left.file_name.cmp(&right.file_name))
+            })
     }
 }
 
@@ -206,11 +221,13 @@ fn oldest_entries(inventory: &BackupInventory) -> Vec<&BackupEntry> {
 }
 
 pub(super) fn is_finalized_backup_name(file_name: &str) -> bool {
-    file_name.starts_with(FileChatRepository::CHAT_BACKUP_PREFIX) && file_name.ends_with(".jsonl")
+    file_name.starts_with(FileChatRepository::CHAT_BACKUP_PREFIX)
+        && BackupFormat::parse_physical_file_name(file_name).is_some()
 }
 
 pub(super) fn parsed_backup_prefix(file_name: &str) -> Option<String> {
-    let stem = file_name
+    let (_, logical_file_name) = BackupFormat::parse_physical_file_name(file_name)?;
+    let stem = logical_file_name
         .strip_prefix(FileChatRepository::CHAT_BACKUP_PREFIX)?
         .strip_suffix(".jsonl")?;
     let (name, timestamp) = stem.rsplit_once('_')?;
@@ -230,7 +247,10 @@ pub(super) fn is_backup_temp_name(file_name: &str) -> bool {
 }
 
 impl FileChatRepository {
-    pub(super) async fn scan_backup_inventory(&self) -> Result<BackupInventory, DomainError> {
+    pub(super) async fn scan_backup_inventory(
+        &self,
+        target_format: BackupFormat,
+    ) -> Result<BackupInventory, DomainError> {
         self.ensure_directory_exists().await?;
 
         let mut inventory = BackupInventory::default();
@@ -284,6 +304,13 @@ impl FileChatRepository {
                 continue;
             }
 
+            let (format, logical_file_name) = BackupFormat::parse_physical_file_name(&file_name)
+                .ok_or_else(|| {
+                    DomainError::InvalidData(format!(
+                        "Invalid finalized chat backup name: {file_name}"
+                    ))
+                })?;
+
             let metadata = match entry.metadata().await {
                 Ok(metadata) => metadata,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -302,15 +329,71 @@ impl FileChatRepository {
                     error
                 ))
             })?;
-            inventory.insert(BackupEntry {
+            let candidate = BackupEntry {
+                logical_file_name,
                 parsed_prefix: parsed_backup_prefix(&file_name),
                 file_name,
+                format,
                 modified,
                 byte_len: metadata.len(),
-            })?;
+                content_signature: None,
+            };
+            self.insert_scanned_backup_entry(&mut inventory, candidate, target_format)
+                .await?;
         }
 
         Ok(inventory)
+    }
+
+    async fn insert_scanned_backup_entry(
+        &self,
+        inventory: &mut BackupInventory,
+        candidate: BackupEntry,
+        target_format: BackupFormat,
+    ) -> Result<(), DomainError> {
+        let Some(existing) = inventory
+            .find_by_logical_name(&candidate.logical_file_name)
+            .cloned()
+        else {
+            return inventory.insert(candidate);
+        };
+
+        let (mut target_entry, source_entry) = if existing.format == target_format {
+            (existing.clone(), candidate)
+        } else if candidate.format == target_format {
+            (candidate, existing.clone())
+        } else {
+            return Err(DomainError::Conflict(format!(
+                "Multiple chat backup files share the logical name {}",
+                existing.logical_file_name
+            )));
+        };
+        let target_path = self.backups_dir.join(&target_entry.file_name);
+        let source_path = self.backups_dir.join(&source_entry.file_name);
+
+        set_backup_modified(&target_path, source_entry.modified).await?;
+        match fs::remove_file(&source_path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(DomainError::InternalError(format!(
+                    "Failed to finish interrupted chat backup conversion {}: {error}",
+                    source_path.display()
+                )));
+            }
+        }
+
+        target_entry.modified = source_entry.modified;
+        inventory.remove(&existing.file_name);
+        inventory.insert(target_entry)?;
+        self.remove_summary_cache_for_path(&source_path).await;
+        self.remove_summary_cache_for_path(&target_path).await;
+        tracing::warn!(
+            logical_name = %existing.logical_file_name,
+            kept = ?target_format,
+            "Recovered interrupted chat backup format conversion"
+        );
+        Ok(())
     }
 }
 
@@ -322,16 +405,20 @@ mod tests {
 
     fn entry(name: &str, prefix: Option<&str>, age: u64, byte_len: u64) -> BackupEntry {
         BackupEntry {
+            logical_file_name: name.to_string(),
             file_name: name.to_string(),
+            format: BackupFormat::RawJsonl,
             parsed_prefix: prefix.map(ToOwned::to_owned),
             modified: UNIX_EPOCH + Duration::from_secs(age),
             byte_len,
+            content_signature: None,
         }
     }
 
     fn policy(prefix: i64, files: i64, bytes: i64) -> ChatBackupSettings {
         ChatBackupSettings {
             automatic_enabled: true,
+            zstd_compression_enabled: false,
             max_files_per_prefix: prefix,
             max_total_files: files,
             max_total_bytes: bytes,

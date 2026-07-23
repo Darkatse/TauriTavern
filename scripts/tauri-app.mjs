@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const tauriCli = path.join(repoRoot, "node_modules", "@tauri-apps", "cli", "tauri.js");
+const frontendBuildHook = path.join(scriptDir, "tauri-before-build.mjs");
 
 if (!existsSync(tauriCli)) {
     console.error(`Missing Tauri CLI at ${tauriCli}. Run pnpm install first.`);
@@ -26,6 +27,23 @@ if (args[0] === "--") {
     args.shift();
 }
 
+if (args[0] === "--prepare-frontend") {
+    args.shift();
+    const frontendResult = spawnSync(process.execPath, [frontendBuildHook], {
+        cwd: repoRoot,
+        stdio: "inherit",
+        env,
+    });
+    if (frontendResult.error) {
+        console.error(frontendResult.error.message);
+        process.exit(1);
+    }
+    if (frontendResult.status !== 0) {
+        process.exit(frontendResult.status ?? 1);
+    }
+    env.TAURITAVERN_SKIP_WEB_BUILD = "1";
+}
+
 const result = spawnSync(process.execPath, [tauriCli, ...args], {
     cwd: repoRoot,
     stdio: "inherit",
@@ -37,4 +55,4 @@ if (result.error) {
     process.exit(1);
 }
 
-process.exit(result.status ?? 0);
+process.exit(result.status ?? 1);

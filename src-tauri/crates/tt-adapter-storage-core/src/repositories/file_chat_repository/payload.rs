@@ -173,7 +173,7 @@ impl FileChatRepository {
             ));
         }
 
-        let _write_guard = self.acquire_payload_write_lock(path).await;
+        let _write_guard = self.acquire_payload_mutation_lock(path).await;
         self.verify_chat_integrity_if_needed(path, payload, force)
             .await?;
         write_jsonl_file(path, payload).await?;

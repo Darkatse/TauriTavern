@@ -9,9 +9,18 @@ export function mountTauriTavernSettingsApp(mount, options) {
 
     const app = createApp(createTauriTavernSettingsApp(options));
     const vm = app.mount(mount);
+    let mounted = true;
 
     return {
         getDraft: () => vm.getDraft(),
-        unmount: () => app.unmount(),
+        setChatBackupStorageStats: stats => {
+            if (mounted) {
+                vm.chatBackupStorageStats = stats;
+            }
+        },
+        unmount: () => {
+            mounted = false;
+            app.unmount();
+        },
     };
 }

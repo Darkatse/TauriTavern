@@ -20,7 +20,7 @@ regress = "0.11.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = "0.9"
-sha2 = "0.10"
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }

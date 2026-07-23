@@ -1,6 +1,7 @@
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::services::hashing::hex_lower;
 use tt_ports::repositories::prompt_cache_repository::PromptDigestSnapshot;
 
 const PROMPT_CACHE_VERSION: u32 = 1;
@@ -710,18 +711,7 @@ fn strip_cache_control(value: &Value) -> Value {
 fn digest_value(value: &Value) -> String {
     let bytes = serde_json::to_vec(value).unwrap_or_default();
     let digest = Sha256::digest(&bytes);
-    encode_hex(&digest)
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
+    hex_lower(&digest)
 }
 
 fn cache_control(ttl: &str) -> Value {
