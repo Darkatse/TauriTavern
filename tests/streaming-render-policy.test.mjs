@@ -72,7 +72,7 @@ test('ReasoningHandler skips preview no-ops but forces the final reasoning commi
 
     assert.ok(finishStart >= 0 && finishEnd > finishStart);
     assert.ok(updateStart >= 0 && updateEnd > updateStart);
-    assert.match(finishSource, /this\.updateDom\(messageId, \{ final: true \}\);/);
+    assert.match(finishSource, /if \(this\.state !== ReasoningState\.None\) \{[\s\S]*?\n        \}\n\n        this\.updateDom\(messageId, \{ final: true \}\);/);
     assert.match(updateSource, /lastCommittedHtml: this\.lastCommittedHtml/);
     assert.match(updateSource, /this\.lastCommittedHtml = displayReasoning;/);
     assert.doesNotMatch(updateSource, /currentHtml|\.innerHTML,/);
@@ -96,7 +96,10 @@ test('StreamingProcessor owns canonical HTML and refreshes hidden interval befor
     assert.match(classSource, /this\.lastCommittedHtml = null;/);
     assert.match(classSource, /lastCommittedHtml: this\.lastCommittedHtml/);
     assert.match(classSource, /this\.lastCommittedHtml = formattedText;/);
-    assert.doesNotMatch(classSource, /currentHtml: this\.messageTextDom\.innerHTML/);
+    assert.match(classSource, /replaceTransientMesTextHtmlWithRuntimePolicy\(this\.messageDom, formattedText/);
+    assert.match(classSource, /replaceMesTextHtmlWithRuntimePolicy\(this\.messageDom, formattedText\)/);
+    assert.doesNotMatch(classSource, /this\.messageTextDom\.innerHTML|applyStreamFadeIn/);
+    assert.match(classSource, /if \(this\.type !== 'impersonate'\) \{\s*await this\.reasoningHandler\.finish\(messageId\);\s*\}/);
     assert.match(generateSource, /const streamingFps = normalizeStreamingFps\(power_user\.streaming_fps\);/);
     assert.equal(normalizeMatches.length, 1);
     assert.ok(streamLoop > generateSource.indexOf('normalizeStreamingFps(power_user.streaming_fps)'));

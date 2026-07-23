@@ -4419,7 +4419,9 @@ class StreamingProcessor {
         const messageElement = chatElement.find(`.mes[mesid="${messageId}"]`);
         const message = chat[messageId];
 
-        await this.reasoningHandler.finish(messageId);
+        if (this.type !== 'impersonate') {
+            await this.reasoningHandler.finish(messageId);
+        }
 
         if (Array.isArray(this.swipes) && this.swipes.length > 0) {
             const swipeInfoExtra = structuredClone(message.extra ?? {});

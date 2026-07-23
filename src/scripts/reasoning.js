@@ -541,17 +541,17 @@ export class ReasoningHandler {
      * @returns {Promise<void>}
      */
     async finish(messageId) {
-        if (this.state === ReasoningState.None) return;
+        if (this.state !== ReasoningState.None) {
+            // Make sure the finish time is recorded if a reasoning was in process and it wasn't ended correctly during streaming
+            if (this.startTime !== null && this.endTime === null) {
+                this.endTime = new Date();
+            }
 
-        // Make sure the finish time is recorded if a reasoning was in process and it wasn't ended correctly during streaming
-        if (this.startTime !== null && this.endTime === null) {
-            this.endTime = new Date();
-        }
-
-        if (this.state === ReasoningState.Thinking) {
-            this.state = this.#isHiddenReasoningModel ? ReasoningState.Hidden : ReasoningState.Done;
-            this.updateReasoning(messageId, null, { persist: true });
-            await eventSource.emit(event_types.STREAM_REASONING_DONE, this.reasoning, this.getDuration(), messageId, this.state);
+            if (this.state === ReasoningState.Thinking) {
+                this.state = this.#isHiddenReasoningModel ? ReasoningState.Hidden : ReasoningState.Done;
+                this.updateReasoning(messageId, null, { persist: true });
+                await eventSource.emit(event_types.STREAM_REASONING_DONE, this.reasoning, this.getDuration(), messageId, this.state);
+            }
         }
 
         this.updateDom(messageId, { final: true });
