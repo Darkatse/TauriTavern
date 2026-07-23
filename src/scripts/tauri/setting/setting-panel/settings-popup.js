@@ -31,6 +31,13 @@ const HELP_TOPICS = {
             'Embedded Runtime help: saver',
         ],
     },
+    chatVirtualization: {
+        title: 'Chat DOM Virtualization',
+        lines: [
+            'Chat DOM virtualization fully solves the performance problems caused by rendering many messages in very long chats.',
+            'When enabled, only messages near the viewport and the newest message stay mounted. Turn it off to use upstream SillyTavern chat rendering. Renderer extensions must support ChatSurface.',
+        ],
+    },
     closeToTray: {
         title: 'Minimize to tray on close (Windows)',
         lines: [
@@ -223,6 +230,44 @@ async function showHelpTopic(topicId) {
     });
 }
 
+async function showChatVirtualizationCompatibility() {
+    const content = createPopupColumn();
+    const title = document.createElement('b');
+    title.textContent = translate('Compatible renderer extensions');
+    const explanation = document.createElement('div');
+    explanation.textContent = translate(
+        'If you use either renderer extension below, you can temporarily install its compatible version for Chat DOM virtualization:',
+    );
+    content.append(title, explanation);
+
+    for (const [labelKey, repository, href] of [
+        ['JS-Slash-Runner compatible version:', 'Darkatse/JS-Slash-Runner', 'https://github.com/Darkatse/JS-Slash-Runner'],
+        ['LittleWhiteBox compatible version:', 'Darkatse/LittleWhiteBox', 'https://github.com/Darkatse/LittleWhiteBox'],
+    ]) {
+        const line = document.createElement('div');
+        const link = document.createElement('a');
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = repository;
+        line.append(`${translate(labelKey)} `, link);
+        content.appendChild(line);
+    }
+
+    const status = document.createElement('div');
+    status.textContent = translate(
+        'These compatibility changes are currently being submitted to the original extension authors as pull requests.',
+    );
+    content.appendChild(status);
+
+    await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+        okButton: translate('Close'),
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+}
+
 async function confirmChatBackupHistoryPurge() {
     const content = createPopupColumn();
     const title = document.createElement('b');
@@ -363,6 +408,13 @@ export async function openTauriTavernSettingsPopup() {
                     && !await confirmChatBackupHistoryPurge()
                 ) {
                     return false;
+                }
+
+                if (
+                    pendingUpdate.changes.chatVirtualizationEnabled
+                    && pendingUpdate.next.chatVirtualizationEnabled
+                ) {
+                    await showChatVirtualizationCompatibility();
                 }
 
                 return true;

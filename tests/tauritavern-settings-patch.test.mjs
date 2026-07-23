@@ -12,6 +12,7 @@ function createSettings(overrides = {}) {
     return {
         panel_runtime_profile: 'off',
         embedded_runtime_profile: 'off',
+        chat_virtualization_enabled: false,
         chat_backups: {
             automatic_enabled: true,
             max_files_per_prefix: 20,
@@ -83,6 +84,27 @@ test('buildTauriTavernSettingsUpdate returns an empty patch for unchanged settin
 
     assert.equal(update.hasChanges, false);
     assert.deepEqual(update.patch, {});
+});
+
+test('buildTauriTavernSettingsUpdate persists the chat virtualization switch', () => {
+    const initial = createTauriTavernSettingsState(createSettings());
+    const update = buildTauriTavernSettingsUpdate(initial, createDraft(initial, {
+        chatVirtualizationEnabled: true,
+    }));
+
+    assert.equal(update.hasChanges, true);
+    assert.deepEqual(update.patch, { chat_virtualization_enabled: true });
+    assert.equal(update.changes.chatVirtualizationEnabled, true);
+});
+
+test('createTauriTavernSettingsState requires the canonical chat virtualization switch', () => {
+    const settings = createSettings();
+    delete settings.chat_virtualization_enabled;
+
+    assert.throws(
+        () => createTauriTavernSettingsState(settings),
+        /chat virtualization setting missing/,
+    );
 });
 
 test('buildTauriTavernSettingsUpdate preserves minimal nested patch semantics', () => {

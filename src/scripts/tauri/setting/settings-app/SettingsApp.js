@@ -63,6 +63,7 @@ function cloneDraft(values, themeOptions, backgroundOptions, currentBackground) 
     return {
         panelRuntimeProfile: values.panelRuntimeProfile,
         embeddedRuntimeProfile: values.embeddedRuntimeProfile,
+        chatVirtualizationEnabled: values.chatVirtualizationEnabled,
         chatBackups: {
             automaticEnabled: values.chatBackups.automaticEnabled,
             maxFilesPerPrefix: values.chatBackups.maxFilesPerPrefix,
@@ -332,6 +333,7 @@ export function createTauriTavernSettingsApp(options) {
                 return {
                     panelRuntimeProfile: this.draft.panelRuntimeProfile,
                     embeddedRuntimeProfile: this.draft.embeddedRuntimeProfile,
+                    chatVirtualizationEnabled: this.draft.chatVirtualizationEnabled,
                     chatBackups: { ...this.draft.chatBackups },
                     closeToTrayOnClose: this.draft.closeToTrayOnClose,
                     requestProxy: { ...this.draft.requestProxy },
@@ -382,7 +384,20 @@ export function createTauriTavernSettingsApp(options) {
                         :help-title="tr('Learn more')"
                         @help="showHelp"
                     >
-                        <SelectField v-model="draft.embeddedRuntimeProfile" :options="embeddedRuntimeOptions" />
+                        <SelectField
+                            v-model="draft.embeddedRuntimeProfile"
+                            :options="embeddedRuntimeOptions"
+                            :disabled="draft.chatVirtualizationEnabled"
+                        />
+                    </SettingRow>
+
+                    <SettingRow
+                        :label="tr('Chat DOM Virtualization')"
+                        help-topic="chatVirtualization"
+                        :help-title="tr('Learn more')"
+                        @help="showHelp"
+                    >
+                        <ToggleSwitch v-model="draft.chatVirtualizationEnabled" />
                     </SettingRow>
 
                     <SettingRow :label="tr('Rust Regex Backend')">

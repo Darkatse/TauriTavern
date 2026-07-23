@@ -624,17 +624,62 @@ export function findExtension(name) {
     return { name: internalExtensionName, enabled: isEnabled };
 }
 
-const CODE_RENDER_DELEGATE_EXTENSION_NAMES = Object.freeze([
-    'JS-Slash-Runner',
-    'LittleWhiteBox',
+export const CHAT_SURFACE_RENDERER_CAPABILITIES = Object.freeze([
+    Object.freeze({
+        extensionName: 'JS-Slash-Runner',
+        participantId: 'js-slash-runner/message-runtime',
+    }),
+    Object.freeze({
+        extensionName: 'LittleWhiteBox',
+        participantId: 'littlewhitebox/message-runtime',
+    }),
 ]);
+
+export function getEnabledChatSurfaceRendererCapabilities() {
+    return CHAT_SURFACE_RENDERER_CAPABILITIES
+        .map(capability => {
+            const extension = findExtension(capability.extensionName);
+            return extension?.enabled === true
+                ? Object.freeze({ ...capability, internalName: extension.name })
+                : null;
+        })
+        .filter(Boolean);
+}
 
 /**
  * Returns true when a known third-party message code renderer should own HTML/script code blocks.
  * @returns {boolean}
  */
 export function isCodeRenderDelegatedToThirdPartyRenderer() {
-    return CODE_RENDER_DELEGATE_EXTENSION_NAMES.some(name => findExtension(name)?.enabled === true);
+    return getEnabledChatSurfaceRendererCapabilities().length > 0;
+}
+
+/**
+ * Activates the one known renderer required by bounded ChatSurface before any
+ * chat is materialized. Capability verification remains a separate host step.
+ */
+export async function activateRequiredChatSurfaceExtensions() {
+    const enabled = getEnabledChatSurfaceRendererCapabilities();
+    if (enabled.length > 1) {
+        throw new Error(
+            'Bounded ChatSurface cannot start while JS-Slash-Runner and LittleWhiteBox are both enabled',
+        );
+    }
+    if (enabled.length === 0) {
+        return Object.freeze([]);
+    }
+
+    const requiredNames = new Set(enabled.map(capability => capability.internalName));
+    await activateExtensions({
+        parallelism: 1,
+        includeExtension: name => requiredNames.has(name),
+        resetErrors: false,
+    });
+
+    return Object.freeze(enabled.map(({ extensionName, participantId }) => Object.freeze({
+        extensionName,
+        participantId,
+    })));
 }
 
 /**

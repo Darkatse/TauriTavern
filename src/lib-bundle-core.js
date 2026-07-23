@@ -24,6 +24,12 @@ import yaml from 'yaml';
 import * as chevrotain from 'chevrotain';
 import { gzipSync, gzip } from 'fflate';
 import jsSha256Module from 'js-sha256';
+import {
+    Virtualizer,
+    defaultRangeExtractor,
+    observeElementOffset,
+    observeElementRect,
+} from '@tanstack/virtual-core';
 
 const jsSha256 = jsSha256Module.sha256 ?? jsSha256Module;
 
@@ -51,6 +57,10 @@ const libBundle = {
     gzipSync,
     gzip,
     sha256: jsSha256,
+    Virtualizer,
+    defaultRangeExtractor,
+    observeElementOffset,
+    observeElementRect,
     initialized: true,
 };
 
@@ -78,6 +88,10 @@ export {
     gzipSync,
     gzip,
     jsSha256 as sha256,
+    Virtualizer,
+    defaultRangeExtractor,
+    observeElementOffset,
+    observeElementRect,
 };
 
 export default libBundle;

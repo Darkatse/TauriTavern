@@ -929,8 +929,63 @@ type TauriTavernCharacterCardsApi = {
     pickFiles: (options?: TauriTavernCharacterCardsPickOptions) => Promise<File[] | null>;
 };
 
+type TauriTavernChatSurfaceDisposable = (() => void) | { dispose: () => void };
+
+type TauriTavernChatSurfaceDetachedContext = {
+    readonly mesid: number;
+    readonly content: HTMLElement;
+};
+
+type TauriTavernChatSurfaceMountedContext = TauriTavernChatSurfaceDetachedContext & {
+    readonly element: HTMLElement;
+    readonly signal: AbortSignal;
+};
+
+type TauriTavernChatSurfaceRuntimeContext = {
+    readonly mesid: number;
+    readonly source: Element;
+    readonly element: HTMLElement;
+    readonly content: HTMLElement;
+    readonly signal: AbortSignal;
+};
+
+type TauriTavernChatSurfaceRuntimeClaims = {
+    claim: (
+        source: Element,
+        activate: (context: TauriTavernChatSurfaceRuntimeContext) => TauriTavernChatSurfaceDisposable,
+    ) => void;
+};
+
+type TauriTavernChatSurfaceParticipant = {
+    id: string;
+    protocolVersion: 1;
+    prepareContent?: (
+        context: TauriTavernChatSurfaceDetachedContext,
+        claims: TauriTavernChatSurfaceRuntimeClaims,
+    ) => void;
+    didMount?: (
+        context: TauriTavernChatSurfaceMountedContext,
+    ) => void | TauriTavernChatSurfaceDisposable;
+    didCommitContent?: (
+        context: TauriTavernChatSurfaceMountedContext,
+    ) => void | TauriTavernChatSurfaceDisposable;
+};
+
+type TauriTavernChatSurfaceRegistration = {
+    fault: (error: unknown) => void;
+};
+
+type TauriTavernChatSurfaceApi = {
+    readonly protocolVersion: 1;
+    isManagedOwnershipRequired: () => boolean;
+    registerParticipant: (
+        participant: TauriTavernChatSurfaceParticipant,
+    ) => TauriTavernChatSurfaceRegistration;
+};
+
 type TauriTavernHostApi = {
     chat?: TauriTavernChatApi;
+    chatSurface?: TauriTavernChatSurfaceApi;
     characterCards?: TauriTavernCharacterCardsApi;
     agent?: TauriTavernAgentApi;
     llmConnections?: TauriTavernLlmConnectionsApi;

@@ -5,6 +5,10 @@ import { getTauriTavernSettings, updateTauriTavernSettings } from '../../../../t
 import { installChatEmbeddedRuntimeAdapters } from '../../adapters/embedded-runtime/chat-embedded-runtime-adapter.js';
 import { createEmbeddedRuntimeService } from './embedded-runtime-service.js';
 import {
+    initializeChatVirtualization,
+    isChatVirtualizationEnabled,
+} from '../chat-surface/chat-virtualization-state.js';
+import {
     clearLegacyEmbeddedRuntimeProfileName,
     EMBEDDED_RUNTIME_PROFILE_OFF,
     normalizeEmbeddedRuntimeProfileName,
@@ -14,6 +18,10 @@ import {
 
 export function installEmbeddedRuntime() {
     const ready = getTauriTavernSettings().then(async (settings) => {
+        initializeChatVirtualization(settings);
+        if (isChatVirtualizationEnabled()) {
+            return null;
+        }
         const configuredProfileName = normalizeEmbeddedRuntimeProfileName(settings.embedded_runtime_profile);
         const effectiveProfileName = resolveEffectiveEmbeddedRuntimeProfileName(configuredProfileName);
 

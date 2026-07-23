@@ -62,6 +62,10 @@ function isChatBackupHistoryDisabled(settings) {
 export function buildTauriTavernSettingsUpdate(initial, draft) {
     const nextPanelRuntimeProfile = String(draft.panelRuntimeProfile || '').trim();
     const nextEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(draft.embeddedRuntimeProfile);
+    const nextChatVirtualizationEnabled = draft.chatVirtualizationEnabled;
+    if (typeof nextChatVirtualizationEnabled !== 'boolean') {
+        throw new TypeError('Chat virtualization setting must be a boolean');
+    }
     const nextChatBackupAutomaticEnabled = Boolean(draft.chatBackups?.automaticEnabled);
     const nextChatBackupMaxFilesPerPrefix = normalizeChatBackupLimit(draft.chatBackups?.maxFilesPerPrefix);
     const nextChatBackupMaxTotalFiles = normalizeChatBackupLimit(draft.chatBackups?.maxTotalFiles);
@@ -98,6 +102,8 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         initial.configuredEmbeddedRuntimeProfile !== initial.embeddedRuntimeProfile;
     const hasEmbeddedRuntimeChange = Boolean(nextEmbeddedRuntimeProfile)
         && (nextEmbeddedRuntimeProfile !== initial.embeddedRuntimeProfile || requiresEmbeddedRuntimeMigration);
+    const hasChatVirtualizationEnabledChange =
+        nextChatVirtualizationEnabled !== initial.chatVirtualizationEnabled;
     const hasChatBackupAutomaticEnabledChange =
         nextChatBackupAutomaticEnabled !== initial.chatBackups.automaticEnabled;
     const hasChatBackupMaxFilesPerPrefixChange =
@@ -131,6 +137,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     const changes = {
         panelRuntimeProfile: hasPanelRuntimeChange,
         embeddedRuntimeProfile: hasEmbeddedRuntimeChange,
+        chatVirtualizationEnabled: hasChatVirtualizationEnabledChange,
         chatBackups: hasChatBackupsChange,
         closeToTrayOnClose: hasCloseToTrayOnCloseChange,
         dynamicTheme: hasDynamicThemeChange,
@@ -151,6 +158,9 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     }
     if (hasEmbeddedRuntimeChange) {
         patch.embedded_runtime_profile = nextEmbeddedRuntimeProfile;
+    }
+    if (hasChatVirtualizationEnabledChange) {
+        patch.chat_virtualization_enabled = nextChatVirtualizationEnabled;
     }
     if (hasChatBackupsChange) {
         /** @type {Record<string, unknown>} */
@@ -221,6 +231,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         next: {
             panelRuntimeProfile: nextPanelRuntimeProfile,
             embeddedRuntimeProfile: nextEmbeddedRuntimeProfile,
+            chatVirtualizationEnabled: nextChatVirtualizationEnabled,
             chatBackups: {
                 automaticEnabled: nextChatBackupAutomaticEnabled,
                 maxFilesPerPrefix: nextChatBackupMaxFilesPerPrefix,

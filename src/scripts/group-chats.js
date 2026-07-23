@@ -80,6 +80,7 @@ import {
     unshallowCharacter,
     chatElement,
     ensureMessageMediaIsArray,
+    resetChatSurfaceView,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect, printTagFilters, tag_filter_type } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -330,7 +331,7 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
 
     if (group && Array.isArray(group.members) && freshChat) {
         chat.splice(0, chat.length);
-        chatElement.find('.mes').remove();
+        resetChatSurfaceView();
         for (let member of group.members) {
             if (!isStillActive()) {
                 return;
@@ -362,7 +363,7 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
         }
         chat.splice(0, chat.length, ...data);
         chat.forEach(ensureMessageMediaIsArray);
-        chatElement.find('.mes').remove();
+        resetChatSurfaceView();
         await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_CHANGED });
         if (!isStillActive()) {
             return;

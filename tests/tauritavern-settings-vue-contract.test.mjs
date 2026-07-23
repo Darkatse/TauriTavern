@@ -45,6 +45,11 @@ test('TauriTavern Settings popup is a host wrapper around the Vue bundle', async
     assert.match(source, /onClosing:\s*async\s*\(popup\)/);
     assert.match(source, /requiresChatBackupPurgeConfirmation/);
     assert.match(source, /confirmChatBackupHistoryPurge/);
+    assert.match(source, /pendingUpdate\.changes\.chatVirtualizationEnabled/);
+    assert.match(source, /pendingUpdate\.next\.chatVirtualizationEnabled/);
+    assert.match(source, /showChatVirtualizationCompatibility/);
+    assert.match(source, /https:\/\/github\.com\/Darkatse\/JS-Slash-Runner/);
+    assert.match(source, /https:\/\/github\.com\/Darkatse\/LittleWhiteBox/);
 });
 
 test('TauriTavern Settings wallpaper options use the no-render background refresh', async () => {
@@ -91,6 +96,12 @@ test('TauriTavern Settings Vue app stays presentation-only', async () => {
     assert.match(app, /Dynamic Theme & Wallpaper/);
     assert.match(app, /WallpaperField/);
     assert.match(app, /Chat Backups/);
+    assert.match(app, /Chat DOM Virtualization/);
+    assert.match(app, /help-topic="chatVirtualization"/);
+    assert.match(app, /:disabled="draft\.chatVirtualizationEnabled"/);
+    assert.match(app, /<ToggleSwitch v-model="draft\.chatVirtualizationEnabled"\s*\/>/);
+    assert.doesNotMatch(app, /Keeps only the viewport and true tail mounted/);
+    assert.doesNotMatch(app, /CHAT_SURFACE_OPTIONS|draft\.chatSurfacePolicy/);
 });
 
 test('TauriTavern Settings keeps mobile toggle rows inline', async () => {

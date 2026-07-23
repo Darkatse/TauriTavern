@@ -61,6 +61,10 @@ export function createTauriTavernSettingsState(settings, options = {}) {
 
     const configuredEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(settings.embedded_runtime_profile);
     const embeddedRuntimeProfile = resolveEffectiveEmbeddedRuntimeProfileName(configuredEmbeddedRuntimeProfile);
+    const chatVirtualizationEnabled = settings.chat_virtualization_enabled;
+    if (typeof chatVirtualizationEnabled !== 'boolean') {
+        throw new Error('TauriTavern settings: chat virtualization setting missing');
+    }
 
     const avatarPersonaOriginalImagesEnabled = settings.avatar_persona_original_images_enabled;
     if (typeof avatarPersonaOriginalImagesEnabled !== 'boolean') {
@@ -96,6 +100,7 @@ export function createTauriTavernSettingsState(settings, options = {}) {
         panelRuntimeProfileSource: rawPanelRuntimeProfile,
         configuredEmbeddedRuntimeProfile,
         embeddedRuntimeProfile,
+        chatVirtualizationEnabled,
         chatBackups: {
             automaticEnabled: chatBackups.automatic_enabled,
             maxFilesPerPrefix,

@@ -138,6 +138,22 @@ src/
 
 完整现状见 `docs/CurrentState/ChatPayload.md`。
 
+## 6.2 ChatSurface 所有权与 participant
+
+- `chat[]` 仍是完整、唯一的数据事实源；ChatSurface 只拥有 `#chat > .mes` 的当前视图投影。
+- `installChatSurfaceRuntime()` 是 `script.js` 唯一的 concrete composition seam；结构/投影位于 kernel，生命周期协调位于 services，真实 DOM/scroll 写入位于 adapters。
+- 外部 renderer 通过 `window.__TAURITAVERN__.api.chatSurface.registerParticipant()` 接入，不直接控制投影，也不依赖伪造消息事件。
+- renderer 在入口只调用一次 `isManagedOwnershipRequired()`：`true` 时只启用 participant owner，`false` 时只启用原 static owner；API 是否存在和当前 DOM 形状都不能替代该决策。
+- 结构 reconcile 与纯 range projection 分离：前者只在 canonical `chat[]` 结构改变时 O(N) 执行，后者携带 epoch/revision token 并保持 O(M)。
+- mount lease 与 content lease 分离；streaming 中间帧只提交内容，最终帧才恢复 decorator/runtime。
+- `chat_virtualization_enabled=false` 是默认值并保持上游 Show More 语义；TauriTavern Settings 的“聊天 DOM 虚拟化”开关直接绑定这个布尔值并在保存后 reload。用户显式开启后，experimental bounded 使用 TanStack 几何提交 `V ∪ T`，true tail 常驻且 `.mes` 上界为 `32 + 1`。
+- TanStack symbols 由 `lib.js` vendor facade 在 composition root 注入单一 adapter；原生 ESM 源码不直接解析 bare package。virtualizer 的 `scrollToFn` 也注入既有 ChatScrollAdapter，因此 `#chat` 的物理滚动写入仍只有一个 owner。
+- bounded 的 runtime candidate 由独立 grant lease 管理；viewport 滚动可以 revoke/re-grant，而不会伪造 content commit 或消息业务事件。
+- runtime demand 只按 visible 与 overscan 排序；常驻 true tail 不额外预留 runtime 名额。真实全局 reflow 会保持独立 follow-tail 意图，或以稳定消息 key + clamp 后的楼内 offset 恢复锚点；普通 settings save 与 IME height-only resize 不再清空全部历史测量。
+- 可由 `chat[mesid]` 推导的楼层状态由 materializer 负责；bounded DOM commit 后，私有 `syncMountedChatViewState()` 在最终测量前幂等重放 swipe/delete 等临时核心 UI。该 seam 不发送 SillyTavern 业务事件。
+- 旧扩展直接删除消息 root 时，兼容桥只负责释放相应 root 的 lease；它不会接管第三方的内容写入或重编号。bounded policy 必须先通过 participant capability gate。
+- Project raw API 见 `docs/API/ChatSurface.md`。
+
 ## 7. 插件系统前端适配
 
 ### 7.1 设计目标
@@ -262,7 +278,9 @@ src/
 
 ### 7.8 嵌入式运行时（Embedded Runtime，消息内 iframe）
 
-目标：把“消息内嵌入式内容（iframe）”从普通 DOM 升级为**可管理运行时**（有预算、有 park/hydrate、有自愈），并且在消息重渲染时尽量避免 iframe teardown/白屏重载，保持对主流扩展生态（JSR/LWB）可迁移。
+> 架构状态：仅保留为 static compatibility。它不是 ChatSurface bounded 路线的 runtime owner；新虚拟化开发不得继续扩展 parking/ghost/slot 体系。
+
+该旧机制把消息内 iframe 包装成带预算、park/hydrate 与自愈的 slot，并在 static 消息重渲染时尽量避免 iframe teardown。bounded 启动会跳过该 chat owner；renderer 必须通过唯一 ChatSurface participant 接入，两套 owner 不得并存。
 
 当前落地点（代码）：
 
@@ -277,13 +295,14 @@ src/
   - 已支持：JS-Slash-Runner（`.TH-render`）与 LittleWhiteBox（`.xiaobaix-iframe-wrapper`）。
 - 消息写入 facade：`src/scripts/tauri/message/mes-text-write.js`
   - 上游调用点统一依赖 facade；`off` 时直接恢复普通 `.mes_text` HTML 写入语义。
-- 渲染事务（ER-3.0）：`src/tauri/main/adapters/embedded-runtime/message-render-transaction.js`
+- 渲染事务：`src/tauri/main/adapters/embedded-runtime/message-render-transaction.js`
   - 作为 facade 在 ER 开启时的底层实现，避免把 iframe runtime 当成普通 DOM 反复销毁重建。
 
 当前边界说明：
 
 - 已纳入管控：**消息内 iframe runtime**（JSR/LWB）。
 - 暂不纳入：面板类 runtime 的 park（目前依赖浏览器本身回收即可）。
+- 上述边界只描述 legacy profile 的当前事实，不是后续 bounded 架构的扩展清单。
 
 更多“当前如何工作/哪些契约不能破坏/回归点”见：`docs/CurrentState/EmbeddedRuntime.md`。
 

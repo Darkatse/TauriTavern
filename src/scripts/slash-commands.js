@@ -54,6 +54,9 @@ import {
     setCharacterName,
     setExtensionPrompt,
     showMoreMessages,
+    getChatScrollTop,
+    setChatScrollTop,
+    scrollChatSurfaceTo,
     swipe,
     stopGeneration,
     substituteParams,
@@ -61,7 +64,9 @@ import {
     system_avatar,
     system_message_types,
     this_chid,
-    updateMessageElement,
+    rerenderChatMessage,
+    isBoundedChatSurfaceView,
+    jumpBoundedChatSurfaceToMessage,
 } from '../script.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
@@ -3299,9 +3304,12 @@ export function initDefaultSlashCommands() {
         name: 'chat-render',
         helpString: t`Renders a specified number of messages into the chat window. Displays all messages if no argument is provided.`,
         callback: async (args, number) => {
+            if (isBoundedChatSurfaceView()) {
+                throw new Error(t`/chat-render is unavailable while chat virtualization is enabled. Use /chat-jump to navigate to a message.`);
+            }
             await showMoreMessages(number && !isNaN(Number(number)) ? Number(number) : Number.MAX_SAFE_INTEGER);
             if (isTrueBoolean(String(args?.scroll ?? ''))) {
-                $('#chat').scrollTop(0);
+                setChatScrollTop(0);
             }
             return '';
         },
@@ -3486,6 +3494,12 @@ export function initDefaultSlashCommands() {
                 return '';
             }
 
+            if (isBoundedChatSurfaceView()) {
+                const messageElement = jumpBoundedChatSurfaceToMessage(messageIndex);
+                flashHighlight($(messageElement), 2000);
+                return '';
+            }
+
             // Load more messages if needed
             const firstDisplayedMessageId = getFirstDisplayedMessageId();
             if (isFinite(firstDisplayedMessageId) && messageIndex < firstDisplayedMessageId) {
@@ -3501,8 +3515,8 @@ export function initDefaultSlashCommands() {
                 const elementRect = messageElement.getBoundingClientRect();
                 const containerRect = chatContainer.getBoundingClientRect();
 
-                const scrollPosition = elementRect.top - containerRect.top + chatContainer.scrollTop;
-                chatContainer.scrollTo({
+                const scrollPosition = elementRect.top - containerRect.top + getChatScrollTop();
+                scrollChatSurfaceTo({
                     top: scrollPosition,
                     behavior: 'smooth',
                 });
@@ -5913,12 +5927,7 @@ async function messageRoleCallback(args, role) {
     message.is_user = role === 'user';
 
     await eventSource.emit(event_types.MESSAGE_EDITED, modifyAt);
-    const existingMessage = chatElement.find(`.mes[mesid="${modifyAt}"]`);
-    if (existingMessage.length) {
-        const newMessageElement = updateMessageElement(message, { messageId: modifyAt });
-        existingMessage.after(newMessageElement);
-        existingMessage.remove();
-    }
+    rerenderChatMessage(modifyAt);
     await eventSource.emit(event_types.MESSAGE_UPDATED, modifyAt);
     await saveChatConditional();
 
@@ -5979,12 +5988,7 @@ async function messageNameCallback(args, name) {
     }
 
     await eventSource.emit(event_types.MESSAGE_EDITED, modifyAt);
-    const existingMessage = chatElement.find(`.mes[mesid="${modifyAt}"]`);
-    if (existingMessage.length) {
-        const newMessageElement = updateMessageElement(message, { messageId: modifyAt });
-        existingMessage.after(newMessageElement);
-        existingMessage.remove();
-    }
+    rerenderChatMessage(modifyAt);
     await eventSource.emit(event_types.MESSAGE_UPDATED, modifyAt);
     await saveChatConditional();
 

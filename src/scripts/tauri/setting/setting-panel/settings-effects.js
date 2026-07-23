@@ -42,6 +42,7 @@ export function applyTauriTavernSettingsUpdateEffects(update, updatedSettings) {
     if (
         changes.panelRuntimeProfile
         || changes.embeddedRuntimeProfile
+        || changes.chatVirtualizationEnabled
         || changes.avatarPersonaOriginalImagesEnabled
     ) {
         window.location.reload();

@@ -67,7 +67,9 @@ test('core chat load keeps full data while initial DOM remains truncated', async
         script.indexOf('export async function showMoreMessages'),
         script.indexOf('\nexport async function printMessages'),
     );
-    assert.match(showMore, /chat\.slice\(firstId,\s*messageId\)\.forEach\s*\(/);
+    assert.match(showMore, /const mountedMessageIds = chatSurface\.getMountedMessageIds\(\)/);
+    assert.match(showMore, /for \(let id = firstId; id < messageId; id \+= 1\)/);
+    assert.match(showMore, /chatSurface\.reconcileMounted\(\{[\s\S]*includeMessageIds:/);
     assert.doesNotMatch(showMore, /chat\.splice|PayloadBefore|updateViewMessageIds\(0\)/);
 });
 

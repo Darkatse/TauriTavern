@@ -211,6 +211,10 @@ impl SettingsService {
             settings.embedded_runtime_profile = embedded_runtime_profile;
         }
 
+        if let Some(chat_virtualization_enabled) = dto.chat_virtualization_enabled {
+            settings.chat_virtualization_enabled = chat_virtualization_enabled;
+        }
+
         let chat_backups_changed = dto.chat_backups.is_some();
         if let Some(chat_backups) = dto.chat_backups {
             Self::apply_chat_backup_settings_update(&mut settings.chat_backups, chat_backups)?;
@@ -1094,6 +1098,7 @@ mod tests {
                 perf_profile: None,
                 panel_runtime_profile: None,
                 embedded_runtime_profile: None,
+                chat_virtualization_enabled: None,
                 chat_backups: None,
                 close_to_tray_on_close: None,
                 allow_keys_exposure: None,
@@ -1115,6 +1120,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tauritavern_settings_update_persists_chat_virtualization_switch() {
+        let service = SettingsService::new(
+            Arc::new(TestSettingsRepository::default()),
+            Arc::new(TestRequestProxyRuntime::default()),
+            Arc::new(TestChatBackupRuntime::default()),
+        );
+
+        let updated = service
+            .update_tauritavern_settings(UpdateTauriTavernSettingsDto {
+                updates: None,
+                perf_profile: None,
+                panel_runtime_profile: None,
+                embedded_runtime_profile: None,
+                chat_virtualization_enabled: Some(true),
+                chat_backups: None,
+                close_to_tray_on_close: None,
+                request_proxy: None,
+                allow_keys_exposure: None,
+                avatar_persona_original_images_enabled: None,
+                native_regex_backend_enabled: None,
+                dev: None,
+                dynamic_theme: None,
+                models: None,
+                agent: None,
+            })
+            .await
+            .expect("enable chat virtualization");
+
+        assert!(updated.chat_virtualization_enabled);
+    }
+
+    #[tokio::test]
     async fn tauritavern_settings_update_persists_and_applies_chat_backup_policy() {
         let repository = Arc::new(TestSettingsRepository::default());
         let backup_runtime = Arc::new(TestChatBackupRuntime::default());
@@ -1130,6 +1167,7 @@ mod tests {
                 perf_profile: None,
                 panel_runtime_profile: None,
                 embedded_runtime_profile: None,
+                chat_virtualization_enabled: None,
                 chat_backups: Some(UpdateChatBackupSettingsDto {
                     automatic_enabled: Some(false),
                     max_files_per_prefix: Some(7),
@@ -1189,6 +1227,7 @@ mod tests {
                 perf_profile: None,
                 panel_runtime_profile: None,
                 embedded_runtime_profile: None,
+                chat_virtualization_enabled: None,
                 close_to_tray_on_close: None,
                 request_proxy: None,
                 allow_keys_exposure: None,

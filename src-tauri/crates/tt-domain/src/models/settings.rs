@@ -329,6 +329,8 @@ pub struct TauriTavernSettings {
     #[serde(default = "default_embedded_runtime_profile")]
     pub embedded_runtime_profile: String,
     #[serde(default)]
+    pub chat_virtualization_enabled: bool,
+    #[serde(default)]
     pub chat_backups: ChatBackupSettings,
     #[serde(default = "default_close_to_tray_on_close")]
     pub close_to_tray_on_close: bool,
@@ -367,6 +369,7 @@ impl Default for TauriTavernSettings {
             perf_profile: default_perf_profile(),
             panel_runtime_profile: default_panel_runtime_profile(),
             embedded_runtime_profile: default_embedded_runtime_profile(),
+            chat_virtualization_enabled: false,
             chat_backups: ChatBackupSettings::default(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             request_proxy: RequestProxySettings::default(),
@@ -485,6 +488,24 @@ mod tests {
         .expect("parse settings");
 
         assert!(settings.native_regex_backend_enabled);
+    }
+
+    #[test]
+    fn chat_virtualization_defaults_to_disabled_and_accepts_enabled() {
+        let older = TauriTavernSettings::from_json_str_with_compat(
+            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
+        )
+        .expect("parse older settings");
+        assert!(!older.chat_virtualization_enabled);
+
+        let enabled = TauriTavernSettings::from_json_str_with_compat(
+            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"chat_virtualization_enabled":true}"#,
+        )
+        .expect("parse enabled chat virtualization");
+        assert!(enabled.chat_virtualization_enabled);
+
+        let serialized = serde_json::to_value(enabled).expect("serialize chat virtualization");
+        assert_eq!(serialized["chat_virtualization_enabled"], true);
     }
 
     #[test]

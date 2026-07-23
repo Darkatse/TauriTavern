@@ -202,6 +202,15 @@
 
 > 注意：`window.__TAURITAVERN__` 是“平台 ABI”，应保持**小而稳定**；不要把内部实现对象整个暴露出去。
 
+### 3.7 ChatSurface participant（Project Contract）
+
+- `window.__TAURITAVERN__.api.chatSurface`
+  - 当前是实验性的 Project Contract，尚未作为 Public Contract 稳定发布。
+  - 只暴露 `protocolVersion: 1`、`isManagedOwnershipRequired()` 与 `registerParticipant()`；ownership query 返回本页已冻结的布尔决策，投影控制器、DOM adapter、内部 revision、admission 预算和虚拟滚动引擎均不外露。
+  - participant 必须显式声明协议版本；hook 返回同步 disposer，宿主用 `AbortSignal` 表达 mount/content/runtime 三种真实寿命。
+  - mount/remount/content lifecycle 不得伪装为 SillyTavern 消息业务事件。
+  - 完整协议与 raw API 接入示例见 `docs/API/ChatSurface.md`。
+
 ---
 
 ## 4. 请求拦截与路由契约（Public）

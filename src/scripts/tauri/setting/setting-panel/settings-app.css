@@ -102,6 +102,11 @@
     margin: 0;
 }
 
+.tt-settings-select:disabled {
+    cursor: not-allowed;
+    opacity: 0.64;
+}
+
 .tt-settings-number-with-unit {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(82px, 0.34fr);

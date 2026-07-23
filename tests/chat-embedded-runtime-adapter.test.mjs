@@ -134,8 +134,8 @@ test('chat open events release only their own frontend source covers on the next
     let eventSource = null;
     let eventTypes = null;
     try {
-        const { installChatEmbeddedRuntimeAdapters } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js'),
+        const { installFrontendSourceHandoff } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
         );
         ({ eventSource, event_types: eventTypes } = await importStable(
             path.join(REPO_ROOT, 'src/scripts/events.js'),
@@ -149,9 +149,7 @@ test('chat open events release only their own frontend source covers on the next
         const character = createCoveredMessage({ mesid: '21', releaseEvent: eventTypes.CHAT_LOADED });
         chat.append(group.message, character.message);
 
-        handle = installChatEmbeddedRuntimeAdapters({
-            manager: createManagerStub({ maxSoftParkedIframes: 0, softParkTtlMs: 0 }),
-        });
+        handle = installFrontendSourceHandoff(chat);
 
         rendererListener = () => queueMicrotask(() => character.pre.classList.add('hidden!'));
         eventSource.on(eventTypes.CHAT_LOADED, rendererListener);
@@ -187,8 +185,8 @@ test('frontend source release follows a JSR-like replacement of .mes_text', asyn
     let eventSource = null;
     let eventTypes = null;
     try {
-        const { installChatEmbeddedRuntimeAdapters } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js'),
+        const { installFrontendSourceHandoff } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
         );
         ({ eventSource, event_types: eventTypes } = await importStable(
             path.join(REPO_ROOT, 'src/scripts/events.js'),
@@ -200,9 +198,7 @@ test('frontend source release follows a JSR-like replacement of .mes_text', asyn
 
         const covered = createCoveredMessage({ mesid: '25', releaseEvent: eventTypes.CHAT_LOADED });
         chat.append(covered.message);
-        handle = installChatEmbeddedRuntimeAdapters({
-            manager: createManagerStub({ maxSoftParkedIframes: 0, softParkTtlMs: 0 }),
-        });
+        handle = installFrontendSourceHandoff(chat);
 
         let replacement = null;
         rendererListener = () => {
@@ -236,12 +232,12 @@ test('frontend source release follows a JSR-like replacement of .mes_text', asyn
     }
 });
 
-test('frontend source release uses its live-query snapshot instead of querying again in rAF', async () => {
+test('frontend source release re-queries captured roots without adopting later messages', async () => {
     const dom = installFakeDom();
     let handle = null;
     try {
-        const { installChatEmbeddedRuntimeAdapters } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js'),
+        const { installFrontendSourceHandoff } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
         );
         const { eventSource, event_types } = await importStable(
             path.join(REPO_ROOT, 'src/scripts/events.js'),
@@ -253,9 +249,7 @@ test('frontend source release uses its live-query snapshot instead of querying a
 
         const first = createCoveredMessage({ mesid: '30', releaseEvent: event_types.CHAT_CHANGED });
         chat.append(first.message);
-        handle = installChatEmbeddedRuntimeAdapters({
-            manager: createManagerStub({ maxSoftParkedIframes: 0, softParkTtlMs: 0 }),
-        });
+        handle = installFrontendSourceHandoff(chat);
 
         await eventSource.emit(event_types.CHAT_CHANGED, 'first-chat');
 
@@ -275,6 +269,37 @@ test('frontend source release uses its live-query snapshot instead of querying a
     }
 });
 
+test('frontend source handoff resolves the direct message owner through nested .mes card markup', async () => {
+    const dom = installFakeDom();
+    let handle = null;
+    try {
+        const { installFrontendSourceHandoff } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
+        );
+        const { eventSource, event_types } = await importStable(
+            path.join(REPO_ROOT, 'src/scripts/events.js'),
+        );
+
+        const chat = document.createElement('div');
+        chat.setAttribute('id', 'chat');
+        document.body.append(chat);
+        const covered = createCoveredMessage({ mesid: '32', releaseEvent: event_types.CHAT_LOADED });
+        const nested = document.createElement('div');
+        nested.classList.add('mes');
+        covered.pre.replaceWith(nested);
+        nested.append(covered.pre);
+        chat.append(covered.message);
+        handle = installFrontendSourceHandoff(chat);
+
+        await eventSource.emit(event_types.CHAT_LOADED);
+        dom.flushRaf();
+        assert.equal(covered.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), null);
+    } finally {
+        handle?.dispose();
+        dom.cleanup();
+    }
+});
+
 test('deferred extension settings keep chat-open release behind newly registered renderer listeners', async () => {
     const dom = installFakeDom();
     let handle = null;
@@ -282,8 +307,8 @@ test('deferred extension settings keep chat-open release behind newly registered
     let eventSource = null;
     let eventTypes = null;
     try {
-        const { installChatEmbeddedRuntimeAdapters } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js'),
+        const { installFrontendSourceHandoff } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
         );
         ({ eventSource, event_types: eventTypes } = await importStable(
             path.join(REPO_ROOT, 'src/scripts/events.js'),
@@ -295,9 +320,7 @@ test('deferred extension settings keep chat-open release behind newly registered
 
         const covered = createCoveredMessage({ mesid: '35', releaseEvent: eventTypes.CHAT_LOADED });
         chat.append(covered.message);
-        handle = installChatEmbeddedRuntimeAdapters({
-            manager: createManagerStub({ maxSoftParkedIframes: 0, softParkTtlMs: 0 }),
-        });
+        handle = installFrontendSourceHandoff(chat);
 
         let markerSeenByRenderer = null;
         lateRenderer = () => {
@@ -324,12 +347,56 @@ test('deferred extension settings keep chat-open release behind newly registered
     }
 });
 
-test('disposing the chat adapter synchronously uncovers pending frontend source', async () => {
+test('source handoff follows a late renderer replacement within the captured message root', async () => {
+    const dom = installFakeDom();
+    let handle = null;
+    let lateRenderer = null;
+    let eventSource = null;
+    let eventTypes = null;
+    try {
+        const { installFrontendSourceHandoff } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
+        );
+        ({ eventSource, event_types: eventTypes } = await importStable(
+            path.join(REPO_ROOT, 'src/scripts/events.js'),
+        ));
+
+        const chat = document.createElement('div');
+        chat.setAttribute('id', 'chat');
+        document.body.append(chat);
+
+        const covered = createCoveredMessage({ mesid: '36', releaseEvent: eventTypes.CHAT_LOADED });
+        chat.append(covered.message);
+        handle = installFrontendSourceHandoff(chat);
+        await eventSource.emit(eventTypes.EXTENSION_SETTINGS_LOADED);
+
+        let replacementPre = null;
+        lateRenderer = () => {
+            const replacement = createCoveredMessage({ mesid: '36', releaseEvent: eventTypes.CHAT_LOADED });
+            covered.message.querySelector('.mes_text').replaceWith(replacement.message.querySelector('.mes_text'));
+            replacementPre = replacement.pre;
+        };
+        eventSource.on(eventTypes.CHAT_LOADED, lateRenderer);
+
+        await eventSource.emit(eventTypes.CHAT_LOADED);
+        assert.equal(replacementPre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), eventTypes.CHAT_LOADED);
+        dom.flushRaf();
+        assert.equal(replacementPre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), null);
+    } finally {
+        if (eventSource && eventTypes && lateRenderer) {
+            eventSource.removeListener(eventTypes.CHAT_LOADED, lateRenderer);
+        }
+        handle?.dispose();
+        dom.cleanup();
+    }
+});
+
+test('disposing frontend source handoff synchronously uncovers pending source', async () => {
     const dom = installFakeDom();
     let handle = null;
     try {
-        const { installChatEmbeddedRuntimeAdapters } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js'),
+        const { installFrontendSourceHandoff } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
         );
         const { eventSource, event_types } = await importStable(
             path.join(REPO_ROOT, 'src/scripts/events.js'),
@@ -341,9 +408,7 @@ test('disposing the chat adapter synchronously uncovers pending frontend source'
 
         const covered = createCoveredMessage({ mesid: '40', releaseEvent: event_types.CHAT_LOADED });
         chat.append(covered.message);
-        handle = installChatEmbeddedRuntimeAdapters({
-            manager: createManagerStub({ maxSoftParkedIframes: 0, softParkTtlMs: 0 }),
-        });
+        handle = installFrontendSourceHandoff(chat);
 
         await eventSource.emit(event_types.CHAT_LOADED);
         assert.equal(covered.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), event_types.CHAT_LOADED);

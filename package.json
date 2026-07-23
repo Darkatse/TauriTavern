@@ -60,6 +60,7 @@
     "@iconfu/svg-inject": "^1.2.3",
     "@mozilla/readability": "^0.6.0",
     "@popperjs/core": "^2.11.8",
+    "@tanstack/virtual-core": "3.17.6",
     "bowser": "^2.12.1",
     "chalk": "^5.6.0",
     "chevrotain": "^11.2.0",
