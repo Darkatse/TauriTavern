@@ -6819,7 +6819,6 @@ dependencies = [
 name = "tauritavern"
 version = "2.1.1"
 dependencies = [
- "async-compression",
  "async-trait",
  "base64 0.22.1",
  "block2",
@@ -7462,6 +7461,7 @@ dependencies = [
 name = "tt-adapter-storage-core"
 version = "0.1.0"
 dependencies = [
+ "async-compression",
  "async-trait",
  "chrono",
  "icu_collator",
@@ -7478,6 +7478,7 @@ dependencies = [
  "tt-domain",
  "tt-ports",
  "uuid",
+ "zstd",
 ]
 
 [[package]]

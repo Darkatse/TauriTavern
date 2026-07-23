@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::dto::chat_dto::{
     ChatSearchResultDto, DeleteGroupChatDto, ImportGroupChatDto, RenameGroupChatDto,
+    RestoreGroupChatBackupDto,
 };
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
 use crate::errors::ApplicationError;
@@ -346,6 +347,23 @@ impl GroupChatService {
     ) -> Result<String, ApplicationError> {
         self.group_chat_repository
             .import_group_chat_payload(Path::new(&dto.file_path))
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Restore a group chat directly from a history backup.
+    pub async fn restore_group_chat_backup(
+        &self,
+        dto: RestoreGroupChatBackupDto,
+    ) -> Result<String, ApplicationError> {
+        if dto.backup_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Backup file name cannot be empty".to_string(),
+            ));
+        }
+
+        self.group_chat_repository
+            .restore_group_chat_backup(&dto.backup_name)
             .await
             .map_err(Into::into)
     }

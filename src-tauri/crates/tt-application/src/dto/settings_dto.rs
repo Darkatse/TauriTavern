@@ -58,6 +58,7 @@ pub struct UpdateTauriTavernSettingsDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatBackupSettingsDto {
     pub automatic_enabled: bool,
+    pub zstd_compression_enabled: bool,
     pub max_files_per_prefix: i64,
     pub max_total_files: i64,
     pub max_total_bytes: i64,
@@ -66,6 +67,7 @@ pub struct ChatBackupSettingsDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateChatBackupSettingsDto {
     pub automatic_enabled: Option<bool>,
+    pub zstd_compression_enabled: Option<bool>,
     pub max_files_per_prefix: Option<i64>,
     pub max_total_files: Option<i64>,
     pub max_total_bytes: Option<i64>,
@@ -272,6 +274,7 @@ impl From<ChatBackupSettings> for ChatBackupSettingsDto {
     fn from(settings: ChatBackupSettings) -> Self {
         Self {
             automatic_enabled: settings.automatic_enabled,
+            zstd_compression_enabled: settings.zstd_compression_enabled,
             max_files_per_prefix: settings.max_files_per_prefix,
             max_total_files: settings.max_total_files,
             max_total_bytes: settings.max_total_bytes,

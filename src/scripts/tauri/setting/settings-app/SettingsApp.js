@@ -6,6 +6,7 @@ import {
     ToggleSwitch,
     WallpaperField,
 } from './components.js';
+import { formatBytes } from '../format-bytes.js';
 
 const PANEL_RUNTIME_OPTIONS = [
     { value: 'compat', labelKey: 'Compact (Recommended)' },
@@ -66,6 +67,7 @@ function cloneDraft(values, themeOptions, backgroundOptions, currentBackground) 
         chatVirtualizationEnabled: values.chatVirtualizationEnabled,
         chatBackups: {
             automaticEnabled: values.chatBackups.automaticEnabled,
+            zstdCompressionEnabled: values.chatBackups.zstdCompressionEnabled,
             maxFilesPerPrefix: values.chatBackups.maxFilesPerPrefix,
             maxTotalFiles: values.chatBackups.maxTotalFiles,
             maxTotalValue,
@@ -124,6 +126,7 @@ export function createTauriTavernSettingsApp(options) {
     const capabilities = { ...viewModel.capabilities };
     const initialDraft = cloneDraft(viewModel.values, themeOptions, backgroundOptions, currentBackground);
     const initialDataRoot = cloneDataRoot(viewModel.dataRoot);
+    const chatBackupStorageStats = viewModel.chatBackupStorageStats ?? null;
 
     return {
         name: 'TauriTavernSettingsApp',
@@ -142,6 +145,7 @@ export function createTauriTavernSettingsApp(options) {
                 backgroundOptions,
                 draft: initialDraft,
                 dataRoot: initialDataRoot,
+                chatBackupStorageStats,
                 details: {
                     dataRoot: false,
                     requestProxy: initialDraft.requestProxy.enabled,
@@ -169,6 +173,32 @@ export function createTauriTavernSettingsApp(options) {
                 return this.draft.chatBackups.maxFilesPerPrefix === 0
                     || this.draft.chatBackups.maxTotalFiles === 0
                     || this.draft.chatBackups.maxTotalValue === 0;
+            },
+            zstdCompressionHint() {
+                const base = this.tr(
+                    'Saves substantial space, but SillyTavern cannot read this format.',
+                );
+                const originalBytes = this.chatBackupStorageStats?.originalBytes ?? 0;
+                const storedBytes = this.chatBackupStorageStats?.storedBytes ?? 0;
+                if (
+                    !this.draft.chatBackups.zstdCompressionEnabled
+                    || originalBytes <= storedBytes
+                ) {
+                    return { summary: base, before: '', saved: '', after: '' };
+                }
+
+                const ratio = Math.round(storedBytes / originalBytes * 100);
+                const [before, after] = this.tr(
+                    'Compressed backups currently use about {ratio}% of their original size and have saved about {saved}.',
+                )
+                    .replace('{ratio}', String(ratio))
+                    .split('{saved}');
+                return {
+                    summary: base,
+                    before,
+                    saved: formatBytes(originalBytes - storedBytes),
+                    after,
+                };
             },
             promptCacheOptions() {
                 return translateOptions(PROMPT_CACHE_OPTIONS, this.tr);
@@ -413,6 +443,21 @@ export function createTauriTavernSettingsApp(options) {
                         :hint="tr('Create a backup automatically when an eligible chat save completes.')"
                     >
                         <ToggleSwitch v-model="draft.chatBackups.automaticEnabled" />
+                    </SettingRow>
+
+                    <SettingRow
+                        :label="tr('zstd Compression')"
+                        help-topic="zstdCompression"
+                        :help-title="tr('Learn more')"
+                        @help="showHelp"
+                    >
+                        <template #hint>
+                            {{ zstdCompressionHint.summary }}<br v-if="zstdCompressionHint.saved" />{{ zstdCompressionHint.before }}<strong
+                                v-if="zstdCompressionHint.saved"
+                                class="tt-settings-hint-accent"
+                            >{{ zstdCompressionHint.saved }}</strong>{{ zstdCompressionHint.after }}
+                        </template>
+                        <ToggleSwitch v-model="draft.chatBackups.zstdCompressionEnabled" />
                     </SettingRow>
 
                     <SettingRow

@@ -6,7 +6,9 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 
 mod backup;
+mod backup_codec;
 mod backup_inventory;
+mod backup_restore;
 mod cache;
 mod chat_dir_resolver;
 mod chat_payload_commit;

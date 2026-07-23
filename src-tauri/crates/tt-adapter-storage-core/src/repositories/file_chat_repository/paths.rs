@@ -238,7 +238,7 @@ impl FileChatRepository {
         }
 
         const FINAL_NAME_FIXED_BYTES: usize =
-            "chat_".len() + "_".len() + "YYYYMMDD-HHMMSS".len() + ".jsonl".len();
+            "chat_".len() + "_".len() + "YYYYMMDD-HHMMSS".len() + ".jsonl.zst".len();
         const MAX_SANITIZED_BYTES: usize = 255 - FINAL_NAME_FIXED_BYTES;
 
         let mut result = String::with_capacity(lowered.len().min(MAX_SANITIZED_BYTES));
@@ -286,21 +286,6 @@ impl FileChatRepository {
     pub(super) fn get_group_chat_path(&self, chat_id: &str) -> Result<PathBuf, DomainError> {
         let normalized = Self::normalize_jsonl_file_name(chat_id)?;
         Ok(self.group_chats_dir.join(normalized))
-    }
-
-    pub(super) fn resolve_existing_backup_path(
-        &self,
-        backup_file_name: &str,
-    ) -> Result<PathBuf, DomainError> {
-        let normalized = Self::normalize_backup_file_name(backup_file_name)?;
-        let path = self.backups_dir.join(&normalized);
-        if !path.starts_with(&self.backups_dir) {
-            return Err(DomainError::InvalidData(
-                "Invalid backup file name".to_string(),
-            ));
-        }
-
-        Ok(path)
     }
 
     pub(super) fn normalize_backup_file_name(

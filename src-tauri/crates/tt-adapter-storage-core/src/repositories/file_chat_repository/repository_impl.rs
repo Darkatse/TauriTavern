@@ -529,18 +529,29 @@ impl ChatRepository for FileChatRepository {
         Ok(results)
     }
 
-    async fn get_chat_backup_bytes(&self, backup_file_name: &str) -> Result<Vec<u8>, DomainError> {
-        self.ensure_directory_exists().await?;
+    async fn materialize_chat_backup(
+        &self,
+        backup_file_name: &str,
+    ) -> Result<std::path::PathBuf, DomainError> {
+        self.materialize_chat_backup_file(backup_file_name).await
+    }
 
-        let path = self.resolve_existing_backup_path(backup_file_name)?;
-        if !path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Chat backup not found: {}",
-                backup_file_name
-            )));
-        }
+    async fn discard_chat_backup_materialization(&self, path: &Path) -> Result<(), DomainError> {
+        self.discard_chat_backup_materialization_file(path).await
+    }
 
-        self.read_payload_bytes_from_path(&path).await
+    async fn restore_character_chat_backup(
+        &self,
+        backup_file_name: &str,
+        character_name: &str,
+        character_display_name: &str,
+    ) -> Result<Vec<String>, DomainError> {
+        self.restore_character_chat_backup_file(
+            backup_file_name,
+            character_name,
+            character_display_name,
+        )
+        .await
     }
 
     async fn delete_chat_backup(&self, backup_file_name: &str) -> Result<(), DomainError> {

@@ -83,6 +83,9 @@ export function createTauriTavernSettingsState(settings, options = {}) {
     if (typeof chatBackups.automatic_enabled !== 'boolean') {
         throw new Error('TauriTavern settings: automatic chat backup setting missing');
     }
+    if (typeof chatBackups.zstd_compression_enabled !== 'boolean') {
+        throw new Error('TauriTavern settings: Zstandard chat backup setting missing');
+    }
 
     const maxFilesPerPrefix = requireChatBackupLimit(
         chatBackups.max_files_per_prefix,
@@ -103,6 +106,7 @@ export function createTauriTavernSettingsState(settings, options = {}) {
         chatVirtualizationEnabled,
         chatBackups: {
             automaticEnabled: chatBackups.automatic_enabled,
+            zstdCompressionEnabled: chatBackups.zstd_compression_enabled,
             maxFilesPerPrefix,
             maxTotalFiles,
             maxTotalBytes,

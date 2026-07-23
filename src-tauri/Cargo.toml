@@ -31,6 +31,8 @@ ttsync-core = { version = "2", default-features = false }
 ttsync-http = "2"
 ttsync-client = "2"
 uuid = { version = "1.4", default-features = false, features = ["serde", "std", "v4"] }
+# Keep bundled libzstd target SIMD/assembly auto-detection; `no_asm` and `thin` disable fast paths.
+zstd = { version = "0.13.3", default-features = false }
 
 [profile.dev]
 incremental = true

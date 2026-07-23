@@ -24,7 +24,7 @@ use tt_domain::models::settings::{
 use tt_ports::repositories::settings_repository::{
     SettingsAggregateSignature, SettingsRepository, UserSettingsRevision,
 };
-pub use tt_ports::settings::{ChatBackupRuntime, RequestProxyRuntime};
+pub use tt_ports::settings::{ChatBackupRuntime, ChatBackupStorageStats, RequestProxyRuntime};
 
 pub const USER_SETTINGS_HASH_ALGORITHM: &str = "tt-user-settings-stable-sha256-v1";
 
@@ -180,6 +180,22 @@ impl SettingsService {
         Ok(TauriTavernSettingsDto::from(settings))
     }
 
+    pub async fn get_chat_backup_storage_stats(
+        &self,
+    ) -> Result<Option<ChatBackupStorageStats>, ApplicationError> {
+        match self
+            .chat_backup_runtime
+            .get_chat_backup_storage_stats()
+            .await
+        {
+            Ok(stats) => Ok(stats),
+            Err(error) => {
+                tracing::warn!("Chat backup storage stats are unavailable: {error}");
+                Ok(None)
+            }
+        }
+    }
+
     pub async fn update_tauritavern_settings(
         &self,
         dto: UpdateTauriTavernSettingsDto,
@@ -215,10 +231,17 @@ impl SettingsService {
             settings.chat_virtualization_enabled = chat_virtualization_enabled;
         }
 
-        let chat_backups_changed = dto.chat_backups.is_some();
+        let previous_chat_backups = settings.chat_backups;
         if let Some(chat_backups) = dto.chat_backups {
             Self::apply_chat_backup_settings_update(&mut settings.chat_backups, chat_backups)?;
         }
+        let chat_backups_changed = settings.chat_backups != previous_chat_backups;
+        let chat_backup_reconciliation_required = settings.chat_backups.zstd_compression_enabled
+            != previous_chat_backups.zstd_compression_enabled
+            || settings.chat_backups.max_files_per_prefix
+                != previous_chat_backups.max_files_per_prefix
+            || settings.chat_backups.max_total_files != previous_chat_backups.max_total_files
+            || settings.chat_backups.max_total_bytes != previous_chat_backups.max_total_bytes;
 
         if let Some(close_to_tray_on_close) = dto.close_to_tray_on_close {
             settings.close_to_tray_on_close = close_to_tray_on_close;
@@ -336,7 +359,7 @@ impl SettingsService {
                 .chat_backup_runtime
                 .apply_chat_backup_settings(settings.chat_backups)
                 .await;
-            if result.is_ok() {
+            if result.is_ok() && chat_backup_reconciliation_required {
                 self.schedule_chat_backup_reconciliation();
             }
             Some(result)
@@ -386,6 +409,9 @@ impl SettingsService {
         let mut next = *settings;
         if let Some(automatic_enabled) = dto.automatic_enabled {
             next.automatic_enabled = automatic_enabled;
+        }
+        if let Some(zstd_compression_enabled) = dto.zstd_compression_enabled {
+            next.zstd_compression_enabled = zstd_compression_enabled;
         }
         if let Some(max_files_per_prefix) = dto.max_files_per_prefix {
             next.max_files_per_prefix = max_files_per_prefix;
@@ -1053,6 +1079,7 @@ mod tests {
             &mut settings,
             UpdateChatBackupSettingsDto {
                 automatic_enabled: Some(false),
+                zstd_compression_enabled: Some(true),
                 max_files_per_prefix: Some(-1),
                 max_total_files: Some(0),
                 max_total_bytes: None,
@@ -1061,6 +1088,7 @@ mod tests {
         .expect("apply chat backup settings");
 
         assert!(!settings.automatic_enabled);
+        assert!(settings.zstd_compression_enabled);
         assert_eq!(settings.max_files_per_prefix, -1);
         assert_eq!(settings.max_total_files, 0);
 
@@ -1068,6 +1096,7 @@ mod tests {
             &mut settings,
             UpdateChatBackupSettingsDto {
                 automatic_enabled: None,
+                zstd_compression_enabled: None,
                 max_files_per_prefix: None,
                 max_total_files: None,
                 max_total_bytes: Some(-2),
@@ -1152,6 +1181,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unavailable_chat_backup_storage_stats_do_not_block_settings() {
+        let backup_runtime = Arc::new(TestChatBackupRuntime::default());
+        backup_runtime.fail_stats.store(true, Ordering::Release);
+        let service = SettingsService::new(
+            Arc::new(TestSettingsRepository::default()),
+            Arc::new(TestRequestProxyRuntime::default()),
+            backup_runtime,
+        );
+
+        assert_eq!(
+            service
+                .get_chat_backup_storage_stats()
+                .await
+                .expect("optional backup statistics should stay non-fatal"),
+            None
+        );
+    }
+
+    #[tokio::test]
     async fn tauritavern_settings_update_persists_and_applies_chat_backup_policy() {
         let repository = Arc::new(TestSettingsRepository::default());
         let backup_runtime = Arc::new(TestChatBackupRuntime::default());
@@ -1170,6 +1218,7 @@ mod tests {
                 chat_virtualization_enabled: None,
                 chat_backups: Some(UpdateChatBackupSettingsDto {
                     automatic_enabled: Some(false),
+                    zstd_compression_enabled: Some(true),
                     max_files_per_prefix: Some(7),
                     max_total_files: Some(-1),
                     max_total_bytes: Some(0),
@@ -1188,6 +1237,7 @@ mod tests {
             .expect("update chat backup policy");
 
         assert!(!updated.chat_backups.automatic_enabled);
+        assert!(updated.chat_backups.zstd_compression_enabled);
         assert_eq!(updated.chat_backups.max_files_per_prefix, 7);
         assert_eq!(updated.chat_backups.max_total_files, -1);
         assert_eq!(updated.chat_backups.max_total_bytes, 0);
@@ -1195,10 +1245,74 @@ mod tests {
             backup_runtime.applied.lock().unwrap().as_slice(),
             &[ChatBackupSettings {
                 automatic_enabled: false,
+                zstd_compression_enabled: true,
                 max_files_per_prefix: 7,
                 max_total_files: -1,
                 max_total_bytes: 0,
             }]
+        );
+    }
+
+    #[tokio::test]
+    async fn compression_only_update_applies_and_schedules_format_reconciliation() {
+        let repository = Arc::new(TestSettingsRepository::default());
+        let backup_runtime = Arc::new(TestChatBackupRuntime::default());
+        let service = SettingsService::new(
+            repository,
+            Arc::new(TestRequestProxyRuntime::default()),
+            backup_runtime.clone(),
+        );
+
+        let update = UpdateTauriTavernSettingsDto {
+            chat_backups: Some(UpdateChatBackupSettingsDto {
+                automatic_enabled: None,
+                zstd_compression_enabled: Some(true),
+                max_files_per_prefix: None,
+                max_total_files: None,
+                max_total_bytes: None,
+            }),
+            updates: None,
+            perf_profile: None,
+            panel_runtime_profile: None,
+            embedded_runtime_profile: None,
+            chat_virtualization_enabled: None,
+            close_to_tray_on_close: None,
+            request_proxy: None,
+            allow_keys_exposure: None,
+            avatar_persona_original_images_enabled: None,
+            native_regex_backend_enabled: None,
+            dev: None,
+            dynamic_theme: None,
+            models: None,
+            agent: None,
+        };
+        service
+            .update_tauritavern_settings(update.clone())
+            .await
+            .expect("enable backup compression");
+
+        assert!(backup_runtime.applied.lock().unwrap()[0].zstd_compression_enabled);
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while backup_runtime.reconciliation_calls.load(Ordering::Acquire) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("background format reconciliation was scheduled");
+        assert_eq!(
+            backup_runtime.reconciliation_calls.load(Ordering::Acquire),
+            1
+        );
+
+        service
+            .update_tauritavern_settings(update)
+            .await
+            .expect("repeat unchanged backup compression setting");
+        tokio::task::yield_now().await;
+        assert_eq!(backup_runtime.applied.lock().unwrap().len(), 1);
+        assert_eq!(
+            backup_runtime.reconciliation_calls.load(Ordering::Acquire),
+            1
         );
     }
 
@@ -1219,7 +1333,8 @@ mod tests {
             .update_tauritavern_settings(UpdateTauriTavernSettingsDto {
                 chat_backups: Some(UpdateChatBackupSettingsDto {
                     automatic_enabled: Some(false),
-                    max_files_per_prefix: None,
+                    zstd_compression_enabled: None,
+                    max_files_per_prefix: Some(7),
                     max_total_files: None,
                     max_total_bytes: None,
                 }),
@@ -1785,6 +1900,7 @@ mod tests {
         applied: StdMutex<Vec<ChatBackupSettings>>,
         reconciliation_calls: AtomicUsize,
         fail_reconciliation: AtomicBool,
+        fail_stats: AtomicBool,
     }
 
     #[async_trait]
@@ -1805,6 +1921,18 @@ mod tests {
                 ))
             } else {
                 Ok(())
+            }
+        }
+
+        async fn get_chat_backup_storage_stats(
+            &self,
+        ) -> Result<Option<ChatBackupStorageStats>, DomainError> {
+            if self.fail_stats.load(Ordering::Acquire) {
+                Err(DomainError::InvalidData(
+                    "simulated backup stats failure".into(),
+                ))
+            } else {
+                Ok(None)
             }
         }
     }

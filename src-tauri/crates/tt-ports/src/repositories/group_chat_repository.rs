@@ -73,6 +73,12 @@ pub trait GroupChatRepository: Send + Sync {
     /// Import a group chat payload and return the created chat id (without extension).
     async fn import_group_chat_payload(&self, file_path: &Path) -> Result<String, DomainError>;
 
+    /// Restore a group chat directly from a logical backup name.
+    async fn restore_group_chat_backup(
+        &self,
+        backup_file_name: &str,
+    ) -> Result<String, DomainError>;
+
     /// Get a single group chat summary without loading the full payload.
     async fn get_group_chat_summary(
         &self,

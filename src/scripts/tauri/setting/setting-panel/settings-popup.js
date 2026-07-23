@@ -6,7 +6,10 @@ import {
     updateTauriTavernSettings,
 } from '../../../../tauri-bridge.js';
 import { runTaskOrPopup, showErrorPopup } from './popup-utils.js';
-import { loadTauriTavernSettingsViewModel } from './settings-view-model.js';
+import {
+    loadChatBackupStorageStats,
+    loadTauriTavernSettingsViewModel,
+} from './settings-view-model.js';
 import { buildTauriTavernSettingsUpdate } from './settings-patch.js';
 import { applyTauriTavernSettingsUpdateEffects } from './settings-effects.js';
 import { callTauriTavernPanelPopup } from '../panel-popup.js';
@@ -36,6 +39,14 @@ const HELP_TOPICS = {
         lines: [
             'Chat DOM virtualization fully solves the performance problems caused by rendering many messages in very long chats.',
             'When enabled, only messages near the viewport and the newest message stay mounted. Turn it off to use upstream SillyTavern chat rendering. Renderer extensions must support ChatSurface.',
+        ],
+    },
+    zstdCompression: {
+        title: 'zstd Compression',
+        lines: [
+            'zstd compression applies to all chat backups.',
+            'When this setting changes, existing backups are converted in the background.',
+            'TauriTavern can read zstd backups directly. SillyTavern does not support this backup format.',
         ],
     },
     closeToTray: {
@@ -384,7 +395,7 @@ export async function openTauriTavernSettingsPopup() {
     let pendingUpdate = null;
 
     try {
-        const result = await callTauriTavernPanelPopup(mount, POPUP_TYPE.CONFIRM, '', {
+        const popupPromise = callTauriTavernPanelPopup(mount, POPUP_TYPE.CONFIRM, '', {
             okButton: translate('Save'),
             cancelButton: translate('Close'),
             allowVerticalScrolling: true,
@@ -420,6 +431,13 @@ export async function openTauriTavernSettingsPopup() {
                 return true;
             },
         });
+        if (viewModel.values.chatBackups.zstdCompressionEnabled) {
+            void loadChatBackupStorageStats()
+                .then(appHandle.setChatBackupStorageStats)
+                .catch(error => console.warn('Chat backup storage stats are unavailable:', error));
+        }
+
+        const result = await popupPromise;
 
         if (result !== POPUP_RESULT.AFFIRMATIVE) {
             return;

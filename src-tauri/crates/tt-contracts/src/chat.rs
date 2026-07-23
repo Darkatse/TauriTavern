@@ -55,6 +55,12 @@ pub struct ChatSearchResult {
     pub chat_metadata: Option<Value>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChatBackupStorageStats {
+    pub original_bytes: u64,
+    pub stored_bytes: u64,
+}
+
 /// Pinned character chat reference used by recent-chat queries.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct PinnedCharacterChat {

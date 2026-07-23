@@ -18,6 +18,7 @@ use tt_domain::models::chat::{parse_message_timestamp_value, strip_jsonl_extensi
 use tt_ports::repositories::chat_repository::ChatSearchResult;
 
 use super::FileChatRepository;
+use super::backup_codec::{BackupFormat, open_decoded_backup};
 
 const INDEX_SCHEMA_VERSION: u32 = 1;
 const FINGERPRINT_WORDS: usize = 64; // 4096 bits
@@ -1246,16 +1247,23 @@ impl FileChatRepository {
     }
 
     async fn scan_summary_line_bytes(path: &Path) -> Result<SummaryLineByteScan, DomainError> {
-        let mut file = File::open(path).await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to open chat file {:?}: {}", path, error))
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| {
+                DomainError::InvalidData(format!("Invalid chat backup path: {}", path.display()))
+            })?;
+        let (format, _) = BackupFormat::parse_physical_file_name(file_name).ok_or_else(|| {
+            DomainError::InvalidData(format!("Unsupported chat backup file name: {file_name}"))
         })?;
+        let mut reader = open_decoded_backup(path, format).await?;
 
         let mut buffer = vec![0u8; SUMMARY_SCAN_BUFFER_BYTES];
         let mut current_line = Vec::new();
         let mut scan = SummaryLineByteScan::default();
 
         loop {
-            let bytes_read = file.read(&mut buffer).await.map_err(|error| {
+            let bytes_read = reader.read(&mut buffer).await.map_err(|error| {
                 DomainError::InternalError(format!(
                     "Failed to read chat file {:?}: {}",
                     path, error
@@ -1357,5 +1365,102 @@ impl FileChatRepository {
             .rev()
             .collect();
         format!("...{}", tail)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::random;
+    use serde_json::json;
+
+    use super::*;
+    use crate::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+
+    #[tokio::test]
+    async fn backup_summary_streams_zstd_and_rejects_raw_bytes_with_zstd_suffix() {
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-zstd-summary-{}", random::<u64>()));
+        let backups_dir = root.join("backups");
+        fs::create_dir_all(&backups_dir)
+            .await
+            .expect("create backup directory");
+
+        let logical_file_name = "chat_alice_20260722-120000.jsonl";
+        let physical_path = backups_dir.join(format!("{logical_file_name}.zst"));
+        let raw_jsonl = [
+            json!({
+                "chat_metadata": { "chat_id_hash": 42 },
+                "user_name": "User",
+                "character_name": "Alice",
+            })
+            .to_string(),
+            json!({
+                "name": "User",
+                "is_user": true,
+                "send_date": "2026-07-21T00:00:00.000Z",
+                "mes": "x".repeat(SUMMARY_SCAN_BUFFER_BYTES + 17),
+                "extra": {},
+            })
+            .to_string(),
+            json!({
+                "name": "Alice",
+                "is_user": false,
+                "send_date": "2026-07-22T00:00:00.000Z",
+                "mes": "tail response",
+                "extra": {},
+            })
+            .to_string(),
+        ]
+        .join("\n");
+        let compressed =
+            zstd::stream::encode_all(raw_jsonl.as_bytes(), 1).expect("compress summary fixture");
+        fs::write(&physical_path, &compressed)
+            .await
+            .expect("write zstd backup");
+
+        let repository = FileChatRepository::with_chat_aliases(
+            root.join("characters"),
+            root.join("chats"),
+            root.join("group chats"),
+            backups_dir,
+            new_shared_chat_alias_store_for_user_dir(&root),
+        );
+        let metadata = fs::metadata(&physical_path)
+            .await
+            .expect("read zstd backup metadata");
+        let summary = repository
+            .scan_chat_summary_file(
+                &physical_path,
+                "",
+                logical_file_name,
+                FileChatRepository::file_signature_from_metadata(&metadata),
+                false,
+            )
+            .await
+            .expect("scan zstd backup summary");
+
+        assert_eq!(summary.summary.file_name, logical_file_name);
+        assert_eq!(summary.summary.file_size, compressed.len() as u64);
+        assert_eq!(summary.summary.message_count, 2);
+        assert_eq!(summary.summary.preview, "tail response");
+
+        fs::write(&physical_path, raw_jsonl)
+            .await
+            .expect("replace zstd backup with invalid raw bytes");
+        assert!(
+            repository
+                .scan_chat_summary_file(
+                    &physical_path,
+                    "",
+                    logical_file_name,
+                    FileChatRepository::file_signature_from_metadata(&metadata),
+                    false,
+                )
+                .await
+                .is_err(),
+            "a .jsonl.zst backup must never fall back to raw JSONL"
+        );
+
+        let _ = fs::remove_dir_all(root).await;
     }
 }

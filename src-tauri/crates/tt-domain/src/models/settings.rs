@@ -250,6 +250,8 @@ impl AgentRunRetentionSettings {
 pub struct ChatBackupSettings {
     #[serde(default = "default_chat_backup_automatic_enabled")]
     pub automatic_enabled: bool,
+    #[serde(default)]
+    pub zstd_compression_enabled: bool,
     #[serde(default = "default_chat_backup_max_files_per_prefix")]
     pub max_files_per_prefix: i64,
     #[serde(default = "default_chat_backup_max_total_files")]
@@ -262,6 +264,7 @@ impl Default for ChatBackupSettings {
     fn default() -> Self {
         Self {
             automatic_enabled: default_chat_backup_automatic_enabled(),
+            zstd_compression_enabled: false,
             max_files_per_prefix: default_chat_backup_max_files_per_prefix(),
             max_total_files: default_chat_backup_max_total_files(),
             max_total_bytes: default_chat_backup_max_total_bytes(),
@@ -560,6 +563,7 @@ mod tests {
         .expect("parse settings");
 
         assert!(settings.chat_backups.automatic_enabled);
+        assert!(!settings.chat_backups.zstd_compression_enabled);
         assert_eq!(
             settings.chat_backups.max_files_per_prefix,
             DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX
@@ -585,6 +589,7 @@ mod tests {
         .expect("parse settings");
 
         assert!(settings.chat_backups.automatic_enabled);
+        assert!(!settings.chat_backups.zstd_compression_enabled);
         assert_eq!(
             settings.chat_backups.max_files_per_prefix,
             DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX

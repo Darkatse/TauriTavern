@@ -6,10 +6,12 @@ import {
 } from '../../../scripts/tauri/chat/transport.js';
 import { payloadToJsonl } from '../../../scripts/tauri/chat/jsonl.js';
 import { resolveRouteCharacterId } from './character-route-utils.js';
+import { registerChatImportRoutes } from './chat-import-routes.js';
 import { mapChatSummaryResults } from './chat-route-utils.js';
 import { registerChatRecentRoutes } from './chat-recent-routes.js';
 
 export function registerChatRoutes(router, context, { jsonResponse }) {
+    registerChatImportRoutes(router, context, { jsonResponse });
     const allowMissingChat = (body) => Boolean(body?.allow_not_found ?? body?.allowNotFound);
 
     const isIntegrityError = (error) => {
@@ -289,67 +291,6 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         });
     });
 
-    router.post('/api/chats/import', async ({ body }) => {
-        if (!(body instanceof FormData)) {
-            return jsonResponse({ error: 'Expected multipart form data' }, 400);
-        }
-
-        const file = body.get('avatar');
-        if (!(file instanceof Blob)) {
-            return jsonResponse({ error: 'No chat file provided' }, 400);
-        }
-
-        const fileType = String(body.get('file_type') || '').trim().toLowerCase();
-        if (!['json', 'jsonl'].includes(fileType)) {
-            return jsonResponse({ error: true });
-        }
-
-        const characterDisplayName = String(body.get('character_name') || '').trim();
-        const resolved = await resolveRouteCharacterId(context, {
-            avatar: body.get('avatar_url'),
-            fallbackName: characterDisplayName,
-        });
-        if (resolved.responseBody) {
-            return jsonResponse(resolved.responseBody, 400);
-        }
-        const characterId = resolved.characterId;
-        if (!characterId) {
-            return jsonResponse({ error: true }, 400);
-        }
-
-        const preferredName = file instanceof File && file.name ? file.name : `import.${fileType}`;
-        const fileInfo = await context.materializeUploadFile(file, {
-            kind: 'chat-import',
-            preferredName,
-            preferredExtension: fileType,
-        });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            return jsonResponse({ error: `Unable to access uploaded chat file path${reason}` }, 400);
-        }
-
-        try {
-            const fileNames = await context.safeInvoke('import_character_chats', {
-                dto: {
-                    character_name: characterId,
-                    character_display_name: characterDisplayName || null,
-                    user_name: String(body.get('user_name') || '').trim() || null,
-                    file_path: fileInfo.filePath,
-                    file_type: fileType,
-                },
-            });
-
-            return jsonResponse({
-                res: true,
-                fileNames: Array.isArray(fileNames) ? fileNames : [],
-            });
-        } catch {
-            return jsonResponse({ error: true });
-        } finally {
-            await fileInfo.cleanup?.();
-        }
-    });
-
     router.post('/api/chats/group/get', async ({ body }) => {
         const allowNotFound = allowMissingChat(body);
         const id = String(body?.id ?? '');
@@ -465,36 +406,4 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         }
     });
 
-    router.post('/api/chats/group/import', async ({ body }) => {
-        if (!(body instanceof FormData)) {
-            return jsonResponse({ error: 'Expected multipart form data' }, 400);
-        }
-
-        const file = body.get('avatar');
-        if (!(file instanceof Blob)) {
-            return jsonResponse({ error: true }, 400);
-        }
-
-        const preferredName = file instanceof File && file.name ? file.name : 'group-chat.jsonl';
-        const fileInfo = await context.materializeUploadFile(file, {
-            kind: 'chat-import',
-            preferredName,
-            preferredExtension: 'jsonl',
-        });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            return jsonResponse({ error: `Unable to access uploaded group chat file path${reason}` }, 400);
-        }
-
-        try {
-            const chatId = await context.safeInvoke('import_group_chat_payload', {
-                dto: { file_path: fileInfo.filePath },
-            });
-            return jsonResponse({ res: String(chatId || '') });
-        } catch {
-            return jsonResponse({ error: true });
-        } finally {
-            await fileInfo.cleanup?.();
-        }
-    });
 }

@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 async-trait = "0.1"
+async-compression = { version = "0.4", default-features = false, features = ["tokio", "zstd"] }
 chrono = { workspace = true }
 icu_collator = "2.1.1"
 icu_locale_core = "2.1.1"
@@ -20,6 +21,7 @@ tt-contracts = { path = "../tt-contracts" }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 uuid = { workspace = true }
+zstd = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }

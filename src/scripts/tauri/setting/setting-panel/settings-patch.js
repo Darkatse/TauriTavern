@@ -67,6 +67,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         throw new TypeError('Chat virtualization setting must be a boolean');
     }
     const nextChatBackupAutomaticEnabled = Boolean(draft.chatBackups?.automaticEnabled);
+    const nextChatBackupZstdCompressionEnabled = Boolean(draft.chatBackups?.zstdCompressionEnabled);
     const nextChatBackupMaxFilesPerPrefix = normalizeChatBackupLimit(draft.chatBackups?.maxFilesPerPrefix);
     const nextChatBackupMaxTotalFiles = normalizeChatBackupLimit(draft.chatBackups?.maxTotalFiles);
     const nextChatBackupMaxTotalUnit = draft.chatBackups?.maxTotalUnit;
@@ -106,6 +107,8 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         nextChatVirtualizationEnabled !== initial.chatVirtualizationEnabled;
     const hasChatBackupAutomaticEnabledChange =
         nextChatBackupAutomaticEnabled !== initial.chatBackups.automaticEnabled;
+    const hasChatBackupZstdCompressionEnabledChange =
+        nextChatBackupZstdCompressionEnabled !== initial.chatBackups.zstdCompressionEnabled;
     const hasChatBackupMaxFilesPerPrefixChange =
         nextChatBackupMaxFilesPerPrefix !== initial.chatBackups.maxFilesPerPrefix;
     const hasChatBackupMaxTotalFilesChange =
@@ -113,6 +116,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     const hasChatBackupMaxTotalBytesChange =
         nextChatBackupMaxTotalBytes !== initial.chatBackups.maxTotalBytes;
     const hasChatBackupsChange = hasChatBackupAutomaticEnabledChange
+        || hasChatBackupZstdCompressionEnabledChange
         || hasChatBackupMaxFilesPerPrefixChange
         || hasChatBackupMaxTotalFilesChange
         || hasChatBackupMaxTotalBytesChange;
@@ -167,6 +171,9 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         const chatBackups = {};
         if (hasChatBackupAutomaticEnabledChange) {
             chatBackups.automatic_enabled = nextChatBackupAutomaticEnabled;
+        }
+        if (hasChatBackupZstdCompressionEnabledChange) {
+            chatBackups.zstd_compression_enabled = nextChatBackupZstdCompressionEnabled;
         }
         if (hasChatBackupMaxFilesPerPrefixChange) {
             chatBackups.max_files_per_prefix = nextChatBackupMaxFilesPerPrefix;
@@ -234,6 +241,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
             chatVirtualizationEnabled: nextChatVirtualizationEnabled,
             chatBackups: {
                 automaticEnabled: nextChatBackupAutomaticEnabled,
+                zstdCompressionEnabled: nextChatBackupZstdCompressionEnabled,
                 maxFilesPerPrefix: nextChatBackupMaxFilesPerPrefix,
                 maxTotalFiles: nextChatBackupMaxTotalFiles,
                 maxTotalBytes: nextChatBackupMaxTotalBytes,

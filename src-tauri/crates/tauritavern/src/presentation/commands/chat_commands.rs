@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use tauri::State;
-use tauri::ipc::Response as InvokeResponse;
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -9,6 +8,7 @@ use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
     ImportCharacterChatsDto, ImportChatDto, PinnedCharacterChatDto, RenameChatDto,
+    RestoreCharacterChatBackupDto,
 };
 use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_application::errors::ApplicationError;
@@ -293,19 +293,53 @@ pub async fn list_chat_backups(
 }
 
 #[tauri::command]
-pub async fn get_chat_backup_raw(
+pub async fn materialize_chat_backup(
     name: String,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<InvokeResponse, CommandError> {
-    log_command(format!("get_chat_backup_raw {}", name));
+) -> Result<String, CommandError> {
+    log_command(format!("materialize_chat_backup {}", name));
 
     app_state
         .services
         .chat_service
-        .get_chat_backup_bytes(&name)
+        .materialize_chat_backup(&name)
         .await
-        .map(InvokeResponse::new)
-        .map_err(map_command_error("Failed to get chat backup content"))
+        .map_err(map_command_error("Failed to materialize chat backup"))
+}
+
+#[tauri::command]
+pub async fn discard_chat_backup_materialization(
+    path: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("discard_chat_backup_materialization");
+
+    app_state
+        .services
+        .chat_service
+        .discard_chat_backup_materialization(&path)
+        .await
+        .map_err(map_command_error(
+            "Failed to discard chat backup materialization",
+        ))
+}
+
+#[tauri::command]
+pub async fn restore_character_chat_backup(
+    dto: RestoreCharacterChatBackupDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<String>, CommandError> {
+    log_command(format!(
+        "restore_character_chat_backup {} for {}",
+        dto.backup_name, dto.character_name
+    ));
+
+    app_state
+        .services
+        .chat_service
+        .restore_character_chat_backup(dto)
+        .await
+        .map_err(map_command_error("Failed to restore character chat backup"))
 }
 
 #[tauri::command]

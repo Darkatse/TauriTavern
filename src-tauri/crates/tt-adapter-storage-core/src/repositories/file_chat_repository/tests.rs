@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 use chrono::DateTime;
 use rand::random;
@@ -24,6 +24,7 @@ use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::settings::ChatBackupRuntime;
 
 use super::FileChatRepository;
+use super::backup_codec::set_backup_modified;
 use super::backup_inventory::BackupInventoryState;
 use super::chat_payload_commit::MAX_ACTIVE_CHAT_COMMIT_SESSIONS;
 
@@ -562,6 +563,7 @@ fn backup_policy(
 ) -> ChatBackupSettings {
     ChatBackupSettings {
         automatic_enabled: true,
+        zstd_compression_enabled: false,
         max_files_per_prefix,
         max_total_files,
         max_total_bytes,
@@ -586,7 +588,7 @@ async fn backup_file_names(root: &Path) -> Vec<String> {
         .expect("read backups directory");
     while let Some(entry) = entries.next_entry().await.expect("read backup entry") {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with("chat_") && name.ends_with(".jsonl") {
+        if name.starts_with("chat_") && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst")) {
             names.push(name);
         }
     }
@@ -769,6 +771,623 @@ async fn explicit_backups_keep_readable_format_without_same_second_overwrite() {
     assert_eq!(names.len(), 2);
     assert_ne!(names[0], names[1]);
     assert!(names.iter().all(|name| name.starts_with("chat_角色_a_")));
+}
+
+#[tokio::test]
+async fn zstd_setting_converts_all_backups_in_both_directions() {
+    let (repository, root) = setup_repository().await;
+    let source = root.join("source.jsonl");
+    let payload = payload_to_jsonl(&payload_with_integrity("format"));
+    fs::write(&source, &payload).await.expect("write source");
+
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("create raw backup");
+    let raw_name = backup_file_names(&root).await.pop().expect("raw backup");
+    let logical_name = raw_name.clone();
+    let original_modified = fs::metadata(root.join("backups").join(&raw_name))
+        .await
+        .expect("read raw metadata")
+        .modified()
+        .expect("read raw mtime");
+
+    let mut compressed_policy = backup_policy(-1, -1, -1);
+    compressed_policy.zstd_compression_enabled = true;
+    apply_and_reconcile_backups(&repository, compressed_policy).await;
+    let compressed_name = backup_file_names(&root)
+        .await
+        .pop()
+        .expect("converted zstd backup");
+    assert_eq!(compressed_name, format!("{logical_name}.zst"));
+    let compressed_path = root.join("backups").join(&compressed_name);
+    assert_eq!(
+        fs::metadata(&compressed_path)
+            .await
+            .expect("read compressed metadata")
+            .modified()
+            .expect("read compressed mtime"),
+        original_modified
+    );
+    let materialized = repository
+        .materialize_chat_backup(&logical_name)
+        .await
+        .expect("materialize converted backup");
+    assert_eq!(
+        fs::read(&materialized)
+            .await
+            .expect("read converted backup"),
+        payload.as_bytes()
+    );
+    repository
+        .discard_chat_backup_materialization(&materialized)
+        .await
+        .expect("discard converted backup");
+
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    assert_eq!(backup_file_names(&root).await, vec![logical_name.clone()]);
+    let restored_path = root.join("backups").join(&logical_name);
+    assert_eq!(
+        fs::read(&restored_path)
+            .await
+            .expect("read restored raw backup"),
+        payload.as_bytes()
+    );
+    assert_eq!(
+        fs::metadata(&restored_path)
+            .await
+            .expect("read restored metadata")
+            .modified()
+            .expect("read restored mtime"),
+        original_modified
+    );
+
+    let logical_names: Vec<_> = repository
+        .list_chat_backup_files()
+        .await
+        .expect("list converged backups")
+        .into_iter()
+        .map(|entry| entry.file_name)
+        .collect();
+    assert_eq!(logical_names, vec![logical_name]);
+}
+
+#[tokio::test]
+async fn zstd_to_raw_convergence_prunes_oldest_before_decoding_it() {
+    let (repository, root) = setup_repository().await;
+    let payload = format!(
+        "{{\"chat_metadata\":{{}},\"user_name\":\"User\"}}\n{{\"mes\":\"{}\"}}",
+        "x".repeat(64 * 1024)
+    );
+    let source = root.join("source.jsonl");
+    fs::write(&source, &payload).await.expect("write source");
+
+    let mut compressed_policy = backup_policy(-1, -1, -1);
+    compressed_policy.zstd_compression_enabled = true;
+    apply_and_reconcile_backups(&repository, compressed_policy).await;
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("create old compressed backup");
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("create new compressed backup");
+
+    let compressed_names = backup_file_names(&root).await;
+    assert_eq!(compressed_names.len(), 2);
+    let old_path = root.join("backups").join(&compressed_names[0]);
+    let new_path = root.join("backups").join(&compressed_names[1]);
+    fs::write(&old_path, b"corrupt old compressed backup")
+        .await
+        .expect("corrupt oldest backup");
+    set_backup_modified(&old_path, UNIX_EPOCH + Duration::from_secs(10))
+        .await
+        .expect("set old backup mtime");
+    set_backup_modified(&new_path, UNIX_EPOCH + Duration::from_secs(20))
+        .await
+        .expect("set new backup mtime");
+
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, payload.len() as i64)).await;
+
+    let expected = compressed_names[1]
+        .strip_suffix(".zst")
+        .expect("compressed suffix")
+        .to_string();
+    assert_eq!(backup_file_names(&root).await, vec![expected.clone()]);
+    assert_eq!(
+        fs::read(root.join("backups").join(&expected))
+            .await
+            .expect("read retained raw backup"),
+        payload.as_bytes()
+    );
+}
+
+#[tokio::test]
+async fn automatic_deduplication_survives_raw_zstd_runtime_toggles() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let payload_a = payload_to_jsonl(&payload_with_message(
+        "toggle",
+        "2026-01-01T00:00:00.000Z",
+        "raw",
+        "Assistant",
+    ));
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session"),
+        payload_a.as_bytes(),
+        false,
+    )
+    .await
+    .expect("commit raw state");
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("create raw automatic backup");
+
+    let mut compressed_policy = backup_policy(-1, -1, -1);
+    compressed_policy.zstd_compression_enabled = true;
+    apply_and_reconcile_backups(&repository, compressed_policy).await;
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("skip unchanged state after raw to zstd toggle");
+    let names = backup_file_names(&root).await;
+    assert_eq!(names.len(), 1);
+    assert!(names.iter().all(|name| name.ends_with(".jsonl.zst")));
+
+    let payload_b = payload_to_jsonl(&payload_with_message(
+        "toggle",
+        "2026-01-01T00:00:01.000Z",
+        "zstd",
+        "Assistant",
+    ));
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session"),
+        payload_b.as_bytes(),
+        false,
+    )
+    .await
+    .expect("commit zstd state");
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("create zstd automatic backup");
+
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    repository
+        .backup_chat_automatic("Alice", "session")
+        .await
+        .expect("skip unchanged state after zstd to raw toggle");
+    let names = backup_file_names(&root).await;
+    assert_eq!(names.len(), 2);
+    assert!(names.iter().all(|name| name.ends_with(".jsonl")));
+}
+
+#[tokio::test]
+async fn zstd_backup_materialize_and_restore_are_streamed_and_byte_exact() {
+    let (repository, root) = setup_repository().await;
+    let mut policy = backup_policy(-1, -1, -1);
+    policy.zstd_compression_enabled = true;
+    apply_and_reconcile_backups(&repository, policy).await;
+
+    let payload = format!(
+        "{{\"chat_metadata\":{{\"integrity\":\"zstd\"}},\"user_name\":\"User\",\"character_name\":\"Alice\"}}\n{{\"name\":\"Alice\",\"is_user\":false,\"send_date\":\"2026-01-01T00:00:00.000Z\",\"mes\":\"{}\",\"extra\":{{}}}}",
+        "重复内容".repeat(32_768)
+    );
+    let source = root.join("large-source.jsonl");
+    fs::write(&source, payload.as_bytes())
+        .await
+        .expect("write large source");
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("create zstd backup");
+
+    let descriptor = repository
+        .list_chat_backup_files()
+        .await
+        .expect("list zstd backup")
+        .pop()
+        .expect("zstd backup descriptor");
+    assert!(descriptor.path.to_string_lossy().ends_with(".jsonl.zst"));
+    assert!(
+        fs::metadata(&descriptor.path)
+            .await
+            .expect("read compressed metadata")
+            .len()
+            < payload.len() as u64
+    );
+
+    let materialized = repository
+        .materialize_chat_backup(&descriptor.file_name)
+        .await
+        .expect("materialize zstd backup");
+    assert_eq!(
+        fs::read(&materialized)
+            .await
+            .expect("read materialized backup"),
+        payload.as_bytes()
+    );
+    repository
+        .discard_chat_backup_materialization(&materialized)
+        .await
+        .expect("discard materialized backup");
+    assert!(!materialized.exists());
+
+    let restored_character = repository
+        .restore_character_chat_backup(&descriptor.file_name, "alice", "Alice")
+        .await
+        .expect("restore character chat");
+    assert_eq!(restored_character.len(), 1);
+    assert_eq!(
+        repository
+            .get_chat_payload_bytes("alice", &restored_character[0])
+            .await
+            .expect("read restored character chat"),
+        payload.as_bytes()
+    );
+
+    let restored_group = repository
+        .restore_group_chat_backup(&descriptor.file_name)
+        .await
+        .expect("restore group chat");
+    assert_eq!(
+        fs::read(
+            repository
+                .get_group_chat_payload_path(&restored_group)
+                .await
+                .expect("resolve restored group chat")
+        )
+        .await
+        .expect("read restored group chat"),
+        payload.as_bytes()
+    );
+
+    repository
+        .delete_chat_backup(&descriptor.file_name)
+        .await
+        .expect("delete zstd backup by logical name");
+    assert!(!descriptor.path.exists());
+    let mut staging_entries = fs::read_dir(&repository.chat_commit_staging_dir)
+        .await
+        .expect("read chat staging directory");
+    assert!(
+        staging_entries
+            .next_entry()
+            .await
+            .expect("read chat staging entry")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn zstd_quota_uses_actual_compressed_bytes() {
+    let (repository, root) = setup_repository().await;
+    let payload = format!(
+        "{{\"chat_metadata\":{{}},\"user_name\":\"User\"}}\n{{\"mes\":\"{}\"}}",
+        "x".repeat(256 * 1024)
+    );
+    let source = root.join("compressible-source.jsonl");
+    fs::write(&source, payload.as_bytes())
+        .await
+        .expect("write compressible source");
+
+    let mut policy = backup_policy(-1, -1, 4096);
+    policy.zstd_compression_enabled = true;
+    apply_and_reconcile_backups(&repository, policy).await;
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("compressed candidate should fit physical quota");
+
+    let name = backup_file_names(&root)
+        .await
+        .pop()
+        .expect("compressed backup");
+    assert!(name.ends_with(".jsonl.zst"));
+    assert!(
+        fs::metadata(root.join("backups").join(name))
+            .await
+            .expect("read compressed backup metadata")
+            .len()
+            <= 4096
+    );
+}
+
+#[tokio::test]
+async fn zstd_storage_stats_use_frame_headers_without_waiting_for_history() {
+    let (repository, root) = setup_repository().await;
+    let payload = format!(
+        "{{\"chat_metadata\":{{}},\"user_name\":\"User\"}}\n{{\"mes\":\"{}\"}}",
+        "x".repeat(64 * 1024)
+    );
+    let source = root.join("stats-source.jsonl");
+    fs::write(&source, &payload)
+        .await
+        .expect("write stats source");
+
+    let mut policy = backup_policy(-1, -1, -1);
+    policy.zstd_compression_enabled = true;
+    apply_and_reconcile_backups(&repository, policy).await;
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("create first compressed backup");
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("create second compressed backup");
+
+    let mut stored_bytes = 0;
+    for name in backup_file_names(&root).await {
+        stored_bytes += fs::metadata(root.join("backups").join(name))
+            .await
+            .expect("read compressed backup metadata")
+            .len();
+    }
+    let stats = repository
+        .get_chat_backup_storage_stats()
+        .await
+        .expect("read backup storage stats")
+        .expect("stable compressed stats");
+    assert_eq!(stats.original_bytes, payload.len() as u64 * 2);
+    assert_eq!(stats.stored_bytes, stored_bytes);
+    assert!(stats.stored_bytes < stats.original_bytes);
+
+    let history = repository.backup_history.lock().await;
+    let mut query = repository.get_chat_backup_storage_stats();
+    let waker = std::task::Waker::noop();
+    let mut context = std::task::Context::from_waker(waker);
+    let busy_result = match std::future::Future::poll(query.as_mut(), &mut context) {
+        std::task::Poll::Ready(result) => result.expect("busy stats query"),
+        std::task::Poll::Pending => panic!("stats query waited for backup maintenance"),
+    };
+    drop(history);
+    assert_eq!(busy_result, None);
+}
+
+#[tokio::test]
+async fn rejected_raw_candidate_does_not_stage_or_delete_history() {
+    let (repository, root) = setup_repository().await;
+    let small_payload = payload_to_jsonl(&payload_with_integrity("retained"));
+    let small_source = root.join("small.jsonl");
+    fs::write(&small_source, &small_payload)
+        .await
+        .expect("write retained source");
+    apply_and_reconcile_backups(
+        &repository,
+        backup_policy(-1, -1, small_payload.len() as i64 + 32),
+    )
+    .await;
+    repository
+        .backup_chat_file_explicit(&small_source, "Alice")
+        .await
+        .expect("create retained backup");
+    let retained_names = backup_file_names(&root).await;
+
+    let large_source = root.join("large.jsonl");
+    fs::write(&large_source, "x".repeat(small_payload.len() + 1024))
+        .await
+        .expect("write oversized source");
+    assert!(matches!(
+        repository
+            .backup_chat_file_explicit(&large_source, "Alice")
+            .await,
+        Err(DomainError::Conflict(_))
+    ));
+    assert_eq!(backup_file_names(&root).await, retained_names);
+
+    let mut entries = fs::read_dir(root.join("backups"))
+        .await
+        .expect("read backup directory");
+    while let Some(entry) = entries.next_entry().await.expect("read backup entry") {
+        assert!(
+            !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tmp-chat-backup-")
+        );
+    }
+}
+
+#[tokio::test]
+async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
+    let (repository, root) = setup_repository().await;
+    let mut policy = backup_policy(-1, -1, -1);
+    policy.zstd_compression_enabled = true;
+    apply_and_reconcile_backups(&repository, policy).await;
+
+    let source = root.join("source.jsonl");
+    let healthy_payload = payload_to_jsonl(&payload_with_integrity("healthy"));
+    fs::write(&source, &healthy_payload)
+        .await
+        .expect("write healthy source");
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("create healthy zstd backup");
+    let healthy = repository
+        .list_chat_backup_files()
+        .await
+        .expect("list healthy zstd backup")
+        .pop()
+        .expect("healthy zstd descriptor");
+
+    fs::write(
+        &source,
+        payload_to_jsonl(&payload_with_integrity("truncated")),
+    )
+    .await
+    .expect("write source to corrupt");
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("create zstd backup to corrupt");
+    let descriptor = repository
+        .list_chat_backup_files()
+        .await
+        .expect("list zstd backups")
+        .into_iter()
+        .find(|candidate| candidate.file_name != healthy.file_name)
+        .expect("zstd descriptor to corrupt");
+    let compressed_len = fs::metadata(&descriptor.path)
+        .await
+        .expect("read zstd metadata")
+        .len();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&descriptor.path)
+        .await
+        .expect("open zstd backup for truncation")
+        .set_len(compressed_len - 4)
+        .await
+        .expect("truncate zstd checksum");
+    set_backup_modified(&healthy.path, UNIX_EPOCH + Duration::from_secs(1))
+        .await
+        .expect("age healthy backup");
+    set_backup_modified(&descriptor.path, UNIX_EPOCH + Duration::from_secs(2))
+        .await
+        .expect("make corrupt backup newest");
+
+    assert!(
+        repository
+            .materialize_chat_backup(&descriptor.file_name)
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .restore_character_chat_backup(&descriptor.file_name, "alice", "Alice")
+            .await
+            .is_err()
+    );
+    let mut staging_entries = fs::read_dir(&repository.chat_commit_staging_dir)
+        .await
+        .expect("read chat staging directory");
+    assert!(
+        staging_entries
+            .next_entry()
+            .await
+            .expect("read chat staging entry")
+            .is_none()
+    );
+
+    repository
+        .apply_chat_backup_settings(backup_policy(-1, -1, -1))
+        .await
+        .expect("disable compression");
+    assert!(
+        repository.reconcile_chat_backups().await.is_err(),
+        "corrupt zstd must fail background conversion"
+    );
+    assert!(descriptor.path.exists());
+    assert!(!root.join("backups").join(&descriptor.file_name).exists());
+    assert_eq!(
+        repository
+            .list_chat_backup_files()
+            .await
+            .expect("list usable inventory after conversion failure")
+            .len(),
+        2
+    );
+    assert!(root.join("backups").join(&healthy.file_name).exists());
+    assert!(!healthy.path.exists());
+    let materialized = repository
+        .materialize_chat_backup(&healthy.file_name)
+        .await
+        .expect("materialize converted healthy backup");
+    assert_eq!(
+        fs::read(&materialized)
+            .await
+            .expect("read converted healthy backup"),
+        healthy_payload.as_bytes()
+    );
+    repository
+        .discard_chat_backup_materialization(&materialized)
+        .await
+        .expect("discard healthy materialization");
+    let mut backup_entries = fs::read_dir(root.join("backups"))
+        .await
+        .expect("read backup directory");
+    while let Some(entry) = backup_entries
+        .next_entry()
+        .await
+        .expect("read backup entry")
+    {
+        assert!(
+            !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tmp-chat-backup-")
+        );
+    }
+    repository
+        .delete_chat_backup(&descriptor.file_name)
+        .await
+        .expect("delete failed conversion source");
+    repository
+        .reconcile_chat_backups()
+        .await
+        .expect("finish convergence after removing corrupt backup");
+    assert_eq!(backup_file_names(&root).await, vec![healthy.file_name]);
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn inventory_recovers_interrupted_conversion_using_the_selected_format() {
+    let (repository, root) = setup_repository().await;
+    let logical_name = "chat_alice_20260101-000000.jsonl";
+    let raw_path = root.join("backups").join(logical_name);
+    let compressed_path = root.join("backups").join(format!("{logical_name}.zst"));
+    let payload = payload_to_jsonl(&payload_with_integrity("collision"));
+    fs::write(&raw_path, payload.as_bytes())
+        .await
+        .expect("write raw backup");
+    let compressed = zstd::stream::encode_all(payload.as_bytes(), 1).expect("compress backup");
+    fs::write(&compressed_path, &compressed)
+        .await
+        .expect("write zstd backup");
+
+    repository
+        .reconcile_chat_backups()
+        .await
+        .expect("raw policy should finish interrupted conversion");
+    assert!(raw_path.exists());
+    assert!(!compressed_path.exists());
+
+    let raw_modified = fs::metadata(&raw_path)
+        .await
+        .expect("read raw metadata")
+        .modified()
+        .expect("read raw mtime");
+    fs::write(&compressed_path, compressed)
+        .await
+        .expect("recreate zstd backup");
+    let mut compressed_policy = backup_policy(-1, -1, -1);
+    compressed_policy.zstd_compression_enabled = true;
+    repository
+        .apply_chat_backup_settings(compressed_policy)
+        .await
+        .expect("enable compression");
+    repository
+        .reconcile_chat_backups()
+        .await
+        .expect("zstd policy should finish interrupted conversion");
+    assert!(!raw_path.exists());
+    assert!(compressed_path.exists());
+    assert_eq!(
+        fs::metadata(&compressed_path)
+            .await
+            .expect("read recovered zstd metadata")
+            .modified()
+            .expect("read recovered zstd mtime"),
+        raw_modified
+    );
 }
 
 #[tokio::test]
@@ -1013,7 +1632,7 @@ async fn automatic_deduplication_preserves_prefix_and_latest_state() {
 }
 
 #[tokio::test]
-async fn explicit_and_reconciled_backups_remain_conservative() {
+async fn settings_reconciliation_preserves_tracked_backup_provenance() {
     let (repository, root) = setup_repository().await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
     let payload = payload_to_jsonl(&payload_with_integrity("explicit"));
@@ -1041,18 +1660,18 @@ async fn explicit_and_reconciled_backups_remain_conservative() {
     assert_eq!(backup_file_names(&root).await.len(), 2);
 
     repository
+        .apply_chat_backup_settings(backup_policy(-1, 10, -1))
+        .await
+        .expect("change backup quota");
+    repository
         .reconcile_chat_backups()
         .await
-        .expect("rebuild inventory without hashing existing files");
+        .expect("rebuild inventory after a settings change");
     repository
         .backup_chat_automatic("Alice", "session")
         .await
-        .expect("unknown rebuilt entry causes one conservative snapshot");
-    repository
-        .backup_chat_automatic("Alice", "session")
-        .await
-        .expect("newly tracked snapshot suppresses the next duplicate");
-    assert_eq!(backup_file_names(&root).await.len(), 3);
+        .expect("tracked snapshot still suppresses a duplicate");
+    assert_eq!(backup_file_names(&root).await.len(), 2);
 
     let _ = fs::remove_dir_all(root).await;
 }

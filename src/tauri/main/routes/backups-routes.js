@@ -1,4 +1,4 @@
-import { normalizeBinaryPayload, sanitizeAttachmentFileName } from '../binary-utils.js';
+import { sanitizeAttachmentFileName } from '../binary-utils.js';
 
 function isNotFoundError(error) {
     const message = String(error?.message || error || '').toLowerCase();
@@ -13,6 +13,57 @@ function isBadRequestError(error) {
     return message.includes('bad request')
         || message.includes('validation error')
         || message.includes('invalid');
+}
+
+async function discardChatBackupMaterialization(context, path) {
+    await context.safeInvoke('discard_chat_backup_materialization', { path });
+}
+
+async function createChatBackupStream(context, path) {
+    if (typeof context.createReadableFileStream !== 'function') {
+        throw new Error('Readable file stream service is unavailable');
+    }
+
+    const sourceStream = await context.createReadableFileStream(path);
+    const reader = sourceStream.getReader();
+    let discarded = false;
+
+    async function discardOnce() {
+        if (discarded) {
+            return;
+        }
+
+        discarded = true;
+        try {
+            await discardChatBackupMaterialization(context, path);
+        } catch (error) {
+            console.warn('Failed to discard chat backup materialization after streaming:', error);
+        }
+    }
+
+    return new ReadableStream({
+        async pull(controller) {
+            try {
+                const { done, value } = await reader.read();
+                if (done) {
+                    await discardOnce();
+                    controller.close();
+                    return;
+                }
+                controller.enqueue(value);
+            } catch (error) {
+                await discardOnce();
+                throw error;
+            }
+        },
+        async cancel(reason) {
+            try {
+                await reader.cancel(reason);
+            } finally {
+                await discardOnce();
+            }
+        },
+    });
 }
 
 export function registerBackupsRoutes(router, context, { jsonResponse, textResponse }) {
@@ -66,12 +117,18 @@ export function registerBackupsRoutes(router, context, { jsonResponse, textRespo
             return textResponse('Bad Request', 400);
         }
 
+        let materializedPath = '';
         try {
-            const payload = await context.safeInvoke('get_chat_backup_raw', { name });
-            const bytes = normalizeBinaryPayload(payload);
-            const fileName = sanitizeAttachmentFileName(name, 'chat_backup.jsonl');
+            materializedPath = String(await context.safeInvoke('materialize_chat_backup', { name }) || '').trim();
+            if (!materializedPath) {
+                throw new Error('Materialized chat backup path is missing');
+            }
 
-            return new Response(bytes, {
+            const stream = await createChatBackupStream(context, materializedPath);
+            const fileName = sanitizeAttachmentFileName(name, 'chat_backup.jsonl');
+            materializedPath = '';
+
+            return new Response(stream, {
                 status: 200,
                 headers: {
                     'Content-Type': 'application/octet-stream',
@@ -79,6 +136,14 @@ export function registerBackupsRoutes(router, context, { jsonResponse, textRespo
                 },
             });
         } catch (error) {
+            if (materializedPath) {
+                try {
+                    await discardChatBackupMaterialization(context, materializedPath);
+                } catch (cleanupError) {
+                    console.error('Failed to discard chat backup materialization:', cleanupError);
+                }
+            }
+
             if (isNotFoundError(error)) {
                 return textResponse('Not Found', 404);
             }

@@ -38,7 +38,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_commands::export_chat,
         super::chat_commands::backup_chat,
         super::chat_commands::list_chat_backups,
-        super::chat_commands::get_chat_backup_raw,
+        super::chat_commands::materialize_chat_backup,
+        super::chat_commands::discard_chat_backup_materialization,
+        super::chat_commands::restore_character_chat_backup,
         super::chat_commands::delete_chat_backup,
         super::chat_commands::clear_chat_cache,
         super::chat_commands::get_chat_payload_path,
@@ -57,6 +59,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::group_chat_commands::delete_group_chat,
         super::group_chat_commands::rename_group_chat,
         super::group_chat_commands::import_group_chat_payload,
+        super::group_chat_commands::restore_group_chat_backup,
         // Chat API commands (TauriTavern extension/memory APIs)
         super::chat_api_commands::get_character_chat_summary,
         super::chat_api_commands::get_character_chat_metadata,
@@ -108,6 +111,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::bootstrap_commands::wait_for_backend_ready,
         // Settings commands
         super::settings_commands::get_tauritavern_settings,
+        super::settings_commands::get_chat_backup_storage_stats,
         super::settings_commands::update_tauritavern_settings,
         #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
         super::runtime_paths_commands::get_runtime_paths,

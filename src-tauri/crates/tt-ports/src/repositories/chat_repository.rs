@@ -106,8 +106,20 @@ pub trait ChatRepository: Send + Sync {
     /// List all chat backup files.
     async fn list_chat_backups(&self) -> Result<Vec<ChatSearchResult>, DomainError>;
 
-    /// Get raw JSONL bytes for a chat backup file.
-    async fn get_chat_backup_bytes(&self, backup_file_name: &str) -> Result<Vec<u8>, DomainError>;
+    /// Decode a chat backup into a temporary JSONL file for streaming consumers.
+    async fn materialize_chat_backup(&self, backup_file_name: &str)
+    -> Result<PathBuf, DomainError>;
+
+    /// Remove a temporary JSONL file returned by [`Self::materialize_chat_backup`].
+    async fn discard_chat_backup_materialization(&self, path: &Path) -> Result<(), DomainError>;
+
+    /// Restore a character chat directly from a logical backup name.
+    async fn restore_character_chat_backup(
+        &self,
+        backup_file_name: &str,
+        character_name: &str,
+        character_display_name: &str,
+    ) -> Result<Vec<String>, DomainError>;
 
     /// Delete a chat backup file.
     async fn delete_chat_backup(&self, backup_file_name: &str) -> Result<(), DomainError>;

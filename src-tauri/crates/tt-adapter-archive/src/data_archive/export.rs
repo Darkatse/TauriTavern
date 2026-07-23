@@ -373,6 +373,10 @@ mod tests {
             false
         ));
         assert!(should_include_user_backup_entry(
+            Path::new("backups/chat.jsonl.zst"),
+            false
+        ));
+        assert!(should_include_user_backup_entry(
             Path::new("characters/secrets.json"),
             false
         ));

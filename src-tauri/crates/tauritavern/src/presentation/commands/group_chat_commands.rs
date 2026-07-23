@@ -7,7 +7,7 @@ use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
     ChatSearchResultDto, DeleteGroupChatDto, ImportGroupChatDto, PinnedGroupChatDto,
-    RenameGroupChatDto,
+    RenameGroupChatDto, RestoreGroupChatBackupDto,
 };
 use tt_application::errors::ApplicationError;
 use tt_ports::repositories::chat_types::{ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail};
@@ -216,4 +216,19 @@ pub async fn import_group_chat_payload(
         .import_group_chat(dto)
         .await
         .map_err(map_command_error("Failed to import group chat payload"))
+}
+
+#[tauri::command]
+pub async fn restore_group_chat_backup(
+    dto: RestoreGroupChatBackupDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<String, CommandError> {
+    log_command(format!("restore_group_chat_backup {}", dto.backup_name));
+
+    app_state
+        .services
+        .group_chat_service
+        .restore_group_chat_backup(dto)
+        .await
+        .map_err(map_command_error("Failed to restore group chat backup"))
 }

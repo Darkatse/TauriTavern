@@ -239,6 +239,13 @@ impl GroupChatRepository for FileChatRepository {
         Ok(chat_id)
     }
 
+    async fn restore_group_chat_backup(
+        &self,
+        backup_file_name: &str,
+    ) -> Result<String, DomainError> {
+        self.restore_group_chat_backup_file(backup_file_name).await
+    }
+
     async fn get_group_chat_summary(
         &self,
         chat_id: &str,

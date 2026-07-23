@@ -184,6 +184,15 @@ export async function getTauriTavernSettings() {
     return invokeFn('get_tauritavern_settings');
 }
 
+export async function getChatBackupStorageStats() {
+    const invokeFn = getInvokeFn();
+    if (!invokeFn) {
+        throw new Error('Tauri invoke is unavailable');
+    }
+
+    return invokeFn('get_chat_backup_storage_stats');
+}
+
 export async function updateTauriTavernSettings(dto) {
     const invokeFn = getInvokeFn();
     if (!invokeFn) {

@@ -28,7 +28,7 @@ test('major TauriTavern panels use the dedicated panel popup shell', async () =>
     const syncSource = await readRepoFile('src/scripts/tauri/setting/setting-panel/sync-popup.js');
 
     assert.match(settingsSource, /from\s+['"]\.\.\/panel-popup\.js['"]/);
-    assert.match(settingsSource, /await\s+callTauriTavernPanelPopup\(mount,\s*POPUP_TYPE\.CONFIRM/);
+    assert.match(settingsSource, /callTauriTavernPanelPopup\(mount,\s*POPUP_TYPE\.CONFIRM/);
     assert.match(devLogsSource, /from\s+['"]\.\/panel-popup\.js['"]/);
     assert.match(devLogsSource, /await\s+callTauriTavernPanelPopup\(mount,\s*POPUP_TYPE\.TEXT/);
     assert.match(syncSource, /from\s+['"]\.\.\/panel-popup\.js['"]/);

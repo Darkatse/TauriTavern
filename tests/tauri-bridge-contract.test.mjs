@@ -24,7 +24,22 @@ global.window = {
 
 // Import the bridge under test
 const tauriBridgePath = path.join(REPO_ROOT, 'src/tauri-bridge.js');
-const { updateTauriTavernSettings, openDialog, setDataRoot } = await import(pathToFileURL(tauriBridgePath).href);
+const {
+    getChatBackupStorageStats,
+    updateTauriTavernSettings,
+    openDialog,
+    setDataRoot,
+} = await import(pathToFileURL(tauriBridgePath).href);
+
+test('getChatBackupStorageStats invokes the lightweight stats command', async () => {
+    lastInvokedCommand = null;
+    lastInvokedArgs = null;
+
+    await getChatBackupStorageStats();
+
+    assert.equal(lastInvokedCommand, 'get_chat_backup_storage_stats');
+    assert.equal(lastInvokedArgs, undefined);
+});
 
 test('updateTauriTavernSettings contract validation', async (t) => {
     await t.test('accepts valid plain object', async () => {

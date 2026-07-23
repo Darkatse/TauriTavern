@@ -174,6 +174,20 @@ pub struct ImportGroupChatDto {
     pub file_path: String,
 }
 
+/// DTO for restoring a character chat from a history backup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreCharacterChatBackupDto {
+    pub backup_name: String,
+    pub character_name: String,
+    pub character_display_name: String,
+}
+
+/// DTO for restoring a group chat from a history backup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreGroupChatBackupDto {
+    pub backup_name: String,
+}
+
 /// DTO for renaming a group chat file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenameGroupChatDto {
@@ -312,5 +326,27 @@ impl From<PinnedGroupChatDto> for PinnedGroupChat {
         Self {
             chat_id: dto.chat_id,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RestoreCharacterChatBackupDto, RestoreGroupChatBackupDto};
+
+    #[test]
+    fn restore_backup_dtos_accept_the_command_wire_shape() {
+        let character: RestoreCharacterChatBackupDto = serde_json::from_value(serde_json::json!({
+            "backup_name": "chat_alice_20260722-120000.jsonl",
+            "character_name": "Alice",
+            "character_display_name": "Alice"
+        }))
+        .expect("character restore DTO");
+        let group: RestoreGroupChatBackupDto = serde_json::from_value(serde_json::json!({
+            "backup_name": "chat_group_20260722-120000.jsonl"
+        }))
+        .expect("group restore DTO");
+
+        assert_eq!(character.character_name, "Alice");
+        assert_eq!(group.backup_name, "chat_group_20260722-120000.jsonl");
     }
 }

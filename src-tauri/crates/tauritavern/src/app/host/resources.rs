@@ -11,10 +11,12 @@ use crate::app::StartupProfile;
 use crate::infrastructure::bundled_resources::BundledResourceStore;
 use crate::infrastructure::paths::RuntimePaths;
 use tauri::Manager;
+use tauri_plugin_fs::FsExt;
 use tt_adapter_media::{FilesystemHostResourceStore, FilesystemUserMediaStore};
 use tt_application::services::bundled_template_service::BundledTemplateService;
 use tt_application::services::host_resource_service::HostResourceService;
 use tt_application::services::user_media_service::UserMediaService;
+use tt_domain::errors::DomainError;
 
 pub(super) fn install_bundled_templates(app: &mut tauri::App, app_handle: &tauri::AppHandle) {
     // Template reads are command-driven and independent of user data root, so the
@@ -29,7 +31,7 @@ pub(super) fn install_runtime_resources(
     app_handle: &tauri::AppHandle,
     runtime_paths: &RuntimePaths,
     startup_profile: &StartupProfile,
-) -> Arc<HostResourceService> {
+) -> Result<Arc<HostResourceService>, DomainError> {
     // tauri.conf.json whitelists standard Tauri directories; this dynamic scope
     // adds the resolved data root, including portable/migrated roots.
     if let Err(error) = app_handle
@@ -42,6 +44,21 @@ pub(super) fn install_runtime_resources(
             error
         );
     }
+
+    let chat_staging_root = runtime_paths
+        .data_root
+        .join("default-user")
+        .join(".staging")
+        .join("chat-commits");
+    app_handle
+        .fs_scope()
+        .allow_directory(&chat_staging_root, true)
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to extend filesystem scope for chat staging {}: {error}",
+                chat_staging_root.display()
+            ))
+        })?;
 
     // HostResourceService must be managed before the main window is created:
     // both production web resource interception and dev `tt-ext` serving read
@@ -64,5 +81,5 @@ pub(super) fn install_runtime_resources(
     ));
     app.manage(Arc::new(UserMediaService::new(user_media_store)));
 
-    host_resource_service
+    Ok(host_resource_service)
 }

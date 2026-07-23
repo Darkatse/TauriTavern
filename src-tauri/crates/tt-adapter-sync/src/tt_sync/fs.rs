@@ -230,6 +230,7 @@ mod tests {
         .expect("resolve backups dataset");
 
         assert!(policy.contains_path("default-user/backups/chat_alice_20260714-010203.jsonl"));
+        assert!(policy.contains_path("default-user/backups/chat_alice_20260714-010203.jsonl.zst"));
         assert!(!policy.contains_path(
             "default-user/backups/.tmp-chat-backup-00000000000000000000000000000000"
         ));

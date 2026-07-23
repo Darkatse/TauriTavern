@@ -124,6 +124,77 @@ test('jsonl: jsonlStreamToPayload parses chunked stream input', async () => {
     assert.deepEqual(payload, [{ a: 1 }, { b: 2 }, { c: 3 }]);
 });
 
+test('jsonl: visitJsonlStream visits chunked entries without building a payload', async () => {
+    const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/jsonl.js'));
+    const { visitJsonlStream } = mod;
+
+    const encoder = new TextEncoder();
+    const visited = [];
+    const stream = new ReadableStream({
+        start(controller) {
+            controller.enqueue(encoder.encode('{"a":1}\n{"b":'));
+            controller.enqueue(encoder.encode('2}\n'));
+            controller.close();
+        },
+    });
+
+    await visitJsonlStream(stream, (entry) => visited.push(entry));
+    assert.deepEqual(visited, [{ a: 1 }, { b: 2 }]);
+});
+
+test('jsonl: visitJsonlStream scans each chunk once for a large unterminated record', async () => {
+    const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/jsonl.js'));
+    const { visitJsonlStream } = mod;
+
+    const expected = { mes: 'x'.repeat(256 * 1024) };
+    const bytes = new TextEncoder().encode(JSON.stringify(expected));
+    let offset = 0;
+    const stream = new ReadableStream({
+        pull(controller) {
+            if (offset >= bytes.length) {
+                controller.close();
+                return;
+            }
+
+            controller.enqueue(bytes.slice(offset, offset + 1024));
+            offset += 1024;
+        },
+    });
+
+    const originalIndexOf = String.prototype.indexOf;
+    let scannedCharacters = 0;
+    String.prototype.indexOf = function (searchString, position = 0) {
+        if (searchString === '\n') {
+            scannedCharacters += Math.max(0, this.length - position);
+        }
+        return originalIndexOf.call(this, searchString, position);
+    };
+
+    const visited = [];
+    try {
+        await visitJsonlStream(stream, (entry) => visited.push(entry));
+    } finally {
+        String.prototype.indexOf = originalIndexOf;
+    }
+
+    assert.deepEqual(visited, [expected]);
+    assert.ok(scannedCharacters <= bytes.length * 2, `scanned ${scannedCharacters} characters`);
+});
+
+test('jsonl: visitJsonlStream fails on an invalid unterminated final line', async () => {
+    const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/jsonl.js'));
+    const { visitJsonlStream } = mod;
+
+    const stream = new ReadableStream({
+        start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"a":1}\n{bad}'));
+            controller.close();
+        },
+    });
+
+    await assert.rejects(() => visitJsonlStream(stream, () => {}), /Invalid JSONL at line 2/);
+});
+
 test('jsonl: jsonlStreamToPayload cancels reader on parse error during streaming', async () => {
     const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/jsonl.js'));
     const { jsonlStreamToPayload } = mod;
