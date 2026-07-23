@@ -36,7 +36,7 @@ impl AgentRuntimeService {
     ) -> Result<AgentRunHandleDto, ApplicationError> {
         if dto.options.stream {
             return Err(ApplicationError::ValidationError(
-                "agent.phase2b_stream_unsupported: Agent Phase 2B only supports non-streaming model calls"
+                "agent.stream_unsupported: Agent runtime only supports non-streaming model calls"
                     .to_string(),
             ));
         }

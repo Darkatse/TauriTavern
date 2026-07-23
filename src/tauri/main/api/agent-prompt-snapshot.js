@@ -31,7 +31,7 @@ export async function buildAgentPromptSnapshotSeed(input = {}) {
     const script = await import('../../../script.js');
 
     if (script.main_api !== 'openai') {
-        throw new Error('agent.phase2b_chat_completion_required: Agent Phase 2B requires the OpenAI/chat-completion frontend path');
+        throw new Error('agent.chat_completion_required: Agent runtime requires the OpenAI/chat-completion frontend path');
     }
 
     const { generateData } = await captureAgentDryRun(script, generationType, {
@@ -164,10 +164,10 @@ function assertMessagesReady(messages) {
 function assertNoExternalTools(payload) {
     const tools = payload?.tools;
     if (Array.isArray(tools) && tools.length > 0) {
-        throw new Error('agent.external_tools_unsupported_phase2b: Agent Phase 2B owns the tool registry');
+        throw new Error('agent.external_tools_unsupported: Agent runtime owns the tool registry');
     }
     if (Object.prototype.hasOwnProperty.call(payload || {}, 'tool_choice')) {
-        throw new Error('agent.external_tool_choice_unsupported_phase2b: Agent Phase 2B owns tool choice');
+        throw new Error('agent.external_tool_choice_unsupported: Agent runtime owns tool choice');
     }
 }
 
@@ -183,6 +183,6 @@ function assertNoExternalToolTurns(messages) {
     });
 
     if (hasToolTurn) {
-        throw new Error('agent.external_tool_turns_unsupported_phase2b: prompt snapshot already contains tool turns');
+        throw new Error('agent.external_tool_turns_unsupported: prompt snapshot already contains tool turns');
     }
 }

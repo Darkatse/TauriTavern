@@ -585,7 +585,7 @@ mod tests {
         (
             profile_service,
             diagnostic_service,
-            BuiltinAgentToolRegistry::phase2c(),
+            BuiltinAgentToolRegistry::all(),
         )
     }
 

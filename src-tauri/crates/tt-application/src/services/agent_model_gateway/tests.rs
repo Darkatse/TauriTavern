@@ -19,7 +19,7 @@ use tt_ports::repositories::chat_completion_repository::{
 
 #[test]
 fn decodes_tool_call_to_canonical_name() {
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     let response = json!({
         "choices": [{
             "message": {
@@ -49,7 +49,7 @@ fn decodes_tool_call_to_canonical_name() {
 
 #[test]
 fn rejects_tool_call_without_id() {
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     let response = json!({
         "choices": [{
             "message": {
@@ -67,7 +67,7 @@ fn rejects_tool_call_without_id() {
 
 #[test]
 fn rejects_normalizer_synthetic_tool_call_id() {
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     let response = json!({
         "choices": [{
             "message": {
@@ -175,7 +175,7 @@ fn gemini_schema_sanitizer_projects_nested_objects_to_agent_friendly_schema() {
 
 #[test]
 fn gemini_builtin_tool_schemas_do_not_emit_nested_required() {
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     let tools = render_openai_tools(registry.specs(), AgentProviderAdapter::Gemini);
     for tool in &tools {
         let name = tool["function"]["name"].as_str().unwrap_or("<unknown>");
@@ -230,7 +230,7 @@ fn claude_schema_sanitizer_only_removes_transport_metadata() {
 
 #[test]
 fn openai_responses_continuation_sends_only_new_tool_results() {
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     let request = AgentModelRequest {
         payload: json!({
             "chat_completion_source": "custom",
@@ -281,7 +281,7 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
 
 #[test]
 fn openai_responses_continuation_requires_valid_cursor() {
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     let mut request = basic_request(
         "custom",
         Some("openai_responses"),
@@ -330,7 +330,7 @@ fn same_provider_native_metadata_loss_fails_for_native_formats() {
         ),
     ];
 
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     let raw = response_with_tool_call_without_native();
     let response = decode_chat_completion_response(raw, registry.specs()).unwrap();
 
@@ -352,7 +352,7 @@ fn same_provider_native_metadata_loss_fails_for_native_formats() {
 
 #[test]
 fn provider_state_requires_session_id() {
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     let raw = json!({
         "id": "msg_1",
         "model": "test",
@@ -375,7 +375,7 @@ fn provider_state_requires_session_id() {
 
 #[test]
 fn claude_provider_state_records_native_continuation() {
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     let request = provider_state_test_request("run_claude");
     let raw = json!({
         "id": "msg_1",
@@ -429,7 +429,7 @@ fn claude_provider_state_records_native_continuation() {
 
 #[test]
 fn gemini_provider_state_records_native_continuation() {
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     let request = provider_state_test_request("run_gemini");
     let raw = json!({
         "id": "gemini-chat-completion",
@@ -563,7 +563,7 @@ fn assert_gemini_required_shape(schema: &Value, root: bool, context: &str) {
 
 fn provider_state_test_request(session_id: &str) -> AgentModelRequest {
     let mut request = basic_request("claude", None, Vec::new());
-    request.tools = BuiltinAgentToolRegistry::phase2c().specs().to_vec();
+    request.tools = BuiltinAgentToolRegistry::all().specs().to_vec();
     request.provider_state = json!({ "sessionId": session_id });
     request
 }

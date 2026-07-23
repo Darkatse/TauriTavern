@@ -11,7 +11,7 @@ const GHOST_PLACEHOLDER_CLASS = 'tt-runtime-ghost';
 
 /**
  * Marks an iframe mutation as managed by TauriTavern embedded-runtime so that
- * chat-level observers can ignore it (ER-3.2 self-heal).
+ * chat-level self-healing observers can ignore it.
  *
  * @param {HTMLIFrameElement} iframe
  */

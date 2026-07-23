@@ -5,7 +5,7 @@
  * moving them into a hidden DOM container instead of destroying them.
  * Browsing-context preservation across DOM moves is platform-dependent.
  *
- * This is a Phase-1 mechanism:
+ * The parking lot:
  * - Reuses iframe elements when scrolling back.
  * - Enforces a hard cap (mobile) by evicting oldest parked iframes.
  * - Uses TTL to avoid leaking parked instances after DOM rebuilds.

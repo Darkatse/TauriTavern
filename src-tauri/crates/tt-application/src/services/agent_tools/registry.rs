@@ -22,7 +22,7 @@ pub struct BuiltinAgentToolRegistry {
 }
 
 impl BuiltinAgentToolRegistry {
-    pub fn phase2c() -> Self {
+    pub fn all() -> Self {
         Self {
             specs: vec![
                 agent_list_spec(),
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn registry_uses_openai_safe_model_names() {
-        let registry = BuiltinAgentToolRegistry::phase2c();
+        let registry = BuiltinAgentToolRegistry::all();
         let tools = registry.specs();
 
         assert_eq!(tools[0].model_name, "agent_list");
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn agent_delegate_requires_objective_but_not_title() {
-        let registry = BuiltinAgentToolRegistry::phase2c();
+        let registry = BuiltinAgentToolRegistry::all();
         let delegate = registry
             .specs()
             .iter()
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn visible_specs_expose_profile_skill_read_budget() {
-        let registry = BuiltinAgentToolRegistry::phase2c();
+        let registry = BuiltinAgentToolRegistry::all();
         let profile = profile_with_skill_budget(100_000, 100_000);
         let tools = registry.visible_specs(&profile).expect("visible specs");
         let skill_read = tools
@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn agent_tool_specs_keep_runtime_terms_out_of_model_descriptions() {
-        let registry = BuiltinAgentToolRegistry::phase2c();
+        let registry = BuiltinAgentToolRegistry::all();
         let agent_tools = registry
             .specs()
             .iter()

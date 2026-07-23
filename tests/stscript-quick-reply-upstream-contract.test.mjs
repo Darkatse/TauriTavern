@@ -29,7 +29,7 @@ function extractCommandBlock(source, name) {
     return source.slice(start, next === -1 ? source.length : next);
 }
 
-test('root slash commands include SillyTavern 1.18 P8 command surface and local commands', async () => {
+test('root slash commands include the SillyTavern 1.18 command surface and local commands', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/slash-commands.js'), 'utf8');
     const names = extractCommandNames(source);
 

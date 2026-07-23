@@ -171,7 +171,7 @@ Agent commit 不能直接写 chat JSONL。
 
 ### 1.9 LLM 调用必须复用现有服务边界
 
-Agent 第一阶段的 LLM 调用必须经过 `ChatCompletionService` 或它的正式 gateway wrapper。
+Agent 的 LLM 调用必须经过 `ChatCompletionService` 或它的正式 gateway wrapper。
 
 禁止：
 

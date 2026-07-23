@@ -197,10 +197,10 @@ function hasChatCompletionSource(settings) {
 function assertNoExternalTools(payload) {
     const tools = payload?.tools;
     if (Array.isArray(tools) && tools.length > 0) {
-        throw new Error('agent.external_tools_unsupported_phase2b: Agent Phase 2B owns the tool registry');
+        throw new Error('agent.external_tools_unsupported: Agent runtime owns the tool registry');
     }
     if (Object.prototype.hasOwnProperty.call(payload || {}, 'tool_choice')) {
-        throw new Error('agent.external_tool_choice_unsupported_phase2b: Agent Phase 2B owns tool choice');
+        throw new Error('agent.external_tool_choice_unsupported: Agent runtime owns tool choice');
     }
 }
 
@@ -216,6 +216,6 @@ function assertNoExternalToolTurns(messages) {
     });
 
     if (hasToolTurn) {
-        throw new Error('agent.external_tool_turns_unsupported_phase2b: prompt snapshot already contains tool turns');
+        throw new Error('agent.external_tool_turns_unsupported: prompt snapshot already contains tool turns');
     }
 }

@@ -5,8 +5,8 @@ export {};
 /**
  * Host-known backend invoke command names.
  *
- * Phase 3 goal: make the invoke surface searchable and typo-resistant without
- * forcing a TS build. Keep this list scoped to commands referenced by the host
+ * Keep the invoke surface searchable and typo-resistant without forcing a TS
+ * build. This list stays scoped to commands referenced by the host
  * kernel (`src/tauri/main/**`).
  *
  * @typedef {(

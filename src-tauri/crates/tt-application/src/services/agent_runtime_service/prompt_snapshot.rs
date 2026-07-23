@@ -108,14 +108,14 @@ pub(super) fn reject_external_tool_request(
         .is_some_and(|tools| !tools.is_empty());
     if has_tools {
         return Err(ApplicationError::ValidationError(
-            "agent.external_tools_unsupported_phase2b: Agent Phase 2B owns the tool registry"
+            "agent.external_tools_unsupported: Agent runtime owns the tool registry"
                 .to_string(),
         ));
     }
 
     if payload.contains_key("tool_choice") {
         return Err(ApplicationError::ValidationError(
-            "agent.external_tool_choice_unsupported_phase2b: Agent Phase 2B owns tool choice"
+            "agent.external_tool_choice_unsupported: Agent runtime owns tool choice"
                 .to_string(),
         ));
     }
@@ -137,7 +137,7 @@ pub(super) fn reject_external_tool_request(
         })
     {
         return Err(ApplicationError::ValidationError(
-            "agent.external_tool_turns_unsupported_phase2b: prompt snapshot already contains tool turns"
+            "agent.external_tool_turns_unsupported: prompt snapshot already contains tool turns"
                 .to_string(),
         ));
     }
@@ -324,7 +324,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("agent.external_tool_choice_unsupported_phase2b")
+                .contains("agent.external_tool_choice_unsupported")
         );
     }
 

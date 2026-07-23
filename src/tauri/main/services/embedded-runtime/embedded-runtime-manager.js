@@ -283,8 +283,8 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
      * Marks a slot as "dirty" so the next reconcile can re-assert its desired
      * state and (re)hydrate it if selected active.
      *
-     * This is primarily used for ER-3 self-heal when third-party code removes
-     * an iframe DOM node without properly unmounting its runtime controller.
+     * This supports self-healing when third-party code removes an iframe DOM
+     * node without properly unmounting its runtime controller.
      *
      * @param {string} id
      */

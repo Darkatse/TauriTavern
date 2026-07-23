@@ -111,14 +111,14 @@ function createAgentApi({ safeInvoke }) {
         },
         promptAssembly,
         approveToolCall() {
-            throw new Error('approveToolCall is not implemented in Agent Phase 2B');
+            throw new Error('approveToolCall is not implemented');
         },
         listRuns: runtime.listRuns,
         readDiff() {
-            throw new Error('readDiff is not implemented in Agent Phase 2B');
+            throw new Error('readDiff is not implemented');
         },
         rollback() {
-            throw new Error('rollback is not implemented in Agent Phase 2B');
+            throw new Error('rollback is not implemented');
         },
     };
 }

@@ -8,7 +8,7 @@ use tt_domain::models::agent::{
 async fn agent_runtime_background_run_finish_uses_run_presentation() {
     let root = temp_root("agent-runtime");
     let fixture = agent_runtime_fixture(&root);
-    let registry = BuiltinAgentToolRegistry::phase2c();
+    let registry = BuiltinAgentToolRegistry::all();
     let mut profile = fixture
         .profile_service
         .resolve_profile(AgentProfileResolveInput {

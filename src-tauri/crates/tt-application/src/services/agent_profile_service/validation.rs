@@ -149,7 +149,7 @@ pub(super) fn validate_instructions(
 pub(super) fn validate_plan_policy(plan: &AgentPlanPolicy) -> Result<(), ApplicationError> {
     if plan.mode != AgentPlanMode::None {
         return Err(ApplicationError::ValidationError(
-            "agent.plan_mode_unsupported: Phase 3 foundation only supports plan.mode = none"
+            "agent.plan_mode_unsupported: Agent runtime only supports plan.mode = none"
                 .to_string(),
         ));
     }
