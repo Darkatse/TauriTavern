@@ -24,6 +24,7 @@ import {
     isChatVirtualizationEnabled,
 } from './tauri/main/services/chat-surface/chat-virtualization-state.js';
 import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
+import { getStreamingRenderInterval, normalizeStreamingFps, shouldCommitStreamingMessage } from './scripts/tauri/perf/streaming-render-policy.js';
 import { CHAT_COMMIT_REASON } from './scripts/chat-payload-transport.js';
 import { getActiveChatSnapshot } from './tauri/main/adapters/st/active-chat-ref.js';
 import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
@@ -4194,6 +4195,8 @@ class StreamingProcessor {
         this.messageDom = null;
         /** @type {HTMLElement} */
         this.messageTextDom = null;
+        /** @type {string|null} Last canonical message HTML committed during streaming. */
+        this.lastCommittedHtml = null;
         /** @type {HTMLElement} */
         this.messageTimerDom = null;
         /** @type {HTMLElement} */
@@ -4364,20 +4367,34 @@ class StreamingProcessor {
                 {},
                 false,
             );
-            if (this.messageTextDom instanceof HTMLElement) {
-                if (isFinal && this.messageDom instanceof HTMLElement) {
+            if (
+                this.messageDom instanceof HTMLElement
+                && this.messageTextDom instanceof HTMLElement
+                && shouldCommitStreamingMessage({
+                    lastCommittedHtml: this.lastCommittedHtml,
+                    nextHtml: formattedText,
+                    final: isFinal,
+                    fadeIn: power_user.stream_fade_in,
+                })
+            ) {
+                if (isFinal) {
                     replaceMesTextHtmlWithRuntimePolicy(this.messageDom, formattedText);
-                } else if (this.messageDom instanceof HTMLElement) {
+                } else {
                     replaceTransientMesTextHtmlWithRuntimePolicy(this.messageDom, formattedText, {
                         fadeIn: power_user.stream_fade_in,
                     });
                 }
+                this.lastCommittedHtml = formattedText;
             }
 
             const timePassed = formatGenerationTimer(this.timeStarted, currentTime, currentTokenCount, this.reasoningHandler.getDuration(), this.timeToFirstToken);
             if (this.messageTimerDom instanceof HTMLElement) {
-                this.messageTimerDom.textContent = timePassed.timerValue;
-                this.messageTimerDom.title = timePassed.timerTitle;
+                if (this.messageTimerDom.textContent !== timePassed.timerValue) {
+                    this.messageTimerDom.textContent = timePassed.timerValue;
+                }
+                if (this.messageTimerDom.title !== timePassed.timerTitle) {
+                    this.messageTimerDom.title = timePassed.timerTitle;
+                }
             }
 
             this.setFirstSwipe(messageId);
@@ -4402,7 +4419,9 @@ class StreamingProcessor {
         const messageElement = chatElement.find(`.mes[mesid="${messageId}"]`);
         const message = chat[messageId];
 
-        await this.reasoningHandler.finish(messageId);
+        if (this.type !== 'impersonate') {
+            await this.reasoningHandler.finish(messageId);
+        }
 
         if (Array.isArray(this.swipes) && this.swipes.length > 0) {
             const swipeInfoExtra = structuredClone(message.extra ?? {});
@@ -4520,7 +4539,11 @@ class StreamingProcessor {
         this.stoppingStrings = getStoppingStrings(isImpersonate, isContinue, main_api);
 
         try {
-            const sw = new Stopwatch(1000 / power_user.streaming_fps);
+            const streamingFps = normalizeStreamingFps(power_user.streaming_fps);
+            const sw = new Stopwatch(getStreamingRenderInterval({
+                configuredFps: streamingFps,
+                hidden: document.hidden,
+            }));
             const timestamps = [];
             for await (const { text, swipes, logprobs, toolCalls, state } of this.generator()) {
                 const now = Date.now();
@@ -4544,6 +4567,10 @@ class StreamingProcessor {
                 this.reasoningSignature = state?.signature ?? null;
                 this.native = state?.native ?? null;
                 await eventSource.emit(event_types.STREAM_TOKEN_RECEIVED, text);
+                sw.interval = getStreamingRenderInterval({
+                    configuredFps: streamingFps,
+                    hidden: document.hidden,
+                });
                 await sw.tick(async () => await this.onProgressStreaming(this.messageId, this.continueMessage + text));
             }
             const seconds = (timestamps[timestamps.length - 1] - timestamps[0]) / 1000;
