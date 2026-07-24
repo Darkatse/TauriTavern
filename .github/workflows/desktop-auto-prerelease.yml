@@ -202,6 +202,8 @@ jobs:
 
       - name: Cache Rust build artifacts
         uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -292,6 +294,8 @@ jobs:
 
       - name: Cache Rust build artifacts
         uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
