@@ -114,6 +114,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 
 开发态本地 Web 入口：
 
+- `scripts/tauri-dev-server.mjs` 会在入口文档最前面注入 `src/dev-sw-bootstrap.js`；新 WebView 会话若继承旧 Service Worker controller，会先注销旧注册并重载一次，避免跨宿主进程复用失效的 Wry 协议过滤器
 - `src/init.js` 会注册 `/tt-ext-sw.js`
 - Service Worker 将 `/css/user.css`、`/scripts/extensions/third-party/*`、`/thumbnail`、`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 转发到 `tt-ext` 自定义 scheme
 - Rust 侧 `register_uri_scheme_protocol("tt-ext", ...)` 在 dev 下统一分发上述资源请求
@@ -190,7 +191,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
   - `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs`
   - `src-tauri/crates/tt-application/src/services/host_resource_service/third_party.rs`
   - 相关测试
-- 若改动开发态代理链路，也必须同步验证 `src/init.js` 与 `src/tt-ext-sw.js`
+- 若改动开发态代理链路，也必须同步验证 `src/dev-sw-bootstrap.js`、`src/init.js` 与 `src/tt-ext-sw.js`
 
 ## 7. 建议的最小回归面
 

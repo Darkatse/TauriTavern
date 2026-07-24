@@ -12,10 +12,11 @@ async function readRepoFile(relativePath) {
 }
 
 test('dev service worker proxies the same browser host resources as production', async () => {
-    const [sw, init, endpoint] = await Promise.all([
+    const [sw, init, endpoint, devServer] = await Promise.all([
         readRepoFile('src/tt-ext-sw.js'),
         readRepoFile('src/init.js'),
         readRepoFile('src-tauri/crates/tauritavern/src/presentation/web_resources/dev_protocol_endpoint.rs'),
+        readRepoFile('scripts/tauri-dev-server.mjs'),
     ]);
 
     for (const route of [
@@ -50,6 +51,67 @@ test('dev service worker proxies the same browser host resources as production',
     assert.match(sw, /status === 204 \|\| status === 205 \|\| status === 304/);
     assert.match(endpoint, /ACCESS_CONTROL_EXPOSE_HEADERS/);
     assert.match(endpoint, /HeaderValue::from_static\("\*"\)/);
+    assert.match(devServer, /<script src="\/dev-sw-bootstrap\.js"><\/script>/);
+    assert.match(devServer, /headIndex \+ headTag\.length/);
+});
+
+test('dev bootstrap releases a service worker inherited by a new WebView session', async () => {
+    const bootstrap = await readRepoFile('src/dev-sw-bootstrap.js');
+    const storage = new Map();
+    const unregistered = [];
+    let stopped = false;
+    let reloaded = false;
+    const registrations = ['first', 'second'].map((name) => ({
+        async unregister() {
+            unregistered.push(name);
+            return true;
+        },
+    }));
+    const context = vm.createContext({
+        navigator: {
+            serviceWorker: {
+                controller: {},
+                async getRegistrations() {
+                    return registrations;
+                },
+            },
+        },
+        sessionStorage: {
+            getItem(key) {
+                return storage.get(key) ?? null;
+            },
+            setItem(key, value) {
+                storage.set(key, value);
+            },
+        },
+        window: {
+            location: {
+                reload() {
+                    reloaded = true;
+                },
+            },
+            stop() {
+                stopped = true;
+            },
+        },
+    });
+
+    vm.runInContext(bootstrap, context);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(stopped, true);
+    assert.equal(reloaded, true);
+    assert.deepEqual(unregistered, ['first', 'second']);
+
+    stopped = false;
+    reloaded = false;
+    unregistered.length = 0;
+    vm.runInContext(bootstrap, context);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(stopped, false);
+    assert.equal(reloaded, false);
+    assert.deepEqual(unregistered, []);
 });
 
 test('dev service worker keeps ordinary bodies on tt-ext and reserves IPC for conditionals', async () => {

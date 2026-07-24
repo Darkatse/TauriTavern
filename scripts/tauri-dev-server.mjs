@@ -10,6 +10,7 @@ const port = 1430;
 const reloadPath = '/__tauritavern_dev_reload';
 const reloadHost = process.env.TAURI_DEV_HOST || 'localhost';
 const reloadUrl = `http://${formatUrlHost(reloadHost)}:${port}${reloadPath}`;
+const devServiceWorkerBootstrap = '<script src="/dev-sw-bootstrap.js"></script>';
 
 const reloadClientScript = `
 <script type="module">
@@ -113,18 +114,22 @@ async function resolveStaticFile(requestUrl) {
     return { filePath };
 }
 
-function injectReloadClient(filePath, data) {
+function injectDevRuntime(filePath, data) {
     if (!isReloadEntryDocument(filePath)) {
         return data;
     }
 
     const html = data.toString('utf8');
-    const bodyIndex = html.toLowerCase().lastIndexOf('</body>');
+    const headTag = '<head>';
+    const headIndex = html.toLowerCase().indexOf(headTag);
+    const bootstrapIndex = headIndex === -1 ? 0 : headIndex + headTag.length;
+    const bootstrappedHtml = `${html.slice(0, bootstrapIndex)}${devServiceWorkerBootstrap}${html.slice(bootstrapIndex)}`;
+    const bodyIndex = bootstrappedHtml.toLowerCase().lastIndexOf('</body>');
     if (bodyIndex === -1) {
-        return Buffer.from(`${html}${reloadClientScript}`);
+        return Buffer.from(`${bootstrappedHtml}${reloadClientScript}`);
     }
 
-    return Buffer.from(`${html.slice(0, bodyIndex)}${reloadClientScript}${html.slice(bodyIndex)}`);
+    return Buffer.from(`${bootstrappedHtml.slice(0, bodyIndex)}${reloadClientScript}${bootstrappedHtml.slice(bodyIndex)}`);
 }
 
 function writeText(response, status, body) {
@@ -144,7 +149,7 @@ async function serveStatic(request, response) {
     }
 
     const raw = await fs.promises.readFile(resolved.filePath);
-    const body = injectReloadClient(resolved.filePath, raw);
+    const body = injectDevRuntime(resolved.filePath, raw);
     response.writeHead(200, {
         'Cache-Control': 'no-store',
         'Content-Length': body.byteLength,

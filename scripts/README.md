@@ -52,7 +52,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\export-sillytavern-migration.
 - `tauri-before-build.mjs`
   统一生成 Tauri 打包所需的前端 bundle；pnpm 启动入口也复用它以覆盖移动端 IDE 构建。
 - `tauri-dev-server.mjs`
-  为 `tauri dev` 提供轻量静态前端服务器和页面刷新通道，避免普通前端文件变化污染 Rust 编译指纹。
+  为 `tauri dev` 提供轻量静态前端服务器、页面刷新通道与开发态 Service Worker 会话 bootstrap，避免普通前端文件变化污染 Rust 编译指纹。
 - `check-frontend-guardrails.mjs`
   校验前端宿主层文件规模和依赖边界，避免 Host Kernel 持续膨胀。对应 `pnpm run check:frontend`。
 - `tauri-ios-xcode-script.sh`
