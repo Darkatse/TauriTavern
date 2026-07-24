@@ -3,7 +3,7 @@ pub mod commands;
 pub mod errors;
 pub mod web_resources;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 pub mod main_window_presenter;
 
 #[cfg(target_os = "windows")]
