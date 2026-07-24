@@ -1,8 +1,7 @@
-use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
 use tt_domain::errors::DomainError;
@@ -17,14 +16,22 @@ use super::response_body::read_upstream_json_body;
 
 const GEMINI_API_VERSION: &str = "v1beta";
 
+struct ActiveStep {
+    index: usize,
+    step: Map<String, Value>,
+    argument_fragments: String,
+}
+
 struct InteractionsStreamState {
     created: u64,
     model: String,
-    interaction_id: Option<String>,
     sent_role: bool,
+    saw_text: bool,
     saw_tool_call: bool,
+    next_tool_ordinal: usize,
     done_sent: bool,
-    outputs_by_index: HashMap<usize, Value>,
+    completed_steps: Vec<Value>,
+    active_step: Option<ActiveStep>,
 }
 
 impl InteractionsStreamState {
@@ -32,318 +39,341 @@ impl InteractionsStreamState {
         Self {
             created: current_unix_timestamp(),
             model,
-            interaction_id: None,
             sent_role: false,
+            saw_text: false,
             saw_tool_call: false,
+            next_tool_ordinal: 0,
             done_sent: false,
-            outputs_by_index: HashMap::new(),
+            completed_steps: Vec::new(),
+            active_step: None,
         }
     }
 
-    fn handle_event(&mut self, sender: &ChatCompletionStreamSender, raw_payload: &[u8]) {
+    fn handle_event(
+        &mut self,
+        sender: &ChatCompletionStreamSender,
+        raw_payload: &[u8],
+    ) -> Result<(), DomainError> {
         if self.done_sent {
-            return;
+            return Ok(());
         }
 
-        let Ok(event) = serde_json::from_slice::<Value>(raw_payload) else {
-            return;
-        };
+        if raw_payload == b"[DONE]" {
+            return Err(invalid_stream(
+                "received [DONE] before interaction.completed",
+            ));
+        }
 
-        let Some(event_object) = event.as_object() else {
-            return;
-        };
+        let event = serde_json::from_slice::<Value>(raw_payload).map_err(|error| {
+            DomainError::transient(format!(
+                "model.upstream_invalid_response: Gemini Interactions stream event is not valid JSON: {error}"
+            ))
+        })?;
+        let event_object = event
+            .as_object()
+            .ok_or_else(|| invalid_stream("event must be an object"))?;
 
-        let event_type = event_object
-            .get("event_type")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let event_type = required_string(event_object, "event_type", "event")?;
 
         match event_type {
-            "interaction.start" => {
-                if let Some(id) = event_object
-                    .get("interaction")
-                    .and_then(Value::as_object)
-                    .and_then(|interaction| interaction.get("id"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    self.interaction_id = Some(id.to_string());
-                }
-            }
-            "content.start" => self.apply_content_start(event_object),
-            "content.delta" => self.apply_content_delta(event_object, sender),
-            "interaction.complete" => self.apply_interaction_complete(event_object, sender),
-            "error" => self.apply_error(event_object, sender),
-            _ => {}
+            "interaction.created"
+            | "interaction.status_update"
+            | "interaction.in_progress"
+            | "interaction.requires_action" => Ok(()),
+            "step.start" => self.apply_step_start(event_object, sender),
+            "step.delta" => self.apply_step_delta(event_object, sender),
+            "step.stop" => self.apply_step_stop(event_object, sender),
+            "interaction.completed" => self.apply_interaction_completed(event_object, sender),
+            "error" => Err(stream_error(event_object)),
+            other => Err(invalid_stream(format!("unsupported event_type {other:?}"))),
         }
     }
 
-    fn apply_content_start(&mut self, event: &serde_json::Map<String, Value>) {
-        let index = event
-            .get("index")
-            .and_then(Value::as_u64)
-            .unwrap_or_default() as usize;
-
-        let Some(content) = event.get("content").and_then(Value::as_object) else {
-            return;
-        };
-
-        if content
-            .get("type")
-            .and_then(Value::as_str)
-            .is_some_and(|ty| ty == "function_call")
-        {
-            self.saw_tool_call = true;
-        }
-
-        self.outputs_by_index
-            .insert(index, Value::Object(content.clone()));
-    }
-
-    fn apply_content_delta(
+    fn apply_step_start(
         &mut self,
-        event: &serde_json::Map<String, Value>,
+        event: &Map<String, Value>,
         sender: &ChatCompletionStreamSender,
-    ) {
-        let index = event
-            .get("index")
-            .and_then(Value::as_u64)
-            .unwrap_or_default() as usize;
+    ) -> Result<(), DomainError> {
+        if self.active_step.is_some() {
+            return Err(invalid_stream(
+                "step.start arrived before the active step stopped",
+            ));
+        }
 
-        let Some(delta) = event.get("delta").and_then(Value::as_object) else {
-            return;
+        let index = required_index(event, "step.start event")?;
+        let step = required_object(event, "step", "step.start event")?.clone();
+        let step_type = required_string(&step, "type", "step.start step")?;
+        if step_type.trim().is_empty() {
+            return Err(invalid_stream("step.start step type must not be empty"));
+        }
+
+        let projection = match step_type {
+            "model_output" => Some((step.get("content"), "model_output.content", "content")),
+            "thought" => Some((step.get("summary"), "thought.summary", "reasoning_content")),
+            _ => None,
         };
 
-        let delta_type = delta
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-
-        let output_entry = self
-            .outputs_by_index
-            .entry(index)
-            .or_insert_with(|| json!({}));
-
-        let Some(output) = output_entry.as_object_mut() else {
-            return;
-        };
-
-        match delta_type {
-            "text" => {
-                let text = delta
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
+        if let Some((Some(value), context, field)) = projection {
+            let blocks = value
+                .as_array()
+                .ok_or_else(|| invalid_stream(format!("{context} must be an array")))?;
+            for block in blocks {
+                let block = block
+                    .as_object()
+                    .ok_or_else(|| invalid_stream(format!("{context} block must be an object")))?;
+                if required_string(block, "type", context)? != "text" {
+                    return Err(invalid_stream(format!(
+                        "{context} only supports text blocks"
+                    )));
+                }
+                let text = required_string(block, "text", context)?;
                 if text.is_empty() {
-                    return;
+                    continue;
                 }
-
-                append_string_field(output, "text", text);
-                self.send_delta(sender, json!({ "content": text }), None);
-            }
-            "thought_summary" => {
-                let summary = delta
-                    .get("content")
-                    .and_then(Value::as_object)
-                    .and_then(|content| content.get("text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if summary.is_empty() {
-                    return;
-                }
-
-                output.insert("type".to_string(), Value::String("thought".to_string()));
-                append_string_field(output, "summary", summary);
-                self.send_delta(sender, json!({ "reasoning_content": summary }), None);
-            }
-            "thought_signature" => {
-                let signature = delta
-                    .get("signature")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .unwrap_or_default();
-                if signature.is_empty() {
-                    return;
-                }
-
-                output.insert("type".to_string(), Value::String("thought".to_string()));
-                output.insert(
-                    "signature".to_string(),
-                    Value::String(signature.to_string()),
-                );
-            }
-            "function_call" => {
-                self.saw_tool_call = true;
-                output.insert(
-                    "type".to_string(),
-                    Value::String("function_call".to_string()),
-                );
-
-                let id = delta
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or("tool_call");
-                let name = delta
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or("tool");
-                let arguments = delta
-                    .get("arguments")
-                    .cloned()
-                    .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-
-                output.insert("id".to_string(), Value::String(id.to_string()));
-                output.insert("name".to_string(), Value::String(name.to_string()));
-                output.insert("arguments".to_string(), arguments.clone());
-
-                if let Some(signature) = delta
-                    .get("signature")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    output.insert(
-                        "signature".to_string(),
-                        Value::String(signature.to_string()),
-                    );
-                }
-
-                let arguments =
-                    serde_json::to_string(&arguments).unwrap_or_else(|_| "{}".to_string());
-
-                let mut tool_call = json!({
-                    "index": index,
-                    "id": id,
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": arguments,
-                    }
-                });
-
-                if let Some(signature) = output.get("signature").and_then(Value::as_str)
-                    && let Some(object) = tool_call.as_object_mut()
-                {
-                    object.insert(
-                        "signature".to_string(),
-                        Value::String(signature.to_string()),
-                    );
-                }
-
-                self.send_delta(
-                    sender,
-                    json!({
-                        "tool_calls": [tool_call]
-                    }),
-                    None,
-                );
-            }
-            _ => {
-                for (key, value) in delta {
-                    if key == "type" {
-                        continue;
-                    }
-                    output.insert(key.clone(), value.clone());
-                }
+                self.saw_text |= field == "content";
+                self.send_delta(sender, projection_delta(field, text));
             }
         }
-    }
 
-    fn apply_interaction_complete(
-        &mut self,
-        event: &serde_json::Map<String, Value>,
-        sender: &ChatCompletionStreamSender,
-    ) {
-        if let Some(id) = event
-            .get("interaction")
-            .and_then(Value::as_object)
-            .and_then(|interaction| interaction.get("id"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            self.interaction_id = Some(id.to_string());
-        }
-
-        let finish_reason = if self.saw_tool_call {
-            "tool_calls"
-        } else {
-            "stop"
-        };
-
-        let outputs = self.finalize_outputs();
-        let native = json!({
-            "gemini_interactions": {
-                "outputs": outputs,
-            }
+        self.active_step = Some(ActiveStep {
+            index,
+            step,
+            argument_fragments: String::new(),
         });
 
-        self.send_delta(sender, json!({ "native": native }), Some(finish_reason));
-        let _ = sender.send("[DONE]".to_string());
-        self.done_sent = true;
+        Ok(())
     }
 
-    fn apply_error(
+    fn apply_step_delta(
         &mut self,
-        event: &serde_json::Map<String, Value>,
+        event: &Map<String, Value>,
         sender: &ChatCompletionStreamSender,
-    ) {
-        let message = event
-            .get("error")
-            .and_then(|error| error.get("message"))
-            .and_then(Value::as_str)
-            .unwrap_or("Gemini Interactions stream failed");
+    ) -> Result<(), DomainError> {
+        let index = required_index(event, "step.delta event")?;
+        let delta = required_object(event, "delta", "step.delta event")?;
+        let delta_type = required_string(delta, "type", "step.delta delta")?;
 
-        let _ = sender.send(
-            serde_json::to_string(&json!({ "error": { "message": message } })).unwrap_or_default(),
-        );
+        let projection = {
+            let active = self
+                .active_step
+                .as_mut()
+                .ok_or_else(|| invalid_stream("step.delta arrived without an active step"))?;
+            if index != active.index {
+                return Err(invalid_stream(format!(
+                    "step.delta index {index} does not match active index {}",
+                    active.index
+                )));
+            }
+
+            let step_type = required_string(&active.step, "type", "active step")?;
+            match (step_type, delta_type) {
+                ("model_output", "text") => {
+                    let text = required_string(delta, "text", "text delta")?.to_string();
+                    append_text_block(&mut active.step, "content", &text)?;
+                    Some(("content", text))
+                }
+                ("model_output", "text_annotation_delta") => {
+                    append_text_annotations(&mut active.step, delta)?;
+                    None
+                }
+                ("thought", "thought_summary") => {
+                    let content = required_object(delta, "content", "thought_summary delta")?;
+                    if required_string(content, "type", "thought_summary content")? != "text" {
+                        return Err(invalid_stream(
+                            "thought_summary content must have type text",
+                        ));
+                    }
+                    let text =
+                        required_string(content, "text", "thought_summary content")?.to_string();
+                    active
+                        .step
+                        .entry("summary".to_string())
+                        .or_insert_with(|| Value::Array(Vec::new()))
+                        .as_array_mut()
+                        .ok_or_else(|| invalid_stream("thought summary must be an array"))?
+                        .push(Value::Object(content.clone()));
+                    Some(("reasoning_content", text))
+                }
+                ("thought", "thought_signature") => {
+                    let signature = required_string(delta, "signature", "thought_signature delta")?;
+                    active.step.insert(
+                        "signature".to_string(),
+                        Value::String(signature.to_string()),
+                    );
+                    None
+                }
+                ("function_call", "arguments_delta") => {
+                    let arguments = required_string(delta, "arguments", "arguments_delta")?;
+                    active.argument_fragments.push_str(arguments);
+                    None
+                }
+                ("model_output" | "thought" | "function_call", _) => {
+                    return Err(invalid_stream(format!(
+                        "delta type {delta_type:?} is invalid for step type {step_type:?}"
+                    )));
+                }
+                _ if delta_type == step_type => {
+                    merge_opaque_delta(&mut active.step, delta);
+                    None
+                }
+                _ => {
+                    return Err(invalid_stream(format!(
+                        "delta type {delta_type:?} does not match opaque step type {step_type:?}"
+                    )));
+                }
+            }
+        };
+
+        if let Some((field, text)) = projection
+            && !text.is_empty()
+        {
+            self.saw_text |= field == "content";
+            self.send_delta(sender, projection_delta(field, &text));
+        }
+
+        Ok(())
+    }
+
+    fn apply_step_stop(
+        &mut self,
+        event: &Map<String, Value>,
+        sender: &ChatCompletionStreamSender,
+    ) -> Result<(), DomainError> {
+        let index = required_index(event, "step.stop event")?;
+        let mut active = self
+            .active_step
+            .take()
+            .ok_or_else(|| invalid_stream("step.stop arrived without an active step"))?;
+        if index != active.index {
+            return Err(invalid_stream(format!(
+                "step.stop index {index} does not match active index {}",
+                active.index
+            )));
+        }
+
+        let step_type = required_string(&active.step, "type", "active step")?.to_string();
+        let tool_call = if step_type == "function_call" {
+            let tool_call = finish_function_call(&mut active, self.next_tool_ordinal)?;
+            self.next_tool_ordinal += 1;
+            self.saw_tool_call = true;
+            Some(tool_call)
+        } else {
+            None
+        };
+
+        self.completed_steps.push(Value::Object(active.step));
+
+        if let Some(tool_call) = tool_call {
+            self.send_delta(sender, json!({ "tool_calls": [tool_call] }));
+        }
+
+        Ok(())
+    }
+
+    fn apply_interaction_completed(
+        &mut self,
+        event: &Map<String, Value>,
+        sender: &ChatCompletionStreamSender,
+    ) -> Result<(), DomainError> {
+        if self.active_step.is_some() {
+            return Err(invalid_stream(
+                "interaction.completed arrived before the active step stopped",
+            ));
+        }
+
+        let interaction = required_object(event, "interaction", "interaction.completed event")?;
+        let status = required_string(interaction, "status", "completed interaction")?;
+        let finish_reason = match status {
+            "completed" if self.saw_tool_call => "tool_calls",
+            "completed" => "stop",
+            "requires_action" if self.saw_tool_call => "tool_calls",
+            "requires_action" => {
+                return Err(invalid_stream(
+                    "interaction requires action without a function_call step",
+                ));
+            }
+            "incomplete" if self.saw_text && !self.saw_tool_call => "length",
+            "incomplete" => {
+                return Err(invalid_stream(
+                    "incomplete interaction has no consumable partial text",
+                ));
+            }
+            other => {
+                return Err(invalid_stream(format!(
+                    "interaction did not complete successfully (status: {other})"
+                )));
+            }
+        };
+
+        if !self.saw_text && !self.saw_tool_call {
+            return Err(invalid_stream(
+                "completed interaction has no consumable text or function_call",
+            ));
+        }
+
+        let native = json!({
+            "gemini_interactions": {
+                "steps": std::mem::take(&mut self.completed_steps),
+            }
+        });
+        let usage = normalizers::map_gemini_interactions_usage(interaction.get("usage"));
+
+        self.send_terminal(sender, json!({ "native": native }), finish_reason, usage);
         let _ = sender.send("[DONE]".to_string());
         self.done_sent = true;
+        Ok(())
     }
 
-    fn finalize_outputs(&self) -> Vec<Value> {
-        let mut indices = self.outputs_by_index.keys().cloned().collect::<Vec<_>>();
-        indices.sort_unstable();
+    fn ensure_completed(&self, cancelled: bool) -> Result<(), DomainError> {
+        if self.done_sent || cancelled {
+            return Ok(());
+        }
 
-        indices
-            .into_iter()
-            .filter_map(|index| self.outputs_by_index.get(&index).cloned())
-            .collect()
+        Err(DomainError::transient(
+            "Gemini Interactions stream closed before interaction.completed".to_string(),
+        ))
     }
 
-    fn send_delta(
+    fn send_delta(&mut self, sender: &ChatCompletionStreamSender, delta: Value) {
+        self.ensure_role(sender);
+        self.send_chunk(sender, self.build_chunk(delta, None));
+    }
+
+    fn send_terminal(
         &mut self,
         sender: &ChatCompletionStreamSender,
         delta: Value,
-        finish_reason: Option<&str>,
+        finish_reason: &str,
+        usage: Option<Value>,
     ) {
-        if !self.sent_role {
-            self.sent_role = true;
-            let role_chunk = self.build_chunk(json!({ "role": "assistant" }), None);
-            if let Ok(payload) = serde_json::to_string(&role_chunk) {
-                let _ = sender.send(payload);
-            }
+        self.ensure_role(sender);
+        let mut chunk = self.build_chunk(delta, Some(finish_reason));
+        if let Some(usage) = usage
+            && let Some(object) = chunk.as_object_mut()
+        {
+            object.insert("usage".to_string(), usage);
         }
+        self.send_chunk(sender, chunk);
+    }
 
-        let chunk = self.build_chunk(delta, finish_reason);
-        if let Ok(payload) = serde_json::to_string(&chunk) {
-            let _ = sender.send(payload);
+    fn ensure_role(&mut self, sender: &ChatCompletionStreamSender) {
+        if self.sent_role {
+            return;
         }
+        self.sent_role = true;
+        self.send_chunk(
+            sender,
+            self.build_chunk(json!({ "role": "assistant" }), None),
+        );
+    }
+
+    fn send_chunk(&self, sender: &ChatCompletionStreamSender, chunk: Value) {
+        let _ = sender.send(chunk.to_string());
     }
 
     fn build_chunk(&self, delta: Value, finish_reason: Option<&str>) -> Value {
-        let id = self
-            .interaction_id
-            .clone()
-            .unwrap_or_else(|| "gemini-interactions-stream".to_string());
-
         json!({
-            "id": id,
+            "id": "gemini-interactions-stream",
             "object": "chat.completion.chunk",
             "created": self.created,
             "model": self.model,
@@ -391,7 +421,7 @@ pub(super) async fn generate(
 
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
-    Ok(normalizers::normalize_gemini_interactions_response(body))
+    normalizers::normalize_gemini_interactions_response(body)
 }
 
 pub(super) async fn generate_stream(
@@ -412,7 +442,7 @@ pub(super) async fn generate_stream(
         .header(ACCEPT, "text/event-stream")
         .json(payload);
 
-    let request = apply_gemini_stream_auth(request, config);
+    let request = apply_gemini_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
@@ -436,7 +466,7 @@ pub(super) async fn generate_stream(
         .to_string();
 
     let mut state = InteractionsStreamState::new(model);
-    let out_sender = sender.clone();
+    let cancelled = cancel.clone();
 
     let (dummy_sender, dummy_receiver) = mpsc::unbounded_channel::<String>();
     drop(dummy_receiver);
@@ -446,12 +476,12 @@ pub(super) async fn generate_stream(
         response,
         dummy_sender,
         cancel,
-        move |payload| {
-            state.handle_event(&out_sender, payload);
-            Ok(())
-        },
+        |payload| state.handle_event(&sender, payload),
     )
-    .await
+    .await?;
+
+    let was_cancelled = *cancelled.borrow();
+    state.ensure_completed(was_cancelled)
 }
 
 fn apply_gemini_auth(
@@ -466,43 +496,11 @@ fn apply_gemini_auth(
         );
     }
 
-    let request = HttpChatCompletionRepository::apply_header_if_present(
+    HttpChatCompletionRepository::apply_header_if_present(
         request,
         "x-goog-api-key",
         &config.api_key,
-    );
-
-    if config.api_key.trim().is_empty() {
-        request
-    } else {
-        request.query(&[("key", config.api_key.as_str())])
-    }
-}
-
-fn apply_gemini_stream_auth(
-    request: reqwest::RequestBuilder,
-    config: &ChatCompletionApiConfig,
-) -> reqwest::RequestBuilder {
-    if let Some(authorization_header) = config.authorization_header.as_deref() {
-        let request = HttpChatCompletionRepository::apply_header_if_present(
-            request,
-            "Authorization",
-            authorization_header,
-        );
-        return request.query(&[("alt", "sse")]);
-    }
-
-    let request = HttpChatCompletionRepository::apply_header_if_present(
-        request,
-        "x-goog-api-key",
-        &config.api_key,
-    );
-
-    if config.api_key.trim().is_empty() {
-        request.query(&[("alt", "sse")])
-    } else {
-        request.query(&[("key", config.api_key.as_str()), ("alt", "sse")])
-    }
+    )
 }
 
 fn build_gemini_url(base_url: &str, endpoint_path: &str) -> String {
@@ -516,12 +514,176 @@ fn build_gemini_url(base_url: &str, endpoint_path: &str) -> String {
     }
 }
 
-fn append_string_field(target: &mut serde_json::Map<String, Value>, key: &str, delta: &str) {
-    let existing = target.get(key).and_then(Value::as_str).unwrap_or_default();
-    let mut combined = String::new();
-    combined.push_str(existing);
-    combined.push_str(delta);
-    target.insert(key.to_string(), Value::String(combined));
+fn required_object<'a>(
+    object: &'a Map<String, Value>,
+    field: &str,
+    context: &str,
+) -> Result<&'a Map<String, Value>, DomainError> {
+    object
+        .get(field)
+        .and_then(Value::as_object)
+        .ok_or_else(|| invalid_stream(format!("{context} is missing object field {field:?}")))
+}
+
+fn required_string<'a>(
+    object: &'a Map<String, Value>,
+    field: &str,
+    context: &str,
+) -> Result<&'a str, DomainError> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid_stream(format!("{context} is missing string field {field:?}")))
+}
+
+fn required_index(object: &Map<String, Value>, context: &str) -> Result<usize, DomainError> {
+    let index = object
+        .get("index")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| invalid_stream(format!("{context} is missing integer index")))?;
+    usize::try_from(index)
+        .map_err(|_| invalid_stream(format!("{context} index does not fit usize")))
+}
+
+fn append_text_block(
+    step: &mut Map<String, Value>,
+    field: &str,
+    text: &str,
+) -> Result<(), DomainError> {
+    let blocks = step
+        .entry(field.to_string())
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| invalid_stream(format!("step field {field:?} must be an array")))?;
+
+    if let Some(last) = blocks.last_mut().and_then(Value::as_object_mut)
+        && last.get("type").and_then(Value::as_str) == Some("text")
+    {
+        let Some(Value::String(existing)) = last.get_mut("text") else {
+            return Err(invalid_stream(format!(
+                "{field} text block is missing text"
+            )));
+        };
+        existing.push_str(text);
+        return Ok(());
+    }
+
+    blocks.push(json!({ "type": "text", "text": text }));
+    Ok(())
+}
+
+fn append_text_annotations(
+    step: &mut Map<String, Value>,
+    delta: &Map<String, Value>,
+) -> Result<(), DomainError> {
+    let annotations = delta
+        .get("annotations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_stream("text_annotation_delta annotations must be an array"))?;
+    let content = step
+        .get_mut("content")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid_stream("text_annotation_delta arrived before text content"))?;
+    let text = content
+        .last_mut()
+        .and_then(Value::as_object_mut)
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+        .ok_or_else(|| invalid_stream("text_annotation_delta arrived before text content"))?;
+    text.entry("annotations".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| invalid_stream("text content annotations must be an array"))?
+        .extend(annotations.iter().cloned());
+    Ok(())
+}
+
+fn merge_opaque_delta(step: &mut Map<String, Value>, delta: &Map<String, Value>) {
+    step.extend(
+        delta
+            .iter()
+            .filter(|(key, _)| key.as_str() != "type")
+            .map(|(key, value)| (key.clone(), value.clone())),
+    );
+}
+
+fn finish_function_call(
+    active: &mut ActiveStep,
+    tool_ordinal: usize,
+) -> Result<Value, DomainError> {
+    let id = required_string(&active.step, "id", "function_call step")?;
+    if id.trim().is_empty() {
+        return Err(invalid_stream("function_call id must not be empty"));
+    }
+    let id = id.to_string();
+
+    let name = required_string(&active.step, "name", "function_call step")?;
+    if name.trim().is_empty() {
+        return Err(invalid_stream("function_call name must not be empty"));
+    }
+    let name = name.to_string();
+
+    let arguments_text = if active.argument_fragments.is_empty() {
+        let arguments = active
+            .step
+            .get("arguments")
+            .and_then(Value::as_object)
+            .ok_or_else(|| invalid_stream("function_call arguments must be an object"))?;
+        Value::Object(arguments.clone()).to_string()
+    } else {
+        let arguments =
+            serde_json::from_str::<Value>(&active.argument_fragments).map_err(|error| {
+                invalid_stream(format!(
+                    "function_call arguments_delta is not valid JSON: {error}"
+                ))
+            })?;
+        if !arguments.is_object() {
+            return Err(invalid_stream(
+                "function_call arguments_delta must decode to an object",
+            ));
+        }
+        active.step.insert("arguments".to_string(), arguments);
+        active.argument_fragments.clone()
+    };
+
+    let signature = match active.step.get("signature") {
+        None => None,
+        Some(Value::String(signature)) => Some(signature.clone()),
+        Some(_) => return Err(invalid_stream("function_call signature must be a string")),
+    };
+
+    let mut tool_call = json!({
+        "index": tool_ordinal,
+        "id": id,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments_text,
+        }
+    });
+    if let Some(signature) = signature {
+        tool_call["signature"] = Value::String(signature);
+    }
+    Ok(tool_call)
+}
+
+fn projection_delta(field: &str, text: &str) -> Value {
+    let mut delta = Map::new();
+    delta.insert(field.to_string(), Value::String(text.to_string()));
+    Value::Object(delta)
+}
+
+fn stream_error(event: &Map<String, Value>) -> DomainError {
+    let message = event
+        .get("error")
+        .and_then(Value::as_object)
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("Gemini Interactions stream failed");
+    DomainError::transient(message.to_string())
+}
+
+fn invalid_stream(message: impl Into<String>) -> DomainError {
+    DomainError::InternalError(format!("Gemini Interactions stream {}", message.into()))
 }
 
 fn current_unix_timestamp() -> u64 {
@@ -529,4 +691,336 @@ fn current_unix_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    fn apply(
+        state: &mut InteractionsStreamState,
+        sender: &ChatCompletionStreamSender,
+        event: Value,
+    ) -> Result<(), DomainError> {
+        state.handle_event(sender, &serde_json::to_vec(&event).unwrap())
+    }
+
+    fn apply_all(
+        state: &mut InteractionsStreamState,
+        sender: &ChatCompletionStreamSender,
+        events: Value,
+    ) {
+        for event in events.as_array().unwrap() {
+            apply(state, sender, event.clone()).unwrap();
+        }
+    }
+
+    fn drain(receiver: &mut mpsc::UnboundedReceiver<String>) -> (Vec<Value>, bool) {
+        let mut chunks = Vec::new();
+        let mut done = false;
+        while let Ok(payload) = receiver.try_recv() {
+            if payload == "[DONE]" {
+                done = true;
+            } else {
+                chunks.push(serde_json::from_str(&payload).unwrap());
+            }
+        }
+        (chunks, done)
+    }
+
+    #[test]
+    fn stream_rebuilds_projected_and_opaque_steps() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut state = InteractionsStreamState::new("gemini-3.6-flash".to_string());
+
+        apply_all(
+            &mut state,
+            &sender,
+            json!([
+                {
+                    "event_type": "interaction.created",
+                    "interaction": { "id": "", "status": "in_progress" }
+                },
+                { "event_type": "interaction.in_progress", "interaction_id": "" },
+                { "event_type": "interaction.status_update", "status": "in_progress" },
+                {
+                    "event_type": "step.start",
+                    "index": 0,
+                    "step": {
+                        "type": "thought",
+                        "summary": [{ "type": "text", "text": "think " }]
+                    }
+                },
+                {
+                    "event_type": "step.delta",
+                    "index": 0,
+                    "delta": {
+                        "type": "thought_summary",
+                        "content": { "type": "text", "text": "more" }
+                    }
+                },
+                {
+                    "event_type": "step.delta",
+                    "index": 0,
+                    "delta": { "type": "thought_signature", "signature": "" }
+                },
+                { "event_type": "step.stop", "index": 0 },
+                {
+                    "event_type": "step.start",
+                    "index": 1,
+                    "step": { "type": "google_search_call", "id": "search_1", "signature": "" }
+                },
+                {
+                    "event_type": "step.delta",
+                    "index": 1,
+                    "delta": {
+                        "type": "google_search_call",
+                        "arguments": { "queries": ["Rust"] },
+                        "signature": "search_signature"
+                    }
+                },
+                { "event_type": "step.stop", "index": 1 },
+                {
+                    "event_type": "step.start",
+                    "index": 2,
+                    "step": {
+                        "type": "model_output",
+                        "content": [{ "type": "text", "text": "Hel" }]
+                    }
+                },
+                {
+                    "event_type": "step.delta",
+                    "index": 2,
+                    "delta": { "type": "text", "text": "lo" }
+                },
+                {
+                    "event_type": "step.delta",
+                    "index": 2,
+                    "delta": {
+                        "type": "text_annotation_delta",
+                        "annotations": [{
+                            "type": "url_citation",
+                            "url": "https://www.rust-lang.org/",
+                            "start_index": 0,
+                            "end_index": 5
+                        }]
+                    }
+                },
+                { "event_type": "step.stop", "index": 2 },
+                {
+                "event_type": "interaction.completed",
+                "interaction": {
+                    "id": "",
+                    "status": "incomplete",
+                    "usage": {
+                        "total_input_tokens": 3,
+                        "total_output_tokens": 2,
+                        "total_thought_tokens": 4,
+                        "total_tokens": 9
+                    }
+                }
+                }
+            ]),
+        );
+
+        let (chunks, done) = drain(&mut receiver);
+        let reasoning = chunks
+            .iter()
+            .filter_map(|chunk| {
+                chunk
+                    .pointer("/choices/0/delta/reasoning_content")
+                    .and_then(Value::as_str)
+            })
+            .collect::<String>();
+        let text = chunks
+            .iter()
+            .filter_map(|chunk| {
+                chunk
+                    .pointer("/choices/0/delta/content")
+                    .and_then(Value::as_str)
+            })
+            .collect::<String>();
+        let terminal = chunks
+            .iter()
+            .find(|chunk| chunk.pointer("/choices/0/delta/native").is_some())
+            .unwrap();
+
+        assert_eq!(reasoning, "think more");
+        assert_eq!(text, "Hello");
+        assert_eq!(
+            terminal.pointer("/choices/0/delta/native/gemini_interactions/steps/0/summary/0/text"),
+            Some(&json!("think "))
+        );
+        assert_eq!(
+            terminal.pointer("/choices/0/delta/native/gemini_interactions/steps/0/summary/1/text"),
+            Some(&json!("more"))
+        );
+        assert_eq!(
+            terminal.pointer("/choices/0/delta/native/gemini_interactions/steps/0/signature"),
+            Some(&json!(""))
+        );
+        assert_eq!(
+            terminal
+                .pointer("/choices/0/delta/native/gemini_interactions/steps/1/arguments/queries/0"),
+            Some(&json!("Rust"))
+        );
+        assert_eq!(
+            terminal.pointer("/choices/0/delta/native/gemini_interactions/steps/2/content/0/text"),
+            Some(&json!("Hello"))
+        );
+        assert_eq!(
+            terminal.pointer(
+                "/choices/0/delta/native/gemini_interactions/steps/2/content/0/annotations/0/type"
+            ),
+            Some(&json!("url_citation"))
+        );
+        assert_eq!(terminal["usage"]["prompt_tokens"], json!(3));
+        assert_eq!(terminal["usage"]["completion_tokens"], json!(6));
+        assert_eq!(terminal["usage"]["total_tokens"], json!(9));
+        assert_eq!(terminal["choices"][0]["finish_reason"], json!("length"));
+        assert!(done);
+        state.ensure_completed(false).unwrap();
+    }
+
+    #[test]
+    fn stream_emits_completed_function_calls_with_contiguous_ordinals() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut state = InteractionsStreamState::new("gemini-3.6-flash".to_string());
+
+        apply_all(
+            &mut state,
+            &sender,
+            json!([
+                {
+                    "event_type": "step.start",
+                    "index": 0,
+                    "step": {
+                        "type": "function_call",
+                        "id": "call_weather",
+                        "name": "get_weather",
+                        "arguments": {},
+                        "signature": "opaque"
+                    }
+                },
+                {
+                    "event_type": "step.delta",
+                    "index": 0,
+                    "delta": { "type": "arguments_delta", "arguments": "{\"city\":\"" }
+                },
+                {
+                    "event_type": "step.delta",
+                    "index": 0,
+                    "delta": { "type": "arguments_delta", "arguments": "Paris\"}" }
+                }
+            ]),
+        );
+        assert!(receiver.try_recv().is_err());
+        apply_all(
+            &mut state,
+            &sender,
+            json!([
+                { "event_type": "step.stop", "index": 0 },
+                {
+                    "event_type": "step.start",
+                    "index": 1,
+                    "step": {
+                        "type": "function_call",
+                        "id": "call_time",
+                        "name": "get_time",
+                        "arguments": {}
+                    }
+                },
+                { "event_type": "step.stop", "index": 1 },
+                {
+                    "event_type": "interaction.completed",
+                    "interaction": { "id": "", "status": "requires_action" }
+                }
+            ]),
+        );
+
+        let (chunks, done) = drain(&mut receiver);
+        let tool_calls = chunks
+            .iter()
+            .filter_map(|chunk| chunk.pointer("/choices/0/delta/tool_calls/0"))
+            .collect::<Vec<_>>();
+        let terminal = chunks
+            .iter()
+            .find(|chunk| chunk.pointer("/choices/0/delta/native").is_some())
+            .unwrap();
+
+        assert_eq!(tool_calls.len(), 2);
+        assert_eq!(tool_calls[0]["index"], json!(0));
+        assert_eq!(tool_calls[0]["id"], json!("call_weather"));
+        assert_eq!(
+            tool_calls[0]["function"]["arguments"],
+            json!("{\"city\":\"Paris\"}")
+        );
+        assert_eq!(tool_calls[0]["signature"], json!("opaque"));
+        assert_eq!(tool_calls[1]["index"], json!(1));
+        assert_eq!(tool_calls[1]["function"]["arguments"], json!("{}"));
+        assert_eq!(
+            terminal.pointer("/choices/0/delta/native/gemini_interactions/steps/0/arguments/city"),
+            Some(&json!("Paris"))
+        );
+        assert_eq!(terminal["choices"][0]["finish_reason"], json!("tool_calls"));
+        assert!(done);
+    }
+
+    #[test]
+    fn stream_rejects_invalid_order_payloads_and_premature_eof() {
+        let (sender, _receiver) = mpsc::unbounded_channel();
+
+        let mut state = InteractionsStreamState::new("gemini-3.6-flash".to_string());
+        let schema_error = apply(
+            &mut state,
+            &sender,
+            json!({
+                "event_type": "step.delta",
+                "index": 0,
+                "delta": { "type": "text", "text": "orphan" }
+            }),
+        )
+        .expect_err("orphan delta must fail");
+        assert!(
+            matches!(schema_error, DomainError::InternalError(message) if !message.contains("model.upstream_invalid_response"))
+        );
+
+        let json_error = state
+            .handle_event(&sender, b"{")
+            .expect_err("invalid JSON must fail");
+        assert!(
+            matches!(json_error, DomainError::Transient(message) if message.contains("model.upstream_invalid_response"))
+        );
+
+        let mut state = InteractionsStreamState::new("gemini-3.6-flash".to_string());
+        apply(
+            &mut state,
+            &sender,
+            json!({
+                "event_type": "step.start",
+                "index": 0,
+                "step": { "type": "thought" }
+            }),
+        )
+        .unwrap();
+        assert!(
+            apply(
+                &mut state,
+                &sender,
+                json!({
+                    "event_type": "step.delta",
+                    "index": 0,
+                    "delta": { "type": "thought_signature" }
+                }),
+            )
+            .is_err()
+        );
+
+        let state = InteractionsStreamState::new("gemini-3.6-flash".to_string());
+        assert!(state.ensure_completed(false).is_err());
+        state.ensure_completed(true).unwrap();
+    }
 }

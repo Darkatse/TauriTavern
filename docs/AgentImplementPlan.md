@@ -121,7 +121,7 @@ Provider native data 是 opaque state，不是 Agent 业务语义。Runtime 可�
 | --- | --- | --- |
 | Claude Messages | assistant `content` blocks，包含 `thinking` / `tool_use` / signature | Claude payload message conversion |
 | Gemini | response `content.parts`，包含 `thoughtSignature` | Makersuite payload message conversion |
-| Gemini Interactions | raw `outputs` | Gemini Interactions payload message conversion |
+| Gemini Interactions | raw `steps` | Gemini Interactions payload message conversion |
 | OpenAI Responses | raw `output` items 与 `responseId` | Responses payload `input` items |
 
 约束：

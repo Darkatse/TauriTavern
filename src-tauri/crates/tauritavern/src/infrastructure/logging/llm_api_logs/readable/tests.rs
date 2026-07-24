@@ -171,19 +171,22 @@ fn wire_log_payload_strips_internal_provider_state() {
 }
 
 #[test]
-fn format_request_readable_supports_gemini_interactions_input_outputs() {
+fn format_request_readable_supports_gemini_interactions_input_steps() {
     let payload = json!({
         "model": "gemini-3",
         "system_instruction": "sys",
         "input": [
-            { "role": "user", "content": "hi" },
-            { "role": "model", "content": [
-                { "type": "text", "text": "hello" },
-                { "type": "function_call", "id": "call_1", "name": "get_weather", "arguments": { "location": "Paris" } }
-            ]},
-            { "role": "user", "content": [
-                { "type": "function_result", "name": "get_weather", "call_id": "call_1", "result": { "temp": 20 } }
-            ]}
+            { "type": "user_input", "content": [{ "type": "text", "text": "hi" }] },
+            { "type": "model_output", "content": [{ "type": "text", "text": "hello" }] },
+            { "type": "thought", "signature": "sig_1", "summary": [{ "type": "text", "text": "Need weather." }] },
+            { "type": "function_call", "id": "call_1", "name": "get_weather", "arguments": { "location": "Paris" }, "signature": "sig_fc" },
+            {
+                "type": "function_result",
+                "name": "get_weather",
+                "call_id": "call_1",
+                "result": [{ "type": "text", "text": "{\"temp\":20}" }]
+            },
+            { "type": "google_search_call", "id": "search_1", "arguments": { "queries": ["weather"] }, "signature": "sig_search" }
         ],
         "stream": true
     });
@@ -192,7 +195,7 @@ fn format_request_readable_supports_gemini_interactions_input_outputs() {
 
     assert_eq!(
         readable,
-        "[system]\nsys\n\n[user]\nhi\n\n[model]\nhello\n[function_call id=call_1 name=get_weather]\n{\"location\":\"Paris\"}\n\n[user]\n[function_result call_id=call_1 name=get_weather]\n{\"temp\":20}"
+        "[system]\nsys\n\n[user]\nhi\n\n[model]\nhello\n\n[thought native_state=present]\nNeed weather.\n\n[function_call id=call_1 name=get_weather native_state=present]\n{\"location\":\"Paris\"}\n\n[function_result call_id=call_1 name=get_weather]\n{\"temp\":20}\n\n[google_search_call native_state=present]"
     );
 }
 

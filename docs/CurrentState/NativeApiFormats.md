@@ -1,6 +1,6 @@
 # 原生 API 格式（Custom）兼容现状
 
-最后更新：2026-05-02
+最后更新：2026-07-23
 
 本文件描述 **TauriTavern 已落地** 的三家原生 API 格式兼容（OpenAI Responses / Claude Messages / Gemini Interactions）的当前实现快照与持续开发约束。
 
@@ -78,7 +78,7 @@ Connection Profiles（Connection Manager 扩展）：
 | OpenAI-compatible (`/chat/completions`) | ✅ | ✅ | ✅（上游 ST 语义） | ✅（现有链路） | ✅ |
 | OpenAI Responses (`/responses`) | ✅（normalize→chat.completion） | ✅（Responses events→chat.completion.chunk） | ✅（full transcript replay / `previous_response_id`） | ✅（backend normalizer / Agent gateway 保留 raw `output` 与 `responseId`） | ✅ |
 | Claude Messages (`/messages`) | ✅（normalize→chat.completion） | ✅（Anthropic events） | ✅（沿用 Claude tool loop） | ✅（现有链路） | ✅ |
-| Gemini Interactions (`/interactions`) | ✅（normalize→chat.completion，含 native） | ✅（SSE→chat.completion.chunk，末包带 native） | ✅ | ✅（`message.extra.native` 回放 outputs） | ✅ |
+| Gemini Interactions (`/interactions`) | ✅（normalize→chat.completion，含 native） | ✅（SSE→chat.completion.chunk，末包带 native） | ✅ | ✅（`message.extra.native` 回放 steps） | ✅ |
 
 ### 3.2 明确的当前限制
 
@@ -128,20 +128,29 @@ tool follow-up（关键契约）：
 
 URL 与鉴权：
 - 若 `custom_url` 末尾不含 `/v1` 或 `/v1beta`，后端自动补 `.../v1beta`
-- streaming 自动加 `?alt=sse`
-- 未提供 `Authorization` 时使用 `x-goog-api-key`，并（当 key 非空）同时追加 query `key=...`
+- 用户显式提供 `Authorization` 时优先使用该 header；否则使用 `x-goog-api-key`
+- streaming 由请求体 `stream: true` 启用，响应按 SSE 解析
+
+请求侧：
+- `system` message 聚合为顶层 `system_instruction`
+- user / assistant / tool history 分别构造 `user_input`、`model_output` / `function_call`、`function_result` steps
+- structured output 使用 `response_format = { "type": "text", "mime_type": "application/json", "schema": ... }`
 
 signature / native blocks（关键契约）：
-- 后端在 streaming 完成事件 `interaction.complete` 时，将聚合后的 `outputs[]` 放入：
-  - `choices[0].delta.native = { gemini_interactions: { outputs } }`
+- 后端在 streaming 完成事件 `interaction.completed` 时，将聚合后的 `steps[]` 放入：
+  - `choices[0].delta.native = { gemini_interactions: { steps } }`
 - 前端在保存消息时将其落到 `message.extra.native`
-- 后续构造 stateless history 时：若 `extra.native.gemini_interactions.outputs` 存在，则 **原样回放** outputs（满足 thought-signatures 相关要求）
+- 后续构造 stateless history 时：若 `extra.native.gemini_interactions.steps` 存在，则 **原样回放** steps（满足 thought-signatures 相关要求）
+- SillyTavern 将带前导文本的 function-call turn 拆成相邻的可见消息与 tool invocation 时，payload translator 只对两者完全相同的 native steps 去重并回放一次
 
 流式归一化：
-- Interactions SSE 的 `content.delta`：
-  - `text` → `delta.content`
-  - `thought_summary` → `delta.reasoning_content`
-  - `function_call` → `delta.tool_calls`（arguments 为 JSON 字符串；tool_call_id 视为不透明字符串）
+- Interactions SSE 顺序为 `interaction.created` / 状态通知，随后每个输出依次经历 `step.start` / `step.delta` / `step.stop`，最后是 `interaction.completed` 与 `[DONE]`；适配器接受现网的 `interaction.status_update` 与文档命名的状态事件，但只以终态事件完成响应
+- `step.delta.type=text` → `delta.content`
+- `step.delta.type=thought_summary` → `delta.reasoning_content`；`thought_signature` 只保留在 native step
+- function call 的 id / name 来自 `step.start.step`；`step.delta.type=arguments_delta` 的 `arguments` 字符串累计到 `step.stop` 后解析，并只发送一个完整 `delta.tool_calls` item
+- Google Search 等服务端工具 step 与 text annotations 不投影到通用 chat 字段，只在流式组装后原样保留于 native steps
+- streaming function call 的 terminal status 可以是 `completed`，因此 `finish_reason=tool_calls` 由已组装的 `function_call` step 决定；非流式 function call 的状态可以是 `requires_action`
+- `incomplete` 若含可消费文本则归一化为 `finish_reason=length`；无可消费输出或不完整 function call 直接报错
 
 ### 4.3 Claude Messages（/messages，Custom 变体）
 
@@ -167,5 +176,5 @@ streaming 语义：
 
 1. **回滚兼容**：Custom 变体落盘必须保持 `chat_completion_source="custom"`，不要把 UI 选择值（如 `custom_openai_responses`）写入设置文件。
 2. **tool_call_id 透明性**：tool loop 不应假设 tool_call_id 是 OpenAI UUID；必须把它当作不透明字符串传递与存储。
-3. **native metadata 保真**：Agent gateway 会通过 normalized `message.native` / canonical `Native` part 保留 Claude content blocks、Gemini content parts、OpenAI Responses output items、Gemini Interactions outputs。不得“清洗未知字段”，否则签名链或 reasoning continuation 会断。
+3. **native metadata 保真**：Agent gateway 会通过 normalized `message.native` / canonical `Native` part 保留 Claude content blocks、Gemini content parts、OpenAI Responses output items、Gemini Interactions steps。不得“清洗未知字段”，否则签名链或 reasoning continuation 会断。
 4. **Custom Claude 不注入 anthropic-beta**：该行为是为了兼容第三方；现在只有显式 opt-in 的 prompt caching 会自动补 caching header，其他场景仍不得硬编码回退。

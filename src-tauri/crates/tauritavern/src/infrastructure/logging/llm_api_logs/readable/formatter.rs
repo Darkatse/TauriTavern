@@ -411,6 +411,9 @@ fn append_function_call_item(out: &mut String, object: &serde_json::Map<String, 
     append_header_attr(out, "id", object.get("id"));
     append_header_attr(out, "call_id", object.get("call_id"));
     append_header_attr(out, "name", object.get("name"));
+    if has_reasoning_native_state(object) {
+        out.push_str(" native_state=present");
+    }
     out.push(']');
 
     if let Some(arguments) = object
@@ -546,17 +549,33 @@ fn format_input_items(payload: &Value) -> String {
 
                 if let Some(ty) = object.get("type").and_then(Value::as_str) {
                     match ty {
+                        "user_input" | "model_output" => {
+                            out.push_str(if ty == "user_input" {
+                                "[user]\n"
+                            } else {
+                                "[model]\n"
+                            });
+                            append_message_content(&mut out, object.get("content"));
+                        }
                         "function_call" => append_function_call_item(&mut out, object),
                         "function_call_output" | "function_result" => {
                             append_function_result_item(&mut out, object)
                         }
                         "message" => append_message_content(&mut out, object.get("content")),
-                        "reasoning" | "thinking" => append_reasoning_part(&mut out, ty, object),
+                        "reasoning" | "thinking" | "thought" => {
+                            append_reasoning_part(&mut out, ty, object)
+                        }
                         _ => {
+                            let native_state = has_reasoning_native_state(object);
                             out.push('[');
                             out.push_str(ty);
+                            if native_state {
+                                out.push_str(" native_state=present");
+                            }
                             out.push_str("]\n");
-                            append_block_json(&mut out, item);
+                            if !native_state {
+                                append_block_json(&mut out, item);
+                            }
                         }
                     }
                     out.push_str("\n\n");

@@ -2,6 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
+use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionNormalizationReport, ChatCompletionRepositoryGenerateResponse,
 };
@@ -485,90 +486,166 @@ pub(super) fn normalize_openai_responses_response(
 
 pub(super) fn normalize_gemini_interactions_response(
     response: Value,
-) -> ChatCompletionRepositoryGenerateResponse {
-    let mut report = ChatCompletionNormalizationReport::default();
-    let outputs = response
-        .get("outputs")
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+    let status = response
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            DomainError::InternalError("Gemini Interactions response is missing status".to_string())
+        })?;
+
+    let incomplete = match status {
+        "completed" | "requires_action" => false,
+        "incomplete" => true,
+        "failed" => {
+            let message = response
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("Gemini Interactions response failed");
+            return Err(DomainError::InternalError(message.to_string()));
+        }
+        other => {
+            return Err(DomainError::InternalError(format!(
+                "Gemini Interactions response did not complete (status: {other})"
+            )));
+        }
+    };
+
+    let steps = response
+        .get("steps")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_default();
+        .ok_or_else(|| {
+            DomainError::InternalError(
+                "Gemini Interactions response is missing steps array".to_string(),
+            )
+        })?;
+    if steps.is_empty() {
+        return Err(DomainError::InternalError(
+            "Gemini Interactions response contains no output steps".to_string(),
+        ));
+    }
 
-    let mut text_parts = Vec::new();
+    let mut text = String::new();
     let mut reasoning_parts = Vec::new();
     let mut tool_calls = Vec::new();
 
-    for (index, output) in outputs.iter().enumerate() {
-        let Some(output_object) = output.as_object() else {
-            continue;
-        };
-
-        match output_object
+    for (index, step) in steps.iter().enumerate() {
+        let step_object = step.as_object().ok_or_else(|| {
+            DomainError::InternalError(format!(
+                "Gemini Interactions step {index} must be an object"
+            ))
+        })?;
+        let step_type = step_object
             .get("type")
             .and_then(Value::as_str)
-            .unwrap_or_default()
-        {
-            "text" => {
-                if let Some(text) = output_object
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    text_parts.push(text.to_string());
+            .ok_or_else(|| {
+                DomainError::InternalError(format!(
+                    "Gemini Interactions step {index} is missing type"
+                ))
+            })?;
+
+        match step_type {
+            "model_output" => {
+                let content = step_object
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| {
+                        DomainError::InternalError(format!(
+                            "Gemini Interactions model_output step {index} is missing content array"
+                        ))
+                    })?;
+
+                for (content_index, block) in content.iter().enumerate() {
+                    let block = block.as_object().ok_or_else(|| {
+                        DomainError::InternalError(format!(
+                            "Gemini Interactions model_output content {content_index} in step {index} must be an object"
+                        ))
+                    })?;
+                    match block.get("type").and_then(Value::as_str) {
+                        Some("text") => {
+                            let fragment = block.get("text").and_then(Value::as_str).ok_or_else(
+                                || {
+                                    DomainError::InternalError(format!(
+                                        "Gemini Interactions text content {content_index} in step {index} is missing text"
+                                    ))
+                                },
+                            )?;
+                            text.push_str(fragment);
+                        }
+                        Some(other) => {
+                            return Err(DomainError::InternalError(format!(
+                                "Gemini Interactions model_output content type is unsupported: {other}"
+                            )));
+                        }
+                        None => {
+                            return Err(DomainError::InternalError(format!(
+                                "Gemini Interactions model_output content {content_index} in step {index} is missing type"
+                            )));
+                        }
+                    }
                 }
             }
             "thought" => {
-                reasoning_parts.extend(extract_reasoning_texts(output_object));
+                reasoning_parts.extend(extract_reasoning_texts(step_object));
             }
             "function_call" => {
-                let name = as_non_empty_str(output_object.get("name")).unwrap_or("tool");
-                let id = as_non_empty_str(output_object.get("id"))
-                    .map(str::to_string)
-                    .unwrap_or_else(|| synthetic_tool_call_id(&mut report, index));
-                let arguments = to_openai_arguments(
-                    output_object
-                        .get("arguments")
-                        .cloned()
-                        .unwrap_or_else(|| Value::Object(Map::new())),
-                );
-                let signature =
-                    as_non_empty_str(output_object.get("signature")).map(str::to_string);
+                let id = as_non_empty_str(step_object.get("id")).ok_or_else(|| {
+                    DomainError::InternalError(format!(
+                        "Gemini Interactions function_call step {index} is missing id"
+                    ))
+                })?;
+                let name = as_non_empty_str(step_object.get("name")).ok_or_else(|| {
+                    DomainError::InternalError(format!(
+                        "Gemini Interactions function_call step {index} is missing name"
+                    ))
+                })?;
+                let arguments = step_object
+                    .get("arguments")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .ok_or_else(|| {
+                        DomainError::InternalError(format!(
+                            "Gemini Interactions function_call step {index} is missing arguments object"
+                        ))
+                    })?;
+                let arguments = to_openai_arguments(Value::Object(arguments));
+                let signature = step_object.get("signature").and_then(Value::as_str);
 
-                tool_calls.push(build_openai_tool_call(
-                    &id,
-                    name,
-                    arguments,
-                    signature.as_deref(),
-                ));
+                tool_calls.push(build_openai_tool_call(id, name, arguments, signature));
             }
             _ => {}
         }
     }
 
+    let has_tool_calls = !tool_calls.is_empty();
+    if text.is_empty() && !has_tool_calls {
+        return Err(DomainError::InternalError(
+            "Gemini Interactions response contains no consumable model output".to_string(),
+        ));
+    }
+
     let mut message = Map::new();
     message.insert("role".to_string(), Value::String("assistant".to_string()));
-    message.insert(
-        "content".to_string(),
-        Value::String(text_parts.join("\n\n")),
-    );
+    message.insert("content".to_string(), Value::String(text));
     if !reasoning_parts.is_empty() {
         message.insert(
             "reasoning_content".to_string(),
             Value::String(reasoning_parts.join("\n\n")),
         );
     }
-    if !tool_calls.is_empty() {
+    if has_tool_calls {
         message.insert("tool_calls".to_string(), Value::Array(tool_calls));
     }
-    if !outputs.is_empty() {
-        message.insert(
-            "native".to_string(),
-            json!({ "gemini_interactions": { "outputs": outputs } }),
-        );
-    }
+    message.insert(
+        "native".to_string(),
+        json!({ "gemini_interactions": { "steps": steps } }),
+    );
 
-    let finish_reason = if message.contains_key("tool_calls") {
+    let finish_reason = if has_tool_calls {
         "tool_calls".to_string()
+    } else if incomplete {
+        "length".to_string()
     } else {
         "stop".to_string()
     };
@@ -601,7 +678,6 @@ pub(super) fn normalize_gemini_interactions_response(
         "model".to_string(),
         response
             .get("model")
-            .or_else(|| response.get("modelVersion"))
             .cloned()
             .unwrap_or_else(|| Value::String(String::new())),
     );
@@ -614,7 +690,10 @@ pub(super) fn normalize_gemini_interactions_response(
         normalized.insert("usage".to_string(), usage);
     }
 
-    ChatCompletionRepositoryGenerateResponse::new(Value::Object(normalized), report)
+    Ok(ChatCompletionRepositoryGenerateResponse::new(
+        Value::Object(normalized),
+        ChatCompletionNormalizationReport::default(),
+    ))
 }
 
 fn synthetic_tool_call_id(report: &mut ChatCompletionNormalizationReport, index: usize) -> String {
@@ -718,22 +797,24 @@ fn map_openai_responses_usage(raw_usage: Option<&Value>) -> Option<Value> {
     }))
 }
 
-fn map_gemini_interactions_usage(raw_usage: Option<&Value>) -> Option<Value> {
+pub(super) fn map_gemini_interactions_usage(raw_usage: Option<&Value>) -> Option<Value> {
     let usage = raw_usage?.as_object()?;
 
     let prompt_tokens = usage
-        .get("input_tokens")
-        .or_else(|| usage.get("prompt_tokens"))
+        .get("total_input_tokens")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let completion_tokens = usage
-        .get("output_tokens")
-        .or_else(|| usage.get("completion_tokens"))
+    let output_tokens = usage
+        .get("total_output_tokens")
         .and_then(Value::as_u64)
         .unwrap_or_default();
+    let thought_tokens = usage
+        .get("total_thought_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let completion_tokens = output_tokens + thought_tokens;
     let total_tokens = usage
         .get("total_tokens")
-        .or_else(|| usage.get("totalTokens"))
         .and_then(Value::as_u64)
         .unwrap_or(prompt_tokens + completion_tokens);
 
@@ -1227,20 +1308,38 @@ mod tests {
     }
 
     #[test]
-    fn normalize_gemini_interactions_preserves_native_outputs_and_signatures() {
+    fn normalize_gemini_interactions_preserves_native_steps_and_signatures() {
         let response = json!({
-            "id": "interaction_1",
+            "status": "completed",
             "model": "gemini-3-flash-preview",
-            "usage": { "input_tokens": 10, "output_tokens": 5, "total_tokens": 15 },
-            "outputs": [
-                { "type": "thought", "signature": "sig_thought", "summary": "Thinking..." },
+            "usage": {
+                "total_input_tokens": 10,
+                "total_output_tokens": 5,
+                "total_thought_tokens": 3,
+                "total_tool_use_tokens": 50,
+                "total_tokens": 18
+            },
+            "steps": [
+                {
+                    "type": "thought",
+                    "signature": "sig_thought",
+                    "summary": [{ "type": "text", "text": "Thinking..." }]
+                },
                 { "type": "function_call", "id": "call_1", "name": "get_weather", "arguments": { "location": "Paris" }, "signature": "sig_fc" },
                 { "type": "url_context_call", "id": "browse_001", "arguments": { "urls": ["https://example.com"] }, "signature": "sig_url" },
-                { "type": "text", "text": "Done." }
+                {
+                    "type": "model_output",
+                    "content": [
+                        { "type": "text", "text": "Done" },
+                        { "type": "text", "text": "." }
+                    ]
+                }
             ]
         });
 
-        let normalized = normalize_gemini_interactions_response(response).body;
+        let normalized = normalize_gemini_interactions_response(response)
+            .expect("response should normalize")
+            .body;
 
         let message = normalized
             .get("choices")
@@ -1254,6 +1353,10 @@ mod tests {
         assert_eq!(
             message.get("reasoning_content").and_then(Value::as_str),
             Some("Thinking...")
+        );
+        assert_eq!(
+            message.get("content").and_then(Value::as_str),
+            Some("Done.")
         );
 
         let tool_call = message
@@ -1269,19 +1372,61 @@ mod tests {
             Some("sig_fc")
         );
 
-        let native_outputs = message
+        let native_steps = message
             .get("native")
             .and_then(Value::as_object)
             .and_then(|native| native.get("gemini_interactions"))
             .and_then(Value::as_object)
-            .and_then(|interactions| interactions.get("outputs"))
+            .and_then(|interactions| interactions.get("steps"))
             .and_then(Value::as_array)
-            .expect("native outputs should exist");
+            .expect("native steps should exist");
 
         assert!(
-            native_outputs.iter().any(
-                |output| output.get("type").and_then(Value::as_str) == Some("url_context_call")
-            )
+            native_steps
+                .iter()
+                .any(|step| step.get("type").and_then(Value::as_str) == Some("url_context_call"))
         );
+        assert_eq!(normalized["usage"]["prompt_tokens"], 10);
+        assert_eq!(normalized["usage"]["completion_tokens"], 8);
+        assert_eq!(normalized["usage"]["total_tokens"], 18);
+    }
+
+    #[test]
+    fn normalize_gemini_interactions_maps_incomplete_text_to_length() {
+        let response = json!({
+            "status": "incomplete",
+            "model": "gemini-3.6-flash",
+            "steps": [{
+                "type": "model_output",
+                "content": [{ "type": "text", "text": "Partial answer" }]
+            }]
+        });
+
+        let normalized = normalize_gemini_interactions_response(response)
+            .expect("partial text should normalize")
+            .body;
+
+        assert_eq!(
+            normalized["choices"][0]["message"]["content"],
+            "Partial answer"
+        );
+        assert_eq!(normalized["choices"][0]["finish_reason"], "length");
+    }
+
+    #[test]
+    fn normalize_gemini_interactions_rejects_unusable_responses() {
+        for response in [
+            json!({ "status": "incomplete", "steps": [] }),
+            json!({
+                "status": "completed",
+                "steps": [{ "type": "thought", "signature": "" }]
+            }),
+            json!({
+                "status": "requires_action",
+                "steps": [{ "type": "function_call", "name": "get_weather", "arguments": {} }]
+            }),
+        ] {
+            assert!(normalize_gemini_interactions_response(response).is_err());
+        }
     }
 }

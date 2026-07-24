@@ -10,11 +10,9 @@ use super::content_parts::{
 };
 use super::shared::message_content_to_text;
 use super::tool_calls::{
-    OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
-    message_tool_name, message_tool_result_text, normalize_tool_result_payload,
+    OpenAiToolCall, extract_openai_tool_calls, message_tool_call_id,
+    validate_openai_chat_tool_transcript,
 };
-
-const CUSTOM_API_FORMAT: &str = "custom_api_format";
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let request = build_gemini_interactions_payload(&payload)?;
@@ -63,25 +61,45 @@ fn build_gemini_interactions_payload(
         );
     }
 
-    if let Some(tools) = payload.get("tools").and_then(Value::as_array)
-        && !tools.is_empty()
-    {
+    match payload.get("tools") {
+        None | Some(Value::Null) => {}
+        Some(Value::Array(tools)) if tools.is_empty() => {}
+        Some(Value::Array(tools)) => {
+            request.insert(
+                "tools".to_string(),
+                Value::Array(map_openai_tools_to_interactions(tools)?),
+            );
+        }
+        Some(_) => {
+            return Err(ApplicationError::ValidationError(
+                "Gemini Interactions tools must be an array".to_string(),
+            ));
+        }
+    }
+
+    if let Some(json_schema) = payload.get("json_schema").filter(|value| !value.is_null()) {
+        let json_schema = json_schema.as_object().ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "Gemini Interactions json_schema must be an object".to_string(),
+            )
+        })?;
+        let schema_value = json_schema
+            .get("value")
+            .filter(|value| !value.is_null())
+            .ok_or_else(|| {
+                ApplicationError::ValidationError(
+                    "Gemini Interactions json_schema is missing value".to_string(),
+                )
+            })?;
         request.insert(
-            "tools".to_string(),
-            Value::Array(map_openai_tools_to_interactions(tools)),
+            "response_format".to_string(),
+            json!({
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": schema_value,
+            }),
         );
     }
-
-    if let Some(schema_value) = payload
-        .get("json_schema")
-        .and_then(Value::as_object)
-        .and_then(|schema| schema.get("value"))
-        .filter(|value| !value.is_null())
-    {
-        request.insert("response_format".to_string(), schema_value.clone());
-    }
-
-    request.remove(CUSTOM_API_FORMAT);
 
     Ok(request)
 }
@@ -124,37 +142,52 @@ fn build_generation_config(payload: &Map<String, Value>) -> Option<Map<String, V
     }
 }
 
-fn map_openai_tools_to_interactions(tools: &[Value]) -> Vec<Value> {
+fn map_openai_tools_to_interactions(tools: &[Value]) -> Result<Vec<Value>, ApplicationError> {
     tools
         .iter()
-        .filter_map(|tool| tool.as_object())
-        .map(|tool| {
-            let tool_type = tool.get("type").and_then(Value::as_str).unwrap_or_default();
+        .enumerate()
+        .map(|(index, tool)| {
+            let tool = tool.as_object().ok_or_else(|| {
+                ApplicationError::ValidationError(format!(
+                    "Gemini Interactions tool {index} must be an object"
+                ))
+            })?;
 
-            if tool_type != "function" {
-                return Value::Object(tool.clone());
+            if tool.get("type").and_then(Value::as_str) != Some("function") {
+                return Ok(Value::Object(tool.clone()));
             }
 
-            let Some(function) = tool.get("function").and_then(Value::as_object) else {
-                return Value::Object(tool.clone());
-            };
+            let function = tool
+                .get("function")
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    ApplicationError::ValidationError(format!(
+                        "Gemini Interactions function tool {index} is missing function"
+                    ))
+                })?;
+            let name = function
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| {
+                    ApplicationError::ValidationError(format!(
+                        "Gemini Interactions function tool {index} is missing name"
+                    ))
+                })?;
 
             let mut mapped = Map::new();
             mapped.insert("type".to_string(), Value::String("function".to_string()));
-            if let Some(name) = function.get("name").and_then(Value::as_str) {
-                mapped.insert("name".to_string(), Value::String(name.to_string()));
+            mapped.insert("name".to_string(), Value::String(name.to_string()));
+            if let Some(description) = function.get("description").filter(|value| !value.is_null())
+            {
+                mapped.insert("description".to_string(), description.clone());
             }
-            if let Some(description) = function.get("description").and_then(Value::as_str) {
-                mapped.insert(
-                    "description".to_string(),
-                    Value::String(description.to_string()),
-                );
-            }
-            if let Some(parameters) = function.get("parameters") {
+            if let Some(parameters) = function.get("parameters").filter(|value| !value.is_null()) {
                 mapped.insert("parameters".to_string(), parameters.clone());
             }
 
-            Value::Object(mapped)
+            Ok(Value::Object(mapped))
         })
         .collect()
 }
@@ -170,123 +203,127 @@ fn build_input_and_system_instruction(
         return Ok((Value::String(prompt.to_string()), None));
     }
 
-    let Some(entries) = messages.as_array() else {
-        return Ok((Value::Array(Vec::new()), None));
-    };
+    let entries = messages.as_array().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "Gemini Interactions messages must be a string or an array".to_string(),
+        )
+    })?;
+    validate_openai_chat_tool_transcript(Some(messages), false)?;
 
-    let mut turns = Vec::new();
+    let mut steps = Vec::new();
     let mut system_parts = Vec::new();
-    let mut tool_name_by_id = HashMap::<String, String>::new();
+    let mut function_name_by_call_id = HashMap::<String, String>::new();
 
-    let mut index = 0_usize;
-    while index < entries.len() {
-        let Some(message) = entries[index].as_object() else {
-            index += 1;
-            continue;
-        };
+    for (index, entry) in entries.iter().enumerate() {
+        let message = entry.as_object().ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "Gemini Interactions message {index} must be an object"
+            ))
+        })?;
 
         let role = message
             .get("role")
             .and_then(Value::as_str)
-            .unwrap_or("user")
-            .trim()
-            .to_ascii_lowercase();
+            .map(str::trim)
+            .filter(|role| !role.is_empty())
+            .map(str::to_ascii_lowercase)
+            .ok_or_else(|| {
+                ApplicationError::ValidationError(format!(
+                    "Gemini Interactions message {index} is missing role"
+                ))
+            })?;
 
-        if role == "system" {
-            reject_media_for_text_only_content(
-                "Gemini Interactions system instruction",
-                message.get("content"),
-            )?;
-            let text = message_content_to_text(message.get("content"));
-            if !text.trim().is_empty() {
-                system_parts.push(text);
+        match role.as_str() {
+            "system" | "developer" => {
+                reject_media_for_text_only_content(
+                    "Gemini Interactions system instruction",
+                    message.get("content"),
+                )?;
+                let text = message_content_to_text(message.get("content"));
+                if !text.trim().is_empty() {
+                    system_parts.push(text);
+                }
             }
-            index += 1;
-            continue;
-        }
-
-        if role == "tool" || role == "function" {
-            let mut results = Vec::new();
-            while index < entries.len() {
-                let Some(tool_message) = entries[index].as_object() else {
-                    index += 1;
-                    continue;
-                };
-
-                let tool_role = tool_message
-                    .get("role")
-                    .and_then(Value::as_str)
-                    .unwrap_or("tool")
-                    .trim()
-                    .to_ascii_lowercase();
-
-                if tool_role != "tool" && tool_role != "function" {
-                    break;
+            "assistant" => {
+                let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
+                for tool_call in &tool_calls {
+                    function_name_by_call_id.insert(tool_call.id.clone(), tool_call.name.clone());
                 }
 
-                let call_id = message_tool_call_id(tool_message).ok_or_else(|| {
+                if let Some(native_steps) = message_native_steps(message)? {
+                    let duplicate_split_turn = if tool_calls.is_empty() || index == 0 {
+                        false
+                    } else {
+                        let previous = entries[index - 1].as_object().filter(|previous| {
+                            previous
+                                .get("role")
+                                .and_then(Value::as_str)
+                                .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
+                                && extract_openai_tool_calls(previous.get("tool_calls")).is_empty()
+                        });
+
+                        match previous.map(message_native_steps).transpose()? {
+                            Some(Some(previous_steps)) if previous_steps == native_steps => true,
+                            Some(Some(_)) => {
+                                return Err(ApplicationError::ValidationError(
+                                    "Gemini Interactions split assistant turn has mismatched native steps"
+                                        .to_string(),
+                                ));
+                            }
+                            None | Some(None) => false,
+                        }
+                    };
+
+                    if !duplicate_split_turn {
+                        steps.extend_from_slice(native_steps);
+                    }
+                    continue;
+                }
+
+                let text = message_content_to_text(message.get("content"));
+                if !text.trim().is_empty() {
+                    steps.push(json!({
+                        "type": "model_output",
+                        "content": [{ "type": "text", "text": text }],
+                    }));
+                }
+
+                steps.extend(tool_calls.iter().map(build_function_call_step));
+            }
+            "tool" | "function" => {
+                let call_id = message_tool_call_id(message).ok_or_else(|| {
                     ApplicationError::ValidationError(
                         "Tool message is missing tool_call_id required for Gemini Interactions function_result".to_string(),
                     )
                 })?;
+                let name = function_name_by_call_id.remove(&call_id).ok_or_else(|| {
+                    ApplicationError::ValidationError(format!(
+                        "Gemini Interactions function_result references call_id without preceding function_call: {call_id}"
+                    ))
+                })?;
+                let result = convert_openai_content_to_interactions_blocks(message.get("content"))?;
 
-                let name = message_tool_name(tool_message)
-                    .or_else(|| tool_name_by_id.get(&call_id).cloned())
-                    .unwrap_or_else(|| fallback_tool_name().to_string());
-
-                let result_text = message_tool_result_text(tool_message);
-                let result_payload = normalize_tool_result_payload(&result_text);
-
-                results.push(json!({
+                steps.push(json!({
                     "type": "function_result",
                     "name": name,
                     "call_id": call_id,
-                    "result": result_payload,
+                    "result": result,
                 }));
-
-                index += 1;
             }
-
-            turns.push(json!({
-                "role": "user",
-                "content": results,
-            }));
-
-            continue;
-        }
-
-        if role == "assistant" {
-            if let Some(tool_calls) = message.get("tool_calls") {
-                for tool_call in extract_openai_tool_calls(Some(tool_calls)) {
-                    tool_name_by_id.insert(tool_call.id.clone(), tool_call.name.clone());
-                }
+            "user" => {
+                let content =
+                    convert_openai_content_to_interactions_blocks(message.get("content"))?;
+                steps.push(json!({
+                    "type": "user_input",
+                    "content": content,
+                }));
             }
-
-            let content = message_native_outputs(message).unwrap_or_else(|| {
-                build_synthetic_model_outputs(
-                    message.get("content"),
-                    message.get("tool_calls"),
-                    message.get("signature"),
-                )
-            });
-
-            turns.push(json!({
-                "role": "model",
-                "content": content,
-            }));
-
-            index += 1;
-            continue;
+            other => {
+                return Err(ApplicationError::ValidationError(format!(
+                    "Gemini Interactions message role is unsupported: {other}"
+                )));
+            }
         }
-
-        let content_blocks = convert_openai_content_to_interactions_blocks(message.get("content"))?;
-        let content = blocks_to_interactions_content_value(content_blocks);
-        turns.push(json!({
-            "role": "user",
-            "content": content,
-        }));
-
-        index += 1;
     }
 
     let system_instruction = system_parts
@@ -302,53 +339,44 @@ fn build_input_and_system_instruction(
         Some(system_instruction)
     };
 
-    Ok((Value::Array(turns), system_instruction))
+    Ok((Value::Array(steps), system_instruction))
 }
 
-fn message_native_outputs(message: &Map<String, Value>) -> Option<Value> {
-    let native = message.get("native")?.as_object()?;
-    let interactions = native.get("gemini_interactions")?.as_object()?;
-    let outputs = interactions.get("outputs")?.as_array()?.clone();
+fn message_native_steps(
+    message: &Map<String, Value>,
+) -> Result<Option<&[Value]>, ApplicationError> {
+    let Some(native) = message.get("native") else {
+        return Ok(None);
+    };
+    let native = native.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "Gemini Interactions message native state must be an object".to_string(),
+        )
+    })?;
+    let Some(interactions) = native.get("gemini_interactions") else {
+        return Ok(None);
+    };
+    let interactions = interactions.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "Gemini Interactions native state must be an object".to_string(),
+        )
+    })?;
 
-    Some(Value::Array(outputs))
+    let steps = interactions
+        .get("steps")
+        .and_then(Value::as_array)
+        .filter(|steps| !steps.is_empty())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "Gemini Interactions native state is missing non-empty steps".to_string(),
+            )
+        })?;
+
+    Ok(Some(steps))
 }
 
-fn build_synthetic_model_outputs(
-    content: Option<&Value>,
-    tool_calls: Option<&Value>,
-    signature: Option<&Value>,
-) -> Value {
-    let mut outputs = Vec::new();
-
-    let text = message_content_to_text(content);
-    if !text.trim().is_empty() {
-        outputs.push(json!({
-            "type": "text",
-            "text": text,
-        }));
-    }
-
-    let tool_calls = extract_openai_tool_calls(tool_calls);
-    if !tool_calls.is_empty() {
-        outputs.extend(tool_calls.iter().map(build_function_call_output));
-    }
-
-    if let Some(signature) = signature
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        outputs.push(json!({
-            "type": "thought",
-            "signature": signature,
-        }));
-    }
-
-    Value::Array(outputs)
-}
-
-fn build_function_call_output(tool_call: &OpenAiToolCall) -> Value {
-    let mut output = json!({
+fn build_function_call_step(tool_call: &OpenAiToolCall) -> Value {
+    let mut step = json!({
         "type": "function_call",
         "id": tool_call.id.clone(),
         "name": tool_call.name.clone(),
@@ -356,7 +384,7 @@ fn build_function_call_output(tool_call: &OpenAiToolCall) -> Value {
     });
 
     if let Some(signature) = tool_call.signature.as_deref()
-        && let Some(object) = output.as_object_mut()
+        && let Some(object) = step.as_object_mut()
     {
         object.insert(
             "signature".to_string(),
@@ -364,7 +392,7 @@ fn build_function_call_output(tool_call: &OpenAiToolCall) -> Value {
         );
     }
 
-    output
+    step
 }
 
 fn convert_openai_content_to_interactions_blocks(
@@ -432,18 +460,6 @@ fn render_unknown_block(ty: Option<&str>, value: &Value) -> Result<Value, Applic
     ))
 }
 
-fn blocks_to_interactions_content_value(blocks: Vec<Value>) -> Value {
-    if blocks.len() == 1
-        && let Some(block_object) = blocks[0].as_object()
-        && block_object.get("type").and_then(Value::as_str) == Some("text")
-        && let Some(text) = block_object.get("text").and_then(Value::as_str)
-    {
-        return Value::String(text.to_string());
-    }
-
-    Value::Array(blocks)
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
@@ -468,16 +484,16 @@ mod tests {
     }
 
     #[test]
-    fn gemini_interactions_build_maps_tool_calls_and_results() {
+    fn gemini_interactions_builds_canonical_steps() {
         let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "gemini_interactions",
             "model": "gemini-3-flash-preview",
             "messages": [
+                { "role": "system", "content": "System rule" },
+                { "role": "developer", "content": "Developer rule" },
                 { "role": "user", "content": "What is the weather in Paris?" },
                 {
                     "role": "assistant",
-                    "content": "",
+                    "content": "Checking",
                     "tool_calls": [{
                         "id": "call_1",
                         "type": "function",
@@ -488,17 +504,27 @@ mod tests {
                         "signature": "sig_1"
                     }]
                 },
-                { "role": "tool", "tool_call_id": "call_1", "content": "Sunny" }
-            ],
-            "tools": [{
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "description": "Gets the weather",
-                    "parameters": { "type": "object" }
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "name": "wrong_projection_name",
+                    "content": "Sunny"
                 }
-            }],
-            "custom_url": "https://generativelanguage.googleapis.com",
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Gets the weather",
+                        "parameters": { "type": "object" }
+                    }
+                },
+                {
+                    "type": "google_search",
+                    "filters": { "safe_search": true }
+                }
+            ],
         })
         .as_object()
         .cloned()
@@ -509,44 +535,51 @@ mod tests {
 
         let upstream = upstream.as_object().expect("upstream must be object");
         assert_eq!(
-            upstream.get("model").and_then(|v| v.as_str()),
-            Some("gemini-3-flash-preview")
+            upstream["system_instruction"],
+            "System rule\n\nDeveloper rule"
         );
-        assert!(upstream.get("tools").is_some());
+        assert_eq!(upstream["tools"][1]["type"], "google_search");
 
         let input = upstream
             .get("input")
             .and_then(|v| v.as_array())
             .expect("input must be array");
-        assert_eq!(input.len(), 3);
-
-        assert_eq!(input[0].get("role").and_then(|v| v.as_str()), Some("user"));
-        assert_eq!(input[1].get("role").and_then(|v| v.as_str()), Some("model"));
-
-        let model_outputs = input[1]
-            .get("content")
-            .and_then(|v| v.as_array())
-            .expect("model content must be array");
+        assert_eq!(input.len(), 4);
         assert_eq!(
-            model_outputs[0].get("type").and_then(|v| v.as_str()),
-            Some("function_call")
+            input[0],
+            json!({
+                "type": "user_input",
+                "content": [{
+                    "type": "text",
+                    "text": "What is the weather in Paris?"
+                }]
+            })
         );
         assert_eq!(
-            model_outputs[0].get("id").and_then(|v| v.as_str()),
-            Some("call_1")
-        );
-
-        let tool_turn = input[2]
-            .get("content")
-            .and_then(|v| v.as_array())
-            .expect("tool content must be array");
-        assert_eq!(
-            tool_turn[0].get("type").and_then(|v| v.as_str()),
-            Some("function_result")
+            input[1],
+            json!({
+                "type": "model_output",
+                "content": [{ "type": "text", "text": "Checking" }]
+            })
         );
         assert_eq!(
-            tool_turn[0].get("call_id").and_then(|v| v.as_str()),
-            Some("call_1")
+            input[2],
+            json!({
+                "type": "function_call",
+                "id": "call_1",
+                "name": "get_weather",
+                "arguments": { "location": "Paris" },
+                "signature": "sig_1"
+            })
+        );
+        assert_eq!(
+            input[3],
+            json!({
+                "type": "function_result",
+                "name": "get_weather",
+                "call_id": "call_1",
+                "result": [{ "type": "text", "text": "Sunny" }]
+            })
         );
     }
 
@@ -577,6 +610,10 @@ mod tests {
             ]
         }]));
 
+        assert_eq!(
+            upstream.pointer("/input/0/type"),
+            Some(&json!("user_input"))
+        );
         assert_eq!(
             upstream.pointer("/input/0/content"),
             Some(&json!([
@@ -693,30 +730,113 @@ mod tests {
     }
 
     #[test]
-    fn gemini_interactions_replays_native_outputs_before_synthetic_content() {
-        let native_outputs = json!([
-            { "type": "thought", "signature": "sig_native" },
-            { "type": "text", "text": "Native text" }
+    fn gemini_interactions_coalesces_exact_split_native_turn() {
+        let native_steps = json!([{
+            "type": "function_call",
+            "id": "call_1",
+            "name": "provider_tool_name",
+            "arguments": {},
+            "signature": "opaque"
+        }]);
+        let mut messages = json!([
+            {
+                "role": "assistant",
+                "content": "Visible tool call",
+                "native": { "gemini_interactions": { "steps": native_steps.clone() } }
+            },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": { "name": "provider_tool_name", "arguments": "{}" }
+                }],
+                "native": { "gemini_interactions": { "steps": native_steps.clone() } }
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "name": "different_projection_name",
+                "content": [{ "type": "text", "text": "Done" }]
+            }
         ]);
-        let upstream = build_with_messages(json!([{
-            "role": "assistant",
-            "content": "Synthetic text",
-            "signature": "sig_synthetic",
-            "tool_calls": [{
-                "id": "call_1",
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "arguments": "{}"
+        let upstream = build_with_messages(messages.clone());
+
+        assert_eq!(
+            upstream.get("input"),
+            Some(&json!([
+                {
+                    "type": "function_call",
+                    "id": "call_1",
+                    "name": "provider_tool_name",
+                    "arguments": {},
+                    "signature": "opaque"
+                },
+                {
+                    "type": "function_result",
+                    "name": "provider_tool_name",
+                    "call_id": "call_1",
+                    "result": [{ "type": "text", "text": "Done" }]
                 }
-            }],
-            "native": {
-                "gemini_interactions": {
-                    "outputs": native_outputs.clone()
+            ]))
+        );
+
+        let mismatched = messages
+            .pointer_mut("/1/native/gemini_interactions/steps/0/name")
+            .expect("native name must exist");
+        *mismatched = json!("different");
+        let payload = json!({
+            "model": "gemini-3-flash-preview",
+            "messages": messages,
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+        let error = build(payload).expect_err("mismatched split native steps must fail");
+        assert!(error.to_string().contains("mismatched native steps"));
+    }
+
+    #[test]
+    fn gemini_interactions_wraps_json_schema_response_format() {
+        let payload = json!({
+            "model": "gemini-3-flash-preview",
+            "messages": "Return JSON",
+            "json_schema": {
+                "value": {
+                    "type": "object",
+                    "properties": { "answer": { "type": "string" } },
+                    "required": ["answer"]
                 }
             }
-        }]));
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
 
-        assert_eq!(upstream.pointer("/input/0/content"), Some(&native_outputs));
+        let (_, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(upstream.get("input"), Some(&json!("Return JSON")));
+        assert_eq!(
+            upstream.get("response_format"),
+            Some(&json!({
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": {
+                    "type": "object",
+                    "properties": { "answer": { "type": "string" } },
+                    "required": ["answer"]
+                }
+            }))
+        );
+
+        let malformed = json!({
+            "model": "gemini-3-flash-preview",
+            "messages": [{ "role": "user", "content": "Return JSON" }],
+            "json_schema": {}
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+        assert!(build(malformed).is_err());
     }
 }

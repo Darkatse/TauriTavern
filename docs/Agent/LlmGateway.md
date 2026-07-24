@@ -126,7 +126,7 @@ Provider native metadata 必须当作 opaque continuation state。
 | --- | --- | --- |
 | Claude Messages | assistant `content` blocks，包括 `thinking`、`tool_use`、signature | 同 provider 续接时原样回放 |
 | Gemini | response `content.parts` 与 `thoughtSignature` | 同 provider 续接时原样回放 |
-| Gemini Interactions | raw `outputs` | 同 provider 续接时原样回放 |
+| Gemini Interactions | raw `steps` | 同 provider 续接时原样回放 |
 | OpenAI Responses | raw `output` items 与 `responseId` | function call output / reasoning continuation |
 
 禁止：

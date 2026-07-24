@@ -214,7 +214,7 @@ AgentModelContentPart {
 - Claude：保留 assistant `content` blocks，用于回放 `thinking` / `tool_use` / signature。
 - Gemini：保留 response `content.parts` 与 `thoughtSignature`。
 - OpenAI Responses：保留 raw `output` items 与 `responseId`。
-- Gemini Interactions：保留 raw `outputs`，包含 `thought`、`function_call`、URL context 等非通用块。
+- Gemini Interactions：保留 raw `steps`，包含 `thought`、`function_call`、URL context 等非通用 step。
 
 ## Tool Result Context 策略
 
