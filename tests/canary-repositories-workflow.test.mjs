@@ -9,6 +9,11 @@ const publisherSource = readFileSync('scripts/ci/publish-linux-repositories.sh',
 const nixPublisherSource = readFileSync('scripts/ci/publish-nix-cache.sh', 'utf8');
 const flakeSource = readFileSync('flake.nix', 'utf8');
 
+test('Canary artifact names use the China-local calendar date without a time', () => {
+    assert.match(workflowSource, /asset_time=.*date \+'%Y%m%d'/);
+    assert.doesNotMatch(workflowSource, /asset_time=.*%H%M/);
+});
+
 test('Canary Linux package versions derive from the latest stable release', () => {
     assert.equal(workflow.env.NEXT_STABLE_VERSION, undefined);
     assert.match(workflowSource, /releases\/latest/);

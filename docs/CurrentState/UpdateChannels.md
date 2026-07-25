@@ -27,10 +27,10 @@ Canary Release 必须是 prerelease；Stable latest 不能是 prerelease。返�
 `.github/workflows/canary-release.yml` 从 `dev` 的同一提交构建桌面端与移动端，完整产物通过后才更新固定的 `Canary` Release 和 tag。产物统一命名为：
 
 ```text
-TauriTavern-<YYYYMMDD-HHmm>-canary-<platform>-<arch>-<kind>.<ext>
+TauriTavern-<YYYYMMDD>-canary-<platform>-<arch>-<kind>.<ext>
 ```
 
-其中时间以 `Asia/Shanghai` 计算；Release 标题使用 `Canary Release <YYYY.MM.DD>`。tag 最后移动到已发布提交，因此客户端不会先看到尚未完成的构建。
+其中日期以 `Asia/Shanghai` 计算；Release 标题使用 `Canary Release <YYYY.MM.DD>`。tag 最后移动到已发布提交，因此客户端不会先看到尚未完成的构建。
 
 Release notes 先由 Git 历史生成确定性上下文和回退正文。独立的只读 Codex job 使用 `CANARY_CODEX_API_KEY`、`CANARY_CODEX_RESPONSES_ENDPOINT`、`CANARY_CODEX_MODEL` 与 `CANARY_CODEX_EFFORT` secrets 检查实际 diff，再通过项目专用 Skill 撰写中英双语正文。Skill 源文件保存在不会被本地 Codex 自动发现的 `.github/codex/skills/`，CI 只把它们复制到 runner 临时 `CODEX_HOME`。Codex 调用失败或输出不符合结构时直接使用确定性正文，不影响构建和发布。
 
