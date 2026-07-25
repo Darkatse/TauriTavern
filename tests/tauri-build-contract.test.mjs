@@ -88,6 +88,8 @@ test('Canary release workflow does not build frontend assets twice', async () =>
     );
 
     assert.doesNotMatch(workflow, /run:\s+pnpm run web:build/u);
+    assert.match(workflow, /run:\s+node scripts\/build-portable\.mjs --skip-web-build/u);
+    assert.doesNotMatch(workflow, /args:.*--no-bundle --features portable/u);
     assert.match(workflow, /date \+'%Y\.%m\.%d'/u);
     assert.match(workflow, /--title "Canary Release \$DISPLAY_TIME"/u);
 });

@@ -55,6 +55,7 @@ jobs:
           - platform: windows-latest
             target_args: ""
             portable: true
+            portable_name: windows-x64
           - platform: macos-latest
             target_args: --target x86_64-apple-darwin
             portable: false
@@ -64,9 +65,11 @@ jobs:
           - platform: ubuntu-22.04
             target_args: --bundles appimage,deb,rpm
             portable: true
+            portable_name: linux-x64
           - platform: ubuntu-22.04-arm
             target_args: --bundles deb,rpm
             portable: true
+            portable_name: linux-arm64
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -134,18 +137,15 @@ jobs:
 
       - name: Build portable binary
         if: matrix.portable
-        uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/build-portable.mjs --skip-web-build --output-dir portable
+
+      - name: Upload portable binary
+        if: matrix.portable
+        uses: actions/upload-artifact@v4
         with:
-          projectPath: src-tauri/crates/tauritavern
-          tauriScript: node ../../../scripts/tauri-app.mjs
-          args: ${{ matrix.target_args }} --no-bundle --features portable
-          uploadWorkflowArtifacts: true
-          uploadPlainBinary: true
-          uploadUpdaterJson: false
-          uploadUpdaterSignatures: false
-          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-[platform]-[arch]-portable'
+          name: TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-${{ matrix.portable_name }}-portable
+          path: portable/*
+          if-no-files-found: error
 
   mobile:
     needs: prepare
@@ -180,6 +180,10 @@ jobs:
         with:
           java-version: "21"
           distribution: temurin
+          cache: gradle
+          cache-dependency-path: |
+            src-tauri/crates/tauritavern/gen/android/**/*.gradle*
+            src-tauri/crates/tauritavern/gen/android/**/gradle-wrapper.properties
 
       - name: Setup Android SDK
         if: matrix.mobile == 'android'
