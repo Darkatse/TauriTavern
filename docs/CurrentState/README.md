@@ -86,3 +86,7 @@
 18. `docs/CurrentState/UpdateChannels.md`
    - Stable / Canary 更新检测与统一发布契约
    - 包含用户时间、机器 SHA、默认渠道、产物命名和可选 AI release notes 的边界
+
+19. `docs/CurrentState/LinuxRepository.md`
+   - APT、RPM 与 Nix 的分发现状
+   - 包含支持范围、签名身份、安装入口、缓存配置和维护边界

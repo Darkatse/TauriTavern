@@ -2,6 +2,39 @@
 
 这个目录存放仓库内的开发、构建、迁移导出与 CI 辅助脚本。
 
+## Linux 一键安装
+
+`install-linux.sh` 为 Debian 12+、Ubuntu 22.04 LTS+、Fedora 与 openSUSE Leap 16.0 配置签名软件源，并安装或更新 TauriTavern：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
+```
+
+使用 Canary 渠道：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  | sh -s -- --channel canary
+```
+
+NixOS 会自动使用项目 flake；其他已经安装 Nix 的 Linux 可显式选择 Nix：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  | sh -s -- --method nix
+```
+
+Nix 安装进入当前用户 profile，不使用 sudo，也不修改 `/etc/nix/nix.conf`。脚本使用 POSIX `sh` 语法，可由 sh、Dash、Bash 或 Zsh 执行。运行前可先下载并检查内容，或使用 `--dry-run` 查看识别结果和执行计划：
+
+```sh
+curl -fsSL \
+  https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  -o install-tauritavern.sh
+sh install-tauritavern.sh --dry-run
+```
+
+原生软件源安装会核对完整的 OpenPGP 主密钥和签名子密钥指纹。Nix 安装接受项目 flake 声明的 binary cache；multi-user Nix 仍要求 daemon 预先信任该 cache，否则可能回退到本地构建。
+
 ## SillyTavern 迁移导出
 
 这两个脚本会交互式生成一个可直接导入 TauriTavern `data-migration` 扩展的 zip：
@@ -43,6 +76,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\export-sillytavern-migration.
 
 ## 目录说明
 
+- `install-linux.sh`
+  通过受支持的 APT/RPM 软件源或 Nix flake 安装 TauriTavern。
 - `export-sillytavern-migration.sh`
   面向 Unix/macOS/Linux/Termux 的 SillyTavern 迁移导出脚本。
 - `export-sillytavern-migration.ps1`
@@ -65,6 +100,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\export-sillytavern-migration.
   校验 iOS App Icon appearance 变体，并只将基础 `Any` 图标展平为不透明背景，供 `tauri-ios-xcode-script.sh` 调用。
 - `ci/setup-macos-signing.sh`
   GitHub Actions / CI 中的 macOS 签名初始化脚本，用于导入证书、创建 keychain 与写入 Apple API Key 路径。
+- `ci/verify-release-version.mjs`
+  校验 Stable Release tag 与前端、Cargo、Tauri、Cargo lock 和 Nix 包版本一致。
+- `ci/publish-linux-repositories.sh`
+  按 Stable 或 Canary 渠道汇入 DEB/RPM、生成并签署软件源元数据，再按安全顺序发布到 R2。
+- `ci/publish-nix-cache.sh`
+  校验 Nix cache key，签署运行时 closure 和缺失的构建依赖，并上传按内容寻址的缓存对象。
+- `ci/rewrite-deb-version.sh`
+  将 Canary DEB 的包版本改写为高于当前 Stable、低于后续正式版的 Debian 版本。
 - `guardrails/frontend-lines-baseline.json`
   `check-frontend-guardrails.mjs` 使用的基线数据文件，文件行数硬性限制指标。
 

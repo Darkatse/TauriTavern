@@ -159,7 +159,7 @@ pnpm run check:rust:dev
 
 - Windows：MSI / EXE / portable
 - macOS：DMG / App Bundle
-- Linux：AppImage / DEB / RPM
+- Linux：AppImage / DEB / RPM，以及从源码构建的 Nix flake
 
 移动端：
 
@@ -176,5 +176,6 @@ pnpm run check:rust:dev
 | 前端集成结构 | `docs/FrontendGuide.md` |
 | Host ABI / 请求拦截 / 资源契约 | `docs/FrontendHostContract.md` |
 | 当前实现状态 | `docs/CurrentState/README.md` |
+| Linux 分发与 Nix | `docs/CurrentState/LinuxRepository.md` |
 | 扩展 API | `docs/API/README.md` |
 | Agent 架构 | `docs/AgentArchitecture.md` |
