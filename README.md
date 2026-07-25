@@ -40,6 +40,57 @@
 
 </div>
 
+<details>
+<summary><b>📦 使用包管理器安装</b>（Windows · macOS · Linux · Canary）</summary>
+
+### Windows · Scoop
+
+在 PowerShell 中运行：
+
+```powershell
+scoop bucket add Darkatse https://github.com/Darkatse/Scoop-Darkatse.git
+scoop install Darkatse/TauriTavern
+```
+
+### macOS · Homebrew
+
+TauriTavern 正在等待 Homebrew Cask 审核。审核完成前，请使用上方下载按钮获取 macOS 安装包。
+
+[查看 Homebrew 审核进度](https://github.com/Homebrew/homebrew-cask/pull/275888)
+
+### Linux
+
+**Arch Linux · AUR**
+
+使用你喜欢的 AUR 助手安装 [`tauritavern-bin`](https://aur.archlinux.org/packages/tauritavern-bin)：
+
+```sh
+yay -S tauritavern-bin
+```
+
+该软件包由 [@LX2000WASD](https://github.com/LX2000WASD) 维护，感谢他在 [TauriTavern-aur](https://github.com/LX2000WASD/TauriTavern-aur) 中的持续维护贡献！！
+
+**Debian · Ubuntu · Fedora · openSUSE · NixOS**
+
+脚本会自动识别系统并选择合适的安装方式，也支持其他已经安装 Nix 的 Linux。
+
+**稳定版**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
+```
+
+**Canary**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  | sh -s -- --channel canary
+```
+
+Canary 包含最新改进，也可能不如稳定版可靠。Windows、macOS 和移动平台可从 [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary) 下载。
+
+</details>
+
 > [!TIP]
 > **iOS 用户**：通过 [TestFlight 公开外测](https://testflight.apple.com/join/gpqAdeTm) 安装，需要 iOS 16 或更高版本。请注意 TestFlight 版本需要遵守苹果的 TestFlight 规则，存在使用限制。
 >
@@ -146,7 +197,7 @@ tauri-pilot logs --level error
 
 ## 致谢与许可
 
-基于 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 与 [Tauri](https://tauri.app/) 构建，并感谢 [Cocktail](https://github.com/Lianues/cocktail)、[Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner)、[LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox)、[MikTik](https://github.com/Darkatse/MikTik)。
+基于 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 与 [Tauri](https://tauri.app/) 构建，并感谢 [Cocktail](https://github.com/Lianues/cocktail)、[Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner)、[LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox)、[MikTik](https://github.com/Darkatse/MikTik)，以及维护 [TauriTavern AUR 软件包](https://github.com/LX2000WASD/TauriTavern-aur) 的 [@LX2000WASD](https://github.com/LX2000WASD)。
 
 以 [AGPL-3.0](LICENSE) 许可发布（与 SillyTavern 同系列许可协议）。
 

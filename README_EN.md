@@ -40,6 +40,57 @@
 
 </div>
 
+<details>
+<summary><b>📦 Install with a package manager</b> (Windows · macOS · Linux · Canary)</summary>
+
+### Windows · Scoop
+
+Run in PowerShell:
+
+```powershell
+scoop bucket add Darkatse https://github.com/Darkatse/Scoop-Darkatse.git
+scoop install Darkatse/TauriTavern
+```
+
+### macOS · Homebrew
+
+The TauriTavern Homebrew Cask is awaiting review. Until it is accepted, use the download button above for the macOS installer.
+
+[Follow the Homebrew review](https://github.com/Homebrew/homebrew-cask/pull/275888)
+
+### Linux
+
+**Arch Linux · AUR**
+
+Install [`tauritavern-bin`](https://aur.archlinux.org/packages/tauritavern-bin) with your preferred AUR helper:
+
+```sh
+yay -S tauritavern-bin
+```
+
+This package is maintained by [@LX2000WASD](https://github.com/LX2000WASD). Many thanks for the ongoing work in [TauriTavern-aur](https://github.com/LX2000WASD/TauriTavern-aur).
+
+**Debian · Ubuntu · Fedora · openSUSE · NixOS**
+
+The script detects your system and chooses the appropriate installation method. It also supports other Linux systems with Nix installed.
+
+**Stable**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
+```
+
+**Canary**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  | sh -s -- --channel canary
+```
+
+Canary includes the latest improvements and may be less reliable than Stable. Windows, macOS, and mobile builds are available from the [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary).
+
+</details>
+
 > [!TIP]
 > **iOS**: install via the [public TestFlight beta](https://testflight.apple.com/join/gpqAdeTm). It requires iOS 16 or later. TestFlight builds are subject to Apple's TestFlight rules and have usage restrictions.
 >
@@ -145,7 +196,7 @@ Issues and PRs are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first
 
 ## Acknowledgements & License
 
-Built on [SillyTavern](https://github.com/SillyTavern/SillyTavern) and [Tauri](https://tauri.app/), with thanks to [Cocktail](https://github.com/Lianues/cocktail), [Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner), [LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox), and [MikTik](https://github.com/Darkatse/MikTik).
+Built on [SillyTavern](https://github.com/SillyTavern/SillyTavern) and [Tauri](https://tauri.app/), with thanks to [Cocktail](https://github.com/Lianues/cocktail), [Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner), [LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox), [MikTik](https://github.com/Darkatse/MikTik), and [@LX2000WASD](https://github.com/LX2000WASD) for maintaining the [TauriTavern AUR package](https://github.com/LX2000WASD/TauriTavern-aur).
 
 Released under [AGPL-3.0](LICENSE) (same license family as SillyTavern).
 
