@@ -18,10 +18,19 @@ function installTauriWindow(readyPromise) {
     };
 }
 
-function rejectSoon(error) {
-    return new Promise((_, reject) => {
-        setTimeout(() => reject(error), 0);
+// Returns a controllable deferred rejection. Rejecting via a bare
+// setTimeout(0) races the dynamic import() in the tests: on slower
+// filesystems (e.g. Windows) the promise rejects before any handler is
+// attached, and the test runner fails the test on the unhandled rejection.
+function createDeferredRejection() {
+    let rejectPromise;
+    const promise = new Promise((_, reject) => {
+        rejectPromise = reject;
     });
+    return {
+        promise,
+        reject: (error) => rejectPromise(error),
+    };
 }
 
 function cleanupGlobals() {
@@ -29,25 +38,31 @@ function cleanupGlobals() {
 }
 
 test('waitForTauriMainReady preserves default fallback behavior', async () => {
-    installTauriWindow(rejectSoon(new Error('backend failed')));
+    const deferred = createDeferredRejection();
+    installTauriWindow(deferred.promise);
 
     try {
         const { waitForTauriMainReady } = await importFreshReady();
 
-        await assert.doesNotReject(waitForTauriMainReady());
+        const waiting = waitForTauriMainReady();
+        deferred.reject(new Error('backend failed'));
+        await assert.doesNotReject(waiting);
     } finally {
         cleanupGlobals();
     }
 });
 
 test('waitForTauriMainReady can fail fast for the main startup path', async () => {
-    installTauriWindow(rejectSoon(new Error('backend failed')));
+    const deferred = createDeferredRejection();
+    installTauriWindow(deferred.promise);
 
     try {
         const { waitForTauriMainReady } = await importFreshReady();
 
+        const waiting = waitForTauriMainReady({ failFast: true });
+        deferred.reject(new Error('backend failed'));
         await assert.rejects(
-            waitForTauriMainReady({ failFast: true }),
+            waiting,
             /backend failed/,
         );
     } finally {
