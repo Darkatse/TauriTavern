@@ -9,8 +9,7 @@ use crate::presentation::errors::CommandError;
 use crate::presentation::web_resources::tauri_resource_adapter::serve_dev_ipc_resource_from_app;
 
 const SILLYTAVERN_COMPAT_VERSION: &str = "1.18.0";
-const BUILD_GIT_REVISION: &str = env!("TAURITAVERN_GIT_REVISION");
-const BUILD_GIT_BRANCH: &str = env!("TAURITAVERN_GIT_BRANCH");
+use tt_domain::models::update::UpdateChannel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EventType {
@@ -55,6 +54,8 @@ pub struct VersionInfo {
     pub git_revision: Option<String>,
     #[serde(rename = "gitBranch")]
     pub git_branch: Option<String>,
+    #[serde(rename = "defaultUpdateChannel")]
+    pub default_update_channel: UpdateChannel,
 }
 
 #[tauri::command]
@@ -73,20 +74,14 @@ pub fn get_client_version() -> Result<VersionInfo, CommandError> {
         // Keep it aligned with the embedded frontend baseline to preserve plugin behavior.
         pkg_version: SILLYTAVERN_COMPAT_VERSION.to_string(),
         tauri_version: crate::product::VERSION.to_string(),
-        git_revision: normalize_optional_build_value(BUILD_GIT_REVISION),
-        git_branch: normalize_optional_build_value(BUILD_GIT_BRANCH),
+        git_revision: crate::product::optional_build_value(crate::product::GIT_REVISION)
+            .map(str::to_string),
+        git_branch: crate::product::optional_build_value(crate::product::GIT_BRANCH)
+            .map(str::to_string),
+        default_update_channel: crate::product::default_update_channel(),
     };
 
     Ok(version_info)
-}
-
-fn normalize_optional_build_value(value: &str) -> Option<String> {
-    let normalized = value.trim();
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized.to_string())
-    }
 }
 
 #[tauri::command]

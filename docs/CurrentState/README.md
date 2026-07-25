@@ -82,3 +82,7 @@
 17. `docs/CurrentState/HostResourceCaching.md`
    - Host Resource 的 opened source、representation revision、条件请求和平台 delivery 契约
    - 包含 weak ETag/Last-Modified/HEAD/Range/If-Range、Android 304 限制与持续开发约束
+
+18. `docs/CurrentState/UpdateChannels.md`
+   - Stable / Canary 更新检测与统一发布契约
+   - 包含用户时间、机器 SHA、默认渠道、产物命名和可选 AI release notes 的边界

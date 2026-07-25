@@ -81,13 +81,26 @@ test('portable builds delegate frontend ownership to the Tauri hook', async () =
     assert.match(source, /TAURITAVERN_SKIP_WEB_BUILD: "1"/);
 });
 
-test('release workflows do not build frontend assets twice', async () => {
-    const workflows = await Promise.all([
-        readFile(path.join(REPO_ROOT, '.github/workflows/desktop-auto-prerelease.yml'), 'utf8'),
-        readFile(path.join(REPO_ROOT, '.github/workflows/mobile-auto-prerelease.yml'), 'utf8'),
-    ]);
+test('Canary release workflow does not build frontend assets twice', async () => {
+    const workflow = await readFile(
+        path.join(REPO_ROOT, '.github/workflows/canary-release.yml'),
+        'utf8',
+    );
 
-    for (const workflow of workflows) {
-        assert.doesNotMatch(workflow, /run:\s+pnpm run web:build/u);
-    }
+    assert.doesNotMatch(workflow, /run:\s+pnpm run web:build/u);
+    assert.match(workflow, /date \+'%Y\.%m\.%d'/u);
+    assert.match(workflow, /--title "Canary Release \$DISPLAY_TIME"/u);
+});
+
+test('Canary release notes isolate Codex skills and keep a deterministic fallback', async () => {
+    const workflow = await readFile(
+        path.join(REPO_ROOT, '.github/workflows/canary-release.yml'),
+        'utf8',
+    );
+
+    assert.match(workflow, /cp -R \.github\/codex\/skills\/\. "\$codex_home\/skills\/"/u);
+    assert.match(workflow, /codex-home: \$\{\{ steps\.codex-home\.outputs\.path \}\}/u);
+    assert.match(workflow, /permission-profile: ":read-only"/u);
+    assert.match(workflow, /cp context\/fallback\.md release-notes\.md/u);
+    assert.doesNotMatch(workflow, /\.agents\/skills|models\.github\.ai/u);
 });

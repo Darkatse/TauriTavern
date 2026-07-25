@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use crate::models::update::UpdateChannel;
+
 fn default_ios_policy_seed() -> Option<Value> {
     if !cfg!(target_os = "ios") {
         return None;
@@ -418,6 +420,8 @@ impl TauriTavernSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TauriTavernUpdateSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<UpdateChannel>,
     pub startup_popup: StartupUpdatePopupSettings,
 }
 

@@ -1,15 +1,20 @@
 use async_trait::async_trait;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
 use tt_adapter_http::github::classify_github_rate_limit;
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
-use tt_domain::models::update::ReleaseInfo;
+use tt_domain::models::update::{ReleaseInfo, UpdateChannel};
 use tt_ports::repositories::update_repository::UpdateRepository;
 
 const GITHUB_API_LATEST_RELEASE: &str =
     "https://api.github.com/repos/Darkatse/TauriTavern/releases/latest";
+const GITHUB_API_CANARY_RELEASE: &str =
+    "https://api.github.com/repos/Darkatse/TauriTavern/releases/tags/Canary";
+const GITHUB_API_CANARY_COMMIT: &str =
+    "https://api.github.com/repos/Darkatse/TauriTavern/commits/Canary";
 
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
@@ -21,6 +26,11 @@ struct GitHubRelease {
     published_at: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct GitHubCommit {
+    sha: String,
+}
+
 pub struct GitHubUpdateRepository {
     http_clients: Arc<HttpClientPool>,
 }
@@ -29,15 +39,13 @@ impl GitHubUpdateRepository {
     pub fn new(http_clients: Arc<HttpClientPool>) -> Self {
         Self { http_clients }
     }
-}
 
-#[async_trait]
-impl UpdateRepository for GitHubUpdateRepository {
-    async fn get_latest_release(&self) -> Result<ReleaseInfo, DomainError> {
+    async fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T, DomainError> {
         let client = self.http_clients.client(HttpClientProfile::Default)?;
         let response = client
-            .get(GITHUB_API_LATEST_RELEASE)
+            .get(url)
             .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
             .send()
             .await
             .map_err(|error| {
@@ -64,15 +72,52 @@ impl UpdateRepository for GitHubUpdateRepository {
             )));
         }
 
-        let response: GitHubRelease = response.json().await.map_err(|error| {
+        response.json().await.map_err(|error| {
             DomainError::InternalError(format!("Failed to parse GitHub response: {error}"))
-        })?;
+        })
+    }
+}
 
-        let version = parse_version_from_tag(&response.tag_name);
+#[async_trait]
+impl UpdateRepository for GitHubUpdateRepository {
+    async fn get_release(&self, channel: UpdateChannel) -> Result<ReleaseInfo, DomainError> {
+        let response: GitHubRelease = self
+            .get_json(match channel {
+                UpdateChannel::Stable => GITHUB_API_LATEST_RELEASE,
+                UpdateChannel::Canary => GITHUB_API_CANARY_RELEASE,
+            })
+            .await?;
+
+        match channel {
+            UpdateChannel::Stable if response.prerelease => {
+                return Err(DomainError::InvalidData(
+                    "Stable update endpoint returned a prerelease".to_string(),
+                ));
+            }
+            UpdateChannel::Canary if !response.prerelease => {
+                return Err(DomainError::InvalidData(
+                    "Canary update endpoint returned a stable release".to_string(),
+                ));
+            }
+            _ => {}
+        }
+
+        let version =
+            (channel == UpdateChannel::Stable).then(|| parse_version_from_tag(&response.tag_name));
+        let source_revision = if channel == UpdateChannel::Canary {
+            Some(
+                self.get_json::<GitHubCommit>(GITHUB_API_CANARY_COMMIT)
+                    .await?
+                    .sha,
+            )
+        } else {
+            None
+        };
 
         Ok(ReleaseInfo {
             tag_name: response.tag_name,
             version,
+            source_revision,
             name: response.name.unwrap_or_default(),
             body: response.body.unwrap_or_default(),
             html_url: response.html_url,

@@ -211,6 +211,9 @@ impl SettingsService {
         let mut settings = self.settings_repository.load_tauritavern_settings().await?;
 
         if let Some(updates) = dto.updates {
+            if let Some(channel) = updates.channel {
+                settings.updates.channel = Some(channel);
+            }
             settings.updates.startup_popup.dismissed_release_token =
                 updates.startup_popup.dismissed_release_token;
         }

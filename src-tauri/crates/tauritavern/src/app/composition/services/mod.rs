@@ -142,6 +142,7 @@ pub(super) async fn build(
     let update_service = Arc::new(UpdateService::new(
         repositories.update_repository.clone(),
         crate::product::VERSION,
+        crate::product::optional_build_value(crate::product::GIT_REVISION),
     ));
 
     let chat_history_coordinator = Arc::new(ChatHistoryCoordinator::new(

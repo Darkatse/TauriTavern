@@ -7,10 +7,11 @@ use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
-use tt_domain::models::update::UpdateCheckResult;
+use tt_domain::models::update::{UpdateChannel, UpdateCheckResult};
 
 #[tauri::command]
 pub async fn check_for_update(
+    channel: UpdateChannel,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<UpdateCheckResult, CommandError> {
     log_command("check_for_update");
@@ -24,7 +25,7 @@ pub async fn check_for_update(
     app_state
         .services
         .update_service
-        .check_for_update()
+        .check_for_update(channel)
         .await
         .map_err(map_command_error("Failed to check for update"))
 }

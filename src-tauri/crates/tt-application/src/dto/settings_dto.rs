@@ -6,6 +6,7 @@ use tt_domain::models::settings::{
     SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings,
     UserSettings,
 };
+use tt_domain::models::update::UpdateChannel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernSettingsDto {
@@ -28,6 +29,8 @@ pub struct TauriTavernSettingsDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernUpdateSettingsDto {
+    #[serde(default)]
+    pub channel: Option<UpdateChannel>,
     pub startup_popup: StartupUpdatePopupSettingsDto,
 }
 
@@ -361,6 +364,7 @@ impl From<ModelSettings> for ModelSettingsDto {
 impl From<TauriTavernUpdateSettings> for TauriTavernUpdateSettingsDto {
     fn from(settings: TauriTavernUpdateSettings) -> Self {
         Self {
+            channel: settings.channel,
             startup_popup: StartupUpdatePopupSettingsDto::from(settings.startup_popup),
         }
     }

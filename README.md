@@ -18,7 +18,7 @@
 [![Telegram](https://img.shields.io/badge/Telegram-%E7%BE%A4%E7%BB%84-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/TauriTavern)
 [![Discord](https://img.shields.io/badge/Discord-%E7%A4%BE%E5%8C%BA-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/hn57aFGe8h)
 [![Issues](https://img.shields.io/github/issues/Darkatse/TauriTavern?style=flat-square&logo=github)](https://github.com/Darkatse/TauriTavern/issues)
-[![Build](https://img.shields.io/github/actions/workflow/status/Darkatse/TauriTavern/desktop-auto-prerelease.yml?style=flat-square&logo=githubactions&label=build)](https://github.com/Darkatse/TauriTavern/actions/workflows/desktop-auto-prerelease.yml)
+[![Canary](https://img.shields.io/github/actions/workflow/status/Darkatse/TauriTavern/canary-release.yml?style=flat-square&logo=githubactions&label=canary)](https://github.com/Darkatse/TauriTavern/actions/workflows/canary-release.yml)
 
 </div>
 

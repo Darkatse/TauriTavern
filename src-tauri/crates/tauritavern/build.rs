@@ -16,6 +16,8 @@ fn main() {
     println!("cargo:rerun-if-changed=../../../.git/refs");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
     println!("cargo:rerun-if-env-changed=GITHUB_SHA");
+    println!("cargo:rerun-if-env-changed=TAURITAVERN_BUILD_BRANCH");
+    println!("cargo:rerun-if-env-changed=TAURITAVERN_BUILD_REVISION");
 
     emit_git_build_metadata();
 
@@ -33,14 +35,16 @@ fn needs_embedded_resources() -> bool {
 
 fn emit_git_build_metadata() {
     let git_branch = normalize_git_branch(
-        std::env::var("GITHUB_REF_NAME")
+        std::env::var("TAURITAVERN_BUILD_BRANCH")
             .ok()
+            .or_else(|| std::env::var("GITHUB_REF_NAME").ok())
             .or_else(|| run_git_command(&["rev-parse", "--abbrev-ref", "HEAD"])),
     );
 
     let git_revision = normalize_git_value(
-        std::env::var("GITHUB_SHA")
+        std::env::var("TAURITAVERN_BUILD_REVISION")
             .ok()
+            .or_else(|| std::env::var("GITHUB_SHA").ok())
             .map(|sha| shorten_revision(&sha))
             .or_else(|| run_git_command(&["rev-parse", "--short=12", "HEAD"])),
     );

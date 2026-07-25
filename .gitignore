@@ -12,6 +12,7 @@ dist
 dist-ssr
 .cache
 *.local
+.playwright-mcp
 
 # Editor directories and files
 .vscode/*

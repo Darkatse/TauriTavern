@@ -1,29 +1,68 @@
 use std::sync::Arc;
 
 use tt_domain::errors::DomainError;
-use tt_domain::models::update::UpdateCheckResult;
+use tt_domain::models::update::{UpdateChannel, UpdateCheckResult};
 use tt_ports::repositories::update_repository::UpdateRepository;
 
 pub struct UpdateService {
     repository: Arc<dyn UpdateRepository>,
     current_version: String,
+    current_revision: Option<String>,
 }
 
 impl UpdateService {
-    pub fn new(repository: Arc<dyn UpdateRepository>, current_version: impl Into<String>) -> Self {
+    pub fn new(
+        repository: Arc<dyn UpdateRepository>,
+        current_version: impl Into<String>,
+        current_revision: Option<impl Into<String>>,
+    ) -> Self {
         Self {
             repository,
             current_version: current_version.into(),
+            current_revision: current_revision.map(Into::into),
         }
     }
 
-    pub async fn check_for_update(&self) -> Result<UpdateCheckResult, DomainError> {
-        let latest_release = self.repository.get_latest_release().await?;
-        let has_update = is_newer_version(&self.current_version, &latest_release.version)?;
+    pub async fn check_for_update(
+        &self,
+        channel: UpdateChannel,
+    ) -> Result<UpdateCheckResult, DomainError> {
+        let latest_release = self.repository.get_release(channel).await?;
+        let (has_update, release_token) = match channel {
+            UpdateChannel::Stable => {
+                let has_update = is_newer_version(
+                    &self.current_version,
+                    latest_release
+                        .version
+                        .as_deref()
+                        .ok_or_else(|| missing_release_field(channel, "version"))?,
+                )?;
+                let token = has_update.then(|| format!("stable:{}", latest_release.tag_name));
+                (has_update, token)
+            }
+            UpdateChannel::Canary => {
+                let current_revision = parse_revision(
+                    self.current_revision
+                        .as_deref()
+                        .ok_or_else(missing_current_revision)?,
+                )?;
+                let release_revision = parse_revision(
+                    latest_release
+                        .source_revision
+                        .as_deref()
+                        .ok_or_else(|| missing_release_field(channel, "source revision"))?,
+                )?;
+                let has_update = current_revision != release_revision;
+                let token = has_update.then(|| format!("canary:{release_revision}"));
+                (has_update, token)
+            }
+        };
 
         Ok(UpdateCheckResult {
             has_update,
             current_version: self.current_version.clone(),
+            channel,
+            release_token,
             latest_release: if has_update {
                 Some(latest_release)
             } else {
@@ -31,6 +70,26 @@ impl UpdateService {
             },
         })
     }
+}
+
+fn parse_revision(value: &str) -> Result<&str, DomainError> {
+    let value = value.trim();
+    if !(12..=40).contains(&value.len())
+        || !value.chars().all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(DomainError::InvalidData(format!(
+            "Invalid Git revision: {value}"
+        )));
+    }
+    Ok(&value[..12])
+}
+
+fn missing_current_revision() -> DomainError {
+    DomainError::InvalidData("Current build Git revision is unavailable".to_string())
+}
+
+fn missing_release_field(channel: UpdateChannel, field: &str) -> DomainError {
+    DomainError::InvalidData(format!("{channel:?} release is missing {field}"))
 }
 
 fn is_newer_version(local: &str, remote: &str) -> Result<bool, DomainError> {
@@ -77,11 +136,11 @@ fn invalid_version(value: &str) -> DomainError {
 
 #[cfg(test)]
 mod tests {
-    use super::{UpdateService, is_newer_version};
+    use super::{UpdateService, is_newer_version, parse_revision};
     use async_trait::async_trait;
     use std::sync::Arc;
     use tt_domain::errors::DomainError;
-    use tt_domain::models::update::ReleaseInfo;
+    use tt_domain::models::update::{ReleaseInfo, UpdateChannel};
     use tt_ports::repositories::update_repository::UpdateRepository;
 
     struct FakeUpdateRepository {
@@ -90,7 +149,7 @@ mod tests {
 
     #[async_trait]
     impl UpdateRepository for FakeUpdateRepository {
-        async fn get_latest_release(&self) -> Result<ReleaseInfo, DomainError> {
+        async fn get_release(&self, _channel: UpdateChannel) -> Result<ReleaseInfo, DomainError> {
             Ok(self.latest_release.clone())
         }
     }
@@ -132,28 +191,71 @@ mod tests {
         assert!(is_newer_version("1.2.0", "latest").is_err());
     }
 
+    #[test]
+    fn revision_identity_is_exactly_sha12() {
+        assert_eq!(
+            parse_revision("34b126db7e23490330ef4a8ea622d36c70bc831c").unwrap(),
+            "34b126db7e23"
+        );
+        assert!(parse_revision("34b126d").is_err());
+        assert!(parse_revision("not-a-sha12").is_err());
+    }
+
     #[tokio::test]
     async fn check_for_update_uses_injected_product_version() {
         let repository = Arc::new(FakeUpdateRepository {
             latest_release: release("2.1.1"),
         });
-        let service = UpdateService::new(repository, "2.1.1");
+        let service = UpdateService::new(repository, "2.1.1", Some("34b126db7e23"));
 
-        let result = service.check_for_update().await.unwrap();
+        let result = service
+            .check_for_update(UpdateChannel::Stable)
+            .await
+            .unwrap();
 
         assert_eq!(result.current_version, "2.1.1");
         assert!(!result.has_update);
         assert!(result.latest_release.is_none());
     }
 
+    #[tokio::test]
+    async fn canary_uses_revision_instead_of_version() {
+        let repository = Arc::new(FakeUpdateRepository {
+            latest_release: canary_release("44b126db7e23490330ef4a8ea622d36c70bc831c"),
+        });
+        let service = UpdateService::new(repository, "2.1.1", Some("34b126db7e23"));
+
+        let result = service
+            .check_for_update(UpdateChannel::Canary)
+            .await
+            .unwrap();
+
+        assert!(result.has_update);
+        assert_eq!(result.release_token.as_deref(), Some("canary:44b126db7e23"));
+    }
+
     fn release(version: &str) -> ReleaseInfo {
         ReleaseInfo {
             tag_name: format!("v{version}"),
-            version: version.to_string(),
+            version: Some(version.to_string()),
+            source_revision: None,
             name: format!("v{version}"),
             body: String::new(),
             html_url: String::new(),
             prerelease: false,
+            published_at: String::new(),
+        }
+    }
+
+    fn canary_release(revision: &str) -> ReleaseInfo {
+        ReleaseInfo {
+            tag_name: "Canary".to_string(),
+            version: None,
+            source_revision: Some(revision.to_string()),
+            name: "Canary Release 2026.07.24".to_string(),
+            body: String::new(),
+            html_url: String::new(),
+            prerelease: true,
             published_at: String::new(),
         }
     }

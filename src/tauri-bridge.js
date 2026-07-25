@@ -167,12 +167,13 @@ export async function getClientVersion() {
             tauriVersion: version,
             gitRevision: null,
             gitBranch: null,
+            defaultUpdateChannel: 'stable',
         };
     }
 }
 
-export async function checkForUpdate() {
-    return invokeWithHostNormalization('check_for_update');
+export async function checkForUpdate(channel) {
+    return invokeWithHostNormalization('check_for_update', { channel });
 }
 
 export async function getTauriTavernSettings() {
