@@ -87,6 +87,18 @@ curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/i
   | sh -s -- --channel canary
 ```
 
+**Nix / NixOS**
+
+If Nix is already installed, add TauriTavern directly to your user profile:
+
+```sh
+# Stable
+nix profile add github:Darkatse/TauriTavern#tauritavern
+
+# Canary
+nix profile add github:Darkatse/TauriTavern/Canary#canary
+```
+
 Canary includes the latest improvements and may be less reliable than Stable. Windows, macOS, and mobile builds are available from the [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary).
 
 </details>

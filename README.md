@@ -68,7 +68,7 @@ TauriTavern 正在等待 Homebrew Cask 审核。审核完成前，请使用上�
 yay -S tauritavern-bin
 ```
 
-该软件包由 [@LX2000WASD](https://github.com/LX2000WASD) 维护，感谢他在 [TauriTavern-aur](https://github.com/LX2000WASD/TauriTavern-aur) 中的持续维护贡献！！
+该软件包由 [@LX2000WASD](https://github.com/LX2000WASD) 维护，感谢他在 [TauriTavern-aur](https://github.com/LX2000WASD/TauriTavern-aur) 中的持续维护贡献！
 
 **Debian · Ubuntu · Fedora · openSUSE · NixOS**
 
@@ -85,6 +85,18 @@ curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/i
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
   | sh -s -- --channel canary
+```
+
+**Nix / NixOS**
+
+已经安装 Nix 的用户可以直接加入当前用户 profile：
+
+```sh
+# 稳定版
+nix profile add github:Darkatse/TauriTavern#tauritavern
+
+# Canary
+nix profile add github:Darkatse/TauriTavern/Canary#canary
 ```
 
 Canary 包含最新改进，也可能不如稳定版可靠。Windows、macOS 和移动平台可从 [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary) 下载。
