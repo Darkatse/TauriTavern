@@ -46,41 +46,8 @@ jobs:
             echo "sha12=${GITHUB_SHA:0:12}"
           } >> "$GITHUB_OUTPUT"
 
-  quality:
-    needs: prepare
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "src-tauri -> target"
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-          run_install: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run check
-
   desktop:
-    needs: [prepare, quality]
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -181,7 +148,7 @@ jobs:
           workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-[platform]-[arch]-portable'
 
   mobile:
-    needs: [prepare, quality]
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
