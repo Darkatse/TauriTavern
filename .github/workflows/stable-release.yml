@@ -180,6 +180,54 @@ jobs:
           path: portable/*
           if-no-files-found: error
 
+  flatpak:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      TAURITAVERN_BUILD_BRANCH: main
+      TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
+      TAURITAVERN_FLATPAK_USER: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Flatpak build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            flatpak flatpak-builder zstd
+          flatpak --user remote-add \
+            --if-not-exists \
+            flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Cache Flatpak SDK and build inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/flatpak
+            .flatpak-builder/downloads
+            .flatpak-builder/ccache
+          key: flatpak-x86_64-${{ hashFiles('packaging/flatpak/com.tauritavern.client.yml', 'packaging/flatpak/*-sources.json', 'pnpm-lock.yaml', 'src-tauri/Cargo.lock') }}
+          restore-keys: |
+            flatpak-x86_64-
+
+      - name: Build Flatpak application tree
+        run: ./packaging/flatpak/build.sh
+
+      - name: Archive Flatpak application tree
+        run: tar --zstd --create --file flatpak-build.tar.zst .flatpak-build
+
+      - name: Upload Flatpak build tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-build-${{ needs.prepare.outputs.version }}-x86_64
+          path: flatpak-build.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
   mobile:
     needs: prepare
     strategy:
@@ -476,6 +524,129 @@ jobs:
           curl -fsSL \
             https://packages.tauritavern.com/rpm/opensuse/16.0/x86_64/repodata/repomd.xml \
             >/dev/null
+
+  publish-flatpak-repository:
+    needs: [prepare, flatpak, publish-release]
+    continue-on-error: true
+    concurrency:
+      group: tauritavern-stable-flatpak-repository
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.FLATPAK_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.FLATPAK_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: "true"
+      R2_ENDPOINT: https://feb4df7b9167cb2a5c75b327584225b5.r2.cloudflarestorage.com
+      FLATPAK_R2_BUCKET: tauritavern-flatpak
+      FLATPAK_REPOSITORY_URL: https://flatpak.tauritavern.com
+      FLATPAK_BUILD_DIR: .flatpak-build
+      FLATPAK_ARCH: x86_64
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+      LINUX_REPOSITORY_KEY_FPR: C75284E78972F19A0DDD88C487F5B8530682A857
+      LINUX_REPOSITORY_SIGNING_FPR: D609D0B174E0073BB3980A1BEDC6CEF924B6C529
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-build-${{ needs.prepare.outputs.version }}-x86_64
+          path: flatpak-artifact
+
+      - name: Install Flatpak repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            awscli flatpak gnupg2 jq ostree zstd
+
+      - name: Restore Flatpak application tree
+        run: |
+          tar \
+            --zstd \
+            --extract \
+            --file flatpak-artifact/flatpak-build.tar.zst \
+            --no-same-owner
+          test -x .flatpak-build/files/bin/tauritavern
+          test -f .flatpak-build/metadata
+
+      - name: Import repository signing subkey
+        shell: bash
+        env:
+          GPG_PRIVATE_KEY_BASE64: ${{ secrets.LINUX_REPOSITORY_GPG_PRIVATE_KEY_BASE64 }}
+          GPG_PASSPHRASE: ${{ secrets.LINUX_REPOSITORY_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          : "${GPG_PRIVATE_KEY_BASE64:?Missing LINUX_REPOSITORY_GPG_PRIVATE_KEY_BASE64 secret}"
+          : "${GPG_PASSPHRASE:?Missing LINUX_REPOSITORY_GPG_PASSPHRASE secret}"
+          key_file="$RUNNER_TEMP/tauritavern-flatpak-private-key.asc"
+          umask 077
+          printf '%s' "$GPG_PRIVATE_KEY_BASE64" | base64 --decode > "$key_file"
+          gpg --batch --import "$key_file"
+
+          keygrip=$(
+            gpg --batch --with-colons --with-keygrip --with-subkey-fingerprint \
+              --list-secret-keys "$LINUX_REPOSITORY_SIGNING_FPR" \
+              | awk -F: -v expected="$LINUX_REPOSITORY_SIGNING_FPR" \
+                  '$1 == "fpr" { match_key = ($10 == expected); next }
+                   match_key && $1 == "grp" { print $10; exit }'
+          )
+          test -n "$keygrip"
+
+          gnupg_home=$(gpgconf --list-dirs homedir)
+          agent_config="$gnupg_home/gpg-agent.conf"
+          touch "$agent_config"
+          grep -Fqx 'allow-preset-passphrase' "$agent_config" \
+            || printf '%s\n' 'allow-preset-passphrase' >> "$agent_config"
+          gpgconf --kill gpg-agent
+
+          preset=
+          for candidate in \
+            /usr/lib/gnupg2/gpg-preset-passphrase \
+            /usr/lib/gnupg/gpg-preset-passphrase; do
+            if test -x "$candidate"; then
+              preset=$candidate
+              break
+            fi
+          done
+          test -n "$preset"
+          GNUPGHOME="$gnupg_home" \
+            "$preset" --preset --passphrase "$GPG_PASSPHRASE" "$keygrip"
+          unset GPG_PASSPHRASE
+
+      - name: Publish signed Stable Flatpak repository
+        run: ./distribution/flatpak/publish.sh
+
+      - name: Verify public Flatpak repository
+        run: |
+          set -euo pipefail
+          manifest=$(
+            curl -fsSL \
+              https://flatpak.tauritavern.com/repository-manifest.json
+          )
+          expected_commit=$(jq -r '.flatpak_commit' <<< "$manifest")
+          test "$(jq -r '.version' <<< "$manifest")" = "$RELEASE_VERSION"
+          test "$(jq -r '.commit' <<< "$manifest")" = "$RELEASE_COMMIT"
+
+          export FLATPAK_USER_DIR="$RUNNER_TEMP/flatpak-public-verify"
+          flatpak --user remote-add \
+            --if-not-exists \
+            tauritavern \
+            https://flatpak.tauritavern.com/tauritavern.flatpakrepo
+          actual_commit=$(
+            flatpak --user remote-info \
+              --arch=x86_64 \
+              --show-commit \
+              tauritavern \
+              com.tauritavern.client
+          )
+          test "$actual_commit" = "$expected_commit"
 
   publish-nix-cache:
     needs: [prepare, publish-release]
