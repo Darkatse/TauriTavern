@@ -12,6 +12,7 @@ import {
 const canarySource = readFileSync('.github/workflows/canary-release.yml', 'utf8');
 const stableSource = readFileSync('.github/workflows/stable-release.yml', 'utf8');
 const testflightSource = readFileSync('.github/workflows/public-testflight.yml', 'utf8');
+const mobileHttpScript = readFileSync('scripts/ci/configure-mobile-http.sh', 'utf8');
 const testflightSkill = readFileSync('.github/codex/skills/tauritavern-testflight-notes/SKILL.md', 'utf8');
 const humanizerSkill = readFileSync('.github/codex/skills/tauritavern-release-humanizer/SKILL.md', 'utf8');
 const canary = YAML.parse(canarySource);
@@ -36,6 +37,29 @@ test('Stable and Canary preserve the ordinary IPA and build a separate TestFligh
         assert.match(testflightBuild.with.workflowArtifactNamePattern, /-TestFlight-\[bundle\]$/u, name);
         assert.match(source, /"bundleVersion":"%s"/u, name);
     }
+});
+
+test('standard mobile artifacts allow HTTP without relaxing the TestFlight IPA', () => {
+    for (const [name, workflow] of [
+        ['Canary', canary],
+        ['Stable', stable],
+    ]) {
+        const steps = workflow.jobs.mobile.steps;
+        const enableIndex = steps.findIndex((step) => step.name === 'Enable HTTP access for standard mobile bundle');
+        const standardIndex = steps.findIndex((step) => step.name === 'Build mobile bundle');
+        const restoreIndex = steps.findIndex((step) => step.name === 'Restore iOS transport security for TestFlight');
+        const testflightIndex = steps.findIndex((step) => step.name === 'Build public TestFlight IPA');
+
+        assert.equal(steps[enableIndex].run, './scripts/ci/configure-mobile-http.sh enable "${{ matrix.mobile }}"', name);
+        assert.equal(steps[restoreIndex].if, "matrix.mobile == 'ios'", name);
+        assert.equal(steps[restoreIndex].run, './scripts/ci/configure-mobile-http.sh disable ios', name);
+        assert.equal(enableIndex < standardIndex, true, name);
+        assert.equal(standardIndex < restoreIndex && restoreIndex < testflightIndex, true, name);
+    }
+
+    assert.match(mobileHttpScript, /usesCleartextTraffic/u);
+    assert.match(mobileHttpScript, /MIXED_CONTENT_ALWAYS_ALLOW/u);
+    assert.match(mobileHttpScript, /NSAllowsArbitraryLoadsInWebContent/u);
 });
 
 test('Stable and Canary target only their existing public TestFlight groups', () => {
