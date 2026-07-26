@@ -114,7 +114,7 @@ impl FileSkillRepository {
         let text = serde_json::to_string_pretty(index).map_err(|error| {
             DomainError::InvalidData(format!("Failed to serialize Skill index: {error}"))
         })?;
-        let temp = unique_temp_path(&path, "skills.json");
+        let temp = unique_temp_path(&path);
         tokio_fs::write(&temp, text).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to write temporary Skill index '{}': {}",

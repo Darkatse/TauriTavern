@@ -92,7 +92,7 @@ async fn update_store_json_entry(dir: &Path, key: &str, value: Value) -> Result<
 
     merge_json_value(&mut current, value);
 
-    let temp = unique_temp_path(&target, "store.json");
+    let temp = unique_temp_path(&target);
     let bytes = serde_json::to_vec_pretty(&current).map_err(|error| {
         DomainError::InvalidData(format!("Failed to serialize chat store JSON: {}", error))
     })?;
@@ -261,7 +261,7 @@ impl FileChatRepository {
         })?;
 
         let target = dir.join(format!("{}.json", key));
-        let temp = unique_temp_path(&target, "store.json");
+        let temp = unique_temp_path(&target);
         let bytes = serde_json::to_vec_pretty(&value).map_err(|error| {
             DomainError::InvalidData(format!("Failed to serialize chat store JSON: {}", error))
         })?;
@@ -313,7 +313,7 @@ impl FileChatRepository {
         })?;
 
         let target = dir.join(format!("{}.json", key));
-        let temp = unique_temp_path(&target, "store.json");
+        let temp = unique_temp_path(&target);
         let bytes = serde_json::to_vec_pretty(&value).map_err(|error| {
             DomainError::InvalidData(format!("Failed to serialize chat store JSON: {}", error))
         })?;

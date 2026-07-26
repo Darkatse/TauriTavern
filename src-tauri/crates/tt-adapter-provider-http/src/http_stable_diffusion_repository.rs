@@ -1133,7 +1133,7 @@ async fn comfy_save_workflow(dir: &Path, body: &Value) -> Result<SdRouteResponse
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?;
     }
-    let temp_path = unique_temp_path(&dest, "workflow.json");
+    let temp_path = unique_temp_path(&dest);
     fs::write(&temp_path, workflow.as_bytes())
         .await
         .map_err(|error| DomainError::InternalError(error.to_string()))?;

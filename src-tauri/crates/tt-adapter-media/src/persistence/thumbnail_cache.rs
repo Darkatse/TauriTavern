@@ -340,8 +340,8 @@ fn open_fresh_thumbnail_sync(
     open_fresh_thumbnail_unlocked(thumbnail_path, cache_identity)
 }
 
-fn write_temp_file(target_path: &Path, label: &str, bytes: &[u8]) -> Result<PathBuf, DomainError> {
-    let temp_path = unique_temp_path(target_path, label);
+fn write_temp_file(target_path: &Path, bytes: &[u8]) -> Result<PathBuf, DomainError> {
+    let temp_path = unique_temp_path(target_path);
     let mut temp_file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -445,7 +445,7 @@ fn generate_thumbnail_sync(
         })?;
     }
 
-    let thumbnail_temp_path = write_temp_file(thumbnail_path, "thumbnail", &encoded)?;
+    let thumbnail_temp_path = write_temp_file(thumbnail_path, &encoded)?;
 
     let _commit = THUMBNAIL_COMMIT_LOCK.lock().map_err(|_| {
         DomainError::InternalError("Thumbnail cache commit lock is poisoned".to_string())

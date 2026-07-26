@@ -167,7 +167,7 @@ impl FileChatRepository {
     }
 
     pub(super) fn temp_payload_path(path: &Path) -> PathBuf {
-        unique_temp_path(path, "chat.jsonl")
+        unique_temp_path(path)
     }
 
     pub(super) fn normalize_jsonl_file_stem(file_name: &str) -> Result<String, DomainError> {

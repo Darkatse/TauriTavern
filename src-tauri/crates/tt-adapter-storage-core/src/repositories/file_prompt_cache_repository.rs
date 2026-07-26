@@ -90,7 +90,7 @@ impl PromptCacheRepository for FilePromptCacheRepository {
             ))
         })?;
 
-        let temp_path = unique_temp_path(&path, "prompt-cache.json");
+        let temp_path = unique_temp_path(&path);
         fs::write(&temp_path, json).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to write prompt cache snapshot {:?}: {}",

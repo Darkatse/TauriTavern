@@ -219,16 +219,10 @@ pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, Domai
 
 /// Generate a unique temporary file path adjacent to `target_path`.
 ///
-/// The returned file name is based on the target file name (or `fallback_file_name` if missing)
-/// and includes a random UUID to avoid collisions under concurrent writes.
-pub fn unique_temp_path(target_path: &Path, fallback_file_name: &str) -> PathBuf {
-    let file_name = target_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or(fallback_file_name);
-
-    target_path.with_file_name(format!("{}.{}.tmp", file_name, Uuid::new_v4()))
+/// The bounded, target-independent file name remains valid even when the target
+/// already uses the full file-system component length.
+pub fn unique_temp_path(target_path: &Path) -> PathBuf {
+    target_path.with_file_name(format!(".tauritavern-{}.tmp", Uuid::new_v4().simple()))
 }
 
 async fn optional_metadata(path: &Path) -> Result<Option<std::fs::Metadata>, DomainError> {
@@ -615,7 +609,7 @@ pub fn write_json_file_sync<T: Serialize + ?Sized>(
         DomainError::InvalidData(format!("Failed to serialize to JSON: {}", e))
     })?;
 
-    let temp_path = unique_temp_path(path, "data.json");
+    let temp_path = unique_temp_path(path);
     std::fs::write(&temp_path, json.as_bytes()).map_err(|e| {
         tracing::error!(
             "Failed to write JSON temp file {:?} -> {:?}: {}",
@@ -657,7 +651,7 @@ pub async fn write_json_file<T: Serialize + ?Sized>(
     // Write to a unique temp file adjacent to the target, then replace the target.
     //
     // This avoids truncating the target file if the process is interrupted mid-write.
-    let temp_path = unique_temp_path(path, "data.json");
+    let temp_path = unique_temp_path(path);
     tokio_fs::write(&temp_path, json.as_bytes())
         .await
         .map_err(|e| {
@@ -749,18 +743,19 @@ mod tests {
     #[test]
     fn unique_temp_path_is_unique_and_adjacent() {
         let root = unique_temp_root();
-        let target = root.join("settings.json");
+        let target = root.join("a".repeat(255));
 
-        let a = unique_temp_path(&target, "fallback.json");
-        let b = unique_temp_path(&target, "fallback.json");
+        let a = unique_temp_path(&target);
+        let b = unique_temp_path(&target);
 
         assert_ne!(a, b);
         assert_eq!(a.parent(), target.parent());
         assert_eq!(b.parent(), target.parent());
 
         let a_name = a.file_name().and_then(|value| value.to_str()).unwrap_or("");
-        assert!(a_name.starts_with("settings.json."));
+        assert!(a_name.starts_with(".tauritavern-"));
         assert!(a_name.ends_with(".tmp"));
+        assert!(a_name.len() <= 255);
     }
 
     #[tokio::test]

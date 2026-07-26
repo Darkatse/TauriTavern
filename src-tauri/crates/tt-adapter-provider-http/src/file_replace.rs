@@ -4,14 +4,8 @@ use std::path::{Path, PathBuf};
 use tt_domain::errors::DomainError;
 use uuid::Uuid;
 
-pub(crate) fn unique_temp_path(target_path: &Path, fallback_file_name: &str) -> PathBuf {
-    let file_name = target_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or(fallback_file_name);
-
-    target_path.with_file_name(format!("{}.{}.tmp", file_name, Uuid::new_v4()))
+pub(crate) fn unique_temp_path(target_path: &Path) -> PathBuf {
+    target_path.with_file_name(format!(".tauritavern-{}.tmp", Uuid::new_v4().simple()))
 }
 
 async fn optional_metadata(path: &Path) -> Result<Option<std::fs::Metadata>, DomainError> {
@@ -136,18 +130,19 @@ mod tests {
     #[test]
     fn unique_temp_path_is_unique_and_adjacent() {
         let root = temp_root("unique");
-        let target = root.join("workflow.json");
+        let target = root.join("a".repeat(255));
 
-        let a = unique_temp_path(&target, "fallback.json");
-        let b = unique_temp_path(&target, "fallback.json");
+        let a = unique_temp_path(&target);
+        let b = unique_temp_path(&target);
 
         assert_ne!(a, b);
         assert_eq!(a.parent(), target.parent());
         assert_eq!(b.parent(), target.parent());
 
         let a_name = a.file_name().and_then(|value| value.to_str()).unwrap_or("");
-        assert!(a_name.starts_with("workflow.json."));
+        assert!(a_name.starts_with(".tauritavern-"));
         assert!(a_name.ends_with(".tmp"));
+        assert!(a_name.len() <= 255);
     }
 
     #[tokio::test]

@@ -48,7 +48,7 @@ impl FileCharacterRepository {
         file_path: &Path,
         image_data: &[u8],
     ) -> Result<(), DomainError> {
-        let temp_path = unique_temp_path(file_path, "character.png");
+        let temp_path = unique_temp_path(file_path);
         fs::write(&temp_path, image_data).await.map_err(|error| {
             tracing::error!(
                 "Failed to write character temp file {}: {}",

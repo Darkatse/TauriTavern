@@ -490,7 +490,7 @@ impl FileCharacterRepository {
     ) -> Result<PathBuf, DomainError> {
         let image_data = write_character_data_to_png(base_image_data, card_json)?;
         let target_path = self.get_character_path(file_stem);
-        let temp_path = unique_temp_path(&target_path, "character.png");
+        let temp_path = unique_temp_path(&target_path);
 
         fs::write(&temp_path, image_data).await.map_err(|e| {
             DomainError::InternalError(format!(

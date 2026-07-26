@@ -347,7 +347,7 @@ impl FileCharacterRepository {
             })?;
             let updated_png = write_character_data_to_png(&file_data, &updated_json)?;
 
-            let temp_path = unique_temp_path(path, "character.png");
+            let temp_path = unique_temp_path(path);
             fs::write(&temp_path, updated_png).await.map_err(|error| {
                 DomainError::InternalError(format!(
                     "Failed to write repaired character temp file '{}': {}",

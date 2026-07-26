@@ -294,7 +294,7 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
             ))
         })?;
 
-        let temp = unique_temp_path(&path, "extension-store.json");
+        let temp = unique_temp_path(&path);
         fs::write(&temp, &bytes).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to write extension store temp file {}: {}",
@@ -336,7 +336,7 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
             ))
         })?;
 
-        let temp = unique_temp_path(&path, "extension-store.json");
+        let temp = unique_temp_path(&path);
         fs::write(&temp, &bytes).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to write extension store temp file {}: {}",
@@ -516,7 +516,7 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
             })?;
         }
 
-        let temp = unique_temp_path(&path, "extension-store.blob");
+        let temp = unique_temp_path(&path);
         fs::write(&temp, &bytes).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to write extension store temp file {}: {}",

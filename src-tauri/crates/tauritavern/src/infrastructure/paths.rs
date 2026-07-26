@@ -627,7 +627,7 @@ fn write_runtime_config_sync(
         std::fs::create_dir_all(parent)?;
     }
 
-    let temp_path = unique_temp_path(path, "tauritavern-runtime.json");
+    let temp_path = unique_temp_path(path);
     std::fs::write(&temp_path, &bytes)?;
     replace_file_with_fallback_sync(&temp_path, path)
         .map_err(|error| Box::new(io::Error::other(error.to_string())) as Box<dyn Error>)?;

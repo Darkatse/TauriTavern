@@ -96,7 +96,7 @@ impl WorkspaceRepository for FileAgentRepository {
         let _guard = self.acquire_workspace_write_lock(&target).await;
         ensure_target_is_not_directory(&target, path).await?;
         verify_workspace_write_guard(&target, path, guard).await?;
-        let temp_path = unique_temp_path(&target, "workspace.txt");
+        let temp_path = unique_temp_path(&target);
         fs::write(&temp_path, text.as_bytes())
             .await
             .map_err(|error| {
@@ -129,7 +129,7 @@ impl WorkspaceRepository for FileAgentRepository {
             }
             None => text.to_string(),
         };
-        let temp_path = unique_temp_path(&target, "workspace.txt");
+        let temp_path = unique_temp_path(&target);
         fs::write(&temp_path, updated.as_bytes())
             .await
             .map_err(|error| {

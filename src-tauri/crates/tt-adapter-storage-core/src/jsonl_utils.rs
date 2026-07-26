@@ -103,7 +103,7 @@ pub async fn write_jsonl_file(path: &Path, objects: &[Value]) -> Result<(), Doma
 /// Uses a temporary file and then replaces the target. On some storage backends (notably Android
 /// external app storage), file replacement may fall back to copy/remove if rename is unreliable.
 pub async fn write_jsonl_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
-    let temp_path = unique_temp_path(path, "data.jsonl");
+    let temp_path = unique_temp_path(path);
 
     if let Some(parent) = path.parent()
         && !parent.exists()

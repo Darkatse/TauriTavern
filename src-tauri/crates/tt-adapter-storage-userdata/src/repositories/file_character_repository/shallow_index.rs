@@ -259,8 +259,7 @@ impl FileCharacterRepository {
             })?;
         }
 
-        let temp_path =
-            unique_temp_path(&self.shallow_index_path, "character_shallow_index_v1.json");
+        let temp_path = unique_temp_path(&self.shallow_index_path);
         fs::write(&temp_path, bytes).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to write character shallow index temp file '{}': {}",

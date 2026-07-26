@@ -165,7 +165,7 @@ impl ChatAliasStore {
             DomainError::InternalError(format!("Failed to serialize chat aliases: {}", error))
         })?;
 
-        let temp_path = unique_temp_path(&self.path, "chat_aliases_v1.json");
+        let temp_path = unique_temp_path(&self.path);
         fs::write(&temp_path, bytes).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to write chat alias temp file {:?}: {}",
