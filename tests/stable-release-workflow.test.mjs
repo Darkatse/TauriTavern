@@ -13,7 +13,7 @@ test('stable release workflow starts from a published release or an explicit tag
 });
 
 test('stable release workflow preserves manually written release notes', () => {
-    assert.doesNotMatch(workflowSource, /codex|release edit|notes-file/i);
+    assert.doesNotMatch(JSON.stringify(workflow.jobs['publish-release']), /codex|release edit|notes-file/i);
     assert.match(workflowSource, /Upload assets without changing release notes/);
 });
 

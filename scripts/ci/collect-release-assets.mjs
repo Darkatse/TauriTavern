@@ -13,6 +13,7 @@ const RELEASE_ASSETS = new Map([
     ['darwin-aarch64-dmg', ['macos-arm64.dmg', '.dmg']],
     ['darwin-x64-dmg', ['macos-x64.dmg', '.dmg']],
     ['ios-arm64-ipa', ['ios-arm64.ipa', '.ipa']],
+    ['ios-arm64-TestFlight-ipa', ['ios-arm64-TestFlight.ipa', '.ipa']],
     ['linux-aarch64-rpm', ['linux-arm64.rpm', '.rpm']],
     ['linux-amd64-appimage', ['linux-x64.AppImage', '.AppImage']],
     ['linux-amd64-deb', ['linux-x64.deb', '.deb']],

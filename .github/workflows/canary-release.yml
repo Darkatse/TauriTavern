@@ -191,6 +191,9 @@ jobs:
             platform: macos-latest
             args: --verbose
 
+    concurrency:
+      group: ${{ matrix.mobile == 'ios' && 'tauritavern-public-testflight-build' || format('{0}-{1}-{2}', github.workflow, github.run_id, matrix.mobile) }}
+      cancel-in-progress: false
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -244,6 +247,21 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Prepare public TestFlight build identity
+        if: matrix.mobile == 'ios'
+        id: testflight-config
+        shell: bash
+        run: |
+          set -euo pipefail
+          epoch_minutes=$(( $(date -u +%s) / 60 ))
+          bundle_version="$((epoch_minutes / 10000)).$(((epoch_minutes / 100) % 100)).$((epoch_minutes % 100))"
+          config_path="$RUNNER_TEMP/tauritavern-testflight.json"
+          printf '{"bundle":{"iOS":{"bundleVersion":"%s"}}}\n' "$bundle_version" > "$config_path"
+          {
+            echo "path=$config_path"
+            echo "bundle_version=$bundle_version"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Setup Android signing
         if: matrix.mobile == 'android'
         shell: bash
@@ -287,6 +305,52 @@ jobs:
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
           workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-[platform]-[arch]-[bundle]'
+
+      - name: Build public TestFlight IPA
+        if: matrix.mobile == 'ios'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          TAURITAVERN_IOS_POLICY_PROFILE: ios_external_beta
+          TAURITAVERN_SKIP_WEB_BUILD: "1"
+        with:
+          projectPath: src-tauri/crates/tauritavern
+          tauriScript: node ../../../scripts/tauri-app.mjs
+          mobile: ios
+          args: --verbose --export-method app-store-connect --config ${{ steps.testflight-config.outputs.path }}
+          uploadWorkflowArtifacts: true
+          uploadPlainBinary: true
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-[platform]-[arch]-TestFlight-[bundle]'
+
+  testflight:
+    needs: [prepare, publish]
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/public-testflight.yml
+    with:
+      channel: canary
+      source_ref: ${{ github.sha }}
+      base_sha: ${{ needs.prepare.outputs.previous_sha }}
+      head_sha: ${{ github.sha }}
+      marketing_version: ${{ needs.prepare.outputs.stable_version }}
+      ipa_artifact: TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-ios-arm64-TestFlight-ipa
+      release_tag: Canary
+      release_asset: TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-ios-arm64-TestFlight.ipa
+      group_id: d379dde8-9206-4533-ba2c-c9f7569e57a7
+      group_name: TauriTavern Canary Test
+    secrets:
+      CODEX_API_KEY: ${{ secrets.CANARY_CODEX_API_KEY }}
+      CODEX_RESPONSES_ENDPOINT: ${{ secrets.CANARY_CODEX_RESPONSES_ENDPOINT }}
+      CODEX_MODEL: ${{ secrets.CANARY_CODEX_MODEL }}
+      CODEX_EFFORT: ${{ secrets.CANARY_CODEX_EFFORT }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
 
   notes-context:
     needs: prepare

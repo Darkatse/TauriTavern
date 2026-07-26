@@ -27,6 +27,7 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
       commit: ${{ steps.release.outputs.commit }}
+      previous_sha: ${{ steps.release.outputs.previous_sha }}
     steps:
       - name: Resolve release tag
         id: tag
@@ -62,10 +63,20 @@ jobs:
 
           version=$(node scripts/ci/verify-release-version.mjs "$RELEASE_TAG")
           commit=$(git rev-parse HEAD)
+          previous_tag=
+          while IFS= read -r candidate; do
+            if [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              previous_tag=$candidate
+              break
+            fi
+          done < <(git tag --merged "$commit^" --sort=-version:refname)
+          test -n "$previous_tag"
+          previous_sha=$(git rev-parse "$previous_tag^{commit}")
           {
             echo "tag=$RELEASE_TAG"
             echo "version=$version"
             echo "commit=$commit"
+            echo "previous_sha=$previous_sha"
           } >> "$GITHUB_OUTPUT"
 
   desktop:
@@ -187,6 +198,9 @@ jobs:
             platform: macos-latest
             args: --verbose
 
+    concurrency:
+      group: ${{ matrix.mobile == 'ios' && 'tauritavern-public-testflight-build' || format('{0}-{1}-{2}', github.workflow, github.run_id, matrix.mobile) }}
+      cancel-in-progress: false
     runs-on: ${{ matrix.platform }}
     env:
       TAURITAVERN_BUILD_BRANCH: main
@@ -247,6 +261,21 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Prepare public TestFlight build identity
+        if: matrix.mobile == 'ios'
+        id: testflight-config
+        shell: bash
+        run: |
+          set -euo pipefail
+          epoch_minutes=$(( $(date -u +%s) / 60 ))
+          bundle_version="$((epoch_minutes / 10000)).$(((epoch_minutes / 100) % 100)).$((epoch_minutes % 100))"
+          config_path="$RUNNER_TEMP/tauritavern-testflight.json"
+          printf '{"bundle":{"iOS":{"bundleVersion":"%s"}}}\n' "$bundle_version" > "$config_path"
+          {
+            echo "path=$config_path"
+            echo "bundle_version=$bundle_version"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Setup Android signing
         if: matrix.mobile == 'android'
         shell: bash
@@ -290,6 +319,52 @@ jobs:
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
           workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-[platform]-[arch]-[bundle]'
+
+      - name: Build public TestFlight IPA
+        if: matrix.mobile == 'ios'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          TAURITAVERN_IOS_POLICY_PROFILE: ios_external_beta
+          TAURITAVERN_SKIP_WEB_BUILD: "1"
+        with:
+          projectPath: src-tauri/crates/tauritavern
+          tauriScript: node ../../../scripts/tauri-app.mjs
+          mobile: ios
+          args: --verbose --export-method app-store-connect --config ${{ steps.testflight-config.outputs.path }}
+          uploadWorkflowArtifacts: true
+          uploadPlainBinary: true
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-[platform]-[arch]-TestFlight-[bundle]'
+
+  testflight:
+    needs: [prepare, publish-release]
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/public-testflight.yml
+    with:
+      channel: stable
+      source_ref: ${{ needs.prepare.outputs.tag }}
+      base_sha: ${{ needs.prepare.outputs.previous_sha }}
+      head_sha: ${{ needs.prepare.outputs.commit }}
+      marketing_version: ${{ needs.prepare.outputs.version }}
+      ipa_artifact: TauriTavern-${{ needs.prepare.outputs.version }}-ios-arm64-TestFlight-ipa
+      release_tag: ${{ needs.prepare.outputs.tag }}
+      release_asset: TauriTavern-${{ needs.prepare.outputs.version }}-ios-arm64-TestFlight.ipa
+      group_id: fde21316-1511-4a66-b48f-7cbadc1be3f7
+      group_name: TauriTavern Beta Test
+    secrets:
+      CODEX_API_KEY: ${{ secrets.CANARY_CODEX_API_KEY }}
+      CODEX_RESPONSES_ENDPOINT: ${{ secrets.CANARY_CODEX_RESPONSES_ENDPOINT }}
+      CODEX_MODEL: ${{ secrets.CANARY_CODEX_MODEL }}
+      CODEX_EFFORT: ${{ secrets.CANARY_CODEX_EFFORT }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
 
   publish-release:
     needs: [prepare, desktop, mobile]

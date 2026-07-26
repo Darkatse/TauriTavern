@@ -30,9 +30,17 @@ Canary Release 必须是 prerelease；Stable latest 不能是 prerelease。返�
 TauriTavern-<release-id>-<platform>-<arch>[-<variant>][.<ext>]
 ```
 
-Stable 的 `release-id` 是版本号；Canary 使用 `<YYYYMMDD>-canary`，日期以 `Asia/Shanghai` 计算。平台统一使用 `windows`、`macos`、`linux`、`android`、`ios`，桌面架构统一使用 `x64` / `arm64`，Android 使用标准 ABI 名称。扩展名已经能区分包格式时不重复添加 kind，只有 `setup`、`portable` 等必要变体保留后缀；Linux portable 是无扩展名的原生可执行文件。Release 标题使用 `Canary Release <YYYY.MM.DD>`。tag 最后移动到已发布提交，因此客户端不会先看到尚未完成的构建。
+Stable 的 `release-id` 是版本号；Canary 使用 `<YYYYMMDD>-canary`，日期以 `Asia/Shanghai` 计算。平台统一使用 `windows`、`macos`、`linux`、`android`、`ios`，桌面架构统一使用 `x64` / `arm64`，Android 使用标准 ABI 名称。扩展名已经能区分包格式时不重复添加 kind，只有 `setup`、`portable`、`TestFlight` 等必要变体保留后缀；Linux portable 是无扩展名的原生可执行文件。Release 标题使用 `Canary Release <YYYY.MM.DD>`。tag 最后移动到已发布提交，因此客户端不会先看到尚未完成的构建。
 
 Release notes 先由 Git 历史生成确定性上下文和回退正文。独立的只读 Codex job 使用 `CANARY_CODEX_API_KEY`、`CANARY_CODEX_RESPONSES_ENDPOINT`、`CANARY_CODEX_MODEL` 与 `CANARY_CODEX_EFFORT` secrets 检查实际 diff，再通过项目专用 Skill 撰写中英双语正文。Skill 源文件保存在不会被本地 Codex 自动发现的 `.github/codex/skills/`，CI 只把它们复制到 runner 临时 `CODEX_HOME`。Codex 调用失败或输出不符合结构时直接使用确定性正文，不影响构建和发布。
+
+## Public TestFlight
+
+Stable 与 Canary 原有的自签 iOS IPA 保持原构建参数和 Release 文件名。iOS job 在普通 IPA 完成后，复用已生成的前端资源额外构建 `ios_external_beta` + App Store Connect 版本，并以 `-TestFlight.ipa` 后缀作为独立产物。完整 GitHub Release 产物发布成功后，共享的 `.github/workflows/public-testflight.yml` 才上传并分发该专用 IPA；成功进入 TestFlight 流程后，再从 GitHub Release 删除临时的 `-TestFlight.ipa`，普通自签 IPA 始终保留。
+
+Stable 的专用 IPA 只进入 `TauriTavern Beta Test`，Canary 的专用 IPA 只进入 `TauriTavern Canary Test`；流水线会校验目标确实是当前 App 的公开外测组。每次 TestFlight 构建使用按时间单调变化的 `CFBundleVersion`，避免两个渠道共用营销版本时发生构建号冲突。
+
+上传前，隔离且只读的 Codex job 检查实际提交范围与 `ios_external_beta` capability 边界，只生成公开包中可见、值得测试的英文 `What to Test` 内容。AI 不参与构建、版本、分组或审核决策；调用失败或正文非法时使用确定性的通用测试提示，因此 AI 不会阻塞上传。IPA 上传前先按 App、营销版本与构建号检查 App Store Connect；重跑遇到已上传的同一构建时跳过重复上传。随后由确定性脚本等待 Apple 完成处理、写入 `en-US` build localization、开启自动通知、关联唯一目标组，并在需要时提交 Beta App Review。Apple 审核是异步外部状态：提交被接受即结束 CI，不等待审核通过。
 
 ## 维护约束
 
@@ -40,3 +48,4 @@ Release notes 先由 Git 历史生成确定性上下文和回退正文。独立�
 2. 不要让桌面与移动端各自推进 Canary tag；一个 Release 必须对应一个源码提交。
 3. 不要让 AI 决定版本、产物、发布条件或 tag；AI 只能改写已经生成的事实。
 4. 修改渠道 DTO、settings 或 command 时，保持 Rust serde 名称与前端字符串 `stable` / `canary` 一致。
+5. Public TestFlight 始终使用 `ios_external_beta`；不要把 GitHub Release 的完整更新日志直接复制成 `What to Test`。
