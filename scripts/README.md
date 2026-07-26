@@ -76,6 +76,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\export-sillytavern-migration.
 
 ## 目录说明
 
+Flatpak 构建配方位于 `packaging/flatpak/`，软件源发布工具位于
+`distribution/`。
+
 - `install-linux.sh`
   通过受支持的 APT/RPM 软件源或 Nix flake 安装 TauriTavern。
 - `export-sillytavern-migration.sh`

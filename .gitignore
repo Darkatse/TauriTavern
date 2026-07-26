@@ -32,6 +32,9 @@ FasTools.exe
 
 # Build artifacts
 release
+.flatpak-build/
+.flatpak-builder/
+packaging/flatpak/build-identity.env
 
 # Local upstream checkout (junction/symlink)
 sillytavern-*

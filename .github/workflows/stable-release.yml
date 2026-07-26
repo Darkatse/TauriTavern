@@ -121,11 +121,6 @@ jobs:
             libwebkit2gtk-4.1-dev librsvg2-dev patchelf rpm \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-alsa gstreamer1.0-pulseaudio
-          if apt-cache show libayatana-appindicator3-dev >/dev/null 2>&1; then
-            sudo apt-get install -y libayatana-appindicator3-dev
-          else
-            sudo apt-get install -y libappindicator3-dev
-          fi
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -215,8 +210,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev
+            libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:

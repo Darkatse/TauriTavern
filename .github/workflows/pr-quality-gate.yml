@@ -38,7 +38,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev
+            libwebkit2gtk-4.1-dev librsvg2-dev
 
       - name: Install latest stable Rust and Clippy
         uses: dtolnay/rust-toolchain@stable

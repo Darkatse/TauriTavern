@@ -1,0 +1,56 @@
+app-id: com.tauritavern.client
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node22
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: tauritavern
+separate-locales: false
+
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=dri
+  # Temporary until every desktop export is routed through the save-file portal.
+  - --filesystem=xdg-download
+  - --talk-name=org.freedesktop.Notifications
+
+modules:
+  - name: tauritavern
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/tauritavern/cargo
+        CARGO_NET_OFFLINE: 'true'
+        XDG_CACHE_HOME: /run/build/tauritavern/flatpak-node/cache
+        npm_config_nodedir: /usr/lib/sdk/node22
+        npm_config_offline: 'true'
+    build-commands:
+      - packaging/flatpak/build-app.sh
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .cache
+          - .flatpak-build
+          - .flatpak-builder
+          - .git
+          - .playwright-mcp
+          - .env
+          - .env.*
+          - node_modules
+          - release
+          - result
+          - sillytavern-*
+          - src-tauri/target
+      - type: archive
+        url: https://registry.npmjs.org/pnpm/-/pnpm-10.34.5.tgz
+        sha256: ccb5c479cab1b00621325bfe7d4c9a8a8031e7a525d7249e275ecbec81b08db2
+        dest: flatpak-pnpm
+      - pnpm-sources.json
+      - cargo-sources.json
