@@ -6,7 +6,7 @@
 
 **SillyTavern 的原生应用 —— 桌面与移动，开箱即用**
 
-**简体中文** · [English](README_EN.md)
+**简体中文** · [English](README.en.md) · [日本語](README.ja.md) · [Русский](README.ru.md) · [Português (Brasil)](README.pt-BR.md)
 
 [下载](https://tauritavern.github.io/downloads/) · [文档](https://tauritavern.github.io/) · [Releases](https://github.com/Darkatse/TauriTavern/releases) · [Issues](https://github.com/Darkatse/TauriTavern/issues)
 

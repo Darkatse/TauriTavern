@@ -6,7 +6,7 @@
 
 **SillyTavern, as a native app — desktop & mobile, out of the box**
 
-[简体中文](README.md) · **English**
+[简体中文](README.md) · **English** · [日本語](README.ja.md) · [Русский](README.ru.md) · [Português (Brasil)](README.pt-BR.md)
 
 [Downloads](https://tauritavern.github.io/en/downloads/) · [Docs](https://tauritavern.github.io/en/) · [Releases](https://github.com/Darkatse/TauriTavern/releases) · [Issues](https://github.com/Darkatse/TauriTavern/issues)
 
