@@ -372,13 +372,12 @@ jobs:
       - name: Let Codex inspect the release range
         id: codex
         continue-on-error: true
-        uses: openai/codex-action@b11346a6fa031e2e164ab4b7c7ea201afffd7d59 # v1
+        uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.CANARY_CODEX_API_KEY }}
           responses-api-endpoint: ${{ secrets.CANARY_CODEX_RESPONSES_ENDPOINT }}
           model: ${{ secrets.CANARY_CODEX_MODEL }}
           effort: ${{ secrets.CANARY_CODEX_EFFORT }}
-          codex-version: 0.145.0
           codex-home: ${{ steps.codex-home.outputs.path }}
           prompt-file: .github/codex/prompts/canary-release-notes.md
           permission-profile: ":read-only"
