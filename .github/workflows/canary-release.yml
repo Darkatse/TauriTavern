@@ -440,6 +440,14 @@ jobs:
       RPM_RELEASE: ${{ needs.prepare.outputs.rpm_release }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - uses: actions/download-artifact@v4
         with:
           pattern: 'TauriTavern-*-canary-*'
@@ -451,48 +459,7 @@ jobs:
           path: notes
 
       - name: Validate complete release set
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir release-assets
-          for artifact in dist/${ASSET_PREFIX}*; do
-            base=$(basename "$artifact")
-            [[ "$base" == *-app ]] && continue
-            mapfile -t files < <(find "$artifact" -type f)
-            test "${#files[@]}" -eq 1 || {
-              echo "Expected one file in $artifact, found ${#files[@]}" >&2
-              exit 1
-            }
-            case "${files[0]}" in
-              *.AppImage) ext=.AppImage ;;
-              *.dmg) ext=.dmg ;;
-              *.msi) ext=.msi ;;
-              *.exe) ext=.exe ;;
-              *.deb) ext=.deb ;;
-              *.rpm) ext=.rpm ;;
-              *.apk) ext=.apk ;;
-              *.aab) ext=.aab ;;
-              *.ipa) ext=.ipa ;;
-              *)
-                [[ "$base" == *-portable ]] || {
-                  echo "Unknown Canary artifact type: ${files[0]}" >&2
-                  exit 1
-                }
-                ext=.bin
-                ;;
-            esac
-            cp "${files[0]}" "release-assets/${base}${ext}"
-          done
-          mapfile -t assets < <(find release-assets -type f -name "${ASSET_PREFIX}*" | sort)
-          printf '%s\n' "${assets[@]}"
-          test "${#assets[@]}" -eq 15 || {
-            echo "Expected 15 Canary assets, found ${#assets[@]}" >&2
-            exit 1
-          }
-
-      - uses: actions/checkout@v4
-        with:
-          path: source
+        run: node source/scripts/ci/collect-release-assets.mjs dist release-assets "$ASSET_PREFIX"
 
       - name: Install Linux package inspection tools
         run: sudo apt-get update && sudo apt-get install -y rpm
@@ -537,12 +504,18 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/Canary" \
-            --jq '.assets[] | [.id, .name] | @tsv' \
-            | while IFS=$'\t' read -r id name; do
-                [[ "$name" == "$ASSET_PREFIX"* ]] || \
-                  gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"
-              done
+          declare -A current_assets=()
+          while IFS= read -r name; do
+            current_assets["$name"]=1
+          done < <(find release-assets -type f -printf '%f\n')
+
+          while IFS=$'\t' read -r id name; do
+            [[ -n "${current_assets[$name]+present}" ]] || \
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"
+          done < <(
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/Canary" \
+              --jq '.assets[] | [.id, .name] | @tsv'
+          )
 
       - uses: actions/upload-artifact@v4
         with:

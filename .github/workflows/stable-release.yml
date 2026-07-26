@@ -302,50 +302,22 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          path: source
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - uses: actions/download-artifact@v4
         with:
           pattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-*'
           path: dist
 
       - name: Validate and collect release assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir release-assets
-          for artifact in dist/"${ASSET_PREFIX}"*; do
-            base=$(basename "$artifact")
-            [[ "$base" == *-app ]] && continue
-            mapfile -t files < <(find "$artifact" -type f)
-            test "${#files[@]}" -eq 1 || {
-              echo "Expected one file in $artifact, found ${#files[@]}" >&2
-              exit 1
-            }
-            case "${files[0]}" in
-              *.AppImage) ext=.AppImage ;;
-              *.dmg) ext=.dmg ;;
-              *.msi) ext=.msi ;;
-              *.exe) ext=.exe ;;
-              *.deb) ext=.deb ;;
-              *.rpm) ext=.rpm ;;
-              *.apk) ext=.apk ;;
-              *.aab) ext=.aab ;;
-              *.ipa) ext=.ipa ;;
-              *)
-                [[ "$base" == *-portable ]] || {
-                  echo "Unknown stable artifact type: ${files[0]}" >&2
-                  exit 1
-                }
-                ext=.bin
-                ;;
-            esac
-            cp "${files[0]}" "release-assets/${base}${ext}"
-          done
-          mapfile -t assets < <(find release-assets -type f -name "${ASSET_PREFIX}*" | sort)
-          printf '%s\n' "${assets[@]}"
-          test "${#assets[@]}" -eq 15 || {
-            echo "Expected 15 stable assets, found ${#assets[@]}" >&2
-            exit 1
-          }
+        run: node source/scripts/ci/collect-release-assets.mjs dist release-assets "$ASSET_PREFIX"
 
       - name: Upload assets without changing release notes
         shell: bash

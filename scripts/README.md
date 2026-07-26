@@ -102,6 +102,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\export-sillytavern-migration.
   GitHub Actions / CI 中的 macOS 签名初始化脚本，用于导入证书、创建 keychain 与写入 Apple API Key 路径。
 - `ci/verify-release-version.mjs`
   校验 Stable Release tag 与前端、Cargo、Tauri、Cargo lock 和 Nix 包版本一致。
+- `ci/collect-release-assets.mjs`
+  校验完整的跨平台构建产物，并按 Stable 与 Canary 共用的用户可见命名契约收集 Release 资产。
 - `ci/publish-linux-repositories.sh`
   按 Stable 或 Canary 渠道汇入 DEB/RPM、生成并签署软件源元数据，再按安全顺序发布到 R2。
 - `ci/publish-nix-cache.sh`
