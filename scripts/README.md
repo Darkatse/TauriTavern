@@ -106,12 +106,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\export-sillytavern-migration.
   校验完整的跨平台构建产物，并按 Stable 与 Canary 共用的用户可见命名契约收集 Release 资产。
 - `ci/distribute-testflight.mjs`
   等待 App Store Connect 处理指定 iOS 构建，写入 `What to Test`，关联公开外测组，并按当前状态提交 Beta App Review。
-- `ci/publish-linux-repositories.sh`
-  按 Stable 或 Canary 渠道汇入 DEB/RPM、生成并签署软件源元数据，再按安全顺序发布到 R2。
-- `ci/publish-nix-cache.sh`
-  校验 Nix cache key，签署运行时 closure 和缺失的构建依赖，并上传按内容寻址的缓存对象。
-- `ci/rewrite-deb-version.sh`
-  将 Canary DEB 的包版本改写为高于当前 Stable、低于后续正式版的 Debian 版本。
 - `guardrails/frontend-lines-baseline.json`
   `check-frontend-guardrails.mjs` 使用的基线数据文件，文件行数硬性限制指标。
 

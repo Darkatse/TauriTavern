@@ -5,8 +5,8 @@ import YAML from 'yaml';
 
 const workflowSource = readFileSync('.github/workflows/canary-release.yml', 'utf8');
 const workflow = YAML.parse(workflowSource);
-const publisherSource = readFileSync('scripts/ci/publish-linux-repositories.sh', 'utf8');
-const nixPublisherSource = readFileSync('scripts/ci/publish-nix-cache.sh', 'utf8');
+const publisherSource = readFileSync('distribution/apt-rpm/publish.sh', 'utf8');
+const nixPublisherSource = readFileSync('distribution/nix-cache/publish.sh', 'utf8');
 const flakeSource = readFileSync('flake.nix', 'utf8');
 
 test('Canary artifact names use the China-local calendar date without a time', () => {

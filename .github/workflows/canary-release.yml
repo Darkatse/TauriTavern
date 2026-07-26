@@ -546,7 +546,7 @@ jobs:
           rpm --dbpath "$rpm_db" --initdb
 
           for package in "${debs[@]}"; do
-            source/scripts/ci/rewrite-deb-version.sh "$package" "$DEB_VERSION"
+            source/distribution/apt-rpm/rewrite-deb-version.sh "$package" "$DEB_VERSION"
           done
           for package in "${rpms[@]}"; do
             test "$(rpm --dbpath "$rpm_db" -qp --queryformat '%{VERSION}' "$package")" = "$PACKAGE_VERSION"
@@ -656,7 +656,7 @@ jobs:
       - name: Publish signed Canary APT and RPM repositories
         env:
           LINUX_REPOSITORY_GPG_PASSPHRASE_FILE: ${{ steps.signing.outputs.passphrase_file }}
-        run: ./scripts/ci/publish-linux-repositories.sh
+        run: ./distribution/apt-rpm/publish.sh
 
       - name: Verify public Canary repository pointers
         run: |
@@ -715,7 +715,7 @@ jobs:
             ".#packages.${{ matrix.system }}.canary.cargoDeps.outPath")
           pnpm_deps=$(nix eval --raw \
             ".#packages.${{ matrix.system }}.canary.pnpmDeps.outPath")
-          ./scripts/ci/publish-nix-cache.sh "$cargo_deps" "$pnpm_deps"
+          ./distribution/nix-cache/publish.sh "$cargo_deps" "$pnpm_deps"
 
       - name: Verify public Nix cache
         run: curl -fsSL https://nix-cache.tauritavern.com/nix-cache-info
