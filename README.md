@@ -99,6 +99,15 @@ nix profile add github:Darkatse/TauriTavern#tauritavern
 nix profile add github:Darkatse/TauriTavern/Canary#canary
 ```
 
+**Flatpak**
+
+```sh
+flatpak remote-add --user --if-not-exists \
+  tauritavern \
+  https://flatpak.tauritavern.com/tauritavern.flatpakrepo
+flatpak install --user tauritavern com.tauritavern.client
+```
+
 Canary 包含最新改进，也可能不如稳定版可靠。Windows、macOS 和移动平台可从 [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary) 下载。
 
 </details>

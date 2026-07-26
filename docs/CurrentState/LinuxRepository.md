@@ -11,8 +11,9 @@
 | Fedora | DNF | Fedora 当前支持版本，`x86_64` / `aarch64` |
 | openSUSE Leap | Zypper | 16.0，`x86_64` / `aarch64` |
 | Nix / NixOS | flake | `x86_64-linux` / `aarch64-linux` |
+| Flatpak | 独立软件源 | `x86_64`；`aarch64` 待验证 |
 
-DEB/RPM 构建要求 `GLIBC_2.34`，并依赖 WebKitGTK 4.1、GTK 3、GStreamer 与 Ayatana AppIndicator。openSUSE Leap 15.x 不能可靠验证当前的 Ed25519 RPM 签名，因此不在支持范围内。
+DEB/RPM 构建要求 `GLIBC_2.34`，并依赖 WebKitGTK 4.1、GTK 3 与 GStreamer。openSUSE Leap 15.x 不能可靠验证当前的 Ed25519 RPM 签名，因此不在支持范围内。
 
 ## 分发与信任
 
@@ -38,6 +39,12 @@ D609 D0B1 74E0 073B B398 0A1B EDC6 CEF9 24B6 C529
 - 签名子密钥有效至 2029-07-24
 - 公钥：<https://packages.tauritavern.com/keys/tauritavern-archive-keyring.asc>
 - 发布清单：<https://packages.tauritavern.com/repository-manifest.json>
+
+Flatpak 软件源复用同一 OpenPGP 身份：
+
+```text
+https://flatpak.tauritavern.com/tauritavern.flatpakrepo
+```
 
 Nix binary cache：
 
@@ -191,9 +198,38 @@ extra-trusted-public-keys = nix-cache.tauritavern.com-1:mOl/sCsfndubNIhnLODjA7GP
 - `aarch64-linux` flake output 已通过求值，仍需原生 ARM64 runner 完成构建与启动验证。
 - 非 NixOS 宿主可能需要 NixGL 或 `nix-system-graphics` 连接宿主 GPU 驱动。
 
+## Flatpak
+
+`packaging/flatpak/` 提供基于 GNOME 50 SDK 的源码构建 manifest。pnpm 与 Cargo
+依赖由 lockfile 生成固定清单，构建阶段不访问网络；Tauri 的 DEB staging tree
+只用于复用资源安装布局，不复用 Ubuntu 构建的二进制。
+
+安装 Stable：
+
+```bash
+flatpak remote-add --user --if-not-exists \
+  tauritavern \
+  https://flatpak.tauritavern.com/tauritavern.flatpakrepo
+flatpak install --user tauritavern com.tauritavern.client
+```
+
+本地构建：
+
+```bash
+pnpm run flatpak:build
+```
+
+当前 `x86_64` 已完成离线构建、AppStream/desktop 校验、动态库检查、Flatpak
+bundle 导出、临时安装与隔离启动。manifest 使用 portal-first 权限，不开放整个
+Home 目录；在桌面导出统一接入保存门户前，暂时直接开放 XDG Downloads 目录读写。
+目录选择持久授权、导入导出、拖放、通知、媒体和 LAN Sync 仍需在真实桌面会话中
+逐项验收；`aarch64` 尚未作为正式发布架构。
+
 ## 发布与缓存
 
-正式版由 `.github/workflows/stable-release.yml` 在 Release 发布后构建。CI 保留人工编写的 Release notes，只追加各平台产物；APT/RPM 与 Nix cache 在 Release 资产上传成功后更新，并被设置为非阻塞后置任务。
+正式版由 `.github/workflows/stable-release.yml` 在 Release 发布后构建。CI
+保留人工编写的 Release notes，只追加各平台产物；APT/RPM、Flatpak 与 Nix
+cache 在 Release 资产上传成功后更新，其中仓库上传均为非阻塞后置任务。
 
 Canary 也在 GitHub Release 成功更新后发布 Linux 产物：
 
@@ -214,3 +250,6 @@ Canary CI 自动读取 GitHub 最新正式 Release 作为版本基线。以 2.1.
 6. Stable tag 发布后不移动。Canary Nix 使用显式 `canary` 输出和提交身份，不替代默认 Stable 包。
 7. 每次发布后从公开域名验证签名、索引和实际软件下载，不只验证 R2 私有端点。
 8. OpenPGP 签名子密钥应在 2029-07-24 前完成轮换。
+9. pnpm 或 Cargo lockfile 变化时同步更新并校验 Flatpak 离线依赖清单。
+10. Flatpak 的哈希对象和静态增量长期缓存；summary、refs、描述文件和发布清单
+    使用 `no-cache`，并在对象上传完成后更新。
