@@ -1,6 +1,6 @@
 # 原生 API 格式（Custom）兼容现状
 
-最后更新：2026-07-23
+最后更新：2026-07-27
 
 本文件描述 **TauriTavern 已落地** 的三家原生 API 格式兼容（OpenAI Responses / Claude Messages / Gemini Interactions）的当前实现快照与持续开发约束。
 
@@ -168,7 +168,11 @@ image 输入：
 
 streaming 语义：
 - 后端沿用 Claude 的 SSE `data:` JSON 事件透传（不做 chunk 归一化）
-- 前端对 `custom_api_format=claude_messages` 走 Claude streaming 分支解析（提取 `delta.text`/`delta.thinking`）
+- 前端对 direct Claude、Vertex Claude、内建 Bedrock Claude 与 `custom_api_format=claude_messages` 走 Claude streaming 分支解析
+- 前端按 content block index 累积 `text_delta`、`thinking_delta`、`signature_delta` 与 `input_json_delta`；`input_json_delta` 按 delta 契约处理，不绑定具体 tool block type
+- 前端在 `message_delta` / 非流式响应的 `stop_reason` 上显式处理终态：`refusal` 保留 provider 输出、显示 toast，并将同一警告追加到最终 `message.mes`；`max_tokens` / `model_context_window_exceeded` 保留部分文本、显示截断警告；这些终态都不会执行或回放未完成的 tool call
+- 只有包含 client `tool_use` 的 assistant turn 才把完整 `content[]` 保存到 `message.extra.native.claude` 并在同 provider/model 的后续请求原样回放；普通 assistant turn 继续使用 SillyTavern canonical content，避免历史 thinking 绕过 token budget 与消息编辑语义
+- SillyTavern 将一次 tool turn 拆成相邻可见消息与 invocation 消息时，translator 仅在两者 native content 完全相等时折叠为一次，内容不一致则 fail-fast；编辑其中任一消息会同时使两份 native metadata 失效
 
 ---
 

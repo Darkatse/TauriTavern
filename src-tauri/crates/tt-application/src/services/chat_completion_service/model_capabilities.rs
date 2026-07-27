@@ -79,8 +79,8 @@ pub(super) fn map_openrouter_reasoning_effort(
         RequestedReasoningEffort::Low => Ok(Some("low")),
         RequestedReasoningEffort::Medium => Ok(Some("medium")),
         RequestedReasoningEffort::High => Ok(Some("high")),
-        RequestedReasoningEffort::XHigh => Ok(Some("high")),
-        RequestedReasoningEffort::Max => Ok(Some("xhigh")),
+        RequestedReasoningEffort::XHigh => Ok(Some("xhigh")),
+        RequestedReasoningEffort::Max => Ok(Some("max")),
     }
 }
 
@@ -335,9 +335,9 @@ mod tests {
             ("low", Some("low")),
             ("medium", Some("medium")),
             ("high", Some("high")),
-            ("xhigh", Some("high")),
-            ("max", Some("xhigh")),
-            ("maximum", Some("xhigh")),
+            ("xhigh", Some("xhigh")),
+            ("max", Some("max")),
+            ("maximum", Some("max")),
         ] {
             assert_eq!(
                 map_openrouter_reasoning_effort(input).expect("known effort must map"),

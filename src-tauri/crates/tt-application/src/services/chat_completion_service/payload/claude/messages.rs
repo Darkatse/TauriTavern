@@ -74,7 +74,7 @@ pub(super) fn convert_messages(
         }
     }
 
-    for entry in entries.iter().skip(start_index) {
+    for (index, entry) in entries.iter().enumerate().skip(start_index) {
         let Some(message) = entry.as_object() else {
             continue;
         };
@@ -98,6 +98,34 @@ pub(super) fn convert_messages(
                 let content_blocks = if let Some(native_content) =
                     message_native_claude_content(message)?
                 {
+                    let duplicate_split_turn = if tool_calls.is_empty() || index == 0 {
+                        false
+                    } else {
+                        let previous = entries[index - 1].as_object().filter(|previous| {
+                            previous
+                                .get("role")
+                                .and_then(Value::as_str)
+                                .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
+                                && extract_openai_tool_calls(previous.get("tool_calls")).is_empty()
+                        });
+
+                        match previous.map(message_native_claude_content).transpose()? {
+                            Some(Some(previous_content)) if previous_content == native_content => {
+                                true
+                            }
+                            Some(Some(_)) => {
+                                return Err(ApplicationError::ValidationError(
+                                    "Claude Messages split assistant turn has mismatched native content"
+                                        .to_string(),
+                                ));
+                            }
+                            None | Some(None) => false,
+                        }
+                    };
+
+                    if duplicate_split_turn {
+                        continue;
+                    }
                     native_content
                 } else if !tool_calls.is_empty() {
                     if use_tools {

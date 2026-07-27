@@ -2177,8 +2177,8 @@
                                             <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
                                                 Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
                                             </strong>
-                                            <div id="claude_reasoning_effort_description" class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai" data-i18n="Claude options: legacy thinking maps effort to a token budget. For adaptive thinking, Maximum selects the highest supported effort and XHigh the level below it. Auto does not request thinking.">
-                                                Claude options: legacy thinking maps effort to a token budget. For adaptive thinking, Maximum selects the highest supported effort and XHigh the level below it. Auto does not request thinking.
+                                            <div id="claude_reasoning_effort_description" class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai" data-i18n="Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default; Claude 5 models think by default.">
+                                                Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default; Claude 5 models think by default.
                                             </div>
                                             <div id="gemini_reasoning_effort_description" class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai">
                                                 <span data-i18n="Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.">
@@ -3190,6 +3190,7 @@
                                     <optgroup label="Versions">
                                         <option value="claude-fable-5">claude-fable-5</option>
                                         <option value="claude-mythos-5">claude-mythos-5</option>
+                                        <option value="claude-opus-5">claude-opus-5</option>
                                         <option value="claude-sonnet-5">claude-sonnet-5</option>
                                         <option value="claude-opus-4-8">claude-opus-4-8</option>
                                         <option value="claude-opus-4-7">claude-opus-4-7</option>
@@ -3513,6 +3514,7 @@
                                     <!-- data-mode="full" is for models that require a service account -->
                                     <optgroup label="Claude on Vertex AI">
                                         <option value="claude-fable-5" data-mode="full">claude-fable-5</option>
+                                        <option value="claude-opus-5" data-mode="full">claude-opus-5</option>
                                         <option value="claude-sonnet-5" data-mode="full">claude-sonnet-5</option>
                                         <option value="claude-opus-4-8" data-mode="full">claude-opus-4-8</option>
                                         <option value="claude-opus-4-7" data-mode="full">claude-opus-4-7</option>
@@ -3662,6 +3664,7 @@
                                 <optgroup label="Cross-region inference profiles — US (recommended for Claude 4.x/5.x)">
                                     <option value="us.anthropic.claude-sonnet-5">us.anthropic.claude-sonnet-5</option>
                                     <option value="us.anthropic.claude-fable-5">us.anthropic.claude-fable-5</option>
+                                    <option value="us.anthropic.claude-opus-5">us.anthropic.claude-opus-5</option>
                                     <option value="us.anthropic.claude-opus-4-8">us.anthropic.claude-opus-4-8</option>
                                     <option value="us.anthropic.claude-opus-4-7">us.anthropic.claude-opus-4-7</option>
                                     <option value="us.anthropic.claude-opus-4-6-v1">us.anthropic.claude-opus-4-6-v1</option>
@@ -3676,6 +3679,7 @@
                                 <optgroup label="Cross-region inference profiles — Global">
                                     <option value="global.anthropic.claude-sonnet-5">global.anthropic.claude-sonnet-5</option>
                                     <option value="global.anthropic.claude-fable-5">global.anthropic.claude-fable-5</option>
+                                    <option value="global.anthropic.claude-opus-5">global.anthropic.claude-opus-5</option>
                                     <option value="global.anthropic.claude-opus-4-8">global.anthropic.claude-opus-4-8</option>
                                     <option value="global.anthropic.claude-opus-4-7">global.anthropic.claude-opus-4-7</option>
                                     <option value="global.anthropic.claude-opus-4-6-v1">global.anthropic.claude-opus-4-6-v1</option>
@@ -3687,6 +3691,7 @@
                                 <optgroup label="Foundation models — Claude 5.x">
                                     <option value="anthropic.claude-sonnet-5">anthropic.claude-sonnet-5</option>
                                     <option value="anthropic.claude-fable-5">anthropic.claude-fable-5</option>
+                                    <option value="anthropic.claude-opus-5">anthropic.claude-opus-5</option>
                                 </optgroup>
                                 <optgroup label="Foundation models — Claude 3.x (ON_DEMAND)">
                                     <option value="anthropic.claude-3-7-sonnet-20250219-v1:0">anthropic.claude-3-7-sonnet-20250219-v1:0</option>

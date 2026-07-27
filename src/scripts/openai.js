@@ -53,6 +53,7 @@ import { forceCharacterEditorTokenize, getCustomStoppingStrings, persona_descrip
 import { resolveSecretKey, SECRET_KEYS, secret_state, writeSecret } from './secrets.js';
 
 import { getEventSourceStream } from './sse-stream.js';
+import { appendClaudeRefusalWarning, ClaudeNativeStreamAccumulator, getClaudeStopStatus, hasClaudeToolUse } from './tauritavern/claude-native-stream.js';
 import {
     createThumbnail,
     delay,
@@ -380,6 +381,22 @@ export function getAwsBedrockModelMetadata(modelId = null) {
 
 function getAwsBedrockModelCapabilities(modelId = null) {
     return getAwsBedrockModelMetadata(modelId)?.capabilities ?? null;
+}
+
+function usesClaudeMessagesSemantics(settings, model = getChatCompletionModel(settings)) {
+    switch (settings.chat_completion_source) {
+        case chat_completion_sources.CLAUDE:
+            return true;
+        case chat_completion_sources.CUSTOM:
+            return settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES;
+        case chat_completion_sources.VERTEXAI:
+            return isVertexAiClaudeModelId(model);
+        case chat_completion_sources.AWS_BEDROCK:
+            return !settings.aws_bedrock_use_custom_template
+                && /^(?:(?:us|eu|jp|au|apac|global|us-gov)\.)?anthropic\.claude/.test(String(model ?? '').trim().toLowerCase());
+        default:
+            return false;
+    }
 }
 
 function getAwsBedrockEntryMetadata(model) {
@@ -934,8 +951,10 @@ function setOpenAIMessages(chat) {
     // Get current API and model for thought signature validation
     const currentApi = oai_settings.chat_completion_source;
     const currentModel = getChatCompletionModel();
-    const includeNative = currentApi === chat_completion_sources.CUSTOM
-        && oai_settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS;
+    const includeClaudeNative = usesClaudeMessagesSemantics(oai_settings, currentModel);
+    const includeNative = includeClaudeNative
+        || (currentApi === chat_completion_sources.CUSTOM
+            && oai_settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS);
 
     for (let i = chat.length - 1; i >= 0; i--) {
         let role = chat[j].is_user ? 'user' : 'assistant';
@@ -990,7 +1009,11 @@ function setOpenAIMessages(chat) {
         const canReplayProviderTurnMetadata = isSameModel && !isOtherGroupMember;
         const signature = canReplayProviderTurnMetadata ? chat[j]?.extra?.reasoning_signature : null;
         const reasoning = canReplayProviderTurnMetadata ? String(chat[j]?.extra?.reasoning ?? '') : '';
-        const native = includeNative && canReplayProviderTurnMetadata ? chat[j]?.extra?.native : null;
+        const native = includeNative
+            && canReplayProviderTurnMetadata
+            && (!includeClaudeNative || hasClaudeToolUse(chat[j]?.extra?.native))
+            ? chat[j]?.extra?.native
+            : null;
         const shouldReplayReasoningContent = currentApi === chat_completion_sources.DEEPSEEK
             && oai_settings.show_thoughts
             && canReplayProviderTurnMetadata;
@@ -1549,8 +1572,12 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const audioInlining = isAudioInliningSupported(settings);
     const canUseTools = ToolManager.isToolCallingSupported(settings);
     const includeSignature = isReasoningSignatureSupported(settings);
-    const includeNative = settings.chat_completion_source === chat_completion_sources.CUSTOM
-        && settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS;
+    const includeClaudeNative = usesClaudeMessagesSemantics(settings);
+    const includeNative = includeClaudeNative
+        || (settings.chat_completion_source === chat_completion_sources.CUSTOM
+            && settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS);
+    const canIncludeNative = native => includeNative
+        && (!includeClaudeNative || hasClaudeToolUse(native));
     const isToolReasoningProvider = interleaved_reasoning_providers.includes(settings.chat_completion_source);
     const toolReasoningMode = isToolReasoningProvider
         ? getEffectiveToolReasoningMode(settings)
@@ -1663,7 +1690,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             const toolCallMessage = await Message.createAsync(chatMessage.role, undefined, 'toolCall-' + chatMessage.identifier, assemblyTokenHandler);
             const toolResultMessages = await Promise.all(invocations.slice().reverse().map((invocation) => Message.createAsync('tool', invocation.result || '[No content]', invocation.id, assemblyTokenHandler)));
             await toolCallMessage.setToolCalls(invocations, includeSignature, includeToolReasoning);
-            if (includeNative && chatPrompt.native) {
+            if (canIncludeNative(chatPrompt.native)) {
                 toolCallMessage.native = chatPrompt.native;
             }
             if (chatPrompt.reasoningContent) {
@@ -1753,7 +1780,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             if (includeSignature && promptSource.signature) {
                 chatMessage.signature = promptSource.signature;
             }
-            if (includeNative && promptSource.native) {
+            if (canIncludeNative(promptSource.native)) {
                 chatMessage.native = promptSource.native;
             }
 
@@ -3900,13 +3927,21 @@ export function isVertexAiClaudeModelId(modelId = null) {
     return value.startsWith('claude-');
 }
 
+function isClaudeOneMillionContextModel(modelId) {
+    const value = String(modelId ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/^(?:(?:us|eu|jp|au|apac|global|us-gov)\.)?anthropic\./, '');
+    return /^claude-(?:fable-5|mythos-5|opus-5|sonnet-5|sonnet-4-(?:5|6)|opus-4-(?:6|7|8))(?:\b|-)/.test(value);
+}
+
 function getVertexAiClaudeMaxContext(modelId, unlocked = false) {
     if (unlocked) {
         return unlocked_max;
     }
 
     const value = String(modelId ?? '').trim().toLowerCase();
-    if (/^claude-(fable-5|sonnet-5|sonnet-4-6|opus-4-(?:6|7|8))/.test(value)) {
+    if (isClaudeOneMillionContextModel(value)) {
         return max_1mil;
     }
 
@@ -3996,6 +4031,13 @@ function getReasoningEffort(settings = null, model = null) {
 
     if (settings.chat_completion_source === chat_completion_sources.ZAI) {
         return getZaiReasoningEffort(settings, model);
+    }
+
+    if (usesClaudeMessagesSemantics(settings, model)) {
+        if (settings.reasoning_effort === reasoning_effort_types.auto) {
+            return undefined;
+        }
+        return settings.reasoning_effort;
     }
 
     // These sources expect the effort as string.
@@ -4569,6 +4611,8 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         tryParseStreamingError(response, await response.text());
         throw new Error(`Got response status ${response.status}`);
     }
+    const requestModel = generate_data.model ?? model;
+    const isClaudeMessagesRequest = usesClaudeMessagesSemantics(generate_data, requestModel);
     if (stream) {
         const eventStream = getEventSourceStream();
         response.body.pipeThrough(eventStream);
@@ -4578,18 +4622,30 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
             const swipes = [];
             const toolCalls = [];
             const state = { reasoning: '', images: [], signature: '', toolSignatures: {}, native: null };
-            const requestModel = generate_data.model ?? model;
             const requestSource = generate_data.chat_completion_source ?? oai_settings.chat_completion_source;
+            const claudeNative = isClaudeMessagesRequest
+                ? new ClaudeNativeStreamAccumulator()
+                : null;
             while (true) {
                 const { done, value } = await reader.read();
-                if (done) return;
+                if (done) {
+                    claudeNative?.finish();
+                    return;
+                }
                 const rawData = value.data;
-                if (rawData === '[DONE]') return;
+                if (rawData === '[DONE]') {
+                    claudeNative?.finish();
+                    return;
+                }
                 tryParseStreamingError(response, rawData);
                 const parsed = JSON.parse(rawData);
 
-                const nativeDelta = parsed?.choices?.[0]?.delta?.native;
-                if (nativeDelta) {
+                const nativeDelta = claudeNative?.consume(parsed)
+                    ?? parsed?.choices?.[0]?.delta?.native;
+                const stopStatus = claudeNative && nativeDelta
+                    ? getClaudeStopStatus(nativeDelta.claude?.stop_reason, nativeDelta.claude?.stop_details)
+                    : null;
+                if (nativeDelta && (!claudeNative || hasClaudeToolUse(nativeDelta))) {
                     state.native = nativeDelta;
                 }
 
@@ -4602,6 +4658,18 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
                 }
 
                 ToolManager.parseToolCalls(toolCalls, parsed, state.toolSignatures);
+                if (stopStatus) {
+                    toolCalls.length = 0;
+                    state.native = null;
+                }
+                if (stopStatus?.code === 'model.provider_refusal') {
+                    toastr.error(stopStatus.message, t`Claude refused the response`);
+                    if (type !== 'impersonate' && !jsonSchema) {
+                        text = appendClaudeRefusalWarning(text, stopStatus.message);
+                    }
+                } else if (stopStatus?.code === 'model.output_truncated') {
+                    toastr.error(stopStatus.message, t`Claude response truncated`);
+                }
 
                 yield { text, swipes: swipes, logprobs: parseChatCompletionLogprobs(parsed), toolCalls: toolCalls, state: state };
             }
@@ -4617,6 +4685,33 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
             const message = data.error.message || response.statusText || t`Unknown error`;
             toastr.error(message, t`API returned an error`);
             throw new Error(message);
+        }
+
+        const stopStatus = isClaudeMessagesRequest
+            ? getClaudeStopStatus(data.stop_reason ?? data?.choices?.[0]?.finish_reason, data.stop_details)
+            : null;
+        const message = data?.choices?.[0]?.message;
+        if (stopStatus) {
+            if (message) {
+                delete message.tool_calls;
+                delete message.native;
+            }
+            if (Array.isArray(data.content)) {
+                data.content = data.content.filter(block => block?.type !== 'tool_use');
+            }
+        } else if (isClaudeMessagesRequest && message?.native && !hasClaudeToolUse(message.native)) {
+            delete message.native;
+        }
+
+        if (stopStatus?.code === 'model.provider_refusal') {
+            toastr.error(stopStatus.message, t`Claude refused the response`);
+            if (type !== 'quiet' && type !== 'impersonate' && !jsonSchema) {
+                const warning = appendClaudeRefusalWarning('', stopStatus.message);
+                message.content = appendClaudeRefusalWarning(message.content, stopStatus.message);
+                data.content?.push({ type: 'text', text: warning });
+            }
+        } else if (stopStatus?.code === 'model.output_truncated') {
+            toastr.error(stopStatus.message, t`Claude response truncated`);
         }
 
         if (type !== 'quiet') {
@@ -7394,7 +7489,7 @@ async function onModelChange() {
     if (oai_settings.chat_completion_source == chat_completion_sources.CLAUDE) {
         if (oai_settings.max_context_unlocked) {
             $('#openai_max_context').attr('max', unlocked_max);
-        } else if (/^claude-(fable-5|mythos-5|sonnet-5|sonnet-4-5|sonnet-4-6|opus-4-6|opus-4-7|opus-4-8)/.test(value)) {
+        } else if (isClaudeOneMillionContextModel(value)) {
             $('#openai_max_context').attr('max', max_1mil);
         } else if (/^claude-(3|opus|haiku|sonnet)/.test(value)) {
             $('#openai_max_context').attr('max', max_200k);
@@ -7676,7 +7771,11 @@ async function onModelChange() {
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
-        const maxContext = max_200k;
+        const maxContext = oai_settings.max_context_unlocked
+            ? unlocked_max
+            : isClaudeOneMillionContextModel(oai_settings.aws_bedrock_model)
+                ? max_1mil
+                : max_200k;
         $('#openai_max_context').attr('max', maxContext);
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
@@ -7995,6 +8094,7 @@ export function isImageInliningSupported(settings = oai_settings) {
         // Claude
         'claude-fable-5',
         'claude-mythos-5',
+        'claude-opus-5',
         'claude-sonnet-5',
         'claude-3',
         'claude-opus-4',

@@ -55,6 +55,7 @@ fn decode_normalized_chat_completion_response(
 ) -> Result<AgentModelResponse, ApplicationError> {
     let message = response.assistant_message();
     let raw_response = response.raw();
+    reject_incomplete_response(raw_response)?;
 
     let text = extract_text_from_message(message);
     let tool_calls = extract_tool_calls_from_message(message, tools)?;
@@ -110,6 +111,37 @@ fn decode_normalized_chat_completion_response(
         }),
         raw_response: raw_response.clone(),
     })
+}
+
+fn reject_incomplete_response(response: &Value) -> Result<(), ApplicationError> {
+    let stop_reason = response
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            response
+                .pointer("/choices/0/finish_reason")
+                .and_then(Value::as_str)
+        });
+
+    match stop_reason {
+        Some("refusal") => {
+            let explanation = response
+                .pointer("/stop_details/explanation")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("provider refused to complete the Agent turn");
+            Err(ApplicationError::ValidationError(format!(
+                "model.provider_refusal: {explanation}"
+            )))
+        }
+        Some(reason @ ("max_tokens" | "length" | "model_context_window_exceeded")) => {
+            Err(ApplicationError::ValidationError(format!(
+                "model.output_truncated: provider stopped before completing the Agent turn ({reason})"
+            )))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn extract_tool_calls_from_message(

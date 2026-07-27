@@ -8,7 +8,7 @@ const indexHtml = await readFile(new URL('../src/index.html', import.meta.url), 
 test('Claude Fable 5 and Mythos 5 are first-party Claude models', () => {
     assert.match(indexHtml, /<option value="claude-fable-5">claude-fable-5<\/option>/);
     assert.match(indexHtml, /<option value="claude-mythos-5">claude-mythos-5<\/option>/);
-    assert.match(openaiSource, /\^claude-\(fable-5\|mythos-5\|/);
+    assert.match(openaiSource, /function isClaudeOneMillionContextModel[\s\S]*?fable-5\|mythos-5/);
     assert.match(openaiSource, /'claude-fable-5'/);
     assert.match(openaiSource, /'claude-mythos-5'/);
 });

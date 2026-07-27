@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(
             body.pointer("/output_config/effort")
                 .and_then(Value::as_str),
-            Some("max")
+            Some("xhigh")
         );
         assert!(body.get("temperature").is_none());
         assert!(body.get("top_p").is_none());
@@ -387,7 +387,7 @@ mod tests {
         assert_eq!(
             body.pointer("/output_config/effort")
                 .and_then(Value::as_str),
-            Some("max")
+            Some("xhigh")
         );
     }
 
@@ -453,7 +453,7 @@ mod tests {
         assert_eq!(
             body.pointer("/output_config/effort")
                 .and_then(Value::as_str),
-            Some("max")
+            Some("xhigh")
         );
 
         let max_payload = json!({
@@ -471,7 +471,7 @@ mod tests {
         assert_eq!(
             body.pointer("/output_config/effort")
                 .and_then(Value::as_str),
-            Some("xhigh")
+            Some("max")
         );
     }
 }

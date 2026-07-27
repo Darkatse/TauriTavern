@@ -128,7 +128,7 @@ async function* parseStreamData(json) {
             for (let i = 0; i < json.delta.text.length; i++) {
                 const str = json.delta.text[i];
                 yield {
-                    data: { ...json, delta: { text: str } },
+                    data: { ...json, delta: { ...json.delta, text: str } },
                     chunk: str,
                 };
             }
@@ -140,7 +140,7 @@ async function* parseStreamData(json) {
             for (let i = 0; i < json.delta.thinking.length; i++) {
                 const str = json.delta.thinking[i];
                 yield {
-                    data: { ...json, delta: { thinking: str } },
+                    data: { ...json, delta: { ...json.delta, thinking: str } },
                     chunk: str,
                     reasoning: true,
                 };

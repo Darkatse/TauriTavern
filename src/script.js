@@ -9315,7 +9315,8 @@ function updateMessage(div) {
     let text = mesBlock.find('.edit_textarea').val()
         ?? mesBlock.find('.mes_text').text();
     const mesElement = div.closest('.mes');
-    const mes = chat[mesElement.attr('mesid')];
+    const messageId = Number(mesElement.attr('mesid'));
+    const mes = chat[messageId];
 
     // editing old messages
     mes.extra ??= {};
@@ -9351,6 +9352,19 @@ function updateMessage(div) {
     }
     if (mes.mes !== text) {
         delete mes.extra.reasoning_signature;
+        delete mes.extra.native;
+
+        const nextMessage = chat[messageId + 1];
+        const pairedMessageId = Array.isArray(mes.extra.tool_invocations)
+            ? messageId - 1
+            : !mes.is_user && !mes.is_system && Array.isArray(nextMessage?.extra?.tool_invocations)
+                ? messageId + 1
+                : null;
+        if (pairedMessageId !== null) {
+            const pairedMessage = chat[pairedMessageId];
+            delete pairedMessage?.extra?.native;
+            syncMesToSwipe(pairedMessageId);
+        }
     }
     mes.mes = text;
 

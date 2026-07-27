@@ -94,6 +94,7 @@ fn claude_opus_4_5_uses_legacy_thinking_with_output_effort() {
 #[test]
 fn claude_rejects_assistant_prefill_for_models_that_removed_it() {
     for model in [
+        "claude-opus-5",
         "claude-fable-5",
         "claude-mythos-5",
         "claude-sonnet-5",
@@ -333,6 +334,79 @@ fn claude_native_content_blocks_are_replayed() {
     assert_eq!(blocks[0]["signature"], "sig_thinking");
     assert_eq!(blocks[1]["type"], "tool_use");
     assert_eq!(blocks[1]["id"], "call_1");
+}
+
+#[test]
+fn claude_coalesces_exact_split_native_turn() {
+    let native_content = json!([
+        { "type": "text", "text": "Checking weather" },
+        { "type": "tool_use", "id": "call_1", "name": "weather", "input": { "city": "Paris" } }
+    ]);
+    let mut messages = json!([
+        {
+            "role": "assistant",
+            "content": "Checking weather",
+            "native": { "claude": { "content": native_content.clone() } }
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "weather", "arguments": "{\"city\":\"Paris\"}" }
+            }],
+            "native": { "claude": { "content": native_content.clone() } }
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "Sunny"
+        }
+    ]);
+    let payload = json!({
+        "model": "claude-sonnet-4-20250514",
+        "messages": messages.clone(),
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "description": "get weather",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    assert_eq!(
+        upstream.pointer("/messages/0/content"),
+        Some(&native_content)
+    );
+    assert_eq!(upstream["messages"].as_array().map(Vec::len), Some(2));
+
+    *messages
+        .pointer_mut("/1/native/claude/content/0/text")
+        .expect("native text must exist") = json!("Different");
+    let payload = json!({
+        "model": "claude-sonnet-4-20250514",
+        "messages": messages,
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "description": "get weather",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+    let error = build(payload).expect_err("mismatched split native content must fail");
+    assert!(error.to_string().contains("mismatched native content"));
 }
 
 #[test]
@@ -668,6 +742,7 @@ fn claude_full_sampling_models_keep_temperature_top_p_and_top_k() {
 #[test]
 fn claude_sampling_free_models_drop_non_default_sampling_params() {
     for model in [
+        "claude-opus-5",
         "claude-fable-5",
         "claude-mythos-5",
         "claude-sonnet-5",
@@ -690,6 +765,7 @@ fn claude_sampling_free_models_drop_non_default_sampling_params() {
 #[test]
 fn claude_sampling_free_models_ignore_default_sampling_params() {
     for model in [
+        "claude-opus-5",
         "claude-fable-5",
         "claude-mythos-5",
         "claude-sonnet-5",
@@ -749,6 +825,7 @@ fn claude_unknown_models_do_not_inherit_reasoning_support() {
 #[test]
 fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
     for model in [
+        "claude-opus-5",
         "claude-fable-5",
         "claude-mythos-5",
         "claude-sonnet-5",
@@ -800,15 +877,51 @@ fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
 }
 
 #[test]
+fn claude_default_thinking_only_requests_visible_summary() {
+    for model in [
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-sonnet-5",
+    ] {
+        let mut visible_payload = claude_payload(model);
+        visible_payload.insert("include_reasoning".to_string(), json!(true));
+
+        let (_, visible) = build(visible_payload).expect("build should succeed");
+        assert_eq!(
+            visible.pointer("/thinking/type").and_then(Value::as_str),
+            Some("adaptive"),
+            "{model}"
+        );
+        assert_eq!(
+            visible.pointer("/thinking/display").and_then(Value::as_str),
+            Some("summarized"),
+            "{model}"
+        );
+        assert!(visible.get("output_config").is_none(), "{model}");
+
+        let (_, hidden) = build(claude_payload(model)).expect("build should succeed");
+        assert!(hidden.get("thinking").is_none(), "{model}");
+        assert!(hidden.get("output_config").is_none(), "{model}");
+    }
+
+    let mut opt_in_payload = claude_payload("claude-opus-4-8");
+    opt_in_payload.insert("include_reasoning".to_string(), json!(true));
+    let (_, opt_in) = build(opt_in_payload).expect("build should succeed");
+    assert!(opt_in.get("thinking").is_none());
+}
+
+#[test]
 fn claude_adaptive_reasoning_orders_project_extremes() {
     for model in [
+        "claude-opus-5",
         "claude-fable-5",
         "claude-mythos-5",
         "claude-sonnet-5",
         "claude-opus-4-7",
         "claude-opus-4-8",
     ] {
-        for (requested, expected) in [("xhigh", "max"), ("max", "xhigh")] {
+        for (requested, expected) in [("xhigh", "xhigh"), ("max", "max")] {
             let mut payload = claude_payload(model);
             payload.insert("reasoning_effort".to_string(), json!(requested));
 
@@ -877,19 +990,21 @@ fn claude_validation_rejects_passthrough_xhigh_on_non_xhigh_models() {
 }
 
 #[test]
-fn claude_sonnet_5_validation_rejects_legacy_thinking_overrides() {
-    let request = json!({
-        "model": "claude-sonnet-5",
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
-        "thinking": {
-            "type": "enabled",
-            "budget_tokens": 2048
-        },
-        "max_tokens": 4096
-    });
+fn claude_adaptive_only_models_reject_legacy_thinking_overrides() {
+    for model in ["claude-opus-5", "claude-sonnet-5"] {
+        let request = json!({
+            "model": model,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+            "thinking": {
+                "type": "enabled",
+                "budget_tokens": 2048
+            },
+            "max_tokens": 4096
+        });
 
-    let error = super::validate_request(&request).expect_err("legacy thinking should fail");
-    assert!(error.to_string().contains("requires adaptive thinking"));
+        let error = super::validate_request(&request).expect_err("legacy thinking should fail");
+        assert!(error.to_string().contains("requires adaptive thinking"));
+    }
 }
 
 #[test]

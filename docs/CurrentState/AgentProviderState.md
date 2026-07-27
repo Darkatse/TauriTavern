@@ -1,6 +1,6 @@
 # Agent Provider State Contract
 
-最后更新：2026-05-02
+最后更新：2026-07-26
 
 本文档记录当前 **已落地** 的 Agent `provider_state` 契约。它不是阶段计划；后续开发应以这里为当前行为基线。
 
@@ -124,6 +124,8 @@ sessionId -> ResponsesWsSessionPool -> response.create -> response.completed
 | `claude_messages` | `claude` |
 | `gemini` | `gemini` |
 | `gemini_interactions` | `gemini_interactions` |
+
+`claude_messages` 覆盖 direct Claude、Vertex Claude、内建 Bedrock Claude 与 Custom Claude Messages。Bedrock 自定义模板没有 Claude Messages 契约，保持 `openai_compatible`。
 
 如果 response 中存在 tool calls，但对应 native part 计数为 0，gateway 返回：
 

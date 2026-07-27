@@ -237,6 +237,16 @@ fn build_claude_payload_inner(
                             }),
                         );
                     }
+                } else if contract.thinking_defaults_on
+                    && payload
+                        .get("include_reasoning")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                {
+                    request.insert(
+                        "thinking".to_string(),
+                        build_claude_adaptive_thinking(payload),
+                    );
                 }
             }
         }
@@ -300,9 +310,8 @@ fn claude_output_effort(
         RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => "low",
         RequestedReasoningEffort::Medium => "medium",
         RequestedReasoningEffort::High => "high",
-        RequestedReasoningEffort::XHigh if contract.supports_xhigh_output_effort => "max",
+        RequestedReasoningEffort::XHigh if contract.supports_xhigh_output_effort => "xhigh",
         RequestedReasoningEffort::XHigh => "high",
-        RequestedReasoningEffort::Max if contract.supports_xhigh_output_effort => "xhigh",
         RequestedReasoningEffort::Max => "max",
         RequestedReasoningEffort::Auto | RequestedReasoningEffort::None => {
             unreachable!("Claude reasoning parser excludes auto and none")

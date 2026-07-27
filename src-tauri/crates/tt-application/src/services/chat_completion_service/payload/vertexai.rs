@@ -153,7 +153,7 @@ mod tests {
         assert_eq!(
             body.pointer("/output_config/effort")
                 .and_then(Value::as_str),
-            Some("max")
+            Some("xhigh")
         );
     }
 

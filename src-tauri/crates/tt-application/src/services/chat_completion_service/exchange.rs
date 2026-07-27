@@ -1,6 +1,7 @@
 use serde_json::{Map, Value};
 
 use crate::errors::ApplicationError;
+use tt_domain::models::bedrock_model::{BedrockModelFamily, BedrockModelSpec};
 use tt_domain::models::claude_model::is_vertex_ai_claude_model_id;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionNormalizationReport, ChatCompletionSource,
@@ -39,6 +40,9 @@ impl ChatCompletionProviderFormat {
 
         Ok(match source {
             ChatCompletionSource::Claude => Self::ClaudeMessages,
+            ChatCompletionSource::AwsBedrock if is_bedrock_claude_payload(payload) => {
+                Self::ClaudeMessages
+            }
             ChatCompletionSource::VertexAi if is_vertexai_claude_payload(payload) => {
                 Self::ClaudeMessages
             }
@@ -56,6 +60,19 @@ impl ChatCompletionProviderFormat {
             Self::GeminiInteractions => "gemini_interactions",
         }
     }
+}
+
+fn is_bedrock_claude_payload(payload: &Map<String, Value>) -> bool {
+    payload
+        .get("aws_bedrock_use_custom_template")
+        .and_then(Value::as_bool)
+        != Some(true)
+        && payload
+            .get("model")
+            .and_then(Value::as_str)
+            .is_some_and(|model| {
+                BedrockModelSpec::classify(model).family() == BedrockModelFamily::AnthropicClaude
+            })
 }
 
 fn is_vertexai_claude_payload(payload: &Map<String, Value>) -> bool {

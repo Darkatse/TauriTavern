@@ -2,6 +2,7 @@ use serde_json::{Value, json};
 
 use super::decode::{decode_chat_completion_exchange, decode_chat_completion_response};
 use super::encode::encode_chat_completion_request;
+use super::format::resolve_request_adapter;
 use super::provider_state::next_provider_state;
 use super::providers::AgentProviderAdapter;
 use super::schema::{render_openai_tools, sanitize_schema_for_provider};
@@ -94,6 +95,87 @@ fn rejects_normalizer_synthetic_tool_call_id() {
             .to_string()
             .contains("provider response is missing tool_call_id")
     );
+}
+
+#[test]
+fn built_in_bedrock_claude_uses_claude_adapter() {
+    let cases = [
+        (
+            "global.anthropic.claude-opus-5-v1:0",
+            false,
+            AgentProviderAdapter::ClaudeMessages,
+        ),
+        (
+            "amazon.nova-pro-v1:0",
+            false,
+            AgentProviderAdapter::OpenAiCompatible,
+        ),
+        (
+            "global.anthropic.claude-opus-5-v1:0",
+            true,
+            AgentProviderAdapter::OpenAiCompatible,
+        ),
+    ];
+
+    for (model, use_custom_template, expected) in cases {
+        let mut request = basic_request("aws_bedrock", None, Vec::new());
+        request
+            .payload
+            .insert("model".to_string(), Value::String(model.to_string()));
+        request.payload.insert(
+            "aws_bedrock_use_custom_template".to_string(),
+            Value::Bool(use_custom_template),
+        );
+
+        let (_, adapter) = resolve_request_adapter(&request).unwrap();
+        assert_eq!(adapter, expected, "unexpected adapter for {model}");
+    }
+}
+
+#[test]
+fn rejects_provider_refusal_before_decoding_the_agent_turn() {
+    let response = json!({
+        "stop_reason": "refusal",
+        "stop_details": {
+            "explanation": "This request was declined by the provider."
+        },
+        "choices": [{
+            "finish_reason": "refusal",
+            "message": {
+                "role": "assistant",
+                "content": "partial output"
+            }
+        }]
+    });
+
+    let error = decode_chat_completion_response(response, &[]).unwrap_err();
+    assert!(error.to_string().contains("model.provider_refusal"));
+    assert!(
+        error
+            .to_string()
+            .contains("This request was declined by the provider.")
+    );
+}
+
+#[test]
+fn rejects_truncated_agent_turns() {
+    for response in [
+        json!({
+            "stop_reason": "model_context_window_exceeded",
+            "choices": [{
+                "message": { "role": "assistant", "content": "partial output" }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "finish_reason": "length",
+                "message": { "role": "assistant", "content": "partial output" }
+            }]
+        }),
+    ] {
+        let error = decode_chat_completion_response(response, &[]).unwrap_err();
+        assert!(error.to_string().contains("model.output_truncated"));
+    }
 }
 
 #[test]

@@ -2616,7 +2616,7 @@
     "openai_reasoning_effort_maximum": "最大",
     "openai_reasoning_effort_minimum": "最小",
     "openai_reasoning_effort_xhigh": "超高",
-    "Claude options: legacy thinking maps effort to a token budget. For adaptive thinking, Maximum selects the highest supported effort and XHigh the level below it. Auto does not request thinking.": "Claude 選項：舊式思維鏈會將推理強度映射為權杖預算。使用自適應思維鏈時，最大會選擇受支援的最高檔位，超高會選擇低一檔。選擇「自動」不會請求模型思維鏈。",
+    "Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default; Claude 5 models think by default.": "Claude 選項：舊式思維鏈會將推理強度映射為權杖預算。自適應思維鏈會在模型支援時保留超高和最大檔位。自動使用模型預設值；Claude 5 模型預設啟用思維鏈。",
     "openrouter_web_search_fee": "需付費。每次提示詞將額外收取 0.02 美元費用。",
     "Pooled order": "合併順序",
     "Request inline images": "請求內嵌圖片",

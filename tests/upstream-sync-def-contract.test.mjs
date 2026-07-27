@@ -21,7 +21,8 @@ test('OpenAI tool reasoning sync preserves Tauri native reasoning lanes', async 
     assert.match(source, /tool_call_recurse_limit:\s*5/);
     assert.match(source, /const canReplayProviderTurnMetadata = isSameModel && !isOtherGroupMember/);
     assert.match(source, /const reasoning = canReplayProviderTurnMetadata \? String\(chat\[j\]\?\.extra\?\.reasoning \?\? ''\) : ''/);
-    assert.match(source, /const native = includeNative && canReplayProviderTurnMetadata \? chat\[j\]\?\.extra\?\.native : null/);
+    assert.match(source, /const includeClaudeNative = usesClaudeMessagesSemantics\(oai_settings, currentModel\)/);
+    assert.match(source, /&& \(!includeClaudeNative \|\| hasClaudeToolUse\(chat\[j\]\?\.extra\?\.native\)\)/);
     assert.match(source, /&& canReplayProviderTurnMetadata/);
     assert.match(source, /if \(!canReplayProviderTurnMetadata && \(invocation\.signature \|\| invocation\.reasoning\)\) \{/);
     assert.match(source, /delete cloneInvocation\.reasoning/);

@@ -25,6 +25,7 @@ const CLAUDE_MANUAL_ONLY_THINKING_MODEL_PREFIXES: &[&str] = &[
 const CLAUDE_MANUAL_OR_ADAPTIVE_THINKING_MODEL_PREFIXES: &[&str] =
     &["claude-opus-4-6", "claude-sonnet-4-6"];
 const CLAUDE_ADAPTIVE_ONLY_THINKING_MODEL_PREFIXES: &[&str] = &[
+    "claude-opus-5",
     "claude-fable-5",
     "claude-mythos-5",
     "claude-sonnet-5",
@@ -32,6 +33,7 @@ const CLAUDE_ADAPTIVE_ONLY_THINKING_MODEL_PREFIXES: &[&str] = &[
     "claude-opus-4-7",
 ];
 const CLAUDE_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &[
+    "claude-opus-5",
     "claude-fable-5",
     "claude-mythos-5",
     "claude-sonnet-5",
@@ -42,11 +44,18 @@ const CLAUDE_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &[
     "claude-opus-4-5",
 ];
 const CLAUDE_XHIGH_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &[
+    "claude-opus-5",
     "claude-fable-5",
     "claude-mythos-5",
     "claude-sonnet-5",
     "claude-opus-4-8",
     "claude-opus-4-7",
+];
+const CLAUDE_DEFAULT_THINKING_MODEL_PREFIXES: &[&str] = &[
+    "claude-opus-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-sonnet-5",
 ];
 const CLAUDE_ASSISTANT_PREFILL_EXACT_MODELS: &[&str] = &["claude-opus-4", "claude-sonnet-4"];
 const CLAUDE_ASSISTANT_PREFILL_MODEL_PREFIXES: &[&str] = &[
@@ -83,6 +92,7 @@ pub(super) struct ClaudeModelContract {
     pub(super) thinking: ClaudeThinkingMode,
     pub(super) supports_output_effort: bool,
     pub(super) supports_xhigh_output_effort: bool,
+    pub(super) thinking_defaults_on: bool,
     pub(super) supports_assistant_prefill: bool,
 }
 
@@ -102,6 +112,11 @@ impl ClaudeModelContract {
                 &model,
                 &[],
                 CLAUDE_XHIGH_OUTPUT_EFFORT_MODEL_PREFIXES,
+            ),
+            thinking_defaults_on: matches_claude_model(
+                &model,
+                &[],
+                CLAUDE_DEFAULT_THINKING_MODEL_PREFIXES,
             ),
             supports_assistant_prefill: matches_claude_model(
                 &model,

@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn openrouter_orders_project_extremes() {
-        for (requested, expected) in [("xhigh", "high"), ("max", "xhigh")] {
+        for (requested, expected) in [("xhigh", "xhigh"), ("max", "max")] {
             let payload = json!({
                 "chat_completion_source": "openrouter",
                 "model": "openai/gpt-5.1",
