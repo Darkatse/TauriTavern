@@ -26,9 +26,9 @@ function isMobileUserAgent() {
 const COMPAT_PROFILE = Object.freeze({
     name: 'compat',
     maxActiveWeight: 200,
-    maxActiveIframes: 12,
+    maxActiveIframes: 18,
     maxActiveSlots: 80,
-    maxSoftParkedIframes: 24,
+    maxSoftParkedIframes: 36,
     softParkTtlMs: 120_000,
     parkWhenHiddenKinds: Object.freeze([
         EmbeddedRuntimeKind.JsrHtmlRender,
@@ -42,9 +42,9 @@ const COMPAT_PROFILE = Object.freeze({
 const MOBILE_SAFE_PROFILE = Object.freeze({
     name: 'mobile-safe',
     maxActiveWeight: 80,
-    maxActiveIframes: 4,
+    maxActiveIframes: 8,
     maxActiveSlots: 30,
-    maxSoftParkedIframes: 8,
+    maxSoftParkedIframes: 16,
     softParkTtlMs: 45_000,
     parkWhenHiddenKinds: Object.freeze([
         EmbeddedRuntimeKind.JsrHtmlRender,

@@ -2,7 +2,7 @@
 
 import { createResourceLease } from './resource-lease.js';
 
-const DEFAULT_RUNTIME_LIMIT = 4;
+const DEFAULT_RUNTIME_LIMIT = 8;
 
 /** @param {unknown} value */
 function toError(value) {

@@ -132,6 +132,7 @@ test('managed RuntimeAdmission suspends new grants without parking active runtim
         cancel: scheduler.cancel,
     });
     admission.configure('managed');
+    assert.equal(admission.snapshot().maxActive, 8);
     admission.register([{ record, candidate: { participantId: 'test/runtime' } }]);
     admission.setDemand(['only'], { suspended: true });
     assert.equal(scheduler.size(), 0);

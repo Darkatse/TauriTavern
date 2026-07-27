@@ -325,14 +325,14 @@ test('bounded runtime demand never exceeds Rmax and unmount synchronously revoke
         fixture.bounded.open();
         dom.flushRaf();
         assert.ok(fixture.controller.snapshot().runtime.active > 0);
-        assert.ok(fixture.controller.snapshot().runtime.active <= 4);
+        assert.ok(fixture.controller.snapshot().runtime.active <= 8);
 
         const firstSignals = activations.map(entry => entry.signal);
         fixture.bounded.jumpToMessage(5);
         dom.flushRaf();
         assert.ok(cleanupCount > 0);
         assert.ok(firstSignals.some(signal => signal.aborted));
-        assert.ok(fixture.controller.snapshot().runtime.active <= 4);
+        assert.ok(fixture.controller.snapshot().runtime.active <= 8);
 
         fixture.bounded.resetEpoch();
         assert.equal(fixture.controller.snapshot().runtime.active, 0);

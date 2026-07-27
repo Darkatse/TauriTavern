@@ -111,6 +111,7 @@ activate({ source, mesid, element, content, signal }) => Disposable
 - activation 必须同步返回 disposer，不得返回 `void` 或 Promise；
 - 每次 `grant → revoke → grant` 都获得新的 signal 与 disposer；
 - revoke 返回时必须已经撤销 iframe、timer、listener、observer 和强引用；
+- active runtime 被 revoke 时，其稳定 host 应留下不持有上述资源的等高 `inert` placeholder；regrant 先把该高度交给新 runtime，再由 renderer 自己的高度协议校准；
 - source 是可重建 runtime 的锚点，不得转移给 detached stash 或其他消息。
 
 宿主可以不 activation 某个 candidate。DOM residency 与 runtime admission 是两个独立上限，预算、顺序和 viewport policy 不进入 participant API。
