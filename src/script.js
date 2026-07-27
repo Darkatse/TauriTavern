@@ -718,6 +718,7 @@ let crop_data = undefined;
 let is_delete_mode = false;
 /** @type {{ firstMessage: ChatMessage | null; firstMessageMounted: boolean } | null} */
 let stylePinProjectionState = null;
+let chatSurfaceStructureMutationDepth = 0;
 let fav_ch_checked = false;
 let scrollLock = false;
 export let abortStatusCheck = new AbortController();
@@ -6916,17 +6917,22 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
     chat_metadata.tainted = true;
 
     if (typeof insertAt === 'number' && insertAt >= 0 && insertAt <= chat.length) {
-        chat.splice(insertAt, 0, message);
-        await saveChatConditional(commitReason);
-        await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
-        await reloadCurrentChat();
+        await withChatSurfaceStructureMutation(async () => {
+            chat.splice(insertAt, 0, message);
+            await saveChatConditional(commitReason);
+            await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
+            await reloadCurrentChat();
+        });
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, insertAt);
     } else {
-        chat.push(message);
-        await saveChatConditional(commitReason);
-        const chat_id = (chat.length - 1);
-        await eventSource.emit(event_types.MESSAGE_SENT, chat_id);
-        addOneMessage(message);
+        let chat_id;
+        await withChatSurfaceStructureMutation(async () => {
+            chat.push(message);
+            await saveChatConditional(commitReason);
+            chat_id = (chat.length - 1);
+            await eventSource.emit(event_types.MESSAGE_SENT, chat_id);
+            addOneMessage(message);
+        });
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, chat_id);
     }
 
@@ -7786,27 +7792,26 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
     } else {
         console.debug('entering chat update routine for non-swipe post');
-        const newMessage = {};
-        chat.push(newMessage);
-        newMessage.extra = {};
-        newMessage.name = name2;
-        newMessage.is_user = false;
-        newMessage.send_date = getMessageTimeStamp();
-        newMessage.extra.api = getGeneratingApi();
-        newMessage.extra.model = getGeneratingModel();
-        newMessage.extra.reasoning = reasoning;
-        newMessage.extra.reasoning_duration = null;
-        newMessage.extra.reasoning_signature = reasoningSignature;
-        if (native !== null && native !== undefined) {
-            newMessage.extra.native = native;
-        }
         if (power_user.trim_spaces) {
             getMessage = getMessage.trim();
         }
-        newMessage.mes = getMessage;
-        newMessage.title = title;
-        newMessage.gen_started = generation_started;
-        newMessage.gen_finished = generationFinished;
+        const newMessage = {
+            name: name2,
+            is_user: false,
+            send_date: getMessageTimeStamp(),
+            mes: getMessage,
+            title,
+            gen_started: generation_started,
+            gen_finished: generationFinished,
+            extra: {
+                api: getGeneratingApi(),
+                model: getGeneratingModel(),
+                reasoning,
+                reasoning_duration: null,
+                reasoning_signature: reasoningSignature,
+                ...(native !== null && native !== undefined ? { native } : {}),
+            },
+        };
 
         if (power_user.message_token_count_enabled) {
             const tokenCountText = (reasoning || '') + newMessage.mes;
@@ -7825,10 +7830,12 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         }
 
         await processImageAttachment(newMessage, { imageUrls });
-        const chat_id = (chat.length - 1);
-
-        !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
-        addOneMessage(chat[chat_id]);
+        const chat_id = chat.length;
+        await withChatSurfaceStructureMutation(async () => {
+            chat.push(newMessage);
+            !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
+            addOneMessage(chat[chat_id]);
+        });
         !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
     }
 
@@ -10786,9 +10793,34 @@ export function jumpBoundedChatSurfaceToMessage(messageId) {
 
 export function syncChatSurfaceProjectionHold() {
     chatSurface.setProjectionHeld(
-        Number.isInteger(this_edit_mes_id)
+        chatSurfaceStructureMutationDepth > 0
+        || Number.isInteger(this_edit_mes_id)
         || document.querySelector('.reasoning_edit_textarea') !== null,
     );
+}
+
+/**
+ * Keeps geometry projection out of an upstream event-before-render structure write.
+ * The callback must reconcile the final chat structure before it returns.
+ * @template T
+ * @param {() => Promise<T>} callback
+ * @returns {Promise<T>}
+ */
+export async function withChatSurfaceStructureMutation(callback) {
+    if (typeof callback !== 'function') {
+        throw new TypeError('ChatSurface structure mutation requires a callback');
+    }
+    chatSurfaceStructureMutationDepth++;
+    syncChatSurfaceProjectionHold();
+    try {
+        return await callback();
+    } catch (error) {
+        reconcileMountedChatSurface();
+        throw error;
+    } finally {
+        chatSurfaceStructureMutationDepth--;
+        syncChatSurfaceProjectionHold();
+    }
 }
 
 export function getChatScrollTop() {
@@ -11252,11 +11284,14 @@ export async function createOrEditCharacter(e) {
                 (chat.length === 0 || (chat.length === 1 && !chat[0].is_user && !chat[0].is_system));
 
             if (shouldRegenerateMessage) {
-                chat.splice(0, chat.length, message);
-                const messageId = (chat.length - 1);
-                await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
-                await clearChat();
-                await printMessages();
+                let messageId;
+                await withChatSurfaceStructureMutation(async () => {
+                    chat.splice(0, chat.length, message);
+                    messageId = (chat.length - 1);
+                    await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
+                    await clearChat();
+                    await printMessages();
+                });
                 await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'first_message');
                 await saveChatConditional();
             }

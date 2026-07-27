@@ -67,6 +67,7 @@ import {
     rerenderChatMessage,
     isBoundedChatSurfaceView,
     jumpBoundedChatSurfaceToMessage,
+    withChatSurfaceStructureMutation,
 } from '../script.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
@@ -5193,16 +5194,17 @@ async function deleteMessagesByNameCallback(_, name) {
         return;
     }
 
-    for (const message of messagesToDelete) {
-        const index = chat.indexOf(message);
-        if (index !== -1) {
-            console.debug(`/delname: Deleting message #${index}`, message);
-            chat.splice(index, 1);
+    await withChatSurfaceStructureMutation(async () => {
+        for (const message of messagesToDelete) {
+            const index = chat.indexOf(message);
+            if (index !== -1) {
+                console.debug(`/delname: Deleting message #${index}`, message);
+                chat.splice(index, 1);
+            }
         }
-    }
-
-    await saveChatConditional();
-    await reloadCurrentChat();
+        await saveChatConditional();
+        await reloadCurrentChat();
+    });
 
     toastr.info(t`Deleted ${messagesToDelete.length} messages from ${name}`);
     return '';
@@ -6070,16 +6072,21 @@ export async function sendMessageAs(args, text) {
     chat_metadata.tainted = true;
 
     if (!isNaN(insertAt) && insertAt >= 0 && insertAt <= chat.length) {
-        chat.splice(insertAt, 0, message);
-        await saveChatConditional();
-        await eventSource.emit(event_types.MESSAGE_RECEIVED, insertAt, 'command');
-        await reloadCurrentChat();
+        await withChatSurfaceStructureMutation(async () => {
+            chat.splice(insertAt, 0, message);
+            await saveChatConditional();
+            await eventSource.emit(event_types.MESSAGE_RECEIVED, insertAt, 'command');
+            await reloadCurrentChat();
+        });
         await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, insertAt, 'command');
     } else {
-        chat.push(message);
-        await eventSource.emit(event_types.MESSAGE_RECEIVED, (chat.length - 1), 'command');
-        addOneMessage(message);
-        await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'command');
+        const messageId = chat.length;
+        await withChatSurfaceStructureMutation(async () => {
+            chat.push(message);
+            await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'command');
+            addOneMessage(message);
+        });
+        await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'command');
         await saveChatConditional();
     }
 
@@ -6122,16 +6129,21 @@ export async function sendNarratorMessage(args, text) {
     chat_metadata.tainted = true;
 
     if (!isNaN(insertAt) && insertAt >= 0 && insertAt <= chat.length) {
-        chat.splice(insertAt, 0, message);
-        await saveChatConditional();
-        await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
-        await reloadCurrentChat();
+        await withChatSurfaceStructureMutation(async () => {
+            chat.splice(insertAt, 0, message);
+            await saveChatConditional();
+            await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
+            await reloadCurrentChat();
+        });
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, insertAt);
     } else {
-        chat.push(message);
-        await eventSource.emit(event_types.MESSAGE_SENT, (chat.length - 1));
-        addOneMessage(message);
-        await eventSource.emit(event_types.USER_MESSAGE_RENDERED, (chat.length - 1));
+        const messageId = chat.length;
+        await withChatSurfaceStructureMutation(async () => {
+            chat.push(message);
+            await eventSource.emit(event_types.MESSAGE_SENT, messageId);
+            addOneMessage(message);
+        });
+        await eventSource.emit(event_types.USER_MESSAGE_RENDERED, messageId);
         await saveChatConditional();
     }
 
@@ -6173,10 +6185,13 @@ export async function promptQuietForLoudResponse(who, text) {
 
     chat_metadata.tainted = true;
 
-    chat.push(message);
-    await eventSource.emit(event_types.MESSAGE_SENT, (chat.length - 1));
-    addOneMessage(message);
-    await eventSource.emit(event_types.USER_MESSAGE_RENDERED, (chat.length - 1));
+    const messageId = chat.length;
+    await withChatSurfaceStructureMutation(async () => {
+        chat.push(message);
+        await eventSource.emit(event_types.MESSAGE_SENT, messageId);
+        addOneMessage(message);
+    });
+    await eventSource.emit(event_types.USER_MESSAGE_RENDERED, messageId);
     await saveChatConditional();
 
 }
@@ -6210,16 +6225,21 @@ async function sendCommentMessage(args, text) {
     chat_metadata.tainted = true;
 
     if (!isNaN(insertAt) && insertAt >= 0 && insertAt <= chat.length) {
-        chat.splice(insertAt, 0, message);
-        await saveChatConditional();
-        await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
-        await reloadCurrentChat();
+        await withChatSurfaceStructureMutation(async () => {
+            chat.splice(insertAt, 0, message);
+            await saveChatConditional();
+            await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
+            await reloadCurrentChat();
+        });
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, insertAt);
     } else {
-        chat.push(message);
-        await eventSource.emit(event_types.MESSAGE_SENT, (chat.length - 1));
-        addOneMessage(message);
-        await eventSource.emit(event_types.USER_MESSAGE_RENDERED, (chat.length - 1));
+        const messageId = chat.length;
+        await withChatSurfaceStructureMutation(async () => {
+            chat.push(message);
+            await eventSource.emit(event_types.MESSAGE_SENT, messageId);
+            addOneMessage(message);
+        });
+        await eventSource.emit(event_types.USER_MESSAGE_RENDERED, messageId);
         await saveChatConditional();
     }
 

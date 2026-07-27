@@ -136,21 +136,27 @@ test('bounded ChatSurface opens at the true tail and keeps a two-range DOM bound
     }
 });
 
-test('bounded projection defers geometry while a first-party editor holds DOM state', () => {
+test('bounded projection defers geometry until a held structure mutation reconciles', () => {
     const dom = installFakeDom();
     try {
         const fixture = createFixture(200);
         fixture.bounded.open();
         fixture.bounded.setProjectionHeld(true);
+        fixture.messages.push({ mes: 'appended-before-event', height: 100 });
         fixture.notifyGeometryChange({ sync: false });
         dom.flushRaf();
         assert.equal(fixture.bounded.snapshot().projectionHeld, true);
         assert.equal(fixture.bounded.snapshot().projectionDeferred, true);
+        assert.equal(fixture.controller.snapshot().messageCount, 200);
+        assert.deepEqual(fixture.faults, []);
 
+        fixture.bounded.reconcile();
         fixture.bounded.setProjectionHeld(false);
         dom.flushRaf();
+        assert.equal(fixture.controller.snapshot().messageCount, 201);
         assert.equal(fixture.bounded.snapshot().projectionDeferred, false);
         assert.equal(fixture.bounded.snapshot().state, 'settled');
+        assert.deepEqual(fixture.faults, []);
         fixture.bounded.resetEpoch();
     } finally {
         dom.cleanup();

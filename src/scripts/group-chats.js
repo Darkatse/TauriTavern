@@ -81,6 +81,7 @@ import {
     chatElement,
     ensureMessageMediaIsArray,
     resetChatSurfaceView,
+    withChatSurfaceStructureMutation,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect, printTagFilters, tag_filter_type } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -351,10 +352,13 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
                 continue;
             }
 
-            chat.push(mes);
-            await eventSource.emit(event_types.MESSAGE_RECEIVED, (chat.length - 1), 'first_message');
-            addOneMessage(mes);
-            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'first_message');
+            const messageId = chat.length;
+            await withChatSurfaceStructureMutation(async () => {
+                chat.push(mes);
+                await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
+                addOneMessage(mes);
+            });
+            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'first_message');
         }
         await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
     } else if (Array.isArray(data) && data.length) {

@@ -16,6 +16,7 @@ import {
     systemUserName,
     this_chid,
     user_avatar,
+    withChatSurfaceStructureMutation,
 } from '../../../script.js';
 import {
     doExtrasFetch,
@@ -4989,10 +4990,12 @@ async function sendMessage(prompt, image, generationType, additionalNegativePref
             inline_image: false,
         },
     };
-    context.chat.push(message);
-    const messageId = context.chat.length - 1;
-    await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'extension');
-    context.addOneMessage(message);
+    const messageId = context.chat.length;
+    await withChatSurfaceStructureMutation(async () => {
+        context.chat.push(message);
+        await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'extension');
+        context.addOneMessage(message);
+    });
     await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'extension');
     await context.saveChat();
     setTimeout(() => context.scrollOnMediaLoad(), debounce_timeout.short);
