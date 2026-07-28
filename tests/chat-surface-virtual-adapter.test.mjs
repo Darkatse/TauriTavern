@@ -47,6 +47,25 @@ test('pinned TanStack adapter exposes tail, normal and forced geometry without l
         assert.ok(normal.viewportItems.length <= CHAT_VIRTUAL_MAX_VIEWPORT_ITEMS);
         assert.equal(normal.projectedItems.at(-1).index, 99);
 
+        changes.length = 0;
+        root.scrollHeight = 20_000;
+        root.scrollTo({ top: 100 });
+        assert.deepEqual(changes.at(-1), { scrolling: true, programmatic: false });
+
+        const message = document.createElement('div');
+        message.classList.add('mes');
+        message.setAttribute('data-tt-virtual-index', '0');
+        message._setRect({ width: 800, height: 480 });
+        root.append(message);
+        adapter.measure([message]);
+        const messageObserver = dom.createdResizeObservers.find(observer => observer._targets.has(message));
+        messageObserver._trigger([{ target: message, borderBoxSize: [{ blockSize: 480 }] }]);
+        assert.equal(changes.at(-1).scrolling, true);
+
+        root.dispatchEvent({ type: 'scrollend', target: root });
+        assert.equal(changes.at(-1).scrolling, false);
+        assert.equal(Object.hasOwn(changes.at(-1), 'sync'), false);
+
         adapter.force(50);
         const forced = adapter.geometry();
         assert.ok(forced.viewportItems.some(item => item.index === 50));

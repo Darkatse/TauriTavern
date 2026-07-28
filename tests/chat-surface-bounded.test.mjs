@@ -51,6 +51,7 @@ function createFixture(count, registry = createChatSurfaceParticipantRegistry())
     });
     controller.configureRuntimeAdmission({ mode: 'managed' });
     const faults = [];
+    let projectionCommitCount = 0;
     let notifyGeometryChange;
     const bounded = createBoundedChatSurface({
         controller,
@@ -60,7 +61,7 @@ function createFixture(count, registry = createChatSurfaceParticipantRegistry())
             notifyGeometryChange = options.onGeometryChange;
             return createTanStackVirtualAdapter({ ...options, virtualCore });
         },
-        onProjectionCommitted() {},
+        onProjectionCommitted() { projectionCommitCount += 1; },
         onFault: error => faults.push(error),
     });
     return {
@@ -70,6 +71,7 @@ function createFixture(count, registry = createChatSurfaceParticipantRegistry())
         controller,
         bounded,
         faults,
+        getProjectionCommitCount: () => projectionCommitCount,
         notifyGeometryChange: change => notifyGeometryChange(change),
     };
 }
@@ -143,7 +145,7 @@ test('bounded projection defers geometry until a held structure mutation reconci
         fixture.bounded.open();
         fixture.bounded.setProjectionHeld(true);
         fixture.messages.push({ mes: 'appended-before-event', height: 100 });
-        fixture.notifyGeometryChange({ sync: false });
+        fixture.notifyGeometryChange({ scrolling: false, programmatic: false });
         dom.flushRaf();
         assert.equal(fixture.bounded.snapshot().projectionHeld, true);
         assert.equal(fixture.bounded.snapshot().projectionDeferred, true);
@@ -168,7 +170,7 @@ test('global measurement refresh waits for an active gesture to settle', () => {
     try {
         const fixture = createFixture(200);
         fixture.bounded.open();
-        fixture.notifyGeometryChange({ sync: true });
+        fixture.notifyGeometryChange({ scrolling: true, programmatic: false });
         dom.flushRaf();
         assert.equal(fixture.bounded.snapshot().state, 'gesture-scrolling');
 
@@ -176,9 +178,37 @@ test('global measurement refresh waits for an active gesture to settle', () => {
         dom.flushRaf();
         assert.equal(fixture.bounded.snapshot().state, 'gesture-scrolling');
 
-        fixture.notifyGeometryChange({ sync: false });
+        fixture.notifyGeometryChange({ scrolling: false, programmatic: false });
         dom.flushRaf();
         assert.equal(fixture.bounded.snapshot().state, 'settled');
+        fixture.bounded.resetEpoch();
+    } finally {
+        dom.cleanup();
+    }
+});
+
+test('scrolling geometry stays suspended and an unchanged settle skips projection replay', () => {
+    const dom = installFakeDom();
+    try {
+        const fixture = createFixture(200);
+        fixture.bounded.open();
+        const projectionCommitCount = fixture.getProjectionCommitCount();
+
+        fixture.notifyGeometryChange({ scrolling: true, programmatic: false });
+        dom.flushRaf();
+        fixture.notifyGeometryChange({ scrolling: true, programmatic: false });
+        dom.flushRaf();
+
+        assert.equal(fixture.bounded.snapshot().state, 'gesture-scrolling');
+        assert.equal(fixture.controller.snapshot().runtime.suspended, true);
+        assert.equal(fixture.getProjectionCommitCount(), projectionCommitCount);
+
+        fixture.notifyGeometryChange({ scrolling: false, programmatic: false });
+        dom.flushRaf();
+
+        assert.equal(fixture.bounded.snapshot().state, 'settled');
+        assert.equal(fixture.controller.snapshot().runtime.suspended, false);
+        assert.equal(fixture.getProjectionCommitCount(), projectionCommitCount);
         fixture.bounded.resetEpoch();
     } finally {
         dom.cleanup();
@@ -190,7 +220,7 @@ test('structural reconcile keeps runtime admission suspended until the gesture s
     try {
         const fixture = createFixture(200);
         fixture.bounded.open();
-        fixture.notifyGeometryChange({ sync: true });
+        fixture.notifyGeometryChange({ scrolling: true, programmatic: false });
         dom.flushRaf();
 
         fixture.messages.push({ mes: 'appended-during-scroll', height: 100 });
@@ -199,12 +229,12 @@ test('structural reconcile keeps runtime admission suspended until the gesture s
         assert.equal(fixture.bounded.snapshot().state, 'gesture-scrolling');
         assert.equal(fixture.controller.snapshot().runtime.suspended, true);
 
-        fixture.notifyGeometryChange({ sync: true, programmatic: true });
+        fixture.notifyGeometryChange({ scrolling: true, programmatic: true });
         dom.flushRaf();
         assert.equal(fixture.bounded.snapshot().state, 'gesture-scrolling');
         assert.equal(fixture.controller.snapshot().runtime.suspended, true);
 
-        fixture.notifyGeometryChange({ sync: false });
+        fixture.notifyGeometryChange({ scrolling: false, programmatic: false });
         dom.flushRaf();
         assert.equal(fixture.bounded.snapshot().state, 'settled');
         assert.equal(fixture.controller.snapshot().runtime.suspended, false);
@@ -246,7 +276,7 @@ test('measurement refresh clamps an intra-message anchor when the message shrink
 
         const item = fixture.bounded.snapshot().geometry.viewportItems.find(candidate => candidate.index === 250);
         fixture.root.scrollTo({ top: item.start + 800 });
-        fixture.notifyGeometryChange({ sync: false });
+        fixture.notifyGeometryChange({ scrolling: false, programmatic: false });
         dom.flushRaf();
         assert.equal(fixture.bounded.snapshot().geometry.visibleMessageIds[0], 250);
 

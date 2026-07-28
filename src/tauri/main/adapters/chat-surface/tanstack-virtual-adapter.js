@@ -74,7 +74,7 @@ function cappedViewportRange(range, maxItems, extract) {
  *
  * @param {{
  *   root: HTMLElement;
- *   onGeometryChange: (change: { sync: boolean; programmatic: boolean }) => void;
+ *   onGeometryChange: (change: { scrolling: boolean; programmatic: boolean }) => void;
  *   virtualCore: {
  *     Virtualizer: typeof import('@tanstack/virtual-core').Virtualizer;
  *     defaultRangeExtractor: typeof import('@tanstack/virtual-core').defaultRangeExtractor;
@@ -200,7 +200,7 @@ export function createTanStackVirtualAdapter({
             followOnAppend: 'auto',
             scrollEndThreshold: CHAT_VIRTUAL_SCROLL_END_THRESHOLD_PX,
             isScrollingResetDelay: CHAT_VIRTUAL_SCROLL_RESET_DELAY_MS,
-            useScrollendEvent: false,
+            useScrollendEvent: true,
             useAnimationFrameWithResizeObserver: false,
             observeElementRect,
             observeElementOffset,
@@ -214,7 +214,7 @@ export function createTanStackVirtualAdapter({
                     pendingProgrammaticOffset = null;
                 }
                 onGeometryChange(Object.freeze({
-                    sync,
+                    scrolling: _instance.isScrolling,
                     programmatic: Boolean(_instance.scrollState) || matchedProgrammaticWrite,
                 }));
             },

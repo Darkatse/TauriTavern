@@ -11,7 +11,7 @@ import { CHAT_VIRTUAL_MAX_VIEWPORT_ITEMS } from '../../kernel/chat-surface/virtu
  *   controller: ReturnType<import('./chat-surface-controller.js').createChatSurfaceController>;
  *   domAdapter: ReturnType<import('../../adapters/chat-surface/chat-dom-adapter.js').createChatDomAdapter>;
  *   getMessages: () => any[];
- *   createVirtualAdapter: (input: { root: HTMLElement; scrollToFn: import('@tanstack/virtual-core').VirtualizerOptions<HTMLElement, HTMLElement>['scrollToFn']; onGeometryChange: (change: { sync: boolean; programmatic: boolean }) => void }) => ReturnType<import('../../adapters/chat-surface/tanstack-virtual-adapter.js').createTanStackVirtualAdapter>;
+ *   createVirtualAdapter: (input: { root: HTMLElement; scrollToFn: import('@tanstack/virtual-core').VirtualizerOptions<HTMLElement, HTMLElement>['scrollToFn']; onGeometryChange: (change: { scrolling: boolean; programmatic: boolean }) => void }) => ReturnType<import('../../adapters/chat-surface/tanstack-virtual-adapter.js').createTanStackVirtualAdapter>;
  *   onProjectionCommitted: (messageIds: readonly number[]) => void;
  *   onFault: (error: Error) => void;
  * }} deps
@@ -39,7 +39,7 @@ export function createBoundedChatSurface({
     let state = 'inactive';
     /** @type {any} */
     let layout = null;
-    /** @type {{ sync: boolean; programmatic?: boolean } | null} */
+    /** @type {{ scrolling: boolean; programmatic: boolean } | null} */
     let pendingGeometry = null;
     /** @type {number | null} */
     let scheduledCommit = null;
@@ -55,14 +55,13 @@ export function createBoundedChatSurface({
         scrollToFn: controller.scroll.virtualScrollTo,
         onGeometryChange(change) {
             pendingGeometry = change;
-            if (change.sync && !change.programmatic) {
-                followingTail = virtual.isAtEnd();
-            }
             if (committing || state === 'inactive' || state === 'bootstrapping' || state === 'jumping' || state === 'faulted' || state === 'disposed') {
                 return;
             }
-            if (change.sync && !change.programmatic) {
+            if (change.scrolling && !change.programmatic) {
                 state = 'gesture-scrolling';
+            } else if (!change.programmatic) {
+                followingTail = virtual.isAtEnd();
             }
             scheduleGeometryCommit();
         },
@@ -111,6 +110,20 @@ export function createBoundedChatSurface({
             gap: geometry.metrics.gap,
             maxViewportItems: CHAT_VIRTUAL_MAX_VIEWPORT_ITEMS,
         });
+    }
+
+    /** @param {any} current @param {any} next */
+    function hasSameDomLayout(current, next) {
+        return Boolean(current)
+            && current.projection.indices.length === next.projection.indices.length
+            && current.projection.indices.every(
+                /** @param {number} messageId @param {number} index */
+                (messageId, index) => messageId === next.projection.indices[index],
+            )
+            && current.topSpacer.present === next.topSpacer.present
+            && current.topSpacer.height === next.topSpacer.height
+            && current.middleSpacer.present === next.middleSpacer.present
+            && current.middleSpacer.height === next.middleSpacer.height;
     }
 
     /** @param {ReturnType<typeof virtual.geometry>} geometry */
@@ -166,12 +179,18 @@ export function createBoundedChatSurface({
         controller.setRuntimeDemand({ messageIds: runtimeDemand, suspended });
     }
 
-    /** @param {{ replaceMessageIds?: number[]; materializeOptionsByMessageId?: Map<number, any> }} [options] */
-    function commitCurrentGeometry({ replaceMessageIds = [], materializeOptionsByMessageId = new Map() } = {}) {
+    /** @param {{ replaceMessageIds?: number[]; materializeOptionsByMessageId?: Map<number, any>; skipUnchanged?: boolean }} [options] */
+    function commitCurrentGeometry({ replaceMessageIds = [], materializeOptionsByMessageId = new Map(), skipUnchanged = false } = {}) {
         assertOperational();
         virtual.refreshMetrics();
         const geometry = virtual.geometry();
         const nextLayout = layoutFromGeometry(geometry);
+        if (skipUnchanged && hasSameDomLayout(layout, nextLayout)) {
+            layout = nextLayout;
+            runtimeDemand = createRuntimeDemand(geometry);
+            controller.setRuntimeDemand({ messageIds: runtimeDemand, suspended: false });
+            return nextLayout;
+        }
         controller.project({
             indices: nextLayout.projection.indices.slice(),
             replaceMessageIds,
@@ -250,7 +269,7 @@ export function createBoundedChatSurface({
                 return;
             }
             try {
-                if (change.sync && (state === 'gesture-scrolling' || !change.programmatic)) {
+                if (change.scrolling && (state === 'gesture-scrolling' || !change.programmatic)) {
                     controller.setRuntimeDemand({ messageIds: runtimeDemand, suspended: true });
                     return;
                 }
@@ -264,7 +283,7 @@ export function createBoundedChatSurface({
                     measurementRefreshPending = false;
                     commitMeasurementRefresh();
                 } else {
-                    commitCurrentGeometry();
+                    commitCurrentGeometry({ skipUnchanged: true });
                 }
                 state = 'settled';
             } catch (error) {
@@ -419,7 +438,7 @@ export function createBoundedChatSurface({
                 projectionDeferred = true;
             }
         } else {
-            pendingGeometry = Object.freeze({ sync: false });
+            pendingGeometry = Object.freeze({ scrolling: false, programmatic: false });
             scheduleGeometryCommit();
         }
         return layout;
@@ -431,7 +450,7 @@ export function createBoundedChatSurface({
         projectionHeld = Boolean(held);
         if (!projectionHeld && projectionDeferred) {
             projectionDeferred = false;
-            pendingGeometry = Object.freeze({ sync: false });
+            pendingGeometry = Object.freeze({ scrolling: false, programmatic: false });
             scheduleGeometryCommit();
         }
     }
