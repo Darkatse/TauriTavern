@@ -35,7 +35,11 @@ uuid = { version = "1.4", default-features = false, features = ["serde", "std", 
 zstd = { version = "0.13.3", default-features = false }
 
 [profile.dev]
+debug = "line-tables-only"
 incremental = true
+
+[profile.dev.package."*"]
+debug = false
 
 [profile.release]
 codegen-units = 1
