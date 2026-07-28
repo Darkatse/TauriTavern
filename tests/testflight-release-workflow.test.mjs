@@ -7,6 +7,7 @@ import YAML from 'yaml';
 import {
     createAppStoreConnectToken,
     externalStateAction,
+    verifyExternalGroup,
 } from '../scripts/ci/distribute-testflight.mjs';
 
 const canarySource = readFileSync('.github/workflows/canary-release.yml', 'utf8');
@@ -154,6 +155,37 @@ test('App Store Connect JWTs use ES256 and a twenty-minute lifetime', () => {
         { key: publicKey, dsaEncoding: 'ieee-p1363' },
         Buffer.from(signaturePart, 'base64url'),
     ), true);
+});
+
+test('TestFlight group ownership uses the explicit App Store Connect linkage', async () => {
+    const paths = [];
+    const client = {
+        async get(path) {
+            paths.push(path);
+            if (path.endsWith('/relationships/app')) {
+                return { data: { id: 'app-id' } };
+            }
+            return {
+                data: {
+                    attributes: {
+                        name: 'Public Group',
+                        isInternalGroup: false,
+                        publicLinkEnabled: true,
+                    },
+                },
+            };
+        },
+    };
+
+    await verifyExternalGroup(client, {
+        appId: 'app-id',
+        groupId: 'group-id',
+        groupName: 'Public Group',
+    });
+    assert.deepEqual(paths, [
+        '/v1/betaGroups/group-id',
+        '/v1/betaGroups/group-id/relationships/app',
+    ]);
 });
 
 test('TestFlight external states submit, wait, complete, or fail explicitly', () => {

@@ -625,7 +625,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            apt-utils awscli createrepo-c gnupg2 jq rpm
+            apt-utils createrepo-c gnupg2 jq rpm
 
       - name: Import repository signing subkey
         id: signing

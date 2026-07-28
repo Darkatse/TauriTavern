@@ -165,9 +165,9 @@ async function waitForProcessedBuild(client, identity) {
     );
 }
 
-async function verifyExternalGroup(client, { appId, groupId, groupName }) {
+export async function verifyExternalGroup(client, { appId, groupId, groupName }) {
     const group = (await client.get(`/v1/betaGroups/${groupId}`, {
-        'fields[betaGroups]': 'name,isInternalGroup,publicLinkEnabled,app',
+        'fields[betaGroups]': 'name,isInternalGroup,publicLinkEnabled',
     })).data;
     if (!group || group.attributes?.name !== groupName) {
         throw new Error(`TestFlight group ${groupId} is not ${groupName}`);
@@ -175,7 +175,8 @@ async function verifyExternalGroup(client, { appId, groupId, groupName }) {
     if (group.attributes.isInternalGroup !== false || group.attributes.publicLinkEnabled !== true) {
         throw new Error(`TestFlight group ${groupName} is not a public external group`);
     }
-    if (group.relationships?.app?.data?.id !== appId) {
+    const app = (await client.get(`/v1/betaGroups/${groupId}/relationships/app`)).data;
+    if (app?.id !== appId) {
         throw new Error(`TestFlight group ${groupName} does not belong to app ${appId}`);
     }
 }
