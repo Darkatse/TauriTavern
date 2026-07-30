@@ -18,6 +18,9 @@ test('dynamic appearance runtime applies SillyTavern appearance through the ST a
     assert.match(runtime, /applySillyTavernGlobalBackground/);
     assert.doesNotMatch(runtime, /scripts\/backgrounds\.js/);
     assert.match(adapter, /import\('\.\.\/\.\.\/\.\.\/\.\.\/scripts\/backgrounds\.js'\)/);
+    assert.match(adapter, /import\('\.\.\/\.\.\/\.\.\/\.\.\/scripts\/power-user\.js'\)/);
+    assert.doesNotMatch(adapter, /dispatchEvent/);
+    assert.match(runtime, /await applySillyTavernTheme\(targetTheme\)/);
 });
 
 test('dynamic appearance runtime validates targets before applying appearance', async () => {

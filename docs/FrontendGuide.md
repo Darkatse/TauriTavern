@@ -154,6 +154,14 @@ src/
 - 旧扩展直接删除消息 root 时，兼容桥只负责释放相应 root 的 lease；它不会接管第三方的内容写入或重编号。bounded policy 必须先通过 participant capability gate。
 - Project raw API 见 `docs/API/ChatSurface.md`。
 
+## 6.3 Theme 作用域与所有权
+
+- `power_user.theme` 始终表示当前实际生效的命名 Theme；主题 CRUD、斜杠命令与扩展上下文继续遵循这一上游语义。
+- `power_user.theme_fallback` 保存无局部绑定时的全局 Theme；系统动态主题只更新该 fallback，不覆盖当前聊天、角色或群组绑定。
+- Theme 解析顺序固定为 `chat_metadata.theme -> character/group binding -> theme_fallback`。角色绑定以未经转换的 avatar filename 为键，群组绑定以 group id 为键。
+- Theme 文件只保存可移植的外观快照，不包含本机角色或聊天身份。聊天绑定随 JSONL header metadata 持久化；角色与群组绑定随 settings 持久化。
+- 所有生效切换必须经 `src/scripts/power-user.js` 的统一入口；Tauri appearance adapter 不模拟 `#themes` 的 DOM change 事件。
+
 ## 7. 插件系统前端适配
 
 ### 7.1 设计目标

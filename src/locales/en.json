@@ -28,7 +28,7 @@
     "No backgrounds available": "No backgrounds available",
     "Dynamic Theme & Wallpaper hint": "Automatically switch TauriTavern themes and global wallpapers with the system light/dark mode.",
     "Dynamic Theme help: mapping": "Day = system light mode. Night = system dark mode.",
-    "Dynamic Theme help: behavior": "Theme switching behaves like changing the theme dropdown. Wallpaper switching updates the global SillyTavern background and respects chat-locked backgrounds.",
+    "Dynamic Theme help: behavior": "Theme switching updates the global fallback and respects themes bound to chats, characters, or groups. Wallpaper switching updates the global SillyTavern background and respects chat-locked backgrounds.",
     "Last request accepted": "Last request accepted",
     "Auto sync upload request has been accepted as scheduled.": "Auto sync upload request has been accepted as scheduled.",
     "Auto sync upload request has been accepted as scheduled. Next sync time: ${0}": "Auto sync upload request has been accepted as scheduled. Next sync time: ${0}",
@@ -39,5 +39,15 @@
     "Keep the initiator's copy.": "Keep the initiator's copy.",
     "Keep the copy with the later modification time.": "Keep the copy with the later modification time.",
     "The initiator's copy replaces the other side.": "The initiator's copy replaces the other side.",
-    "Modification time decides which copy wins. Keep device clocks synchronized; Mirror can still delete destination-only files.": "Modification time decides which copy wins. Keep device clocks synchronized; Mirror can still delete destination-only files."
+    "Modification time decides which copy wins. Keep device clocks synchronized; Mirror can still delete destination-only files.": "Modification time decides which copy wins. Keep device clocks synchronized; Mirror can still delete destination-only files.",
+    "Bind:": "Bind:",
+    "Bind the current theme to this character or group. Click again while it is active to remove the binding.": "Bind the current theme to this character or group. Click again while it is active to remove the binding.",
+    "Bind the current theme to this chat. Click again while it is active to remove the binding.": "Bind the current theme to this chat. Click again while it is active to remove the binding.",
+    "Theme Binding": "Theme Binding",
+    "A selected or bound theme is unavailable. Check the console for details.": "A selected or bound theme is unavailable. Check the console for details.",
+    "No binding target is selected.": "No binding target is selected.",
+    "The current theme is unavailable.": "The current theme is unavailable.",
+    "Could not save the theme binding.": "Could not save the theme binding.",
+    "Theme binding removed.": "Theme binding removed.",
+    "Current theme bound.": "Current theme bound."
 }

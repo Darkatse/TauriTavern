@@ -60,6 +60,7 @@ declare global {
         integrity?: string;
         scenario?: string;
         persona?: string;
+        theme?: string;
         [key: string]: any;
     }
 
