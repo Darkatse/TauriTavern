@@ -7,6 +7,8 @@ const workflowPath = '.github/workflows/stable-release.yml';
 const workflowSource = readFileSync(workflowPath, 'utf8');
 const workflow = YAML.parse(workflowSource);
 const flatpakPublisherSource = readFileSync('distribution/flatpak/publish.sh', 'utf8');
+const nixPackageSource = readFileSync('nix/package.nix', 'utf8');
+const cargoLockSource = readFileSync('src-tauri/Cargo.lock', 'utf8');
 
 test('stable release workflow starts from a published release or an explicit tag', () => {
     assert.deepEqual(workflow.on.release.types, ['published']);
@@ -66,6 +68,12 @@ test('stable Nix publication includes reusable project dependencies', () => {
     assert.match(workflowSource, /tauritavern\.cargoDeps\.outPath/);
     assert.match(workflowSource, /tauritavern\.pnpmDeps\.outPath/);
     assert.match(workflowSource, /NIX_CACHE_URL: https:\/\/nix-cache\.tauritavern\.com/);
+});
+
+test('Nix derives Rust dependencies directly from Cargo.lock', () => {
+    assert.match(nixPackageSource, /cargoLock\s*=\s*\{\s*lockFile = \.\.\/src-tauri\/Cargo\.lock;/);
+    assert.doesNotMatch(nixPackageSource, /\bcargoHash\s*=/);
+    assert.doesNotMatch(cargoLockSource, /^source = "git\+/m);
 });
 
 test('stable Flatpak build and publication keep signing isolated', () => {

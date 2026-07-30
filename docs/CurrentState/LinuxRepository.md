@@ -167,6 +167,9 @@ nix run github:Darkatse/TauriTavern
 nix build github:Darkatse/TauriTavern
 ```
 
+Rust 依赖直接由 `src-tauri/Cargo.lock` 中的版本和 checksum 固定，不额外维护容易与 lockfile 漂移的整体 `cargoHash`。如果以后加入 Git 来源的 crate，需要在 `cargoLock.outputHashes` 中显式固定相应源码。
+`pnpmDeps` 仍是一个整体的离线依赖仓库；`pnpm-lock.yaml` 变化后，需要按 Nix 构建报告的实际值手动更新其固定哈希。
+
 通过安装脚本加入当前用户 profile：
 
 ```sh
@@ -246,7 +249,7 @@ Canary CI 自动读取 GitHub 最新正式 Release 作为版本基线。以 2.1.
 2. 私钥不进入 Git、R2、构建产物或日志。日常 OpenPGP 发布环境只持有签名子密钥。
 3. 版本化负载和普通索引先上传，各仓库的签名指针最后更新；公钥独立维护，清单在发布完成后更新。
 4. 可变入口使用 `Cache-Control: no-cache`；版本化软件包和哈希对象使用 `public, max-age=31536000, immutable`。
-5. Nix cache 只接收从确定 Git revision 构建并由专用 Nix key 签名的 runtime closure、Cargo vendor 和 pnpm dependency paths。
+5. Nix cache 只接收从确定 Git revision 构建并由专用 Nix key 签名的 runtime closure、Cargo lockfile 依赖闭包和 pnpm dependency paths。
 6. Stable tag 发布后不移动。Canary Nix 使用显式 `canary` 输出和提交身份，不替代默认 Stable 包。
 7. 每次发布后从公开域名验证签名、索引和实际软件下载，不只验证 R2 私有端点。
 8. OpenPGP 签名子密钥应在 2029-07-24 前完成轮换。
