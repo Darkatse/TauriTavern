@@ -7,6 +7,8 @@ const workflowPath = '.github/workflows/stable-release.yml';
 const workflowSource = readFileSync(workflowPath, 'utf8');
 const workflow = YAML.parse(workflowSource);
 const flatpakPublisherSource = readFileSync('distribution/flatpak/publish.sh', 'utf8');
+const nixPackageSource = readFileSync('nix/package.nix', 'utf8');
+const cargoLockSource = readFileSync('src-tauri/Cargo.lock', 'utf8');
 
 test('stable release workflow starts from a published release or an explicit tag', () => {
     assert.deepEqual(workflow.on.release.types, ['published']);
@@ -16,6 +18,26 @@ test('stable release workflow starts from a published release or an explicit tag
 test('stable release workflow preserves manually written release notes', () => {
     assert.doesNotMatch(JSON.stringify(workflow.jobs['publish-release']), /codex|release edit|notes-file/i);
     assert.match(workflowSource, /Upload assets without changing release notes/);
+});
+
+test('stable release builds Windows and macOS debug installers in parallel', () => {
+    const debugBuilds = workflow.jobs.desktop.strategy.matrix.include
+        .filter((entry) => entry.artifact_prefix === 'debug-')
+        .map(({ platform, target_args: targetArgs, portable }) => ({ platform, targetArgs, portable }));
+
+    assert.deepEqual(debugBuilds, [
+        { platform: 'windows-latest', targetArgs: '--debug --bundles nsis', portable: false },
+        {
+            platform: 'macos-latest',
+            targetArgs: '--target x86_64-apple-darwin --debug --bundles dmg',
+            portable: false,
+        },
+        {
+            platform: 'macos-latest',
+            targetArgs: '--target aarch64-apple-darwin --debug --bundles dmg',
+            portable: false,
+        },
+    ]);
 });
 
 test('stable release workflow publishes release assets before optional repositories', () => {
@@ -48,6 +70,12 @@ test('stable Nix publication includes reusable project dependencies', () => {
     assert.match(workflowSource, /NIX_CACHE_URL: https:\/\/nix-cache\.tauritavern\.com/);
 });
 
+test('Nix derives Rust dependencies directly from Cargo.lock', () => {
+    assert.match(nixPackageSource, /cargoLock\s*=\s*\{\s*lockFile = \.\.\/src-tauri\/Cargo\.lock;/);
+    assert.doesNotMatch(nixPackageSource, /\bcargoHash\s*=/);
+    assert.doesNotMatch(cargoLockSource, /^source = "git\+/m);
+});
+
 test('stable Flatpak build and publication keep signing isolated', () => {
     const build = workflow.jobs.flatpak;
     const publish = workflow.jobs['publish-flatpak-repository'];
@@ -66,4 +94,13 @@ test('stable Flatpak build and publication keep signing isolated', () => {
     assert.match(flatpakPublisherSource, /objects\/\*/);
     assert.match(flatpakPublisherSource, /summary\.sig/);
     assert.match(flatpakPublisherSource, /public, max-age=31536000, immutable/);
+});
+
+test('Flatpak publication restores OSTree ref layout lost by object storage', () => {
+    const restoreRefs = flatpakPublisherSource.indexOf('mkdir -p "$repository_dir/refs/remotes"');
+    const updateRepository = flatpakPublisherSource.indexOf('flatpak build-update-repo');
+
+    assert.notEqual(restoreRefs, -1);
+    assert.notEqual(updateRepository, -1);
+    assert.ok(restoreRefs < updateRepository);
 });

@@ -20,6 +20,15 @@ function osReleaseFile(contents) {
     return path;
 }
 
+function shellPath(path, platform = process.platform) {
+    if (platform !== 'win32') {
+        return path;
+    }
+
+    const normalized = path.replaceAll('\\', '/');
+    return normalized.replace(/^([A-Za-z]):\//, (_, drive) => `/${drive.toLowerCase()}/`);
+}
+
 function runDryRun({
     shell = 'sh',
     osRelease,
@@ -47,7 +56,7 @@ function runDryRun({
                 ...process.env,
                 TAURITAVERN_TEST_ARCHITECTURE: architecture,
                 TAURITAVERN_TEST_KERNEL: 'Linux',
-                TAURITAVERN_TEST_OS_RELEASE: osReleasePath ?? osReleaseFile(osRelease),
+                TAURITAVERN_TEST_OS_RELEASE: shellPath(osReleasePath ?? osReleaseFile(osRelease)),
             },
         },
     );
@@ -65,6 +74,14 @@ function runDryRun({
 test('Linux installer keeps all side effects behind the final main call', () => {
     const lastLine = installerSource.trimEnd().split('\n').at(-1);
     assert.equal(lastLine, 'main "$@"');
+});
+
+test('Linux installer test paths use the shell filesystem namespace', () => {
+    assert.equal(
+        shellPath('C:\\Users\\runner\\AppData\\Local\\Temp\\os-release', 'win32'),
+        '/c/Users/runner/AppData/Local/Temp/os-release',
+    );
+    assert.equal(shellPath('/tmp/os-release', 'linux'), '/tmp/os-release');
 });
 
 test('Linux installer is syntactically valid in available common shells', () => {
@@ -94,7 +111,7 @@ test('Linux installer supports piped execution through common shells', () => {
                     ...process.env,
                     TAURITAVERN_TEST_ARCHITECTURE: 'amd64',
                     TAURITAVERN_TEST_KERNEL: 'Linux',
-                    TAURITAVERN_TEST_OS_RELEASE: release,
+                    TAURITAVERN_TEST_OS_RELEASE: shellPath(release),
                 },
             },
         );

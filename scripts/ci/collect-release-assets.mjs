@@ -12,6 +12,9 @@ const RELEASE_ASSETS = new Map([
     ['android-arm64-apk', ['android-arm64-v8a.apk', '.apk']],
     ['darwin-aarch64-dmg', ['macos-arm64.dmg', '.dmg']],
     ['darwin-x64-dmg', ['macos-x64.dmg', '.dmg']],
+    ['debug-darwin-aarch64-dmg', ['macos-arm64-DEBUG.dmg', '.dmg']],
+    ['debug-darwin-x64-dmg', ['macos-x64-DEBUG.dmg', '.dmg']],
+    ['debug-windows-x64-nsis', ['windows-x64-setup-DEBUG.exe', '.exe']],
     ['ios-arm64-ipa', ['ios-arm64.ipa', '.ipa']],
     ['ios-arm64-TestFlight-ipa', ['ios-arm64-TestFlight.ipa', '.ipa']],
     ['linux-aarch64-rpm', ['linux-arm64.rpm', '.rpm']],
@@ -29,6 +32,14 @@ const RELEASE_ASSETS = new Map([
 const IGNORED_ARTIFACTS = new Set([
     'darwin-aarch64-app',
     'darwin-x64-app',
+    'debug-darwin-aarch64-app',
+    'debug-darwin-x64-app',
+]);
+
+const DEBUG_ARTIFACTS = new Set([
+    'debug-darwin-aarch64-dmg',
+    'debug-darwin-x64-dmg',
+    'debug-windows-x64-nsis',
 ]);
 
 async function listFiles(directory) {
@@ -66,6 +77,7 @@ export async function collectReleaseAssets({
     inputDirectory,
     outputDirectory,
     artifactPrefix,
+    requireDebug = false,
 }) {
     validatePrefix(artifactPrefix);
 
@@ -109,7 +121,8 @@ export async function collectReleaseAssets({
         });
     }
 
-    const missing = [...RELEASE_ASSETS.keys()].filter((suffix) => !found.has(suffix));
+    const missing = [...RELEASE_ASSETS.keys()]
+        .filter((suffix) => !found.has(suffix) && (requireDebug || !DEBUG_ARTIFACTS.has(suffix)));
     if (missing.length > 0) {
         throw new Error(`Missing workflow artifacts: ${missing.map((suffix) => artifactPrefix + suffix).join(', ')}`);
     }
@@ -132,10 +145,17 @@ export async function collectReleaseAssets({
 }
 
 async function main() {
-    const [inputDirectory, outputDirectory, artifactPrefix] = process.argv.slice(2);
-    if (!inputDirectory || !outputDirectory || !artifactPrefix || process.argv.length !== 5) {
+    const [inputDirectory, outputDirectory, artifactPrefix, option] = process.argv.slice(2);
+    if (
+        !inputDirectory
+        || !outputDirectory
+        || !artifactPrefix
+        || (option !== undefined && option !== '--require-debug')
+        || process.argv.length < 5
+        || process.argv.length > 6
+    ) {
         throw new Error(
-            'Usage: collect-release-assets.mjs <workflow-artifacts-dir> <release-assets-dir> <artifact-prefix>',
+            'Usage: collect-release-assets.mjs <workflow-artifacts-dir> <release-assets-dir> <artifact-prefix> [--require-debug]',
         );
     }
 
@@ -143,6 +163,7 @@ async function main() {
         inputDirectory: resolve(inputDirectory),
         outputDirectory: resolve(outputDirectory),
         artifactPrefix,
+        requireDebug: option === '--require-debug',
     });
     process.stdout.write(`${assets.join('\n')}\n`);
 }

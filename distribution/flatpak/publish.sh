@@ -96,6 +96,11 @@ else
     ostree init --repo="$repository_dir" --mode=archive-z2
 fi
 
+# Object stores preserve files, not empty directories. OSTree creates this
+# directory during init, and Flatpak requires it when listing refs for static
+# delta generation on subsequent publishes.
+mkdir -p "$repository_dir/refs/remotes"
+
 release_subject="TauriTavern ${RELEASE_VERSION}"
 release_tag_line="Release tag: ${RELEASE_TAG}"
 source_commit_line="Source commit: ${RELEASE_COMMIT}"

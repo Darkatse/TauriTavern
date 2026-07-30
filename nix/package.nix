@@ -29,7 +29,9 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   cargoRoot = "src-tauri";
   buildAndTestSubdir = "src-tauri/crates/tauritavern";
-  cargoHash = "sha256-liGQG8h4DsjCuQb7T//sC0MuJYC1UHyK7wrRkwh+Mlg=";
+  cargoLock = {
+    lockFile = ../src-tauri/Cargo.lock;
+  };
 
   pnpmDeps = fetchPnpmDeps {
     inherit (finalAttrs)
@@ -39,7 +41,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
       ;
     pnpm = pnpm_10;
     fetcherVersion = 3;
-    hash = "sha256-QwzuJvkenRRdlH5o1A5vXCyUFif98NNHrRZyW0+eIcU=";
+    hash = "sha256-aDxsMBQcMWYJl4FPTo+cReYnkqbiMuSvKRzslwmkGVM=";
   };
 
   nativeBuildInputs = [
