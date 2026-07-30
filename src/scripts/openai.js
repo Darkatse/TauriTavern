@@ -8601,25 +8601,6 @@ function updateFeatureSupportFlags() {
 
     const model = getChatCompletionModel();
     $('#continue_prefill_block').toggle(!isDirectGeminiSource() || !['gemini-3.5-flash-lite', 'gemini-3.6-flash'].includes(model));
-    updateReasoningEffortControlVisibility();
-    updateVertexAiClaudeControlVisibility();
-}
-
-function updateReasoningEffortControlVisibility() {
-    const block = $('#openai_reasoning_effort_block');
-    if (!block.length) {
-        return;
-    }
-
-    block.toggle(oai_settings.chat_completion_source !== chat_completion_sources.ZAI || isZaiReasoningEffortModel(oai_settings.zai_model));
-}
-
-function updateVertexAiClaudeControlVisibility() {
-    const isVertexAi = oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI;
-    const isVertexAiClaude = isVertexAi && isVertexAiClaudeModelId();
-    $('#request_images_block').toggle([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(oai_settings.chat_completion_source) && !isVertexAiClaude);
-    $('#claude_reasoning_effort_description').toggle(!isVertexAi || isVertexAiClaude);
-    $('#gemini_reasoning_effort_description').toggle(!isVertexAi || !isVertexAiClaude);
 }
 
 export function initOpenAI() {
