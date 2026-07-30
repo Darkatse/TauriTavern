@@ -158,25 +158,28 @@ export function createExtensionAssetLoader({
             throw toInvalidAssetFieldError(name, 'js');
         }
 
-        let scriptUrl = getExtensionResourceUrl(name, scriptPath);
+        const scriptUrl = getExtensionResourceUrl(name, scriptPath);
 
-        await new Promise((resolve, reject) => {
-            const script = document.createElement('script');
+        const script = document.createElement('script');
+        script.id = id;
+        script.type = 'module';
+        script.src = scriptUrl;
+        script.async = true;
 
-            script.id = id;
-            script.type = 'module';
-            script.src = scriptUrl;
-            script.async = true;
+        const loaded = new Promise((resolve, reject) => {
             script.onerror = function (err) {
                 script.dataset.tauritavernLoaded = 'false';
                 reject(toScriptLoadError(name, scriptUrl, err));
             };
             script.onload = function () {
-                script.dataset.tauritavernLoaded = 'true';
                 resolve();
             };
-            document.body.appendChild(script);
         });
+
+        document.body.appendChild(script);
+        // A load event alone does not reliably cover top-level await across WebViews.
+        await Promise.all([loaded, import(scriptUrl)]);
+        script.dataset.tauritavernLoaded = 'true';
     }
 
     return {
