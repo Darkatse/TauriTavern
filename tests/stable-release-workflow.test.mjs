@@ -18,6 +18,26 @@ test('stable release workflow preserves manually written release notes', () => {
     assert.match(workflowSource, /Upload assets without changing release notes/);
 });
 
+test('stable release builds Windows and macOS debug installers in parallel', () => {
+    const debugBuilds = workflow.jobs.desktop.strategy.matrix.include
+        .filter((entry) => entry.artifact_prefix === 'debug-')
+        .map(({ platform, target_args: targetArgs, portable }) => ({ platform, targetArgs, portable }));
+
+    assert.deepEqual(debugBuilds, [
+        { platform: 'windows-latest', targetArgs: '--debug --bundles nsis', portable: false },
+        {
+            platform: 'macos-latest',
+            targetArgs: '--target x86_64-apple-darwin --debug --bundles dmg',
+            portable: false,
+        },
+        {
+            platform: 'macos-latest',
+            targetArgs: '--target aarch64-apple-darwin --debug --bundles dmg',
+            portable: false,
+        },
+    ]);
+});
+
 test('stable release workflow publishes release assets before optional repositories', () => {
     assert.deepEqual(workflow.jobs['publish-release'].needs, ['prepare', 'desktop', 'mobile']);
 

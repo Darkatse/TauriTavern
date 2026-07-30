@@ -87,20 +87,37 @@ jobs:
         include:
           - platform: windows-latest
             target_args: ""
+            artifact_prefix: ""
             portable: true
             portable_name: windows-x64
+          - platform: windows-latest
+            target_args: --debug --bundles nsis
+            artifact_prefix: debug-
+            portable: false
           - platform: macos-latest
             target_args: --target x86_64-apple-darwin
+            artifact_prefix: ""
+            portable: false
+          - platform: macos-latest
+            target_args: --target x86_64-apple-darwin --debug --bundles dmg
+            artifact_prefix: debug-
             portable: false
           - platform: macos-latest
             target_args: --target aarch64-apple-darwin
+            artifact_prefix: ""
+            portable: false
+          - platform: macos-latest
+            target_args: --target aarch64-apple-darwin --debug --bundles dmg
+            artifact_prefix: debug-
             portable: false
           - platform: ubuntu-22.04
             target_args: --bundles appimage,deb,rpm
+            artifact_prefix: ""
             portable: true
             portable_name: linux-x64
           - platform: ubuntu-22.04-arm
             target_args: --bundles deb,rpm
+            artifact_prefix: ""
             portable: true
             portable_name: linux-arm64
 
@@ -166,7 +183,7 @@ jobs:
           uploadWorkflowArtifacts: true
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
-          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-[platform]-[arch]-[bundle]'
+          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-${{ matrix.artifact_prefix }}[platform]-[arch]-[bundle]'
 
       - name: Build portable binary
         if: matrix.portable
@@ -441,7 +458,7 @@ jobs:
           path: dist
 
       - name: Validate and collect release assets
-        run: node source/scripts/ci/collect-release-assets.mjs dist release-assets "$ASSET_PREFIX"
+        run: node source/scripts/ci/collect-release-assets.mjs dist release-assets "$ASSET_PREFIX" --require-debug
 
       - name: Upload assets without changing release notes
         shell: bash
