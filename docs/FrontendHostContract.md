@@ -25,6 +25,8 @@
 
 当前启动链路（见 `docs/FrontendGuide.md`）：
 
+开发态 HTTP 入口会先由 `scripts/tauri-dev-server.mjs` 注入 `src/dev-sw-bootstrap.js`，仅负责让持久 Service Worker registration 与当前 WebView 会话重新绑定，不参与应用模块初始化。
+
 1. `src/init.js`：负责最早期的环境标记、可选 perf 开关与动态 import。
 2. `src/tauri-main.js`：薄入口，仅调用 `bootstrapTauriMain()`。
 3. `src/tauri/main/bootstrap.js`：composition root，创建 context、注册 routes、安装拦截器与补丁。
@@ -34,6 +36,7 @@
 
 - `window.__TAURITAVERN_MAIN_READY__ : Promise<void>`
   - 由 `src/tauri/main/bootstrap.js` 写入，表示宿主层初始化已完成（或失败已被捕获并写入 console）。
+  - 在 Tauri runtime 下，resolve 前必须完成 Rust `BackendReadiness` 等待，确保首批依赖 `AppState` 的命令不靠 “state not managed” 文本重试作为正常控制流。
 - `window.__TAURITAVERN_PERF_READY__ : Promise<unknown> | undefined`
   - 仅在 perf-hud 启用时存在（见第 5 节）。
 - `globalThis.__TAURITAVERN_PERF_ENABLED__ : boolean`
@@ -52,12 +55,10 @@
 由 `createTauriMainContext()` 安装（实现：`src/tauri/main/context/index.js`，兼容入口：`src/tauri/main/context.js`）：
 
 - `window.__TAURITAVERN_THUMBNAIL__(type, file, useTimestamp?) -> string`
-  - 生成缩略图 URL（通常返回 `/thumbnail?...` 或 asset protocol URL）。
-- `window.__TAURITAVERN_THUMBNAIL_BLOB_URL__(type, file, options?) -> Promise<string>`
-  - 返回可直接用于 `<img src>` 的 blob URL（内部有 cache/in-flight 去重）。
+  - 为 `bg` / `avatar` / `persona` 生成 `/thumbnail?...` Host Resource URL；未知 type 直接抛错。
+  - 正常第一方路径不使用 `useTimestamp`；该参数只保留为显式 force/debug cache bust。
 - `window.__TAURITAVERN_BACKGROUND_PATH__(file) -> string`
-- `window.__TAURITAVERN_AVATAR_PATH__(file) -> string | null`
-- `window.__TAURITAVERN_PERSONA_PATH__(file) -> string`
+  - 生成 `/backgrounds/<encoded file>` Host Resource URL。
 
 这些 API 的**可观察行为**必须保持：
 
@@ -104,15 +105,20 @@
 为避免未来继续扩散 `window.__TAURITAVERN_*` 零散符号，宿主层额外提供一个**统一出口**：
 
 - `window.__TAURITAVERN__ : { abiVersion, traceHeader, ready, invoke, assets, api }`
-  - `abiVersion: number`：ABI 版本号（语义化破坏改动时递增）。
+  - `abiVersion: 1`：ABI 版本号（已发布扩展契约发生语义化破坏改动时递增）。
   - `traceHeader: string`：请求追踪 header 名（见 4.4）。
   - `ready: Promise<void> | null`：与 `__TAURITAVERN_MAIN_READY__` 语义一致。
   - `invoke.safeInvoke(...)` / `invoke.flushAll()`：对 `context` invoke 能力的稳定包装。
-  - `assets.*`：对资源路径/缩略图相关全局 API 的统一引用。
+  - `assets.thumbnailUrl` / `assets.backgroundPath`：对 3.1 中稳定 Host Resource URL helper 的统一引用。
   - `api.layout`：布局契约 API（safe-area / viewport / Android IME），并配合 `data-tt-mobile-surface` taxonomy 让扩展以几行 opt-in 完成移动端适配。
     - 详细签名与示例见：`docs/API/Layout.md`。
   - `api.chat`：TauriTavern 独有的聊天/记忆类扩展 API（聊天摘要、元数据、历史分页、稳定存储、后端定位、纯文本检索）。
     - 详细签名与示例见：`docs/API/Chat.md`。
+  - `api.characterCards`：角色卡文件选择宿主 API。用于在 Tauri desktop/iOS 上以 native picker 选择本地角色卡文件，并返回标准 `File[]` 给上游导入/替换流程继续处理。
+    - 当前已落地 Host ABI：`isNativePickerAvailable()`、`pickFiles(options?: { multiple?: boolean; title?: string }) -> Promise<File[] | null>`。
+    - 当前 native picker 仅暴露 Rust 角色导入器真实支持的 `json/png` 角色卡格式；上游 `processDroppedFiles` 的格式判断保持不变。
+    - 语义：只补齐平台文件选择能力，不导入、不覆盖、不改变 `/api/characters/import`、`preserved_name`、角色 avatar identity 或上游 toast/tag/刷新收尾语义。
+    - 取消选择返回 `null`；picker/staging/read 失败必须抛错，不得静默回退到 WebView file input。
   - `api.extension.store`：扩展级**全局持久化**（不绑定 chat），提供 KV JSON + Blob，支持多 table。
     - 详细签名与示例见：`docs/API/Extension.md`。
   - `api.dev`：TauriTavern 规范化的开发调试 API。内置 Settings 开发面板与第三方扩展都应消费这一层，而不是直接依赖 Tauri 事件名或 Rust 命令名。
@@ -163,7 +169,7 @@
 - `api.agent`：TauriTavern Agent Run API。用于启动 Agent Run、订阅 run event、取消、审批工具、读取 workspace 文件/diff、rollback。
   - 详细参考见：`docs/API/Agent.md`。
   - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`subscribe()`。
-  - Chat commit 由模型调用 `workspace.commit` 触发；前端内部 host bridge 响应 `chat_commit_requested`，通过上游 `saveReply()` 写同一消息楼层，再调用 `resolve_agent_chat_commit`。
+  - Chat commit 由模型调用 `workspace.commit` 触发；前端内部 host bridge 响应 `chat_commit_requested`，先按完整 raw 目标文本应用上游生成输出保存前后处理，再通过上游 `saveReply()` 写同一消息楼层，最后调用 `resolve_agent_chat_commit`。
   - `persistStateId` 只在 persistent state 已经落盘后写入 chat metadata；host bridge 响应 `persistent_state_metadata_update_requested` 后调用 `resolve_agent_persistent_state_metadata_update`。
   - `startRunFromLegacyGenerate()` 是当前兼容入口：使用 Legacy dryRun 生成 `promptSnapshot`，再进入 Rust-owned Agent loop。
   - `startRunWithPromptSnapshot()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。
@@ -197,6 +203,15 @@
   - MCP stdio command/config 不得由 Agent/Preset/角色卡/世界书直接写入；危险工具调用必须经过 capability policy 与审批。
 
 > 注意：`window.__TAURITAVERN__` 是“平台 ABI”，应保持**小而稳定**；不要把内部实现对象整个暴露出去。
+
+### 3.7 ChatSurface participant（Project Contract）
+
+- `window.__TAURITAVERN__.api.chatSurface`
+  - 当前是实验性的 Project Contract，尚未作为 Public Contract 稳定发布。
+  - 只暴露 `protocolVersion: 1`、`isManagedOwnershipRequired()` 与 `registerParticipant()`；ownership query 返回本页已冻结的布尔决策，投影控制器、DOM adapter、内部 revision、admission 预算和虚拟滚动引擎均不外露。
+  - participant 必须显式声明协议版本；hook 返回同步 disposer，宿主用 `AbortSignal` 表达 mount/content/runtime 三种真实寿命。
+  - mount/remount/content lifecycle 不得伪装为 SillyTavern 消息业务事件。
+  - 完整协议与 raw API 接入示例见 `docs/API/ChatSurface.md`。
 
 ---
 
@@ -235,6 +250,7 @@
 高频与高风险路径（示例，不是完整列表）：
 
 - `/api/*`：应用核心 API（settings/chats/characters/ai/worldinfo…）
+- `/css/user.css`：用户自定义 CSS 覆盖文件（数据目录 `_css/user.css`）
 - `/scripts/extensions/third-party/*`：third-party 扩展静态资源端点（ESM/CSS/url()/字体/图片）
 - `/thumbnail`：缩略图端点（与 `__TAURITAVERN_THUMBNAIL__` 强耦合）
 - 用户静态资源端点（通配符路由）：
@@ -247,18 +263,29 @@
 这些路径必须能被浏览器**原生子资源加载**（`<img src>` / `<link href>` / `<script src>` / `CSS url()`），且 dev/prod 语义一致：
 
 - `/scripts/extensions/third-party/*`
+  - `.git` 是 SillyTavern 迁移兼容所需的普通路径组件；显式文件请求不得仅因任一组件名为 `.git` 而被拒绝。`.`、`..`、编码路径分隔符与路径逃逸仍必须拒绝。
+- `/css/user.css`
 - `/scripts/tauritavern/layout-kit.js`（ESM；扩展可选 DX 糖衣）
 - `/thumbnail?type={bg|avatar|persona}&file=...`
 - `/characters/*`、`/User Avatars/*`
 - `/backgrounds/*`、`/assets/*`
 - `/user/images/*`、`/user/files/*`
 
+第三方扩展管理 API 保持上游 install/update/version/branches/switch DTO 与 hook/event 语义，remote transport 为 Rust gitoxide smart HTTP。mutating update 不使用前端 timeout/AbortSignal，因为 Tauri invoke 已进入 Rust 后不能据此取消磁盘写入。version 的 UI AbortSignal 仍可用于关闭只读检查结果。branches 只投影唯一远端 heads（空 label，不 fetch object）；switch 成功为 `204`，当前 branch 是 no-op，且不得隐式触发 update hook。
+
 对这些端点的最小可观察语义：
 
 - 仅接受 `GET` / `HEAD` / `OPTIONS`
 - 未命中返回真实 `404`（不回退 `index.html`）
-- `Content-Type` 正确，`Cache-Control: no-store`
+- `Content-Type` 正确；成功表示使用 `Cache-Control: private, no-cache`、weak ETag 和适用的 Last-Modified，错误/OPTIONS/416 使用 `no-store`（完整条件请求与平台 delivery 语义见 `docs/CurrentState/HostResourceCaching.md`）
 - 媒体文件（`video/*` / `audio/*`）必须支持 `Range`（单范围）并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
+
+背景预览与背景消费是两个不同表示：
+
+- 系统静态图预览使用普通 `/thumbnail`；
+- GIF/WebP/APNG 在预览动画开启时使用 raw `/backgrounds/*`，关闭时使用 `/thumbnail?...&static=true` 的 first-frame JPEG；
+- MP4 选择器使用占位图，不为 poster 引入视频解码器；
+- active background 与 `<video>` 始终保留 raw `/backgrounds/*`，`static=true` 不得进入播放路径。
 
 禁止事项（为了保持契约稳定）：
 
@@ -333,8 +360,10 @@ header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免�
    - iframe 能加载且不被同源 patch/拦截破坏。
 4. **浏览器资源契约（端点级）**
    - `/thumbnail?type=bg|avatar|persona&file=...` 能返回图片 bytes（无 `blob:` 魔法）；不存在返回真实 `404`
+   - `/thumbnail?type=bg&file=<animated>&static=true` 对可解码动画返回 JPEG；MP4 的 raw `/backgrounds/*` Range 播放不受影响
+   - `/css/user.css` 能从数据目录 `_css/user.css` 返回用户 CSS；不存在返回真实 `404`
    - `/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 作为子资源可直接加载
-   - `/scripts/extensions/third-party/*` 的 ESM/CSS/图片/字体均可加载，未命中返回 `404`
+   - `/scripts/extensions/third-party/*` 的 ESM/CSS/图片/字体均可加载，未命中返回 `404`；无秘密 fixture 的 `.git/HEAD` / `.git/config` 采用同一文件级路径语义
    - 媒体 Range 契约：`/backgrounds/<file>.mp4` 的 `Range: bytes=0-1` 返回 `206` 且包含 `Content-Range`
 
 任何涉及第 3/4 节契约的改动，都必须至少跑通以上 smoke tests。

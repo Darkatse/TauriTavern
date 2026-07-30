@@ -1,0 +1,250 @@
+use async_trait::async_trait;
+use std::path::{Path, PathBuf};
+use tokio::fs;
+
+use tt_domain::errors::DomainError;
+use tt_domain::models::filename::sanitize_filename;
+use tt_ports::repositories::background_repository::BackgroundRepository;
+
+/// File system implementation of the BackgroundRepository
+pub struct FileBackgroundRepository {
+    backgrounds_dir: PathBuf,
+}
+
+impl FileBackgroundRepository {
+    /// Create a new FileBackgroundRepository instance
+    pub fn new(backgrounds_dir: PathBuf) -> Self {
+        Self { backgrounds_dir }
+    }
+
+    fn normalize_filename(&self, filename: &str) -> Result<String, DomainError> {
+        let sanitized = sanitize_filename(filename);
+        if sanitized.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Invalid background filename".to_string(),
+            ));
+        }
+
+        Ok(sanitized)
+    }
+
+    async fn ensure_backgrounds_dir_exists(&self) -> Result<(), DomainError> {
+        if fs::try_exists(&self.backgrounds_dir)
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to check backgrounds directory '{}': {}",
+                    self.backgrounds_dir.display(),
+                    error
+                ))
+            })?
+        {
+            return Ok(());
+        }
+
+        fs::create_dir_all(&self.backgrounds_dir)
+            .await
+            .map_err(|error| {
+                tracing::error!("Failed to create backgrounds directory: {}", error);
+                DomainError::InternalError(format!(
+                    "Failed to create backgrounds directory: {}",
+                    error
+                ))
+            })
+    }
+}
+
+#[async_trait]
+impl BackgroundRepository for FileBackgroundRepository {
+    async fn delete_background(&self, filename: &str) -> Result<(), DomainError> {
+        tracing::debug!(
+            "FileBackgroundRepository: Deleting background: {}",
+            filename
+        );
+
+        let normalized = self.normalize_filename(filename)?;
+        let file_path = self.backgrounds_dir.join(&normalized);
+        if !fs::try_exists(&file_path).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to check background file '{}': {}",
+                file_path.display(),
+                error
+            ))
+        })? {
+            return Err(DomainError::NotFound(format!(
+                "Background not found: {}",
+                filename
+            )));
+        }
+
+        fs::remove_file(&file_path).await.map_err(|error| {
+            tracing::error!("Failed to delete background file: {}", error);
+            DomainError::InternalError(format!("Failed to delete background file: {}", error))
+        })?;
+
+        Ok(())
+    }
+
+    async fn rename_background(
+        &self,
+        old_filename: &str,
+        new_filename: &str,
+    ) -> Result<(), DomainError> {
+        tracing::debug!(
+            "FileBackgroundRepository: Renaming background from '{}' to '{}'",
+            old_filename,
+            new_filename
+        );
+
+        let old_normalized = self.normalize_filename(old_filename)?;
+        let new_normalized = self.normalize_filename(new_filename)?;
+        let old_path = self.backgrounds_dir.join(&old_normalized);
+        let new_path = self.backgrounds_dir.join(&new_normalized);
+
+        if !fs::try_exists(&old_path).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to check background file '{}': {}",
+                old_path.display(),
+                error
+            ))
+        })? {
+            return Err(DomainError::NotFound(format!(
+                "Background not found: {}",
+                old_filename
+            )));
+        }
+        if fs::try_exists(&new_path).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to check background file '{}': {}",
+                new_path.display(),
+                error
+            ))
+        })? {
+            return Err(DomainError::InvalidData(format!(
+                "Background already exists: {}",
+                new_filename
+            )));
+        }
+
+        fs::rename(&old_path, &new_path).await.map_err(|error| {
+            tracing::error!("Failed to rename background file: {}", error);
+            DomainError::InternalError(format!("Failed to rename background file: {}", error))
+        })?;
+
+        Ok(())
+    }
+
+    async fn upload_background(&self, filename: &str, data: &[u8]) -> Result<String, DomainError> {
+        tracing::debug!(
+            "FileBackgroundRepository: Uploading background: {}",
+            filename
+        );
+
+        self.ensure_backgrounds_dir_exists().await?;
+
+        let normalized = self.normalize_filename(filename)?;
+        let file_path = self.backgrounds_dir.join(&normalized);
+        fs::write(&file_path, data).await.map_err(|error| {
+            tracing::error!("Failed to write background file: {}", error);
+            DomainError::InternalError(format!("Failed to write background file: {}", error))
+        })?;
+
+        Ok(normalized)
+    }
+
+    async fn upload_background_from_path(
+        &self,
+        filename: &str,
+        source_path: &Path,
+    ) -> Result<String, DomainError> {
+        tracing::debug!(
+            "FileBackgroundRepository: Uploading background from path: {}",
+            filename
+        );
+
+        self.ensure_backgrounds_dir_exists().await?;
+
+        let normalized = self.normalize_filename(filename)?;
+        let file_path = self.backgrounds_dir.join(&normalized);
+
+        fs::copy(source_path, &file_path).await.map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                return DomainError::NotFound(format!(
+                    "Source background file not found: {}",
+                    source_path.display()
+                ));
+            }
+
+            tracing::error!("Failed to copy background file: {}", error);
+            DomainError::InternalError(format!("Failed to copy background file: {}", error))
+        })?;
+
+        Ok(normalized)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use tt_ports::repositories::background_repository::BackgroundRepository;
+
+    use super::FileBackgroundRepository;
+
+    #[test]
+    fn normalize_filename_matches_upstream_sanitize_filename() {
+        let repository = FileBackgroundRepository::new(PathBuf::from("backgrounds"));
+        let normalized = repository
+            .normalize_filename("..\\bad:*name?.png")
+            .expect("filename should be valid after normalization");
+
+        assert_eq!(normalized, "..badname.png");
+    }
+
+    #[test]
+    fn normalize_filename_rejects_empty_result() {
+        let repository = FileBackgroundRepository::new(PathBuf::from("backgrounds"));
+        assert!(repository.normalize_filename(" ... ").is_err());
+    }
+
+    struct TempDirGuard {
+        path: PathBuf,
+    }
+
+    impl TempDirGuard {
+        fn new(test_name: &str) -> Self {
+            let mut path = std::env::temp_dir();
+            path.push(format!("tauritavern-{test_name}-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_background_from_path_copies_file() {
+        let temp = TempDirGuard::new("background-upload-from-path");
+        let backgrounds_dir = temp.path.join("backgrounds");
+        let source_path = temp.path.join("source.bin");
+
+        tokio::fs::write(&source_path, b"ok")
+            .await
+            .expect("write source");
+
+        let repository = FileBackgroundRepository::new(backgrounds_dir.clone());
+        let uploaded = repository
+            .upload_background_from_path("a.bin", &source_path)
+            .await
+            .expect("upload");
+
+        assert_eq!(uploaded, "a.bin");
+        let dest_bytes = tokio::fs::read(backgrounds_dir.join("a.bin"))
+            .await
+            .expect("read destination");
+        assert_eq!(dest_bytes, b"ok");
+    }
+}

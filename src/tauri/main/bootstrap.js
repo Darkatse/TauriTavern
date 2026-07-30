@@ -1,4 +1,4 @@
-import { invoke, isTauri as isTauriRuntime, convertFileSrc } from '../../tauri-bridge.js';
+import { invoke, isTauri as isTauriRuntime } from '../../tauri-bridge.js';
 import { createTauriMainContext } from './context.js';
 import { createDownloadBridge } from './download-bridge.js';
 import { createInterceptors } from './interceptors.js';
@@ -21,6 +21,8 @@ import { isAbortError } from './kernel/abort-error.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import { installWorldInfoGlobalSelectorSelect2Enforcer } from './adapters/st/world-info-global-selector-select2-enforcer.js';
 import { installChatApi } from './api/chat.js';
+import { installChatSurfaceApi } from './api/chat-surface.js';
+import { installCharacterCardsApi } from './api/character-cards.js';
 import { installAgentApi } from './api/agent.js';
 import { installDevApi } from './api/dev.js';
 import { installExtensionStoreApi } from './api/extension-store.js';
@@ -154,10 +156,7 @@ function installHostAbi(context) {
         },
         assets: {
             thumbnailUrl: window.__TAURITAVERN_THUMBNAIL__,
-            thumbnailBlobUrl: window.__TAURITAVERN_THUMBNAIL_BLOB_URL__,
             backgroundPath: window.__TAURITAVERN_BACKGROUND_PATH__,
-            avatarPath: window.__TAURITAVERN_AVATAR_PATH__,
-            personaPath: window.__TAURITAVERN_PERSONA_PATH__,
         },
     };
 }
@@ -273,8 +272,8 @@ export function bootstrapTauriMain() {
     installBackNavigationBridge();
     installNativeShareBridge();
 
-    const context = createTauriMainContext({ invoke, convertFileSrc });
-    installHostAbi(context); installLayoutApi(context); installChatApi(context); installAgentApi(context); installLlmConnectionsApi(context); installSkillApi(context); installDevApi(context); installExtensionStoreApi(context); installWorldInfoApi();
+    const context = createTauriMainContext({ invoke });
+    installHostAbi(context); installLayoutApi(context); installChatApi(context); installChatSurfaceApi(); installCharacterCardsApi(context); installAgentApi(context); installLlmConnectionsApi(context); installSkillApi(context); installDevApi(context); installExtensionStoreApi(context); installWorldInfoApi();
     installMainApiOptionParking();
     installWorldInfoGlobalSelectorSelect2Enforcer();
     if (perfEnabled) {
@@ -380,21 +379,33 @@ export function bootstrapTauriMain() {
         perfEnabled,
         perfReadyPromise,
         safePerfMark,
-    ).catch((error) => {
+    );
+    void readyPromise.catch((error) => {
         console.error('Failed to initialize Tauri integration:', error);
     });
+    const runAfterTauriReady = (callback) => {
+        void readyPromise.then(callback, () => {});
+    };
     window.__TAURITAVERN_MAIN_READY__ = readyPromise;
     if (window.__TAURITAVERN__) {
         window.__TAURITAVERN__.ready = readyPromise;
     }
 
-    void readyPromise.then(() => setFrontendLogBackendForwardingEnabled(true));
+    runAfterTauriReady(() => setFrontendLogBackendForwardingEnabled(true));
 
-    void readyPromise.then(() => import('../../scripts/tauri/setting/setting-panel.js').then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel()).catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
-    void readyPromise.then(() => import('../../scripts/tauri/regex/native-regex-settings.js').then(({ installNativeRegexBackendSetting }) => installNativeRegexBackendSetting()));
-    void readyPromise.then(() => import('./services/chat-history/install.js').then(({ installChatHistoryMode }) => installChatHistoryMode())); void readyPromise.then(() => import('./services/dynamic-theme/install.js').then(({ installDynamicTheme }) => installDynamicTheme()));
-    if (!isEmbeddedRuntimeTakeoverDisabled()) void readyPromise.then(() => import('./services/embedded-runtime/install.js').then(({ installEmbeddedRuntime }) => installEmbeddedRuntime()));
-    void readyPromise.then(() => import('./services/panel-runtime/install.js').then(({ installPanelRuntime }) => installPanelRuntime()));
+    runAfterTauriReady(() => import('../../scripts/tauri/setting/setting-panel.js')
+        .then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel())
+        .catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
+    runAfterTauriReady(() => import('../../scripts/tauri/regex/native-regex-settings.js')
+        .then(({ installNativeRegexBackendSetting }) => installNativeRegexBackendSetting()));
+    runAfterTauriReady(() => import('./services/dynamic-theme/install.js')
+        .then(({ installDynamicTheme }) => installDynamicTheme()));
+    if (!isEmbeddedRuntimeTakeoverDisabled()) {
+        runAfterTauriReady(() => import('./services/embedded-runtime/install.js')
+            .then(({ installEmbeddedRuntime }) => installEmbeddedRuntime()));
+    }
+    runAfterTauriReady(() => import('./services/panel-runtime/install.js')
+        .then(({ installPanelRuntime }) => installPanelRuntime()));
 
     if (perfEnabled) {
         readyPromise

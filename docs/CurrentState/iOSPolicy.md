@@ -24,8 +24,8 @@
 
 实现位置：
 
-- 读取/写入：`src-tauri/src/infrastructure/repositories/file_settings_repository.rs`
-- Settings 模型：`src-tauri/src/domain/models/settings.rs`
+- 读取/写入：`src-tauri/crates/tt-adapter-storage-core/src/repositories/file_settings_repository.rs`
+- Settings 模型：`src-tauri/crates/tt-domain/src/models/settings.rs`
 
 > 选择 raw JSON 的原因：允许桌面端加载来自 iOS 的 settings（即使未来 iOS policy schema 演进），同时让 iOS 端在运行时严格校验并 fail-fast。
 
@@ -58,7 +58,7 @@
 
 实现位置：
 
-- schema + baseline + 解析器：`src-tauri/src/domain/ios_policy.rs`
+- schema + baseline + 解析器：`src-tauri/crates/tt-domain/src/ios_policy.rs`
 
 ### 1.3 iOS-only 生效语义（范围隔离）
 
@@ -67,8 +67,8 @@
 
 实现位置：
 
-- `IosPolicyScope::for_current_platform()`：`src-tauri/src/domain/ios_policy.rs`
-- 解析入口：`resolve_ios_policy_activation_report()`：`src-tauri/src/domain/ios_policy.rs`
+- `IosPolicyScope::for_current_platform()`：`src-tauri/crates/tt-domain/src/ios_policy.rs`
+- 解析入口：`resolve_ios_policy_activation_report()`：`src-tauri/crates/tt-domain/src/ios_policy.rs`
 
 ---
 
@@ -85,8 +85,9 @@
 
 实现位置：
 
-- AppState 构建：`src-tauri/src/app/bootstrap.rs`
-- Bootstrap DTO：`src-tauri/src/presentation/commands/bootstrap_commands.rs`
+- 启动快照：`src-tauri/crates/tauritavern/src/app/startup_profile.rs`
+- AppState 注入：`src-tauri/crates/tauritavern/src/app.rs` / `src-tauri/crates/tauritavern/src/app/composition.rs`
+- Bootstrap DTO：`src-tauri/crates/tauritavern/src/presentation/commands/bootstrap_commands.rs`
 - Host 路由：`src/tauri/main/routes/bootstrap-routes.js`
 - 前端启动：`src/script.js`
 - 前端读取帮助函数：`src/scripts/tauritavern/ios-policy.js`
@@ -100,10 +101,12 @@ iOS 构建可通过 `TAURITAVERN_IOS_POLICY_PROFILE` 注入默认 profile，用�
 
 实现位置：
 
-- build-time 注入：`src-tauri/build.rs`
-- default seed：`src-tauri/src/domain/models/settings.rs`（`default_ios_policy_seed()`）
+- build-time 注入：`src-tauri/crates/tt-domain/build.rs`
+- default seed：`src-tauri/crates/tt-domain/src/models/settings.rs`（`default_ios_policy_seed()`）
 
 > 这只是“首次生成默认 settings”的默认值：用户导入 settings 后可覆盖 profile/overrides，且不会被系统偷偷改回去。
+
+Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外生成、带 `-TestFlight` 后缀的专用 IPA 显式注入 `ios_external_beta` 并使用 App Store Connect export method。本地开发和其他分发方式仍由调用方明确选择 profile。公开 TestFlight 的 `What to Test` 也以同一 capability snapshot 为可见性边界，避免描述默认包中不可达的能力。
 
 ### 2.3 Activation Report（用于调试/回归）
 
@@ -114,13 +117,13 @@ iOS 构建可通过 `TAURITAVERN_IOS_POLICY_PROFILE` 注入默认 profile，用�
 - `capabilities`: 最终快照（唯一真相）
 - `overridden_capabilities`: overrides 生效的路径列表（用于定位“哪些能力被手动改过”）
 
-实现位置：`src-tauri/src/domain/ios_policy.rs`
+实现位置：`src-tauri/crates/tt-domain/src/ios_policy.rs`
 
 ---
 
 ## 3. Profiles 与 v1 Baseline Capabilities
 
-基线定义（profile → baseline capabilities）在：`src-tauri/src/domain/ios_policy.rs`。
+基线定义（profile → baseline capabilities）在：`src-tauri/crates/tt-domain/src/ios_policy.rs`。
 
 ### 3.1 Profiles
 
@@ -162,35 +165,35 @@ iOS 构建可通过 `TAURITAVERN_IOS_POLICY_PROFILE` 注入默认 profile，用�
 
 通用拒绝 helper：
 
-- `ensure_ios_policy_allows(...)`：`src-tauri/src/presentation/commands/helpers.rs`
+- `ensure_ios_policy_allows(...)`：`src-tauri/crates/tauritavern/src/presentation/commands/helpers.rs`
 
 能力 → 落点：
 
 - `extensions.third_party_management`
-  - Rust commands：`src-tauri/src/presentation/commands/extension_commands.rs`
-    - `install_extension` / `update_extension` / `delete_extension` / `move_extension` / `get_extension_version`
+  - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/extension_commands.rs`
+    - `install_extension` / `update_extension` / `delete_extension` / `get_extension_version` / `get_extension_branches` / `switch_extension_branch` / `move_extension`
 - `extensions.third_party_execution` + `extensions.system_allowlist`
-  - Rust commands：`src-tauri/src/presentation/commands/extension_commands.rs:get_extensions`
+  - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/extension_commands.rs:get_extensions`
   - 行为：发现阶段过滤（system 仅 allowlist；local/global third-party 受 `third_party_execution` 控制）
 - `content.external_import`
-  - Rust commands：`src-tauri/src/presentation/commands/content_commands.rs:download_external_import_url`
+  - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/content_commands.rs:download_external_import_url`
 - `updates.manual_check`
-  - Rust commands：`src-tauri/src/presentation/commands/update_commands.rs:check_for_update`
+  - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/update_commands.rs:check_for_update`
 - `llm.chat_completion_sources.allowlist`
-  - Service：`src-tauri/src/application/services/chat_completion_service/mod.rs`
+  - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
 - `llm.endpoint_overrides`
-  - Service：`src-tauri/src/application/services/chat_completion_service/mod.rs`
+  - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
   - 行为：禁用时禁止 `custom` source；并拒绝任何非空 override 字段（reverse_proxy/custom_url/custom_include_headers/proxy_password）
 - `llm.chat_completion_features.web_search` / `llm.chat_completion_features.request_images`
-  - Service：`src-tauri/src/application/services/chat_completion_service/mod.rs`
+  - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
   - 行为：payload 中出现 enable_web_search/request_images 或 request_image_* 即拒绝
 - `network.request_proxy`
-  - 启动期：`src-tauri/src/lib.rs` 若 settings 中 request_proxy.enabled=true 但 capability 禁用 → 直接启动失败
-  - 运行期：`src-tauri/src/presentation/commands/settings_commands.rs:update_tauritavern_settings` 禁止启用 proxy
+  - 启动期：`src-tauri/crates/tauritavern/src/lib.rs` 若 settings 中 request_proxy.enabled=true 但 capability 禁用 → 直接启动失败
+  - 运行期：`src-tauri/crates/tauritavern/src/presentation/commands/settings_commands.rs:update_tauritavern_settings` 禁止启用 proxy
 - `ai.image_generation`
-  - Rust commands：`src-tauri/src/presentation/commands/stable_diffusion_commands.rs:sd_handle`
+  - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/stable_diffusion_commands.rs:sd_handle`
 - `sync.lan`
-  - Rust commands：`src-tauri/src/presentation/commands/lan_sync_commands.rs:*`（所有 LAN sync 命令统一门禁）
+  - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/lan_sync_commands.rs:*`（所有 LAN sync 命令统一门禁）
 
 ### 4.2 启动关键路径裁剪（避免外测默认自爆）
 
@@ -234,7 +237,7 @@ iOS 构建可通过 `TAURITAVERN_IOS_POLICY_PROFILE` 注入默认 profile，用�
   - `scripting.tool_registration=false`：不注册 `/tools-register` 等注册类命令
     - `src/scripts/tool-calling.js`
 - `tauritavern-version` 扩展（更新能力 UI）：
-  - `updates.manual_check=false`：移除 “Check for Updates” 按钮，并隐藏兼容性信息/Discord 链接
+  - `updates.manual_check=false`：移除 “Check for Updates” 按钮与更新渠道选择，并隐藏兼容性信息/Discord 链接
   - `updates.startup_check=false`：跳过启动检查更新
   - `about.git_info=false`：隐藏 Git Info
   - `src/scripts/extensions/tauritavern-version/index.js`
@@ -253,6 +256,6 @@ iOS 构建可通过 `TAURITAVERN_IOS_POLICY_PROFILE` 注入默认 profile，用�
 
 ## 6. 维护约束（防腐化要点）
 
-1. 新增/调整能力时，先改 `src-tauri/src/domain/ios_policy.rs`（capability key + baseline + overrides），再落裁决点与 UI 投影；禁止直接在 UI 到处加 `if (profile === ...)`。
+1. 新增/调整能力时，先改 `src-tauri/crates/tt-domain/src/ios_policy.rs`（capability key + baseline + overrides），再落裁决点与 UI 投影；禁止直接在 UI 到处加 `if (profile === ...)`。
 2. iOS 上拒绝 silent fallback：策略非法/能力禁用必须“明确失败或明确拒绝”，避免后续难排查。
 3. 非 iOS 平台必须继续 **忽略** `ios_policy`，防止跨平台 settings 导入把桌面端拖死。

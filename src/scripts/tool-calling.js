@@ -1,6 +1,6 @@
 import { DOMPurify } from '../lib.js';
 
-import { addOneMessage, chat, event_types, eventSource, getGeneratingApi, getGeneratingModel, main_api, saveChatConditional, system_avatar, systemUserName } from '../script.js';
+import { addOneMessage, chat, event_types, eventSource, getGeneratingApi, getGeneratingModel, main_api, saveChatConditional, system_avatar, systemUserName, withChatSurfaceStructureMutation } from '../script.js';
 import { chat_completion_sources, custom_prompt_post_processing_types, getChatCompletionModel, model_list, oai_settings } from './openai.js';
 import { Popup } from './popup.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
@@ -698,7 +698,7 @@ export class ToolManager {
         const isClaudeToolCall = c => Array.isArray(c) ? c.filter(x => x).every(isClaudeToolCall) : c?.input && c?.name && c?.id;
         const isGoogleToolCall = c => Array.isArray(c) ? c.filter(x => x).every(isGoogleToolCall) : c?.name && c?.args;
         const convertClaudeToolCall = c => ({ id: c.id, function: { name: c.name, arguments: c.input } });
-        const convertGoogleToolCall = (c, signature = null) => ({ id: getRandomId(), function: { name: c.name, arguments: c.args }, signature });
+        const convertGoogleToolCall = (c, signature = null) => ({ id: c.id || getRandomId(), function: { name: c.name, arguments: c.args }, signature });
 
         // Parsed tool calls from streaming data
         if (Array.isArray(data) && data.length > 0 && Array.isArray(data[0])) {
@@ -907,9 +907,11 @@ export class ToolManager {
                 ...(reasoningContent ? { tool_reasoning_content: reasoningContent } : {}),
             },
         };
-        chat.push(message);
-        await eventSource.emit(event_types.TOOL_CALLS_PERFORMED, invocations);
-        addOneMessage(message);
+        await withChatSurfaceStructureMutation(async () => {
+            chat.push(message);
+            await eventSource.emit(event_types.TOOL_CALLS_PERFORMED, invocations);
+            addOneMessage(message);
+        });
         await eventSource.emit(event_types.TOOL_CALLS_RENDERED, invocations);
         await saveChatConditional();
     }

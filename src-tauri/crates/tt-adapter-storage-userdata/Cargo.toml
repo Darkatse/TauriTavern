@@ -1,0 +1,30 @@
+[package]
+name = "tt-adapter-storage-userdata"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+chrono = { workspace = true }
+crc32fast = "1"
+flate2 = "1.1.9"
+image = { version = "0.24", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
+mime_guess = "2.0.5"
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+sha2 = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "rt", "sync"] }
+tracing = "0.1"
+typed-path = "0.12"
+uuid = { workspace = true }
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+tt-adapter-storage-core = { path = "../tt-adapter-storage-core" }
+tt-contracts = { path = "../tt-contracts" }
+tt-domain = { path = "../tt-domain" }
+tt-ports = { path = "../tt-ports" }
+
+[dev-dependencies]
+rand = { workspace = true }

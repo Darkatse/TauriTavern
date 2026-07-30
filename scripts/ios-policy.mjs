@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -111,13 +110,10 @@ function main() {
         throw new Error('iOS dev/build requires macOS.');
     }
 
-    const tauriCli = path.join(repoRoot, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
-    if (!existsSync(tauriCli)) {
-        throw new Error(`Missing Tauri CLI at ${tauriCli}. Run pnpm install first.`);
-    }
-
     const env = {
         ...process.env,
+        TAURI_APP_PATH: path.join(repoRoot, 'src-tauri', 'crates', 'tauritavern'),
+        TAURI_FRONTEND_PATH: repoRoot,
         TAURITAVERN_IOS_POLICY_PROFILE: profile,
     };
 
@@ -131,7 +127,8 @@ function main() {
         tauriArgs.splice(2, 0, '--export-method', 'app-store-connect');
     }
 
-    const result = spawnSync(process.execPath, [tauriCli, ...tauriArgs], {
+    const tauriScript = path.join(repoRoot, 'scripts', 'tauri-app.mjs');
+    const result = spawnSync(process.execPath, [tauriScript, '--prepare-frontend', ...tauriArgs], {
         stdio: 'inherit',
         env,
     });

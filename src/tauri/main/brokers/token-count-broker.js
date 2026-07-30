@@ -1,40 +1,6 @@
 const DEFAULT_FLUSH_INTERVAL_MS = 25;
 const DEFAULT_MAX_BATCH_REQUESTS = 50;
 
-export function trimOpenAiMessage(message) {
-    if (!message || typeof message !== 'object' || Array.isArray(message)) {
-        return message;
-    }
-
-    const trimmed = {};
-
-    if (typeof message.role === 'string') {
-        trimmed.role = message.role;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(message, 'content')) {
-        trimmed.content = message.content;
-    }
-
-    if (typeof message.name === 'string') {
-        trimmed.name = message.name;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(message, 'tool_calls')) {
-        trimmed.tool_calls = message.tool_calls;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(message, 'tool_call_id')) {
-        trimmed.tool_call_id = message.tool_call_id;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(message, 'function_call')) {
-        trimmed.function_call = message.function_call;
-    }
-
-    return trimmed;
-}
-
 function normalizeModel(model) {
     return String(model || '').trim();
 }
@@ -142,10 +108,9 @@ export function createTokenCountBroker(options) {
     return {
         async count({ model, messages }) {
             const state = getState(model);
-            const trimmedMessages = messages.map(trimOpenAiMessage);
 
             const promise = new Promise((resolve, reject) => {
-                state.queue.push({ messages: trimmedMessages, resolve, reject });
+                state.queue.push({ messages, resolve, reject });
             });
 
             if (state.queue.length >= maxBatchRequests) {

@@ -16,6 +16,7 @@ const REQUIRED_CLIENT_METHODS = [
     'removeLanDevice',
     'pullLanDevice',
     'pushLanDevice',
+    'setOverwritePolicy',
     'removeTtSyncServer',
     'pullTtSyncServer',
     'pushTtSyncServer',
@@ -28,10 +29,12 @@ const REQUIRED_ACTIONS = [
     'scanPairUri',
     'changeSyncMode',
     'editSyncScope',
+    'showOverwritePolicyHelp',
     'renameTarget',
     'connectPairUri',
     'notifyLanPushRequested',
     'reportError',
+    'showSyncReportResult',
 ];
 
 function requireMethods(source, names, label) {
@@ -122,6 +125,7 @@ export function createTauriTavernSyncApp(options) {
                     autoSyncEnabled: false,
                     intervalMinutes: 30,
                     target: null,
+                    syncMode: 'Incremental',
                     selection: null,
                 },
                 automationStatus: {
@@ -129,6 +133,8 @@ export function createTauriTavernSyncApp(options) {
                     nextRunAtMs: null,
                     lastAttemptAtMs: null,
                     lastSuccessAtMs: null,
+                    lastRequestAcceptedAtMs: null,
+                    lastErrorAtMs: null,
                     lastError: '',
                 },
                 automationExpanded: false,
@@ -175,6 +181,11 @@ export function createTauriTavernSyncApp(options) {
             modeDanger() {
                 return this.status?.syncMode === 'Mirror';
             },
+            overwritePolicyDescription() {
+                return this.tr(this.status?.overwritePolicy === 'prefer-newer'
+                    ? 'Keep the copy with the later modification time.'
+                    : "Keep the initiator's copy.");
+            },
             pairingText() {
                 if (!this.pairingEnabled) {
                     return this.tr('Disabled');
@@ -183,7 +194,7 @@ export function createTauriTavernSyncApp(options) {
                 return `${this.tr('Enabled')} (${this.tr('Expires')}: ${formatTimestampValue(this.status?.pairingExpiresAtMs, this.tr)})`;
             },
             pairUri() {
-                return this.pairingInfo?.v2PairUri || '';
+                return this.pairingInfo?.pairUri || '';
             },
             pairExpiryText() {
                 return this.pairingInfo?.expiresAtMs
@@ -191,7 +202,7 @@ export function createTauriTavernSyncApp(options) {
                     : this.tr('N/A');
             },
             qrImageSrc() {
-                const svg = this.pairingInfo?.v2QrSvg || '';
+                const svg = this.pairingInfo?.qrSvg || '';
                 if (!svg) {
                     return '';
                 }
@@ -246,13 +257,13 @@ export function createTauriTavernSyncApp(options) {
             automationTargets() {
                 return this.targets.map((target) => {
                     const isLan = target.type === 'lan';
-                    const isLanV2 = !isLan || target.protocolVersion === 2;
                     const canWrite = isLan || Boolean(target.permissions?.write);
                     const canMirror = isLan || Boolean(target.permissions?.mirror_delete);
+                    const automationMirror = this.automationConfig?.syncMode === 'Mirror';
                     const disabled = isLan
-                        ? (!isLanV2 || !target.lastKnownAddress)
-                        : (!canWrite || (this.modeDanger && !canMirror));
-                    const protocol = isLan ? (isLanV2 ? 'LAN v2' : 'LAN v1') : 'TT-Sync';
+                        ? !target.lastKnownAddress
+                        : (!canWrite || (automationMirror && !canMirror));
+                    const protocol = isLan ? 'LAN' : 'TT-Sync';
 
                     return {
                         value: automationTargetValue(target),
@@ -278,6 +289,7 @@ export function createTauriTavernSyncApp(options) {
                 return [
                     this.tr('On'),
                     formatAutomationInterval(this.automationConfig.intervalMinutes, this.tr),
+                    this.tr(this.automationConfig.syncMode === 'Mirror' ? 'Mirror Mode' : 'Incremental Mode'),
                     this.automationTargetLabel,
                 ].join(' · ');
             },
@@ -289,14 +301,19 @@ export function createTauriTavernSyncApp(options) {
                 if (status.running) {
                     return this.tr('Uploading...');
                 }
+                if (status.lastError) {
+                    return `${this.tr('Last error')}: ${status.lastError}`;
+                }
                 if (status.nextRunAtMs) {
                     return `${this.tr('Next run')}: ${formatTimestampValue(status.nextRunAtMs, this.tr)}`;
                 }
-                if (status.lastSuccessAtMs) {
-                    return `${this.tr('Last success')}: ${formatTimestampValue(status.lastSuccessAtMs, this.tr)}`;
+                const lastSuccessAtMs = Number(status.lastSuccessAtMs || 0);
+                const lastRequestAcceptedAtMs = Number(status.lastRequestAcceptedAtMs || 0);
+                if (lastSuccessAtMs >= lastRequestAcceptedAtMs && lastSuccessAtMs > 0) {
+                    return `${this.tr('Last success')}: ${formatTimestampValue(lastSuccessAtMs, this.tr)}`;
                 }
-                if (status.lastError) {
-                    return `${this.tr('Last error')}: ${status.lastError}`;
+                if (lastRequestAcceptedAtMs > 0) {
+                    return `${this.tr('Last request accepted')}: ${formatTimestampValue(lastRequestAcceptedAtMs, this.tr)}`;
                 }
                 return this.tr('Idle');
             },
@@ -316,6 +333,9 @@ export function createTauriTavernSyncApp(options) {
             },
             reportError(error) {
                 void actions.reportError(error);
+            },
+            showOverwritePolicyHelp() {
+                void actions.showOverwritePolicyHelp();
             },
             async withBusy(name, task) {
                 const busyName = normalizeBusyName(name);
@@ -342,11 +362,20 @@ export function createTauriTavernSyncApp(options) {
                     }
                 }
             },
+            async runSyncCommand(command) {
+                const report = await command();
+                await actions.showSyncReportResult(report);
+                return report;
+            },
             automationIntervalLabel(minutes) {
                 return formatAutomationInterval(minutes, this.tr);
             },
             setAutomationInterval(value) {
                 this.automationConfig.intervalMinutes = Number(value);
+                this.automationDraftDirty = true;
+            },
+            setAutomationMode(value) {
+                this.automationConfig.syncMode = value === 'Mirror' ? 'Mirror' : 'Incremental';
                 this.automationDraftDirty = true;
             },
             applySnapshot(snapshot) {
@@ -400,6 +429,22 @@ export function createTauriTavernSyncApp(options) {
                     }
                 });
             },
+            async setOverwritePolicy(overwritePolicy) {
+                if (!this.status) {
+                    return;
+                }
+
+                const previous = this.status.overwritePolicy;
+                this.status.overwritePolicy = overwritePolicy;
+                try {
+                    await this.withBusyStrict('overwrite-policy', () => (
+                        client.setOverwritePolicy(overwritePolicy)
+                    ));
+                } catch (error) {
+                    this.status.overwritePolicy = previous;
+                    this.reportError(error);
+                }
+            },
             syncOperationOptions() {
                 if (!this.syncSelection) {
                     throw new Error(this.tr('Sync content selection is unavailable'));
@@ -407,6 +452,7 @@ export function createTauriTavernSyncApp(options) {
 
                 return {
                     selection: this.syncSelection,
+                    overwrite_policy: this.status.overwritePolicy,
                     require_bundle_zstd: true,
                 };
             },
@@ -543,25 +589,33 @@ export function createTauriTavernSyncApp(options) {
                 await this.withBusy(`pull:${target.type}:${target.id}`, async () => {
                     const options = this.syncOperationOptions();
                     if (target.type === 'lan') {
-                        await client.pullLanDevice(target.id, options);
+                        await this.runSyncCommand(() => client.pullLanDevice(target.id, options));
                         return;
                     }
 
                     const mode = this.status?.syncMode ?? 'Incremental';
-                    await client.pullTtSyncServer(target.id, mode, options);
+                    await this.runSyncCommand(() => client.pullTtSyncServer(
+                        target.id,
+                        mode,
+                        options,
+                    ));
                 });
             },
             async pushTarget(target) {
                 await this.withBusy(`push:${target.type}:${target.id}`, async () => {
                     const options = this.syncOperationOptions();
                     if (target.type === 'lan') {
-                        await client.pushLanDevice(target.id, options);
+                        await this.runSyncCommand(() => client.pushLanDevice(target.id, options));
                         actions.notifyLanPushRequested();
                         return;
                     }
 
                     const mode = this.status?.syncMode ?? 'Incremental';
-                    await client.pushTtSyncServer(target.id, mode, options);
+                    await this.runSyncCommand(() => client.pushTtSyncServer(
+                        target.id,
+                        mode,
+                        options,
+                    ));
                 });
             },
             async removeTarget(target) {
@@ -649,6 +703,71 @@ export function createTauriTavernSyncApp(options) {
                     </div>
                 </section>
 
+                <SyncSection :title="tr('Sync preferences')">
+                    <div class="tt-sync-preferences-card">
+                        <div class="tt-sync-preference-row">
+                            <div class="tt-sync-preference-copy">
+                                <b>{{ tr('Sync content') }}</b>
+                                <span class="tt-sync-muted">{{ scopeTitle }} · {{ scopeSubtitle }}</span>
+                            </div>
+                            <SyncButton
+                                :label="tr('Choose')"
+                                icon="fa-list-check"
+                                :disabled="isBusy || !datasetCatalog"
+                                @click="editSyncScope"
+                            />
+                        </div>
+                        <div class="tt-sync-preference-row tt-sync-overwrite-row">
+                            <div class="tt-sync-preference-copy">
+                                <div class="tt-sync-preference-title">
+                                    <b>{{ tr('When files conflict') }}</b>
+                                    <button
+                                        type="button"
+                                        class="tt-sync-help-button"
+                                        :title="tr('Learn more')"
+                                        :aria-label="tr('Learn more')"
+                                        @click="showOverwritePolicyHelp"
+                                    >
+                                        <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <span id="tt-sync-overwrite-description" class="tt-sync-muted" aria-live="polite">
+                                    {{ overwritePolicyDescription }}
+                                </span>
+                            </div>
+                            <div
+                                class="tt-sync-overwrite-options"
+                                role="radiogroup"
+                                :aria-label="tr('When files conflict')"
+                                aria-describedby="tt-sync-overwrite-description"
+                            >
+                                <label class="tt-sync-overwrite-option">
+                                    <input
+                                        type="radio"
+                                        name="tt-sync-overwrite-policy"
+                                        value="exact"
+                                        :checked="status?.overwritePolicy === 'exact'"
+                                        :disabled="isBusy || !status"
+                                        @change="setOverwritePolicy('exact')"
+                                    />
+                                    <span>{{ tr('Initiator wins (default)') }}</span>
+                                </label>
+                                <label class="tt-sync-overwrite-option">
+                                    <input
+                                        type="radio"
+                                        name="tt-sync-overwrite-policy"
+                                        value="prefer-newer"
+                                        :checked="status?.overwritePolicy === 'prefer-newer'"
+                                        :disabled="isBusy || !status"
+                                        @change="setOverwritePolicy('prefer-newer')"
+                                    />
+                                    <span>{{ tr('Newer copy wins') }}</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </SyncSection>
+
                 <section class="tt-sync-section tt-sync-automation-section">
                     <details
                         class="tt-sync-automation-disclosure"
@@ -691,6 +810,18 @@ export function createTauriTavernSyncApp(options) {
                                         </option>
                                     </select>
                                 </label>
+                                <label class="tt-sync-field-row">
+                                    <span>{{ tr('Sync mode') }}</span>
+                                    <select
+                                        :value="automationConfig.syncMode"
+                                        class="text_pole"
+                                        :disabled="isBusy || !automationConfig"
+                                        @change="setAutomationMode($event.target.value)"
+                                    >
+                                        <option value="Incremental">{{ tr('Incremental Mode') }}</option>
+                                        <option value="Mirror">{{ tr('Mirror Mode') }}</option>
+                                    </select>
+                                </label>
                                 <label class="tt-sync-field-row tt-sync-field-row-wide">
                                     <span>{{ tr('Target') }}</span>
                                     <select
@@ -730,25 +861,10 @@ export function createTauriTavernSyncApp(options) {
                     </details>
                 </section>
 
-                <SyncSection :title="tr('Sync content')">
-                    <div class="tt-sync-scope-row">
-                        <div class="tt-sync-scope-current">
-                            <b>{{ scopeTitle }}</b>
-                            <span class="tt-sync-muted">{{ scopeSubtitle }}</span>
-                        </div>
-                        <SyncButton
-                            :label="tr('Choose')"
-                            icon="fa-list-check"
-                            :disabled="isBusy || !datasetCatalog"
-                            @click="editSyncScope"
-                        />
-                    </div>
-                </SyncSection>
-
-                <SyncSection :title="tr('Pair via LAN v2 QR')">
+                <SyncSection :title="tr('Pair via LAN QR')">
                     <div class="tt-sync-pair-grid">
                         <div class="tt-sync-qr-wrap">
-                            <img v-if="qrImageSrc" :src="qrImageSrc" alt="LAN Sync v2 Pair QR" width="200" height="200" />
+                            <img v-if="qrImageSrc" :src="qrImageSrc" alt="LAN Sync Pair QR" width="200" height="200" />
                             <span v-else>{{ tr('No QR') }}</span>
                         </div>
                         <div class="tt-sync-pair-fields">
@@ -758,7 +874,7 @@ export function createTauriTavernSyncApp(options) {
                                 :value="pairUri"
                                 rows="4"
                                 readonly
-                                :placeholder="tr('LAN Sync v2 Pair URI')"
+                                :placeholder="tr('LAN Sync Pair URI')"
                             ></textarea>
                             <div class="tt-sync-actions">
                                 <SyncButton

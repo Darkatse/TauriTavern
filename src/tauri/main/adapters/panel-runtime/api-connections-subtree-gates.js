@@ -241,7 +241,7 @@ function handleTextgenTypeChange(type) {
 }
 
 /**
- * Phase 1 (preinstall): register early `change` listeners so our gate handlers
+ * Preinstall: register early `change` listeners so our gate handlers
  * run before SillyTavern's own handlers (including jQuery `.trigger('change')`).
  */
 export function preinstallApiConnectionsSubtreeGates() {
@@ -278,7 +278,7 @@ export function preinstallApiConnectionsSubtreeGates() {
 }
 
 /**
- * Phase 1 (activate): build gates and immediately park inactive subtrees.
+ * Activation: build gates and immediately park inactive subtrees.
  *
  * @param {{ manager: EmbeddedRuntimeManager }} options
  */

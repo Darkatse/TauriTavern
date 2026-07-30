@@ -63,9 +63,9 @@ Rust chat repository 当前接收的是 character stem，而不是 avatar filena
 
 核心实现位置：
 
-- `src-tauri/src/infrastructure/repositories/chat_directory_identity.rs`
-- `src-tauri/src/infrastructure/repositories/file_chat_repository/chat_dir_resolver.rs`
-- `src-tauri/src/infrastructure/repositories/file_character_repository/helpers.rs`
+- `src-tauri/crates/tt-adapter-storage-core/src/chat_directory_identity.rs`
+- `src-tauri/crates/tt-adapter-storage-core/src/repositories/file_chat_repository/chat_dir_resolver.rs`
+- `src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_character_repository/helpers.rs`
 
 持续开发约束：
 
@@ -140,12 +140,12 @@ alias key 是 Rust 内部 character stem，不是 avatar filename。
 
 当前生产 bootstrap 会把同一个 shared alias store 注入 character repository 和 chat repository：
 
-- `FileCharacterRepository::with_chat_aliases(...)`
+- `FileCharacterRepository::with_chat_repository(...)`
 - `FileChatRepository::with_chat_aliases(...)`
 
 这样两个 repository 不再各自持有独立 alias cache，避免并发懒发现时互相覆盖 alias 文件。
 
-生产 bootstrap 会显式创建 shared alias store，并通过 `with_chat_aliases(...)` 注入给 character/chat repositories。`new(...)` 只是 isolated/single-repository 便捷构造；当同一运行时同时创建两个 repository 时，必须使用同一个 shared store。
+生产 bootstrap 会显式创建 shared alias store 和 shared `FileChatRepository`，再通过 `with_chat_repository(...)` 注入给 character repository。`new(...)` 只是 isolated/single-repository 便捷构造；当同一运行时同时创建 character/chat repositories 时，必须共享同一个 `FileChatRepository`。
 
 ---
 

@@ -21,8 +21,8 @@ test('embedded-runtime profiles: auto resolves to mobile-safe on mobile user age
 
         const profile = resolveEmbeddedRuntimeProfile('auto');
         assert.equal(profile.name, 'mobile-safe');
-        assert.equal(profile.maxActiveIframes, 4);
-        assert.equal(profile.maxSoftParkedIframes, 8);
+        assert.equal(profile.maxActiveIframes, 8);
+        assert.equal(profile.maxSoftParkedIframes, 16);
     } finally {
         dom.cleanup();
     }
@@ -51,8 +51,8 @@ test('embedded-runtime profiles: auto resolves to compat on desktop', async () =
 
         const profile = resolveEmbeddedRuntimeProfile('auto');
         assert.equal(profile.name, 'compat');
-        assert.equal(profile.maxActiveIframes, 12);
-        assert.equal(profile.maxSoftParkedIframes, 24);
+        assert.equal(profile.maxActiveIframes, 18);
+        assert.equal(profile.maxSoftParkedIframes, 36);
     } finally {
         dom.cleanup();
     }
@@ -77,4 +77,3 @@ test('embedded-runtime profiles expose parkWhenHiddenKinds and reject off', asyn
         dom.cleanup();
     }
 });
-

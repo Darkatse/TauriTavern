@@ -1,0 +1,6 @@
+interface:
+  display_name: "TauriTavern Canary Notes"
+  short_description: "Draft user-facing bilingual Canary release notes"
+  default_prompt: "Use $tauritavern-canary-notes to draft bilingual Canary release notes from the prepared commit range."
+policy:
+  allow_implicit_invocation: false

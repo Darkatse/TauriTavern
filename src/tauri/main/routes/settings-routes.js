@@ -34,6 +34,11 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
         return jsonResponse({ result: 'ok' });
     });
 
+    router.post('/api/settings/patch', async ({ body }) => {
+        const result = await context.safeInvoke('save_user_settings_patch', { patch: body || {} });
+        return jsonResponse(result || { result: 'ok' });
+    });
+
     router.post('/api/settings/make-snapshot', async () => {
         await context.safeInvoke('create_settings_snapshot');
         return jsonResponse({ result: 'ok' });

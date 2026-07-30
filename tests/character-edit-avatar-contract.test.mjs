@@ -44,6 +44,38 @@ test('/api/characters/edit-avatar delegates multipart avatar replacement only', 
     assert.equal(calls[0].url, url);
 });
 
+test('/api/characters/edit saves without full list refresh', async () => {
+    const router = createRouteRegistry();
+    const calls = [];
+    const formData = new FormData();
+    formData.set('avatar_url', 'Alice.png');
+    const context = {
+        editCharacterFromForm: async (body, url) => {
+            calls.push({ type: 'edit', body, url });
+        },
+        getAllCharacters: async () => {
+            throw new Error('getAllCharacters should not be called for character edit');
+        },
+    };
+
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+
+    const url = new URL('http://localhost/api/characters/edit');
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/edit',
+        url,
+        body: formData,
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'ok');
+    assert.deepEqual(calls, [
+        { type: 'edit', body: formData, url },
+    ]);
+});
+
 test('/api/characters/edit-avatar rejects non-multipart payloads', async () => {
     const router = createRouteRegistry();
     const context = {
@@ -529,14 +561,10 @@ test('/api/characters/merge-attributes rejects path-like single avatar fields', 
 
 test('character form service maps edit-avatar to update_avatar without full character rewrite', async () => {
     const invokes = [];
-    const invalidations = [];
     const cleanups = [];
     const service = createCharacterFormService({
         safeInvoke: async (command, args) => {
             invokes.push({ command, args });
-        },
-        invalidateInvokeAll: (command) => {
-            invalidations.push(command);
         },
         resolveCharacterId: async () => {
             throw new Error('resolveCharacterId should not be called');
@@ -582,7 +610,6 @@ test('character form service maps edit-avatar to update_avatar without full char
             },
         },
     ]);
-    assert.deepEqual(invalidations, ['read_thumbnail_asset']);
     assert.deepEqual(cleanups, ['avatar.png']);
 });
 
@@ -924,9 +951,6 @@ test('character form service fails fast on invalid avatar_url', async () => {
         safeInvoke: async () => {
             throw new Error('should not be called');
         },
-        invalidateInvokeAll: () => {
-            throw new Error('should not be called');
-        },
         resolveCharacterId: async () => {
             throw new Error('should not be called');
         },
@@ -954,9 +978,6 @@ test('character form service fails fast on invalid avatar_url', async () => {
 test('character form service keeps missing edit-avatar target on upstream 400 contract', async () => {
     const service = createCharacterFormService({
         safeInvoke: async () => {
-            throw new Error('should not be called');
-        },
-        invalidateInvokeAll: () => {
             throw new Error('should not be called');
         },
         resolveCharacterId: async ({ avatar }) => {

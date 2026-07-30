@@ -5,8 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const TAURI_CONFIG_PATH = path.join(REPO_ROOT, 'src-tauri', 'tauri.conf.json');
-const ANDROID_RES_PATH = path.join(REPO_ROOT, 'src-tauri', 'gen', 'android', 'app', 'src', 'main', 'res');
+const TAURI_APP_ROOT = path.join(REPO_ROOT, 'src-tauri', 'crates', 'tauritavern');
+const TAURI_CONFIG_PATH = path.join(TAURI_APP_ROOT, 'tauri.conf.json');
+const ANDROID_RES_PATH = path.join(TAURI_APP_ROOT, 'gen', 'android', 'app', 'src', 'main', 'res');
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 function readPngHeader(buffer, iconPath) {
@@ -83,7 +84,19 @@ test('Android launcher PNG assets remain 8-bit RGBA', async () => {
 
     const androidIcons = densities.flatMap((density) => iconNames.map((iconName) => ({
         absolutePath: path.join(ANDROID_RES_PATH, density, iconName),
-        displayPath: path.join('src-tauri', 'gen', 'android', 'app', 'src', 'main', 'res', density, iconName),
+        displayPath: path.join(
+            'src-tauri',
+            'crates',
+            'tauritavern',
+            'gen',
+            'android',
+            'app',
+            'src',
+            'main',
+            'res',
+            density,
+            iconName,
+        ),
     })));
 
     await assertPngIconsStayRgba(

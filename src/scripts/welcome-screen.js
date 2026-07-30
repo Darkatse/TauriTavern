@@ -18,10 +18,12 @@ import {
     openCharacterChat,
     printCharactersDebounced,
     renameGroupOrCharacterChat,
+    resetChatSurfaceView,
     saveSettingsDebounced,
     selectCharacterById,
     setActiveCharacter,
     setActiveGroup,
+    setChatScrollTop,
     system_avatar,
     system_message_types,
     this_chid,
@@ -244,7 +246,7 @@ export async function openWelcomeScreen({ force = false, expand = false } = {}) 
     if (chatAfterFetch === undefined && force) {
         console.debug('Forcing welcome screen open.');
         chat.splice(0, chat.length);
-        $('#chat').empty();
+        resetChatSurfaceView({ includeAuxiliary: true });
     }
 
     await sendWelcomePanel(recentChats, expand);
@@ -694,13 +696,13 @@ async function refreshWelcomeScreen({ flashChat = null } = {}) {
         });
         if (chatToFlash instanceof HTMLElement) {
             if (!isElementInViewport(chatToFlash)) {
-                chatElement.scrollTop = chatToFlash.offsetTop - chatElement.offsetTop - (chatToFlash.clientHeight / 2);
+                setChatScrollTop(chatToFlash.offsetTop - chatElement.offsetTop - (chatToFlash.clientHeight / 2));
             }
             flashHighlight($(chatToFlash), 1000);
         }
     } else {
         // Restore scroll position
-        chatElement.scrollTop = scrollTop + (chatElement.scrollHeight - scrollHeight);
+        setChatScrollTop(scrollTop + (chatElement.scrollHeight - scrollHeight));
     }
 }
 

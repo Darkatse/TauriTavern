@@ -1,11 +1,11 @@
 import {
     moment,
 } from '../lib.js';
-import { chat, closeMessageEditor, event_types, eventSource, main_api, messageFormatting, saveChatConditional, saveChatDebounced, saveSettingsDebounced, substituteParams, syncMesToSwipe, updateMessageBlock } from '../script.js';
+import { chat, closeMessageEditor, event_types, eventSource, getChatScrollTop, main_api, messageFormatting, offsetChatScrollTop, saveChatConditional, saveChatDebounced, saveSettingsDebounced, setChatScrollTop, substituteParams, syncChatSurfaceProjectionHold, syncMesToSwipe, updateMessageBlock } from '../script.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { getCurrentLocale, t, translate } from './i18n.js';
 import { macros, MacroCategory } from './macros/macro-system.js';
-import { chat_completion_sources, getChatCompletionModel, oai_settings } from './openai.js';
+import { chat_completion_sources, getChatCompletionModel, isVertexAiClaudeModelId, oai_settings } from './openai.js';
 import { Popup } from './popup.js';
 import { performFuzzySearch, power_user } from './power-user.js';
 import { getPresetManager } from './preset-manager.js';
@@ -14,9 +14,19 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { enumTypes, SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
+import { shouldCommitStreamingMessage } from './tauri/perf/streaming-render-policy.js';
 import { textgen_types, textgenerationwebui_settings } from './textgen-settings.js';
 import { applyStreamFadeIn } from './util/stream-fadein.js';
 import { copyText, escapeRegex, isFalseBoolean, isTrueBoolean, setDatasetProperty, stringToRange, trimSpaces } from './utils.js';
+
+function setDatasetPropertyIfChanged(element, name, value) {
+    const currentValue = element.dataset[name] ?? null;
+    if (currentValue === value) {
+        return;
+    }
+
+    setDatasetProperty(element, name, value);
+}
 
 /**
  * @typedef {object} ReasoningTemplate
@@ -95,6 +105,7 @@ export function extractReasoningFromData(data, {
     ignoreShowThoughts = false,
     textGenType = null,
     chatCompletionSource = null,
+    model = null,
 } = {}) {
     switch (mainApi ?? main_api) {
         case 'textgenerationwebui':
@@ -118,8 +129,15 @@ export function extractReasoningFromData(data, {
                     return data?.choices?.[0]?.message?.reasoning
                         ?? data?.choices?.[0]?.message?.reasoning_content
                         ?? '';
-                case chat_completion_sources.MAKERSUITE:
                 case chat_completion_sources.VERTEXAI:
+                    if (isVertexAiClaudeModelId((model ?? data?.model) || null)) {
+                        return data?.choices?.[0]?.message?.reasoning_content
+                            ?? data?.choices?.[0]?.message?.reasoning
+                            ?? data?.content?.filter(part => part.type === 'thinking')?.map(part => part.thinking)?.join('\n\n')
+                            ?? '';
+                    }
+                    return data?.responseContent?.parts?.filter(part => part.thought)?.map(part => part.text)?.join('\n\n') ?? '';
+                case chat_completion_sources.MAKERSUITE:
                     return data?.responseContent?.parts?.filter(part => part.thought)?.map(part => part.text)?.join('\n\n') ?? '';
                 case chat_completion_sources.CLAUDE:
                     return data?.content?.filter(part => part.type === 'thinking')?.map(part => part.thinking)?.join('\n\n') ?? '';
@@ -154,11 +172,13 @@ export function extractReasoningFromData(data, {
  * @param {object} [options] Optional parameters
  * @param {string|null} [options.mainApi] Override for main API
  * @param {string|null} [options.chatCompletionSource] Override for chat completion source
+ * @param {string|null} [options.model] Override for chat completion model
  * @returns {string?} Encrypted signature of the reasoning text
  */
 export function extractReasoningSignatureFromData(data, {
     mainApi = null,
     chatCompletionSource = null,
+    model = null,
 } = {}) {
     // Only Gemini models use thought signatures (via MakerSuite/VertexAI or OpenRouter)
     if ((mainApi ?? main_api) !== 'openai') {
@@ -166,7 +186,10 @@ export function extractReasoningSignatureFromData(data, {
     }
 
     const source = chatCompletionSource ?? oai_settings.chat_completion_source;
-    const isGemini = source === chat_completion_sources.MAKERSUITE || source === chat_completion_sources.VERTEXAI;
+    const isVertexAiClaude = source === chat_completion_sources.VERTEXAI
+        && isVertexAiClaudeModelId((model ?? data?.model) || null);
+    const isGemini = source === chat_completion_sources.MAKERSUITE
+        || (source === chat_completion_sources.VERTEXAI && !isVertexAiClaude);
     const isOpenRouter = source === chat_completion_sources.OPENROUTER;
 
     if (!isGemini && !isOpenRouter) {
@@ -184,11 +207,8 @@ export function extractReasoningSignatureFromData(data, {
 
     // Direct Gemini format: Extract from responseContent.parts if available (only text parts)
     if (isGemini && Array.isArray(data?.responseContent?.parts)) {
-        data.responseContent.parts.forEach((part) => {
-            if (part.thoughtSignature && typeof part.text === 'string') {
-                return part.thoughtSignature;
-            }
-        });
+        const signedTextPart = data.responseContent.parts.find(part => !part.thought && part.thoughtSignature && typeof part.text === 'string');
+        return signedTextPart?.thoughtSignature ?? null;
     }
 
     return null;
@@ -290,6 +310,8 @@ export class ReasoningHandler {
         this.messageReasoningDetailsDom = null;
         /** @type {HTMLElement} Reasoning content DOM element `.mes_reasoning` */
         this.messageReasoningContentDom = null;
+        /** @type {string|null} Last canonical reasoning HTML committed during streaming. */
+        this.lastCommittedHtml = null;
         /** @type {HTMLElement} Reasoning header DOM element `.mes_reasoning_header_title` */
         this.messageReasoningHeaderDom = null;
     }
@@ -516,20 +538,20 @@ export class ReasoningHandler {
      * @returns {Promise<void>}
      */
     async finish(messageId) {
-        if (this.state === ReasoningState.None) return;
+        if (this.state !== ReasoningState.None) {
+            // Make sure the finish time is recorded if a reasoning was in process and it wasn't ended correctly during streaming
+            if (this.startTime !== null && this.endTime === null) {
+                this.endTime = new Date();
+            }
 
-        // Make sure the finish time is recorded if a reasoning was in process and it wasn't ended correctly during streaming
-        if (this.startTime !== null && this.endTime === null) {
-            this.endTime = new Date();
+            if (this.state === ReasoningState.Thinking) {
+                this.state = this.#isHiddenReasoningModel ? ReasoningState.Hidden : ReasoningState.Done;
+                this.updateReasoning(messageId, null, { persist: true });
+                await eventSource.emit(event_types.STREAM_REASONING_DONE, this.reasoning, this.getDuration(), messageId, this.state);
+            }
         }
 
-        if (this.state === ReasoningState.Thinking) {
-            this.state = this.#isHiddenReasoningModel ? ReasoningState.Hidden : ReasoningState.Done;
-            this.updateReasoning(messageId, null, { persist: true });
-            await eventSource.emit(event_types.STREAM_REASONING_DONE, this.reasoning, this.getDuration(), messageId, this.state);
-        }
-
-        this.updateDom(messageId);
+        this.updateDom(messageId, { final: true });
     }
 
     /**
@@ -538,35 +560,48 @@ export class ReasoningHandler {
      * Toggles the CSS class, updates states, reasoning message, and duration.
      *
      * @param {number} messageId - The ID of the message to update
+     * @param {object} [options] - Rendering options
+     * @param {boolean} [options.final=false] - Whether this is the final reasoning render
      */
-    updateDom(messageId) {
+    updateDom(messageId, { final = false } = {}) {
         this.#checkDomElements(messageId);
 
         // Main CSS class to show this message includes reasoning
         this.messageDom.classList.toggle('reasoning', this.state !== ReasoningState.None);
 
         // Update states to the relevant DOM elements
-        setDatasetProperty(this.messageDom, 'reasoningState', this.state !== ReasoningState.None ? this.state : null);
-        setDatasetProperty(this.messageReasoningDetailsDom, 'state', this.state);
-        setDatasetProperty(this.messageReasoningDetailsDom, 'type', this.type);
+        setDatasetPropertyIfChanged(this.messageDom, 'reasoningState', this.state !== ReasoningState.None ? this.state : null);
+        setDatasetPropertyIfChanged(this.messageReasoningDetailsDom, 'state', this.state);
+        setDatasetPropertyIfChanged(this.messageReasoningDetailsDom, 'type', this.type);
 
         // Update the reasoning message
         const reasoning = trimSpaces(this.reasoningDisplayText ?? this.reasoning);
         const displayReasoning = messageFormatting(reasoning, '', false, false, messageId, {}, true);
 
-        if (power_user.stream_fade_in) {
-            applyStreamFadeIn(this.messageReasoningContentDom, displayReasoning);
-        } else {
-            this.messageReasoningContentDom.innerHTML = displayReasoning;
+        if (shouldCommitStreamingMessage({
+            lastCommittedHtml: this.lastCommittedHtml,
+            nextHtml: displayReasoning,
+            final,
+            fadeIn: power_user.stream_fade_in,
+        })) {
+            if (power_user.stream_fade_in) {
+                applyStreamFadeIn(this.messageReasoningContentDom, displayReasoning);
+            } else {
+                this.messageReasoningContentDom.innerHTML = displayReasoning;
+            }
+            this.lastCommittedHtml = displayReasoning;
         }
 
         // Update tooltip for hidden reasoning edit
         /** @type {HTMLElement} */
         const button = this.messageDom.querySelector('.mes_edit_add_reasoning');
-        button.title = this.state === ReasoningState.Hidden ? t`Hidden reasoning - Add reasoning block` : t`Add reasoning block`;
+        const buttonTitle = this.state === ReasoningState.Hidden ? t`Hidden reasoning - Add reasoning block` : t`Add reasoning block`;
+        if (button.title !== buttonTitle) {
+            button.title = buttonTitle;
+        }
 
         // Make sure that hidden reasoning headers are collapsed by default, to not show a useless edit button
-        if (this.state === ReasoningState.Hidden) {
+        if (this.state === ReasoningState.Hidden && this.messageReasoningDetailsDom.open) {
             this.messageReasoningDetailsDom.open = false;
         }
 
@@ -611,19 +646,20 @@ export class ReasoningHandler {
         const element = this.messageReasoningHeaderDom;
         const duration = this.getDuration();
         let data = null;
+        let text = '';
         let title = '';
         if (duration) {
             const seconds = moment.duration(duration).asSeconds();
 
             const durationStr = moment.duration(duration).locale(getCurrentLocale()).humanize({ s: 50, ss: 3 });
-            element.textContent = t`Thought for ${durationStr}`;
+            text = t`Thought for ${durationStr}`;
             data = String(seconds);
             title = `${seconds} seconds`;
         } else if ([ReasoningState.Done, ReasoningState.Hidden].includes(this.state)) {
-            element.textContent = t`Thought for some time`;
+            text = t`Thought for some time`;
             data = 'unknown';
         } else {
-            element.textContent = t`Thinking...`;
+            text = t`Thinking...`;
             data = null;
         }
 
@@ -631,10 +667,15 @@ export class ReasoningHandler {
             title += ` [${translate(this.type)}]`;
             title = title.trim();
         }
-        element.title = title;
+        if (element.textContent !== text) {
+            element.textContent = text;
+        }
+        if (element.title !== title) {
+            element.title = title;
+        }
 
-        setDatasetProperty(this.messageReasoningDetailsDom, 'duration', data);
-        setDatasetProperty(element, 'duration', data);
+        setDatasetPropertyIfChanged(this.messageReasoningDetailsDom, 'duration', data);
+        setDatasetPropertyIfChanged(element, 'duration', data);
     }
 }
 
@@ -1235,13 +1276,14 @@ function setReasoningEventHandlers() {
         textarea.classList.add('reasoning_edit_textarea');
         textarea.value = reasoning;
         $(textarea).insertBefore(reasoningBlock);
+        syncChatSurfaceProjectionHold();
 
         if (!CSS.supports('field-sizing', 'content')) {
             const resetHeight = function () {
-                const scrollTop = chatElement.scrollTop;
+                const scrollTop = getChatScrollTop();
                 textarea.style.height = '0px';
                 textarea.style.height = `${textarea.scrollHeight}px`;
-                chatElement.scrollTop = scrollTop;
+                setChatScrollTop(scrollTop);
             };
 
             textarea.addEventListener('input', resetHeight);
@@ -1257,7 +1299,7 @@ function setReasoningEventHandlers() {
         // Scroll if textarea bottom is below visible area
         if (textareaRect.bottom > chatRect.bottom) {
             const scrollOffset = textareaRect.bottom - chatRect.bottom;
-            chatElement.scrollTop += scrollOffset;
+            offsetChatScrollTop(scrollOffset);
         }
     });
 
@@ -1280,6 +1322,7 @@ function setReasoningEventHandlers() {
         let newReasoning = String(textarea.val());
         newReasoning = substituteParams(newReasoning);
         textarea.remove();
+        syncChatSurfaceProjectionHold();
         if (newReasoning === message.extra.reasoning) {
             return;
         }
@@ -1298,6 +1341,7 @@ function setReasoningEventHandlers() {
         const { messageBlock } = getMessageFromJquery(this);
         const textarea = messageBlock.find('.reasoning_edit_textarea');
         textarea.remove();
+        syncChatSurfaceProjectionHold();
 
         messageBlock.find('.mes_reasoning_edit_cancel:visible').trigger('click');
 

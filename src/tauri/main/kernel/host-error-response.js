@@ -40,6 +40,9 @@ export function resolveHostErrorResponse(message) {
     if (lower.startsWith('bad request:') || lower.startsWith('validation error:')) {
         return { status: 400, body: normalized };
     }
+    if (lower.startsWith('conflict:')) {
+        return { status: 409, body: normalized };
+    }
     if (lower.startsWith('unauthorized:') || lower.startsWith('permission denied:')) {
         return { status: 401, body: normalized };
     }

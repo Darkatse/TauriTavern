@@ -223,7 +223,8 @@ persist/
 
 - Mutating/control。
 - 创建 return-mode `AgentTaskRecord` 与 child `AgentInvocation`。
-- 参数只包含 `agentId`、`task` 与可选 `budget`；不接受 `execution`、`continuation`、`invocationId` 等 runtime 字段。
+- 参数只包含 `agentId` 与 `task`；不接受 `budget`、`execution`、`continuation`、`invocationId` 等 runtime 字段。
+- SubAgent 的硬运行预算来自 target Agent Profile 与宿主运行时策略；调用方只能通过 task brief 表达任务范围和期望输出形态。
 - 子任务提交给当前 run 的 `AgentTaskScheduler` 后台执行；父 Agent 不需要阻塞在 `agent.delegate` 上。
 
 `agent.handoff`

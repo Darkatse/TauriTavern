@@ -1,11 +1,12 @@
 // @ts-check
 
 /**
- * A tiny global parking lot that keeps iframe browsing contexts alive by
+ * A tiny global parking lot that keeps iframe elements attached for reuse by
  * moving them into a hidden DOM container instead of destroying them.
+ * Browsing-context preservation across DOM moves is platform-dependent.
  *
- * This is a Phase-1 mechanism:
- * - Keeps scroll-driven runtimes smooth (no reload when coming back).
+ * The parking lot:
+ * - Reuses iframe elements when scrolling back.
  * - Enforces a hard cap (mobile) by evicting oldest parked iframes.
  * - Uses TTL to avoid leaking parked instances after DOM rebuilds.
  */

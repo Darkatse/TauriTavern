@@ -1,15 +1,19 @@
-import { invoke, isTauriEnv } from '../../../tauri-bridge.js';
+import { invoke } from '../../../tauri-bridge.js';
 import { stripJsonl } from '../../../tauri/main/kernel/chat-utils.js';
 import {
     characterStemFromAvatarFileName,
     hasCharacterAvatarIdentity,
 } from '../../../tauri/main/services/characters/character-identity.js';
-import { fetchAssetStream, writeTempFileFromBytesIterable } from './asset-io.js';
-import { jsonlStreamToPayload, jsonlToPayload, payloadToJsonlByteChunks } from './jsonl.js';
-import {
-    CHAT_HISTORY_MODE_WINDOWED,
-    getChatHistoryBootstrapModeName,
-} from '../../../tauri/main/services/chat-history/chat-history-mode-state.js';
+import { fetchAssetStream } from './asset-io.js';
+import { commitChatPayload } from './commit.js';
+import { jsonlStreamToPayload } from './jsonl.js';
+
+export const CHAT_COMMIT_REASON = Object.freeze({
+    MUTATION: 'mutation',
+    PROVIDER_BARRIER: 'providerBarrier',
+    GENERATION_CHECKPOINT: 'generationCheckpoint',
+    MAINTENANCE: 'maintenance',
+});
 
 export function normalizeChatFileName(fileName) {
     return stripJsonl(fileName);
@@ -25,44 +29,6 @@ export function resolveCharacterDirectoryId(characterName, avatarUrl) {
     }
 
     return String(characterName || '').trim();
-}
-
-async function withTempFile(bytesIterable, options, handler) {
-    const tempFile = await writeTempFileFromBytesIterable(bytesIterable, options);
-
-    let result;
-    let handlerError;
-
-    try {
-        result = await handler(tempFile.filePath);
-    } catch (error) {
-        handlerError = error;
-    }
-
-    try {
-        await tempFile.cleanup();
-    } catch (cleanupError) {
-        if (handlerError) {
-            const handlerMessage = String(handlerError?.message || handlerError || 'Temp file handler failed');
-            throw new AggregateError([handlerError, cleanupError], handlerMessage);
-        }
-
-        throw cleanupError;
-    }
-
-    if (handlerError) {
-        throw handlerError;
-    }
-
-    return result;
-}
-
-export function isTauriChatPayloadTransportEnabled() {
-    if (!isTauriEnv) {
-        return false;
-    }
-
-    return getChatHistoryBootstrapModeName() === CHAT_HISTORY_MODE_WINDOWED;
 }
 
 export async function loadCharacterChatPayload({ characterName, avatarUrl, fileName, allowNotFound = false }) {
@@ -89,161 +55,22 @@ export async function loadCharacterChatPayload({ characterName, avatarUrl, fileN
     return jsonlStreamToPayload(stream);
 }
 
-export async function loadCharacterChatPayloadTail({ characterName, avatarUrl, fileName, maxLines, allowNotFound = false }) {
-    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
-    const normalizedFile = normalizeChatFileName(fileName);
-    if (!normalizedCharacter || !normalizedFile.trim()) {
-        throw new Error('Invalid character chat tail request');
-    }
-
-    const result = await invoke('get_chat_payload_tail', {
-        characterName: normalizedCharacter,
-        fileName: normalizedFile,
-        maxLines: Number(maxLines),
-        allowNotFound,
-    });
-
-    if (!result?.header) {
-        return { payload: [], cursor: null, hasMoreBefore: false };
-    }
-
-    const text = [result.header, ...(result.lines || [])].join('\n');
-    const payload = jsonlToPayload(text);
-    return { payload, cursor: result.cursor, hasMoreBefore: Boolean(result.hasMoreBefore) };
-}
-
-export async function loadCharacterChatPayloadBefore({ characterName, avatarUrl, fileName, cursor, maxLines }) {
-    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
-    const normalizedFile = normalizeChatFileName(fileName);
-    if (!normalizedCharacter || !normalizedFile.trim()) {
-        throw new Error('Invalid character chat before request');
-    }
-
-    const result = await invoke('get_chat_payload_before', {
-        characterName: normalizedCharacter,
-        fileName: normalizedFile,
-        cursor,
-        maxLines: Number(maxLines),
-    });
-
-    const text = (result?.lines || []).join('\n');
-    const messages = jsonlToPayload(text);
-    return { messages, cursor: result.cursor, hasMoreBefore: Boolean(result.hasMoreBefore) };
-}
-
-export async function loadCharacterChatPayloadBeforePages({ characterName, avatarUrl, fileName, cursor, maxLines, maxPages }) {
-    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
-    const normalizedFile = normalizeChatFileName(fileName);
-    if (!normalizedCharacter || !normalizedFile.trim()) {
-        throw new Error('Invalid character chat before pages request');
-    }
-
-    const result = await invoke('get_chat_payload_before_pages', {
-        characterName: normalizedCharacter,
-        fileName: normalizedFile,
-        cursor,
-        maxLines: Number(maxLines),
-        maxPages: Number(maxPages),
-    });
-
-    if (!Array.isArray(result) || result.length === 0) {
-        return [];
-    }
-
-    return result.map((page) => {
-        const text = (page?.lines || []).join('\n');
-        const messages = jsonlToPayload(text);
-        return { messages, cursor: page.cursor, hasMoreBefore: Boolean(page.hasMoreBefore) };
-    });
-}
-
-export async function saveCharacterChatPayload({ characterName, avatarUrl, fileName, payload, force = false }) {
+export async function saveCharacterChatPayload({ characterName, avatarUrl, fileName, payload, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
     if (!Array.isArray(payload) || payload.length === 0 || !normalizedCharacter || !normalizedFile.trim()) {
         throw new Error('Invalid chat payload');
     }
 
-    await withTempFile(payloadToJsonlByteChunks(payload), {
-        prefix: 'tauritavern-chat',
-        extension: 'jsonl',
-    }, (filePath) => invoke('save_chat_payload_from_file', {
-        dto: {
-            ch_name: normalizedCharacter,
-            file_name: normalizedFile,
-            file_path: filePath,
-            force,
+    await commitChatPayload({
+        target: {
+            kind: 'character',
+            characterId: normalizedCharacter,
+            fileName: normalizedFile,
         },
-    }));
-}
-
-function normalizeExpectedWindowLineCount(value) {
-    const normalized = Number(value);
-    if (!Number.isInteger(normalized) || normalized < 0) {
-        throw new Error('Windowed chat baseline expectedWindowLineCount is missing');
-    }
-    return normalized;
-}
-
-export async function saveCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, payload, expectedWindowLineCount, force = false }) {
-    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
-    const normalizedFile = normalizeChatFileName(fileName);
-    if (!Array.isArray(payload) || payload.length === 0 || !normalizedCharacter || !normalizedFile.trim()) {
-        throw new Error('Invalid chat payload');
-    }
-
-    const header = JSON.stringify(payload[0]);
-    const lines = payload.slice(1).map((entry) => JSON.stringify(entry));
-
-    return invoke('save_chat_payload_windowed', {
-        dto: {
-            ch_name: normalizedCharacter,
-            file_name: normalizedFile,
-            cursor,
-            header,
-            lines,
-            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
-            force,
-        },
-    });
-}
-
-export async function patchCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, header, patch, expectedWindowLineCount, force = false }) {
-    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
-    const normalizedFile = normalizeChatFileName(fileName);
-    if (!normalizedCharacter || !normalizedFile.trim()) {
-        throw new Error('Invalid chat payload patch request');
-    }
-
-    return invoke('patch_chat_payload_windowed', {
-        dto: {
-            ch_name: normalizedCharacter,
-            file_name: normalizedFile,
-            cursor,
-            header: String(header),
-            patch,
-            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
-            force,
-        },
-    });
-}
-
-export async function hideCharacterChatPayloadBeforeCursor({ characterName, avatarUrl, fileName, cursor, hide, nameFilter = null, expectedWindowLineCount }) {
-    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
-    const normalizedFile = normalizeChatFileName(fileName);
-    if (!normalizedCharacter || !normalizedFile.trim()) {
-        throw new Error('Invalid chat payload hide request');
-    }
-
-    return invoke('hide_chat_payload_before_cursor', {
-        dto: {
-            ch_name: normalizedCharacter,
-            file_name: normalizedFile,
-            cursor,
-            hide: Boolean(hide),
-            name_filter: nameFilter || null,
-            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
-        },
+        payload,
+        force,
+        commitReason,
     });
 }
 
@@ -269,138 +96,19 @@ export async function loadGroupChatPayload({ id, allowNotFound = false }) {
     return jsonlStreamToPayload(stream);
 }
 
-export async function loadGroupChatPayloadTail({ id, maxLines, allowNotFound = false }) {
-    const normalizedId = normalizeChatFileName(id);
-    if (!normalizedId.trim()) {
-        throw new Error('Invalid group chat tail request');
-    }
-
-    const result = await invoke('get_group_chat_payload_tail', {
-        id: normalizedId,
-        maxLines: Number(maxLines),
-        allowNotFound,
-    });
-
-    if (!result?.header) {
-        return { payload: [], cursor: null, hasMoreBefore: false };
-    }
-
-    const text = [result.header, ...(result.lines || [])].join('\n');
-    const payload = jsonlToPayload(text);
-    return { payload, cursor: result.cursor, hasMoreBefore: Boolean(result.hasMoreBefore) };
-}
-
-export async function loadGroupChatPayloadBefore({ id, cursor, maxLines }) {
-    const normalizedId = normalizeChatFileName(id);
-    if (!normalizedId.trim()) {
-        throw new Error('Invalid group chat before request');
-    }
-
-    const result = await invoke('get_group_chat_payload_before', {
-        id: normalizedId,
-        cursor,
-        maxLines: Number(maxLines),
-    });
-
-    const text = (result?.lines || []).join('\n');
-    const messages = jsonlToPayload(text);
-    return { messages, cursor: result.cursor, hasMoreBefore: Boolean(result.hasMoreBefore) };
-}
-
-export async function loadGroupChatPayloadBeforePages({ id, cursor, maxLines, maxPages }) {
-    const normalizedId = normalizeChatFileName(id);
-    if (!normalizedId.trim()) {
-        throw new Error('Invalid group chat before pages request');
-    }
-
-    const result = await invoke('get_group_chat_payload_before_pages', {
-        id: normalizedId,
-        cursor,
-        maxLines: Number(maxLines),
-        maxPages: Number(maxPages),
-    });
-
-    if (!Array.isArray(result) || result.length === 0) {
-        return [];
-    }
-
-    return result.map((page) => {
-        const text = (page?.lines || []).join('\n');
-        const messages = jsonlToPayload(text);
-        return { messages, cursor: page.cursor, hasMoreBefore: Boolean(page.hasMoreBefore) };
-    });
-}
-
-export async function saveGroupChatPayload({ id, payload, force = false }) {
+export async function saveGroupChatPayload({ id, payload, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {
     const normalizedId = normalizeChatFileName(id);
     if (!Array.isArray(payload) || payload.length === 0 || !normalizedId.trim()) {
         throw new Error('Invalid group chat payload');
     }
 
-    await withTempFile(payloadToJsonlByteChunks(payload), {
-        prefix: 'tauritavern-group-chat',
-        extension: 'jsonl',
-    }, (filePath) => invoke('save_group_chat_from_file', {
-        dto: {
-            id: normalizedId,
-            file_path: filePath,
-            force,
+    await commitChatPayload({
+        target: {
+            kind: 'group',
+            chatId: normalizedId,
         },
-    }));
-}
-
-export async function saveGroupChatPayloadWindowed({ id, cursor, payload, expectedWindowLineCount, force = false }) {
-    const normalizedId = normalizeChatFileName(id);
-    if (!Array.isArray(payload) || payload.length === 0 || !normalizedId.trim()) {
-        throw new Error('Invalid group chat payload');
-    }
-
-    const header = JSON.stringify(payload[0]);
-    const lines = payload.slice(1).map((entry) => JSON.stringify(entry));
-
-    return invoke('save_group_chat_payload_windowed', {
-        dto: {
-            id: normalizedId,
-            cursor,
-            header,
-            lines,
-            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
-            force,
-        },
-    });
-}
-
-export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch, expectedWindowLineCount, force = false }) {
-    const normalizedId = normalizeChatFileName(id);
-    if (!normalizedId.trim()) {
-        throw new Error('Invalid group chat payload patch request');
-    }
-
-    return invoke('patch_group_chat_payload_windowed', {
-        dto: {
-            id: normalizedId,
-            cursor,
-            header: String(header),
-            patch,
-            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
-            force,
-        },
-    });
-}
-
-export async function hideGroupChatPayloadBeforeCursor({ id, cursor, hide, nameFilter = null, expectedWindowLineCount }) {
-    const normalizedId = normalizeChatFileName(id);
-    if (!normalizedId.trim()) {
-        throw new Error('Invalid group chat payload hide request');
-    }
-
-    return invoke('hide_group_chat_payload_before_cursor', {
-        dto: {
-            id: normalizedId,
-            cursor,
-            hide: Boolean(hide),
-            name_filter: nameFilter || null,
-            expected_window_line_count: normalizeExpectedWindowLineCount(expectedWindowLineCount),
-        },
+        payload,
+        force,
+        commitReason,
     });
 }

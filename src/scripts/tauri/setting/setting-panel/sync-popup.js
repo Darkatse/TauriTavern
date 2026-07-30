@@ -9,19 +9,20 @@ import {
     TT_SYNC_SERVERS_CHANGED_EVENT,
 } from './constants.js';
 import { formatTimestamp } from './formatters.js';
-import { showErrorPopup } from './popup-utils.js';
+import { runTaskOrPopup, showErrorPopup } from './popup-utils.js';
 import { callTauriTavernPanelPopup } from '../panel-popup.js';
+import { showSyncReportResult } from './sync-listeners.js';
 import {
     clearSyncTargetAlias,
     getLanSyncAdvertiseAddress,
-    getSyncV2DatasetSelection,
+    getSyncDatasetSelection,
     getSyncTargetAlias,
     getSyncTargetDisplayName,
-    parseLanSyncV2PairUri,
+    parseLanSyncPairUri,
     parseTtSyncPairUri,
     selectLanSyncAdvertiseAddress,
     setLanSyncAdvertiseAddress,
-    setSyncV2DatasetSelection,
+    setSyncDatasetSelection,
     setSyncTargetAlias,
 } from './sync-state.js';
 
@@ -58,6 +59,36 @@ function createPopupColumn() {
     return root;
 }
 
+async function showOverwritePolicyHelp() {
+    const content = createPopupColumn();
+    const title = document.createElement('b');
+    title.textContent = translate('When files conflict');
+    content.appendChild(title);
+
+    for (const [labelKey, descriptionKey] of [
+        ['Initiator wins (default)', "The initiator's copy replaces the other side."],
+        ['Newer copy wins', 'Modification time decides which copy wins. Keep device clocks synchronized; Mirror can still delete destination-only files.'],
+    ]) {
+        const item = document.createElement('div');
+        item.className = 'flex-container flexFlowColumn';
+        item.style.gap = '2px';
+
+        const label = document.createElement('b');
+        label.textContent = translate(labelKey);
+        const description = document.createElement('div');
+        description.textContent = translate(descriptionKey);
+        item.append(label, description);
+        content.appendChild(item);
+    }
+
+    await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+        okButton: translate('Close'),
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+}
+
 function buildMirrorWarningContent(titleText, detailText) {
     const content = createPopupColumn();
 
@@ -86,19 +117,22 @@ function buildMirrorWarningContent(titleText, detailText) {
 }
 
 function normalizeStatus(status) {
+    const overwritePolicy = status?.overwrite_policy;
+    if (overwritePolicy !== 'exact' && overwritePolicy !== 'prefer-newer') {
+        throw new Error(`lan_sync_get_status returned invalid overwrite_policy: ${String(overwritePolicy)}`);
+    }
+
     return {
         running: Boolean(status?.running),
         address: String(status?.address || ''),
         availableAddresses: Array.isArray(status?.available_addresses)
             ? status.available_addresses
             : [],
-        v2Running: Boolean(status?.v2_running),
-        v2Port: status?.v2_port ?? null,
-        v2SpkiSha256: String(status?.v2_spki_sha256 || ''),
         pairingEnabled: Boolean(status?.pairing_enabled),
         pairingExpiresAtMs: status?.pairing_expires_at_ms ?? null,
         syncMode: status?.sync_mode ?? 'Incremental',
         syncModeOverridden: Boolean(status?.sync_mode_overridden),
+        overwritePolicy,
     };
 }
 
@@ -112,20 +146,17 @@ function normalizePairingInfo(pairingInfo) {
         pairUri: String(pairingInfo.pair_uri || ''),
         qrSvg: String(pairingInfo.qr_svg || ''),
         expiresAtMs: pairingInfo.expires_at_ms ?? null,
-        v2Address: String(pairingInfo.v2_address || ''),
-        v2PairUri: String(pairingInfo.v2_pair_uri || ''),
-        v2QrSvg: String(pairingInfo.v2_qr_svg || ''),
     };
 }
 
 function normalizeDatasetCatalog(catalog) {
     const supportedDatasetIds = ensureArray(
         catalog?.supported_dataset_ids,
-        'sync_v2_get_dataset_catalog.supported_dataset_ids',
+        'sync_get_dataset_catalog.supported_dataset_ids',
     ).map(String);
     const defaultDatasetIds = ensureArray(
         catalog?.default_dataset_ids,
-        'sync_v2_get_dataset_catalog.default_dataset_ids',
+        'sync_get_dataset_catalog.default_dataset_ids',
     ).map(String);
 
     return {
@@ -133,7 +164,7 @@ function normalizeDatasetCatalog(catalog) {
         supportedDatasetIds,
         supportedProfileIds: ensureArray(
             catalog?.supported_profile_ids,
-            'sync_v2_get_dataset_catalog.supported_profile_ids',
+            'sync_get_dataset_catalog.supported_profile_ids',
         ).map(String),
         defaultDatasetIds,
     };
@@ -147,7 +178,6 @@ function normalizeLanDevice(device) {
         type: 'lan',
         id,
         name,
-        protocolVersion: Number(device.protocol_version || 1),
         displayName: getSyncTargetDisplayName('lan', id, name),
         lastKnownAddress: device.last_known_address || '',
         pairedAtMs: device.paired_at_ms ?? null,
@@ -216,6 +246,7 @@ function normalizeAutomationConfig(config, syncSelection) {
         autoSyncEnabled: Boolean(config?.auto_sync_enabled),
         intervalMinutes: Number(config?.interval_minutes || 30),
         target: normalizeAutomationTarget(config?.target),
+        syncMode: config?.sync_mode || 'Incremental',
         selection: syncSelection,
     };
 }
@@ -226,6 +257,7 @@ function serializeAutomationConfig(config, syncSelection) {
         auto_sync_enabled: Boolean(config?.autoSyncEnabled),
         interval_minutes: Number(config?.intervalMinutes || 30),
         target: serializeAutomationTarget(config?.target),
+        sync_mode: config?.syncMode || 'Incremental',
         selection: syncSelection,
     };
 }
@@ -236,6 +268,8 @@ function normalizeAutomationStatus(status) {
         nextRunAtMs: status?.next_run_at_ms ?? null,
         lastAttemptAtMs: status?.last_attempt_at_ms ?? null,
         lastSuccessAtMs: status?.last_success_at_ms ?? null,
+        lastRequestAcceptedAtMs: status?.last_request_accepted_at_ms ?? null,
+        lastErrorAtMs: status?.last_error_at_ms ?? null,
         lastError: status?.last_error || '',
     };
 }
@@ -263,7 +297,7 @@ function createSyncClient() {
                 invoke('lan_sync_get_status'),
                 invoke('lan_sync_list_devices'),
                 invoke('tt_sync_list_servers'),
-                invoke('sync_v2_get_dataset_catalog'),
+                invoke('sync_get_dataset_catalog'),
                 invoke('sync_automation_get_config'),
                 invoke('sync_automation_get_status'),
             ]);
@@ -271,7 +305,7 @@ function createSyncClient() {
             const selectedAddress = selectLanSyncAdvertiseAddress(status, getLanSyncAdvertiseAddress());
             setLanSyncAdvertiseAddress(selectedAddress);
             const datasetCatalog = normalizeDatasetCatalog(rawCatalog);
-            const syncSelection = getSyncV2DatasetSelection(datasetCatalog);
+            const syncSelection = getSyncDatasetSelection(datasetCatalog);
 
             return {
                 status,
@@ -297,6 +331,7 @@ function createSyncClient() {
         pushLanDevice: (deviceId, options) => invoke('lan_sync_push_to_device', { deviceId, options }),
         setLanSyncMode: (mode, persist) => invoke('lan_sync_set_sync_mode', { mode, persist }),
         clearLanSyncModeOverride: () => invoke('lan_sync_clear_sync_mode_override'),
+        setOverwritePolicy: (overwritePolicy) => invoke('lan_sync_set_overwrite_policy', { overwritePolicy }),
         pairTtSync: (pairUri) => invoke('tt_sync_pair', { pairUri }),
         removeTtSyncServer: async (serverDeviceId) => {
             await invoke('tt_sync_remove_server', { serverDeviceId });
@@ -316,7 +351,7 @@ async function confirmTtSyncPairing(pairUri) {
     const content = createPopupColumn();
 
     const title = document.createElement('b');
-    title.textContent = translate('TT-Sync pairing confirmation (v2 client)');
+    title.textContent = translate('TT-Sync pairing confirmation');
     content.appendChild(title);
 
     const meta = createPopupColumn();
@@ -464,7 +499,7 @@ async function editSyncScope(catalog, selection) {
             return null;
         }
 
-        return setSyncV2DatasetSelection(appHandle.getSelection(), catalog);
+        return setSyncDatasetSelection(appHandle.getSelection(), catalog);
     } finally {
         appHandle.unmount();
     }
@@ -479,6 +514,7 @@ function createSyncActions(client) {
         reportError: (error) => showErrorPopup(error),
         changeSyncMode: (status) => changeSyncMode(client, status),
         editSyncScope: ({ catalog, selection }) => editSyncScope(catalog, selection),
+        showOverwritePolicyHelp: () => runTaskOrPopup(showOverwritePolicyHelp),
         renameTarget: async ({ type, id, fallbackName }) => {
             const existing = getSyncTargetAlias(type, id);
             const result = await callGenericPopup(
@@ -520,13 +556,14 @@ function createSyncActions(client) {
                 return true;
             }
 
-            parseLanSyncV2PairUri(trimmed, translate);
+            parseLanSyncPairUri(trimmed, translate);
             await client.requestLanPairing(trimmed);
             return true;
         },
         notifyLanPushRequested: () => {
             toastr.success(translate('Upload request sent.'));
         },
+        showSyncReportResult,
     };
 }
 

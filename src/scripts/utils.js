@@ -1,8 +1,9 @@
 import {
     moment,
     DOMPurify,
+    Readability,
+    isProbablyReaderable,
     lodash,
-    getReadability,
 } from '../lib.js';
 
 import { getContext } from './extensions.js';
@@ -2020,8 +2021,6 @@ function postProcessText(text, collapse = true) {
  * @returns {Promise<string>} A promise that resolves to the parsed text.
  */
 export async function getReadableText(document, textSelector = 'body') {
-    const { Readability, isProbablyReaderable } = await getReadability();
-
     if (isProbablyReaderable(document)) {
         const parser = new Readability(document);
         const article = parser.parse();
@@ -3029,9 +3028,10 @@ export function setupScrollToTop({ scrollContainerId, buttonId, drawerId, visibi
  * @param {string} url URL or UUID of the content to import.
  * @param {Object} [options={}] Options object.
  * @param {string|null} [options.preserveFileName=null] Optional file name to use for the imported content.
+ * @param {boolean} [options.replacement=false] Whether the caller explicitly requested character replacement.
  * @returns {Promise<void>} A promise that resolves when the import is complete.
  */
-export async function importFromExternalUrl(url, { preserveFileName = null } = {}) {
+export async function importFromExternalUrl(url, { preserveFileName = null, replacement = false } = {}) {
     let request;
 
     if (isValidUrl(url)) {
@@ -3051,25 +3051,33 @@ export async function importFromExternalUrl(url, { preserveFileName = null } = {
     }
 
     if (!request.ok) {
+        const error = new Error(`Custom content import failed: ${request.statusText || `HTTP ${request.status}`}`);
+        if (replacement) {
+            throw error;
+        }
+
         toastr.info(request.statusText, 'Custom content import failed');
         console.error('Custom content import failed', request.status, request.statusText);
         return;
     }
 
-    const data = await request.blob();
     const customContentType = request.headers.get('X-Custom-Content-Type');
-    let fileName = request.headers.get('Content-Disposition').split('filename=')[1].replace(/"/g, '');
+    if (replacement && customContentType !== 'character') {
+        throw new Error(`Expected character content, received: ${customContentType || 'unknown'}`);
+    }
+
+    const data = await request.blob();
+    const fileName = request.headers.get('Content-Disposition').split('filename=')[1].replace(/"/g, '');
     const file = new File([data], fileName, { type: data.type });
 
     const extraData = new Map();
     if (preserveFileName) {
-        fileName = preserveFileName;
         extraData.set(file, preserveFileName);
     }
 
     switch (customContentType) {
         case 'character':
-            await processDroppedFiles([file], extraData);
+            await processDroppedFiles([file], extraData, { replacement });
             break;
         case 'lorebook':
             await importWorldInfo(file);

@@ -18,6 +18,73 @@ function ensureCustomEvent() {
     };
 }
 
+function installCurrentChatRef(chatRef) {
+    ensureCustomEvent();
+    globalThis.window = new EventTarget();
+    globalThis.window.__TAURITAVERN__ = {
+        api: {
+            chat: {
+                current: {
+                    ref: () => chatRef,
+                },
+            },
+        },
+    };
+}
+
+function createFakeCommitScript(cleanUpMessage, saveCalls = []) {
+    const script = {
+        chat: [],
+        cleanUpMessage,
+        async saveReply({ type, getMessage }) {
+            saveCalls.push({ type, getMessage });
+            if (type === 'appendFinal') {
+                const message = script.chat[script.chat.length - 1];
+                message.mes = getMessage;
+                message.swipes[message.swipe_id] = getMessage;
+                return { type, getMessage };
+            }
+
+            script.chat.push({
+                mes: getMessage,
+                extra: {},
+                swipe_id: 0,
+                swipes: [getMessage],
+                swipe_info: [{ extra: {} }],
+            });
+            return { type, getMessage };
+        },
+    };
+    return script;
+}
+
+function workspaceFile(text, pathName = 'output/main.md') {
+    return {
+        path: pathName,
+        text,
+        chars: text.length,
+        words: text.trim() ? text.trim().split(/\s+/).length : 0,
+        sha256: `sha-${text.length}`,
+    };
+}
+
+function agentCommitPayload(chatRef, overrides = {}) {
+    return {
+        commitId: 'commit-1',
+        runId: 'run-commit',
+        workspaceId: 'workspace-1',
+        stableChatId: 'stable-1',
+        chatRef,
+        generationType: 'normal',
+        profileId: 'default-writer',
+        persistBaseStateId: null,
+        path: 'output/main.md',
+        mode: 'replace',
+        checkpointId: 'checkpoint-1',
+        ...overrides,
+    };
+}
+
 async function installHarness(options = {}) {
     const calls = [];
     ensureCustomEvent();
@@ -167,6 +234,80 @@ test('api.agent.promptAssembly prepares backend broker requests', async () => {
                     generationType: 'swipe',
                     frozenRunInputSnapshot,
                     jsonSchema: { type: 'object' },
+                },
+            },
+        },
+    ]);
+});
+
+test('api.agent.promptAssembly normalizes current model connection through backend commands', async () => {
+    const calls = [];
+    const settings = {
+        chat_completion_source: 'custom',
+        custom_model: 'opencode-model',
+        custom_url: 'https://opencode.example.test/v1',
+        additional_parameters_by_source: {
+            custom: { include_body: '', exclude_body: '', include_headers: 'X-Test: true' },
+        },
+    };
+    const currentModelConnection = {
+        schemaVersion: 1,
+        kind: 'tauritavern.currentModelConnectionSnapshot',
+        settings: {
+            chat_completion_source: 'custom',
+            model: 'opencode-model',
+            custom_model: 'opencode-model',
+            custom_url: 'https://opencode.example.test/v1',
+            secret_id: 'secret-current',
+        },
+    };
+    const appliedSettings = {
+        temp_openai: 0.7,
+        ...currentModelConnection.settings,
+    };
+    const { agent } = await installHarness({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            if (command === 'build_agent_current_model_connection_snapshot') {
+                return { currentModelConnection };
+            }
+            if (command === 'apply_agent_current_model_connection_snapshot') {
+                return { settings: appliedSettings };
+            }
+            return {};
+        },
+    });
+
+    assert.ok(agent.promptAssembly);
+    const built = await agent.promptAssembly.buildCurrentModelConnectionSnapshot({
+        settings,
+        model: 'opencode-model',
+        secretId: 'secret-current',
+    });
+    const applied = await agent.promptAssembly.applyCurrentModelConnectionSnapshot({
+        settings: { temp_openai: 0.7 },
+        currentModelConnection,
+    });
+
+    assert.deepEqual(built, currentModelConnection);
+    assert.deepEqual(applied, appliedSettings);
+    assert.deepEqual(calls, [
+        {
+            command: 'build_agent_current_model_connection_snapshot',
+            args: {
+                dto: {
+                    settings,
+                    model: 'opencode-model',
+                    secretId: 'secret-current',
+                },
+            },
+        },
+        {
+            command: 'apply_agent_current_model_connection_snapshot',
+            args: {
+                dto: {
+                    settings: { temp_openai: 0.7 },
+                    currentModelConnection,
                 },
             },
         },
@@ -698,6 +839,128 @@ test('agent chat commit bridge detaches on partial success terminal event', asyn
     assert.equal(stopped, false);
     listener({ type: 'run_partial_success', payload: { preservedCommitCount: 1 } });
     assert.equal(stopped, true);
+});
+
+test('agent chat commit bridge runs generated output cleanup before saving', async () => {
+    const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-chat-commit-bridge.js'));
+    moduleUrl.search = `?case=commit-cleanup-${Date.now()}`;
+    const { attachHostCommitBridge } = await import(moduleUrl.href);
+    const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
+    installCurrentChatRef(chatRef);
+
+    const cleanups = [];
+    const saveCalls = [];
+    const script = createFakeCommitScript((options) => {
+        cleanups.push(options);
+        return options.getMessage.replace(/^[\s\S]*?(<content>)/, '$1');
+    }, saveCalls);
+    let listener = null;
+    const resolutions = [];
+    attachHostCommitBridge({
+        runId: 'run-commit-cleanup',
+        safeInvoke: async (command, args) => {
+            if (command === 'resolve_agent_chat_commit') {
+                resolutions.shift()(args);
+            }
+            return {};
+        },
+        readWorkspaceFile: async () => workspaceFile('debug <content>real'),
+        subscribe(runId, handler) {
+            assert.equal(runId, 'run-commit-cleanup');
+            listener = handler;
+            return () => {};
+        },
+        loadScript: async () => script,
+        persistChat: async () => {},
+    });
+
+    const resolved = new Promise(resolve => resolutions.push(resolve));
+    listener({
+        type: 'chat_commit_requested',
+        payload: agentCommitPayload(chatRef, {
+            commitId: 'commit-cleanup',
+            runId: 'run-commit-cleanup',
+        }),
+    });
+    const result = await resolved;
+    assert.equal(result.dto.error, undefined);
+
+    assert.deepEqual(cleanups, [{
+        getMessage: 'debug <content>real',
+        isImpersonate: false,
+        isContinue: false,
+        displayIncompleteSentences: false,
+    }]);
+    assert.deepEqual(saveCalls, [{ type: 'normal', getMessage: '<content>real' }]);
+    assert.equal(script.chat[0].mes, '<content>real');
+});
+
+test('agent chat commit bridge cleans append commits as one raw target message', async () => {
+    const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-chat-commit-bridge.js'));
+    moduleUrl.search = `?case=commit-append-cleanup-${Date.now()}`;
+    const { attachHostCommitBridge } = await import(moduleUrl.href);
+    const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
+    installCurrentChatRef(chatRef);
+
+    const cleanups = [];
+    const saveCalls = [];
+    const script = createFakeCommitScript((options) => {
+        cleanups.push(options.getMessage);
+        return options.getMessage.includes('<content>')
+            ? options.getMessage.replace(/^[\s\S]*?(<content>)/, '$1')
+            : options.getMessage;
+    }, saveCalls);
+    const files = [workspaceFile('debug '), workspaceFile('<content>real')];
+    const resolutions = [];
+    let listener = null;
+    attachHostCommitBridge({
+        runId: 'run-commit-append-cleanup',
+        safeInvoke: async (command, args) => {
+            if (command === 'resolve_agent_chat_commit') {
+                resolutions.shift()(args);
+            }
+            return {};
+        },
+        readWorkspaceFile: async () => files.shift(),
+        subscribe(runId, handler) {
+            assert.equal(runId, 'run-commit-append-cleanup');
+            listener = handler;
+            return () => {};
+        },
+        loadScript: async () => script,
+        persistChat: async () => {},
+    });
+
+    const firstResolved = new Promise(resolve => resolutions.push(resolve));
+    listener({
+        type: 'chat_commit_requested',
+        payload: agentCommitPayload(chatRef, {
+            commitId: 'commit-append-1',
+            runId: 'run-commit-append-cleanup',
+            mode: 'append',
+        }),
+    });
+    const firstResult = await firstResolved;
+    assert.equal(firstResult.dto.error, undefined);
+
+    const secondResolved = new Promise(resolve => resolutions.push(resolve));
+    listener({
+        type: 'chat_commit_requested',
+        payload: agentCommitPayload(chatRef, {
+            commitId: 'commit-append-2',
+            runId: 'run-commit-append-cleanup',
+            mode: 'append',
+        }),
+    });
+    const secondResult = await secondResolved;
+    assert.equal(secondResult.dto.error, undefined);
+
+    assert.deepEqual(cleanups, ['debug ', 'debug <content>real']);
+    assert.deepEqual(saveCalls, [
+        { type: 'normal', getMessage: 'debug ' },
+        { type: 'appendFinal', getMessage: '<content>real' },
+    ]);
+    assert.equal(script.chat[0].mes, '<content>real');
 });
 
 test('agent prompt assembly bridge reads pending request by assembly id', async () => {

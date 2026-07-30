@@ -1,0 +1,20 @@
+[package]
+name = "tt-adapter-http"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+reqwest = { workspace = true, features = ["blocking", "http2", "rustls", "socks"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tt-domain = { path = "../tt-domain" }
+tt-ports = { path = "../tt-ports" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+rustls = "0.23"
+webpki-roots = "1"
+
+[dev-dependencies]
+rcgen = "0.13.2"
+rustls = "0.23"

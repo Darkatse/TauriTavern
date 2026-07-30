@@ -1,56 +1,58 @@
 # 记忆类扩展 API（当前落地状态）
 
-本文档记录 **已经落地** 的 TauriTavern 记忆类扩展 API 现状，用于后续持续开发与回归。
+本文档记录 TauriTavern 记忆、数据库与检索类扩展 API 的当前状态。
 
-目标问题：
+TauriTavern 遵循 SillyTavern 1.18.0 契约：`getContext().chat` 是当前聊天的完整、有序消息数组，数组下标就是 0-based 绝对消息索引。增强 API 不替代这一契约，而是把有界读取、定位、搜索和扩展状态持久化交给 Rust 后端。
 
-- windowed payload 下，`getContext().chat` 不再是全量数组，导致上游记忆类扩展契约破裂
-- 需要让扩展在不加载全量历史的前提下，仍能：
-  - 获取稳定楼层语义（绝对索引）
-  - 按需读取历史
-  - 后端定位状态
-  - 做纯文本召回（不向量，CJK 优化）
-  - 可靠持久化扩展状态
+## 1. 唯一入口
 
-## 1. 唯一入口（Public ABI）
-
-唯一入口（刻意不做 alias）：
-
-- `window.__TAURITAVERN__.api.chat`
-
-扩展侧 ready 建议：
+公开 ABI 刻意只有一个入口，不提供 alias：
 
 ```js
 await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
+const api = window.__TAURITAVERN__.api.chat;
 ```
 
-## 2. 已落地能力（Phase 1 + Phase 2）
+## 2. 当前 chat 与身份
 
-### 2.1 当前 chat 与楼层语义
+- `api.chat.current.ref()`：当前聊天引用。
+- `api.chat.current.handle()`：当前聊天 handle。
+- `api.chat.current.windowInfo()`：保留六字段 Promise ABI；`mode` 固定为 `'off'`，`windowStartIndex` 固定为 `0`，`windowLength === totalCount === chat.length`。
+- `handle.stableId()`：可持久化的稳定聊天身份。
+- `handle.summary({ includeMetadata? })`：无需读取消息正文的摘要。
 
-- `api.chat.current.windowInfo() -> { mode, totalCount, windowStartIndex, windowLength, chatRef }`
-- “window index -> 绝对 index”映射：`abs = windowStartIndex + windowIndex`
-
-### 2.2 历史按需读取
+## 3. 有界历史读取
 
 - `handle.history.tail({ limit })`
 - `handle.history.before(page, { limit })`
-- `handle.history.beforePages(page, { limit, pages })`（批量减少 IPC 往返）
+- `handle.history.beforePages(page, { limit, pages })`
 
-### 2.3 后端定位（从尾部倒序扫描）
+这些方法单次只返回请求的页，适合后台批处理或避免扩展再创建一份全量数组。它们不会改变前端 `chat[]` 或 DOM。
+
+分页 cursor 带文件签名；聊天被其他写入改变后，旧 cursor 会明确失败，调用方应重新从 `tail()` 开始。
+
+## 4. 后端定位与搜索
 
 - `handle.locate.findLastMessage({ role?, hasTopLevelKeys?, hasExtraKeys?, scanLimit? })`
+- `handle.searchMessages({ query, limit?, filters? })`
 
-用于替代扩展侧对 `chat` 的反复倒序扫描（尤其是 st-memory-enhancement / Database_script 这种“找最后状态”逻辑）。
+`filters` 支持：
 
-### 2.4 状态持久化（每 chat）
+- `role?: 'user' | 'assistant' | 'system'`
+- `startIndex?: number`
+- `endIndex?: number`
+- `scanLimit?: number`
 
-小状态（写入 header）：
+当前搜索是轻量文本召回，不引入向量库或全量常驻索引。CJK/无空格 query 会扩展 bigram tokens；扩展应使用 `scanLimit` 明确性能边界。
+
+## 5. 每聊天扩展状态
+
+小状态写入 header 的 namespace：
 
 - `handle.metadata.get()`
-- `handle.metadata.setExtension({ namespace, value })`（`value=null` 表示删除）
+- `handle.metadata.setExtension({ namespace, value })`
 
-大状态（稳定 KV JSON store）：
+大状态使用独立 KV JSON store：
 
 - `handle.store.getJson({ namespace, key })`
 - `handle.store.setJson({ namespace, key, value })`
@@ -59,31 +61,18 @@ await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
 - `handle.store.deleteJson({ namespace, key })`
 - `handle.store.listKeys({ namespace })`
 
-### 2.5 纯文本检索（Phase 2）
+消息本身的修改仍应通过 `await getContext().saveChat()` 保存；不要 import `script.js` 内部实现，也不要直接写 JSONL。
 
-- `handle.searchMessages({ query, limit?, filters? }) -> [{ index, score, snippet, role, text }]`
+## 6. 持续开发约束
 
-`filters`：
+- 保持 `getContext().chat` 完整、有序，不为内存优化改变数据契约。
+- DOM 优化只能发生在渲染层。
+- history 分页保持显式、只读，不参与当前聊天状态或 generation。
+- API 错误直接传播，不做 silent fallback。
+- 不新增公开 alias，不把大扩展状态塞进消息体。
 
-- `role?: 'user' | 'assistant' | 'system'`
-- `startIndex?: number` / `endIndex?: number`（绝对索引范围）
-- `scanLimit?: number`（从尾部向前最多扫描多少条消息）
-
-当前实现约束（重要）：
-
-- 不上向量检索
-- 不做“全量常驻索引库”；直接复用 windowed payload 的 tail/before 分页 I/O，从尾部开始流式扫描
-- 对 CJK/无空格 query 自动扩展 bigram tokens，提高召回鲁棒性
-- `scanLimit` 是移动端性能上限开关，扩展侧应主动设置
-
-## 3. 持续开发约束（不要回归的点）
-
-- 不要引入新的 alias（坚持唯一入口 `window.__TAURITAVERN__.api.chat`）
-- 不要把全量 chat 塞回 JS（除非用户手动关闭 windowed 模式）
-- API 报错直接暴露（避免 silent fallback），方便定位扩展适配问题
-
-## 4. 相关文档
+## 7. 相关文档
 
 - API 参考：`docs/API/Chat.md`
 - 适配指南：`docs/API/Migration.md`
-- windowed payload 现状：`docs/CurrentState/WindowedPayload.md`
+- Chat payload：`docs/CurrentState/ChatPayload.md`

@@ -33,6 +33,7 @@ const SOURCE_SPECIFIC_API_URL_KEYS = Object.freeze({
     zai: 'zai_endpoint',
     siliconflow: 'siliconflow_endpoint',
     minimax: 'minimax_endpoint',
+    moonshot: 'moonshot_endpoint',
     vertexai: 'vertexai_region',
 });
 

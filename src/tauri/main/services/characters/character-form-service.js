@@ -11,7 +11,6 @@ import { parseCropParam } from './character-request-utils.js';
 
 /**
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any) => Promise<any>} SafeInvokeFn
- * @typedef {(command: import('../../context/types.js').TauriInvokeCommand) => void} InvalidateInvokeAllFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveCharacterIdFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveExistingCharacterIdFn
  * @typedef {(file: Blob, options?: { preferredName?: string; preferredExtension?: string; kind?: string }) => Promise<MaterializedFileInfo | null>} MaterializeUploadFileFn
@@ -20,7 +19,6 @@ import { parseCropParam } from './character-request-utils.js';
 /**
  * @param {{
  *   safeInvoke: SafeInvokeFn;
- *   invalidateInvokeAll: InvalidateInvokeAllFn;
  *   resolveCharacterId: ResolveCharacterIdFn;
  *   resolveExistingCharacterId: ResolveExistingCharacterIdFn;
  *   materializeUploadFile: MaterializeUploadFileFn;
@@ -28,7 +26,6 @@ import { parseCropParam } from './character-request-utils.js';
  */
 export function createCharacterFormService({
     safeInvoke,
-    invalidateInvokeAll,
     resolveCharacterId,
     resolveExistingCharacterId,
     materializeUploadFile,
@@ -165,8 +162,6 @@ export function createCharacterFormService({
                         crop: crop || null,
                     },
                 });
-
-                invalidateInvokeAll('read_thumbnail_asset');
             } finally {
                 await fileInfo.cleanup?.();
             }
@@ -216,7 +211,6 @@ export function createCharacterFormService({
                     crop: crop || null,
                 },
             });
-            invalidateInvokeAll('read_thumbnail_asset');
         } finally {
             await fileInfo.cleanup?.();
         }
@@ -249,7 +243,6 @@ export function createCharacterFormService({
                 overwrite_name: overwriteName,
                 crop: crop ? JSON.stringify(crop) : null,
             });
-            invalidateInvokeAll('read_thumbnail_asset');
             return uploaded;
         } finally {
             await fileInfo.cleanup?.();

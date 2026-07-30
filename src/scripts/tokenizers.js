@@ -7,6 +7,11 @@ import { getStringHash } from './utils.js';
 import { kai_flags, kai_settings } from './kai-settings.js';
 import { textgen_types, textgenerationwebui_settings as textgen_settings, getTextGenServer, getTextGenModel } from './textgen-settings.js';
 import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, openRouterModels } from './textgen-models.js';
+import {
+    getOpenAIConversationTokenCount,
+    getOpenAITextTokenCount,
+} from './util/openai-token-count.js';
+import { createSingleFlight } from './util/single-flight.js';
 
 export const CHARACTERS_PER_TOKEN_RATIO = 3.35;
 export const TOKENIZER_WARNING_KEY = 'tokenizationWarningShown';
@@ -35,6 +40,8 @@ export const tokenizers = {
     COMMAND_A: 19,
     BEST_MATCH: 99,
 };
+
+const countTokenPrefixesSingleFlight = createSingleFlight();
 
 // A list of local tokenizers that support encoding and decoding token ids.
 export const ENCODE_TOKENIZERS = [
@@ -153,6 +160,7 @@ const TOKENIZER_URLS = {
 };
 
 const objectStore = localforage.createInstance({ name: 'SillyTavern_ChatCompletions' });
+const TAURI_WARM_TOKENIZER_MODEL = 'gpt-4o';
 
 let tokenCacheState = {
     chatId: 'undefined',
@@ -666,6 +674,72 @@ function counterWrapperOpenAIAsync(text) {
     return countTokensOpenAIAsync(message, true);
 }
 
+/**
+ * Gets exact token counts for multiple strings using the active tokenizer.
+ * Results preserve input order and match individual getTokenCountAsync calls.
+ * @param {string[]} strings Strings to tokenize.
+ * @param {number | undefined} padding Optional padding tokens.
+ * @returns {Promise<number[]>} Token counts in input order.
+ */
+export async function getTokenCountsAsync(strings, padding = undefined) {
+    if (!Array.isArray(strings)) {
+        throw new TypeError('getTokenCountsAsync expects an array');
+    }
+
+    if (main_api === 'openai' && padding !== power_user.token_padding) {
+        const messages = strings.map(text => ({ role: 'system', content: text }));
+        const counts = await countOpenAIMessageTokensBatchAsync(messages);
+        return counts.map((count, index) => strings[index]?.length ? getOpenAITextTokenCount(count) : 0);
+    }
+
+    return Promise.all(strings.map(text => getTokenCountAsync(text, padding)));
+}
+
+/**
+ * Gets estimated token counts for cumulative prefixes without sending every expanded prefix.
+ * @param {string} base Initial prefix shared by every result.
+ * @param {string[]} suffixes Suffixes appended cumulatively in input order.
+ * @param {number | undefined} padding Optional padding tokens.
+ * @param {number | undefined} stopAt Caller-visible text token threshold; the single-message wrapper offset is excluded.
+ * @returns {Promise<number[]>} Estimated token counts for each cumulative prefix.
+ */
+export async function getTokenPrefixCountsAsync(base, suffixes, padding = undefined, stopAt = undefined) {
+    if (typeof base !== 'string' || !Array.isArray(suffixes)) {
+        throw new TypeError('getTokenPrefixCountsAsync expects a string base and an array of suffixes');
+    }
+
+    if (main_api === 'openai' && padding !== power_user.token_padding && globalThis.__TAURITAVERN__) {
+        const model = getTokenizerModel();
+
+        try {
+            const requestBody = JSON.stringify({ base, suffixes, stop_at: stopAt });
+            const requestKey = `${model}\n${requestBody}`;
+            const data = await countTokenPrefixesSingleFlight(requestKey, () => jQuery.ajax({
+                async: true,
+                type: 'POST',
+                url: `/api/tokenizers/openai/count-prefix-batch?model=${model}`,
+                data: requestBody,
+                dataType: 'json',
+                contentType: 'application/json',
+            }));
+
+            if (Array.isArray(data?.token_counts) && data.token_counts.length === suffixes.length) {
+                return data.token_counts.map(getOpenAITextTokenCount);
+            }
+        } catch (error) {
+            console.warn('OpenAI token prefix count request failed, using exact batch fallback:', error);
+        }
+    }
+
+    const prefixes = [];
+    let prefix = base;
+    for (const suffix of suffixes) {
+        prefix += suffix;
+        prefixes.push(prefix);
+    }
+    return getTokenCountsAsync(prefixes, padding);
+}
+
 export function getTokenizerModel(settings = null) {
     const oai_settings = settings ?? current_oai_settings;
     // OpenAI models always provide their own tokenizer
@@ -853,7 +927,9 @@ export function getTokenizerModel(settings = null) {
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.VERTEXAI) {
-        return gemmaTokenizer;
+        return String(oai_settings.vertexai_model ?? '').trim().toLowerCase().startsWith('claude-')
+            ? claudeTokenizer
+            : gemmaTokenizer;
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.AI21) {
@@ -907,6 +983,25 @@ export function getTokenizerModel(settings = null) {
 
     // Default to Turbo 3.5
     return turboTokenizer;
+}
+
+export async function warmTokenizerCache() {
+    if (!globalThis.__TAURITAVERN__) {
+        return;
+    }
+
+    try {
+        await jQuery.ajax({
+            async: true,
+            type: 'POST',
+            url: `/api/tokenizers/openai/count-batch?model=${TAURI_WARM_TOKENIZER_MODEL}`,
+            data: '[]',
+            dataType: 'json',
+            contentType: 'application/json',
+        });
+    } catch (error) {
+        console.warn('TauriTavern tokenizer warm-up failed:', error);
+    }
 }
 
 function guesstimateOpenAiMessageTokenCount(message) {
@@ -1048,6 +1143,27 @@ export function countTokensOpenAI(messages, full = false) {
  */
 export async function countTokensOpenAIAsync(messages, full = false, settings = null) {
     const model = getTokenizerModel(settings);
+
+    if (!Array.isArray(messages)) {
+        messages = [messages];
+    }
+
+    if (model === 'claude') {
+        full = true;
+    }
+
+    const counts = await countOpenAIMessageTokensBatchAsync(messages, settings);
+    return getOpenAIConversationTokenCount(counts, full);
+}
+
+/**
+ * Counts OpenAI-style messages independently in one batch while preserving order.
+ * @param {object[]} messages Messages to count independently.
+ * @param {ChatCompletionSettings|null} settings Optional model settings.
+ * @returns {Promise<number[]>} Per-message token counts.
+ */
+async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
+    const model = getTokenizerModel(settings);
     const tokenizerEndpoint = `/api/tokenizers/openai/count-batch?model=${model}`;
     const legacyTokenizerEndpoint = `/api/tokenizers/openai/count?model=${model}`;
     const cacheState = getTokenCacheState(resolveTokenCacheChatId());
@@ -1055,32 +1171,26 @@ export async function countTokensOpenAIAsync(messages, full = false, settings = 
         await cacheState.loadPromise;
     }
     const cacheObject = cacheState.cache;
-
-    if (!Array.isArray(messages)) {
-        messages = [messages];
-    }
-
-    let token_count = -1;
-
-    if (model === 'claude') {
-        full = true;
-    }
+    const counts = new Array(messages.length);
 
     const cacheMisses = [];
     const cacheMissKeys = [];
+    const cacheMissIndices = [];
 
-    for (const message of messages) {
+    for (let index = 0; index < messages.length; index++) {
+        const message = messages[index];
         const hash = getStringHash(JSON.stringify(message));
         const cacheKey = `${model}-${hash}`;
         const cachedCount = cacheObject[cacheKey];
 
         if (typeof cachedCount === 'number') {
-            token_count += cachedCount;
+            counts[index] = cachedCount;
         }
 
         else {
             cacheMisses.push(message);
             cacheMissKeys.push(cacheKey);
+            cacheMissIndices.push(index);
         }
     }
 
@@ -1134,7 +1244,7 @@ export async function countTokensOpenAIAsync(messages, full = false, settings = 
                 count = guesstimateOpenAiMessageTokenCount(cacheMisses[i]);
             }
 
-            token_count += count;
+            counts[cacheMissIndices[i]] = count;
             if (shouldCache) {
                 cacheObject[cacheMissKeys[i]] = count;
                 cacheState.dirty = true;
@@ -1142,9 +1252,7 @@ export async function countTokensOpenAIAsync(messages, full = false, settings = 
         }
     }
 
-    if (!full) token_count -= 2;
-
-    return token_count;
+    return counts;
 }
 
 /**

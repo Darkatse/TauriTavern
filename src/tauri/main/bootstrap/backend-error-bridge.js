@@ -47,12 +47,19 @@ export async function installBackendErrorBridge() {
         return;
     }
 
-    try {
-        await tauriEvent.listen(TAURI_BACKEND_ERROR_EVENT, (event) => {
-            publishBackendError(event?.payload);
-        });
-    } catch (error) {
-        console.error('Failed to install backend error bridge:', error);
+    await tauriEvent.listen(TAURI_BACKEND_ERROR_EVENT, (event) => {
+        publishBackendError(event?.payload);
+    });
+
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (typeof invoke !== 'function') {
+        throw new Error('Tauri invoke is unavailable for backend error bridge');
+    }
+
+    const pendingErrors = await invoke('backend_error_bridge_ready');
+    if (Array.isArray(pendingErrors)) {
+        for (const payload of pendingErrors) {
+            publishBackendError(payload);
+        }
     }
 }
-

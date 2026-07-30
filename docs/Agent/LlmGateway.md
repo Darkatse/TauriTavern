@@ -8,8 +8,8 @@
 
 当前后端 LLM 事实：
 
-- Provider source 定义在 `ChatCompletionSource`。见 `src-tauri/src/domain/repositories/chat_completion_repository.rs`。
-- Payload builder 由 `application/services/chat_completion_service/payload/mod.rs` 按 provider 分发。
+- Provider source 定义在 `ChatCompletionSource`。见 `src-tauri/crates/tt-domain/src/models/chat_completion_source.rs`；旧的 repository 路径仍 re-export 以保持兼容。
+- Payload builder 由 `crates/tt-application/src/services/chat_completion_service/payload/mod.rs` 按 provider 分发。
 - `ChatCompletionService` 负责 source 解析、iOS policy、endpoint override、feature policy、settings、secret、prompt caching、payload build、generate/generate_stream/cancel。
 - LLM API 日志依赖 `LoggingChatCompletionRepository` wrapper。
 - Custom Native API 文档强调 tool call id 透明性与 native metadata 保真。见 `docs/CurrentState/NativeApiFormats.md`。
@@ -126,7 +126,7 @@ Provider native metadata 必须当作 opaque continuation state。
 | --- | --- | --- |
 | Claude Messages | assistant `content` blocks，包括 `thinking`、`tool_use`、signature | 同 provider 续接时原样回放 |
 | Gemini | response `content.parts` 与 `thoughtSignature` | 同 provider 续接时原样回放 |
-| Gemini Interactions | raw `outputs` | 同 provider 续接时原样回放 |
+| Gemini Interactions | raw `steps` | 同 provider 续接时原样回放 |
 | OpenAI Responses | raw `output` items 与 `responseId` | function call output / reasoning continuation |
 
 禁止：
@@ -223,6 +223,10 @@ Gateway 必须遵守：
 
 Policy denied 必须 fail-fast 并写 journal，不允许静默降级为另一个 provider、另一个模型或空工具集。
 
+## 8.1 `custom_*` 参数优先级
+
+用户填写的 `custom_include_body`、`custom_exclude_body`、`custom_include_headers` 是明确的上游请求覆盖，优先级高于 TauriTavern 自动组装的 provider 参数。后端只负责解析并透传这些字段，不按 provider 语义二次裁决；若与 prompt caching 等自动功能冲突，自动功能必须退让，上游 provider 负责接受或拒绝最终请求。
+
 ## 9. Prompt Cache
 
 Prompt cache 是 provider 能力，不是 Agent 自己随意拼 header。
@@ -261,7 +265,11 @@ model.request_failed
 model.stream_failed
 model.cancelled
 model.native_metadata_lost
+model.provider_refusal
+model.output_truncated
 ```
+
+Agent gateway 在 canonical decode 与工具执行前检查 terminal reason：`refusal` 返回 `model.provider_refusal`；`max_tokens`、`length`、`model_context_window_exceeded` 返回 `model.output_truncated`。两者都是 provider 已明确给出的终态，不自动重试，也不消费部分文本或工具调用。
 
 Agent runtime 会按 Profile `run.modelRetry` 重试 `429` rate limit 与 transient transport/provider availability 错误。`model.upstream_invalid_response` 专用于上游响应体不可读或不是合法 provider JSON 的暂态异常，可自动重试；payload build、policy denied、provider 明确拒绝、response schema decode、tool call id、native metadata 等本地或 provider 明确契约错误不重试。
 
@@ -279,6 +287,8 @@ Agent runtime 会按 Profile `run.modelRetry` 重试 `429` rate limit 与 transi
 - OpenAI Responses native output items 回放。
 - OpenAI Responses `provider_state.previousResponseId` 注入与 `messageCursor` 增量输入。
 - Claude / Gemini native continuation 计数与缺失 fail-fast。
+- 内建 Bedrock Claude 使用 Claude Messages adapter；其他 Bedrock family 与自定义模板仍使用通用 adapter。
+- provider refusal 与输出截断在 canonical decode 前 fail-fast。
 - same-provider native metadata loss fail-fast。
 - cross-provider switch 不迁移 provider-private state。
 - LLM API log 剥离 `_tauritavern_provider_state`。

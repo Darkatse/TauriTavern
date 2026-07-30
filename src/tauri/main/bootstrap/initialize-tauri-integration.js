@@ -2,6 +2,7 @@
 
 import { initializeBridge } from '../../../tauri-bridge.js';
 import { installBackendErrorBridge } from './backend-error-bridge.js';
+import { waitForBackendReady } from './backend-readiness.js';
 
 export async function initializeTauriIntegration(
     context,
@@ -33,9 +34,9 @@ export async function initializeTauriIntegration(
         safePerfMark('tt:tauri:init:error-bridge-ready');
     }
 
-    await context.initialize();
+    await waitForBackendReady();
     if (perfEnabled) {
-        safePerfMark('tt:tauri:init:context-ready');
+        safePerfMark('tt:tauri:init:backend-ready');
     }
 
     // Re-apply runtime patches in case third-party code recreated fetch/jQuery or download bindings after bootstrap.
@@ -43,4 +44,3 @@ export async function initializeTauriIntegration(
     interceptors.patchJQueryAjax();
     downloadBridge.patchWindow();
 }
-

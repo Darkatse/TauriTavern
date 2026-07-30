@@ -10,8 +10,6 @@ import { addLocaleData, getCurrentLocale, t, translate } from './i18n.js';
 import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { stripCommandErrorPrefixes } from './util/command-error-utils.js';
-import { isGitHubRateLimitMessage, isGitHubRateLimitStatus } from './util/github-rate-limit.js';
-import { githubRateLimitStopper } from './util/github-rate-limit-stopper.js';
 import { toUserFacingErrorText } from './util/user-facing-error.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
 import { createThirdPartyStylesheetResolver } from './extensions/runtime/third-party-runtime.js';
@@ -75,6 +73,7 @@ let connectedToApi = false;
 let manifests = {};
 let offlineExtensionsDiscoveryPromise = null;
 let offlineExtensionsPreparationPromise = null;
+let offlineExtensionsDiscoveryGeneration = 0;
 
 /**
  * Default URL for the Extras API.
@@ -370,18 +369,27 @@ async function discoverExtensions() {
 export function startOfflineExtensionsDiscovery({ forceRefresh = false } = {}) {
     if (forceRefresh) {
         offlineExtensionsDiscoveryPromise = null;
+        offlineExtensionsDiscoveryGeneration += 1;
     }
 
     if (offlineExtensionsDiscoveryPromise) {
         return offlineExtensionsDiscoveryPromise;
     }
 
+    const generation = offlineExtensionsDiscoveryGeneration;
     offlineExtensionsDiscoveryPromise = (async () => {
         await waitForTauriMainReady();
         const extensions = await discoverExtensions();
-        extensionNames = extensions.map(x => x.name);
-        extensionTypes = Object.fromEntries(extensions.map(x => [x.name, x.type]));
-        manifests = await getManifests(extensionNames);
+        const nextExtensionNames = extensions.map(x => x.name);
+        const nextExtensionTypes = Object.fromEntries(extensions.map(x => [x.name, x.type]));
+        const nextManifests = await getManifests(nextExtensionNames);
+        if (generation !== offlineExtensionsDiscoveryGeneration) {
+            return offlineExtensionsDiscoveryPromise ?? [];
+        }
+
+        extensionNames = nextExtensionNames;
+        extensionTypes = nextExtensionTypes;
+        manifests = nextManifests;
         return extensions;
     })();
 
@@ -616,17 +624,62 @@ export function findExtension(name) {
     return { name: internalExtensionName, enabled: isEnabled };
 }
 
-const CODE_RENDER_DELEGATE_EXTENSION_NAMES = Object.freeze([
-    'JS-Slash-Runner',
-    'LittleWhiteBox',
+export const CHAT_SURFACE_RENDERER_CAPABILITIES = Object.freeze([
+    Object.freeze({
+        extensionName: 'JS-Slash-Runner',
+        participantId: 'js-slash-runner/message-runtime',
+    }),
+    Object.freeze({
+        extensionName: 'LittleWhiteBox',
+        participantId: 'littlewhitebox/message-runtime',
+    }),
 ]);
+
+export function getEnabledChatSurfaceRendererCapabilities() {
+    return CHAT_SURFACE_RENDERER_CAPABILITIES
+        .map(capability => {
+            const extension = findExtension(capability.extensionName);
+            return extension?.enabled === true
+                ? Object.freeze({ ...capability, internalName: extension.name })
+                : null;
+        })
+        .filter(Boolean);
+}
 
 /**
  * Returns true when a known third-party message code renderer should own HTML/script code blocks.
  * @returns {boolean}
  */
 export function isCodeRenderDelegatedToThirdPartyRenderer() {
-    return CODE_RENDER_DELEGATE_EXTENSION_NAMES.some(name => findExtension(name)?.enabled === true);
+    return getEnabledChatSurfaceRendererCapabilities().length > 0;
+}
+
+/**
+ * Activates the one known renderer required by bounded ChatSurface before any
+ * chat is materialized. Capability verification remains a separate host step.
+ */
+export async function activateRequiredChatSurfaceExtensions() {
+    const enabled = getEnabledChatSurfaceRendererCapabilities();
+    if (enabled.length > 1) {
+        throw new Error(
+            'Bounded ChatSurface cannot start while JS-Slash-Runner and LittleWhiteBox are both enabled',
+        );
+    }
+    if (enabled.length === 0) {
+        return Object.freeze([]);
+    }
+
+    const requiredNames = new Set(enabled.map(capability => capability.internalName));
+    await activateExtensions({
+        parallelism: 1,
+        includeExtension: name => requiredNames.has(name),
+        resetErrors: false,
+    });
+
+    return Object.freeze(enabled.map(({ extensionName, participantId }) => Object.freeze({
+        extensionName,
+        participantId,
+    })));
 }
 
 /**
@@ -651,28 +704,17 @@ export function getExtensionManifest(name) {
  */
 async function getManifests(names) {
     const obj = {};
-    const promises = [];
+    await Promise.all(names.map(async name => {
+        try {
+            const response = await fetch(getExtensionResourceUrl(name, 'manifest.json'));
+            if (response.ok) {
+                obj[name] = await response.json();
+            }
+        } catch (err) {
+            console.log('Could not load manifest.json for ' + name, err);
+        }
+    }));
 
-    for (const name of names) {
-        const promise = new Promise((resolve, reject) => {
-            fetch(getExtensionResourceUrl(name, 'manifest.json')).then(async response => {
-                if (response.ok) {
-                    const json = await response.json();
-                    obj[name] = json;
-                    resolve();
-                } else {
-                    reject();
-                }
-            }).catch(err => {
-                reject();
-                console.log('Could not load manifest.json for ' + name, err);
-            });
-        });
-
-        promises.push(promise);
-    }
-
-    await Promise.allSettled(promises);
     return obj;
 }
 
@@ -1489,35 +1531,11 @@ async function onUpdateClick() {
  * Updates a third-party extension via the API.
  * @param {string} extensionName Extension folder name
  * @param {boolean} quiet If true, don't show a success message
- * @param {object} [options] Update options.
- * @param {number?} [options.timeoutMs] Timeout in milliseconds to wait for the update to complete.
- * @param {AbortController?} [options.abortController] Abort controller for batch updates.
  */
-async function updateExtension(extensionName, quiet, { timeoutMs = null, abortController = null } = {}) {
-    if (githubRateLimitStopper.isTripped()) {
-        return;
-    }
-
+async function updateExtension(extensionName, quiet) {
     try {
-        let signal = abortController?.signal;
-        if (timeoutMs) {
-            const timeoutSignal = AbortSignal.timeout(timeoutMs);
-            if (!signal) {
-                signal = timeoutSignal;
-            } else if (typeof AbortSignal.any === 'function') {
-                signal = AbortSignal.any([signal, timeoutSignal]);
-            } else {
-                const combined = new AbortController();
-                const abort = () => combined.abort();
-                signal.addEventListener('abort', abort, { once: true });
-                timeoutSignal.addEventListener('abort', abort, { once: true });
-                signal = combined.signal;
-            }
-        }
-
         const response = await fetch('/api/extensions/update', {
             method: 'POST',
-            signal: signal,
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 extensionName,
@@ -1528,12 +1546,6 @@ async function updateExtension(extensionName, quiet, { timeoutMs = null, abortCo
         if (!response.ok) {
             const text = await response.text();
             const normalized = stripCommandErrorPrefixes(text || response.statusText);
-            if (isGitHubRateLimitStatus(response.status) || isGitHubRateLimitMessage(normalized)) {
-                githubRateLimitStopper.trip();
-                abortController?.abort();
-                return;
-            }
-
             const message = toUserFacingErrorText(normalized) || normalized || response.statusText;
             toastr.error(message, t`Extension update failed`, { timeOut: 5000 });
             console.error('Extension update failed', response.status, response.statusText, text);
@@ -1556,10 +1568,6 @@ async function updateExtension(extensionName, quiet, { timeoutMs = null, abortCo
             toastr.success(t`Extension ${extensionName} updated to ${data.shortCommitHash}`, t`Reload the page to apply updates`);
         }
     } catch (error) {
-        if (abortController?.signal?.aborted || githubRateLimitStopper.isTripped()) {
-            return;
-        }
-
         console.error('Extension update error:', error);
     }
 }
@@ -1633,18 +1641,14 @@ async function onBranchClick() {
         return;
     }
 
-    let newBranch = '';
-
     const branches = await getExtensionBranches(extensionName, isGlobal);
     const selectElement = document.createElement('select');
     selectElement.classList.add('text_pole', 'wide100p');
-    selectElement.addEventListener('change', function () {
-        newBranch = this.value;
-    });
     for (const branch of branches) {
         const option = document.createElement('option');
         option.value = branch.name;
-        option.textContent = `${branch.name} (${branch.commit}) [${branch.label}]`;
+        const label = branch.label ? ` [${branch.label}]` : '';
+        option.textContent = `${branch.name} (${branch.commit})${label}`;
         option.selected = branch.current;
         selectElement.appendChild(option);
     }
@@ -1654,6 +1658,7 @@ async function onBranchClick() {
         cancelButton: t`Cancel`,
     });
     const popupResult = await popup.show();
+    const newBranch = selectElement.value;
 
     if (!popupResult || !newBranch) {
         return;
@@ -1762,15 +1767,11 @@ export async function deleteExtension(extensionName, shouldClean = false) {
  *
  * @param {string} extensionName - The name of the extension.
  * @param {AbortController} [abortController] - Abort controller for the operation.
- * @return {Promise<object|null>} - Version details or null when stopped.
+ * @return {Promise<object|null>} - Version details or null when aborted.
  * This object includes the currentBranchName, currentCommitHash, isUpToDate, and remoteUrl.
- * @throws {Error} - When the fetch fails for reasons other than rate limit/stop.
+ * @throws {Error} - When the fetch fails.
  */
 async function getExtensionVersion(extensionName, abortController) {
-    if (githubRateLimitStopper.isTripped()) {
-        return null;
-    }
-
     try {
         const response = await fetch('/api/extensions/version', {
             method: 'POST',
@@ -1785,13 +1786,6 @@ async function getExtensionVersion(extensionName, abortController) {
         if (!response.ok) {
             const text = await response.text();
             const normalized = stripCommandErrorPrefixes(text || response.statusText);
-            if (isGitHubRateLimitStatus(response.status) || isGitHubRateLimitMessage(normalized)) {
-                githubRateLimitStopper.trip();
-                cancelQueuedVersionChecks();
-                abortController?.abort();
-                return null;
-            }
-
             throw new Error(normalized || response.statusText);
         }
 
@@ -1882,25 +1876,9 @@ async function switchExtensionBranch(extensionName, isGlobal, branch) {
  * @param {string} [branch] Optional branch to install, if not provided the default branch will be used
  * @returns {Promise<boolean>} True if the extension was installed successfully, false otherwise
  */
-const GITHUB_ONLY_ERROR_TOKEN = 'only github repositories are supported';
-
-function isGithubOnlyRepositoryError(value) {
-    const message = String(value || '').toLowerCase();
-    return message.includes(GITHUB_ONLY_ERROR_TOKEN);
-}
-
 function getExtensionInstallToastMessage(value) {
     const normalized = stripCommandErrorPrefixes(value);
     return normalized ? translate(normalized) : t`Unknown error`;
-}
-
-async function showGithubOnlyRepositoryPopup() {
-    await callGenericPopup(
-        t`Only GitHub repositories are supported for extension installation.`,
-        POPUP_TYPE.TEXT,
-        '',
-        { okButton: t`OK` },
-    );
 }
 
 export async function installExtension(url, global, branch = '') {
@@ -1912,8 +1890,8 @@ export async function installExtension(url, global, branch = '') {
 
         // Normalize the URL (resolve relative paths, remove redundant segments, etc.)
         url = parsedUrl.href;
-    } catch (error) {
-        console.error('Invalid URL:', error);
+    } catch {
+        console.error('Invalid extension URL');
         toastr.error(t`Only valid HTTP and HTTPS URLs are allowed.`, t`Invalid URL`);
         return false;
     }
@@ -1921,7 +1899,7 @@ export async function installExtension(url, global, branch = '') {
     if (!isOfficialExtension(url)) {
         const extensionInstallationWarningKey = 'extensionInstallationWarningShown';
         if (accountStorage.getItem(extensionInstallationWarningKey)) {
-            console.debug('Bypassed URL check for third-party extension (account preference).', url);
+            console.debug('Bypassed URL check for third-party extension (account preference).');
         } else {
             let dismissWarning = false;
             const confirmation = await Popup.show.confirm(
@@ -1947,7 +1925,7 @@ export async function installExtension(url, global, branch = '') {
         }
     }
 
-    console.debug('Extension installation started', url);
+    console.debug('Extension installation started');
 
     toastr.info(t`Please wait...`, t`Installing extension`);
 
@@ -1964,23 +1942,13 @@ export async function installExtension(url, global, branch = '') {
         });
     } catch (error) {
         const message = String(error?.message || error || '');
-        if (isGithubOnlyRepositoryError(message)) {
-            await showGithubOnlyRepositoryPopup();
-            return;
-        }
-
         toastr.warning(getExtensionInstallToastMessage(message), t`Extension installation failed`, { timeOut: 5000 });
         console.error('Extension installation failed', error);
-        return;
+        return false;
     }
 
     if (!request.ok) {
         const text = await request.text();
-        if (isGithubOnlyRepositoryError(text)) {
-            await showGithubOnlyRepositoryPopup();
-            return;
-        }
-
         toastr.warning(getExtensionInstallToastMessage(text || request.statusText), t`Extension installation failed`, { timeOut: 5000 });
         console.error('Extension installation failed', request.status, request.statusText, text);
         return false;
@@ -2111,18 +2079,7 @@ const concurrencyLimit = 5;
 let activeRequestsCount = 0;
 const versionCheckQueue = [];
 
-function cancelQueuedVersionChecks() {
-    while (versionCheckQueue.length) {
-        const item = versionCheckQueue.shift();
-        item.resolve();
-    }
-}
-
 function enqueueVersionCheck(fn) {
-    if (githubRateLimitStopper.isTripped()) {
-        return Promise.resolve();
-    }
-
     return new Promise((resolve, reject) => {
         versionCheckQueue.push({ fn, resolve, reject });
         processVersionCheckQueue();
@@ -2130,11 +2087,6 @@ function enqueueVersionCheck(fn) {
 }
 
 function processVersionCheckQueue() {
-    if (githubRateLimitStopper.isTripped()) {
-        cancelQueuedVersionChecks();
-        return;
-    }
-
     if (activeRequestsCount >= concurrencyLimit || versionCheckQueue.length === 0) {
         return;
     }
@@ -2217,7 +2169,7 @@ async function checkForUpdatesManual(sortFn, abortController) {
                     }
                 }
             } catch (error) {
-                if (abortController?.signal?.aborted || githubRateLimitStopper.isTripped()) {
+                if (abortController?.signal?.aborted) {
                     return;
                 }
                 console.error('Error checking for extension updates', error);
@@ -2247,11 +2199,6 @@ async function checkForExtensionUpdates(force) {
     }
 
     const isCurrentUserAdmin = isAdmin();
-    if (githubRateLimitStopper.isTripped()) {
-        return;
-    }
-
-    const abortController = new AbortController();
     const updatesAvailable = [];
     const promises = [];
 
@@ -2270,7 +2217,7 @@ async function checkForExtensionUpdates(force) {
         if (manifest.auto_update && id.startsWith('third-party')) {
             const promise = enqueueVersionCheck(async () => {
                 try {
-                    const data = await getExtensionVersion(id.replace('third-party', ''), abortController);
+                    const data = await getExtensionVersion(id.replace('third-party', ''));
                     if (!data) {
                         return;
                     }
@@ -2278,9 +2225,6 @@ async function checkForExtensionUpdates(force) {
                         updatesAvailable.push(manifest.display_name);
                     }
                 } catch (error) {
-                    if (abortController.signal.aborted || githubRateLimitStopper.isTripped()) {
-                        return;
-                    }
                     console.error('Error checking for extension updates', error);
                 }
             });
@@ -2301,24 +2245,14 @@ async function checkForExtensionUpdates(force) {
  * @returns {Promise<void>}
  */
 async function autoUpdateExtensions(forceAll) {
-    if (githubRateLimitStopper.isTripped()) {
-        return;
-    }
-
     if (!Object.values(manifests).some(x => x.auto_update)) {
         return;
     }
 
     const banner = toastr.info(t`Auto-updating extensions. This may take several minutes.`, t`Please wait...`, { timeOut: 10000, extendedTimeOut: 10000 });
     const isCurrentUserAdmin = isAdmin();
-    const abortController = new AbortController();
-    const autoUpdateTimeout = 60 * 1000;
     try {
         for (const [id, manifest] of Object.entries(manifests)) {
-            if (abortController.signal.aborted || githubRateLimitStopper.isTripped()) {
-                break;
-            }
-
             const isDisabled = extension_settings.disabledExtensions.includes(id);
             if (!forceAll && isDisabled) {
                 console.debug(`Skipping extension: ${manifest.display_name} (${id}) for non-admin user`);
@@ -2331,10 +2265,7 @@ async function autoUpdateExtensions(forceAll) {
             }
             if ((forceAll || manifest.auto_update) && id.startsWith('third-party')) {
                 console.debug(`Auto-updating 3rd-party extension: ${manifest.display_name} (${id})`);
-                await updateExtension(id.replace('third-party', ''), true, {
-                    timeoutMs: autoUpdateTimeout,
-                    abortController,
-                });
+                await updateExtension(id.replace('third-party', ''), true);
             }
         }
     } finally {

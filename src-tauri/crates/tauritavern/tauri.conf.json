@@ -1,0 +1,101 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TauriTavern",
+  "version": "2.2.0",
+  "identifier": "com.tauritavern.client",
+  "build": {
+    "beforeBuildCommand": {
+      "script": "node scripts/tauri-before-build.mjs",
+      "cwd": "../../.."
+    },
+    "beforeDevCommand": {
+      "script": "node scripts/tauri-dev-server.mjs",
+      "cwd": "../../.."
+    },
+    "devUrl": "http://localhost:1430",
+    "frontendDist": "../../../src",
+    "removeUnusedCommands": true
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "create": false,
+        "title": "TauriTavern",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPCACHE/**",
+          "$APPCACHE/*",
+          "$APPDATA/**",
+          "$APPDATA/*",
+          "$APPLOCALDATA/**",
+          "$APPLOCALDATA/*",
+          "$LOCALDATA/**",
+          "$LOCALDATA/*",
+          "$RESOURCE/**",
+          "$RESOURCE/*"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../../default/": "default/",
+      "../../../src/scripts/templates/": "frontend-templates/"
+    },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true,
+        "files": {
+          "/usr/share/metainfo/com.tauritavern.client.metainfo.xml": "bundle/linux/com.tauritavern.client.metainfo.xml"
+        }
+      },
+      "deb": {
+        "depends": [
+          "gstreamer1.0-plugins-base",
+          "gstreamer1.0-plugins-good"
+        ],
+        "desktopTemplate": "bundle/linux/TauriTavern.desktop",
+        "files": {
+          "/usr/share/metainfo/com.tauritavern.client.metainfo.xml": "bundle/linux/com.tauritavern.client.metainfo.xml"
+        }
+      },
+      "rpm": {
+        "depends": [
+          "gstreamer1(element-appsink)()(64bit)",
+          "gstreamer1(element-autoaudiosink)()(64bit)"
+        ],
+        "desktopTemplate": "bundle/linux/TauriTavern.desktop",
+        "files": {
+          "/usr/share/metainfo/com.tauritavern.client.metainfo.xml": "bundle/linux/com.tauritavern.client.metainfo.xml"
+        }
+      }
+    },
+    "iOS": {
+      "developmentTeam": "Y82Q3U47CB"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+[package]
+name = "tt-adapter-sync"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+axum = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "query", "tokio"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+filetime = "0.2"
+local-ip-address = "0.6"
+rand = { workspace = true }
+reqwest = { workspace = true, features = ["json", "rustls", "stream"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+tt-contracts = { path = "../tt-contracts" }
+tt-domain = { path = "../tt-domain" }
+tt-ports = { path = "../tt-ports" }
+ttsync-client = { workspace = true }
+ttsync-contract = { workspace = true }
+ttsync-core = { workspace = true }
+ttsync-http = { workspace = true }
+url = "2.4"
+uuid = { workspace = true }
+
+[dev-dependencies]
+base64 = "0.22"

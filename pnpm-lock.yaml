@@ -20,9 +20,15 @@ importers:
       '@popperjs/core':
         specifier: ^2.11.8
         version: 2.11.8
+      '@tanstack/virtual-core':
+        specifier: 3.17.7
+        version: 3.17.7
       bowser:
         specifier: ^2.12.1
         version: 2.14.1
+      chalk:
+        specifier: ^5.6.0
+        version: 5.6.0
       chevrotain:
         specifier: ^11.2.0
         version: 11.2.0
@@ -71,6 +77,9 @@ importers:
       vue:
         specifier: ^3.5.33
         version: 3.5.33(typescript@5.9.3)
+      yaml:
+        specifier: ^2.8.3
+        version: 2.8.3
     devDependencies:
       '@rspack/cli':
         specifier: ^2.0.8
@@ -255,6 +264,9 @@ packages:
       '@swc/helpers':
         optional: true
 
+  '@tanstack/virtual-core@3.17.7':
+    resolution: {integrity: sha512-bp+v10y65sp2H7WpWfIMyxTNfl8ZVfxFTLRjPIFRryi6FV/J33z4IS53WO4pTk36KlvJ4iLiQz+oaydDC1xbcA==}
+
   '@tauri-apps/cli-darwin-arm64@2.10.0':
     resolution: {integrity: sha512-avqHD4HRjrMamE/7R/kzJPcAJnZs0IIS+1nkDP5b+TNBn3py7N2aIo9LIpy+VQq0AkN8G5dDpZtOOBkmWt/zjA==}
     engines: {node: '>= 10'}
@@ -396,6 +408,10 @@ packages:
   bowser@2.14.1:
     resolution: {integrity: sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg==}
 
+  chalk@5.6.0:
+    resolution: {integrity: sha512-46QrSQFyVSEyYAgQ22hQ+zDa60YHA4fBstHmtSApj1Y5vKtG27fWowW03jCk5KcbXEWPZUIR894aARCA/G1kfQ==}
+    engines: {node: ^12.17.0 || ^14.13 || >=16.0.0}
+
   chevrotain@11.2.0:
     resolution: {integrity: sha512-mHCHTxM51nCklUw9RzRVc0DLjAh/SAUPM4k/zMInlTIo25ldWXOZoPt7XEIk/LwoT4lFVmJcu9g5MHtx371x3A==}
 
@@ -530,6 +546,11 @@ packages:
   wordwrap@1.0.0:
     resolution: {integrity: sha512-gvVzJFlPycKc5dZN4yPkP8w7Dc37BtP1yczEneOb4uq34pXZcvrtRTmWV8W+Ume+XCxKgbjM+nevkyFPMybd4Q==}
 
+  yaml@2.8.3:
+    resolution: {integrity: sha512-AvbaCLOO2Otw/lW5bmh9d/WEdcDFdQp2Z2ZUH3pX9U2ihyUY0nvLv7J6TrWowklRGPYbB/IuIMfYgxaCPg5Bpg==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
 snapshots:
 
   '@adobe/css-tools@4.4.4': {}
@@ -649,6 +670,8 @@ snapshots:
   '@rspack/core@2.0.8':
     dependencies:
       '@rspack/binding': 2.0.8
+
+  '@tanstack/virtual-core@3.17.7': {}
 
   '@tauri-apps/cli-darwin-arm64@2.10.0':
     optional: true
@@ -793,6 +816,8 @@ snapshots:
 
   bowser@2.14.1: {}
 
+  chalk@5.6.0: {}
+
   chevrotain@11.2.0:
     dependencies:
       '@chevrotain/cst-dts-gen': 11.2.0
@@ -904,3 +929,5 @@ snapshots:
       typescript: 5.9.3
 
   wordwrap@1.0.0: {}
+
+  yaml@2.8.3: {}

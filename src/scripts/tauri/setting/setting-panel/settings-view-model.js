@@ -2,7 +2,11 @@
 
 import { isMobile } from '../../../RossAscends-mods.js';
 import { isAndroidRuntime, isIosRuntime } from '../../../util/mobile-runtime.js';
-import { getRuntimePaths, getTauriTavernSettings } from '../../../../tauri-bridge.js';
+import {
+    getChatBackupStorageStats,
+    getRuntimePaths,
+    getTauriTavernSettings,
+} from '../../../../tauri-bridge.js';
 import { getActiveIosPolicyCapabilities } from '../../../tauritavern/ios-policy.js';
 import {
     isNativeRegexBackendEnabled,
@@ -27,6 +31,29 @@ export function resolveTauriTavernSettingsCapabilities() {
         supportsCloseToTrayOnClose: isWindowsPlatform() && !isMobile(),
         supportsDataRootSelection,
     };
+}
+
+function normalizeChatBackupStorageStats(stats) {
+    if (stats === null) {
+        return null;
+    }
+
+    const originalBytes = Number(stats?.original_bytes);
+    const storedBytes = Number(stats?.stored_bytes);
+    if (
+        !Number.isSafeInteger(originalBytes)
+        || originalBytes < 0
+        || !Number.isSafeInteger(storedBytes)
+        || storedBytes < 0
+    ) {
+        throw new Error('TauriTavern settings: invalid chat backup storage stats');
+    }
+
+    return { originalBytes, storedBytes };
+}
+
+export async function loadChatBackupStorageStats() {
+    return normalizeChatBackupStorageStats(await getChatBackupStorageStats());
 }
 
 export async function loadTauriTavernSettingsViewModel() {

@@ -1,0 +1,184 @@
+use std::sync::Arc;
+
+use serde::Serialize;
+use serde_json::Value;
+use tauri::{State, ipc::Channel};
+
+use crate::app::AppState;
+use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::errors::CommandError;
+use tt_application::dto::chat_completion_dto::{
+    ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
+};
+use tt_application::services::chat_completion_service::ChatCompletionService;
+use tt_domain::models::upstream_failure::UpstreamFailure;
+
+#[tauri::command]
+pub async fn get_chat_completions_status(
+    dto: ChatCompletionStatusRequestDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Value, CommandError> {
+    log_command("get_chat_completions_status");
+
+    app_state
+        .services
+        .chat_completion_service
+        .get_status(dto)
+        .await
+        .map_err(map_command_error("Failed to get chat completions status"))
+}
+
+#[tauri::command]
+pub async fn generate_chat_completion(
+    dto: ChatCompletionGenerateRequestDto,
+    request_id: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Value, CommandError> {
+    let request_id = request_id.trim().to_string();
+    validate_stream_id(&request_id)?;
+    log_command(format!("generate_chat_completion {}", request_id));
+
+    let service = app_state.services.chat_completion_service.clone();
+    let cancel = service.register_generation(&request_id).await;
+    let result = service.generate_with_cancel(dto, cancel).await;
+    service.complete_generation(&request_id).await;
+
+    result.map_err(map_command_error("Failed to generate chat completion"))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum ChatCompletionStreamEvent {
+    Chunk {
+        data: String,
+    },
+    Done,
+    Error {
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        details: Option<UpstreamFailure>,
+    },
+}
+
+#[tauri::command]
+pub async fn start_chat_completion_stream(
+    stream_id: String,
+    dto: ChatCompletionGenerateRequestDto,
+    on_event: Channel<ChatCompletionStreamEvent>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    validate_stream_id(&stream_id)?;
+    log_command(format!("start_chat_completion_stream {}", stream_id));
+
+    let service = app_state.services.chat_completion_service.clone();
+    let cancel = service.register_stream(&stream_id).await;
+
+    tauri::async_runtime::spawn(run_stream_generation(
+        service, stream_id, dto, cancel, on_event,
+    ));
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_chat_completion_stream(
+    stream_id: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    validate_stream_id(&stream_id)?;
+    log_command(format!("cancel_chat_completion_stream {}", stream_id));
+
+    app_state
+        .services
+        .chat_completion_service
+        .cancel_stream(&stream_id)
+        .await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_chat_completion_generation(
+    request_id: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    validate_stream_id(&request_id)?;
+    log_command(format!("cancel_chat_completion_generation {}", request_id));
+
+    app_state
+        .services
+        .chat_completion_service
+        .cancel_generation(&request_id)
+        .await;
+    Ok(())
+}
+
+async fn run_stream_generation(
+    service: Arc<ChatCompletionService>,
+    stream_id: String,
+    dto: ChatCompletionGenerateRequestDto,
+    cancel: tokio::sync::watch::Receiver<bool>,
+    on_event: Channel<ChatCompletionStreamEvent>,
+) {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let generation_task = tauri::async_runtime::spawn({
+        let service = service.clone();
+        async move { service.generate_stream(dto, sender, cancel).await }
+    });
+
+    while let Some(chunk) = receiver.recv().await {
+        if chunk.is_empty() {
+            continue;
+        }
+
+        let emit_result = on_event.send(ChatCompletionStreamEvent::Chunk { data: chunk });
+
+        if emit_result.is_err() {
+            generation_task.abort();
+            service.complete_stream(&stream_id).await;
+            return;
+        }
+    }
+
+    let generation_result = match generation_task.await {
+        Ok(result) => result,
+        Err(error) => Err(tt_application::errors::ApplicationError::InternalError(
+            format!("Streaming task join failed: {error}"),
+        )),
+    };
+
+    service.complete_stream(&stream_id).await;
+
+    match generation_result {
+        Ok(()) => {
+            let _ = on_event.send(ChatCompletionStreamEvent::Done);
+        }
+        Err(error) => {
+            let command_error = CommandError::from(error);
+            let details = command_error.upstream_failure().cloned();
+            let _ = on_event.send(ChatCompletionStreamEvent::Error {
+                message: command_error.to_string(),
+                details,
+            });
+        }
+    }
+}
+
+fn validate_stream_id(stream_id: &str) -> Result<(), CommandError> {
+    let stream_id = stream_id.trim();
+    if stream_id.is_empty() || stream_id.len() > 128 {
+        return Err(CommandError::BadRequest(
+            "Invalid stream id length".to_string(),
+        ));
+    }
+
+    if !stream_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return Err(CommandError::BadRequest(
+            "Invalid stream id characters".to_string(),
+        ));
+    }
+
+    Ok(())
+}

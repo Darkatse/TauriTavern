@@ -2,7 +2,7 @@
 
 本文档记录当前**已经落地**的“浏览器原生媒体加载契约”：`<video>` / `<audio>` 在桌面与移动端对用户静态资源端点（尤其是 `/backgrounds/*`）的请求方式，以及宿主目前承诺的响应语义。
 
-> 实现位置：`src-tauri/src/presentation/web_resources/user_data_endpoint.rs`
+> 实现位置：`src-tauri/crates/tt-application/src/services/host_resource_service/user_data.rs`
 
 ---
 
@@ -13,7 +13,7 @@
 - 上游 SillyTavern 与第三方扩展可以把 `/backgrounds/*` 等路径当作“普通 HTTP 资源端点”使用（子资源加载 + Range）。
 - 媒体文件（`video/*` / `audio/*`）必须满足浏览器媒体管线的最小网络契约：**支持 `Range`（单范围）并返回 `206 + Content-Range`**。
 
-涉及端点（由 `user_data_endpoint.rs` 提供）：
+涉及端点（由 Host Resource Service 提供）：
 
 - `/backgrounds/*`（图片背景 + 视频背景）
 - `/assets/*`、`/user/files/*`（可能承载音视频/下载内容）
@@ -28,8 +28,13 @@
 - 仅接受 `GET` / `HEAD` / `OPTIONS`，其他方法返回 `405`
 - 未命中返回真实 `404`（不回退到 `index.html`）
 - `Content-Type` 必须与文件类型匹配（基于扩展名推断）
-- `Cache-Control: no-store`
+- 成功响应使用 `Cache-Control: private, no-cache`、weak ETag 和 Last-Modified；完整表示与条件请求契约见 `docs/CurrentState/HostResourceCaching.md`
 - `Accept-Ranges: bytes`
+- 允许 data root 内的 symlink 指向外部文件或目录，以支持与 SillyTavern 共享同一套数据。
+
+第一方 `<img>`、`<video>`、CSS 与普通 fetch 必须直接使用这些 Host Resource URL。
+
+背景选择器的预览不改变媒体消费契约。GIF/WebP/APNG 可以按设置选择 raw 动画或 `static=true` first-frame JPEG；MP4 选择器使用占位图，因为当前不为 poster 引入视频解码依赖。
 
 ---
 
@@ -58,6 +63,8 @@
 ## 4. Android WebView 差异与当前 workaround（视频背景）
 
 现象（历史问题）：
+
+- Android `WebResourceResponse` 不支持 3xx，因此 Host Resource validator 命中时返回完整 200，而不是 304；
 
 - Android WebView 对 `video/mp4` 的请求序列通常包含多个 Range（例如 `bytes=0-`、`bytes=131072-`、尾部 Range 等）。
 - 在 Tauri mobile 的资源拦截链路中（`shouldInterceptRequest`），Android WebView 会对**拦截返回的响应流**再次应用请求的 Range 语义。
@@ -96,4 +103,3 @@ Android 端额外关注：
 当需要确认媒体编码兼容性（解码层问题）：
 
 - 使用 `ffprobe` 检查视频编码/音频声道布局（Android 上 AAC 5.1 可能存在兼容风险）。
-

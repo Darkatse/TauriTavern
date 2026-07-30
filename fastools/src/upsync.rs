@@ -12,7 +12,8 @@ const DEFAULT_BASE: &str = "sillytavern-1.16.0/public";
 const DEFAULT_TARGET: &str = "sillytavern-1.18.0/public";
 const DEFAULT_LOCAL: &str = "src";
 const DEFAULT_ROUTE_DIR: &str = "src/tauri/main/routes";
-const DEFAULT_COMMAND_REGISTRY: &str = "src-tauri/src/presentation/commands/registry.rs";
+const DEFAULT_COMMAND_REGISTRY: &str =
+    "src-tauri/crates/tauritavern/src/presentation/commands/registry.rs";
 const DEFAULT_OUT: &str = "docs/upstream-sync-1.18-plan/reports";
 
 const IGNORED_PREFIXES: &[&str] = &["scripts/extensions/third-party/JS-Slash-Runner/"];

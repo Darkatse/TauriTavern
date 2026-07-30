@@ -1,0 +1,665 @@
+use chrono::{SecondsFormat, Utc};
+use serde_json::Value;
+use std::borrow::Cow;
+use std::path::{Path, PathBuf};
+
+use tokio::fs;
+
+use crate::png_card_metadata::{read_character_data_from_png, write_character_data_to_png};
+use tt_adapter_storage_core::file_system::{replace_file_with_fallback, unique_temp_path};
+use tt_contracts::client_asset_paths::validate_path_segment;
+use tt_domain::errors::DomainError;
+use tt_domain::models::character::Character;
+use tt_domain::models::chat::{
+    humanized_date as humanized_chat_date,
+    normalize_chat_file_stem as normalize_domain_chat_file_stem, truncate_chat_file_stem_prefix,
+};
+use tt_domain::models::filename::sanitize_filename;
+
+use super::FileCharacterRepository;
+
+struct ImportedCharacterCard {
+    character: Character,
+    card_value: Value,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum CharacterImportMode<'a> {
+    New {
+        preserve_file_name: Option<&'a str>,
+    },
+    Replace {
+        file_stem: &'a str,
+        primary_lorebook: Option<&'a str>,
+    },
+}
+
+impl FileCharacterRepository {
+    fn parse_hex_escape(digits: &[u8]) -> Option<u16> {
+        if digits.len() != 4 {
+            return None;
+        }
+
+        let mut value = 0u16;
+        for digit in digits {
+            let nibble = match digit {
+                b'0'..=b'9' => digit - b'0',
+                b'a'..=b'f' => digit - b'a' + 10,
+                b'A'..=b'F' => digit - b'A' + 10,
+                _ => return None,
+            };
+            value = (value << 4) | nibble as u16;
+        }
+
+        Some(value)
+    }
+
+    fn normalize_json_surrogate_escapes(json_data: &str) -> Cow<'_, str> {
+        let bytes = json_data.as_bytes();
+        let mut output: Option<String> = None;
+        let mut copy_start = 0usize;
+        let mut index = 0usize;
+
+        while index < bytes.len() {
+            if index + 6 <= bytes.len()
+                && bytes[index] == b'\\'
+                && bytes[index + 1] == b'u'
+                && Self::is_unescaped_backslash(bytes, index)
+                && let Some(code) = Self::parse_hex_escape(&bytes[index + 2..index + 6])
+            {
+                let is_high_surrogate = (0xD800..=0xDBFF).contains(&code);
+                let is_low_surrogate = (0xDC00..=0xDFFF).contains(&code);
+
+                if is_high_surrogate {
+                    let has_valid_low_pair = if index + 12 <= bytes.len()
+                        && bytes[index + 6] == b'\\'
+                        && bytes[index + 7] == b'u'
+                    {
+                        match Self::parse_hex_escape(&bytes[index + 8..index + 12]) {
+                            Some(next) => (0xDC00..=0xDFFF).contains(&next),
+                            None => false,
+                        }
+                    } else {
+                        false
+                    };
+
+                    if has_valid_low_pair {
+                        index += 12;
+                        continue;
+                    }
+
+                    let out = output.get_or_insert_with(|| String::with_capacity(json_data.len()));
+                    out.push_str(&json_data[copy_start..index]);
+                    out.push_str("\\uFFFD");
+                    index += 6;
+                    copy_start = index;
+                    continue;
+                }
+
+                if is_low_surrogate {
+                    let out = output.get_or_insert_with(|| String::with_capacity(json_data.len()));
+                    out.push_str(&json_data[copy_start..index]);
+                    out.push_str("\\uFFFD");
+                    index += 6;
+                    copy_start = index;
+                    continue;
+                }
+            }
+
+            index += 1;
+        }
+
+        if let Some(mut out) = output {
+            out.push_str(&json_data[copy_start..]);
+            Cow::Owned(out)
+        } else {
+            Cow::Borrowed(json_data)
+        }
+    }
+
+    fn is_unescaped_backslash(bytes: &[u8], index: usize) -> bool {
+        let mut preceding = 0usize;
+        let mut cursor = index;
+
+        while cursor > 0 {
+            cursor -= 1;
+            if bytes[cursor] != b'\\' {
+                break;
+            }
+            preceding += 1;
+        }
+
+        preceding.is_multiple_of(2)
+    }
+
+    fn parse_alternate_greetings(value: Option<&Value>) -> Vec<String> {
+        match value {
+            Some(Value::Array(items)) => items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToString::to_string)
+                .collect(),
+            Some(Value::String(item)) => {
+                let trimmed = item.trim();
+                if trimmed.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![trimmed.to_string()]
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn has_canonical_data_payload(raw_value: &Value) -> bool {
+        matches!(
+            raw_value.get("spec").and_then(Value::as_str),
+            Some("chara_card_v2" | "chara_card_v3")
+        ) && raw_value.get("data").is_some_and(Value::is_object)
+    }
+
+    pub(crate) fn sync_canonical_data_fields(character: &mut Character, raw_value: &Value) {
+        if !Self::has_canonical_data_payload(raw_value) {
+            return;
+        }
+
+        if raw_value.pointer("/data/name").is_some() {
+            character.name = character.data.name.clone();
+        }
+        if raw_value.pointer("/data/description").is_some() {
+            character.description = character.data.description.clone();
+        }
+        if raw_value.pointer("/data/personality").is_some() {
+            character.personality = character.data.personality.clone();
+        }
+        if raw_value.pointer("/data/scenario").is_some() {
+            character.scenario = character.data.scenario.clone();
+        }
+        if raw_value.pointer("/data/first_mes").is_some() {
+            character.first_mes = character.data.first_mes.clone();
+        }
+        if raw_value.pointer("/data/mes_example").is_some() {
+            character.mes_example = character.data.mes_example.clone();
+        }
+        if raw_value.pointer("/data/tags").is_some() {
+            character.tags = character.data.tags.clone();
+        }
+
+        character.talkativeness = raw_value
+            .pointer("/data/extensions/talkativeness")
+            .map(|_| character.data.extensions.talkativeness)
+            .unwrap_or(0.5);
+        character.data.extensions.talkativeness = character.talkativeness;
+
+        character.fav = raw_value
+            .pointer("/data/extensions/fav")
+            .map(|_| character.data.extensions.fav)
+            .unwrap_or(false);
+        character.data.extensions.fav = character.fav;
+
+        if raw_value.pointer("/data/creator").is_some() {
+            character.creator = character.data.creator.clone();
+        }
+
+        if raw_value.pointer("/data/creator_notes").is_some() {
+            character.creator_notes = character.data.creator_notes.clone();
+        }
+
+        if raw_value.pointer("/data/character_version").is_some() {
+            character.character_version = character.data.character_version.clone();
+        }
+    }
+
+    fn parse_imported_character_json(
+        &self,
+        json_data: &str,
+    ) -> Result<ImportedCharacterCard, DomainError> {
+        let normalized_json = Self::normalize_json_surrogate_escapes(json_data);
+
+        let raw_value = Self::parse_card_json(&normalized_json, "imported character JSON")?;
+        let has_talkativeness = raw_value.get("talkativeness").is_some()
+            || raw_value
+                .pointer("/data/extensions/talkativeness")
+                .is_some();
+
+        let mut character: Character = serde_json::from_value(raw_value.clone()).map_err(|e| {
+            DomainError::InvalidData(format!("Failed to decode character payload: {}", e))
+        })?;
+
+        self.apply_legacy_aliases(&mut character, &raw_value);
+        Self::sync_canonical_data_fields(&mut character, &raw_value);
+        Self::normalize_imported_character(&mut character)?;
+        if !has_talkativeness
+            && character.talkativeness == 0.0
+            && character.data.extensions.talkativeness == 0.0
+        {
+            character.talkativeness = 0.5;
+            character.data.extensions.talkativeness = 0.5;
+        }
+
+        Ok(ImportedCharacterCard {
+            character,
+            card_value: raw_value,
+        })
+    }
+
+    pub(crate) fn apply_legacy_aliases(&self, character: &mut Character, raw_value: &Value) {
+        if character.creator_notes.trim().is_empty()
+            && let Some(value) = raw_value.get("creatorcomment").and_then(Value::as_str)
+        {
+            character.creator_notes = value.to_string();
+        }
+
+        if character.name.trim().is_empty()
+            && let Some(value) = raw_value.get("char_name").and_then(Value::as_str)
+        {
+            character.name = value.to_string();
+        }
+
+        if character.description.trim().is_empty()
+            && let Some(value) = raw_value.get("char_persona").and_then(Value::as_str)
+        {
+            character.description = value.to_string();
+        }
+
+        if character.first_mes.trim().is_empty()
+            && let Some(value) = raw_value.get("char_greeting").and_then(Value::as_str)
+        {
+            character.first_mes = value.to_string();
+        }
+
+        if character.mes_example.trim().is_empty()
+            && let Some(value) = raw_value.get("example_dialogue").and_then(Value::as_str)
+        {
+            character.mes_example = value.to_string();
+        }
+
+        if character.scenario.trim().is_empty()
+            && let Some(value) = raw_value.get("world_scenario").and_then(Value::as_str)
+        {
+            character.scenario = value.to_string();
+        }
+
+        if character.tags.is_empty() {
+            if let Some(array) = raw_value.get("tags").and_then(Value::as_array) {
+                character.tags = array
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|tag| tag.trim().to_string())
+                    .filter(|tag| !tag.is_empty())
+                    .collect();
+            } else if let Some(csv) = raw_value.get("tags").and_then(Value::as_str) {
+                character.tags = csv
+                    .split(',')
+                    .map(|tag| tag.trim().to_string())
+                    .filter(|tag| !tag.is_empty())
+                    .collect();
+            }
+        }
+
+        if character.data.alternate_greetings.is_empty() {
+            character.data.alternate_greetings = Self::parse_alternate_greetings(
+                raw_value
+                    .get("alternate_greetings")
+                    .or_else(|| raw_value.pointer("/data/alternate_greetings")),
+            );
+        }
+    }
+
+    fn sync_string_field(primary: &mut String, secondary: &mut String) {
+        if primary.trim().is_empty() && !secondary.trim().is_empty() {
+            *primary = secondary.clone();
+        } else if secondary.trim().is_empty() && !primary.trim().is_empty() {
+            *secondary = primary.clone();
+        }
+    }
+
+    pub(crate) fn normalize_imported_character(
+        character: &mut Character,
+    ) -> Result<(), DomainError> {
+        Self::sync_string_field(&mut character.name, &mut character.data.name);
+        Self::sync_string_field(&mut character.description, &mut character.data.description);
+        Self::sync_string_field(&mut character.personality, &mut character.data.personality);
+        Self::sync_string_field(&mut character.scenario, &mut character.data.scenario);
+        Self::sync_string_field(&mut character.first_mes, &mut character.data.first_mes);
+        Self::sync_string_field(&mut character.mes_example, &mut character.data.mes_example);
+        Self::sync_string_field(&mut character.creator, &mut character.data.creator);
+        Self::sync_string_field(
+            &mut character.creator_notes,
+            &mut character.data.creator_notes,
+        );
+        Self::sync_string_field(
+            &mut character.character_version,
+            &mut character.data.character_version,
+        );
+        character.name = character.name.trim().to_string();
+        if character.name.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Character name is missing".to_string(),
+            ));
+        }
+        character.data.name = character.name.clone();
+
+        if character.tags.is_empty() && !character.data.tags.is_empty() {
+            character.tags = character.data.tags.clone();
+        } else if character.data.tags.is_empty() && !character.tags.is_empty() {
+            character.data.tags = character.tags.clone();
+        }
+
+        let top_talkativeness = character.talkativeness;
+        let data_talkativeness = character.data.extensions.talkativeness;
+        if top_talkativeness == 0.0 && data_talkativeness != 0.0 {
+            character.talkativeness = data_talkativeness;
+        } else if data_talkativeness == 0.0 {
+            character.data.extensions.talkativeness = top_talkativeness;
+        }
+
+        let fav = character.fav || character.data.extensions.fav;
+        character.fav = fav;
+        character.data.extensions.fav = fav;
+
+        if character.spec.trim().is_empty() {
+            character.spec = "chara_card_v2".to_string();
+        }
+        if character.spec_version.trim().is_empty() {
+            character.spec_version = "2.0".to_string();
+        }
+
+        character.chat = Self::normalize_chat_file_stem(&character.chat, &character.name);
+
+        Ok(())
+    }
+
+    fn normalize_preserved_file_stem(raw_name: &str) -> Result<String, DomainError> {
+        let Some(stem) = raw_name.strip_suffix(".png") else {
+            return Err(DomainError::InvalidData(
+                "Preserved file name is invalid".to_string(),
+            ));
+        };
+        if stem.is_empty() || !validate_path_segment(raw_name) {
+            return Err(DomainError::InvalidData(
+                "Preserved file name is invalid".to_string(),
+            ));
+        }
+
+        Ok(stem.to_string())
+    }
+
+    fn resolve_import_file_stem(
+        &self,
+        character: &Character,
+        source_path: &Path,
+        preserve_file_name: Option<&str>,
+    ) -> Result<String, DomainError> {
+        if let Some(name) = preserve_file_name {
+            return Self::normalize_preserved_file_stem(name);
+        }
+
+        let mut base = sanitize_filename(&character.name);
+        if base.is_empty() {
+            base = source_path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .map(sanitize_filename)
+                .unwrap_or_default();
+        }
+
+        if base.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Unable to determine character file name".to_string(),
+            ));
+        }
+
+        Ok(self.ensure_unique_file_stem(&base))
+    }
+
+    pub(super) fn ensure_unique_file_stem(&self, base: &str) -> String {
+        let mut candidate = base.to_string();
+        let mut suffix = 1;
+
+        while self.get_character_path(&candidate).exists() {
+            candidate = format!("{}{}", base, suffix);
+            suffix += 1;
+        }
+
+        candidate
+    }
+
+    fn default_chat_file_stem(name: &str) -> String {
+        let sanitized_name = sanitize_filename(name);
+        let suffix = format!(" - {}", humanized_chat_date(Utc::now()));
+        let prefix = truncate_chat_file_stem_prefix(&sanitized_name, &suffix);
+        let stem = format!("{prefix}{suffix}");
+        let normalized = normalize_domain_chat_file_stem(&stem);
+
+        normalized.unwrap_or_else(|| "chat".to_string())
+    }
+
+    fn normalize_chat_file_stem(chat_name: &str, character_name: &str) -> String {
+        if !chat_name.trim().is_empty()
+            && let Some(normalized) = normalize_domain_chat_file_stem(chat_name)
+        {
+            return normalized;
+        }
+
+        Self::default_chat_file_stem(character_name)
+    }
+
+    fn prepare_imported_character_for_storage(character: &mut Character, file_stem: &str) {
+        // Match SillyTavern import semantics: imported cards lose local-only state.
+        character.create_date = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        character.file_name = Some(file_stem.to_string());
+        character.avatar = format!("{}.png", file_stem);
+        character.chat = Self::normalize_chat_file_stem("", &character.name);
+        character.fav = false;
+        character.data.extensions.fav = false;
+    }
+
+    fn prepare_imported_character(
+        &self,
+        character: &mut Character,
+        source_path: &Path,
+        mode: CharacterImportMode<'_>,
+    ) -> Result<String, DomainError> {
+        let (file_stem, primary_lorebook) = match mode {
+            CharacterImportMode::New { preserve_file_name } => (
+                self.resolve_import_file_stem(character, source_path, preserve_file_name)?,
+                None,
+            ),
+            CharacterImportMode::Replace {
+                file_stem,
+                primary_lorebook,
+            } => (file_stem.to_string(), primary_lorebook),
+        };
+
+        Self::prepare_imported_character_for_storage(character, &file_stem);
+        if let Some(primary_lorebook) = primary_lorebook {
+            character.data.extensions.world = primary_lorebook.to_string();
+        }
+
+        Ok(file_stem)
+    }
+
+    async fn persist_character_card_json(
+        &self,
+        file_stem: &str,
+        base_image_data: &[u8],
+        card_json: &str,
+    ) -> Result<PathBuf, DomainError> {
+        let image_data = write_character_data_to_png(base_image_data, card_json)?;
+        let target_path = self.get_character_path(file_stem);
+        let temp_path = unique_temp_path(&target_path);
+
+        fs::write(&temp_path, image_data).await.map_err(|e| {
+            DomainError::InternalError(format!(
+                "Failed to write imported character temp file {}: {}",
+                temp_path.display(),
+                e
+            ))
+        })?;
+        self.discard_character_read_cache(file_stem).await;
+        replace_file_with_fallback(&temp_path, &target_path).await?;
+
+        Ok(target_path)
+    }
+
+    async fn import_from_png_file(
+        &self,
+        source_path: &Path,
+        file_data: &[u8],
+        mode: CharacterImportMode<'_>,
+    ) -> Result<Character, DomainError> {
+        let card_json = read_character_data_from_png(file_data)?;
+        let ImportedCharacterCard {
+            mut character,
+            mut card_value,
+        } = self.parse_imported_character_json(&card_json)?;
+        let file_stem = self.prepare_imported_character(&mut character, source_path, mode)?;
+        Self::merge_existing_character_projection_into_card_value(&mut card_value, &character)?;
+        let stored_card_json = Self::serialize_card_value(&card_value, "imported character card")?;
+
+        let target_path = self
+            .persist_character_card_json(&file_stem, file_data, &stored_card_json)
+            .await?;
+
+        self.read_character_from_file(&target_path).await
+    }
+
+    async fn import_from_json_file(
+        &self,
+        source_path: &Path,
+        file_data: Vec<u8>,
+        mode: CharacterImportMode<'_>,
+    ) -> Result<Character, DomainError> {
+        let card_json = String::from_utf8(file_data).map_err(|e| {
+            DomainError::InvalidData(format!("Failed to decode JSON character file: {}", e))
+        })?;
+        let ImportedCharacterCard {
+            mut character,
+            mut card_value,
+        } = self.parse_imported_character_json(&card_json)?;
+        let file_stem = self.prepare_imported_character(&mut character, source_path, mode)?;
+        Self::merge_existing_character_projection_into_card_value(&mut card_value, &character)?;
+        let stored_card_json = Self::serialize_card_value(&card_value, "imported character card")?;
+
+        let default_avatar = self.read_default_avatar().await?;
+        let target_path = self
+            .persist_character_card_json(&file_stem, &default_avatar, &stored_card_json)
+            .await?;
+
+        self.read_character_from_file(&target_path).await
+    }
+
+    pub(super) async fn import_character_file(
+        &self,
+        file_path: &Path,
+        mode: CharacterImportMode<'_>,
+    ) -> Result<Character, DomainError> {
+        let file_data = fs::read(file_path).await.map_err(|error| {
+            tracing::error!("Failed to read character import file: {}", error);
+            DomainError::InternalError(format!("Failed to read character import file: {}", error))
+        })?;
+
+        match file_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "png" => self.import_from_png_file(file_path, &file_data, mode).await,
+            "json" => self.import_from_json_file(file_path, file_data, mode).await,
+            extension => Err(DomainError::InvalidData(format!(
+                "Unsupported file format: {}",
+                extension
+            ))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FileCharacterRepository;
+
+    #[test]
+    fn preserved_avatar_filename_is_an_exact_identity() {
+        assert_eq!(
+            FileCharacterRepository::normalize_preserved_file_stem(" Alice#1.png")
+                .expect("valid exact avatar filename"),
+            " Alice#1"
+        );
+        assert_eq!(
+            FileCharacterRepository::normalize_preserved_file_stem("Legacy\u{0080}.png")
+                .expect("legacy C1 filename"),
+            "Legacy\u{0080}"
+        );
+        for invalid in [
+            "Alice.PNG",
+            "Alice.png ",
+            "folder/Alice.png",
+            "Alice.png?cache=1",
+            "Bad\u{007F}.png",
+        ] {
+            assert!(FileCharacterRepository::normalize_preserved_file_stem(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn normalize_imported_character_chat_uses_shared_chat_file_contract() {
+        assert_eq!(
+            FileCharacterRepository::normalize_chat_file_stem(" Story.jsonl", "Alice"),
+            " Story"
+        );
+        assert_eq!(
+            FileCharacterRepository::normalize_chat_file_stem("Story.JSONL", "Alice"),
+            "Story.JSONL"
+        );
+        assert_eq!(
+            FileCharacterRepository::normalize_chat_file_stem("Story.jsonl ", "Alice"),
+            "Story.jsonl "
+        );
+    }
+
+    #[test]
+    fn normalize_imported_character_chat_default_keeps_room_for_jsonl_suffix() {
+        let long_name = "角色".repeat(130);
+        let stem = FileCharacterRepository::normalize_chat_file_stem("", &long_name);
+
+        assert!(!stem.is_empty());
+        assert!(format!("{stem}.jsonl").len() <= 255);
+    }
+
+    #[test]
+    fn normalize_json_surrogate_escapes_replaces_lone_high_surrogate() {
+        let input = r#"{"first_mes":"Hello \uD83D"}"#;
+        let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
+
+        assert_eq!(normalized.as_ref(), r#"{"first_mes":"Hello \uFFFD"}"#);
+    }
+
+    #[test]
+    fn normalize_json_surrogate_escapes_replaces_lone_low_surrogate() {
+        let input = r#"{"first_mes":"Hello \uDE00"}"#;
+        let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
+
+        assert_eq!(normalized.as_ref(), r#"{"first_mes":"Hello \uFFFD"}"#);
+    }
+
+    #[test]
+    fn normalize_json_surrogate_escapes_keeps_valid_surrogate_pair() {
+        let input = r#"{"first_mes":"Hello \uD83D\uDE00"}"#;
+        let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
+
+        assert_eq!(normalized.as_ref(), input);
+    }
+
+    #[test]
+    fn normalize_json_surrogate_escapes_skips_escaped_unicode_literal() {
+        let input = r#"{"first_mes":"Literal \\uD83D marker"}"#;
+        let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
+
+        assert_eq!(normalized.as_ref(), input);
+    }
+}

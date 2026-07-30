@@ -26,35 +26,45 @@ function installWindowMocks() {
     return { windowMock, documentMock };
 }
 
-test('Tauri background path helper uses /backgrounds route (not asset protocol)', async () => {
+test('Tauri resource helpers expose only stable Host Resource URLs', async () => {
     const { windowMock } = installWindowMocks();
-
-    const assetService = {
-        buildThumbnailRouteUrl: () => '/thumbnail?type=bg&file=a',
-        resolveAssetPath: () => '/storage/emulated/0/Android/data/com.tauritavern.client/data/default-user/backgrounds/a.png',
-        toAssetUrl: () => 'http://asset.localhost/%2Fstorage%2Femulated%2F0%2FAndroid%2Fdata%2Fcom.tauritavern.client%2Fdata%2Fdefault-user%2Fbackgrounds%2Fa.png',
-    };
-
-    const thumbnailService = {
-        async resolveThumbnailBlobUrl() {
-            return 'blob:ok';
-        },
-    };
 
     const { installAssetPathHelpers } = await importFresh(
         path.join(REPO_ROOT, 'src/tauri/main/context/asset-path-helpers.js'),
     );
 
     installAssetPathHelpers({
-        assetService,
-        thumbnailService,
         thumbnailRouteTypes: new Set(['bg', 'avatar', 'persona']),
     });
 
     const backgroundPathFn = windowMock.__TAURITAVERN_BACKGROUND_PATH__;
+    const thumbnailPathFn = windowMock.__TAURITAVERN_THUMBNAIL__;
     assert.equal(typeof backgroundPathFn, 'function');
+    assert.equal(typeof thumbnailPathFn, 'function');
 
-    const resolved = backgroundPathFn('test.mp4.jpg');
+    assert.equal(backgroundPathFn('test.mp4.jpg'), '/backgrounds/test.mp4.jpg');
+    assert.equal(thumbnailPathFn('bg', 'test image.png'), '/thumbnail?type=bg&file=test+image.png');
 
-    assert.equal(resolved, '/backgrounds/test.mp4.jpg');
+    for (const file of [
+        'space name.png',
+        'plus+amp&hash#.png',
+        'literal%percent.png',
+        '雪 😀.png',
+    ]) {
+        assert.equal(backgroundPathFn(file), `/backgrounds/${encodeURIComponent(file)}`);
+        assert.equal(
+            thumbnailPathFn('bg', file),
+            `/thumbnail?${new URLSearchParams({ type: 'bg', file }).toString()}`,
+        );
+
+        const parsedThumbnail = new URL(thumbnailPathFn('bg', file), 'http://localhost');
+        assert.equal(parsedThumbnail.searchParams.get('file'), file);
+        assert.equal(parsedThumbnail.searchParams.has('t'), false);
+    }
+
+    assert.throws(() => thumbnailPathFn('unknown', 'test.png'), /Unsupported thumbnail type/);
+
+    assert.equal(windowMock.__TAURITAVERN_THUMBNAIL_BLOB_URL__, undefined);
+    assert.equal(windowMock.__TAURITAVERN_AVATAR_PATH__, undefined);
+    assert.equal(windowMock.__TAURITAVERN_PERSONA_PATH__, undefined);
 });

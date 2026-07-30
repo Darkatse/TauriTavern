@@ -68,7 +68,7 @@ pub fn collect(project_root: &Path, kind: BuildArtifactsKind) -> Result<Vec<Coll
 }
 
 fn load_tauri_config(project_root: &Path) -> Result<TauriConfig> {
-    let config_path = project_root.join("src-tauri/tauri.conf.json");
+    let config_path = project_root.join("src-tauri/crates/tauritavern/tauri.conf.json");
     let content = fs::read_to_string(&config_path)
         .with_context(|| format!("Failed to read {}", config_path.display()))?;
     serde_json::from_str(&content)
@@ -118,7 +118,8 @@ fn desktop_artifact_copies(project_root: &Path, debug: bool) -> Result<Vec<Artif
 }
 
 fn android_artifact_copies(project_root: &Path, config: &TauriConfig) -> Result<Vec<ArtifactCopy>> {
-    let apk_root = project_root.join("src-tauri/gen/android/app/build/outputs/apk");
+    let apk_root =
+        project_root.join("src-tauri/crates/tauritavern/gen/android/app/build/outputs/apk");
     ensure_dir(&apk_root)?;
 
     let mut abi_dirs = fs::read_dir(&apk_root)
@@ -190,7 +191,7 @@ fn android_artifact_copies(project_root: &Path, config: &TauriConfig) -> Result<
 
 fn ios_artifact_copies(project_root: &Path, config: &TauriConfig) -> Result<Vec<ArtifactCopy>> {
     let source = project_root
-        .join("src-tauri/gen/apple/build/arm64")
+        .join("src-tauri/crates/tauritavern/gen/apple/build/arm64")
         .join(format!("{}.ipa", config.product_name));
     ensure_file(&source)?;
 

@@ -39,7 +39,9 @@ export const SettingRow = {
                         <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
                     </button>
                 </div>
-                <small v-if="hint" class="tt-settings-hint">{{ hint }}</small>
+                <small v-if="hint || $slots.hint" class="tt-settings-hint">
+                    <slot name="hint">{{ hint }}</slot>
+                </small>
             </div>
             <div class="tt-settings-control">
                 <slot></slot>

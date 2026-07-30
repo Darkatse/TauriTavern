@@ -1,0 +1,6 @@
+interface:
+  display_name: "TauriTavern Release Humanizer"
+  short_description: "Polish release notes without changing supported facts"
+  default_prompt: "Use $tauritavern-release-humanizer to polish release notes while preserving every supported fact."
+policy:
+  allow_implicit_invocation: false

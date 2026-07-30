@@ -1947,7 +1947,7 @@
                                             <input type="hidden" id="continue_postfix" class="displayNone" />
                                         </div>
                                     </div>
-                                    <div class="range-block">
+                                    <div id="continue_prefill_block" class="range-block">
                                         <label for="continue_prefill" class="checkbox_label widthFreeExpand">
                                             <input id="continue_prefill" type="checkbox" />
                                             <span data-i18n="Continue prefill">Continue prefill</span>
@@ -2150,7 +2150,7 @@
                                             </strong>
                                         </div>
                                     </div>
-                                    <div id="openai_reasoning_effort_block" class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,claude,aws_bedrock,xai,makersuite,vertexai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek,zai">
+                                    <div id="openai_reasoning_effort_block" class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,claude,aws_bedrock,xai,makersuite,vertexai,aimlapi,openrouter,moonshot,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek,zai">
                                         <div class="flex-container oneline-dropdown" title="Constrains effort on reasoning for reasoning models.&#10;Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning in a response." data-i18n="[title]Constrains effort on reasoning for reasoning models.">
                                             <label for="openai_reasoning_effort">
                                                 <span data-i18n="Reasoning Effort">Reasoning Effort</span>
@@ -2162,23 +2162,23 @@
                                                 <option data-i18n="openai_reasoning_effort_low" value="low">Low</option>
                                                 <option data-i18n="openai_reasoning_effort_medium" value="medium">Medium</option>
                                                 <option data-i18n="openai_reasoning_effort_high" value="high">High</option>
-                                                <option data-i18n="openai_reasoning_effort_maximum" value="max">Maximum</option>
                                                 <option data-i18n="openai_reasoning_effort_xhigh" value="xhigh">XHigh</option>
+                                                <option data-i18n="openai_reasoning_effort_maximum" value="max">Maximum</option>
                                             </select>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.">
-                                                OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.">
+                                                Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.">
-                                                DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.">
+                                                DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, Low and Medium request high effort, and XHigh requests max effort.">
-                                                Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, Low and Medium request high effort, and XHigh requests max effort.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.">
+                                                Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.
                                             </div>
                                             <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
                                                 Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
                                             </strong>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock" data-i18n="Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on Claude Opus 4.7/4.8; otherwise it behaves like Maximum. Auto does not request thinking.">
-                                                Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on Claude Opus 4.7/4.8; otherwise it behaves like Maximum. Auto does not request thinking.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai" data-i18n="Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.">
+                                                Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.
                                             </div>
                                             <div class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai">
                                                 <span data-i18n="Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.">
@@ -3058,6 +3058,12 @@
                             <div>
                                 <h4 data-i18n="OpenAI Model">OpenAI Model</h4>
                                 <select id="model_openai_select">
+                                    <optgroup label="GPT-5.6">
+                                        <option value="gpt-5.6">gpt-5.6</option>
+                                        <option value="gpt-5.6-sol">gpt-5.6-sol</option>
+                                        <option value="gpt-5.6-terra">gpt-5.6-terra</option>
+                                        <option value="gpt-5.6-luna">gpt-5.6-luna</option>
+                                    </optgroup>
                                     <optgroup label="GPT-5.5">
                                         <option value="gpt-5.5">gpt-5.5</option>
                                         <option value="gpt-5.5-2026-04-23">gpt-5.5-2026-04-23</option>
@@ -3182,6 +3188,10 @@
                                 <h4 data-i18n="Claude Model">Claude Model</h4>
                                 <select id="model_claude_select">
                                     <optgroup label="Versions">
+                                        <option value="claude-fable-5">claude-fable-5</option>
+                                        <option value="claude-mythos-5">claude-mythos-5</option>
+                                        <option value="claude-opus-5">claude-opus-5</option>
+                                        <option value="claude-sonnet-5">claude-sonnet-5</option>
                                         <option value="claude-opus-4-8">claude-opus-4-8</option>
                                         <option value="claude-opus-4-7">claude-opus-4-7</option>
                                         <option value="claude-opus-4-6">claude-opus-4-6</option>
@@ -3314,6 +3324,12 @@
                             <div>
                                 <h4 data-i18n="Google Model">Google Model</h4>
                                 <select id="model_google_select">
+                                    <optgroup label="Gemini 3.6">
+                                        <option value="gemini-3.6-flash">gemini-3.6-flash</option>
+                                    </optgroup>
+                                    <optgroup label="Gemini 3.5">
+                                        <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                                    </optgroup>
                                     <optgroup label="Gemini 3.1">
                                         <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
                                         <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
@@ -3468,6 +3484,8 @@
 
                                 <datalist id="vertexai_region_suggestions">
                                     <option value="global">global</option>
+                                    <option value="us">us</option>
+                                    <option value="eu">eu</option>
                                     <option value="us-central1">us-central1</option>
                                     <option value="us-east1">us-east1</option>
                                     <option value="us-east4">us-east4</option>
@@ -3494,6 +3512,24 @@
                                 <h4 data-i18n="Google Model">Google Model</h4>
                                 <select id="model_vertexai_select">
                                     <!-- data-mode="full" is for models that require a service account -->
+                                    <optgroup label="Claude on Vertex AI">
+                                        <option value="claude-fable-5" data-mode="full">claude-fable-5</option>
+                                        <option value="claude-opus-5" data-mode="full">claude-opus-5</option>
+                                        <option value="claude-sonnet-5" data-mode="full">claude-sonnet-5</option>
+                                        <option value="claude-opus-4-8" data-mode="full">claude-opus-4-8</option>
+                                        <option value="claude-opus-4-7" data-mode="full">claude-opus-4-7</option>
+                                        <option value="claude-opus-4-6" data-mode="full">claude-opus-4-6</option>
+                                        <option value="claude-sonnet-4-6" data-mode="full">claude-sonnet-4-6</option>
+                                        <option value="claude-opus-4-5@20251101" data-mode="full">claude-opus-4-5@20251101</option>
+                                        <option value="claude-sonnet-4-5@20250929" data-mode="full">claude-sonnet-4-5@20250929</option>
+                                        <option value="claude-haiku-4-5@20251001" data-mode="full">claude-haiku-4-5@20251001</option>
+                                    </optgroup>
+                                    <optgroup label="Gemini 3.6">
+                                        <option value="gemini-3.6-flash">gemini-3.6-flash</option>
+                                    </optgroup>
+                                    <optgroup label="Gemini 3.5">
+                                        <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                                    </optgroup>
                                     <optgroup label="Gemini 3.1">
                                         <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
                                         <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
@@ -3625,7 +3661,11 @@
                                 The list below is a fallback. After Connect succeeds, the live Bedrock catalog for your region replaces these options.
                             </small>
                             <select id="model_aws_bedrock_select">
-                                <optgroup label="Cross-region inference profiles — US (recommended for Claude 4.x)">
+                                <optgroup label="Cross-region inference profiles — US (recommended for Claude 4.x/5.x)">
+                                    <option value="us.anthropic.claude-sonnet-5">us.anthropic.claude-sonnet-5</option>
+                                    <option value="us.anthropic.claude-fable-5">us.anthropic.claude-fable-5</option>
+                                    <option value="us.anthropic.claude-opus-5">us.anthropic.claude-opus-5</option>
+                                    <option value="us.anthropic.claude-opus-4-8">us.anthropic.claude-opus-4-8</option>
                                     <option value="us.anthropic.claude-opus-4-7">us.anthropic.claude-opus-4-7</option>
                                     <option value="us.anthropic.claude-opus-4-6-v1">us.anthropic.claude-opus-4-6-v1</option>
                                     <option value="us.anthropic.claude-opus-4-5-20251101-v1:0">us.anthropic.claude-opus-4-5-20251101-v1:0</option>
@@ -3637,12 +3677,21 @@
                                     <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">us.anthropic.claude-haiku-4-5-20251001-v1:0</option>
                                 </optgroup>
                                 <optgroup label="Cross-region inference profiles — Global">
+                                    <option value="global.anthropic.claude-sonnet-5">global.anthropic.claude-sonnet-5</option>
+                                    <option value="global.anthropic.claude-fable-5">global.anthropic.claude-fable-5</option>
+                                    <option value="global.anthropic.claude-opus-5">global.anthropic.claude-opus-5</option>
+                                    <option value="global.anthropic.claude-opus-4-8">global.anthropic.claude-opus-4-8</option>
                                     <option value="global.anthropic.claude-opus-4-7">global.anthropic.claude-opus-4-7</option>
                                     <option value="global.anthropic.claude-opus-4-6-v1">global.anthropic.claude-opus-4-6-v1</option>
                                     <option value="global.anthropic.claude-opus-4-5-20251101-v1:0">global.anthropic.claude-opus-4-5-20251101-v1:0</option>
                                     <option value="global.anthropic.claude-sonnet-4-6">global.anthropic.claude-sonnet-4-6</option>
                                     <option value="global.anthropic.claude-sonnet-4-5-20250929-v1:0">global.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
                                     <option value="global.anthropic.claude-haiku-4-5-20251001-v1:0">global.anthropic.claude-haiku-4-5-20251001-v1:0</option>
+                                </optgroup>
+                                <optgroup label="Foundation models — Claude 5.x">
+                                    <option value="anthropic.claude-sonnet-5">anthropic.claude-sonnet-5</option>
+                                    <option value="anthropic.claude-fable-5">anthropic.claude-fable-5</option>
+                                    <option value="anthropic.claude-opus-5">anthropic.claude-opus-5</option>
                                 </optgroup>
                                 <optgroup label="Foundation models — Claude 3.x (ON_DEMAND)">
                                     <option value="anthropic.claude-3-7-sonnet-20250219-v1:0">anthropic.claude-3-7-sonnet-20250219-v1:0</option>
@@ -4001,18 +4050,18 @@
                             <div data-for="api_key_moonshot" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you click 'Connect'.">
                                 For privacy reasons, your API key will be hidden after you click 'Connect'.
                             </div>
+                            <h4 data-i18n="Moonshot Endpoint">Moonshot Endpoint</h4>
+                            <select id="moonshot_endpoint">
+                                <option value="global" data-i18n="Global (moonshot.ai)">Global (moonshot.ai)</option>
+                                <option value="cn" data-i18n="China (moonshot.cn)">China (moonshot.cn)</option>
+                            </select>
                             <h4 data-i18n="Moonshot AI Model">Moonshot AI Model</h4>
                             <select id="model_moonshot_select">
-                                <option value="kimi-k2-0711-preview">kimi-k2-0711-preview</option>
-                                <option value="moonshot-v1-8k">moonshot-v1-8k</option>
-                                <option value="moonshot-v1-32k">moonshot-v1-32k</option>
-                                <option value="moonshot-v1-128k">moonshot-v1-128k</option>
-                                <option value="moonshot-v1-auto">moonshot-v1-auto</option>
-                                <option value="kimi-latest">kimi-latest</option>
-                                <option value="moonshot-v1-8k-vision-preview">moonshot-v1-8k-vision-preview</option>
-                                <option value="moonshot-v1-32k-vision-preview">moonshot-v1-32k-vision-preview</option>
-                                <option value="moonshot-v1-128k-vision-preview">moonshot-v1-128k-vision-preview</option>
-                                <option value="kimi-thinking-preview">kimi-thinking-preview</option>
+                                <option value="kimi-k2.5">kimi-k2.5</option>
+                                <option value="kimi-k2.6">kimi-k2.6</option>
+                                <option value="kimi-k2.7-code">kimi-k2.7-code</option>
+                                <option value="kimi-k2.7-code-highspeed">kimi-k2.7-code-highspeed</option>
+                                <option value="kimi-k3">kimi-k3</option>
                             </select>
                         </div>
                         <div id="zai_form" data-source="zai">

@@ -42,6 +42,15 @@ test('TauriTavern Settings popup is a host wrapper around the Vue bundle', async
     assert.doesNotMatch(source, /from\s+['"]vue(?:\/|['"])/);
     assert.match(source, /buildTauriTavernSettingsUpdate\(viewModel\.values,\s*appHandle\.getDraft\(\)\)/);
     assert.match(source, /applyTauriTavernSettingsUpdateEffects\(update,\s*updatedSettings\)/);
+    assert.match(source, /onClosing:\s*async\s*\(popup\)/);
+    assert.match(source, /requiresChatBackupPurgeConfirmation/);
+    assert.match(source, /confirmChatBackupHistoryPurge/);
+    assert.match(source, /pendingUpdate\.changes\.chatVirtualizationEnabled/);
+    assert.match(source, /pendingUpdate\.next\.chatVirtualizationEnabled/);
+    assert.match(source, /showChatVirtualizationCompatibility/);
+    assert.match(source, /zstdCompression:\s*\{[\s\S]*existing backups are converted in the background/);
+    assert.match(source, /https:\/\/github\.com\/Darkatse\/JS-Slash-Runner/);
+    assert.match(source, /https:\/\/github\.com\/Darkatse\/LittleWhiteBox/);
 });
 
 test('TauriTavern Settings wallpaper options use the no-render background refresh', async () => {
@@ -49,6 +58,23 @@ test('TauriTavern Settings wallpaper options use the no-render background refres
 
     assert.match(source, /refreshSystemBackgroundEntries/);
     assert.doesNotMatch(source, /getBackgrounds/);
+});
+
+test('TauriTavern Settings loads optional backup stats after opening the popup', async () => {
+    const popup = await readRepoFile('src/scripts/tauri/setting/setting-panel/settings-popup.js');
+    const viewModel = await readRepoFile('src/scripts/tauri/setting/setting-panel/settings-view-model.js');
+    const popupIndex = popup.indexOf('const popupPromise = callTauriTavernPanelPopup');
+    const statsIndex = popup.indexOf('void loadChatBackupStorageStats()');
+
+    assert.ok(popupIndex >= 0);
+    assert.ok(statsIndex > popupIndex);
+    assert.match(popup, /viewModel\.values\.chatBackups\.zstdCompressionEnabled/);
+    assert.match(popup, /const result = await popupPromise/);
+    assert.match(viewModel, /export async function loadChatBackupStorageStats/);
+    assert.doesNotMatch(
+        viewModel.slice(viewModel.indexOf('export async function loadTauriTavernSettingsViewModel')),
+        /getChatBackupStorageStats\(/,
+    );
 });
 
 test('Rspack exposes a dedicated TauriTavern Settings Vue entry', async () => {
@@ -83,10 +109,23 @@ test('TauriTavern Settings Vue app stays presentation-only', async () => {
     const entry = await readRepoFile('src/scripts/tauri/setting/settings-app/index.js');
     assert.match(entry, /from\s+['"]vue\/dist\/vue\.esm-bundler\.js['"]/);
     assert.match(entry, /export\s+function\s+mountTauriTavernSettingsApp/);
+    assert.match(entry, /setChatBackupStorageStats/);
 
     const app = await readRepoFile('src/scripts/tauri/setting/settings-app/SettingsApp.js');
     assert.match(app, /Dynamic Theme & Wallpaper/);
     assert.match(app, /WallpaperField/);
+    assert.match(app, /Chat Backups/);
+    assert.match(app, /draft\.chatBackups\.zstdCompressionEnabled/);
+    assert.match(app, /help-topic="zstdCompression"/);
+    assert.match(app, /<br v-if="zstdCompressionHint\.saved"\s*\/\>/);
+    assert.match(app, /class="tt-settings-hint-accent"/);
+    assert.match(app, /formatBytes/);
+    assert.match(app, /Chat DOM Virtualization/);
+    assert.match(app, /help-topic="chatVirtualization"/);
+    assert.match(app, /:disabled="draft\.chatVirtualizationEnabled"/);
+    assert.match(app, /<ToggleSwitch v-model="draft\.chatVirtualizationEnabled"\s*\/>/);
+    assert.doesNotMatch(app, /Keeps only the viewport and true tail mounted/);
+    assert.doesNotMatch(app, /CHAT_SURFACE_OPTIONS|draft\.chatSurfacePolicy/);
 });
 
 test('TauriTavern Settings keeps mobile toggle rows inline', async () => {

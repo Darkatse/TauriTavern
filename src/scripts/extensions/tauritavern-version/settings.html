@@ -22,21 +22,37 @@
                     <span class="ttv-label" data-i18n="ttv_version.author_label">Author</span>
                     <strong>{{authorName}}</strong>
                 </div>
+                <div id="ttv-channel-row" class="ttv-channel-block">
+                    <button id="ttv-channel-toggle" class="ttv-row ttv-channel-toggle" type="button" aria-expanded="false" aria-controls="ttv-channel-body">
+                        <span class="ttv-label" data-i18n="ttv_version.channel_label">Update Channel</span>
+                        <span class="ttv-channel-current">
+                            <!-- JS-owned dynamic text: no data-i18n, or the i18n observer would reset it
+                                 whenever the panel subtree is re-attached (extensions drawer park/hydrate). -->
+                            <strong id="ttv-channel-current-name">Stable</strong>
+                            <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                        </span>
+                    </button>
+                    <div id="ttv-channel-body" class="ttv-channel-body">
+                        <div class="ttv-channel-group" role="radiogroup" aria-label="Update Channel" data-i18n="[aria-label]ttv_version.channel_label">
+                            <label class="ttv-channel-option">
+                                <input type="radio" name="tauritavern_update_channel" value="stable">
+                                <span class="ttv-channel-pill">
+                                    <span data-i18n="ttv_version.channel_stable">Stable</span>
+                                </span>
+                            </label>
+                            <label class="ttv-channel-option">
+                                <input type="radio" name="tauritavern_update_channel" value="canary">
+                                <span class="ttv-channel-pill">
+                                    <span data-i18n="ttv_version.channel_canary">Canary</span>
+                                </span>
+                            </label>
+                        </div>
+                        <small id="ttv-channel-hint" class="ttv-channel-hint"></small>
+                    </div>
+                </div>
             </div>
 
             <div class="ttv-actions">
-                <a class="menu_button menu_button_icon" href="{{repositoryUrl}}" target="_blank" rel="noopener noreferrer">
-                    <i class="fa-brands fa-github"></i>
-                    <span data-i18n="ttv_version.github_repository">GitHub Repository</span>
-                </a>
-                <a id="ttv-discord-link" class="menu_button menu_button_icon" href="{{discordUrl}}" target="_blank" rel="noopener noreferrer">
-                    <i class="fa-brands fa-discord"></i>
-                    <span data-i18n="ttv_version.discord_updates">Discord Update Channel</span>
-                </a>
-                <button id="tauritavern_export_debug_bundle" class="menu_button menu_button_icon" type="button">
-                    <i class="fa-solid fa-file-zipper"></i>
-                    <span data-i18n="ttv_version.export_debug_bundle">Export Debug Bundle</span>
-                </button>
                 <button id="tauritavern_check_update" class="menu_button menu_button_icon" type="button">
                     <i class="fa-solid fa-arrows-rotate"></i>
                     <span data-i18n="ttv_version.check_updates">Check for Updates</span>
@@ -66,6 +82,52 @@
                     <i class="fa-solid fa-download"></i>
                     <span data-i18n="ttv_version.go_to_download">Go to Download</span>
                 </a>
+            </div>
+
+            <hr class="ttv-footer-sep">
+
+            <div class="ttv-footer">
+                <div class="ttv-links">
+                    <a
+                        class="menu_button menu_button_icon"
+                        href="{{repositoryUrl}}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="GitHub Repository"
+                        aria-label="GitHub Repository"
+                        data-i18n="[title]ttv_version.github_repository;[aria-label]ttv_version.github_repository"
+                    >
+                        <i class="fa-brands fa-github" aria-hidden="true"></i>
+                    </a>
+                    <a
+                        id="ttv-discord-link"
+                        class="menu_button menu_button_icon"
+                        href="{{discordUrl}}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Discord Server"
+                        aria-label="Discord Server"
+                        data-i18n="[title]ttv_version.discord_updates;[aria-label]ttv_version.discord_updates"
+                    >
+                        <i class="fa-brands fa-discord" aria-hidden="true"></i>
+                    </a>
+                    <a
+                        id="ttv-telegram-link"
+                        class="menu_button menu_button_icon"
+                        href="{{telegramUrl}}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Telegram Channel"
+                        aria-label="Telegram Channel"
+                        data-i18n="[title]ttv_version.telegram;[aria-label]ttv_version.telegram"
+                    >
+                        <i class="fa-brands fa-telegram" aria-hidden="true"></i>
+                    </a>
+                </div>
+                <button id="tauritavern_export_debug_bundle" class="menu_button menu_button_icon" type="button">
+                    <i class="fa-solid fa-file-zipper"></i>
+                    <span data-i18n="ttv_version.export_debug_bundle">Export Debug Bundle</span>
+                </button>
             </div>
         </div>
     </div>

@@ -1,4 +1,4 @@
-# 同步（LAN Sync v1 / LAN Sync v2 / TT-Sync v2）当前落地状态
+# 同步（LAN Sync / TT-Sync v2）当前落地状态
 
 本文档描述 **当前已经落地** 的同步能力现状：它解决什么问题、端到端链路如何工作、明确支持/不支持的边界、以及后续开发最容易误改的契约。
 
@@ -8,19 +8,19 @@
 
 ## 1. 范围与结论
 
-TauriTavern 当前存在三种同步协议形态：
+TauriTavern 当前存在两种同步拓扑：
 
-- **LAN Sync v1**：局域网内设备间同步的遗留 HTTP 协议；保留兼容，不再扩展新同步能力。
-- **LAN Sync v2**：局域网 HTTPS/SPKI peer 协议；复用 TT-Sync v2 的 session、manifest、plan、bundle 与 DatasetPolicy 语义。
-- **TT-Sync v2**：远端同步（TauriTavern ⇄ TT-Sync 服务端）；与 LAN Sync v2 共享协议语义，但拓扑是 remote hub。
+- **LAN Sync**：局域网 HTTPS/SPKI peer 协议；复用 TT-Sync v2 的 session、manifest、plan、bundle 与 DatasetPolicy 语义。旧 LAN v1 HTTP/HMAC 纵切面已删除，旧设备需要重新配对。
+- **TT-Sync v2**：远端同步（TauriTavern ⇄ TT-Sync 服务端）；与 LAN Sync 共享协议语义，但拓扑是 remote hub。
 
 关键结论（后续改动优先守住这些）：
 
 1. **同步语义以“用户数据一致性”为中心**：scope/exclude、`(size_bytes, modified_ms)` 增量判定、Mirror delete 的时序、原子写入与 mtime 保留。
-2. **同步作业全局串行**：LAN Sync v1/v2 与 TT-Sync v2 共用同一个 `Semaphore(1)`（即同一时刻只能跑一个同步作业），避免多条链路并发写入相同数据目录导致破坏性竞态（见 `src-tauri/src/app/bootstrap.rs`）。
-3. **长期同步 scope 由 TT-Sync `DatasetPolicy` 定义**：LAN Sync v2 与 TT-Sync v2 消费同一份策略；LAN Sync v1 冻结旧 allowlist，不再扩展 Agent 等新范围。
+2. **本地 mutation 全局串行**：LAN Sync、TT-Sync v2 与第三方扩展 install/update/switch/delete/move 共用同一个 composition-root `Semaphore(1)`。所有本地写操作都用 `try_acquire_owned()` fail-fast；只发送远端 pull-request 的作业、extension discovery/version/branches 不占 permit（见 `src-tauri/crates/tauritavern/src/app/composition/services/{mod.rs,sync.rs}`）。
+3. **长期同步 scope 由 TT-Sync `DatasetPolicy` 定义**：LAN Sync 与 TT-Sync v2 消费同一份策略，不再存在独立的 LAN v1 allowlist。
 4. **v2 协议已落地 Bundle + zstd 传输形态**：把 N 个 per-file 请求收敛为 1 个 bundle 请求，并可选 zstd 压缩；旧的 per-file 端点仍保留作为 fallback。
-5. **Sync Panel 入口默认走 v2 scoped sync**：前端持久化一份 `DatasetSelection` 作为后续 LAN v2 / TT-Sync v2 默认范围，并要求对端支持 `bundle_v1 + zstd_v1`；旧 LAN v1 设备只保留兼容，不再作为面板主路径。
+5. **Sync Panel 入口默认走 scoped sync**：前端持久化一份 `DatasetSelection` 作为后续 LAN Sync / TT-Sync v2 默认范围，并要求对端支持 `bundle_v1 + zstd_v1`；不再静默降级到旧 LAN v1。
+6. **覆盖策略由逻辑发起方逐作业决定**：`Exact`（默认）保持同步源权威；`PreferNewer` 仅保护目标端修改时间严格更新的同路径文件。该策略贯穿手动与自动、LAN 与 TT-Sync 作业，不属于同步服务端配置。
 
 ---
 
@@ -31,13 +31,18 @@ TauriTavern 当前存在三种同步协议形态：
 当前目录结构（默认用户目录下）：
 
 - LAN Sync 状态：`default-user/user/lan-sync/`
-  - v1：`config.json` / `identity.json` / `paired-devices.json`（见 `src-tauri/src/infrastructure/lan_sync/store.rs`）
-  - 自动同步本地配置：`automation.json`（随 App 启动开端口、运行期自动上传目标/间隔/范围；见 `src-tauri/src/infrastructure/sync_automation_store.rs`）
-  - v2：`v2/identity.json` / `v2/peers.json` / v2 TLS 状态（见 `src-tauri/src/infrastructure/lan_sync/v2/store.rs`）
+  - LAN server 配置：`server-settings.json`（由旧 `config.json.v2_port` 一次迁移；同时保存随 App 启动开启同步端口的 `auto_start`）
+  - Sync 偏好：`sync-preferences.json`（保存手动默认 Sync mode 与全局 `overwrite_policy`；由旧 `config.json.sync_mode` 一次迁移，旧文件缺少策略时默认为 `Exact`；见 `src-tauri/crates/tt-adapter-sync/src/lan_sync/store.rs`）
+  - 自动同步规则：`automation.json`（运行期自动上传开关、目标、间隔、显式 Sync mode、范围与 bundle 要求；见 `src-tauri/crates/tt-adapter-sync/src/sync_automation_store.rs`）
+  - peer 状态：`v2/identity.json` / `v2/peers.json` / TLS 状态（见 `src-tauri/crates/tt-adapter-sync/src/sync/lan/store.rs`）
 - TT-Sync v2 状态：`default-user/user/lan-sync/tt-sync-v2/`
-  - `identity.json` / `paired-servers.json`（见 `src-tauri/src/infrastructure/tt_sync/store.rs`）
+  - `identity.json` / `paired-servers.json`（见 `src-tauri/crates/tt-adapter-sync/src/tt_sync/store.rs`）
 
-LAN Sync v2 与 TT-Sync v2 的 manifest 扫描严格遵循 `ttsync_core::dataset::ResolvedDatasetPolicy`，并且会排除 LAN/TT 同步状态目录（见 `src-tauri/src/infrastructure/tt_sync/fs.rs`）。当前 TauriTavern 默认数据集还会排除 `_tauritavern/prompt-cache/`、`_tauritavern/.ios-policy.json`、`_cache/`、`.staging` 与同步临时文件。
+LAN Sync 与 TT-Sync v2 的 manifest 扫描严格遵循 `ttsync_core::dataset::ResolvedDatasetPolicy`，并且会排除 LAN/TT 同步状态目录（见 `src-tauri/crates/tt-adapter-sync/src/tt_sync/fs.rs`）。当前 TauriTavern 默认数据集还会排除 `_tauritavern/prompt-cache/`、`_tauritavern/.ios-policy.json`、`_cache/`、`.staging` 与同步临时文件。
+
+`.git` 不是全局排除组件。`extensions.local` / `extensions.third_party` 中由 SillyTavern 迁移而来的 embedded `.git/**` 按普通数据路径参与所选 Dataset 同步；不要为 `.git` 新增名称级排除规则。`extensions.sources` 当前仍同步 `_tauritavern/extension-sources` 下的 source metadata，Gitoxide 扩展管理只把它作为 legacy JSON 的滚动兼容路径，不再在其中新增 bare repository。更早版本遗留在扩展根目录的 inline source JSON不再启动期搬迁，而是随扩展 Dataset保留到首次 Git写入转换。
+
+Mirror 删除计划文件后，文件系统适配器会继续清理因此变成 fileless 的父目录树，但永远保留 `ttsync-core` Dataset catalog 为 delete path 推导的最深匹配 `scan_root` boundary。清理会识别 gix 创建的 `objects/info`、`objects/pack`、`refs/heads`、`refs/tags` 等空 sibling 目录，只在候选子树完全由真实目录组成时按最深优先逐个调用 `remove_dir`；遍历时遇到 symlink、junction 或其他非目录节点会保留候选树，也不使用 `remove_dir_all`。file-only Dataset 只删除文件、不清理父目录；目录清理不新增 manifest entry、删除计数或进度事件。文件删除成功后的清理错误会按“目标已改变”fail-fast，并沿现有部分 mutation/reconcile 链路传播。
 
 默认 TauriTavern 数据集已经覆盖 Agent 连续性数据：
 
@@ -54,26 +59,36 @@ Agent run history 只同步终态运行。扫描器会读取 `run.json` / run in
 
 Agent run retention 复用同一套 run storage class 词汇来描述 `run_journal`、`run_context`、`run_workspace_projection`、`run_tool_io` 等路径归属，但 prune 策略不读取 `DatasetSelection`，同步 scope 仍只由 TT-Sync `DatasetPolicy` 决定。
 
-LAN Sync v1 仍使用原有固定 allowlist 和裸 `LanSyncManifest` plan 请求。它不会同步 Agent 数据，也不会接入 DatasetPolicy；新范围应进入 LAN Sync v2/TT-Sync v2。
-
 ---
 
 ## 3. 事件语义（前端可观测契约）
 
-两类产品入口都对前端暴露“阶段（phase）+ 进度（files/bytes）”事件，语义上保持一致：
+两类产品入口都通过统一作业事件暴露“阶段（phase）+ 进度（files/bytes）”与最终结果；手动命令仍返回 `SyncJobReport`，前端用命令返回负责手动完成/错误弹窗，避免同一作业双重提示。
 
-- LAN Sync（v1/v2 共用事件通道）：
+- 统一作业事件：
+  - 作业流：`sync:job`
+  - `job` 是轻量作业上下文：`id` / `endpoint` / `intent` / `execution` / `origin`；不暴露内部 `policy` / selection。
+  - progress payload：`status: "progress"`，携带 `job` 与 `progress`
+  - final payload：`status: "completed" | "remote_request_accepted" | "failed"`，携带 `job` 与 `result`
+  - `job.origin.type: "remote_request"` 表示“这是远端请求触发的本地作业”；`result.status: "remote_request_accepted"` 表示“本地请求对端稍后 pull 已被接受”，二者不是同一概念。
+
+- LAN Sync：
   - pairing 请求事件：`lan_sync:pair_request`
-  - 进度/完成/错误：`lan_sync:progress` / `lan_sync:completed` / `lan_sync:error`
-  - runtime：`src-tauri/src/infrastructure/lan_sync/runtime.rs`
+  - 进度/完成/错误：`sync:job`
+  - 手动作业完成/错误：命令返回 `SyncJobReport`；后台 inbound pull-request 由 `sync:job` final event 驱动提示和 reload。
+  - 应用边界：`src-tauri/crates/tt-application/src/services/lan_sync_service.rs`
+  - Tauri event / pairing approval adapter：`src-tauri/crates/tauritavern/src/app/composition/adapters.rs`
+  - Axum server lifecycle adapter：`src-tauri/crates/tt-adapter-sync/src/sync/lan/control.rs`
 - TT-Sync：
-  - 进度/完成/错误：`tt_sync:progress` / `tt_sync:completed` / `tt_sync:error`
-  - runtime：`src-tauri/src/infrastructure/tt_sync/runtime.rs`
+  - 进度/完成/错误：`sync:job`
+  - 完成/错误：手动命令通过 `SyncJobReport` 返回；不额外发 TT 专属 completed/error 事件。
+  - runtime：`src-tauri/crates/tt-adapter-sync/src/tt_sync/runtime.rs`
 - 自动同步：
   - 状态/提示：`sync_auto:status` / `sync_auto:toast`
-  - 自动 TT-Sync push 的 `tt_sync:*` payload 会额外带 `origin: "auto"`；前端监听器据此不打开手动进度弹窗，也不触发手动 pull 完成后的 reload。
+  - `last_success_at_ms` 只表示一次同步作业已经实际完成；LAN pull-request 只会更新 `last_request_accepted_at_ms`，不再记为成功完成。
+  - 自动同步作业的 `sync:job` payload 会携带 `job.origin.type: "scheduled"`；前端监听器据此不打开手动进度弹窗、不触发 reload。最终面板数据刷新由 `sync_auto:toast` 复用 `SYNC_AUTOMATION_CHANGED_EVENT` 触发。
 
-**不要破坏事件时序**：允许提升并发与吞吐，但不应改动“哪个阶段会发什么事件、完成/错误何时发”的外部语义。
+**不要破坏事件时序**：允许提升并发与吞吐，但不应改动“哪个阶段会发什么事件、作业完成/错误如何回到调用方”的外部语义。
 
 ---
 
@@ -83,11 +98,12 @@ Sync Panel 是 TauriTavern 自有设置面板，不属于上游 SillyTavern 事�
 
 - `src/scripts/tauri/setting/sync-app/**` 只做 Vue 展示组件，不直接访问 Tauri invoke、Popup、扫码服务或 SillyTavern host API。
 - `src/scripts/tauri/setting/setting-panel/sync-popup.js` 拥有 popup / Tauri invoke / QR 扫码能力，并负责把 UI 选择转换为命令参数。
-- `sync_v2_get_dataset_catalog` 返回当前 `DatasetPolicy` 版本、支持的数据集 ID、profile ID 与 TauriTavern 默认范围；前端只持久化 dataset ID，不持久化路径。
-- “Sync content”是独立持久化设置，保存在 localStorage。保存后所有 Sync Panel 发起的 LAN v2 pull、LAN v2 push-request、TT-Sync pull/push 默认都携带同一份 `DatasetSelection`。
+- `sync_get_dataset_catalog` 返回当前 `DatasetPolicy` 版本、支持的数据集 ID、profile ID 与 TauriTavern 默认范围；前端只持久化 dataset ID，不持久化路径。
+- “Sync content”是独立持久化设置，保存在 localStorage。保存后所有 Sync Panel 发起的 LAN Sync pull、LAN Sync push-request、TT-Sync pull/push 默认都携带同一份 `DatasetSelection`。
+- “File overwrite”是后端持久化的全局偏好，保存在 `sync-preferences.json`。所有新建的手动作业都会显式携带当前值；自动同步在每次创建作业时读取当前值，不把它复制进 `automation.json`。
 - 自动同步配置保存在后端本地 `automation.json`，不进入同步 scope。Sync Panel 保存自动同步设置或同步范围时，会把当前 `DatasetSelection` 写入这份本地配置，供面板关闭后的 Rust 调度器使用。
-- Sync Panel 展示并复制 LAN v2 pairing URI/QR；粘贴 LAN pairing URI 时只接受 `tauritavern://lan-sync/pair?v=2`。已存在的 LAN v1 设备会显示为 legacy，面板禁用其 pull/push 操作并要求重新 v2 配对。
-- Sync Panel 发起 v2 同步时传入 `require_bundle_zstd: true`。如果对端缺少 `bundle_v1` 或 `zstd_v1`，操作 fail-fast，不静默降级到 per-file 或 LAN v1。
+- Sync Panel 展示并复制 LAN pairing URI/QR；粘贴 LAN pairing URI 时只接受 `tauritavern://lan-sync/pair?v=2`。旧 LAN v1 设备不会再作为可同步目标出现，需要重新配对。
+- Sync Panel 发起同步时传入 `require_bundle_zstd: true`。如果对端缺少 `bundle_v1` 或 `zstd_v1`，操作 fail-fast，不静默降级到 per-file 或旧 LAN v1。
 
 ### 4.1 自动同步契约
 
@@ -95,17 +111,17 @@ Sync Panel 是 TauriTavern 自有设置面板，不属于上游 SillyTavern 事�
 - 自动同步只在 App 进程运行期间工作；冷启动后延迟 **45 秒** 才允许第一次自动上传。
 - 自动同步只做上传：
   - TT-Sync 目标：执行 v2 push。
-  - LAN v2 目标：发送 v2 pull-request，让对端从本机回拉；本机只能确认“上传请求已发送”，实际写入发生在目标设备。
-- TT-Sync 自动上传复用本机当前 Sync mode；Incremental / Mirror 都允许。LAN v2 自动上传沿用现有 pull-request 语义，实际下载与 Mirror delete 由目标设备执行，因此删除行为取决于目标设备的有效 Sync mode。Mirror 可能删除目标端不存在于源端的文件，面板固定提示同步期间不要在目标设备上使用或编辑数据。
-- 自动同步最小间隔为 5 分钟，最大间隔为 1440 分钟。配置启用时必须选择目标；LAN 自动目标必须是 v2 peer，TT-Sync 自动目标必须具备 write 权限。
-- “随 App 启动开启同步端口”只启动 LAN server / LAN v2 HTTPS server，不自动开启配对。
+  - LAN Sync 目标：发送 pull-request，让对端从本机回拉；本机只能确认“上传请求已发送”，实际写入发生在目标设备。
+- TT-Sync 自动上传的 Sync mode 是自动同步规则的一部分，不再隐式读取 LAN 手动同步偏好；Incremental / Mirror 都允许。LAN Sync 自动上传沿用现有 pull-request 语义，实际下载与 Mirror delete 由目标设备执行，因此删除行为取决于目标设备的有效 Sync mode。Mirror 可能删除目标端不存在于源端的文件，面板固定提示同步期间不要在目标设备上使用或编辑数据。
+- 自动同步最小间隔为 5 分钟，最大间隔为 1440 分钟。配置启用时必须选择目标；LAN 自动目标必须是 LAN Sync peer，TT-Sync 自动目标必须具备 write 权限，Mirror 模式还必须具备 mirror_delete 权限。
+- “随 App 启动开启同步端口”只启动 LAN HTTPS server，不自动开启配对。
 - 自动同步成功通过 SillyTavern `toastr.info` 提示；失败通过 `toastr.warning` 提示。手动同步仍使用原来的进度弹窗、完成弹窗与必要 reload。
 
 ---
 
 ## 5. v2 同步链路（现在如何工作）
 
-LAN Sync v2 与 TT-Sync v2 共享 `/v2/*` 协议族：
+LAN Sync 与 TT-Sync v2 共享 `/v2/*` 协议族：
 
 - `GET /v2/status`
 - `POST /v2/session/open`
@@ -115,11 +131,11 @@ LAN Sync v2 与 TT-Sync v2 共享 `/v2/*` 协议族：
 - `GET/PUT /v2/plans/{plan_id}/bundle`
 - `POST /v2/plans/{plan_id}/commit`
 
-两者差异主要在拓扑与配对入口：TT-Sync v2 绑定远端服务端；LAN Sync v2 由本机启动 HTTPS peer server，并在 LAN pairing URI 中携带 SPKI pin。
+两者差异主要在拓扑与配对入口：TT-Sync v2 绑定远端服务端；LAN Sync 由本机启动 HTTPS peer server，并在 LAN pairing URI 中携带 SPKI pin。
 
 ### 5.1 TT-Sync v2 Pair（绑定远端服务端）
 
-入口：`tt_sync_pair`（`src-tauri/src/presentation/commands/tt_sync_commands.rs`）→ `TtSyncService::pair`（`src-tauri/src/application/services/tt_sync_service.rs`）。
+入口：`tt_sync_pair`（`src-tauri/crates/tauritavern/src/presentation/commands/tt_sync_commands.rs`）→ `TtSyncService::pair`（`src-tauri/crates/tt-application/src/services/tt_sync_service.rs`）。
 
 链路要点：
 
@@ -129,20 +145,20 @@ LAN Sync v2 与 TT-Sync v2 共享 `/v2/*` 协议族：
 
 契约：
 
-- `base_url` **必须是 https**，并进行 **SPKI pinning**（见 `src-tauri/src/infrastructure/tt_sync/v2_api.rs`）。
+- `base_url` **必须是 https**，并进行 **SPKI pinning**（见 `src-tauri/crates/tt-adapter-sync/src/sync/http_client.rs`）。
 - Pair 只建立信任与权限，不传输用户数据。
 
 ### 5.2 TT-Sync v2 Push / Pull（远端同步）
 
-入口：`tt_sync_push` / `tt_sync_pull`（`src-tauri/src/presentation/commands/tt_sync_commands.rs`）。
+入口：`tt_sync_push` / `tt_sync_pull`（`src-tauri/crates/tauritavern/src/presentation/commands/tt_sync_commands.rs`）。
 
-共同步骤：
+共同步骤由 `SyncJobCoordinator` 串行化，并通过 `ttsync_client::ClientSyncEngine` 执行共享 pull/direct-push 状态机：
 
-1. **全局 permit**：尝试获取同步许可；失败则发 error 事件并直接返回（见 `src-tauri/src/application/services/tt_sync_service.rs`）。
-2. `POST /v2/session/open`：用 Ed25519 对 canonical request 签名，获得 `session_token` 与 `granted_permissions`。
-3. Status：读取 `GET /v2/status`，必须支持 `dataset_scope_v1` 且 `dataset_policy_version` 匹配；旧 server 会 fail-fast，避免静默漏同步 Agent 数据。
-4. Scanning：按调用方传入的 `DatasetSelection` 扫描本地 manifest；未显式传入时使用 TauriTavern default selection（`src-tauri/src/infrastructure/tt_sync/fs.rs`）。
-5. Diffing：携带同一份 `DatasetSelection` 请求 plan：
+1. **全局 permit**：尝试获取同步许可；失败则直接返回失败 `SyncJobReport`。
+2. Status：读取 `GET /v2/status`，必须支持 `dataset_scope_v1` 且 `dataset_policy_version` 匹配；选择 `PreferNewer` 时还必须支持 `overwrite_policy_v1`。能力不满足会在 session、扫描和 mutation 前 fail-fast。
+3. `POST /v2/session/open`：用 Ed25519 对 canonical request 签名，获得 `session_token` 与 `granted_permissions`。
+4. Scanning：按调用方显式传入的 `DatasetSelection` 扫描本地 manifest；缺失 selection 会 fail-fast，不再回退到旧固定范围或隐式默认范围。
+5. Diffing：携带同一份 `DatasetSelection` 与作业的 `overwrite_policy` 请求 plan：
    - pull：`POST /v2/sync/pull-plan`
    - push：`POST /v2/sync/push-plan`
 6. Transfer：
@@ -154,23 +170,25 @@ LAN Sync v2 与 TT-Sync v2 共享 `/v2/*` 协议族：
 
 pull 的额外步骤：
 
-- pull 完成后会刷新运行时缓存（避免前端继续使用旧索引/缓存），见 `TtSyncService::pull`。
+- pull 成功或失败但已修改本地数据时，会通过 `DataChangeReconciler` 刷新运行时缓存，避免前端继续使用旧索引/缓存。
 
 push 的额外步骤：
 
 - push 在上传完毕后 `POST /v2/plans/{plan_id}/commit`，Mirror delete 只在 commit 阶段生效（保持语义一致性）。
 
-### 5.3 LAN Sync v2 Pair / Pull / Push（局域网 peer）
+### 5.3 LAN Sync Pair / Pull / Push（局域网 peer）
 
-入口仍是现有 LAN Sync 命令面（`src-tauri/src/presentation/commands/lan_sync_commands.rs`）：
+入口仍是现有 LAN Sync 命令面（`src-tauri/crates/tauritavern/src/presentation/commands/lan_sync_commands.rs`）：
 
-1. `lan_sync_start_server` 会同时启动 v1 HTTP server 与 v2 HTTPS server。
-2. `lan_sync_enable_pairing` / `lan_sync_get_pairing_info` 同时返回 v1 与 v2 pairing URI/QR；v2 URI 包含 `base_url`、pair token、过期时间与 `spki_sha256`。Sync Panel 默认只展示 v2 URI/QR。
-3. `lan_sync_request_pairing` 可解析 v1/v2 URI。v2 pairing 通过 `POST /v2/lan/pair/complete` 建立 Ed25519 身份、SPKI pin 与 peer grant。
-4. `lan_sync_sync_from_device` 优先识别 v2 peer，并走 LAN Sync v2 pull；找不到 v2 peer 时，只有未传 `SyncV2OperationOptions` 的旧调用才 fallback 到 v1 pull。Sync Panel 总是传 options，因此不会静默落回 v1。
-5. `lan_sync_push_to_device` 对 v2 peer 不直接上传文件，而是 `POST /v2/lan/pull-request` 请求对端回拉；pull-request body 会携带同一份 `SyncV2OperationOptions`，实际数据传输仍发生在对端的 v2 pull 链路。对端需声明 `lan_pull_request_selection_v1` 才能接受 Sync Panel 的 scoped push-request。
+1. `lan_sync_start_server` 启动单一 LAN HTTPS server。
+2. `lan_sync_enable_pairing` / `lan_sync_get_pairing_info` 返回当前 LAN pairing URI/QR；URI 包含 `base_url`、pair token、过期时间与 `spki_sha256`。
+3. `lan_sync_request_pairing` 只接受 `tauritavern://lan-sync/pair?v=2`，并通过 `POST /v2/lan/pair/complete` 建立 Ed25519 身份、SPKI pin 与 peer grant。
+4. `lan_sync_sync_from_device` 直接按 peer store 查找目标并走 LAN Sync pull；找不到 peer 时 fail-fast，不回退到旧 v1 pull。
+5. `lan_sync_push_to_device` 不直接上传文件，而是 `POST /v2/lan/pull-request` 请求对端回拉；pull-request body 会携带同一份 `SyncOperationOptions`，包括发起方选择的 `overwrite_policy`，实际数据传输仍发生在对端的 pull 链路。对端需声明 `lan_pull_request_selection_v1`；使用 `PreferNewer` 时还需声明 `lan_pull_request_overwrite_policy_v1`。
 
-LAN Sync v2 默认权限是 `read: true`、`mirror_delete: true`、`write: false`。也就是说 peer 可以从本机读取并按 Mirror 语义计算删除，但不能直接向本机 PUT 写入；局域网“push”通过通知对端 pull 来保持写入方向清晰。
+LAN push 的覆盖策略仍归原始发起方所有，但实际回拉端继续使用自己的有效 Sync mode，因为 Mirror delete 发生在目标端。不要把这两个所有权合并。
+
+LAN Sync 默认权限是 `read: true`、`mirror_delete: true`、`write: false`。也就是说 peer 可以从本机读取并按 Mirror 语义计算删除，但不能直接向本机 PUT 写入；局域网“push”通过通知对端 pull 来保持写入方向清晰。
 
 ---
 
@@ -183,11 +201,14 @@ LAN Sync v2 默认权限是 `read: true`、`mirror_delete: true`、`write: false
 - `bundle_v1`：支持 bundle 端点
 - `zstd_v1`：支持 bundle 的 zstd 编解码
 - `dataset_scope_v1`：支持携带 `DatasetSelection` 的 scope-aware plan/delete
-- `lan_pull_request_selection_v1`：LAN v2 peer 支持在 `/v2/lan/pull-request` body 中携带 `DatasetSelection`
+- `overwrite_policy_v1`：plan request 支持按请求中的 `overwrite_policy` 计算计划
+- `lan_pull_request_selection_v1`：LAN peer 支持在 `/v2/lan/pull-request` body 中携带 `DatasetSelection`
+- `lan_pull_request_overwrite_policy_v1`：LAN peer 会在 pull-request 到回拉作业的两跳链路中保留 `overwrite_policy`
 
-客户端策略（见 `src-tauri/src/infrastructure/tt_sync/push.rs`、`src-tauri/src/infrastructure/tt_sync/pull.rs`、`src-tauri/src/infrastructure/lan_sync/v2/pull.rs`）：
+客户端策略（见 `ttsync_client::ClientSyncEngine` 与 `src-tauri/crates/tt-adapter-sync/src/sync/job_executor.rs`）：
 
 - `dataset_scope_v1` 缺失或策略版本不匹配时直接报错。
+- `Exact` 与旧 v2 peer 保持原语义；`PreferNewer` 缺少相应通用能力（或 LAN pull-request 专属能力）时直接报错，不静默降级。
 - 未要求严格传输形态的旧调用：仅当存在 `bundle_v1` 才启用 bundle；仅当同时存在 `bundle_v1` + `zstd_v1` 才启用 zstd。
 - Sync Panel 调用：传入 `require_bundle_zstd: true`，缺少 `bundle_v1` 或 `zstd_v1` 都会 fail-fast。
 
@@ -197,9 +218,9 @@ LAN Sync v2 默认权限是 `read: true`、`mirror_delete: true`、`write: false
 
 实现要点：
 
-- LAN Sync 使用默认并发（桌面 4 / 移动 2）：`src-tauri/src/infrastructure/sync_transfer.rs`
-- TT-Sync 使用更高并发（桌面 16 / 移动 8）：`src-tauri/src/infrastructure/tt_sync/transfer.rs`
-- 所有写入都走原子写入并保留 mtime：`src-tauri/src/infrastructure/sync_fs.rs`
+- LAN Sync 使用默认并发（桌面 4 / 移动 2）：`src-tauri/crates/tt-adapter-sync/src/sync_transfer.rs`
+- TT-Sync 使用更高并发（桌面 16 / 移动 8）：`src-tauri/crates/tt-adapter-sync/src/sync/job_executor.rs`
+- 所有写入都走原子写入并保留 mtime：`src-tauri/crates/tt-adapter-sync/src/sync_fs.rs`
 
 ### 6.3 bundle（bundle_v1：把 N 个文件合并为 1 个请求）
 
@@ -212,7 +233,7 @@ LAN Sync v2 默认权限是 `read: true`、`mirror_delete: true`、`write: false
 
 - `Content-Type: application/x-ttsync-bundle`
 
-wire framing（见 `src-tauri/src/infrastructure/sync_bundle.rs`）：
+wire framing（见 TT-Sync 的 `ttsync_core::bundle` / `ttsync_client::bundle`）：
 
 1. `path_len: u32`（大端）
 2. `path: [u8; path_len]`（UTF-8；必须能构造为 `SyncPath`）
@@ -232,7 +253,7 @@ wire framing（见 `src-tauri/src/infrastructure/sync_bundle.rs`）：
 - pull：客户端发送 `Accept-Encoding: zstd`；服务端返回 `Content-Encoding: zstd` 或 identity
 - push：客户端仅在确认 `zstd_v1` 后才发送 `Content-Encoding: zstd`
 
-当前 LAN Sync v2 pull 与 TT-Sync v2 pull 共用 `src-tauri/src/infrastructure/sync_bundle.rs` 解包路径；TT-Sync v2 push 也复用同一组 bundle framing helper。
+当前 LAN Sync pull、TT-Sync v2 pull 与 TT-Sync v2 push 共用 TT-Sync shared engine 的 bundle framing helper。
 
 ---
 
@@ -240,17 +261,19 @@ wire framing（见 `src-tauri/src/infrastructure/sync_bundle.rs`）：
 
 当前实现 **不做 byte-range resume**，但保证“断线不会破坏数据”，并提供可接受的重试语义：
 
-1. **每文件精确读取**：bundle 解包按 plan 的 `size_bytes` 精确读取；若底层流提前 EOF，会报错并中止（见 `ExactSizeReader`：`src-tauri/src/infrastructure/sync_bundle.rs`）。
-2. **原子写入**：每文件都走 `tmp → rename → set mtime`；断线发生在写入过程中只会留下 tmp，不会覆盖目标文件（`src-tauri/src/infrastructure/sync_fs.rs`）。
+1. **每文件精确读取**：bundle 解包按 plan 的 `size_bytes` 精确读取；若底层流提前 EOF，会报错并中止（见 TT-Sync 的 `ExactSizeReader`）。
+2. **原子写入**：每文件都走 `tmp → set mtime → rename`；断线发生在写入过程中只会留下 tmp，不会覆盖目标文件（`src-tauri/crates/tt-adapter-sync/src/sync_fs.rs`）。
 3. **自然续传**：失败后重新扫描 manifest 并重新计算 plan；已成功写入的文件会因为 `(size_bytes, modified_ms)` 匹配而不再出现在新 plan.transfer 中。
+4. **Mirror 目录清理**：成功删除文件后只清理 Dataset boundary 内的 fileless 祖先树；候选树仍含文件或链接时停止，非 `DirectoryNotEmpty` I/O 错误直接失败。
 
 ---
 
 ## 8. 明确不支持（避免误解的非目标）
 
-- 同步 scope 内 **不支持 symlink**（扫描时直接报错，见 `src-tauri/src/infrastructure/tt_sync/fs.rs`）。
+- 同步 scope 内 **不支持 symlink**（扫描时直接报错，见 `src-tauri/crates/tt-adapter-sync/src/tt_sync/fs.rs`）。
 - v2 协议 **不提供** bundle 内的 byte-range/断点续传；重试依赖“自然续传”。
-- 不允许 LAN Sync v1/v2 与 TT-Sync v2 并发执行（全局 permit 设计即为此）。
+- 不允许 LAN Sync 与 TT-Sync v2 并发执行（全局 permit 设计即为此）。
+- `PreferNewer` 不是双向 merge 或通用冲突解决：它只比较同路径文件的 `modified_ms`，依赖设备时钟基本同步；Mirror 仍会删除目标端独有文件。
 
 ---
 
@@ -261,6 +284,8 @@ wire framing（见 `src-tauri/src/infrastructure/sync_bundle.rs`）：
 3. **不要破坏 mtime 语义**：增量 diff 依赖 `(size_bytes, modified_ms)`，写入必须保留 `modified_ms`。
 4. **不要改动事件语义**：阶段划分与完成/错误时序对前端是契约。
 5. **不要把 iOS policy 本地缓存纳入 scope**：`_tauritavern/.ios-policy.json` 属于 iOS-only 宿主本地状态，用于避免同步覆盖 `tauritavern-settings.json` 时丢失已解锁的 policy。
-6. **不要在 v2 链路重新引入手写 scope 数组**：新增同步目录必须先进入 TT-Sync `DatasetPolicy`，再由 LAN Sync v2/TT-Sync v2 消费。
+6. **不要在 v2 链路重新引入手写 scope 数组**：新增同步目录必须先进入 TT-Sync `DatasetPolicy`，再由 LAN Sync/TT-Sync v2 消费。
 7. **不要把敏感/重型 Agent 数据默认并入无选择同步**：`model-responses/`、`checkpoints/` 与密钥文件需要保持独立数据集。
 8. **不要绕过 Sync Panel 的持久化 selection**：前端显示、保存、命令参数必须围绕 `DatasetSelection`；不要在 UI 中复制路径规则或用 manifest omission 伪装范围选择。
+9. **不要把覆盖策略移回服务端配置**：它是逻辑发起方的作业输入；LAN push 必须透传发起方策略，同时保留目标端对 Sync mode 的所有权。
+10. **不要绕过 Dataset boundary 清理目录**：Mirror 删除只能清理 Dataset catalog 为 delete path 推导的 boundary 内的 fileless 祖先树；不得改用物理 data root、手写路径表或 `remove_dir_all`。

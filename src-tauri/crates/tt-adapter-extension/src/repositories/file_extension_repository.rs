@@ -1,0 +1,271 @@
+use async_trait::async_trait;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use tt_adapter_http::HttpClientPool;
+use tt_adapter_storage_core::file_system::read_json_file;
+use tt_domain::errors::DomainError;
+use tt_domain::models::extension::{
+    Extension, ExtensionBranch, ExtensionInstallResult, ExtensionManifestMetadata,
+    ExtensionUpdateResult, ExtensionVersion,
+};
+use tt_ports::repositories::extension_repository::ExtensionRepository;
+
+mod branches;
+mod delete;
+mod directory_ops;
+mod discovery;
+mod git_http;
+mod git_remote;
+mod git_worktree;
+mod install;
+mod move_op;
+mod source_store;
+mod switch;
+mod update;
+mod version;
+
+#[cfg(test)]
+mod git_test_server;
+#[cfg(test)]
+mod tests;
+
+use self::source_store::{ExtensionSourceStore, ExtensionStoreScope};
+
+pub struct FileExtensionRepository {
+    user_extensions_dir: PathBuf,
+    global_extensions_dir: PathBuf,
+    http_clients: Arc<HttpClientPool>,
+    source_store: ExtensionSourceStore,
+}
+
+/// Built-in extensions enabled in TauriTavern.
+/// Keep this list explicit so custom built-ins remain predictable after upstream sync.
+const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
+    "regex",
+    "code-render",
+    "connection-manager",
+    "data-migration",
+    "attachments",
+    "quick-reply",
+    "stable-diffusion",
+    "vectors",
+    "tauritavern-version",
+    "agent-system",
+    "translate",
+    "tts",
+];
+const THIRD_PARTY_EXTENSION_NAME_PREFIX: &str = "third-party/";
+
+fn is_forbidden_extension_folder_char(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0000}'..='\u{001F}' | '\u{007F}' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+    )
+}
+
+fn is_valid_extension_folder_segment(segment: &str) -> bool {
+    !(segment.is_empty()
+        || segment == "."
+        || segment == ".."
+        || segment.contains('/')
+        || segment.contains('\\')
+        || segment.chars().any(is_forbidden_extension_folder_char))
+}
+
+fn parse_third_party_extension_folder_name(value: &str) -> Option<String> {
+    let normalized = value.trim().replace('\\', "/");
+    let normalized = normalized.trim_matches('/');
+    let normalized = normalized
+        .strip_prefix(THIRD_PARTY_EXTENSION_NAME_PREFIX)
+        .unwrap_or(normalized);
+
+    let mut segments = normalized.split('/');
+    let folder_name = segments.next()?;
+    if !is_valid_extension_folder_segment(folder_name) || segments.next().is_some() {
+        return None;
+    }
+
+    Some(folder_name.to_string())
+}
+
+fn sanitize_third_party_extension_folder_name(value: &str) -> Option<String> {
+    let sanitized = value
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => c,
+        })
+        .collect::<String>();
+
+    is_valid_extension_folder_segment(&sanitized).then_some(sanitized)
+}
+
+impl FileExtensionRepository {
+    pub fn new(
+        user_extensions_dir: PathBuf,
+        global_extensions_dir: PathBuf,
+        source_store_root: PathBuf,
+        http_clients: Arc<HttpClientPool>,
+    ) -> Self {
+        Self {
+            user_extensions_dir,
+            global_extensions_dir,
+            http_clients,
+            source_store: ExtensionSourceStore::new(source_store_root),
+        }
+    }
+
+    fn extension_base_dir(&self, global: bool) -> &Path {
+        if global {
+            &self.global_extensions_dir
+        } else {
+            &self.user_extensions_dir
+        }
+    }
+
+    fn extension_dir_for_scope(&self, scope: ExtensionStoreScope) -> &Path {
+        match scope {
+            ExtensionStoreScope::Local => &self.user_extensions_dir,
+            ExtensionStoreScope::Global => &self.global_extensions_dir,
+        }
+    }
+
+    fn extension_folder_name_from_identifier(
+        &self,
+        extension_name: &str,
+    ) -> Result<String, DomainError> {
+        parse_third_party_extension_folder_name(extension_name).ok_or_else(|| {
+            DomainError::InvalidData(format!("Invalid extension name: {}", extension_name))
+        })
+    }
+
+    fn install_folder_name_from_repo_name(repo_name: &str) -> Result<String, DomainError> {
+        sanitize_third_party_extension_folder_name(repo_name).ok_or_else(|| {
+            DomainError::InvalidData(format!("Invalid extension repository name: {}", repo_name))
+        })
+    }
+
+    fn resolve_extension_path(&self, extension_folder_name: &str, global: bool) -> PathBuf {
+        self.extension_base_dir(global).join(extension_folder_name)
+    }
+
+    async fn read_manifest_metadata(
+        &self,
+        extension_path: &Path,
+    ) -> Result<Option<ExtensionManifestMetadata>, DomainError> {
+        let manifest_path = extension_path.join("manifest.json");
+        if !manifest_path.exists() {
+            return Ok(None);
+        }
+
+        let manifest: ExtensionManifestMetadata = read_json_file(&manifest_path).await?;
+        Ok(Some(manifest))
+    }
+}
+
+#[async_trait]
+impl ExtensionRepository for FileExtensionRepository {
+    async fn discover_extensions(&self) -> Result<Vec<Extension>, DomainError> {
+        discovery::discover_extensions(self).await
+    }
+
+    async fn install_extension(
+        &self,
+        url: &str,
+        global: bool,
+        branch: Option<String>,
+    ) -> Result<ExtensionInstallResult, DomainError> {
+        install::install_extension(self, url, global, branch).await
+    }
+
+    async fn update_extension(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<ExtensionUpdateResult, DomainError> {
+        update::update_extension(self, extension_name, global).await
+    }
+
+    async fn delete_extension(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<(), DomainError> {
+        delete::delete_extension(self, extension_name, global).await
+    }
+
+    async fn get_extension_version(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<ExtensionVersion, DomainError> {
+        version::get_extension_version(self, extension_name, global).await
+    }
+
+    async fn get_extension_branches(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<Vec<ExtensionBranch>, DomainError> {
+        branches::get_extension_branches(self, extension_name, global).await
+    }
+
+    async fn switch_extension_branch(
+        &self,
+        extension_name: &str,
+        branch: &str,
+        global: bool,
+    ) -> Result<(), DomainError> {
+        switch::switch_extension_branch(self, extension_name, branch, global).await
+    }
+
+    async fn move_extension(
+        &self,
+        extension_name: &str,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), DomainError> {
+        move_op::move_extension(self, extension_name, source, destination).await
+    }
+}
+
+#[cfg(test)]
+mod extension_folder_name_tests {
+    use super::{
+        parse_third_party_extension_folder_name, sanitize_third_party_extension_folder_name,
+    };
+
+    #[test]
+    fn parses_extension_folder_name_with_optional_prefix() {
+        assert_eq!(
+            parse_third_party_extension_folder_name("third-party/mobile").as_deref(),
+            Some("mobile")
+        );
+        assert_eq!(
+            parse_third_party_extension_folder_name("/third-party/mobile/").as_deref(),
+            Some("mobile")
+        );
+        assert_eq!(
+            parse_third_party_extension_folder_name("mobile").as_deref(),
+            Some("mobile")
+        );
+    }
+
+    #[test]
+    fn rejects_nested_extension_identifier() {
+        assert_eq!(
+            parse_third_party_extension_folder_name("third-party/mobile/nested"),
+            None
+        );
+    }
+
+    #[test]
+    fn sanitizes_install_folder_name() {
+        assert_eq!(
+            sanitize_third_party_extension_folder_name(" mobile:ext? ").as_deref(),
+            Some("mobile_ext_")
+        );
+    }
+}

@@ -97,6 +97,7 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
 
     /** @type {WeakSet<HTMLElement>} */
     let scannedMessages = new WeakSet();
+    let disposed = false;
 
     /** @param {HTMLElement} messageElement */
     const scanMessageElement = (messageElement) => {
@@ -258,10 +259,16 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
     });
 
     const onChatChanged = () => {
+        if (disposed) {
+            return;
+        }
         scannedMessages = new WeakSet();
         scanUnseenMessages();
     };
     const onChatLoaded = () => {
+        if (disposed) {
+            return;
+        }
         scanUnseenMessages();
     };
     const onMoreMessagesLoaded = () => {
@@ -289,8 +296,18 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
     observer.observe(chat, { childList: true, subtree: true });
     chat.addEventListener('click', onClick, true);
 
-    eventSource.makeLast(event_types.CHAT_CHANGED, onChatChanged);
-    eventSource.makeLast(event_types.CHAT_LOADED, onChatLoaded);
+    const makeChatOpenListenersLast = () => {
+        eventSource.makeLast(event_types.CHAT_CHANGED, onChatChanged);
+        eventSource.makeLast(event_types.CHAT_LOADED, onChatLoaded);
+    };
+    const onExtensionSettingsLoaded = () => {
+        if (!disposed) {
+            makeChatOpenListenersLast();
+        }
+    };
+
+    makeChatOpenListenersLast();
+    eventSource.on(event_types.EXTENSION_SETTINGS_LOADED, onExtensionSettingsLoaded);
     eventSource.makeLast(event_types.MORE_MESSAGES_LOADED, onMoreMessagesLoaded);
 
     eventSource.makeLast(event_types.USER_MESSAGE_RENDERED, onUserMessageRendered);
@@ -300,11 +317,13 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
 
     return {
         dispose: () => {
+            disposed = true;
             observer.disconnect();
             chat.removeEventListener('click', onClick, true);
 
             eventSource.removeListener(event_types.CHAT_CHANGED, onChatChanged);
             eventSource.removeListener(event_types.CHAT_LOADED, onChatLoaded);
+            eventSource.removeListener(event_types.EXTENSION_SETTINGS_LOADED, onExtensionSettingsLoaded);
             eventSource.removeListener(event_types.MORE_MESSAGES_LOADED, onMoreMessagesLoaded);
 
             eventSource.removeListener(event_types.USER_MESSAGE_RENDERED, onUserMessageRendered);

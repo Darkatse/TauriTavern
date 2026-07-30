@@ -17,14 +17,7 @@ interface Window {
     _?: any;
 
     __TAURITAVERN_THUMBNAIL__?: (type: string, file: string, useTimestamp?: boolean) => string;
-    __TAURITAVERN_THUMBNAIL_BLOB_URL__?: (
-        type: string,
-        file: string,
-        options?: { animated?: boolean; useTimestamp?: boolean },
-    ) => Promise<string>;
     __TAURITAVERN_BACKGROUND_PATH__?: (file: string) => string;
-    __TAURITAVERN_AVATAR_PATH__?: (file: string) => string | null;
-    __TAURITAVERN_PERSONA_PATH__?: (file: string) => string;
 
     __TAURITAVERN_IMPORT_ARCHIVE_PICKER__?: {
         onNativeResult: (payload: any) => void;
@@ -64,15 +57,8 @@ type TauriTavernHostInvokeApi = {
 };
 
 type TauriTavernHostAssetsApi = {
-    thumbnailUrl?: (type: string, file: string, useTimestamp?: boolean) => string;
-    thumbnailBlobUrl?: (
-        type: string,
-        file: string,
-        options?: { animated?: boolean; useTimestamp?: boolean },
-    ) => Promise<string>;
-    backgroundPath?: (file: string) => string;
-    avatarPath?: (file: string) => string | null;
-    personaPath?: (file: string) => string;
+    thumbnailUrl: (type: string, file: string, useTimestamp?: boolean) => string;
+    backgroundPath: (file: string) => string;
 };
 
 type TauriTavernChatApi = {
@@ -498,6 +484,15 @@ type TauriTavernAgentPromptAssemblyApi = {
         generationIntent: any;
         assembly: any;
     }>;
+    buildCurrentModelConnectionSnapshot: (input: {
+        settings: Record<string, any>;
+        model: string;
+        secretId?: string | null;
+    }) => Promise<Record<string, any>>;
+    applyCurrentModelConnectionSnapshot: (input: {
+        settings: Record<string, any>;
+        currentModelConnection: Record<string, any>;
+    }) => Promise<Record<string, any>>;
 };
 
 type TauriTavernAgentRetentionApi = {
@@ -924,8 +919,74 @@ type TauriTavernLayoutApi = {
     ) => Promise<TauriTavernHostUnsubscribe>;
 };
 
+type TauriTavernCharacterCardsPickOptions = {
+    multiple?: boolean;
+    title?: string;
+};
+
+type TauriTavernCharacterCardsApi = {
+    isNativePickerAvailable: () => boolean;
+    pickFiles: (options?: TauriTavernCharacterCardsPickOptions) => Promise<File[] | null>;
+};
+
+type TauriTavernChatSurfaceDisposable = (() => void) | { dispose: () => void };
+
+type TauriTavernChatSurfaceDetachedContext = {
+    readonly mesid: number;
+    readonly content: HTMLElement;
+};
+
+type TauriTavernChatSurfaceMountedContext = TauriTavernChatSurfaceDetachedContext & {
+    readonly element: HTMLElement;
+    readonly signal: AbortSignal;
+};
+
+type TauriTavernChatSurfaceRuntimeContext = {
+    readonly mesid: number;
+    readonly source: Element;
+    readonly element: HTMLElement;
+    readonly content: HTMLElement;
+    readonly signal: AbortSignal;
+};
+
+type TauriTavernChatSurfaceRuntimeClaims = {
+    claim: (
+        source: Element,
+        activate: (context: TauriTavernChatSurfaceRuntimeContext) => TauriTavernChatSurfaceDisposable,
+    ) => void;
+};
+
+type TauriTavernChatSurfaceParticipant = {
+    id: string;
+    protocolVersion: 1;
+    prepareContent?: (
+        context: TauriTavernChatSurfaceDetachedContext,
+        claims: TauriTavernChatSurfaceRuntimeClaims,
+    ) => void;
+    didMount?: (
+        context: TauriTavernChatSurfaceMountedContext,
+    ) => void | TauriTavernChatSurfaceDisposable;
+    didCommitContent?: (
+        context: TauriTavernChatSurfaceMountedContext,
+    ) => void | TauriTavernChatSurfaceDisposable;
+};
+
+type TauriTavernChatSurfaceRegistration = {
+    fault: (error: unknown) => void;
+};
+
+type TauriTavernChatSurfaceApi = {
+    readonly protocolVersion: 1;
+    isManagedOwnershipRequired: () => boolean;
+    registerParticipant: (
+        participant: TauriTavernChatSurfaceParticipant,
+    ) => TauriTavernChatSurfaceRegistration;
+};
+
 type TauriTavernHostApi = {
     chat?: TauriTavernChatApi;
+    chatSurface?: TauriTavernChatSurfaceApi;
+    characterCards?: TauriTavernCharacterCardsApi;
     agent?: TauriTavernAgentApi;
     llmConnections?: TauriTavernLlmConnectionsApi;
     skill?: TauriTavernSkillApi;
@@ -936,7 +997,7 @@ type TauriTavernHostApi = {
 };
 
 type TauriTavernHostAbi = {
-    abiVersion: number;
+    abiVersion: 1;
     traceHeader: string;
     ready: Promise<void> | null;
     invoke: TauriTavernHostInvokeApi;
@@ -1052,7 +1113,7 @@ type TauriTavernChatHistoryPage = {
 };
 
 type TauriTavernChatWindowInfo = {
-    mode: 'windowed' | 'off';
+    mode: 'off';
     chatKind: TauriTavernChatRef['kind'];
     chatRef: TauriTavernChatRef;
     totalCount: number;

@@ -28,5 +28,16 @@
     "No backgrounds available": "No backgrounds available",
     "Dynamic Theme & Wallpaper hint": "Automatically switch TauriTavern themes and global wallpapers with the system light/dark mode.",
     "Dynamic Theme help: mapping": "Day = system light mode. Night = system dark mode.",
-    "Dynamic Theme help: behavior": "Theme switching behaves like changing the theme dropdown. Wallpaper switching updates the global SillyTavern background and respects chat-locked backgrounds."
+    "Dynamic Theme help: behavior": "Theme switching behaves like changing the theme dropdown. Wallpaper switching updates the global SillyTavern background and respects chat-locked backgrounds.",
+    "Last request accepted": "Last request accepted",
+    "Auto sync upload request has been accepted as scheduled.": "Auto sync upload request has been accepted as scheduled.",
+    "Auto sync upload request has been accepted as scheduled. Next sync time: ${0}": "Auto sync upload request has been accepted as scheduled. Next sync time: ${0}",
+    "Sync preferences": "Sync preferences",
+    "When files conflict": "When files conflict",
+    "Initiator wins (default)": "Initiator wins (default)",
+    "Newer copy wins": "Newer copy wins",
+    "Keep the initiator's copy.": "Keep the initiator's copy.",
+    "Keep the copy with the later modification time.": "Keep the copy with the later modification time.",
+    "The initiator's copy replaces the other side.": "The initiator's copy replaces the other side.",
+    "Modification time decides which copy wins. Keep device clocks synchronized; Mirror can still delete destination-only files.": "Modification time decides which copy wins. Keep device clocks synchronized; Mirror can still delete destination-only files."
 }

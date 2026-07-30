@@ -6,7 +6,7 @@
 
 - 真实提示词组装仍由前端 SillyTavern `PromptManager` 完成，Rust 不重写近似版 prompt builder。
 - Rust 负责解析 `ResolvedAgentProfile`、加载 preset、解析 LLM Connection，并生成前端 broker request。
-- `FrozenRunInputSnapshot` 是本次 run 的输入事实；broker 只能从其中读取 `promptInputs`、`worldInfoActivation`、`macroContext`。
+- `FrozenRunInputSnapshot` 是本次 run 的输入事实；broker 只能从其中读取 `promptInputs`、`worldInfoActivation`、`macroContext` 与本轮冻结的 `currentModelConnection`。
 - `preset.ref` 是 prompt compiler input，不是对现有 `promptSnapshot` 的字符串补丁。
 - `model.connectionRef + modelId` 与 preset provider source 解耦；preset 不拥有 endpoint、secret、最终 source/model。
 - Profile 导出或嵌入到 Preset/Character 时必须移除本机 `connectionRef + modelId`，写为 `model.mode = "requiresConfiguration"`。
@@ -38,7 +38,7 @@
 
 `model.mode`：
 
-- `currentPromptSnapshot`：沿用 prompt snapshot 中已有 source/model。
+- `currentPromptSnapshot`：沿用本轮 `FrozenRunInputSnapshot.currentModelConnection` 冻结的 source/model/endpoint/secret；当 `preset.mode = ref` 时，用它覆盖 preset 的连接字段。
 - `connectionRef`：通过 `LlmConnectionService` 解析 connection 与 `modelId`，覆盖组装 settings 与最终 runtime payload。
 - `requiresConfiguration`：可保存、可导入、可展示的未配置模型状态；运行或 prompt assembly 前必须 fail-fast，用户需在本机重新选择模型后才能使用。
 
@@ -57,7 +57,19 @@
   "generationType": "normal",
   "promptInputs": {},
   "worldInfoActivation": {},
-  "macroContext": {}
+  "macroContext": {},
+  "currentModelConnection": {
+    "schemaVersion": 1,
+    "kind": "tauritavern.currentModelConnectionSnapshot",
+    "settings": {
+      "chat_completion_source": "custom",
+      "model": "opencode-model",
+      "custom_model": "opencode-model",
+      "custom_url": "https://opencode.example/v1",
+      "custom_api_format": "openai_compat",
+      "secret_id": "opencode-secret"
+    }
+  }
 }
 ```
 
@@ -66,6 +78,7 @@
 - `promptInputs`：本次 Generate 已计算出的角色、世界书文本、extension prompts、bias、messages、messageExamples 等 PromptManager 输入。
 - `worldInfoActivation`：本次 run 激活的世界书事实，用于 `worldinfo.read_activated` 与审计。
 - `macroContext`：冻结 `{{user}}`、`{{char}}`、角色字段、persona、示例消息、`{{model}}` 等宏所需上下文。
+- `currentModelConnection`：前端采集本轮 run 启动时的 ambient `oai_settings`、最终 model 与 active `secret_id`，交由 Rust 按后端连接契约规范化后冻结。字段边界由 `PromptAssemblyService` 复用 `LlmConnectionService` 的 payload/source-specific 契约维护，包括 provider source、最终 model、source-specific model key、endpoint、reverse proxy、OpenRouter routing、adapter hints 与 active `secret_id`。若当前 Custom 端点无 key，则不写 `secret_id`，后续组装会清掉 preset 中的旧 `secret_id`。
 
 `promptInputs.messages` 保存本次 run 的完整候选聊天历史输入，使用 SillyTavern PromptManager 的 latest-first 中间格式，不在 Legacy Generate 阶段按 Agent Profile 提前裁剪。`context.initialChatHistoryMessages` 是 PromptManager 组装期的 Agent context policy：`-1` 表示不做显式楼数裁剪，`0` 表示初始 prompt 不注入真实聊天楼层，正数表示最多注入最近 N 楼；最终可进入 provider payload 的历史仍受 PromptManager token budget 限制。组装期必须先 materialize 工作副本，再执行 attach-existing、in-chat injection、continue splice 与 reverse 等 PromptManager mutation，不能污染 frozen input。这样 runtime-time child/handoff 可以用同一份 frozen input 按 target Profile 重新组装自己的初始 prompt。
 
@@ -79,10 +92,11 @@ extension prompts 在冻结时会先执行 filter，只保留非空、结构化�
   -> getAgentGenerationOptions()
   -> Generate(..., agentMode=true)
   -> OpenAI 分支构造 promptInputs
+  -> build_agent_current_model_connection_snapshot(dto) 后端规范化 currentModelConnection
   -> buildFrozenRunInputSnapshot()
   -> prepare_agent_prompt_assembly(dto)
   -> PromptAssemblyService 加载 preset.ref
-  -> PromptAssemblyService 应用 model.connectionRef + modelId 到 settings
+  -> PromptAssemblyService 应用 model binding 到 settings
   -> 返回 frontendPromptAssembly broker request
   -> frontend buildPromptAssemblySnapshot(request)
   -> headless PromptManager 真实组装 messages
@@ -120,41 +134,41 @@ jsonSchema?
 fingerprint { presetSha256, frozenRunInputSnapshotSha256, agentTaskPromptSha256? }
 ```
 
-`settings` 是“preset settings + model binding overlay”后的有效 settings。broker 不允许额外接收顶层 `promptInputs`、`worldInfoActivation`、`macroContext`，防止冻结输入事实分叉。
+`settings` 是“preset settings + model binding overlay”后的有效 settings。`model.mode = connectionRef` 时 overlay 来自 LLM Connection；`model.mode = currentPromptSnapshot` 时 overlay 来自 `FrozenRunInputSnapshot.currentModelConnection`。broker 不允许额外接收顶层 `promptInputs`、`worldInfoActivation`、`macroContext`，防止冻结输入事实分叉。
 
 runtime-time `prompt_assembly_requested` event 不携带完整 request，只包含 `assemblyId`、`scope`、`requestKind`、`requestSchemaVersion` 与 `requestFingerprint`。完整 request 存在 runtime pending map 中，前端 bridge 只能在该 assembly 仍 pending 时读取。这样 event journal 保持轻量，低端移动端轮询不会反复搬运 frozen input、settings 与 prompt 文本。
 
-## Model 解耦与双阶段覆盖
+## Model 解耦与两次覆盖
 
-第一阶段发生在 `PromptAssemblyService`：
+`PromptAssemblyService` 先处理 preset 与 model binding：
 
 1. 加载 `preset.ref` 的原始 preset settings。
-2. 若 `model.mode = connectionRef`，解析 connection 和 `modelId`。
-3. 删除 preset 中 connection-owned fields：`chat_completion_source`、各 source model key、`custom_url`、`secret_id`、reverse proxy、source-specific endpoint 等。
-4. 写入 broker 组装所需的 `chat_completion_source` 和对应 source model key，例如 DeepSeek 写 `deepseek_model`。
+2. 若 `model.mode = connectionRef`，解析 connection 和 `modelId`；若 `model.mode = currentPromptSnapshot`，读取 `FrozenRunInputSnapshot.currentModelConnection`。
+3. 删除 preset 中 connection-owned fields：`chat_completion_source`、各 source model key、`custom_url`、`secret_id`、reverse proxy、source-specific endpoint、OpenRouter routing、adapter hints 等。
+4. 写入 broker 组装所需的连接字段。`connectionRef` 写入解析出的 source/model；`currentPromptSnapshot` 重放本轮冻结的 current connection，避免 preset 保存的旧 endpoint 或旧 key 污染当前模型。
 
-第二阶段发生在 Agent runtime：
+Agent runtime 随后再次覆盖连接字段，仅适用于 `model.mode = connectionRef`：
 
 1. `start_agent_run` 收到 broker 产出的 `promptSnapshot.chatCompletionPayload`。
 2. executor 在 tool loop 前调用 `apply_connection_to_payload(connectionRef, modelId, payload)`。
 3. 最终 payload 的 source、model、endpoint、secret、reverse proxy、adapter hints 以 LLM Connection 为权威。
 
-这两个阶段都需要存在：前端组装阶段需要正确 source/model 计算 PromptManager 与 generation parameters；runtime 阶段需要保证真正发送请求时不受 preset 中旧连接信息污染。
+`connectionRef` 路径需要这两次覆盖：前端组装时根据正确的 source/model 计算 PromptManager 与 generation parameters；runtime 发送请求前再排除 preset 中旧连接信息的影响。`currentPromptSnapshot` 没有可重解析的 LLM Connection，因此它在 run 输入冻结时捕获 current connection，并通过生成 payload 中的 `secret_id` 避免运行时回退到“当前 active secret”。
 
 ## 关键文件
 
 - `src/script.js`：Agent 发送入口、Legacy Generate 准备、`FrozenRunInputSnapshot` 创建。
-- `src/scripts/tauritavern/agent/frozen-run-input-snapshot.js`：冻结输入结构与 normalization。
-- `src/tauri/main/api/agent-prompt-assembly-run.js`：prepare/buildSnapshot 编排。
+- `src/scripts/tauritavern/agent/frozen-run-input-snapshot.js`：冻结输入结构与前端结构校验；current model connection 字段边界不在此处维护。
+- `src/tauri/main/api/agent-prompt-assembly-run.js`：prepare/buildSnapshot 编排，以及 current model connection snapshot 的后端规范化/应用 facade。
 - `src/tauri/main/api/agent-prompt-assembly.js`：Frontend PromptAssemblyBroker。
 - `src/tauri/main/api/agent-prompt-assembly-bridge.js`：runtime-time child / handoff invocation prompt assembly host bridge，按 `assemblyId` 读取 pending broker request。
 - `src/scripts/openai.js`：headless PromptManager、settings normalization、真实 OpenAI/chat-completion prompt assembly。
-- `src-tauri/src/application/services/prompt_assembly_service.rs`：Rust PromptAssemblyService、preset 加载、broker request、组装阶段 model overlay。
-- `src-tauri/src/application/services/agent_runtime_service/prompt_assembly.rs`：invocation-scoped prompt assembly request/resolve、snapshot 持久化。
-- `src-tauri/src/application/services/llm_connection_service.rs`：runtime payload 连接覆盖。
-- `src-tauri/src/application/services/agent_runtime_service/lifecycle.rs`：`start_agent_run` 输入校验与 run 创建。
-- `src-tauri/src/application/services/agent_runtime_service/executor.rs`：runtime model binding、tool request 准备。
-- `src-tauri/src/application/services/agent_model_gateway/`：Agent canonical IR 与 ChatCompletion DTO 转换。
+- `src-tauri/crates/tt-application/src/services/prompt_assembly_service.rs`：Rust PromptAssemblyService、preset 加载、broker request、组装阶段 model overlay。
+- `src-tauri/crates/tt-application/src/services/agent_runtime_service/prompt_assembly.rs`：invocation-scoped prompt assembly request/resolve、snapshot 持久化。
+- `src-tauri/crates/tt-application/src/services/llm_connection_service.rs`：runtime payload 连接覆盖。
+- `src-tauri/crates/tt-application/src/services/agent_runtime_service/lifecycle.rs`：`start_agent_run` 输入校验与 run 创建。
+- `src-tauri/crates/tt-application/src/services/agent_runtime_service/executor.rs`：runtime model binding、tool request 准备。
+- `src-tauri/crates/tt-application/src/services/agent_model_gateway/`：Agent canonical IR 与 ChatCompletion DTO 转换。
 
 ## 兼容边界
 

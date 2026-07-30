@@ -16,10 +16,10 @@
 - `AgentModelGateway` 在 Agent canonical IR 与现有 `ChatCompletionGenerateRequestDto` 之间转换；provider-native metadata 作为 opaque `Native` part 保留。
 - `provider_state` 已是 run-owned、invocation-scoped continuation contract；OpenAI Responses 使用它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 - Agent Skill 管理、导入导出、embedded skill 提示导入、`skill.list` / `skill.search` / `skill.read` 已落地。
-- Phase 3 Agent Profile 基线已落地：`profileId` 会解析为 `ResolvedAgentProfile`，驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds 与 model-facing prompt/tool descriptions。
+- Agent Profile 基线已落地：`profileId` 会解析为 `ResolvedAgentProfile`，驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds 与 model-facing prompt/tool descriptions。
 - PromptManager 已为 Agent Mode 提供 `agentSystemPrompt` 组装位置与 reserved no-op `agentResults` 位置标记；`agentSystemPrompt` 内容只由 Agent Profile 提供，前端在该 PromptManager index materialize，runtime 只消费最终 messages 并拒绝内部 marker 泄漏；`agentResults` 不再向模型注入历史 commit 内容。
 - Profile 已能通过 `preset.mode = "ref"` 使用独立 OpenAI/chat-completion preset，并通过 `model.mode = "connectionRef"` + `modelId` 使用独立 LLM Connection。当前完整 PromptAssemblyBroker 组装覆盖 root run 启动前、return-mode child invocation 与 handoff invocation；运行中 invocation 仍走 host bridge handshake，Rust runtime 不手写替代 PromptManager。
-- Return-mode SubAgent MVP 已落地：root/active invocation 可通过 `agent.list`、`agent.delegate`、`agent.await` 创建、查看或等待子任务；child invocation 使用 `task.return` 结束，不能直接 `workspace.commit`、`workspace.finish` 或 `agent.handoff`。当前 child task 已由 run-scoped scheduler 后台并行执行；`agent.await` 只等待/查询结果，未显式 await 的 terminal results 会在父 Agent 下一次 tool turn 后注入下一轮模型请求。
+- Return-mode SubAgent MVP 已落地：root/active invocation 可通过 `agent.list`、`agent.delegate`、`agent.await` 创建、查看或等待子任务；child invocation 使用 `task.return` 结束，不能直接 `workspace.commit`、`workspace.finish` 或 `agent.handoff`。SubAgent 硬运行预算来自 target Agent Profile，`agent.delegate` 不接受 `budget` 参数，也不能覆盖或收窄 `maxRounds` / `maxCallsPerRun`。当前 child task 已由 run-scoped scheduler 后台并行执行；`agent.await` 只等待/查询结果，未显式 await 的 terminal results 会在父 Agent 下一次 tool turn 后注入下一轮模型请求。
 - Handoff MVP 已落地：具备 `delegation.canHandoff` 且显式暴露 `agent.handoff` 的 foreground owner 可把同一 `AgentRun` 的下一阶段交给 `allowAsHandoffTarget` 的 target Profile。handoff 创建 `TransferControl` task 与 `Handoff` invocation，不进入后台 scheduler；当前 invocation 记为 `Transferred` 后，executor 在同一 run 内继续目标 Agent 的工具循环。已经 `workspace.commit` 过的 Agent 仍允许 handoff，最终 handoff owner 可继续修订、再次 commit 并 `workspace.finish`。实现框架、结构体与事件序列见 `docs/Agent/Handoff.md`。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；实际 root run 使用扩展设置中的 `activeProfileId`。Profile 面板的 `editingProfileId` 只表示当前正在编辑的配置档案，不影响生成。Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
@@ -119,7 +119,7 @@ _tauritavern/agent-profiles/
 - `profiles.list()` 的 summary 暴露 `directRunnable`，Agent System UI 只允许直接可运行 Profile 成为 `activeProfileId`。保存或删除当前生效 Profile 导致其不可直接运行时，前端会把 `activeProfileId` 显式切回 built-in `default-writer`；不会把当前正在编辑的 Profile 自动设为生效。
 - `profiles.diagnose()` 返回管理态 `AgentProfileHealth`，用于展示可加载 Profile 的外部资源健康度。第一期覆盖 missing/unsupported preset ref、`model.requiresConfiguration`、LLM Connection 缺失或无效；该 API 不改变 run / prompt assembly 的 fail-fast 语义，也不会让运行静默回退当前 UI preset/model。
 - `run.modelRetry` 控制单次模型调用的瞬时错误重试；默认 `maxRetries = 3`、`intervalMs = 3000`。当前只重试 rate limit / transient transport-provider 错误，不重试 prompt/schema/native metadata/tool id 等契约错误。
-- `delegation` 控制多 Agent 能力：`canDelegate` 决定当前 Agent 是否可见 `agent.delegate` / `agent.await`，`callable`、`allowAsSubagent`、`allowedCallers` 决定该 Profile 是否可被其他 Agent 作为 return-mode SubAgent 调用；`canHandoff` 决定当前 Agent 是否可见 `agent.handoff`，`allowAsHandoffTarget`、`allowedCallers` 与 `maxHandoffDepth` 决定该 Profile 是否可作为接力目标以及接力深度上限。
+- `delegation` 控制多 Agent 能力：`canDelegate` 决定当前 Agent 是否可见 `agent.delegate` / `agent.await`，`callable`、`allowAsSubagent`、`allowedCallers` 决定该 Profile 是否可被其他 Agent 作为 return-mode SubAgent 调用；`canHandoff` 决定当前 Agent 是否可见 `agent.handoff`，`allowAsHandoffTarget`、`allowedCallers` 与 `maxHandoffDepth` 决定该 Profile 是否可作为接力目标以及接力深度上限。SubAgent 的 round/tool-call 预算仍由 target Profile 的 `tools.maxRounds` / `tools.maxCallsPerRun` 控制，而不是由主 Agent 的单次委派参数控制。
 - `output.artifacts` 当前必须包含且只能包含一个 `messageBody` artifact；`workspace.commit` 默认发布该 artifact 的 path。
 - Plan Mode schema 已存在，但当前只支持 `plan.mode = "none"`；其他 mode fail-fast。
 - 每个 run 会在 `input/resolved_profile.json` 固化解析结果。
@@ -214,7 +214,7 @@ AgentModelContentPart {
 - Claude：保留 assistant `content` blocks，用于回放 `thinking` / `tool_use` / signature。
 - Gemini：保留 response `content.parts` 与 `thoughtSignature`。
 - OpenAI Responses：保留 raw `output` items 与 `responseId`。
-- Gemini Interactions：保留 raw `outputs`，包含 `thought`、`function_call`、URL context 等非通用块。
+- Gemini Interactions：保留 raw `steps`，包含 `thought`、`function_call`、URL context 等非通用 step。
 
 ## Tool Result Context 策略
 
@@ -252,7 +252,8 @@ Chat commit 当前由模型显式调用 `workspace.commit` 触发，并由前端
 workspace.commit(path?, mode?)
   -> backend 读取 workspace file / checkpoint
   -> chat_commit_requested event
-  -> 前端 saveReply(normal | append | appendFinal)
+  -> 前端应用 Legacy generated-output postprocess
+  -> 前端 saveReply() 写同一消息楼层
   -> resolve_agent_chat_commit
   -> workspace.finish 成功提交 persist projection 后
   -> persistent_state_metadata_update_requested event
@@ -260,7 +261,7 @@ workspace.commit(path?, mode?)
   -> resolve_agent_persistent_state_metadata_update
 ```
 
-`mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。Commit 必须遵守 SillyTavern/windowed payload 保存契约，不能直接写 chat JSONL。`persistStateId` 只能表示已经落盘的 durable persistent state；`chat_commit_requested` 不携带该字段，partial success 保留的聊天输出不会成为下一轮可复用 persist base。下一轮 run 的 `persistBaseStateId` 由 Rust runtime 从同一个输入历史前缀内解析，前端不再负责扫描聊天历史来决定 base state。
+`mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。`append` 追加的是本次 commit 读取到的文件文本，不计算 workspace file diff；host bridge 会对累计后的 raw 目标文本做一次 Legacy output postprocess。Commit 必须遵守 SillyTavern 完整 chat payload 与保存串行化契约，不能直接写 chat JSONL。`persistStateId` 只能表示已经落盘的 durable persistent state；`chat_commit_requested` 不携带该字段，partial success 保留的聊天输出不会成为下一轮可复用 persist base。下一轮 run 的 `persistBaseStateId` 由 Rust runtime 从同一个输入历史前缀内解析，前端不再负责扫描聊天历史来决定 base state。
 
 聊天删除现在会联动清理对应的 Agent chat workspace：
 
@@ -323,6 +324,8 @@ otherwise terminal child results are injected after the next parent tool turn
 ```
 
 Child invocation 与请求它的 Agent 使用同一套逻辑 workspace path；runtime 只按 target Profile 的 `workspace.visibleRoots` / `workspace.writableRoots` 调整当前 invocation 的 root 权限，不再做 child 专用路径映射。完整契约见 `docs/Agent/SubAgent.md`。
+
+Return-mode SubAgent 的硬运行预算只来自 target Agent Profile 与宿主运行时策略。`agent.delegate` 的模型可见参数只有 `agentId` 与 `task`；主 Agent 如需表达任务范围、简洁程度或输出形态，必须写入 task brief，而不能传 `maxRounds` / `maxToolCalls`。
 
 ## 当前 Run Events
 
@@ -480,8 +483,8 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - `cargo test --manifest-path src-tauri/Cargo.toml agent_runtime_service --lib`：53 passed
 - `cargo test --manifest-path src-tauri/Cargo.toml agent_delegate_await_runs_return_mode_subagent`
 - `cargo test --manifest-path src-tauri/Cargo.toml child_workspace_policy_scopes_manifest_roots_without_mapping --lib`：1 passed
-- `cargo test --manifest-path src-tauri/Cargo.toml file_agent_repository --lib`：10 passed
-- `cargo test --manifest-path src-tauri/Cargo.toml file_agent_profile_repository`：1 passed
+- `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_repository --lib`：23 passed
+- `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_profile_repository`：4 passed
 - `git diff --check`
 
 最近一次前端侧验证：
@@ -524,5 +527,5 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - Tool call id 是不透明字符串。
 - Agent 工具结果不写入 chat 楼层。
 - Agent run/timeline event 不伪装成 SillyTavern `GENERATION_*` / `TOOL_CALLS_*` 事件。
-- Commit/rollback 遵守 windowed payload 与保存串行化契约。
+- Commit/rollback 遵守完整 chat payload 与保存串行化契约。
 - MCP stdio command 不由 Agent/Preset/角色卡/世界书直接写入。

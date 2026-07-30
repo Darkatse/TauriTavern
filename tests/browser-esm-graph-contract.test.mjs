@@ -279,3 +279,10 @@ test('browser startup ESM graph links without missing local modules or exports',
 
     assert.equal(diagnostics.length, 0, formatDiagnostics(diagnostics));
 });
+
+test('/lib.js exposes the synchronous SillyTavern library ABI', async () => {
+    const exports = await collectExports(path.join(SRC_ROOT, 'lib.js'));
+    const expected = ['Readability', 'chalk', 'isProbablyReaderable', 'yaml'];
+
+    assert.deepEqual(expected.filter(name => !exports.has(name)), []);
+});

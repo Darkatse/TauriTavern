@@ -6,6 +6,7 @@ import {
     TT_SYNC_SERVERS_CHANGED_EVENT,
 } from './constants.js';
 import { formatBytes, formatTimestamp } from './formatters.js';
+import { resolveSyncJobEventAction, syncFailureRequiresReload } from './sync-job-events.js';
 
 const SYNC_STYLE_ID = 'tauritavern-sync-style';
 
@@ -48,102 +49,8 @@ export function installSyncListeners() {
     const listen = getListen();
 
     void (async () => {
-        await listen('lan_sync:progress', (event) => {
-            if (isAutoSyncPayload(event.payload)) {
-                return;
-            }
-            updateSyncProgress('LAN Sync progress', event.payload);
-        });
-
-        await listen('lan_sync:completed', async (event) => {
-            const payload = event.payload;
-            if (isAutoSyncPayload(payload)) {
-                window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
-                return;
-            }
-
-            await closeSyncProgressPopup();
-
-            const files = payload.files_total;
-            const bytes = payload.bytes_total;
-            const deleted = payload.files_deleted;
-            const message = [
-                translate('LAN Sync completed.'),
-                t`Files: ${files}`,
-                typeof deleted === 'number' && deleted > 0 ? t`Deleted: ${deleted}` : null,
-                t`Bytes: ${formatBytes(bytes)}`,
-                '',
-                translate('The app will now reload to refresh data.'),
-            ].filter(Boolean).join('\n');
-            await callGenericPopup(message, POPUP_TYPE.TEXT, '', {
-                okButton: translate('OK'),
-                allowVerticalScrolling: true,
-                wide: false,
-                large: false,
-            });
-
-            window.location.reload();
-        });
-
-        await listen('lan_sync:error', async (event) => {
-            if (isAutoSyncPayload(event.payload)) {
-                window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
-                return;
-            }
-            await closeSyncProgressPopup();
-            await showSyncError(event.payload);
-        });
-
-        await listen('tt_sync:progress', (event) => {
-            if (isAutoSyncPayload(event.payload)) {
-                return;
-            }
-            updateSyncProgress('TT-Sync progress', event.payload);
-        });
-
-        await listen('tt_sync:completed', async (event) => {
-            const payload = event.payload;
-            if (isAutoSyncPayload(payload)) {
-                window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
-                return;
-            }
-
-            await closeSyncProgressPopup();
-            window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
-
-            const files = payload.files_total;
-            const bytes = payload.bytes_total;
-            const deleted = payload.files_deleted;
-            const direction = payload.direction === 'Push' ? translate('Push') : translate('Pull');
-
-            const message = [
-                t`TT-Sync ${direction} completed.`,
-                t`Files: ${files}`,
-                typeof deleted === 'number' && deleted > 0 ? t`Deleted: ${deleted}` : null,
-                t`Bytes: ${formatBytes(bytes)}`,
-                payload.direction === 'Pull' ? '' : null,
-                payload.direction === 'Pull' ? translate('The app will now reload to refresh data.') : null,
-            ].filter(Boolean).join('\n');
-
-            await callGenericPopup(message, POPUP_TYPE.TEXT, '', {
-                okButton: translate('OK'),
-                allowVerticalScrolling: true,
-                wide: false,
-                large: false,
-            });
-
-            if (payload.direction === 'Pull') {
-                window.location.reload();
-            }
-        });
-
-        await listen('tt_sync:error', async (event) => {
-            if (isAutoSyncPayload(event.payload)) {
-                window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
-                return;
-            }
-            await closeSyncProgressPopup();
-            await showSyncError(event.payload);
+        await listen('sync:job', async (event) => {
+            await handleSyncJobEvent(event.payload);
         });
 
         await listen('sync_auto:status', () => {
@@ -152,13 +59,120 @@ export function installSyncListeners() {
 
         await listen('sync_auto:toast', (event) => {
             showSyncAutomationToast(event.payload);
-            window.dispatchEvent(new Event(SYNC_AUTOMATION_STATUS_CHANGED_EVENT));
+            window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
         });
     })();
 }
 
-function isAutoSyncPayload(payload) {
-    return payload?.origin === 'auto';
+async function handleSyncJobEvent(payload) {
+    const action = resolveSyncJobEventAction(payload);
+
+    if (action.type === 'progress') {
+        updateSyncProgress(action.title, action.payload);
+        return;
+    }
+
+    if (action.type === 'report') {
+        await showSyncReportResult(action.report);
+        return;
+    }
+}
+
+export async function showSyncReportResult(report) {
+    const result = report?.result;
+    if (!result || result.status === 'remote_request_accepted') {
+        return;
+    }
+
+    if (result.status === 'failed') {
+        const shouldReload = syncFailureRequiresReload(result);
+        if (report?.job?.endpoint?.type === 'remote_server') {
+            window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
+        }
+        await closeSyncProgressPopup();
+        await showSyncError({ message: result.message || 'Sync failed.' });
+        if (shouldReload) {
+            window.location.reload();
+        }
+        return;
+    }
+
+    if (result.status !== 'completed') {
+        return;
+    }
+
+    const summary = result.summary;
+    if (!summary) {
+        return;
+    }
+
+    if (report?.job?.endpoint?.type === 'lan_peer') {
+        await showLanSyncCompleted(summary);
+        return;
+    }
+
+    if (report?.job?.endpoint?.type === 'remote_server') {
+        await showTtSyncCompleted({
+            direction: report?.job?.intent === 'replicate_local_to_remote' ? 'Push' : 'Pull',
+            ...summary,
+        });
+    }
+}
+
+async function showLanSyncCompleted(payload) {
+    await closeSyncProgressPopup();
+
+    const files = payload.files_total;
+    const bytes = payload.bytes_total;
+    const deleted = payload.files_deleted;
+    const message = [
+        translate('LAN Sync completed.'),
+        t`Files: ${files}`,
+        typeof deleted === 'number' && deleted > 0 ? t`Deleted: ${deleted}` : null,
+        t`Bytes: ${formatBytes(bytes)}`,
+        '',
+        translate('The app will now reload to refresh data.'),
+    ].filter(Boolean).join('\n');
+    await callGenericPopup(message, POPUP_TYPE.TEXT, '', {
+        okButton: translate('OK'),
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+
+    window.location.reload();
+}
+
+async function showTtSyncCompleted(payload) {
+    await closeSyncProgressPopup();
+    window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
+
+    const files = payload.files_total;
+    const bytes = payload.bytes_total;
+    const deleted = payload.files_deleted;
+    const direction = payload.direction === 'Push' ? translate('Push') : translate('Pull');
+
+    const message = [
+        t`TT-Sync ${direction} completed.`,
+        t`Files: ${files}`,
+        typeof deleted === 'number' && deleted > 0 ? t`Deleted: ${deleted}` : null,
+        t`Bytes: ${formatBytes(bytes)}`,
+        payload.direction === 'Pull' ? '' : null,
+        payload.direction === 'Pull'
+            ? translate('The app will now reload to refresh data.')
+            : null,
+    ].filter(Boolean).join('\n');
+
+    await callGenericPopup(message, POPUP_TYPE.TEXT, '', {
+        okButton: translate('OK'),
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+
+    if (payload.direction === 'Pull') {
+        window.location.reload();
+    }
 }
 
 function showSyncAutomationToast(payload) {
@@ -182,11 +196,11 @@ function formatSyncAutomationToastMessage(payload) {
     const nextRunAtMs = payload?.next_run_at_ms ?? payload?.nextRunAtMs ?? null;
     if (nextRunAtMs) {
         const nextRun = formatTimestamp(nextRunAtMs);
-        if (payload?.message === 'Auto sync upload has started as scheduled.') {
-            return t`Auto sync upload has started as scheduled. Next sync time: ${nextRun}`;
-        }
         if (payload?.message === 'Auto sync upload has completed as scheduled.') {
             return t`Auto sync upload has completed as scheduled. Next sync time: ${nextRun}`;
+        }
+        if (payload?.message === 'Auto sync upload request has been accepted as scheduled.') {
+            return t`Auto sync upload request has been accepted as scheduled. Next sync time: ${nextRun}`;
         }
     }
 

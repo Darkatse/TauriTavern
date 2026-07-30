@@ -1,0 +1,6 @@
+interface:
+  display_name: "TauriTavern TestFlight Notes"
+  short_description: "Draft policy-visible TestFlight notes for public testers"
+  default_prompt: "Use $tauritavern-testflight-notes to draft concise What to Test notes from the prepared release range."
+policy:
+  allow_implicit_invocation: false

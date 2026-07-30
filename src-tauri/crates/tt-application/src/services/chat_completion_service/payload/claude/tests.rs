@@ -1,0 +1,1023 @@
+use serde_json::{Value, json};
+
+use super::build;
+
+fn claude_payload(model: &str) -> serde_json::Map<String, Value> {
+    json!({
+        "model": model,
+        "messages": [{"role": "user", "content": "hello"}],
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object")
+}
+
+#[test]
+fn claude_manual_reasoning_uses_legacy_thinking_and_clears_sampling() {
+    let mut payload = claude_payload("claude-sonnet-4-5");
+    payload.insert("max_tokens".to_string(), json!(1000));
+    payload.insert("reasoning_effort".to_string(), json!("medium"));
+    payload.insert("temperature".to_string(), json!(0.7));
+    payload.insert("top_k".to_string(), json!(40));
+    payload.insert("stream".to_string(), json!(false));
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+
+    assert_eq!(
+        body.get("max_tokens")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        2024
+    );
+    assert_eq!(
+        body.get("thinking")
+            .and_then(Value::as_object)
+            .and_then(|thinking| thinking.get("budget_tokens"))
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        1024
+    );
+    assert_eq!(
+        body.get("thinking")
+            .and_then(Value::as_object)
+            .and_then(|thinking| thinking.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        "enabled"
+    );
+    assert!(body.get("temperature").is_none());
+    assert!(body.get("top_p").is_none());
+    assert!(body.get("top_k").is_none());
+}
+
+#[test]
+fn claude_reasoning_accepts_shared_minimal_alias() {
+    let mut payload = claude_payload("claude-sonnet-4-5");
+    payload.insert("max_tokens".to_string(), json!(4096));
+    payload.insert("reasoning_effort".to_string(), json!("minimal"));
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    assert_eq!(
+        upstream
+            .pointer("/thinking/budget_tokens")
+            .and_then(Value::as_i64),
+        Some(1024)
+    );
+}
+
+#[test]
+fn claude_opus_4_5_uses_legacy_thinking_with_output_effort() {
+    let mut payload = claude_payload("claude-opus-4-5");
+    payload.insert("max_tokens".to_string(), json!(4096));
+    payload.insert("reasoning_effort".to_string(), json!("max"));
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+
+    assert_eq!(
+        body.get("thinking")
+            .and_then(Value::as_object)
+            .and_then(|thinking| thinking.get("type"))
+            .and_then(Value::as_str),
+        Some("enabled")
+    );
+    assert_eq!(
+        body.get("output_config")
+            .and_then(Value::as_object)
+            .and_then(|config| config.get("effort"))
+            .and_then(Value::as_str),
+        Some("max")
+    );
+}
+
+#[test]
+fn claude_rejects_assistant_prefill_for_models_that_removed_it() {
+    for model in [
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-sonnet-5",
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+    ] {
+        let mut payload = claude_payload(model);
+        payload.insert("assistant_prefill".to_string(), json!("prefill"));
+
+        let error = build(payload).expect_err("build should fail");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("does not support assistant_prefill"),
+            "{model} should reject assistant_prefill, got: {message}"
+        );
+    }
+}
+
+#[test]
+fn claude_rejects_assistant_prefill_with_reasoning_effort() {
+    let mut payload = claude_payload("claude-sonnet-4-5");
+    payload.insert("assistant_prefill".to_string(), json!("prefill"));
+    payload.insert("reasoning_effort".to_string(), json!("medium"));
+
+    let error = build(payload).expect_err("build should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("does not support assistant_prefill with reasoning_effort")
+    );
+}
+
+#[test]
+fn claude_use_sysprompt_collects_only_leading_system_messages() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "use_sysprompt": true,
+        "messages": [
+            {"role": "system", "content": "s1"},
+            {"role": "system", "content": "s2"},
+            {"role": "user", "content": "u1"},
+            {"role": "system", "content": "late system"},
+            {"role": "user", "content": "u2"}
+        ]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+
+    let system = body
+        .get("system")
+        .and_then(Value::as_array)
+        .expect("system must be array");
+    assert_eq!(system.len(), 2);
+    assert_eq!(system[0]["text"].as_str().unwrap_or_default(), "s1");
+    assert_eq!(system[1]["text"].as_str().unwrap_or_default(), "s2");
+
+    let messages = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages must be array");
+    let joined = messages
+        .iter()
+        .filter_map(|message| message.get("content").and_then(Value::as_array))
+        .flat_map(|parts| parts.iter())
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("late system"));
+}
+
+#[test]
+fn claude_system_messages_become_user_when_use_sysprompt_false() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "use_sysprompt": false,
+        "messages": [
+            {"role": "system", "content": "s1"},
+            {"role": "user", "content": "u1"}
+        ]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+
+    assert!(body.get("system").is_none());
+
+    let messages = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages must be array");
+    let joined = messages
+        .iter()
+        .filter_map(|message| message.get("content").and_then(Value::as_array))
+        .flat_map(|parts| parts.iter())
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("s1"));
+    assert!(joined.contains("u1"));
+}
+
+#[test]
+fn claude_tool_calls_and_results_are_structured() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [
+            {
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_weather",
+                    "type": "function",
+                    "function": {
+                        "name": "weather",
+                        "arguments": "{\"city\":\"Paris\"}"
+                    }
+                }]
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_weather",
+                "content": "{\"temperature\":20}"
+            }
+        ],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "description": "get weather",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+    let messages = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages must be array");
+
+    let assistant_blocks = messages
+        .first()
+        .and_then(Value::as_object)
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+        .expect("assistant content must be array");
+    assert_eq!(
+        assistant_blocks[0]["type"].as_str().unwrap_or_default(),
+        "tool_use"
+    );
+    assert_eq!(
+        assistant_blocks[0]["id"].as_str().unwrap_or_default(),
+        "call_weather"
+    );
+    assert_eq!(
+        assistant_blocks[0]["name"].as_str().unwrap_or_default(),
+        "weather"
+    );
+
+    let tool_result_block = messages
+        .get(1)
+        .and_then(Value::as_object)
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+        .and_then(|parts| parts.first())
+        .and_then(Value::as_object)
+        .expect("tool result block must be object");
+    assert_eq!(
+        tool_result_block
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        "tool_result"
+    );
+    assert_eq!(
+        tool_result_block
+            .get("tool_use_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        "call_weather"
+    );
+}
+
+#[test]
+fn claude_native_content_blocks_are_replayed() {
+    let payload = json!({
+        "model": "claude-sonnet-4-20250514",
+        "messages": [{
+            "role": "assistant",
+            "content": "",
+            "native": {
+                "claude": {
+                    "content": [
+                        { "type": "thinking", "thinking": "plan", "signature": "sig_thinking" },
+                        { "type": "tool_use", "id": "call_1", "name": "weather", "input": { "city": "Paris" } }
+                    ]
+                }
+            },
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "weather", "arguments": "{\"city\":\"Paris\"}" }
+            }]
+        }],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "description": "get weather",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let blocks = upstream
+        .pointer("/messages/0/content")
+        .and_then(Value::as_array)
+        .expect("assistant native content should be replayed");
+
+    assert_eq!(blocks[0]["type"], "thinking");
+    assert_eq!(blocks[0]["signature"], "sig_thinking");
+    assert_eq!(blocks[1]["type"], "tool_use");
+    assert_eq!(blocks[1]["id"], "call_1");
+}
+
+#[test]
+fn claude_coalesces_exact_split_native_turn() {
+    let native_content = json!([
+        { "type": "text", "text": "Checking weather" },
+        { "type": "tool_use", "id": "call_1", "name": "weather", "input": { "city": "Paris" } }
+    ]);
+    let mut messages = json!([
+        {
+            "role": "assistant",
+            "content": "Checking weather",
+            "native": { "claude": { "content": native_content.clone() } }
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "weather", "arguments": "{\"city\":\"Paris\"}" }
+            }],
+            "native": { "claude": { "content": native_content.clone() } }
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "Sunny"
+        }
+    ]);
+    let payload = json!({
+        "model": "claude-sonnet-4-20250514",
+        "messages": messages.clone(),
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "description": "get weather",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    assert_eq!(
+        upstream.pointer("/messages/0/content"),
+        Some(&native_content)
+    );
+    assert_eq!(upstream["messages"].as_array().map(Vec::len), Some(2));
+
+    *messages
+        .pointer_mut("/1/native/claude/content/0/text")
+        .expect("native text must exist") = json!("Different");
+    let payload = json!({
+        "model": "claude-sonnet-4-20250514",
+        "messages": messages,
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "description": "get weather",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+    let error = build(payload).expect_err("mismatched split native content must fail");
+    assert!(error.to_string().contains("mismatched native content"));
+}
+
+#[test]
+fn claude_tool_calls_are_text_when_tools_disabled() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [
+            {
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_weather",
+                    "type": "function",
+                    "function": {
+                        "name": "weather",
+                        "arguments": "{\"city\":\"Paris\"}"
+                    }
+                }]
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_weather",
+                "content": "{\"temperature\":20}"
+            }
+        ]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+    let messages = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages must be array");
+
+    let assistant_blocks = messages
+        .first()
+        .and_then(Value::as_object)
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+        .expect("assistant content must be array");
+    assert_eq!(
+        assistant_blocks[0]["type"].as_str().unwrap_or_default(),
+        "text"
+    );
+
+    let tool_blocks = messages
+        .get(1)
+        .and_then(Value::as_object)
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+        .expect("tool content must be array");
+    assert_eq!(tool_blocks[0]["type"].as_str().unwrap_or_default(), "text");
+}
+
+#[test]
+fn claude_converts_openai_image_url_blocks() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "describe" },
+                { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+            ]
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+    let messages = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages must be array");
+
+    let content = messages[0]
+        .get("content")
+        .and_then(Value::as_array)
+        .expect("message content must be array");
+
+    assert_eq!(content[0]["type"].as_str().unwrap_or_default(), "text");
+    assert_eq!(content[0]["text"].as_str().unwrap_or_default(), "describe");
+
+    assert_eq!(content[1]["type"].as_str().unwrap_or_default(), "image");
+    assert_eq!(
+        content[1]["source"]["type"].as_str().unwrap_or_default(),
+        "base64"
+    );
+    assert_eq!(
+        content[1]["source"]["media_type"]
+            .as_str()
+            .unwrap_or_default(),
+        "image/png"
+    );
+    assert_eq!(
+        content[1]["source"]["data"].as_str().unwrap_or_default(),
+        "AAAA"
+    );
+}
+
+#[test]
+fn claude_direct_accepts_remote_image_url_blocks() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "describe" },
+                { "type": "image_url", "image_url": { "url": "https://example.test/cat.png" } }
+            ]
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    assert_eq!(
+        upstream
+            .pointer("/messages/0/content/1/source/type")
+            .and_then(Value::as_str),
+        Some("url")
+    );
+    assert_eq!(
+        upstream
+            .pointer("/messages/0/content/1/source/url")
+            .and_then(Value::as_str),
+        Some("https://example.test/cat.png")
+    );
+}
+
+#[test]
+fn claude_direct_rejects_non_remote_image_urls() {
+    for url in ["/user/images/cat.png", "file:///tmp/cat.png"] {
+        let payload = json!({
+            "model": "claude-3-5-sonnet-latest",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "image_url", "image_url": { "url": url } }
+                ]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("local image URL should fail");
+        assert!(
+            error.to_string().contains("remote http(s) image URLs"),
+            "{url}: {error}"
+        );
+    }
+}
+
+#[test]
+fn claude_rejects_input_image_file_id_until_file_resolver_exists() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [{
+            "role": "user",
+            "content": [{ "type": "input_image", "file_id": "file_123" }]
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let error = build(payload).expect_err("file_id image references need a resolver");
+    assert!(error.to_string().contains("file_id image references"));
+}
+
+#[test]
+fn claude_direct_preserves_native_image_url_blocks() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": "https://example.test/native.png"
+                }
+            }]
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    assert_eq!(
+        upstream
+            .pointer("/messages/0/content/0/source/url")
+            .and_then(Value::as_str),
+        Some("https://example.test/native.png")
+    );
+}
+
+#[test]
+fn claude_rejects_audio_video_content_parts() {
+    for part in [
+        json!({ "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } }),
+        json!({ "type": "video_url", "video_url": { "url": "data:video/mp4;base64,AAAA" } }),
+    ] {
+        for content in [json!([part.clone()]), part.clone()] {
+            let payload = json!({
+                "model": "claude-3-5-sonnet-latest",
+                "messages": [{
+                    "role": "user",
+                    "content": content
+                }]
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let error = build(payload).expect_err("unsupported media should fail");
+            assert!(
+                error
+                    .to_string()
+                    .contains("does not support audio or video content parts"),
+                "{part}"
+            );
+        }
+    }
+}
+
+#[test]
+fn claude_rejects_media_in_system_prompt() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "use_sysprompt": true,
+        "messages": [
+            {
+                "role": "system",
+                "content": [
+                    { "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } }
+                ]
+            },
+            { "role": "user", "content": "ok" }
+        ]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let error = build(payload).expect_err("system media should fail");
+    assert!(error.to_string().contains("cannot preserve audio input"));
+}
+
+#[test]
+fn claude_moves_images_out_of_assistant_messages() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    { "type": "text", "text": "here" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+                ]
+            },
+            { "role": "user", "content": "ok" }
+        ]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+    let messages = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages must be array");
+
+    let assistant_content = messages[0]
+        .get("content")
+        .and_then(Value::as_array)
+        .expect("assistant content must be array");
+    assert!(
+        !assistant_content
+            .iter()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+    );
+
+    let user_content = messages[1]
+        .get("content")
+        .and_then(Value::as_array)
+        .expect("user content must be array");
+    assert!(
+        user_content
+            .iter()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+    );
+}
+
+#[test]
+fn claude_limited_sampling_models_reject_temperature_and_top_p_together() {
+    let mut payload = claude_payload("claude-sonnet-4-5");
+    payload.insert("temperature".to_string(), json!(0.7));
+    payload.insert("top_p".to_string(), json!(0.9));
+
+    let error = build(payload).expect_err("build should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("accepts either temperature or top_p, not both")
+    );
+}
+
+#[test]
+fn claude_full_sampling_models_keep_temperature_top_p_and_top_k() {
+    let mut payload = claude_payload("claude-3-5-sonnet-latest");
+    payload.insert("temperature".to_string(), json!(0.7));
+    payload.insert("top_p".to_string(), json!(0.9));
+    payload.insert("top_k".to_string(), json!(40));
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+
+    assert!(body.get("temperature").is_some());
+    assert!(body.get("top_p").is_some());
+    assert!(body.get("top_k").is_some());
+}
+
+#[test]
+fn claude_sampling_free_models_drop_non_default_sampling_params() {
+    for model in [
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-sonnet-5",
+        "claude-opus-4-7",
+    ] {
+        let mut payload = claude_payload(model);
+        payload.insert("temperature".to_string(), json!(0.7));
+        payload.insert("top_p".to_string(), json!(0.9));
+        payload.insert("top_k".to_string(), json!(40));
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert!(body.get("temperature").is_none(), "{model}");
+        assert!(body.get("top_p").is_none(), "{model}");
+        assert!(body.get("top_k").is_none(), "{model}");
+    }
+}
+
+#[test]
+fn claude_sampling_free_models_ignore_default_sampling_params() {
+    for model in [
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-sonnet-5",
+        "claude-opus-4-7",
+    ] {
+        let mut payload = claude_payload(model);
+        payload.insert("temperature".to_string(), json!(1.0));
+        payload.insert("top_p".to_string(), json!(1.0));
+        payload.insert("top_k".to_string(), json!(0));
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert!(body.get("temperature").is_none(), "{model}");
+        assert!(body.get("top_p").is_none(), "{model}");
+        assert!(body.get("top_k").is_none(), "{model}");
+    }
+}
+
+#[test]
+fn claude_opus_4_8_drops_sampling_and_rejects_prefill() {
+    let mut sampling_payload = claude_payload("claude-opus-4-8");
+    sampling_payload.insert("temperature".to_string(), json!(0.7));
+    sampling_payload.insert("top_p".to_string(), json!(0.9));
+    sampling_payload.insert("top_k".to_string(), json!(40));
+
+    let (_, upstream) = build(sampling_payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+    assert!(body.get("temperature").is_none());
+    assert!(body.get("top_p").is_none());
+    assert!(body.get("top_k").is_none());
+
+    let mut prefill_payload = claude_payload("claude-opus-4-8");
+    prefill_payload.insert("assistant_prefill".to_string(), json!("prefill"));
+
+    let prefill_error = build(prefill_payload).expect_err("build should fail");
+    assert!(
+        prefill_error
+            .to_string()
+            .contains("does not support assistant_prefill")
+    );
+}
+
+#[test]
+fn claude_unknown_models_do_not_inherit_reasoning_support() {
+    let mut payload = claude_payload("claude-opus-4-9");
+    payload.insert("reasoning_effort".to_string(), json!("medium"));
+
+    let error = build(payload).expect_err("build should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("does not support reasoning_effort")
+    );
+}
+
+#[test]
+fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
+    for model in [
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-sonnet-5",
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+    ] {
+        let mut payload = claude_payload(model);
+        payload.insert("reasoning_effort".to_string(), json!("high"));
+        payload.insert("include_reasoning".to_string(), json!(true));
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("type"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "adaptive",
+            "{model} should use adaptive thinking"
+        );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("display"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "summarized",
+            "{model} should request summarized reasoning"
+        );
+        assert_eq!(
+            body.get("output_config")
+                .and_then(Value::as_object)
+                .and_then(|config| config.get("effort"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "high",
+            "{model} should map reasoning_effort to output_config.effort"
+        );
+        assert!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("budget_tokens"))
+                .is_none(),
+            "{model} should not use legacy budget_tokens"
+        );
+    }
+}
+
+#[test]
+fn claude_default_thinking_only_requests_visible_summary() {
+    for model in [
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-sonnet-5",
+    ] {
+        let mut visible_payload = claude_payload(model);
+        visible_payload.insert("include_reasoning".to_string(), json!(true));
+
+        let (_, visible) = build(visible_payload).expect("build should succeed");
+        assert_eq!(
+            visible.pointer("/thinking/type").and_then(Value::as_str),
+            Some("adaptive"),
+            "{model}"
+        );
+        assert_eq!(
+            visible.pointer("/thinking/display").and_then(Value::as_str),
+            Some("summarized"),
+            "{model}"
+        );
+        assert!(visible.get("output_config").is_none(), "{model}");
+
+        let (_, hidden) = build(claude_payload(model)).expect("build should succeed");
+        assert!(hidden.get("thinking").is_none(), "{model}");
+        assert!(hidden.get("output_config").is_none(), "{model}");
+    }
+
+    let mut opt_in_payload = claude_payload("claude-opus-4-8");
+    opt_in_payload.insert("include_reasoning".to_string(), json!(true));
+    let (_, opt_in) = build(opt_in_payload).expect("build should succeed");
+    assert!(opt_in.get("thinking").is_none());
+}
+
+#[test]
+fn claude_adaptive_reasoning_orders_project_extremes() {
+    for model in [
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-sonnet-5",
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+    ] {
+        for (requested, expected) in [("xhigh", "xhigh"), ("max", "max")] {
+            let mut payload = claude_payload(model);
+            payload.insert("reasoning_effort".to_string(), json!(requested));
+
+            let (_, upstream) = build(payload).expect("build should succeed");
+            let body = upstream.as_object().expect("body must be object");
+
+            assert_eq!(
+                body.get("thinking")
+                    .and_then(Value::as_object)
+                    .and_then(|thinking| thinking.get("type"))
+                    .and_then(Value::as_str),
+                Some("adaptive")
+            );
+            assert_eq!(
+                body.get("output_config")
+                    .and_then(Value::as_object)
+                    .and_then(|config| config.get("effort"))
+                    .and_then(Value::as_str),
+                Some(expected),
+                "{model} should map project {requested} to {expected}"
+            );
+        }
+    }
+
+    for model in ["claude-opus-4-6", "claude-sonnet-4-6"] {
+        for (requested, expected) in [("xhigh", "high"), ("max", "max")] {
+            let mut payload = claude_payload(model);
+            payload.insert("reasoning_effort".to_string(), json!(requested));
+
+            let (_, upstream) = build(payload).expect("build should succeed");
+            let body = upstream.as_object().expect("body must be object");
+
+            assert_eq!(
+                body.get("output_config")
+                    .and_then(Value::as_object)
+                    .and_then(|config| config.get("effort"))
+                    .and_then(Value::as_str),
+                Some(expected),
+                "{model} should map project {requested} to {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn claude_validation_rejects_passthrough_xhigh_on_non_xhigh_models() {
+    let request = json!({
+        "model": "claude-opus-4-6",
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+        "thinking": {
+            "type": "adaptive",
+            "display": "omitted"
+        },
+        "output_config": {
+            "effort": "xhigh"
+        },
+        "max_tokens": 4096
+    });
+
+    let error = super::validate_request(&request).expect_err("xhigh should be model gated");
+    assert!(
+        error
+            .to_string()
+            .contains("does not support `output_config.effort=xhigh`")
+    );
+}
+
+#[test]
+fn claude_adaptive_only_models_reject_legacy_thinking_overrides() {
+    for model in ["claude-opus-5", "claude-sonnet-5"] {
+        let request = json!({
+            "model": model,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+            "thinking": {
+                "type": "enabled",
+                "budget_tokens": 2048
+            },
+            "max_tokens": 4096
+        });
+
+        let error = super::validate_request(&request).expect_err("legacy thinking should fail");
+        assert!(error.to_string().contains("requires adaptive thinking"));
+    }
+}
+
+#[test]
+fn claude_manual_or_adaptive_models_accept_legacy_thinking_overrides() {
+    let request = json!({
+        "model": "claude-opus-4-6",
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+        "thinking": {
+            "type": "enabled",
+            "budget_tokens": 2048
+        },
+        "max_tokens": 4096
+    });
+
+    super::validate_request(&request).expect("request should be valid");
+}

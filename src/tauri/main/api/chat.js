@@ -1,7 +1,6 @@
 // @ts-check
 
 import { getActiveChatSnapshot } from '../adapters/st/active-chat-ref.js';
-import { getChatHistoryBootstrapModeName } from '../services/chat-history/chat-history-mode-state.js';
 import { createChatSearchMessages } from './chat-search-messages.js';
 import { mustArray, mustNumber, normalizeChatRef, parseJsonLines } from './chat-utils.js';
 
@@ -442,17 +441,12 @@ function createChatApi({ safeInvoke }) {
         },
         async windowInfo() {
             const { ref, windowLength } = getActiveChatSnapshot();
-            const handle = open(ref);
-            const summaryResult = await handle.summary({ includeMetadata: false });
-            const totalCount = mustNumber(summaryResult?.message_count, 'summary.message_count');
-            const windowStartIndex = totalCount - windowLength;
-            const mode = getChatHistoryBootstrapModeName();
             return {
-                mode,
+                mode: 'off',
                 chatKind: ref.kind,
                 chatRef: ref,
-                totalCount,
-                windowStartIndex,
+                totalCount: windowLength,
+                windowStartIndex: 0,
                 windowLength,
             };
         },

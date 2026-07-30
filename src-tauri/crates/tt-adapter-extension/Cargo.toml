@@ -1,0 +1,24 @@
+[package]
+name = "tt-adapter-extension"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+gix = { version = "=0.85.0", default-features = false, features = ["sha1", "blocking-network-client", "worktree-mutation"] }
+gix-transport = { version = "=0.57.2", default-features = false, features = ["http-client"] }
+reqwest = { workspace = true, features = ["blocking"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["fs", "macros", "rt"] }
+tracing = "0.1"
+tt-adapter-http = { path = "../tt-adapter-http" }
+tt-adapter-storage-core = { path = "../tt-adapter-storage-core" }
+tt-domain = { path = "../tt-domain" }
+tt-ports = { path = "../tt-ports" }
+url = "2.4"
+uuid = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }

@@ -1,4 +1,5 @@
 const THIRD_PARTY_EXTENSION_PREFIX = '/scripts/extensions/third-party/';
+const USER_CSS_ROUTE = '/css/user.css';
 const THUMBNAIL_ROUTE = '/thumbnail';
 const CHARACTERS_ROUTE_PREFIX = '/characters/';
 const BACKGROUNDS_ROUTE_PREFIX = '/backgrounds/';
@@ -11,9 +12,25 @@ const USER_AVATARS_ROUTE_PREFIX_ENCODED = '/User%20Avatars/';
 const PROXY_REQUEST_MESSAGE_TYPE = 'tt-ext-proxy-request';
 const PROXY_READY_MESSAGE_TYPE = 'tt-ext-proxy-ready';
 const CLIENT_BRIDGE_TIMEOUT_MS = 8000;
+const FORWARDED_REQUEST_HEADERS = [
+    'range',
+    'if-range',
+    'if-none-match',
+    'if-modified-since',
+];
+const IPC_REQUEST_HEADERS = [
+    'if-range',
+    'if-none-match',
+    'if-modified-since',
+];
+
+function requiresIpcBridge(headers) {
+    return IPC_REQUEST_HEADERS.some((name) => headers.has(name));
+}
 
 function shouldProxyRequestPath(pathname) {
-    return pathname === THUMBNAIL_ROUTE
+    return pathname === USER_CSS_ROUTE
+        || pathname === THUMBNAIL_ROUTE
         || pathname.startsWith(THIRD_PARTY_EXTENSION_PREFIX)
         || pathname.startsWith(CHARACTERS_ROUTE_PREFIX)
         || pathname.startsWith(BACKGROUNDS_ROUTE_PREFIX)
@@ -77,13 +94,25 @@ async function proxyWebAssetRequest(event, requestUrl) {
     const request = event.request;
     const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, ttExtBaseUrl);
 
-    const init = { method: request.method, credentials: 'omit' };
+    const headers = new Headers();
+    for (const name of FORWARDED_REQUEST_HEADERS) {
+        const value = request.headers.get(name);
+        if (value) {
+            headers.set(name, value);
+        }
+    }
+    const init = {
+        method: request.method,
+        credentials: 'omit',
+        cache: request.cache,
+        headers,
+    };
 
     if (request.method !== 'GET' && request.method !== 'HEAD') {
         init.body = await request.clone().arrayBuffer();
     }
 
-    if (proxyViaClient) {
+    if (proxyViaClient || requiresIpcBridge(headers)) {
         return proxyViaClientBridge(event, requestUrl, init, new TypeError('Service Worker proxy fetch is disabled'));
     }
 
@@ -118,18 +147,25 @@ async function proxyViaClientBridge(event, requestUrl, init, originalError) {
     for (const client of candidates) {
         try {
             const payload = await sendProxyRequestToClient(client, requestUrl, init, originalError);
-            const headers = new Headers(payload.headers || []);
-            return new Response(payload.body || null, {
-                status: payload.status || 200,
-                statusText: payload.statusText || '',
-                headers,
-            });
+            return responseFromProxyPayload(payload);
         } catch (error) {
             lastError = error || lastError;
         }
     }
 
     throw lastError || originalError;
+}
+
+function responseFromProxyPayload(payload) {
+    const status = Number(payload.status);
+    const body = status === 204 || status === 205 || status === 304
+        ? null
+        : payload.body;
+    return new Response(body, {
+        status,
+        statusText: String(payload.statusText ?? ''),
+        headers: new Headers(payload.headers),
+    });
 }
 
 function sendProxyRequestToClient(client, requestUrl, init, originalError) {
@@ -196,6 +232,9 @@ function sendProxyRequestToClient(client, requestUrl, init, originalError) {
                 pathname: requestUrl.pathname,
                 search: requestUrl.search,
                 method: init.method,
+                cache: init.cache,
+                headers: Array.from(init.headers.entries()),
+                requiresIpc: requiresIpcBridge(init.headers),
             }, [channel.port2]);
         } catch (error) {
             fail(error);

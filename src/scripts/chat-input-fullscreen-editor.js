@@ -52,18 +52,23 @@ function createExpandButton(title) {
     return button;
 }
 
-function createInputShell(sourceTextarea) {
+function requireInputHost(sourceTextarea) {
     const nonQRFormItems = requireElement('nonQRFormItems', HTMLElement);
     if (sourceTextarea.parentElement !== nonQRFormItems) {
         throw new Error('Expected #send_textarea to be a direct child of #nonQRFormItems');
     }
 
-    const shell = document.createElement('div');
-    shell.className = 'tt-chat-input-shell';
-    sourceTextarea.before(shell);
-    shell.appendChild(sourceTextarea);
+    return nonQRFormItems;
+}
 
-    return shell;
+function positionExpandButton(button, textarea, inputHost) {
+    const textareaRect = textarea.getBoundingClientRect();
+    const inputHostRect = inputHost.getBoundingClientRect();
+    const topOffset = Math.max(textareaRect.top - inputHostRect.top, 0);
+    const rightOffset = Math.max(inputHostRect.right - textareaRect.right, 0);
+
+    button.style.setProperty('--tt-chat-input-expand-top-offset', `${topOffset}px`);
+    button.style.setProperty('--tt-chat-input-expand-right-offset', `${rightOffset}px`);
 }
 
 function getTextareaContentMetrics(textarea) {
@@ -152,13 +157,13 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
         throw new Error('isMobile must be a function');
     }
 
-    const inputShell = createInputShell(sendTextArea);
+    const inputHost = requireInputHost(sendTextArea);
     const expandButton = createExpandButton('Expand the editor');
     expandButton.id = EXPAND_BUTTON_ID;
     expandButton.hidden = true;
     expandButton.setAttribute('aria-controls', EDITOR_DIALOG_ID);
     expandButton.setAttribute('aria-haspopup', 'dialog');
-    inputShell.appendChild(expandButton);
+    inputHost.appendChild(expandButton);
 
     const { dialog, textarea, collapseButton, sendButton } = createEditorDialog(sendTextArea);
 
@@ -168,7 +173,10 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
 
     const setExpandButtonVisible = (visible) => {
         expandButton.hidden = !visible;
-        inputShell.classList.toggle('tt-chat-input-shell--has-expand', visible);
+        sendTextArea.classList.toggle('tt-chat-input--has-expand', visible);
+        if (visible) {
+            positionExpandButton(expandButton, sendTextArea, inputHost);
+        }
     };
 
     const queueButtonVisibilityUpdate = () => {
@@ -274,6 +282,11 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
 
     sendTextArea.addEventListener('input', queueButtonVisibilityUpdate);
     window.addEventListener('resize', queueButtonVisibilityUpdate);
+    const inputResizeObserver = typeof ResizeObserver === 'function'
+        ? new ResizeObserver(queueButtonVisibilityUpdate)
+        : null;
+    inputResizeObserver?.observe(sendTextArea);
+    inputResizeObserver?.observe(inputHost);
     queueButtonVisibilityUpdate();
 
     return {

@@ -1,0 +1,109 @@
+use std::sync::Arc;
+
+use tauri::State;
+
+use crate::app::backend_errors::BackendErrorHub;
+use crate::app::{AppState, BackendReadiness};
+use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::errors::CommandError;
+use tt_application::dto::bootstrap_dto::BootstrapSnapshotDto;
+use tt_application::dto::group_dto::GroupDto;
+
+#[tauri::command]
+pub async fn get_bootstrap_snapshot(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<BootstrapSnapshotDto, CommandError> {
+    log_command("get_bootstrap_snapshot");
+
+    let settings_fut = async {
+        app_state
+            .services
+            .settings_service
+            .get_sillytavern_settings()
+            .await
+            .map_err(map_command_error(
+                "Failed to load bootstrap settings snapshot",
+            ))
+    };
+
+    let characters_fut = async {
+        app_state
+            .services
+            .character_service
+            .get_all_characters(true)
+            .await
+            .map_err(map_command_error(
+                "Failed to load bootstrap characters snapshot",
+            ))
+    };
+
+    let groups_fut = async {
+        app_state
+            .services
+            .group_service
+            .get_all_groups()
+            .await
+            .map(|groups| groups.into_iter().map(GroupDto::from).collect())
+            .map_err(map_command_error(
+                "Failed to load bootstrap groups snapshot",
+            ))
+    };
+
+    let avatars_fut = async {
+        app_state
+            .services
+            .avatar_service
+            .get_avatars()
+            .await
+            .map_err(map_command_error(
+                "Failed to load bootstrap avatars snapshot",
+            ))
+    };
+
+    let secret_state_fut = async {
+        app_state
+            .services
+            .secret_service
+            .read_secret_state()
+            .await
+            .map_err(map_command_error(
+                "Failed to load bootstrap secret state snapshot",
+            ))
+    };
+
+    let (settings, characters, groups, avatars, secret_state) = tokio::try_join!(
+        settings_fut,
+        characters_fut,
+        groups_fut,
+        avatars_fut,
+        secret_state_fut
+    )?;
+
+    Ok(BootstrapSnapshotDto {
+        ios_policy: app_state.ios_policy.clone(),
+        settings,
+        characters,
+        groups,
+        avatars,
+        secret_state,
+    })
+}
+
+#[tauri::command]
+pub async fn backend_error_bridge_ready(
+    backend_errors: State<'_, Arc<BackendErrorHub>>,
+) -> Result<Vec<String>, CommandError> {
+    log_command("backend_error_bridge_ready");
+    Ok(backend_errors.mark_bridge_ready_and_drain())
+}
+
+#[tauri::command]
+pub async fn wait_for_backend_ready(
+    backend_readiness: State<'_, Arc<BackendReadiness>>,
+) -> Result<(), CommandError> {
+    log_command("wait_for_backend_ready");
+    backend_readiness
+        .wait_ready()
+        .await
+        .map_err(|error| CommandError::InternalServerError(error.to_string()))
+}

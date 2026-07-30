@@ -11,19 +11,6 @@ export {};
  */
 
 /**
- * @typedef {(path: string, protocol?: string) => string} ConvertFileSrcFn
- */
-
-/**
- * @typedef {{
- *   characters: string;
- *   avatars: string;
- *   backgrounds: string;
- *   [key: string]: any;
- * }} UserDirectories
- */
-
-/**
  * @typedef {{
  *   filePath: string;
  *   error?: string;
@@ -48,29 +35,12 @@ export {};
 
 /**
  * @typedef {{
- *   type: string;
- *   file: string;
- *   animated: boolean;
- *   cacheBust: string;
- * }} ThumbnailRouteSpec
- */
-
-/**
- * @typedef {{
- *   animated?: boolean;
- *   useTimestamp?: boolean;
- * }} ThumbnailBlobOptions
- */
-
-/**
- * @typedef {{
  *   savedTarget?: string;
  * }} AndroidExportResult
  */
 
 /**
  * @typedef {{
- *   initialize: () => Promise<void>;
  *   safeInvoke: (command: TauriInvokeCommand, args?: any) => Promise<any>;
  *   invalidateInvoke: (command: TauriInvokeCommand, args?: any) => void;
  *   invalidateInvokeAll: (command: TauriInvokeCommand) => void;
@@ -104,6 +74,5 @@ export {};
  *   removeTemporaryFile: (filePath: string) => Promise<void>;
  *   createReadableFileStream: (filePath: string) => ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;
  *   saveAndroidExportArchive: (sourcePath: string, preferredName?: string) => Promise<AndroidExportResult>;
- *   toAssetUrl: (path: string) => string | null;
  * }} TauriMainContext
  */

@@ -10,9 +10,11 @@ import { callGenericPopup, Popup, POPUP_TYPE } from './popup.js';
 import { groups, selected_group } from './group-chats.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import { deleteMediaFromServer } from './chats.js';
+import { consumeStartupPrefetch, startStartupPrefetch } from './tauri/startup/startup-prefetch-registry.js';
 
 const BG_METADATA_KEY = 'custom_background';
 const LIST_METADATA_KEY = 'chat_backgrounds';
+const STARTUP_BACKGROUNDS_PREFETCH_KEY = 'backgrounds';
 
 /** @type {Array<{id: string, name: string, thumbnailFile: string}>} */
 let folderList = [];
@@ -27,7 +29,6 @@ let isBackgroundSelectionMode = false;
 
 // A single transparent PNG pixel used as a placeholder for errored backgrounds
 const PNG_PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
-const PNG_PIXEL_BLOB = new Blob([Uint8Array.from(atob(PNG_PIXEL), c => c.charCodeAt(0))], { type: 'image/png' });
 const PLACEHOLDER_IMAGE = `url('data:image/png;base64,${PNG_PIXEL}')`;
 
 const THUMBNAIL_COLUMNS_MIN = 2;
@@ -40,13 +41,13 @@ const THUMBNAIL_COLUMNS_DEFAULT_MOBILE = 3;
  * This is used to store thumbnails for backgrounds that cannot be generated on the server.
  */
 const THUMBNAIL_STORAGE = localforage.createInstance({ name: 'SillyTavern_Thumbnails' });
+const BACKGROUND_PREVIEW_RECIPE = 'v1';
 
 /**
  * Cache for thumbnail blob URLs.
- * @type {Map<string, string>}
+ * @type {Map<string, {sourceUrl: string, recipe: string, etag: string|null, blobUrl: string}>}
  */
 const THUMBNAIL_BLOBS = new Map();
-const SERVER_THUMBNAIL_BLOBS = new Map();
 
 const THUMBNAIL_CONFIG = {
     width: 160,
@@ -503,99 +504,87 @@ async function onCopyToSystemBackgroundClick(e) {
 }
 
 /**
- * Gets a thumbnail for the background from storage or fetches it if not available.
- * It caches the thumbnail in local storage and returns a blob URL for the thumbnail.
- * If the thumbnail cannot be fetched, it returns a transparent PNG pixel as a fallback.
- * @param {string} bg Background URL
- * @param {boolean} isCustom Is the background custom?
+ * Gets a frontend-derived preview for a custom background.
+ * Same-origin Host resources are validated against their ETag before a cached preview is reused.
+ * @param {string} bg Custom background URL
  * @returns {Promise<string>} Blob URL of the thumbnail
  */
-async function getThumbnailFromStorage(bg, isCustom) {
-    const cachedBlobUrl = THUMBNAIL_BLOBS.get(bg);
-    if (cachedBlobUrl) {
-        return cachedBlobUrl;
+async function getCustomBackgroundPreview(bg) {
+    const url = bg;
+    const recipe = `${BACKGROUND_PREVIEW_RECIPE}:${THUMBNAIL_CONFIG.width}x${THUMBNAIL_CONFIG.height}`;
+    const resolvedUrl = new URL(url, window.location.href);
+    const isHostResource = resolvedUrl.protocol === window.location.protocol && resolvedUrl.host === window.location.host;
+
+    let candidate = THUMBNAIL_BLOBS.get(bg) || null;
+    if (candidate && (candidate.sourceUrl !== url || candidate.recipe !== recipe)) {
+        URL.revokeObjectURL(candidate.blobUrl);
+        THUMBNAIL_BLOBS.delete(bg);
+        candidate = null;
     }
 
-    const savedBlob = await THUMBNAIL_STORAGE.getItem(bg);
-    if (savedBlob) {
-        const savedBlobUrl = URL.createObjectURL(savedBlob);
-        THUMBNAIL_BLOBS.set(bg, savedBlobUrl);
-        return savedBlobUrl;
-    }
-
-    try {
-        const url = isCustom ? bg : getBackgroundPath(bg);
-        const response = await fetch(url, { cache: 'force-cache' });
-        if (!response.ok) {
-            throw new Error('Fetch failed with status: ' + response.status);
+    if (!candidate) {
+        const saved = await THUMBNAIL_STORAGE.getItem(bg);
+        if (saved?.sourceUrl === url && saved.recipe === recipe && saved.blob instanceof Blob) {
+            candidate = saved;
+        } else if (saved !== null) {
+            await THUMBNAIL_STORAGE.removeItem(bg);
         }
-        const imageBlob = await response.blob();
-        const imageBase64 = await getBase64Async(imageBlob);
-        const thumbnailBase64 = await createThumbnail(imageBase64, THUMBNAIL_CONFIG.width, THUMBNAIL_CONFIG.height);
-        const thumbnailBlob = await fetch(thumbnailBase64).then(res => res.blob());
-        await THUMBNAIL_STORAGE.setItem(bg, thumbnailBlob);
-        const blobUrl = URL.createObjectURL(thumbnailBlob);
-        THUMBNAIL_BLOBS.set(bg, blobUrl);
-        return blobUrl;
-    } catch (error) {
-        console.error('Error fetching thumbnail, fallback image will be used:', error);
-        const fallbackBlob = PNG_PIXEL_BLOB;
-        const fallbackBlobUrl = URL.createObjectURL(fallbackBlob);
-        THUMBNAIL_BLOBS.set(bg, fallbackBlobUrl);
-        return fallbackBlobUrl;
     }
+
+    if (candidate) {
+        if (isHostResource) {
+            const response = await fetch(url, { method: 'HEAD' });
+            await requireOkResponse(response, 'Validate custom background preview');
+            const etag = response.headers.get('etag');
+            if (!etag) {
+                throw new Error('Host background response is missing ETag');
+            }
+            if (candidate.etag !== etag) {
+                await forgetCustomBackgroundPreview(bg);
+                candidate = null;
+            }
+        }
+
+        if (candidate) {
+            if (candidate.blobUrl) {
+                return candidate.blobUrl;
+            }
+            const blobUrl = URL.createObjectURL(candidate.blob);
+            THUMBNAIL_BLOBS.set(bg, { sourceUrl: url, recipe, etag: candidate.etag || null, blobUrl });
+            return blobUrl;
+        }
+    }
+
+    const response = await fetch(url);
+    await requireOkResponse(response, 'Load custom background preview source');
+    const etag = isHostResource ? response.headers.get('etag') : null;
+    if (isHostResource && !etag) {
+        throw new Error('Host background response is missing ETag');
+    }
+
+    const imageBlob = await response.blob();
+    const imageBase64 = await getBase64Async(imageBlob);
+    const thumbnailBase64 = await createThumbnail(imageBase64, THUMBNAIL_CONFIG.width, THUMBNAIL_CONFIG.height);
+    const thumbnailBlob = await fetch(thumbnailBase64).then(res => res.blob());
+    await THUMBNAIL_STORAGE.setItem(bg, { sourceUrl: url, recipe, etag, blob: thumbnailBlob });
+    const blobUrl = URL.createObjectURL(thumbnailBlob);
+    THUMBNAIL_BLOBS.set(bg, { sourceUrl: url, recipe, etag, blobUrl });
+    return blobUrl;
 }
 
-function getServerThumbnailCacheKey(bg, animated = false) {
-    return `${bg}::${animated ? 'animated' : 'static'}`;
-}
-
-function revokeThumbnailBlob(cache, key) {
-    const url = cache.get(key);
-    if (!url) {
+function revokeThumbnailBlob(bg) {
+    const cached = THUMBNAIL_BLOBS.get(bg);
+    if (!cached) {
         return;
     }
 
-    URL.revokeObjectURL(url);
-    cache.delete(key);
+    URL.revokeObjectURL(cached.blobUrl);
+    THUMBNAIL_BLOBS.delete(bg);
 }
 
-async function invalidateThumbnailCaches(bg) {
+async function forgetCustomBackgroundPreview(bg) {
     await THUMBNAIL_STORAGE.removeItem(bg);
-    revokeThumbnailBlob(THUMBNAIL_BLOBS, bg);
-    revokeThumbnailBlob(SERVER_THUMBNAIL_BLOBS, getServerThumbnailCacheKey(bg, false));
-    revokeThumbnailBlob(SERVER_THUMBNAIL_BLOBS, getServerThumbnailCacheKey(bg, true));
-}
-
-function pruneServerThumbnailBlobCache(backgrounds) {
-    const validKeys = new Set(backgrounds.flatMap((bg) => [
-        getServerThumbnailCacheKey(getBackgroundFilename(bg), false),
-        getServerThumbnailCacheKey(getBackgroundFilename(bg), true),
-    ]));
-
-    for (const key of SERVER_THUMBNAIL_BLOBS.keys()) {
-        if (!validKeys.has(key)) {
-            revokeThumbnailBlob(SERVER_THUMBNAIL_BLOBS, key);
-        }
-    }
-}
-
-async function getServerThumbnailBlobUrl(bg, animated = false) {
-    const cacheKey = getServerThumbnailCacheKey(bg, animated);
-    const cachedBlobUrl = SERVER_THUMBNAIL_BLOBS.get(cacheKey);
-    if (cachedBlobUrl) {
-        return cachedBlobUrl;
-    }
-
-    const thumbnailUrl = getThumbnailUrl('bg', bg);
-    const requestUrl = animated ? `${thumbnailUrl}&animated=true` : thumbnailUrl;
-    const response = await fetch(requestUrl, { cache: 'no-store' });
-    await requireOkResponse(response, 'Load background thumbnail');
-
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    SERVER_THUMBNAIL_BLOBS.set(cacheKey, blobUrl);
-    return blobUrl;
+    revokeThumbnailBlob(bg);
 }
 
 /**
@@ -835,7 +824,7 @@ function renderChatBackgrounds(backgrounds) {
     activateLazyLoader();
 }
 
-export async function refreshSystemBackgroundEntries() {
+async function fetchSystemBackgroundsPayload() {
     const response = await fetch('/api/backgrounds/all', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -848,11 +837,14 @@ export async function refreshSystemBackgroundEntries() {
         throw new Error('Invalid backgrounds response: images must be an array');
     }
 
+    return { images, config };
+}
+
+function applySystemBackgroundsPayload({ images, config }) {
     Object.assign(THUMBNAIL_CONFIG, config);
 
     const normalizedImages = images.map(normalizeSystemBackgroundEntry);
     cachedSystemBackgrounds = normalizedImages;
-    pruneServerThumbnailBlobCache(normalizedImages);
 
     const existingFiles = new Set(normalizedImages.map(x => x.filename));
     for (const selectedFile of selectedSystemBackgroundFiles) {
@@ -864,24 +856,11 @@ export async function refreshSystemBackgroundEntries() {
     return getSystemBackgroundEntries();
 }
 
-export async function getBackgrounds() {
-    await refreshSystemBackgroundEntries();
-
-    // Load folders first so getFilteredImages() works correctly in folder view
-    await loadFolders();
-
-    await preloadImageMetadata();
-
-    // Render only filtered images if inside a folder, otherwise all
-    renderSystemBackgrounds(getFilteredImages());
-    highlightSelectedBackground();
+export async function refreshSystemBackgroundEntries() {
+    return applySystemBackgroundsPayload(await fetchSystemBackgroundsPayload());
 }
 
-/**
- * Preloads all image metadata to use dominant colors as placeholders.
- * @return {Promise<void>}
- */
-async function preloadImageMetadata() {
+async function fetchBackgroundMetadataPayload() {
     const response = await fetch('/api/image-metadata/all', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -889,7 +868,10 @@ async function preloadImageMetadata() {
     });
     await requireOkResponse(response, 'Load image metadata');
 
-    const data = await response.json();
+    return response.json();
+}
+
+function applyBackgroundMetadataPayload(data) {
     if (data?.images) {
         METADATA_CACHE.clear();
         for (const [path, metadata] of Object.entries(data.images)) {
@@ -898,10 +880,7 @@ async function preloadImageMetadata() {
     }
 }
 
-/**
- * Loads folder data from the server (separate from image loading).
- */
-async function loadFolders() {
+async function fetchBackgroundFoldersPayload() {
     const response = await fetch('/api/backgrounds/folders', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -909,7 +888,10 @@ async function loadFolders() {
     });
     await requireOkResponse(response, 'Load background folders');
 
-    const data = await response.json();
+    return response.json();
+}
+
+async function applyBackgroundFoldersPayload(data) {
     assertBackgroundFoldersPayload(data);
     folderList = data.folders;
     imageFolderMap = data.imageFolderMap;
@@ -940,6 +922,35 @@ async function loadFolders() {
     }
 
     renderFolderGrid();
+}
+
+async function loadBackgroundsPayload() {
+    const systemBackgrounds = await fetchSystemBackgroundsPayload();
+    const [folders, metadata] = await Promise.all([
+        fetchBackgroundFoldersPayload(),
+        fetchBackgroundMetadataPayload(),
+    ]);
+
+    return { systemBackgrounds, folders, metadata };
+}
+
+async function applyBackgroundsPayload({ systemBackgrounds, folders, metadata }) {
+    applySystemBackgroundsPayload(systemBackgrounds);
+    await applyBackgroundFoldersPayload(folders);
+    applyBackgroundMetadataPayload(metadata);
+}
+
+export function prefetchBackgrounds() {
+    return startStartupPrefetch(STARTUP_BACKGROUNDS_PREFETCH_KEY, loadBackgroundsPayload);
+}
+
+export async function getBackgrounds() {
+    const payload = await consumeStartupPrefetch(STARTUP_BACKGROUNDS_PREFETCH_KEY, loadBackgroundsPayload);
+    await applyBackgroundsPayload(payload);
+
+    // Render only filtered images if inside a folder, otherwise all
+    renderSystemBackgrounds(getFilteredImages());
+    highlightSelectedBackground();
 }
 
 /**
@@ -993,11 +1004,16 @@ async function getFolderCoverUrl(folder) {
     })?.filename;
     if (!file) return null;
 
-    const isAnimated = isAnimatedBackgroundExtension(file);
-    if (isAnimated && !background_settings.animation) {
-        return getThumbnailFromStorage(file, false);
+    const entry = assertSystemBackgroundExists(file);
+    if (entry.isAnimated) {
+        if (isVideoBackgroundExtension(file)) {
+            return '/img/No-Image-Placeholder.svg';
+        }
+        return background_settings.animation
+            ? getBackgroundPath(file)
+            : getStaticBackgroundThumbnailUrl(file);
     }
-    return getServerThumbnailBlobUrl(file, isAnimated && background_settings.animation);
+    return getThumbnailUrl('bg', file);
 }
 
 /**
@@ -1554,6 +1570,14 @@ function isAnimatedBackgroundExtension(fileName) {
     return ANIMATED_BACKGROUND_EXTENSIONS.includes(fileExtension);
 }
 
+function isVideoBackgroundExtension(fileName) {
+    return fileName.split('.').pop().toLowerCase() === 'mp4';
+}
+
+function getStaticBackgroundThumbnailUrl(fileName) {
+    return `${getThumbnailUrl('bg', fileName)}&static=true`;
+}
+
 /**
  * Resolves the image URL for the background.
  * @param {string} bg Background file name
@@ -1568,11 +1592,19 @@ async function resolveImageUrl(bg, isCustom, isAnimated = null) {
         animated = isAnimatedBackgroundExtension(bg);
     }
 
-    const thumbnailUrl = animated && !background_settings.animation
-        ? await getThumbnailFromStorage(bg, isCustom)
-        : isCustom
-            ? bg
-            : await getServerThumbnailBlobUrl(bg, animated && background_settings.animation);
+    if (animated && isVideoBackgroundExtension(bg)) {
+        return PLACEHOLDER_IMAGE;
+    }
+
+    const thumbnailUrl = isCustom
+        ? animated && !background_settings.animation
+            ? await getCustomBackgroundPreview(bg)
+            : bg
+        : animated
+            ? background_settings.animation
+                ? getBackgroundPath(bg)
+                : getStaticBackgroundThumbnailUrl(bg)
+            : getThumbnailUrl('bg', bg);
 
     return `url("${thumbnailUrl}")`;
 }
@@ -1608,7 +1640,6 @@ async function delBackground(bg) {
     });
 
     await requireOkResponse(response, 'Delete background');
-    await invalidateThumbnailCaches(bg);
 }
 
 /**
@@ -1694,6 +1725,7 @@ async function convertFileIfVideo(formData) {
  * @param {FormData} formData
  */
 async function uploadBackground(formData) {
+    let bg;
     try {
         if (!formData.has('avatar')) {
             console.log('No file provided. Background upload cancelled.');
@@ -1709,13 +1741,23 @@ async function uploadBackground(formData) {
 
         await requireOkResponse(response, 'Upload background');
 
-        const bg = await response.text();
-        await invalidateThumbnailCaches(bg);
-        setBackground(bg, generateUrlParameter(bg, false));
+        bg = await response.text();
+    } catch (error) {
+        console.error('Error uploading background:', error);
+        return;
+    }
+
+    try {
+        const nextUrl = generateUrlParameter(bg, false);
+        if (!isChatBackgroundLocked() && background_settings.url === nextUrl) {
+            $('#bg1').css('background-image', 'none');
+            await new Promise(resolve => requestAnimationFrame(resolve));
+        }
+        setBackground(bg, nextUrl);
         await getBackgrounds();
         highlightNewBackground(bg);
     } catch (error) {
-        console.error('Error uploading background:', error);
+        console.error('Background was uploaded but the UI could not be refreshed:', error);
     }
 }
 

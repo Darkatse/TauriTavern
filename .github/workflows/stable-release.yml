@@ -1,0 +1,700 @@
+name: Stable Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable release tag, for example v2.2.0
+        required: true
+        type: string
+
+concurrency:
+  group: stable-release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
+      previous_sha: ${{ steps.release.outputs.previous_sha }}
+    steps:
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag=${EVENT_TAG:-$INPUT_TAG}
+          test -n "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Validate stable release identity
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          release_json=$(gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,tagName)
+          test "$(jq -r '.isDraft' <<< "$release_json")" = false
+          test "$(jq -r '.isPrerelease' <<< "$release_json")" = false
+          test "$(jq -r '.tagName' <<< "$release_json")" = "$RELEASE_TAG"
+
+          version=$(node scripts/ci/verify-release-version.mjs "$RELEASE_TAG")
+          commit=$(git rev-parse HEAD)
+          previous_tag=
+          while IFS= read -r candidate; do
+            if [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              previous_tag=$candidate
+              break
+            fi
+          done < <(git tag --merged "$commit^" --sort=-version:refname)
+          test -n "$previous_tag"
+          previous_sha=$(git rev-parse "$previous_tag^{commit}")
+          {
+            echo "tag=$RELEASE_TAG"
+            echo "version=$version"
+            echo "commit=$commit"
+            echo "previous_sha=$previous_sha"
+          } >> "$GITHUB_OUTPUT"
+
+  desktop:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target_args: ""
+            portable: true
+            portable_name: windows-x64
+          - platform: macos-latest
+            target_args: --target x86_64-apple-darwin
+            portable: false
+          - platform: macos-latest
+            target_args: --target aarch64-apple-darwin
+            portable: false
+          - platform: ubuntu-22.04
+            target_args: --bundles appimage,deb,rpm
+            portable: true
+            portable_name: linux-x64
+          - platform: ubuntu-22.04-arm
+            target_args: --bundles deb,rpm
+            portable: true
+            portable_name: linux-arm64
+
+    runs-on: ${{ matrix.platform }}
+    env:
+      TAURITAVERN_BUILD_BRANCH: main
+      TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu-22.04')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev librsvg2-dev patchelf rpm \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-alsa gstreamer1.0-pulseaudio
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Setup macOS signing and notarization
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: ./scripts/ci/setup-macos-signing.sh
+
+      - name: Build desktop bundles
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_API_ISSUER: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_API_KEY || '' }}
+        with:
+          projectPath: src-tauri/crates/tauritavern
+          tauriScript: node ../../../scripts/tauri-app.mjs
+          args: ${{ matrix.target_args }}
+          uploadWorkflowArtifacts: true
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-[platform]-[arch]-[bundle]'
+
+      - name: Build portable binary
+        if: matrix.portable
+        run: node scripts/build-portable.mjs --skip-web-build --output-dir portable
+
+      - name: Upload portable binary
+        if: matrix.portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: TauriTavern-${{ needs.prepare.outputs.version }}-${{ matrix.portable_name }}-portable
+          path: portable/*
+          if-no-files-found: error
+
+  flatpak:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      TAURITAVERN_BUILD_BRANCH: main
+      TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
+      TAURITAVERN_FLATPAK_USER: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Flatpak build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            flatpak flatpak-builder zstd
+          flatpak --user remote-add \
+            --if-not-exists \
+            flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Cache Flatpak SDK and build inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/flatpak
+            .flatpak-builder/downloads
+            .flatpak-builder/ccache
+          key: flatpak-x86_64-${{ hashFiles('packaging/flatpak/com.tauritavern.client.yml', 'packaging/flatpak/*-sources.json', 'pnpm-lock.yaml', 'src-tauri/Cargo.lock') }}
+          restore-keys: |
+            flatpak-x86_64-
+
+      - name: Build Flatpak application tree
+        run: ./packaging/flatpak/build.sh
+
+      - name: Archive Flatpak application tree
+        run: tar --zstd --create --file flatpak-build.tar.zst .flatpak-build
+
+      - name: Upload Flatpak build tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-build-${{ needs.prepare.outputs.version }}-x86_64
+          path: flatpak-build.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+  mobile:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mobile: android
+            platform: ubuntu-latest
+            args: --verbose --apk --split-per-abi --target aarch64 armv7
+          - mobile: ios
+            platform: macos-latest
+            args: --verbose
+
+    concurrency:
+      group: ${{ matrix.mobile == 'ios' && 'tauritavern-public-testflight-build' || format('{0}-{1}-{2}', github.workflow, github.run_id, matrix.mobile) }}
+      cancel-in-progress: false
+    runs-on: ${{ matrix.platform }}
+    env:
+      TAURITAVERN_BUILD_BRANCH: main
+      TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Android host dependencies
+        if: matrix.mobile == 'android'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.mobile == 'android' && 'aarch64-linux-android,armv7-linux-androideabi' || 'aarch64-apple-ios' }}
+
+      - name: Setup JDK
+        if: matrix.mobile == 'android'
+        uses: actions/setup-java@v5
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: gradle
+          cache-dependency-path: |
+            src-tauri/crates/tauritavern/gen/android/**/*.gradle*
+            src-tauri/crates/tauritavern/gen/android/**/gradle-wrapper.properties
+
+      - name: Setup Android SDK
+        if: matrix.mobile == 'android'
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Android NDK
+        if: matrix.mobile == 'android'
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+          link-to-sdk: true
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prepare public TestFlight build identity
+        if: matrix.mobile == 'ios'
+        id: testflight-config
+        shell: bash
+        run: |
+          set -euo pipefail
+          epoch_minutes=$(( $(date -u +%s) / 60 ))
+          bundle_version="$((epoch_minutes / 10000)).$(((epoch_minutes / 100) % 100)).$((epoch_minutes % 100))"
+          config_path="$RUNNER_TEMP/tauritavern-testflight.json"
+          printf '{"bundle":{"iOS":{"bundleVersion":"%s"}}}\n' "$bundle_version" > "$config_path"
+          {
+            echo "path=$config_path"
+            echo "bundle_version=$bundle_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Setup Android signing
+        if: matrix.mobile == 'android'
+        shell: bash
+        run: |
+          cd src-tauri/crates/tauritavern/gen/android
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
+          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+          base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+
+      - name: Setup App Store Connect API key
+        if: matrix.mobile == 'ios'
+        shell: bash
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          : "${APPLE_API_ISSUER:?Missing APPLE_API_ISSUER secret}"
+          : "${APPLE_API_KEY:?Missing APPLE_API_KEY secret}"
+          : "${APPLE_API_KEY_P8:?Missing APPLE_API_KEY_P8 secret}"
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          umask 077
+          printf '%s' "$APPLE_API_KEY_P8" > "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Enable HTTP access for standard mobile bundle
+        run: ./scripts/ci/configure-mobile-http.sh enable "${{ matrix.mobile }}"
+
+      - name: Build mobile bundle
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NDK_HOME: ${{ matrix.mobile == 'android' && steps.setup-ndk.outputs.ndk-path || '' }}
+          APPLE_API_ISSUER: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_KEY || '' }}
+        with:
+          projectPath: src-tauri/crates/tauritavern
+          tauriScript: node ../../../scripts/tauri-app.mjs
+          mobile: ${{ matrix.mobile }}
+          args: ${{ matrix.args }}
+          uploadWorkflowArtifacts: true
+          uploadPlainBinary: true
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-[platform]-[arch]-[bundle]'
+
+      - name: Restore iOS transport security for TestFlight
+        if: matrix.mobile == 'ios'
+        run: ./scripts/ci/configure-mobile-http.sh disable ios
+
+      - name: Build public TestFlight IPA
+        if: matrix.mobile == 'ios'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          TAURITAVERN_IOS_POLICY_PROFILE: ios_external_beta
+          TAURITAVERN_SKIP_WEB_BUILD: "1"
+        with:
+          projectPath: src-tauri/crates/tauritavern
+          tauriScript: node ../../../scripts/tauri-app.mjs
+          mobile: ios
+          args: --verbose --export-method app-store-connect --config ${{ steps.testflight-config.outputs.path }}
+          uploadWorkflowArtifacts: true
+          uploadPlainBinary: true
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-[platform]-[arch]-TestFlight-[bundle]'
+
+  testflight:
+    needs: [prepare, publish-release]
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/public-testflight.yml
+    with:
+      channel: stable
+      source_ref: ${{ needs.prepare.outputs.tag }}
+      base_sha: ${{ needs.prepare.outputs.previous_sha }}
+      head_sha: ${{ needs.prepare.outputs.commit }}
+      marketing_version: ${{ needs.prepare.outputs.version }}
+      ipa_artifact: TauriTavern-${{ needs.prepare.outputs.version }}-ios-arm64-TestFlight-ipa
+      release_tag: ${{ needs.prepare.outputs.tag }}
+      release_asset: TauriTavern-${{ needs.prepare.outputs.version }}-ios-arm64-TestFlight.ipa
+      group_id: fde21316-1511-4a66-b48f-7cbadc1be3f7
+      group_name: TauriTavern Beta Test
+    secrets:
+      CODEX_API_KEY: ${{ secrets.CANARY_CODEX_API_KEY }}
+      CODEX_RESPONSES_ENDPOINT: ${{ secrets.CANARY_CODEX_RESPONSES_ENDPOINT }}
+      CODEX_MODEL: ${{ secrets.CANARY_CODEX_MODEL }}
+      CODEX_EFFORT: ${{ secrets.CANARY_CODEX_EFFORT }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+
+  publish-release:
+    needs: [prepare, desktop, mobile]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      ASSET_PREFIX: TauriTavern-${{ needs.prepare.outputs.version }}-
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          path: source
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-*'
+          path: dist
+
+      - name: Validate and collect release assets
+        run: node source/scripts/ci/collect-release-assets.mjs dist release-assets "$ASSET_PREFIX"
+
+      - name: Upload assets without changing release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          find release-assets -type f -name "${ASSET_PREFIX}*" -print0 \
+            | xargs -0 gh release upload "$RELEASE_TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --clobber
+
+  publish-package-repositories:
+    needs: [prepare, publish-release]
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: "true"
+      R2_ENDPOINT: https://feb4df7b9167cb2a5c75b327584225b5.r2.cloudflarestorage.com
+      PACKAGES_R2_BUCKET: tauritavern-packages
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      EXPECTED_RPM_RELEASE: "1"
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+      LINUX_REPOSITORY_SIGNING_FPR: D609D0B174E0073BB3980A1BEDC6CEF924B6C529
+      RELEASE_ASSETS_DIR: dist
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-*'
+          path: dist
+
+      - name: Install repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            apt-utils createrepo-c gnupg2 jq rpm
+
+      - name: Import repository signing subkey
+        id: signing
+        shell: bash
+        env:
+          GPG_PRIVATE_KEY_BASE64: ${{ secrets.LINUX_REPOSITORY_GPG_PRIVATE_KEY_BASE64 }}
+          GPG_PASSPHRASE: ${{ secrets.LINUX_REPOSITORY_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          : "${GPG_PRIVATE_KEY_BASE64:?Missing LINUX_REPOSITORY_GPG_PRIVATE_KEY_BASE64 secret}"
+          key_file="$RUNNER_TEMP/tauritavern-repository-private-key.asc"
+          passphrase_file="$RUNNER_TEMP/tauritavern-repository-passphrase"
+          umask 077
+          printf '%s' "$GPG_PRIVATE_KEY_BASE64" | base64 --decode > "$key_file"
+          printf '%s' "$GPG_PASSPHRASE" > "$passphrase_file"
+          gpg --batch --import "$key_file"
+          gpg --batch --with-colons --with-subkey-fingerprint \
+            --list-secret-keys "$LINUX_REPOSITORY_SIGNING_FPR" \
+            | awk -F: -v expected="$LINUX_REPOSITORY_SIGNING_FPR" \
+                '$1 == "fpr" && $10 == expected { found = 1 } END { exit !found }'
+          echo "passphrase_file=$passphrase_file" >> "$GITHUB_OUTPUT"
+
+      - name: Publish signed APT and RPM repositories
+        env:
+          LINUX_REPOSITORY_GPG_PASSPHRASE_FILE: ${{ steps.signing.outputs.passphrase_file }}
+        run: ./distribution/apt-rpm/publish.sh
+
+      - name: Verify public repository pointers
+        run: |
+          curl -fsSL https://packages.tauritavern.com/apt/dists/stable/InRelease \
+            | gpg --batch --verify
+          curl -fsSL \
+            https://packages.tauritavern.com/rpm/fedora/stable/x86_64/repodata/repomd.xml \
+            >/dev/null
+          curl -fsSL \
+            https://packages.tauritavern.com/rpm/opensuse/16.0/x86_64/repodata/repomd.xml \
+            >/dev/null
+
+  publish-flatpak-repository:
+    needs: [prepare, flatpak, publish-release]
+    continue-on-error: true
+    concurrency:
+      group: tauritavern-stable-flatpak-repository
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.FLATPAK_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.FLATPAK_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: "true"
+      R2_ENDPOINT: https://feb4df7b9167cb2a5c75b327584225b5.r2.cloudflarestorage.com
+      FLATPAK_R2_BUCKET: tauritavern-flatpak
+      FLATPAK_REPOSITORY_URL: https://flatpak.tauritavern.com
+      FLATPAK_BUILD_DIR: .flatpak-build
+      FLATPAK_ARCH: x86_64
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+      LINUX_REPOSITORY_KEY_FPR: C75284E78972F19A0DDD88C487F5B8530682A857
+      LINUX_REPOSITORY_SIGNING_FPR: D609D0B174E0073BB3980A1BEDC6CEF924B6C529
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-build-${{ needs.prepare.outputs.version }}-x86_64
+          path: flatpak-artifact
+
+      - name: Install Flatpak repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            flatpak gnupg2 jq ostree zstd
+
+      - name: Restore Flatpak application tree
+        run: |
+          tar \
+            --zstd \
+            --extract \
+            --file flatpak-artifact/flatpak-build.tar.zst \
+            --no-same-owner
+          test -x .flatpak-build/files/bin/tauritavern
+          test -f .flatpak-build/metadata
+
+      - name: Import repository signing subkey
+        shell: bash
+        env:
+          GPG_PRIVATE_KEY_BASE64: ${{ secrets.LINUX_REPOSITORY_GPG_PRIVATE_KEY_BASE64 }}
+          GPG_PASSPHRASE: ${{ secrets.LINUX_REPOSITORY_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          : "${GPG_PRIVATE_KEY_BASE64:?Missing LINUX_REPOSITORY_GPG_PRIVATE_KEY_BASE64 secret}"
+          : "${GPG_PASSPHRASE:?Missing LINUX_REPOSITORY_GPG_PASSPHRASE secret}"
+          key_file="$RUNNER_TEMP/tauritavern-flatpak-private-key.asc"
+          umask 077
+          printf '%s' "$GPG_PRIVATE_KEY_BASE64" | base64 --decode > "$key_file"
+          gpg --batch --import "$key_file"
+
+          keygrip=$(
+            gpg --batch --with-colons --with-keygrip --with-subkey-fingerprint \
+              --list-secret-keys "$LINUX_REPOSITORY_SIGNING_FPR" \
+              | awk -F: -v expected="$LINUX_REPOSITORY_SIGNING_FPR" \
+                  '$1 == "fpr" { match_key = ($10 == expected); next }
+                   match_key && $1 == "grp" { print $10; exit }'
+          )
+          test -n "$keygrip"
+
+          gnupg_home=$(gpgconf --list-dirs homedir)
+          agent_config="$gnupg_home/gpg-agent.conf"
+          touch "$agent_config"
+          grep -Fqx 'allow-preset-passphrase' "$agent_config" \
+            || printf '%s\n' 'allow-preset-passphrase' >> "$agent_config"
+          gpgconf --kill gpg-agent
+
+          preset=
+          for candidate in \
+            /usr/lib/gnupg2/gpg-preset-passphrase \
+            /usr/lib/gnupg/gpg-preset-passphrase; do
+            if test -x "$candidate"; then
+              preset=$candidate
+              break
+            fi
+          done
+          test -n "$preset"
+          GNUPGHOME="$gnupg_home" \
+            "$preset" --preset --passphrase "$GPG_PASSPHRASE" "$keygrip"
+          unset GPG_PASSPHRASE
+
+      - name: Publish signed Stable Flatpak repository
+        run: ./distribution/flatpak/publish.sh
+
+      - name: Verify public Flatpak repository
+        run: |
+          set -euo pipefail
+          manifest=$(
+            curl -fsSL \
+              https://flatpak.tauritavern.com/repository-manifest.json
+          )
+          expected_commit=$(jq -r '.flatpak_commit' <<< "$manifest")
+          test "$(jq -r '.version' <<< "$manifest")" = "$RELEASE_VERSION"
+          test "$(jq -r '.commit' <<< "$manifest")" = "$RELEASE_COMMIT"
+
+          export FLATPAK_USER_DIR="$RUNNER_TEMP/flatpak-public-verify"
+          flatpak --user remote-add \
+            --if-not-exists \
+            tauritavern \
+            https://flatpak.tauritavern.com/tauritavern.flatpakrepo
+          actual_commit=$(
+            flatpak --user remote-info \
+              --arch=x86_64 \
+              --show-commit \
+              tauritavern \
+              com.tauritavern.client
+          )
+          test "$actual_commit" = "$expected_commit"
+
+  publish-nix-cache:
+    needs: [prepare, publish-release]
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-22.04
+          - system: aarch64-linux
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: "true"
+      R2_ENDPOINT: https://feb4df7b9167cb2a5c75b327584225b5.r2.cloudflarestorage.com
+      NIX_R2_BUCKET: tauritavern-nix-cache
+      NIX_CACHE_URL: https://nix-cache.tauritavern.com
+      NIX_CACHE_PUBLIC_KEY: nix-cache.tauritavern.com-1:mOl/sCsfndubNIhnLODjA7GPqk1qw5iknbayZLRn92U=
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Build release flake
+        run: >-
+          nix
+          --accept-flake-config
+          build
+          .#tauritavern
+          --print-build-logs
+
+      - name: Sign and publish runtime and dependency paths
+        env:
+          NIX_CACHE_PRIVATE_KEY_BASE64: ${{ secrets.NIX_CACHE_PRIVATE_KEY_BASE64 }}
+        run: |
+          cargo_deps=$(nix eval --raw \
+            ".#packages.${{ matrix.system }}.tauritavern.cargoDeps.outPath")
+          pnpm_deps=$(nix eval --raw \
+            ".#packages.${{ matrix.system }}.tauritavern.pnpmDeps.outPath")
+          ./distribution/nix-cache/publish.sh "$cargo_deps" "$pnpm_deps"
+
+      - name: Verify public Nix cache
+        run: curl -fsSL https://nix-cache.tauritavern.com/nix-cache-info

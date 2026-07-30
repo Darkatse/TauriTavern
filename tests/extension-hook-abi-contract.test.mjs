@@ -100,3 +100,33 @@ test('extensions are marked active only after activation hook call returns witho
     assert.ok(hookIndex >= 0, 'activate hook must be called');
     assert.ok(activeIndex > hookIndex, 'extension must become active after activate hook returns without throwing');
 });
+
+test('extension startup keeps resource loading at the activation boundary', async () => {
+    const [extensionsSource, scriptSource] = await Promise.all([
+        readFile(path.join(REPO_ROOT, 'src/scripts/extensions.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8'),
+    ]);
+
+    assert.doesNotMatch(extensionsSource, /modulepreload|resource-preloader|createExtensionResourcePreloader|prefetchExtensionResources/);
+    assert.doesNotMatch(scriptSource, /prefetch(?:StartupSystem|DeferredThirdParty)ExtensionResources/);
+});
+
+test('extension discovery ignores stale force-refresh results before mutating globals', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions.js'), 'utf8');
+    const start = source.indexOf('export function startOfflineExtensionsDiscovery');
+    assert.ok(start >= 0, 'startOfflineExtensionsDiscovery must exist');
+    const end = source.indexOf('async function prepareOfflineExtensionsActivation', start);
+    assert.ok(end > start, 'discovery section must end before preparation');
+
+    const section = source.slice(start, end);
+    const generationCaptureIndex = section.indexOf('const generation = offlineExtensionsDiscoveryGeneration;');
+    const staleGuardIndex = section.indexOf('if (generation !== offlineExtensionsDiscoveryGeneration)');
+    const commitIndex = section.indexOf('extensionNames = nextExtensionNames;');
+
+    assert.match(source, /let offlineExtensionsDiscoveryGeneration = 0;/);
+    assert.match(section, /offlineExtensionsDiscoveryGeneration \+= 1;/);
+    assert.ok(generationCaptureIndex >= 0, 'discovery generation must be captured per run');
+    assert.ok(staleGuardIndex > generationCaptureIndex, 'stale discovery guard must run after async discovery work');
+    assert.ok(commitIndex > staleGuardIndex, 'global discovery state must be committed only after stale guard');
+    assert.doesNotMatch(source, /manifestFetchPromises/);
+});

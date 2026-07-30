@@ -129,9 +129,6 @@ test('/api/backgrounds/upload leaves filename sanitization to Rust storage bound
             });
             return 'CON';
         },
-        invalidateInvokeAll(scope) {
-            calls.push({ command: 'invalidateInvokeAll', scope });
-        },
     });
 
     const body = new FormData();
@@ -158,7 +155,6 @@ test('/api/backgrounds/upload leaves filename sanitization to Rust storage bound
             command: 'upload_background_from_path',
             args: { filename: 'CON ', file_path: '/tmp/staged-background' },
         },
-        { command: 'invalidateInvokeAll', scope: 'read_thumbnail_asset' },
     ]);
 });
 
@@ -172,4 +168,19 @@ test('background folder payload is validated before mutating UI state', () => {
     assert.match(backgroundsSource, /folders must be an array/);
     assert.match(backgroundsSource, /imageFolderMap values must be string arrays/);
     assert.match(backgroundsSource, /assertBackgroundFoldersPayload\(data\);\s*folderList = data\.folders;/);
+});
+
+test('background startup loader refreshes the backend index before reading folders and metadata', () => {
+    const start = backgroundsSource.indexOf('async function loadBackgroundsPayload()');
+    assert.ok(start >= 0, 'loadBackgroundsPayload must exist');
+    const end = backgroundsSource.indexOf('async function applyBackgroundsPayload', start);
+    assert.ok(end > start, 'loadBackgroundsPayload must end before applyBackgroundsPayload');
+
+    const section = backgroundsSource.slice(start, end);
+    const refreshIndex = section.indexOf('const systemBackgrounds = await fetchSystemBackgroundsPayload();');
+    const parallelReadIndex = section.indexOf('const [folders, metadata] = await Promise.all([');
+
+    assert.ok(refreshIndex >= 0, 'background list refresh must be awaited first');
+    assert.ok(parallelReadIndex > refreshIndex, 'folders and metadata reads must start after the refresh');
+    assert.doesNotMatch(section.slice(0, parallelReadIndex), /fetchBackgroundFoldersPayload|fetchBackgroundMetadataPayload/);
 });

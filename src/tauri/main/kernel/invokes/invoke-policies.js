@@ -38,21 +38,16 @@ const PROVIDER_METADATA_TIMEOUT_MS = 35_000;
  * @param {any} args
  * @returns {string}
  */
-function readThumbnailAssetCacheKey(args) {
-    const type = String(args?.thumbnailType ?? args?.thumbnail_type ?? '').trim().toLowerCase();
-    const file = String(args?.file ?? '').trim();
-    const animated = Boolean(args?.animated);
-    return `${type}|${animated ? 1 : 0}|${file}`;
-}
-
-/**
- * @param {any} args
- * @returns {string}
- */
 function countOpenAiTokensBatchKey(args) {
     const dto = args?.dto ?? args ?? {};
     const json = JSON.stringify(dto);
     return fnv1a32(json);
+}
+
+/** @param {any} args */
+function exactTokenizerRequestKey(args) {
+    const dto = args?.dto ?? args ?? {};
+    return JSON.stringify(dto);
 }
 
 /**
@@ -75,14 +70,9 @@ function takeLatest(_prev, next) {
  *
  * Keep this module free of higher-level imports (services/routes/adapters).
  *
- * @param {{
- *   thumbnailBlobCacheLimit: number;
- * }} deps
  * @returns {HostInvokePolicies}
  */
-export function createHostInvokePolicies({ thumbnailBlobCacheLimit }) {
-    const thumbnailCacheLimit = Math.max(0, Math.floor(Number(thumbnailBlobCacheLimit) || 0));
-
+export function createHostInvokePolicies() {
     return {
         get_bootstrap_snapshot: {
             kind: 'dedupe',
@@ -98,19 +88,17 @@ export function createHostInvokePolicies({ thumbnailBlobCacheLimit }) {
             cacheTtlMs: 5_000,
             cacheLimit: 1,
         },
-        read_thumbnail_asset: {
-            kind: 'dedupe',
-            maxConcurrent: 2,
-            cacheTtlMs: 30_000,
-            cacheLimit: thumbnailCacheLimit,
-            key: readThumbnailAssetCacheKey,
-        },
         count_openai_tokens_batch: {
             kind: 'dedupe',
             maxConcurrent: 1,
             cacheTtlMs: 2_000,
             cacheLimit: 50,
             key: countOpenAiTokensBatchKey,
+        },
+        count_openai_token_prefixes: {
+            kind: 'dedupe',
+            maxConcurrent: 1,
+            key: exactTokenizerRequestKey,
         },
         get_openrouter_model_providers: {
             kind: 'dedupe',

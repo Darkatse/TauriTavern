@@ -161,8 +161,30 @@ function createCodeHighlightCoordinator() {
         observer?.disconnect();
     }
 
+    /** @param {Element} root */
+    function releaseSubtree(root) {
+        const codeElements = [];
+        if (root instanceof HTMLElement && root.matches('code')) {
+            codeElements.push(root);
+        }
+        codeElements.push(...root.querySelectorAll('code'));
+
+        for (const codeEl of codeElements) {
+            if (!(codeEl instanceof HTMLElement)) {
+                continue;
+            }
+            observer?.unobserve(codeEl);
+            queue.delete(codeEl);
+            afterHighlightByEl.delete(codeEl);
+            if (codeEl.dataset.ttHljsState !== 'done') {
+                delete codeEl.dataset.ttHljsState;
+            }
+        }
+    }
+
     return {
         request,
+        releaseSubtree,
         reset,
     };
 }

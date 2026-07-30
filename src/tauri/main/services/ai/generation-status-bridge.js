@@ -16,6 +16,8 @@
 export function createGenerationStatusBridge({ bridge }) {
     /** @type {boolean | null} */
     let liveUpdatesSupported = null;
+    /** @type {boolean | null} */
+    let nativeCompletionSupported = null;
 
     function supportsLiveUpdates() {
         if (liveUpdatesSupported === null) {
@@ -30,7 +32,13 @@ export function createGenerationStatusBridge({ bridge }) {
     }
 
     function supportsNativeCompletion() {
-        return supportsLiveUpdates() && bridge.has('onGenerationFinish');
+        if (nativeCompletionSupported === null) {
+            nativeCompletionSupported = bridge.has('onGenerationFinish')
+                && bridge.has('supportsNativeCompletion')
+                && bridge.get('supportsNativeCompletion') === true;
+        }
+
+        return nativeCompletionSupported;
     }
 
     /**

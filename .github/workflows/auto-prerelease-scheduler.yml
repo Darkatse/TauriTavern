@@ -2,7 +2,8 @@ name: Auto Pre-Release Scheduler
 
 on:
   schedule:
-    - cron: "20 */12 * * *"
+    # GitHub schedules use UTC: 10:00 UTC is 18:00 in China.
+    - cron: "0 10 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -15,78 +16,37 @@ permissions:
 
 jobs:
   dispatch:
-    strategy:
-      fail-fast: false
-      matrix:
-        channel:
-          - desktop
-          - mobile
-        branch:
-          - dev
-
     runs-on: ubuntu-latest
-    name: dispatch-${{ matrix.channel }}-${{ matrix.branch }}
+    name: dispatch-canary-dev
 
     steps:
-      - name: Dispatch branch build when new commits are available
+      - name: Dispatch Canary build when dev advances
         uses: actions/github-script@v7
-        env:
-          BRANCH_NAME: ${{ matrix.branch }}
-          CHANNEL: ${{ matrix.channel }}
         with:
           script: |
-            const workflows = {
-              desktop: "desktop-auto-prerelease.yml",
-              mobile: "mobile-auto-prerelease.yml",
-            };
-
-            const channel = process.env.CHANNEL;
-            const branch = process.env.BRANCH_NAME;
-            const workflowId = workflows[channel];
-            if (!workflowId) {
-              throw new Error(`Unsupported prerelease channel: ${channel}`);
-            }
-
             const { owner, repo } = context.repo;
-
             const { data: branchData } = await github.rest.repos.getBranch({
               owner,
               repo,
-              branch,
+              branch: "dev",
             });
             const headSha = branchData.commit.sha;
-
-            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+            const { data: canaryCommit } = await github.rest.repos.getCommit({
               owner,
               repo,
-              workflow_id: workflowId,
-              branch,
-              event: "workflow_dispatch",
-              status: "completed",
-              per_page: 100,
+              ref: "Canary",
             });
 
-            const previousSuccessfulRun = runs.find((run) => run.conclusion === "success");
-            if (previousSuccessfulRun?.head_sha === headSha) {
-              core.info(
-                `Skipping ${channel}/${branch}: latest successful pre-release already built for ${headSha}.`
-              );
+            if (canaryCommit.sha === headSha) {
+              core.info(`Skipping Canary: dev ${headSha} is already published.`);
               return;
             }
 
-            if (previousSuccessfulRun) {
-              core.notice(
-                `${channel}/${branch} advanced to ${headSha}; last successful pre-release was ${previousSuccessfulRun.head_sha}.`
-              );
-            } else {
-              core.notice(
-                `No successful pre-release exists yet for ${channel}/${branch}; dispatching ${headSha}.`
-              );
-            }
+            core.notice(`Canary ${canaryCommit.sha} -> dev ${headSha}; dispatching.`);
 
             await github.rest.actions.createWorkflowDispatch({
               owner,
               repo,
-              workflow_id: workflowId,
-              ref: branch,
+              workflow_id: "canary-release.yml",
+              ref: "dev",
             });

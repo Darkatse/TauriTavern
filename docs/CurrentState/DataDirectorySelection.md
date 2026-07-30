@@ -28,7 +28,7 @@
 ### 2.2 运行时配置文件
 
 - 文件：`{app_root}/tauritavern-runtime.json`
-- 解析入口：`src-tauri/src/infrastructure/paths.rs`
+- 解析入口：`src-tauri/crates/tauritavern/src/infrastructure/paths.rs`
 - 字段：
   - `version`
   - `data_root`
@@ -39,11 +39,10 @@
 
 ### 2.3 启动期路径决议
 
-- `src-tauri/src/lib.rs` 在 `setup` 早期调用 `resolve_runtime_paths(...)`
+- `src-tauri/crates/tauritavern/src/lib.rs` 在 `setup` 早期调用 `resolve_runtime_paths(...)`
 - `RuntimePaths` 一旦确定，就被作为 managed state 注入并用于：
   - asset protocol scope
-  - `DefaultUserWebDirs`
-  - 第三方扩展目录
+  - Host Resource Service 的用户资源与第三方扩展目录
   - 数据归档目录
   - 后端初始化
 
@@ -108,7 +107,7 @@
 
 ## 5. 持续开发约束
 
-- **路径策略必须继续收敛在 `src-tauri/src/infrastructure/paths.rs`**
+- **路径策略必须继续收敛在 `src-tauri/crates/tauritavern/src/infrastructure/paths.rs`**
   - 不要把 `data_root` 决议逻辑散落到 command、service、frontend 多处
 - **`tauritavern-runtime.json` 是唯一的启动引导配置**
   - 不要把 `data_root` 写回常规 settings
@@ -122,7 +121,7 @@
 
 ## 6. 关键代码位置
 
-- `src-tauri/src/infrastructure/paths.rs`
-- `src-tauri/src/presentation/commands/runtime_paths_commands.rs`
+- `src-tauri/crates/tauritavern/src/infrastructure/paths.rs`
+- `src-tauri/crates/tauritavern/src/presentation/commands/runtime_paths_commands.rs`
 - `src/scripts/tauri/setting/setting-panel/settings-popup.js`
 - `src/tauri-bridge.js`

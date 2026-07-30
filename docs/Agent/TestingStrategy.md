@@ -7,10 +7,10 @@
 测试要守住：
 
 - Legacy Generate 兼容。
-- Clean Architecture 边界。
+- workspace crate 边界。
 - Workspace path 安全。
 - Journal 完整性。
-- Windowed payload 保存契约。
+- 完整 chat payload 保存契约。
 - LLM gateway 不绕过现有 policy/logging。
 - Tool policy 与 approval。
 - MCP 安全边界。
@@ -56,6 +56,7 @@ plan locked node violation
 profile switch allowed/denied
 agent.list policy filtering
 agent.delegate creates task and child invocation
+agent.delegate rejects hard runtime budget arguments
 agent.delegate schedules return-mode child task on background scheduler
 agent.await waits for background child task and renders result capsule
 completed child results are injected into the next parent model turn once
@@ -178,17 +179,16 @@ run timeline mobile view gesture uses Pointer Events only as an input shortcut a
 
 Provider normalizer tests 必须覆盖可见 reasoning 提取：Claude `thinking`、Gemini `thought` 文本、OpenAI Responses reasoning summary 进入 `reasoning_content`；signature / encrypted continuation 仍作为 native/provider state 保留，不能作为可展示文本。
 
-## 7. Windowed Payload Integration Tests
+## 7. Chat History / Save Integration Tests
 
 覆盖：
 
 ```text
-Agent reads history through windowed/search APIs
-Agent does not expand UI chat window
+Agent reads bounded history through paged/search APIs
+Agent does not replace or truncate canonical frontend chat
 Agent commit uses chat save contract
-Agent commit does not trigger cursor mismatch under serialized saves
-cursor mismatch fails clearly
-force does not bypass cursor signature
+Agent commit remains ordered under serialized saves
+integrity and atomic publish failures surface clearly
 rollback committed message uses save contract
 ```
 
@@ -253,8 +253,9 @@ Golden fixtures 应尽量脱敏，不包含真实 API key 或私人聊天。
 
 - 后端 `cargo check --manifest-path src-tauri/Cargo.toml` 通过。
 - 后端 `cargo test --manifest-path src-tauri/Cargo.toml agent_runtime_service` 通过。
-- 后端 `cargo test --manifest-path src-tauri/Cargo.toml file_agent_repository` 通过。
-- 后端 `cargo test --manifest-path src-tauri/Cargo.toml file_agent_profile_repository` 通过。
+- 后端 `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_repository` 通过。
+- 后端 `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_profile_repository` 通过。
+- `node scripts/check-rust-crate-boundaries.mjs` 通过。
 - 涉及前端 ABI 时，前端 `pnpm run check:types`、`pnpm run check:contracts`、`pnpm run check:frontend` 通过。
 - 控制台 smoke 能通过 `startRunFromLegacyGenerate()` 启动 run。
 - 控制台 Agent smoke 能依次调用 `chat_search`、`chat_read_messages`、`worldinfo_read_activated`，写入 `output/main.md` 并进入 `awaiting_commit`。

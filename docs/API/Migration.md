@@ -10,23 +10,23 @@
 
 | 你以前的做法 | 问题 | TauriTavern 替代 |
 | --- | --- | --- |
-| `chat.slice().reverse().find(...)` | 手动遍历，可能在窗口外找不到 | ✅ `handle.locate.findLastMessage()` |
+| `chat.slice().reverse().find(...)` | 手动复制并遍历长数组 | ✅ `handle.locate.findLastMessage()` |
 | 手写关键词 `filter/includes` | CJK 不友好，无评分排序 | ✅ `handle.searchMessages()` |
 | 数据塞进消息体 + `saveChat()` | 膨胀 payload，数据与消息耦合 | ✅ `handle.store.setJson()` |
 | hack 写入 `chat_metadata` | 容量有限，语义不清 | ✅ `handle.metadata.setExtension()` |
-| `context.chat.length` 当总楼层数 | 窗口模式下不准确 | ✅ `windowInfo().totalCount` |
-| `context.chat.slice(-N)` | 可能拿不到完整历史 | ✅ `handle.history.tail({ limit: N })` |
+| 反复读取 `context.chat.length` | 已准确，但需要稳定 handle/summary 时可走后端 | `windowInfo().totalCount` 或 `handle.summary()` |
+| 为后台任务复制 `context.chat.slice(-N)` | 会额外复制消息对象引用 | ✅ `handle.history.tail({ limit: N })` |
 
-## 背景：窗口化聊天
+## 背景：完整历史与增强查询
 
-TauriTavern 默认采用窗口化加载——前端只保留最近 N 条消息，不会把整个聊天历史塞进 JS 内存。这在长对话和移动端上带来显著的性能优势。
+TauriTavern 与 SillyTavern 1.18.0 一样，保证 **`getContext().chat` 包含当前聊天的完整、有序消息历史**。因此，依赖完整数组与绝对索引的上游扩展无需为了数据窗口做兼容分支。
 
-对扩展开发者来说，唯一需要注意的是：**`getContext().chat` 现在只包含窗口内的消息**。但别担心——TauriTavern 提供的 API（`findLastMessage`、`searchMessages`、`history.*`）会透明地穿越窗口边界，在后端扫描完整历史。你只需要把旧代码里的手动遍历换成 API 调用即可。
+增强 API（`findLastMessage`、`searchMessages`、`history.*`）不是修复不完整数组的旁路，而是可选的高效后端能力：它们适合有界扫描、CJK 检索、分页任务或避免在扩展中建立第二份大数组。
 
 另一个容易踩坑的点：
 
 - 如果你的扩展会**修改聊天消息本身**并希望落盘（例如清理/脱敏/批量替换），请调用 `await getContext().saveChat()`（它会走宿主的统一保存队列）。
-- 不要从 `script.js` 里直接 import/调用 `saveChat()`：这属于内部实现细节，且在 windowed payload 下并发保存会导致 cursor 失效与数据一致性问题。
+- 不要从 `script.js` 里直接 import/调用 `saveChat()`：这属于内部实现细节，也会绕过公开 context 边界与调用语义。
 
 ## 第 1 步：初始化 API
 
@@ -116,17 +116,17 @@ await handle.metadata.setExtension({
 
 存储在 `chat_metadata.extensions[namespace]`，语义清晰。
 
-## 第 5 步：索引语义迁移
+## 第 5 步：索引语义
 
 如果你的扩展会持久化"已处理到第几楼"之类的进度，注意使用**绝对索引**：
 
 ```js
 const info = await api.current.windowInfo();
 const total = info.totalCount;       // 全量消息数
-const absIndex = info.windowStartIndex + windowIndex;  // 窗口索引 → 绝对索引
+const absIndex = info.windowStartIndex + chatIndex;  // 当前固定等于 chatIndex
 ```
 
-> ⚠️ 持久化时永远存**绝对索引**，不要存窗口索引。
+> ⚠️ 持久化时使用 0-based 绝对消息索引；JSONL header 不计入索引。
 
 ## 第 6 步（可选）：历史遍历
 

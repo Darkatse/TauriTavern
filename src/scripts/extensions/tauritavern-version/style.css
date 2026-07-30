@@ -1,7 +1,7 @@
-#tauritavern_version_settings .inline-drawer-content {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+/* The host sets inline display:block when the drawer opens, so zone spacing
+   must come from margins rather than a flex context on the content element. */
+#tauritavern_version_settings .inline-drawer-content > * + * {
+    margin-top: 8px;
 }
 
 #tauritavern_version_settings [hidden] {
@@ -12,6 +12,7 @@
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 10px;
     background-color: var(--black30a);
+    overflow: hidden;
 }
 
 #tauritavern_version_settings .ttv-row {
@@ -36,10 +37,163 @@
     word-break: break-word;
 }
 
+#tauritavern_version_settings .ttv-channel-block {
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+#tauritavern_version_settings .ttv-channel-toggle {
+    width: 100%;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+
+#tauritavern_version_settings .ttv-channel-toggle:hover {
+    background-color: var(--black20a);
+}
+
+#tauritavern_version_settings .ttv-channel-toggle:focus-visible {
+    outline: 2px solid var(--interactable-outline-color);
+    outline-offset: -2px;
+}
+
+#tauritavern_version_settings .ttv-channel-current {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+#tauritavern_version_settings .ttv-channel-current .fa-chevron-down {
+    font-size: 0.8em;
+    opacity: 0.7;
+    transition: transform var(--animation-duration-2x) ease;
+}
+
+#tauritavern_version_settings .ttv-channel-toggle.open .fa-chevron-down {
+    transform: rotate(180deg);
+}
+
+#tauritavern_version_settings #ttv-channel-current-name.ttv-canary {
+    color: var(--SmartThemeQuoteColor);
+}
+
+#tauritavern_version_settings .ttv-channel-body {
+    display: none;
+    padding: 10px;
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+#tauritavern_version_settings .ttv-channel-body > * + * {
+    margin-top: 8px;
+}
+
+#tauritavern_version_settings .ttv-channel-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 10px;
+    background-color: var(--black30a);
+}
+
+#tauritavern_version_settings .ttv-channel-option {
+    position: relative;
+    min-width: 0;
+}
+
+#tauritavern_version_settings .ttv-channel-option input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+#tauritavern_version_settings .ttv-channel-pill {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    opacity: 0.7;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color var(--animation-duration-2x) ease, border-color var(--animation-duration-2x) ease, color var(--animation-duration-2x) ease, opacity var(--animation-duration-2x) ease;
+}
+
+#tauritavern_version_settings .ttv-channel-option:hover .ttv-channel-pill {
+    opacity: 1;
+}
+
+#tauritavern_version_settings .ttv-channel-option input:checked + .ttv-channel-pill {
+    color: var(--SmartThemeQuoteColor);
+    background-color: var(--SmartThemeBlurTintColor);
+    border-color: var(--SmartThemeBorderColor);
+    opacity: 1;
+}
+
+#tauritavern_version_settings .ttv-channel-option input:focus-visible + .ttv-channel-pill {
+    outline: 2px solid var(--interactable-outline-color);
+    outline-offset: 1px;
+}
+
+#tauritavern_version_settings .ttv-channel-option input:disabled {
+    cursor: default;
+}
+
+#tauritavern_version_settings .ttv-channel-option input:disabled + .ttv-channel-pill {
+    opacity: 0.5;
+    cursor: default;
+}
+
+#tauritavern_version_settings .ttv-channel-hint {
+    font-size: calc(var(--mainFontSize) * 0.85);
+    opacity: 0.7;
+}
+
+#tauritavern_version_settings .ttv-channel-hint.ttv-hint-canary {
+    color: var(--SmartThemeQuoteColor);
+    opacity: 0.9;
+}
+
 #tauritavern_version_settings .ttv-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+}
+
+#tauritavern_version_settings .ttv-actions .menu_button,
+#tauritavern_version_settings .ttv-footer .menu_button {
+    margin: 0;
+}
+
+#tauritavern_version_settings .ttv-footer-sep {
+    margin: 2px 0;
+}
+
+#tauritavern_version_settings .ttv-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+#tauritavern_version_settings .ttv-links {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+#tauritavern_version_settings .ttv-links .menu_button {
+    padding: 5px 8px;
 }
 
 #tauritavern_version_settings .ttv-update-result {

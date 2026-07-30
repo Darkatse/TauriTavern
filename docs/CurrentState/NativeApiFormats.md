@@ -1,6 +1,6 @@
 # 原生 API 格式（Custom）兼容现状
 
-最后更新：2026-05-02
+最后更新：2026-07-27
 
 本文件描述 **TauriTavern 已落地** 的三家原生 API 格式兼容（OpenAI Responses / Claude Messages / Gemini Interactions）的当前实现快照与持续开发约束。
 
@@ -78,7 +78,7 @@ Connection Profiles（Connection Manager 扩展）：
 | OpenAI-compatible (`/chat/completions`) | ✅ | ✅ | ✅（上游 ST 语义） | ✅（现有链路） | ✅ |
 | OpenAI Responses (`/responses`) | ✅（normalize→chat.completion） | ✅（Responses events→chat.completion.chunk） | ✅（full transcript replay / `previous_response_id`） | ✅（backend normalizer / Agent gateway 保留 raw `output` 与 `responseId`） | ✅ |
 | Claude Messages (`/messages`) | ✅（normalize→chat.completion） | ✅（Anthropic events） | ✅（沿用 Claude tool loop） | ✅（现有链路） | ✅ |
-| Gemini Interactions (`/interactions`) | ✅（normalize→chat.completion，含 native） | ✅（SSE→chat.completion.chunk，末包带 native） | ✅ | ✅（`message.extra.native` 回放 outputs） | ✅ |
+| Gemini Interactions (`/interactions`) | ✅（normalize→chat.completion，含 native） | ✅（SSE→chat.completion.chunk，末包带 native） | ✅ | ✅（`message.extra.native` 回放 steps） | ✅ |
 
 ### 3.2 明确的当前限制
 
@@ -101,11 +101,10 @@ Connection Profiles（Connection Manager 扩展）：
 - 没有 `previous_response_id` 时，`function_call_output` 必须能在同次 transcript 中找到前置 `function_call`；否则 fail-fast
 - 有 `previous_response_id` 时，允许 orphan `function_call_output`，因为前置 function call 可由 provider previous response state 提供
 - `store` 默认 `false`；`include` 会保证包含 `reasoning.encrypted_content`，用于 reasoning/native continuation
-- `previous_response_id`、`max_tokens` / `max_completion_tokens`→`max_output_tokens`、`reasoning_effort`→`reasoning.effort`、`verbosity`、`metadata`、`parallel_tool_calls` 等字段按当前 payload builder 映射
+- `previous_response_id`、`max_tokens` / `max_completion_tokens`→`max_output_tokens`、`reasoning_effort`→`reasoning.effort`、`verbosity`→`text.verbosity`、`metadata`、`parallel_tool_calls` 等字段按当前 payload builder 映射
 
 传输侧（repository）：
-- 普通 Custom `/responses` 非流式请求当前会先尝试 WebSocket `response.create`，失败后回退 HTTP（取消错误不回退）
-- 普通 Custom `/responses` 流式请求当前会先尝试 WebSocket stream；若失败且尚未向前端发送 chunk，则回退 HTTP streaming
+- 普通 Custom `/responses` 非流式请求走 HTTP，流式请求走 SSE
 - 带内部 `_tauritavern_provider_state.sessionId` 的请求走 run-scoped persistent WebSocket session；该路径失败时不回退 HTTP
 - Responses WebSocket 建连通过 `HttpClientPool` 的 ChatCompletion WebSocket profile 发起 HTTP Upgrade，再交给 WebSocket frame stream；因此沿用现有代理、TLS/client 构建与连接超时契约
 - persistent session 的 connection key 包含 transport revision；request proxy / client 配置变更后会重建 session
@@ -113,11 +112,12 @@ Connection Profiles（Connection Manager 扩展）：
 - WebSocket `response.create` payload 会剥离 `_tauritavern_provider_state`、`stream` 与 `background`
 
 流式侧（repository）：
-- 解析 Responses 语义事件（如 `response.output_text.delta` / `response.output_item.added` / `response.function_call_arguments.delta`）
+- 解析 Responses 语义事件（如 `response.output_text.delta` / `response.refusal.delta` / `response.output_item.done`）
 - 输出 OpenAI `chat.completion.chunk`：
   - 文本 delta → `choices[0].delta.content`
   - 推理 delta → `choices[0].delta.reasoning_content`
-  - tool call delta → `choices[0].delta.tool_calls[]`（`id` 使用 Responses 的 `call_id`）
+  - 完成的 function call item → 单个 `choices[0].delta.tool_calls[]`（`id` 使用 Responses 的 `call_id`）
+- SSE 必须以 Responses terminal event 结束；连接提前关闭会 fail-fast，用户主动取消除外
 
 tool follow-up（关键契约）：
 - 普通 Custom Responses 不再依赖 repository 内存缓存。若没有 `previous_response_id`，请求必须通过 full transcript replay 或 native output replay 提供前置 `function_call`。
@@ -128,20 +128,29 @@ tool follow-up（关键契约）：
 
 URL 与鉴权：
 - 若 `custom_url` 末尾不含 `/v1` 或 `/v1beta`，后端自动补 `.../v1beta`
-- streaming 自动加 `?alt=sse`
-- 未提供 `Authorization` 时使用 `x-goog-api-key`，并（当 key 非空）同时追加 query `key=...`
+- 用户显式提供 `Authorization` 时优先使用该 header；否则使用 `x-goog-api-key`
+- streaming 由请求体 `stream: true` 启用，响应按 SSE 解析
+
+请求侧：
+- `system` message 聚合为顶层 `system_instruction`
+- user / assistant / tool history 分别构造 `user_input`、`model_output` / `function_call`、`function_result` steps
+- structured output 使用 `response_format = { "type": "text", "mime_type": "application/json", "schema": ... }`
 
 signature / native blocks（关键契约）：
-- 后端在 streaming 完成事件 `interaction.complete` 时，将聚合后的 `outputs[]` 放入：
-  - `choices[0].delta.native = { gemini_interactions: { outputs } }`
+- 后端在 streaming 完成事件 `interaction.completed` 时，将聚合后的 `steps[]` 放入：
+  - `choices[0].delta.native = { gemini_interactions: { steps } }`
 - 前端在保存消息时将其落到 `message.extra.native`
-- 后续构造 stateless history 时：若 `extra.native.gemini_interactions.outputs` 存在，则 **原样回放** outputs（满足 thought-signatures 相关要求）
+- 后续构造 stateless history 时：若 `extra.native.gemini_interactions.steps` 存在，则 **原样回放** steps（满足 thought-signatures 相关要求）
+- SillyTavern 将带前导文本的 function-call turn 拆成相邻的可见消息与 tool invocation 时，payload translator 只对两者完全相同的 native steps 去重并回放一次
 
 流式归一化：
-- Interactions SSE 的 `content.delta`：
-  - `text` → `delta.content`
-  - `thought_summary` → `delta.reasoning_content`
-  - `function_call` → `delta.tool_calls`（arguments 为 JSON 字符串；tool_call_id 视为不透明字符串）
+- Interactions SSE 顺序为 `interaction.created` / 状态通知，随后每个输出依次经历 `step.start` / `step.delta` / `step.stop`，最后是 `interaction.completed` 与 `[DONE]`；适配器接受现网的 `interaction.status_update` 与文档命名的状态事件，但只以终态事件完成响应
+- `step.delta.type=text` → `delta.content`
+- `step.delta.type=thought_summary` → `delta.reasoning_content`；`thought_signature` 只保留在 native step
+- function call 的 id / name 来自 `step.start.step`；`step.delta.type=arguments_delta` 的 `arguments` 字符串累计到 `step.stop` 后解析，并只发送一个完整 `delta.tool_calls` item
+- Google Search 等服务端工具 step 与 text annotations 不投影到通用 chat 字段，只在流式组装后原样保留于 native steps
+- streaming function call 的 terminal status 可以是 `completed`，因此 `finish_reason=tool_calls` 由已组装的 `function_call` step 决定；非流式 function call 的状态可以是 `requires_action`
+- `incomplete` 若含可消费文本则归一化为 `finish_reason=length`；无可消费输出或不完整 function call 直接报错
 
 ### 4.3 Claude Messages（/messages，Custom 变体）
 
@@ -152,9 +161,18 @@ header 策略（关键契约）：
   - 为请求自动补充 prompt caching 所需的 `anthropic-beta` caching header
 - 未勾选时，仍保持“仅透传用户自定义 headers”的兼容策略。
 
+image 输入：
+- Claude Messages 复用 shared `content_parts` parser：`image_url` data URL 转成 `source.type=base64`，direct/custom Claude Messages 的远端 `http(s)` URL 转成 `source.type=url`。
+- AWS Bedrock Claude 复用 Claude renderer，但执行 base64-only source policy；远端 URL、provider file reference 等不能保真的输入会 fail-fast。
+- OpenAI-style `input_image.file_id` 暂不自动转成 Claude Files API 引用；Claude-native file source 只按 native block 保真回放，调用方需自行负责 beta/header/file 生命周期。
+
 streaming 语义：
 - 后端沿用 Claude 的 SSE `data:` JSON 事件透传（不做 chunk 归一化）
-- 前端对 `custom_api_format=claude_messages` 走 Claude streaming 分支解析（提取 `delta.text`/`delta.thinking`）
+- 前端对 direct Claude、Vertex Claude、内建 Bedrock Claude 与 `custom_api_format=claude_messages` 走 Claude streaming 分支解析
+- 前端按 content block index 累积 `text_delta`、`thinking_delta`、`signature_delta` 与 `input_json_delta`；`input_json_delta` 按 delta 契约处理，不绑定具体 tool block type
+- 前端在 `message_delta` / 非流式响应的 `stop_reason` 上显式处理终态：`refusal` 保留 provider 输出、显示 toast，并将同一警告追加到最终 `message.mes`；`max_tokens` / `model_context_window_exceeded` 保留部分文本、显示截断警告；这些终态都不会执行或回放未完成的 tool call
+- 只有包含 client `tool_use` 的 assistant turn 才把完整 `content[]` 保存到 `message.extra.native.claude` 并在同 provider/model 的后续请求原样回放；普通 assistant turn 继续使用 SillyTavern canonical content，避免历史 thinking 绕过 token budget 与消息编辑语义
+- SillyTavern 将一次 tool turn 拆成相邻可见消息与 invocation 消息时，translator 仅在两者 native content 完全相等时折叠为一次，内容不一致则 fail-fast；编辑其中任一消息会同时使两份 native metadata 失效
 
 ---
 
@@ -162,5 +180,5 @@ streaming 语义：
 
 1. **回滚兼容**：Custom 变体落盘必须保持 `chat_completion_source="custom"`，不要把 UI 选择值（如 `custom_openai_responses`）写入设置文件。
 2. **tool_call_id 透明性**：tool loop 不应假设 tool_call_id 是 OpenAI UUID；必须把它当作不透明字符串传递与存储。
-3. **native metadata 保真**：Agent gateway 会通过 normalized `message.native` / canonical `Native` part 保留 Claude content blocks、Gemini content parts、OpenAI Responses output items、Gemini Interactions outputs。不得“清洗未知字段”，否则签名链或 reasoning continuation 会断。
+3. **native metadata 保真**：Agent gateway 会通过 normalized `message.native` / canonical `Native` part 保留 Claude content blocks、Gemini content parts、OpenAI Responses output items、Gemini Interactions steps。不得“清洗未知字段”，否则签名链或 reasoning continuation 会断。
 4. **Custom Claude 不注入 anthropic-beta**：该行为是为了兼容第三方；现在只有显式 opt-in 的 prompt caching 会自动补 caching header，其他场景仍不得硬编码回退。

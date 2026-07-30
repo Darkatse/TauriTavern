@@ -19,11 +19,6 @@ import {
  * }} deps
  */
 export function createInvokeService({ invoke, policies }) {
-    /** @param {number} ms */
-    function sleep(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-
     /** @param {Record<string, any> | null | undefined} args */
     function withTauriArgumentAliases(args) {
         if (!args || typeof args !== 'object' || Array.isArray(args)) {
@@ -47,15 +42,6 @@ export function createInvokeService({ invoke, policies }) {
         }
 
         return aliased || args;
-    }
-
-    /** @param {unknown} message */
-    function shouldRetryInvoke(message) {
-        const normalized = String(message || '').toLowerCase();
-        return (
-            (normalized.includes('state') && normalized.includes('not managed')) ||
-            normalized.includes('invoke is unavailable')
-        );
     }
 
     /**
@@ -137,6 +123,8 @@ export function createInvokeService({ invoke, policies }) {
         switch (variant) {
             case 'BadRequest':
                 return `Bad request: ${nested}`;
+            case 'Conflict':
+                return `Conflict: ${nested}`;
             case 'NotFound':
                 return `Not found: ${nested}`;
             case 'Unauthorized':
@@ -188,26 +176,19 @@ export function createInvokeService({ invoke, policies }) {
     async function invokeTransport(command, args = {}) {
         const invokeArgs = withTauriArgumentAliases(args);
 
-        for (let attempt = 0; attempt < 20; attempt += 1) {
-            try {
-                return await invoke(command, invokeArgs);
-            } catch (error) {
-                const message = normalizeInvokeErrorMessage(error, `Command failed: ${command}`);
-                const details = findUpstreamFailureDetails(error);
-                if (attempt < 19 && shouldRetryInvoke(message)) {
-                    await sleep(200);
-                    continue;
-                }
-
-                const raised = new Error(message);
-                // @ts-ignore - assign error cause for better debugging.
-                raised.cause = error;
-                if (details) {
-                    // @ts-ignore - structured backend error details.
-                    raised.details = details;
-                }
-                throw raised;
+        try {
+            return await invoke(command, invokeArgs);
+        } catch (error) {
+            const message = normalizeInvokeErrorMessage(error, `Command failed: ${command}`);
+            const details = findUpstreamFailureDetails(error);
+            const raised = new Error(message);
+            // @ts-ignore - assign error cause for better debugging.
+            raised.cause = error;
+            if (details) {
+                // @ts-ignore - structured backend error details.
+                raised.details = details;
             }
+            throw raised;
         }
     }
 
@@ -251,18 +232,6 @@ export function createInvokeService({ invoke, policies }) {
         return invokeBroker.flushAll();
     }
 
-    function installFlushOnHide() {
-        const flush = () => flushAllInvokes();
-
-        window.addEventListener('pagehide', flush);
-        window.addEventListener('beforeunload', flush);
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'hidden') {
-                void flush();
-            }
-        });
-    }
-
     return {
         safeInvoke,
         invalidateInvoke,
@@ -276,6 +245,5 @@ export function createInvokeService({ invoke, policies }) {
             invokeTransportRef = next;
         },
         invokeBroker,
-        installFlushOnHide,
     };
 }

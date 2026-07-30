@@ -1,0 +1,141 @@
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+
+use sha2::{Digest, Sha256};
+use tokio::sync::RwLock;
+use tt_domain::errors::DomainError;
+use yup_oauth2::ServiceAccountAuthenticator;
+use yup_oauth2::ServiceAccountKey;
+use yup_oauth2::authenticator::Authenticator;
+#[cfg(any(target_os = "android", target_os = "ios"))]
+use yup_oauth2::client::CustomHyperClientBuilder;
+use yup_oauth2::client::DefaultHyperClientBuilder;
+use yup_oauth2::client::HyperClientBuilder;
+
+const CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
+
+type DefaultAuthenticator =
+    Authenticator<<DefaultHyperClientBuilder as HyperClientBuilder>::Connector>;
+
+#[derive(Clone)]
+struct CachedServiceAccount {
+    authenticator: Arc<DefaultAuthenticator>,
+}
+
+static SERVICE_ACCOUNT_CACHE: OnceLock<RwLock<HashMap<String, CachedServiceAccount>>> =
+    OnceLock::new();
+
+pub(super) async fn get_service_account_access_token(
+    service_account_json: &str,
+) -> Result<String, DomainError> {
+    let cache_key = sha256_hex(service_account_json);
+
+    let cached = {
+        let cache = service_account_cache().read().await;
+        cache.get(&cache_key).cloned()
+    };
+
+    let cached = match cached {
+        Some(cached) => cached,
+        None => {
+            let service_account_key = serde_json::from_str::<ServiceAccountKey>(
+                service_account_json,
+            )
+            .map_err(|error| {
+                DomainError::InvalidData(format!(
+                    "Vertex AI service account JSON parse failed: {error}"
+                ))
+            })?;
+
+            let authenticator = build_service_account_authenticator(service_account_key)
+                .await
+                .map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Vertex AI service account authenticator build failed: {error}"
+                    ))
+                })?;
+
+            let cached = CachedServiceAccount {
+                authenticator: Arc::new(authenticator),
+            };
+
+            let mut cache = service_account_cache().write().await;
+            cache.insert(cache_key, cached.clone());
+            cached
+        }
+    };
+
+    let token = cached
+        .authenticator
+        .token(&[CLOUD_PLATFORM_SCOPE])
+        .await
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Vertex AI service account access token request failed: {error}"
+            ))
+        })?;
+
+    token.token().map(str::to_string).ok_or_else(|| {
+        DomainError::InternalError("Vertex AI access token response is missing token".to_string())
+    })
+}
+
+fn service_account_cache() -> &'static RwLock<HashMap<String, CachedServiceAccount>> {
+    SERVICE_ACCOUNT_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn sha256_hex(input: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let digest = Sha256::digest(input.as_bytes());
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+async fn build_service_account_authenticator(
+    service_account_key: ServiceAccountKey,
+) -> Result<DefaultAuthenticator, std::io::Error> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        ServiceAccountAuthenticator::with_client(service_account_key, build_mobile_hyper_client())
+            .build()
+            .await
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        ServiceAccountAuthenticator::builder(service_account_key)
+            .build()
+            .await
+    }
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn build_mobile_hyper_client() -> CustomHyperClientBuilder<
+    yup_oauth2::hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+> {
+    let root_store = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+
+    let tls_config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    let connector = yup_oauth2::hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(tls_config)
+        .https_or_http()
+        .enable_http1()
+        .enable_http2()
+        .build();
+
+    let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+        .pool_max_idle_per_host(0)
+        .build::<_, String>(connector);
+
+    CustomHyperClientBuilder::from(client)
+}

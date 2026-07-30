@@ -23,7 +23,7 @@ https://github.com/tauri-apps/tauri/issues/14240
 
 ### 1.3 当前实现
 
-核心入口仍是 `src-tauri/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`，但职责已拆分为：
+核心入口仍是 `src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`，但职责已拆分为：
 
 - `AndroidInsetsBridge.kt`：系统栏/IME inset 监听与 CSS 变量注入；
 - `WebViewReadinessPoller.kt`：页面就绪轮询；
@@ -90,7 +90,7 @@ https://v2.tauri.app/develop/resources/#android
 
 #### A. 构建期生成资源索引与嵌入映射
 
-`src-tauri/build.rs` 现在会：
+`src-tauri/crates/tauritavern/build.rs` 现在会：
 
 - 扫描 `../default/content` 和 `../src/scripts/templates`；
 - 生成 `default_content_manifest.json`（默认内容清单）；
@@ -98,7 +98,7 @@ https://v2.tauri.app/develop/resources/#android
 
 #### B. 运行时统一资源访问入口
 
-`src-tauri/src/infrastructure/assets.rs` 提供统一 API：
+`src-tauri/crates/tauritavern/src/infrastructure/assets.rs` 提供统一 API：
 
 - `read_resource_bytes`
 - `read_resource_text`
@@ -114,13 +114,13 @@ https://v2.tauri.app/develop/resources/#android
 #### C. 前后端模板读取解耦
 
 - 后端新增命令：`read_frontend_template`  
-  文件：`src-tauri/src/presentation/commands/bridge.rs`
+  文件：`src-tauri/crates/tauritavern/src/presentation/commands/bridge.rs`
 - 前端模板加载改为 Tauri 环境下优先 invoke：  
   文件：`src/scripts/templates.js`
 
 #### D. 默认内容初始化改为“资源 -> 真实文件”复制流程
 
-`src-tauri/src/infrastructure/repositories/file_content_repository.rs` 不再依赖资源目录的直接文件路径语义，改用统一资源接口复制到用户目录。
+`src-tauri/crates/tauritavern/src/infrastructure/repositories/file_content_repository.rs` 不再依赖资源目录的直接文件路径语义，改用统一资源接口复制到用户目录。
 
 ---
 
@@ -134,7 +134,7 @@ https://v2.tauri.app/develop/resources/#android
 ### 3.2 当前方案：单点路径解析抽象
 
 新增单点路径解析模块：  
-`src-tauri/src/infrastructure/paths.rs`
+`src-tauri/crates/tauritavern/src/infrastructure/paths.rs`
 
 统一入口：
 
@@ -187,11 +187,11 @@ https://v2.tauri.app/develop/resources/#android
 
 ### 4.2 应用初始化与数据根目录
 
-- `src-tauri/src/app.rs` 的 `resolve_data_root` / `resolve_log_root` 已改为依赖 `resolve_app_data_dir`
+- `src-tauri/crates/tauritavern/src/app.rs` 的 `resolve_data_root` / `resolve_log_root` 已改为依赖 `resolve_app_data_dir`
 
 ### 4.3 资源协议访问权限
 
-- `src-tauri/src/lib.rs` 在 setup 阶段对 `data_root` 执行：
+- `src-tauri/crates/tauritavern/src/lib.rs` 在 setup 阶段对 `data_root` 执行：
   - `asset_protocol_scope().allow_directory(&data_root, true)`
 - 目的：允许 WebView 通过 asset 协议访问用户数据文件，避免前端资源加载 403。
 
@@ -215,11 +215,36 @@ https://v2.tauri.app/develop/resources/#android
 
 ---
 
-## 6. 插件系统（前端）移动端兼容补丁
+## 6. AI 生成通知生命周期
+
+Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyTavern 语义上的“生成开始/进度/结束”事件。
+
+当前通知槽位：
+
+- `42000`：前台服务保活通知，只维持 Android 后台执行契约；
+- `42001`：生成完成通知，表示需要用户知晓的一次完成/失败结果。
+
+生命周期契约：
+
+- 应用前台可交互态定义为 `Activity resumed && window focused`；
+- 应用进入前台可交互态、冷启动、或收到新的 launch intent 时，只清除 `42001`；
+- 生成结束时，如果应用已经前台可交互，则不再发布完成通知；
+- 发布新的完成通知前先清除旧的 `42001`，避免 fixed notification id 上的静默复用；
+- 完成通知不使用 `onlyAlertOnce`；保活/进度通知仍可使用，避免 token 进度频繁打扰。
+
+维护原则：
+
+- 不要用 `cancelAll()` 清通知，避免误伤系统或未来扩展通知；
+- 不要把 native completion 能力绑定到 Android 16+ `ProgressStyle`，旧版 Android 也需要完成通知生命周期；
+- 不要让前端承担 Android 通知栏清理职责，前端应继续保持上游 SillyTavern 的事件语义。
+
+---
+
+## 7. 插件系统（前端）移动端兼容补丁
 
 以下问题仅在 Android 旧 WebView 上高概率出现，桌面端通常不复现。
 
-### 6.1 `*.at is not a function`
+### 7.1 `*.at is not a function`
 
 现象：
 
@@ -237,7 +262,7 @@ https://v2.tauri.app/develop/resources/#android
   - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
   - 行为：仅补齐缺失 API，且只执行一次；桌面端/移动端 Web 不启用。
 
-### 6.2 插件面板样式大面积失效（如 `TH-custom-tailwind` 布局错乱）
+### 7.2 插件面板样式大面积失效（如 `TH-custom-tailwind` 布局错乱）
 
 现象：
 
@@ -306,8 +331,8 @@ https://v2.tauri.app/develop/resources/#android
 当前方案（Native→JS Back Bridge）：
 
 - `MainActivity` 在 `onCreate()` 里向 `onBackPressedDispatcher` 注册回调，并把 Back 交给 `AndroidBackNavigationController`：
-  - `src-tauri/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`
-  - `src-tauri/gen/android/app/src/main/java/com/tauritavern/client/AndroidBackNavigationController.kt`
+  - `src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`
+  - `src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/AndroidBackNavigationController.kt`
 - controller 通过 `WebView.evaluateJavascript` 调用前端全局函数：`window.__TAURITAVERN_HANDLE_BACK__()`。
   - JS 返回 `true`：表示已消费 Back（关闭了一层 UI），原生不退出。
   - JS 返回 `false`：表示前端未消费，原生执行 `finish()` 退出。
@@ -320,7 +345,7 @@ https://v2.tauri.app/develop/resources/#android
 
 维护原则：
 
-- 不修改 auto-generated 的 `src-tauri/gen/android/.../generated/*`，避免升级冲突。
+- 不修改 auto-generated 的 `src-tauri/crates/tauritavern/gen/android/.../generated/*`，避免升级冲突。
 - UI 分层判断与关闭动作只写在 JS；Kotlin 不写 DOM/UI 规则，只做拦截/转发/退出决策。
 - 若未来新增/变更 UI 层级，只在 `back-navigation.js` 增加一个分支即可；更详细设计见 `docs/AndroidBackNavigation.md`。
 
@@ -357,7 +382,7 @@ https://v2.tauri.app/develop/resources/#android
 上面的 fullscreen 逻辑本身没有问题，真正的问题是挂载位置：
 
 - `RustWebChromeClient.kt` 来自 Wry Android 生成链；
-- 直接改 `src-tauri/gen/android/.../generated/RustWebChromeClient.kt` 会在重新生成 Android 工程时被覆盖；
+- 直接改 `src-tauri/crates/tauritavern/gen/android/.../generated/RustWebChromeClient.kt` 会在重新生成 Android 工程时被覆盖；
 - `MainActivity.onWebViewCreate()` 又不是一个可靠的运行时替换点，因为 Wry 后续仍会再次调用 `setWebChromeClient(...)`。
 
 因此，fullscreen 的正式方案不应继续依赖“修改 generated 文件”，而应改为：
@@ -392,7 +417,7 @@ https://v2.tauri.app/develop/resources/#android
 
 当前已落地 workaround（仅背景视频）：
 
-- 实现：`src-tauri/src/presentation/web_resources/user_data_endpoint.rs`
+- 实现：`src-tauri/crates/tt-application/src/services/host_resource_service/user_data.rs`
 - 策略：对 Android + `/backgrounds/*` + `video/*` + `Range start != 0`：
   - 返回 `206` + 正确 `Content-Range/Content-Length`
   - body 提供完整文件 bytes，让 WebView 自己在流上执行 Range（skip）
@@ -418,5 +443,34 @@ https://v2.tauri.app/develop/resources/#android
 维护原则：
 
 - 不把 `content://` 透传到 Rust Skill repository；仓储层只处理真实路径与归档内容。
-- 不使用 base64 作为移动端大文件桥接方案，避免把内存占用放大到 JS heap 与 IPC payload。
+- 导入不把完整文件整体 base64 物化，避免把内存占用集中到 JS heap 与单个 IPC payload。
 - 选择器取消不是错误；staging、预览、安装、清理失败都应直接暴露，避免静默遗留坏状态。
+
+---
+
+## 11. Android 大型 byte ingress
+
+Tauri 2.10.2 在 Android 上不支持 `InvokeBody::Raw`。业务 payload 进入完整 invoke envelope 后，nested `Uint8Array` 会被 JSON serializer 展开为 `number[]`；大型 payload 会因此产生不可接受的逐 byte 对象化内存开销。
+
+聊天 full-save 的正式契约是：
+
+```text
+begin_chat_commit(logical target, force)
+  -> bounded append_chat_commit_chunk
+     -> Android: { data: base64 }, one-in-flight
+     -> Desktop/iOS: root raw Uint8Array
+  -> finish_chat_commit(expectedSize, commitReason)
+  -> target-local strict rename publish
+```
+
+维护原则：
+
+- Android 的大型 JS -> Rust bytes 不得以 raw/numeric-array payload 穿过 Tauri invoke。
+- base64 只能按 host 返回的 frame cap 逐帧生成和发送，不得先物化完整文件的 base64 表示。
+- 每个文件严格逐帧 await，并校验 raw byte offset ACK 与 finish size；失败不得回退旧 plugin-fs raw 路径。
+- renderer 只持有 opaque session ID，不接收 staging/target host path；Rust repository 在目标卷的 `.staging/chat-commits` 内独占 staging 生命周期。
+- finish 只允许 strict rename；失败显式返回，不得 copy 到 current。启动时仅清理该专用 staging 子树。
+- generic `stage_upload_*` 继续服务 avatar、import 与普通 Blob 物化，不参与聊天 full-save。
+- bounded base64 达到实机目标后即停止；只有 profile 证明其仍是主要热点时，才评估 text frame 或 AndroidX binary bridge。
+
+Tauri 版本升级后也必须重新验证运行时 envelope，不能仅凭 API 表面接受 `Uint8Array` 就假定 Android Raw IPC 已可用。

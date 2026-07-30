@@ -1809,17 +1809,128 @@ test('FrozenRunInputSnapshot stores materialized extension prompts and macro con
         },
     });
 
+    const backendCalls = [];
+    const currentModelConnectionApi = {
+        async buildCurrentModelConnectionSnapshot(input) {
+            backendCalls.push(input);
+            return {
+                schemaVersion: 1,
+                kind: 'tauritavern.currentModelConnectionSnapshot',
+                settings: {
+                    chat_completion_source: input.settings.chat_completion_source,
+                    model: input.model,
+                    custom_model: input.model,
+                    custom_url: input.settings.custom_url,
+                    custom_api_format: input.settings.custom_api_format,
+                    secret_id: input.secretId,
+                },
+            };
+        },
+        async applyCurrentModelConnectionSnapshot(input) {
+            return {
+                ...input.settings,
+                ...input.currentModelConnection.settings,
+            };
+        },
+    };
+    const currentModelConnection = await frozen.buildCurrentModelConnectionSnapshot({
+        settings: {
+            chat_completion_source: 'custom',
+            custom_model: 'opencode-model',
+            custom_url: 'https://opencode.example.test/v1',
+            custom_api_format: 'openai_compat',
+            additional_parameters_by_source: {
+                custom: { include_body: '', exclude_body: '', include_headers: 'X-Test: true' },
+            },
+        },
+        model: 'opencode-model',
+        secretKey: 'api_key_custom',
+        secretState: {
+            api_key_custom: [
+                { id: 'old-secret', active: false },
+                { id: 'opencode-secret', active: true },
+            ],
+        },
+        currentModelConnectionApi,
+    });
     const snapshot = frozen.buildFrozenRunInputSnapshot({
         generationType: 'swipe',
         promptInputs: { type: 'swipe', extensionPrompts },
         worldInfoActivation: { entries: [] },
         macroContext: { names: { user: 'User', char: 'Char' } },
+        currentModelConnection,
     });
     const normalized = frozen.normalizeFrozenRunInputSnapshot(snapshot);
 
     assert.equal(normalized.generationType, 'swipe');
     assert.equal(normalized.macroContext.names.char, 'Char');
     assert.equal(Object.hasOwn(normalized.promptInputs.extensionPrompts.active, 'filter'), false);
+    assert.equal(normalized.currentModelConnection.settings.custom_url, 'https://opencode.example.test/v1');
+    assert.equal(normalized.currentModelConnection.settings.secret_id, 'opencode-secret');
+    assert.equal(backendCalls[0].settings.additional_parameters_by_source.custom.include_headers, 'X-Test: true');
+    assert.equal(backendCalls[0].secretId, 'opencode-secret');
+});
+
+test('CurrentModelConnectionSnapshot replays current connection over preset settings', async () => {
+    const frozen = await importFresh('src/scripts/tauritavern/agent/frozen-run-input-snapshot.js');
+    const currentModelConnectionApi = {
+        async buildCurrentModelConnectionSnapshot(input) {
+            return {
+                schemaVersion: 1,
+                kind: 'tauritavern.currentModelConnectionSnapshot',
+                settings: {
+                    chat_completion_source: input.settings.chat_completion_source,
+                    model: input.model,
+                    custom_model: input.model,
+                    custom_url: input.settings.custom_url,
+                    custom_api_format: input.settings.custom_api_format,
+                    secret_id: input.secretId,
+                },
+            };
+        },
+        async applyCurrentModelConnectionSnapshot(input) {
+            const output = { ...input.settings };
+            delete output.chat_completion_source;
+            delete output.custom_model;
+            delete output.custom_url;
+            delete output.secret_id;
+            return {
+                ...output,
+                ...input.currentModelConnection.settings,
+            };
+        },
+    };
+    const snapshot = await frozen.buildCurrentModelConnectionSnapshot({
+        settings: {
+            chat_completion_source: 'custom',
+            custom_model: 'deepseek-through-custom',
+            custom_url: 'https://api.deepseek.example/v1',
+            custom_api_format: 'openai_compat',
+            secret_id: 'stale-secret',
+        },
+        model: 'deepseek-through-custom',
+        secretKey: 'api_key_custom',
+        secretState: {
+            api_key_custom: [
+                { id: 'deepseek-secret', active: true },
+            ],
+        },
+        currentModelConnectionApi,
+    });
+
+    const effectiveSettings = await frozen.buildSettingsWithCurrentModelConnectionSnapshot({
+        chat_completion_source: 'custom',
+        custom_model: 'opencode-model',
+        custom_url: 'https://opencode.example.test/v1',
+        secret_id: 'opencode-secret',
+        temp_openai: 0.7,
+    }, snapshot, currentModelConnectionApi);
+
+    assert.equal(effectiveSettings.chat_completion_source, 'custom');
+    assert.equal(effectiveSettings.custom_model, 'deepseek-through-custom');
+    assert.equal(effectiveSettings.custom_url, 'https://api.deepseek.example/v1');
+    assert.equal(effectiveSettings.secret_id, 'deepseek-secret');
+    assert.equal(effectiveSettings.temp_openai, 0.7);
 });
 
 test('/trigger routes Agent generation fail-fast without Legacy fallback', async () => {

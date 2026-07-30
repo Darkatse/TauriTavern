@@ -52,6 +52,32 @@ test('active chat ref resolves character identity from exact avatar filename', a
     });
 });
 
+test('active chat ref resolves a group locator from the committed chat id', async () => {
+    const { getActiveChatSnapshot } = await importFresh(
+        path.join(REPO_ROOT, 'src/tauri/main/adapters/st/active-chat-ref.js'),
+    );
+
+    const snapshot = withWindow({
+        SillyTavern: {
+            getContext: () => ({
+                chat: [{ mes: 'hello' }, { mes: 'world' }],
+                chatId: 'party-session.jsonl',
+                groupId: 'party',
+                characters: [],
+                characterId: null,
+            }),
+        },
+    }, () => getActiveChatSnapshot());
+
+    assert.deepEqual(snapshot, {
+        ref: {
+            kind: 'group',
+            chatId: 'party-session',
+        },
+        windowLength: 2,
+    });
+});
+
 test('active chat ref rejects URL-like active character avatars', async () => {
     const { getActiveChatSnapshot } = await importFresh(
         path.join(REPO_ROOT, 'src/tauri/main/adapters/st/active-chat-ref.js'),

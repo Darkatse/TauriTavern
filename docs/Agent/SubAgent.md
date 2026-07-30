@@ -2,7 +2,7 @@
 
 本文档记录当前 return-mode SubAgent 的实现基线、核心契约、Agent-friendly 设计原则与代码定位。`agent.handoff` 使用同一套 `AgentTaskRecord + AgentInvocation` 地基，但属于 foreground 接力流程；handoff 细节以 `docs/Agent/Handoff.md` 为准。后续开发多 Agent、task cancel 与 invocation-scoped prompt assembly 前，应先读本文和 `Handoff.md`。
 
-当前状态截至 2026-06-06：已实现 `agent.list`、`agent.delegate`、`agent.await`、return-mode child invocation 的 `task.return`，run-scoped `ActiveRunHandle` / `AgentTaskScheduler` 后台 worker 基线，`agent.handoff` foreground 接力，以及 child / handoff invocation 的 PromptAssemblyBroker handshake。模型可见 task cancel 工具仍是后续计划，当前没有模型可见 `agent.cancel_task`。
+当前状态截至 2026-06-29：已实现 `agent.list`、`agent.delegate`、`agent.await`、return-mode child invocation 的 `task.return`，run-scoped `ActiveRunHandle` / `AgentTaskScheduler` 后台 worker 基线，`agent.handoff` foreground 接力，以及 child / handoff invocation 的 PromptAssemblyBroker handshake。模型可见 task cancel 工具仍是后续计划，当前没有模型可见 `agent.cancel_task`。
 
 ## 1. 设计目标
 
@@ -58,7 +58,7 @@ root Agent may also call agent.await to wait for selected tasks before continuin
 
 ## 3. 核心模型
 
-当前 domain model 位于 `src-tauri/src/domain/models/agent/mod.rs`：
+当前 domain model 位于 `src-tauri/crates/tt-domain/src/models/agent/mod.rs`：
 
 ```rust
 AgentInvocation {
@@ -81,7 +81,6 @@ AgentTaskRecord {
     continuation: ReturnToParent | TransferControl,
     status: Queued | Running | Completed | Failed | Cancelled,
     task,
-    budget,
     result_ref,
     error,
 }
@@ -92,8 +91,8 @@ AgentTaskRecord {
 Invocation 与 task 文件由 `AgentInvocationRepository` 管理，当前文件实现位于：
 
 ```text
-src-tauri/src/domain/repositories/agent_invocation_repository.rs
-src-tauri/src/infrastructure/repositories/file_agent_repository/invocation_store.rs
+src-tauri/crates/tt-ports/src/repositories/agent_invocation_repository.rs
+src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/invocation_store.rs
 ```
 
 物理存储位于 run workspace：
@@ -109,7 +108,7 @@ summaries/<workspace-key>-result.md
 
 ## 4. Tool Surface
 
-当前模型可见工具位于 `src-tauri/src/application/services/agent_tools/agent/specs.rs`：
+当前模型可见工具位于 `src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs`：
 
 | Canonical | Model alias | 可见范围 | 语义 |
 | --- | --- | --- | --- |
@@ -130,17 +129,13 @@ summaries/<workspace-key>-result.md
     "objective": "找出当前草稿里会破坏角色动机连续性的地方。",
     "context": {},
     "expectedOutput": {}
-  },
-  "budget": {
-    "maxRounds": 4,
-    "maxToolCalls": 12
   }
 }
 ```
 
 `task.title` 是可选展示名；只有 `task.objective` 承载必须完成的任务目标。
 
-没有 `execution`、`continuation` 或 `invocationId` 参数。工具名已经表达了 continuation：`agent.delegate` 永远是 return-to-parent，`agent.handoff` 永远是 transfer-control。
+没有 `budget`、`execution`、`continuation` 或 `invocationId` 参数。工具名已经表达了 continuation：`agent.delegate` 永远是 return-to-parent，`agent.handoff` 永远是 transfer-control。return-mode SubAgent 的硬运行预算只来自 target Agent Profile 与宿主运行时策略；主 Agent 如需表达“简短”“快速”“只返回摘要”，应写入 task brief / expectedOutput，而不是 runtime policy。
 
 ## 5. Child Invocation Policy
 
@@ -152,15 +147,15 @@ return-mode child Agent 必须遵守更窄的执行契约：
 - 移除 `agent.list`、`agent.delegate`、`agent.handoff`、`agent.await`。
 - 注入 `task.return`。
 - `exit_policy = TaskReturnRequired`。
-- 可使用 target Agent Profile 的 model binding 与工具预算；delegate call 可进一步收窄 `maxRounds` / `maxToolCalls`。
+- 使用 target Agent Profile 的 model binding 与工具预算；delegate call 不能覆盖或收窄 `maxRounds` / `maxCallsPerRun`。
 - child 与请求它的 Agent 使用同一套逻辑 workspace path，不存在 return-mode 专用目录映射；可见/可写 root 仍由 target Agent Profile 的 `workspace.visibleRoots` / `workspace.writableRoots` 决定。
 
 实现入口：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation/policy.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/child_runtime.rs
-src-tauri/src/application/services/agent_runtime_service.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/policy.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/child_runtime.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service.rs
 ```
 
 子 Agent 如果调用 `workspace.finish`，runtime 会返回 recoverable tool error；如果在最大轮数内没有调用 `task.return`，child invocation 失败并把 task 标记为 failed。
@@ -179,7 +174,7 @@ child invocation 的 Skill 可见性同样按 invocation 解析：`skills.visibl
 task prompt 渲染在：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation/rendering.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/rendering.rs
 ```
 
 渲染原则：
@@ -206,7 +201,7 @@ return-mode child Agent 看到的 path 与请求它的 Agent 看到的 path 是�
 实现位置：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation/workspace_policy.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/workspace_policy.rs
 ```
 
 关键规则：
@@ -248,49 +243,49 @@ src-tauri/src/application/services/agent_runtime_service/delegation/workspace_po
 SubAgent 主干入口：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/list_tool.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/delegate_tool.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/handoff_tool.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/await_tool.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/task_return_tool.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/child_runtime.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/policy.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/rendering.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/workspace_policy.rs
-src-tauri/src/application/services/agent_runtime_service/scheduler.rs
-src-tauri/src/application/services/agent_runtime_service/invocation.rs
-src-tauri/src/application/services/agent_runtime_service/tool_execution.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/list_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/delegate_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/handoff_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/await_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/task_return_tool.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/child_runtime.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/policy.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/rendering.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/workspace_policy.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/scheduler.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/invocation.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_execution.rs
 ```
 
 Tool registry / dispatcher：
 
 ```text
-src-tauri/src/application/services/agent_tools/agent/specs.rs
-src-tauri/src/application/services/agent_tools/registry.rs
-src-tauri/src/application/services/agent_tools/dispatcher.rs
+src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs
+src-tauri/crates/tt-application/src/services/agent_tools/registry.rs
+src-tauri/crates/tt-application/src/services/agent_tools/dispatcher.rs
 ```
 
 Profile / policy：
 
 ```text
-src-tauri/src/domain/models/agent/profile.rs
-src-tauri/src/application/services/agent_profile_service.rs
-src-tauri/src/infrastructure/repositories/file_agent_profile_repository/mod.rs
+src-tauri/crates/tt-domain/src/models/agent/profile.rs
+src-tauri/crates/tt-application/src/services/agent_profile_service.rs
+src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_profile_repository/mod.rs
 ```
 
 Persistence：
 
 ```text
-src-tauri/src/domain/repositories/agent_invocation_repository.rs
-src-tauri/src/infrastructure/repositories/file_agent_repository/invocation_store.rs
+src-tauri/crates/tt-ports/src/repositories/agent_invocation_repository.rs
+src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/invocation_store.rs
 ```
 
 Tests：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/tests.rs
-src-tauri/src/infrastructure/repositories/file_agent_repository/tests.rs
+src-tauri/crates/tt-application/src/services/agent_runtime_service/tests.rs
+src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/tests.rs
 ```
 
 ## 10. 验证入口

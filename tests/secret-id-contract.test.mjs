@@ -293,6 +293,28 @@ test('api-url slash command has explicit clear semantics for model targets', asy
     assert.match(source, /name: 'clear',[\s\S]*?description: t`Clear the current API URL instead of reading it when no URL is provided`/);
 });
 
+test('api-url slash command supports Moonshot region selection', async () => {
+    const source = await readFile(
+        new URL('../src/scripts/slash-commands.js', import.meta.url),
+        'utf8',
+    );
+
+    assert.match(source, /new SlashCommandEnumValue\('moonshot', 'Moonshot AI'/);
+    assert.match(source, /const permittedValues = Object\.values\(MOONSHOT_ENDPOINT\);/);
+    assert.match(source, /\$\('#moonshot_endpoint'\)\.val\(MOONSHOT_ENDPOINT\.GLOBAL\)\.trigger\('input'\);/);
+    assert.match(source, /return oai_settings\.moonshot_endpoint \|\| MOONSHOT_ENDPOINT\.GLOBAL;/);
+});
+
+test('Moonshot endpoint follows existing request profile paths', async () => {
+    const [sharedSource, customRequestSource] = await Promise.all([
+        readFile(new URL('../src/scripts/extensions/shared.js', import.meta.url), 'utf8'),
+        readFile(new URL('../src/scripts/custom-request.js', import.meta.url), 'utf8'),
+    ]);
+
+    assert.match(sharedSource, /moonshot_endpoint: profile\['api-url'\]/);
+    assert.match(customRequestSource, /\['custom_url', 'vertexai_region', 'zai_endpoint', 'siliconflow_endpoint', 'minimax_endpoint', 'moonshot_endpoint'\]/);
+});
+
 test('connection manager model target visible strings have zh translations', async () => {
     const keys = [
         'Name cannot be empty.',
@@ -338,6 +360,7 @@ test('connection manager forwards profile secret id for completion requests', as
     const textRequests = [];
     const CONNECT_API_MAP = {
         minimax: { selected: 'openai', source: 'minimax' },
+        moonshot: { selected: 'openai', source: 'moonshot' },
         koboldcpp: { selected: 'textgenerationwebui', type: 'koboldcpp' },
     };
     const context = {
@@ -356,6 +379,13 @@ test('connection manager forwards profile secret id for completion requests', as
                         'prompt-post-processing': 'merge-tools',
                         'custom-api-format': 'claude-messages',
                         'secret-id': 'chat-secret',
+                    },
+                    {
+                        id: 'moonshot-profile',
+                        api: 'moonshot',
+                        model: 'kimi-k3',
+                        'api-url': 'cn',
+                        'secret-id': 'moonshot-secret',
                     },
                     {
                         id: 'text-profile',
@@ -396,6 +426,13 @@ test('connection manager forwards profile secret id for completion requests', as
         'chat-result',
     );
     assert.equal(
+        await ConnectionManagerRequestService.sendRequest('moonshot-profile', 'hello', 123, {
+            includePreset: false,
+            includeInstruct: false,
+        }),
+        'chat-result',
+    );
+    assert.equal(
         await ConnectionManagerRequestService.sendRequest('text-profile', 'hi', 77, {
             includePreset: false,
             includeInstruct: false,
@@ -403,7 +440,7 @@ test('connection manager forwards profile secret id for completion requests', as
         'text-result',
     );
 
-    assert.equal(chatRequests.length, 1);
+    assert.equal(chatRequests.length, 2);
     assert.equal(chatRequests[0][0].secret_id, 'chat-secret');
     assert.equal(chatRequests[0][0].chat_completion_source, 'minimax');
     assert.equal(chatRequests[0][0].custom_api_format, 'claude-messages');
@@ -411,6 +448,8 @@ test('connection manager forwards profile secret id for completion requests', as
     assert.deepEqual(chatRequests[0][0].messages, [{ role: 'user', content: 'hello' }]);
     assert.equal(chatRequests[0][0].reverse_proxy, 'https://proxy.example/v1');
     assert.equal(chatRequests[0][0].proxy_password, 'proxy-secret');
+    assert.equal(chatRequests[1][0].chat_completion_source, 'moonshot');
+    assert.equal(chatRequests[1][0].moonshot_endpoint, 'cn');
 
     assert.equal(textRequests.length, 1);
     assert.equal(textRequests[0][0].secret_id, 'text-secret');

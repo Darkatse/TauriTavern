@@ -7,12 +7,6 @@ import {
     isCodeRenderDelegatedToThirdPartyRenderer,
     renderExtensionTemplateAsync,
 } from '../../extensions.js';
-import {
-    setHtmlCodeRenderEnabled,
-    setHtmlCodeRenderReplaceLastMessageByDefault,
-    setHtmlCodeRenderSuppressedByExternalRenderer,
-} from '../../html-code-preview.js';
-
 const MODULE_NAME = 'code-render';
 const defaultSettings = {
     enabled: false,
@@ -21,10 +15,6 @@ const defaultSettings = {
 
 function syncHtmlCodeRenderState() {
     const delegated = isCodeRenderDelegatedToThirdPartyRenderer();
-
-    setHtmlCodeRenderEnabled(extension_settings.code_render.enabled);
-    setHtmlCodeRenderReplaceLastMessageByDefault(extension_settings.code_render.replace_last_message_by_default);
-    setHtmlCodeRenderSuppressedByExternalRenderer(delegated);
 
     $('#code_render_enabled').prop('checked', extension_settings.code_render.enabled);
     $('#code_render_replace_last_message_by_default').prop('checked', extension_settings.code_render.replace_last_message_by_default);

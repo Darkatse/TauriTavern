@@ -80,6 +80,8 @@ import {
     unshallowCharacter,
     chatElement,
     ensureMessageMediaIsArray,
+    resetChatSurfaceView,
+    withChatSurfaceStructureMutation,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect, printTagFilters, tag_filter_type } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -87,21 +89,8 @@ import { isExternalMediaAllowed } from './chats.js';
 import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
-import {
-    isTauriChatPayloadTransportEnabled,
-    loadGroupChatPayloadTail,
-    saveGroupChatPayload,
-    patchGroupChatPayloadWindowed,
-} from './chat-payload-transport.js';
-import {
-    buildWindowedPayloadPatch,
-    clearWindowedChatState,
-    DEFAULT_CHAT_WINDOW_LINES,
-    getWindowedChatState,
-    getWindowedChatKey,
-    mergeWindowedChatCursorOffset,
-    setWindowedChatState,
-} from './tauri/chat/windowed-state.js';
+import { CHAT_COMMIT_REASON } from './chat-payload-transport.js';
+import { compressRequest } from './request-compression.js';
 
 export {
     selected_group,
@@ -209,7 +198,7 @@ async function regenerateGroup() {
  * @param {string} chatId Chat ID
  * @returns {Promise<ChatFile>} Array of chat messages
  */
-async function loadGroupChat(chatId, { updateWindowState = false, allowNotFound = false } = {}) {
+async function loadGroupChat(chatId, { allowNotFound = false } = {}) {
     const normalizedChatId = String(chatId || '').trim();
     if (!normalizedChatId) {
         if (allowNotFound) {
@@ -218,33 +207,6 @@ async function loadGroupChat(chatId, { updateWindowState = false, allowNotFound 
         throw new Error('Invalid group chat payload request');
     }
 
-    if (isTauriChatPayloadTransportEnabled()) {
-        const window = await loadGroupChatPayloadTail({
-            id: normalizedChatId,
-            maxLines: DEFAULT_CHAT_WINDOW_LINES,
-            allowNotFound,
-        });
-
-        if (updateWindowState && String(getCurrentChatId() || '').trim() === normalizedChatId) {
-            if (window.cursor) {
-                const messageCount = Array.isArray(window.payload) ? Math.max(0, window.payload.length - 1) : 0;
-                setWindowedChatState({
-                    kind: 'group',
-                    id: normalizedChatId,
-                    cursor: window.cursor,
-                    hasMoreBefore: window.hasMoreBefore,
-                    savedMessageCount: messageCount,
-                    dirtyFromIndex: messageCount,
-                });
-            } else {
-                clearWindowedChatState();
-            }
-        }
-
-        return window.payload;
-    }
-
-    clearWindowedChatState();
     const response = await fetch('/api/chats/group/get', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -346,7 +308,7 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
     }
 
     const chat_id = group.chat_id;
-    const data = await loadGroupChat(chat_id, { updateWindowState: true, allowNotFound: allowNewChat });
+    const data = await loadGroupChat(chat_id, { allowNotFound: allowNewChat });
     if (!isStillActive()) {
         return;
     }
@@ -370,7 +332,7 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
 
     if (group && Array.isArray(group.members) && freshChat) {
         chat.splice(0, chat.length);
-        chatElement.find('.mes').remove();
+        resetChatSurfaceView();
         for (let member of group.members) {
             if (!isStillActive()) {
                 return;
@@ -390,32 +352,27 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
                 continue;
             }
 
-            chat.push(mes);
-            await eventSource.emit(event_types.MESSAGE_RECEIVED, (chat.length - 1), 'first_message');
-            addOneMessage(mes);
-            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'first_message');
+            const messageId = chat.length;
+            await withChatSurfaceStructureMutation(async () => {
+                chat.push(mes);
+                await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
+                addOneMessage(mes);
+            });
+            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'first_message');
         }
-        await saveGroupChat(groupId, false);
+        await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
     } else if (Array.isArray(data) && data.length) {
         if (!isStillActive()) {
             return;
         }
         chat.splice(0, chat.length, ...data);
         chat.forEach(ensureMessageMediaIsArray);
-        chatElement.find('.mes').remove();
-        await printMessages();
+        resetChatSurfaceView();
+        await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_CHANGED });
         if (!isStillActive()) {
             return;
         }
 
-        const windowState = getWindowedChatState();
-        if (windowState?.kind === 'group' && windowState.cursor && windowState.id === chat_id) {
-            setWindowedChatState({
-                ...windowState,
-                savedMessageCount: chat.length,
-                dirtyFromIndex: chat.length,
-            });
-        }
     }
 
     updateChatMetadata(metadata, true);
@@ -731,13 +688,14 @@ function resetSelectedGroup() {
  * @param {string} groupId Group ID
  * @param {boolean} shouldSaveGroup Whether to save the group after saving the chat
  * @param {boolean} force Force the saving on integrity error
+ * @param {string} commitReason Current/history scheduling reason
  * @returns {Promise<void>} A promise that resolves when the group chat has been saved.
  */
-async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
-    return enqueueChatSave(() => saveGroupChatUnsafe(groupId, shouldSaveGroup, force));
+async function saveGroupChat(groupId, shouldSaveGroup, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION) {
+    return enqueueChatSave(() => saveGroupChatUnsafe(groupId, shouldSaveGroup, force, commitReason));
 }
 
-async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false) {
+async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION) {
     const group = groups.find(x => x.id == groupId);
     if (!group) {
         console.warn('Group not found', groupId);
@@ -758,79 +716,35 @@ async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false) {
         String(error?.code || '').toLowerCase() === 'integrity'
         || /integrity/i.test(String(error?.message || ''));
 
-	    try {
-	        if (isTauriChatPayloadTransportEnabled()) {
-	            const windowState = getWindowedChatState();
-	            if (windowState?.kind === 'group' && windowState.cursor && windowState.id === chatId) {
-	                const expectedWindowKey = getWindowedChatKey(windowState);
-	                const expectedCursorOffset = windowState.cursor.offset;
-	                const {
-	                    patch,
-	                    savedMessageCount: nextSavedMessageCount,
-	                    dirtyFromIndex: nextDirtyFromIndex,
-	                    expectedWindowLineCount,
-	                } = buildWindowedPayloadPatch(chat, windowState, 'group chat');
+    try {
+        const saveChatRequest = await compressRequest({
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ id: chatId, chat: payload, force, commit_reason: commitReason }),
+        });
+        const response = await fetch('/api/chats/group/save', saveChatRequest);
 
-                const cursor = await patchGroupChatPayloadWindowed({
-                    id: chatId,
-                    cursor: windowState.cursor,
-                    header: JSON.stringify(chatHeader),
-	                    patch,
-	                    expectedWindowLineCount,
-	                    force: Boolean(force),
-	                });
-
-	                const activeWindowState = getWindowedChatState();
-	                if (getWindowedChatKey(activeWindowState) === expectedWindowKey) {
-	                    const mergedCursor = mergeWindowedChatCursorOffset(activeWindowState?.cursor, cursor, expectedCursorOffset);
-	                    const nextWindowState = {
-	                        ...activeWindowState,
-	                        cursor: mergedCursor,
-	                    };
-
-	                    if (activeWindowState?.cursor?.offset === expectedCursorOffset) {
-	                        nextWindowState.savedMessageCount = nextSavedMessageCount;
-	                        nextWindowState.dirtyFromIndex = nextDirtyFromIndex;
-	                    }
-
-	                    setWindowedChatState(nextWindowState);
-	                }
-	            } else {
-	                await saveGroupChatPayload({
-	                    id: chatId,
-	                    payload,
-	                    force: Boolean(force),
-                });
+        if (response.ok) {
+            if (shouldSaveGroup) {
+                await editGroup(groupId, false, false);
             }
-        } else {
-            const response = await fetch('/api/chats/group/save', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({ id: chatId, chat: payload, force: force }),
-            });
-
-            if (response.ok) {
-                if (shouldSaveGroup) {
-                    await editGroup(groupId, false, false);
-                }
-                return;
-            }
-
-            const errorData = await response.json();
-            if (errorData?.error === 'integrity' && !force) {
-                const integrityError = new Error('integrity');
-                integrityError.code = 'integrity';
-                throw integrityError;
-            }
-
-            throw new Error(response.statusText || 'Group chat save failed');
+            return;
         }
+
+        const errorData = await response.json();
+        if (errorData?.error === 'integrity' && !force) {
+            const integrityError = new Error('integrity');
+            integrityError.code = 'integrity';
+            throw integrityError;
+        }
+
+        throw new Error(response.statusText || 'Group chat save failed');
     } catch (error) {
         const isIntegrityError = isIntegrityTransportError(error) && !force;
         if (!isIntegrityError) {
             toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group Chat could not be saved`);
             console.error('Group chat could not be saved', error);
-            return;
+            throw error;
         }
 
         const popupResult = await Popup.show.input(
@@ -849,7 +763,7 @@ async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false) {
             return;
         }
 
-        await saveGroupChatUnsafe(groupId, shouldSaveGroup, true);
+        await saveGroupChatUnsafe(groupId, shouldSaveGroup, true, commitReason);
     }
 
     if (shouldSaveGroup) {
@@ -912,18 +826,15 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
 
                     if (hadChanges) {
                         await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, messages, oldAvatar, newAvatar);
-                        if (isTauriChatPayloadTransportEnabled()) {
-                            await saveGroupChatPayload({ id: chatId, payload: [...messages] });
-                        } else {
-                            const saveChatResponse = await fetch('/api/chats/group/save', {
-                                method: 'POST',
-                                headers: getRequestHeaders(),
-                                body: JSON.stringify({ id: chatId, chat: [...messages] }),
-                            });
+                        const saveChatRequest = await compressRequest({
+                            method: 'POST',
+                            headers: getRequestHeaders(),
+                            body: JSON.stringify({ id: chatId, chat: [...messages] }),
+                        });
+                        const saveChatResponse = await fetch('/api/chats/group/save', saveChatRequest);
 
-                            if (!saveChatResponse.ok) {
-                                throw new Error('Group member could not be renamed');
-                            }
+                        if (!saveChatResponse.ok) {
+                            throw new Error('Group member could not be renamed');
                         }
 
                         console.log(`Renamed character ${newName} in group chat: ${chatId}`);
@@ -2553,9 +2464,10 @@ export async function importGroupChat(formData, { refresh = true } = {}) {
  * @param {string} name Name of the chat to save
  * @param {ChatMetadata?} metadata New metadata to save with the chat
  * @param {number|undefined} mesId Optional message ID to trim the chat up to
+ * @param {ChatMessage[]|undefined} chatData Optional chat snapshot to save instead of the current in-memory chat
  * @returns {Promise<void>} Promise that resolves when the group chat is saved
  */
-export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
+export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, chatData = undefined) {
     const group = groups.find(x => x.id === groupId);
 
     if (!group) {
@@ -2572,28 +2484,24 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
     };
 
     /** @type {ChatMessage[]} */
-    const trimmedChat = (mesId !== undefined && mesId >= 0 && mesId < chat.length)
-        ? chat.slice(0, Number(mesId) + 1)
-        : chat;
+    const trimmedChat = Array.isArray(chatData)
+        ? chatData
+        : (mesId !== undefined && mesId >= 0 && mesId < chat.length)
+            ? chat.slice(0, Number(mesId) + 1)
+            : chat;
 
     await editGroup(groupId, true, false);
 
     try {
-        if (isTauriChatPayloadTransportEnabled()) {
-            await saveGroupChatPayload({
-                id: name,
-                payload: [chatHeader, ...trimmedChat],
-            });
-        } else {
-            const response = await fetch('/api/chats/group/save', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({ id: name, chat: [chatHeader, ...trimmedChat] }),
-            });
+        const saveChatRequest = await compressRequest({
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ id: name, chat: [chatHeader, ...trimmedChat] }),
+        });
+        const response = await fetch('/api/chats/group/save', saveChatRequest);
 
-            if (!response.ok) {
-                throw new Error(response.statusText || 'Group chat save failed');
-            }
+        if (!response.ok) {
+            throw new Error(response.statusText || 'Group chat save failed');
         }
     } catch (error) {
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be saved`);

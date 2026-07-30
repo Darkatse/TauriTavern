@@ -19,13 +19,14 @@ import {
     saveChatConditional,
     saveMetadata,
     saveSettings,
+    cancelPendingSettingsSave,
     saveSettingsDebounced,
     setUserName,
     this_chid,
 } from '../script.js';
 import { persona_description_positions, power_user } from './power-user.js';
 import { getTokenCountAsync } from './tokenizers.js';
-import { PAGINATION_TEMPLATE, addLongPressEvent, cancelDebounce, clearInfoBlock, debounce, delay, download, ensureImageFormatSupported, escapeHtml, flashHighlight, getBase64Async, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, parseJsonFile, setInfoBlock, localizePagination, renderPaginationDropdown, paginationDropdownChangeHandler, findPersona, resolveAvatarData, stringToRange, sortIgnoreCaseAndAccents, equalsIgnoreCaseAndAccents, uuidv4 } from './utils.js';
+import { PAGINATION_TEMPLATE, addLongPressEvent, clearInfoBlock, debounce, delay, download, ensureImageFormatSupported, escapeHtml, flashHighlight, getBase64Async, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, parseJsonFile, setInfoBlock, localizePagination, renderPaginationDropdown, paginationDropdownChangeHandler, findPersona, resolveAvatarData, stringToRange, sortIgnoreCaseAndAccents, equalsIgnoreCaseAndAccents, uuidv4 } from './utils.js';
 import { debounce_timeout } from './constants.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { groups, selected_group } from './group-chats.js';
@@ -41,7 +42,6 @@ import { SlashCommandNamedArgument, ARGUMENT_TYPE, SlashCommandArgument } from '
 import { commonEnumMatchProviders, commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
-import { isFirefox } from './browser-fixes.js';
 import { slashCommandReturnHelper } from './slash-commands/SlashCommandReturnHelper.js';
 
 export { persona_description_positions };
@@ -99,7 +99,7 @@ async function reloadFrontendAfterPersonaMutation() {
         throw new Error('TauriTavern Host ABI is unavailable (invoke.flushAll)');
     }
 
-    cancelDebounce(saveSettingsDebounced);
+    cancelPendingSettingsSave();
     const saved = await saveSettings();
     if (!saved) {
         throw new Error('Settings could not be saved before reload');
@@ -162,23 +162,10 @@ function switchPersonaGridView() {
 /**
  * Returns the URL of the avatar for the given user avatar Id.
  * @param {string} avatarImg User avatar Id
- * @param {{ forFetch?: boolean }} [options]
  * @returns {string} User avatar URL
  */
-export function getUserAvatar(avatarImg, { forFetch = false } = {}) {
-    if (forFetch) {
-        return `${USER_AVATAR_PATH}${encodeURIComponent(String(avatarImg ?? ''))}`;
-    }
-
-    if (typeof window.__TAURITAVERN_PERSONA_PATH__ === 'function') {
-        try {
-            return window.__TAURITAVERN_PERSONA_PATH__(avatarImg);
-        } catch (error) {
-            console.warn('Tauri persona helper failed:', error);
-        }
-    }
-
-    return `${USER_AVATAR_PATH}${avatarImg}`;
+export function getUserAvatar(avatarImg) {
+    return `${USER_AVATAR_PATH}${encodeURIComponent(String(avatarImg ?? ''))}`;
 }
 
 export function initUserAvatar(avatar) {
@@ -209,17 +196,18 @@ export async function setUserAvatar(imgfile, { toastPersonaNameChange = true, na
     await eventSource.emit(event_types.PERSONA_CHANGED, user_avatar);
 }
 
-function reloadUserAvatar(force = false) {
-    $('.mes').each(function () {
-        const avatarImg = $(this).find('.avatar img');
-        if (force) {
-            avatarImg.attr('src', avatarImg.attr('src'));
-        }
+async function reloadUserAvatar(force = false) {
+    const avatarImages = $('.mes')
+        .filter(function () {
+            return $(this).attr('is_user') == 'true' && $(this).attr('force_avatar') == 'false';
+        })
+        .find('.avatar img');
 
-        if ($(this).attr('is_user') == 'true' && $(this).attr('force_avatar') == 'false') {
-            avatarImg.attr('src', getThumbnailUrl('persona', user_avatar));
-        }
-    });
+    if (force && avatarImages.length) {
+        avatarImages.attr('src', '');
+        await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+    avatarImages.attr('src', getThumbnailUrl('persona', user_avatar));
 }
 
 /**
@@ -284,7 +272,7 @@ function getUserAvatarBlock(avatarId) {
     template.attr('data-avatar-id', avatarId);
     template.find('.avatar').attr('data-avatar-id', avatarId).attr('title', avatarId);
     template.toggleClass('default_persona', avatarId === power_user.default_persona);
-    const avatarUrl = getThumbnailUrl('persona', avatarId, isFirefox());
+    const avatarUrl = getThumbnailUrl('persona', avatarId);
     template.find('img').attr('src', avatarUrl);
 
     // Make sure description block has at least three rows. Otherwise height looks inconsistent. I don't have a better idea for this.
@@ -499,13 +487,6 @@ async function changeUserAvatar(e) {
 
         const overwriteName = formData.get('overwrite_name');
         const dataPath = data?.path;
-
-        // If the user uploaded a new avatar, we want to make sure it's not cached
-        if (overwriteName && dataPath) {
-            await fetch(getUserAvatar(String(dataPath), { forFetch: true }), { cache: 'reload' });
-            await fetch(getThumbnailUrl('persona', String(dataPath), true), { cache: 'reload' });
-            reloadUserAvatar(true);
-        }
 
         if (!overwriteName && dataPath) {
             await getUserAvatars();
@@ -1945,7 +1926,7 @@ async function duplicatePersona(avatarId, { silent = false, select = false } = {
     const newAvatarId = `${Date.now()}-${personaName.replace(/[^a-zA-Z0-9]/g, '')}.png`;
     const descriptor = power_user.persona_descriptions[avatarId];
 
-    await uploadUserAvatar(getUserAvatar(avatarId, { forFetch: true }), newAvatarId);
+    await uploadUserAvatar(getUserAvatar(avatarId), newAvatarId);
 
     power_user.personas[newAvatarId] = personaName;
     power_user.persona_descriptions[newAvatarId] = createPersonaDescriptor({
@@ -2088,15 +2069,18 @@ async function uploadPersonaAvatar(avatarId, base64Data, { resizePrompt = false 
             throw new Error(`Upload failed: ${uploadResponse.statusText}`);
         }
 
-        await fetch(getUserAvatar(avatarId, { forFetch: true }), { cache: 'reload' });
-        await fetch(getThumbnailUrl('persona', avatarId, true), { cache: 'reload' });
-        reloadUserAvatar(true);
-        return true;
     } catch (error) {
         console.error('Error uploading persona avatar:', error);
         toastr.warning(t`Failed to upload avatar: ${error.message}`);
         return false;
     }
+
+    try {
+        await reloadUserAvatar(true);
+    } catch (error) {
+        console.error('Persona avatar was uploaded but visible avatars could not be refreshed:', error);
+    }
+    return true;
 }
 
 /**

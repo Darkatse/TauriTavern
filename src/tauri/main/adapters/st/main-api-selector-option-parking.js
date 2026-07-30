@@ -2,7 +2,7 @@
 
 import { eventSource, event_types } from '../../../../scripts/events.js';
 
-const ALLOWED_MAIN_APIS = new Set(['openai', 'textgenerationwebui']);
+const CHAT_COMPLETION_API = 'openai';
 
 /** @type {boolean} */
 let installed = false;
@@ -23,7 +23,6 @@ function mustGetMainApiSelect() {
 
 function syncMainApiOptionParking() {
     const select = mustGetMainApiSelect();
-    const current = String(select.value || '').trim();
 
     if (!parkedOptions) {
         parkedOptions = document.createDocumentFragment();
@@ -31,18 +30,17 @@ function syncMainApiOptionParking() {
 
     for (const option of Array.from(select.options)) {
         const value = String(option.value || '').trim();
-        if (!value) {
-            continue;
-        }
-        if (ALLOWED_MAIN_APIS.has(value)) {
-            continue;
-        }
-        if (value === current) {
+        if (value === CHAT_COMPLETION_API) {
             continue;
         }
 
         parkedOptions.appendChild(option);
     }
+}
+
+/** @param {{ main_api?: string }} settings */
+function selectChatCompletion(settings) {
+    settings.main_api = CHAT_COMPLETION_API;
 }
 
 export function installMainApiOptionParking() {
@@ -51,7 +49,6 @@ export function installMainApiOptionParking() {
     }
     installed = true;
 
-    eventSource.on(event_types.SETTINGS_LOADED, syncMainApiOptionParking);
-    eventSource.on(event_types.MAIN_API_CHANGED, syncMainApiOptionParking);
+    eventSource.on(event_types.SETTINGS_LOADED_BEFORE, selectChatCompletion);
+    syncMainApiOptionParking();
 }
-

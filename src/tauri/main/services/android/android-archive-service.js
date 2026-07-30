@@ -111,14 +111,6 @@ export function createAndroidArchiveService({ safeInvoke, removeTempUploadFile, 
     }
 
     /**
-     * @param {{ join: (...paths: string[]) => Promise<string> }} pathApi
-     */
-    async function resolveAndroidImportStagingDirectory(pathApi) {
-        const importsRoot = String(await safeInvoke('get_data_archive_imports_root')).trim();
-        return pathApi.join(importsRoot, 'incoming');
-    }
-
-    /**
      * @param {{ appCacheDir?: () => Promise<string>; tempDir?: () => Promise<string>; join: (...paths: string[]) => Promise<string> }} pathApi
      */
     async function resolveAndroidSkillImportStagingDirectory(pathApi) {
@@ -161,11 +153,10 @@ export function createAndroidArchiveService({ safeInvoke, removeTempUploadFile, 
         if (!bridge) {
             throw new Error('Android archive bridge is unavailable');
         }
-        const pathApi = window.__TAURI__.path;
-
-        const stagingDirectory = await resolveAndroidImportStagingDirectory(pathApi);
-        const targetFileName = `tauritavern-import-${Date.now()}-${Math.random().toString(16).slice(2)}.archive`;
-        const targetFilePath = await pathApi.join(stagingDirectory, targetFileName);
+        const targetFilePath = String(await safeInvoke('prepare_data_archive_import_target_path')).trim();
+        if (!targetFilePath) {
+            throw new Error('Android import staging target is missing');
+        }
         const filePath = String(
             bridge.stageContentUriToFile(String(contentUri).trim(), targetFilePath),
         ).trim();

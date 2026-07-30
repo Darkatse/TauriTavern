@@ -1,7 +1,8 @@
 const LAN_SYNC_DEVICE_ALIAS_STORAGE_PREFIX = 'tauritavern:lan_sync_device_alias:';
 const TT_SYNC_SERVER_ALIAS_STORAGE_PREFIX = 'tauritavern:tt_sync_server_alias:';
 const LAN_SYNC_ADVERTISE_ADDRESS_STORAGE_KEY = 'tauritavern:lan_sync_advertise_address';
-const SYNC_V2_DATASET_SELECTION_STORAGE_KEY = 'tauritavern:sync_v2_dataset_selection';
+const SYNC_DATASET_SELECTION_STORAGE_KEY = 'tauritavern:sync_dataset_selection';
+const LEGACY_SYNC_DATASET_SELECTION_STORAGE_KEY = 'tauritavern:sync_v2_dataset_selection';
 
 const SYNC_TARGET_STORAGE_PREFIX = {
     lan: LAN_SYNC_DEVICE_ALIAS_STORAGE_PREFIX,
@@ -60,14 +61,14 @@ export function selectLanSyncAdvertiseAddress(status, storedAddress = getLanSync
     return stored && availableAddresses.includes(stored) ? stored : defaultAddress;
 }
 
-export function createDefaultSyncV2DatasetSelection(catalog) {
+export function createDefaultSyncDatasetSelection(catalog) {
     return {
         policy_version: Number(catalog?.policyVersion),
         dataset_ids: [...catalog.defaultDatasetIds],
     };
 }
 
-function normalizeSyncV2DatasetSelection(selection, catalog) {
+function normalizeSyncDatasetSelection(selection, catalog) {
     const policyVersion = Number(selection?.policy_version);
     if (!Number.isInteger(policyVersion) || policyVersion !== Number(catalog?.policyVersion)) {
         throw new Error('Stored sync content selection has an unsupported policy version');
@@ -98,28 +99,34 @@ function normalizeSyncV2DatasetSelection(selection, catalog) {
     };
 }
 
-export function getSyncV2DatasetSelection(catalog) {
-    const raw = localStorage.getItem(SYNC_V2_DATASET_SELECTION_STORAGE_KEY);
-    if (!raw) {
-        return createDefaultSyncV2DatasetSelection(catalog);
+export function getSyncDatasetSelection(catalog) {
+    for (const key of [SYNC_DATASET_SELECTION_STORAGE_KEY, LEGACY_SYNC_DATASET_SELECTION_STORAGE_KEY]) {
+        const raw = localStorage.getItem(key);
+        if (!raw) {
+            continue;
+        }
+
+        try {
+            const normalized = normalizeSyncDatasetSelection(JSON.parse(raw), catalog);
+            localStorage.setItem(SYNC_DATASET_SELECTION_STORAGE_KEY, JSON.stringify(normalized));
+            localStorage.removeItem(LEGACY_SYNC_DATASET_SELECTION_STORAGE_KEY);
+            return normalized;
+        } catch (error) {
+            throw new Error(`Stored sync content selection is invalid: ${error.message}`);
+        }
     }
 
-    try {
-        return normalizeSyncV2DatasetSelection(JSON.parse(raw), catalog);
-    } catch (error) {
-        localStorage.removeItem(SYNC_V2_DATASET_SELECTION_STORAGE_KEY);
-        console.warn('Stored sync content selection was reset:', error);
-        return createDefaultSyncV2DatasetSelection(catalog);
-    }
+    return createDefaultSyncDatasetSelection(catalog);
 }
 
-export function setSyncV2DatasetSelection(selection, catalog) {
-    const normalized = normalizeSyncV2DatasetSelection(selection, catalog);
-    localStorage.setItem(SYNC_V2_DATASET_SELECTION_STORAGE_KEY, JSON.stringify(normalized));
+export function setSyncDatasetSelection(selection, catalog) {
+    const normalized = normalizeSyncDatasetSelection(selection, catalog);
+    localStorage.setItem(SYNC_DATASET_SELECTION_STORAGE_KEY, JSON.stringify(normalized));
+    localStorage.removeItem(LEGACY_SYNC_DATASET_SELECTION_STORAGE_KEY);
     return normalized;
 }
 
-export function parseLanSyncV2PairUri(pairUri, tr = (key) => key) {
+export function parseLanSyncPairUri(pairUri, tr = (key) => key) {
     const parsed = new URL(String(pairUri || '').trim());
     if (parsed.protocol.toLowerCase() !== 'tauritavern:') {
         throw new Error(tr('Pair URI must start with tauritavern://'));
