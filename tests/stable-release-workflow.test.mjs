@@ -95,3 +95,12 @@ test('stable Flatpak build and publication keep signing isolated', () => {
     assert.match(flatpakPublisherSource, /summary\.sig/);
     assert.match(flatpakPublisherSource, /public, max-age=31536000, immutable/);
 });
+
+test('Flatpak publication restores OSTree ref layout lost by object storage', () => {
+    const restoreRefs = flatpakPublisherSource.indexOf('mkdir -p "$repository_dir/refs/remotes"');
+    const updateRepository = flatpakPublisherSource.indexOf('flatpak build-update-repo');
+
+    assert.notEqual(restoreRefs, -1);
+    assert.notEqual(updateRepository, -1);
+    assert.ok(restoreRefs < updateRepository);
+});
