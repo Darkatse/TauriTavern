@@ -97,6 +97,19 @@ test('TestFlight notes keep Codex isolated, read-only, and non-blocking', () => 
     assert.equal(testflightWorkflow.jobs.publish.needs, 'notes');
 });
 
+test('Stable TestFlight notes use maintainer release notes as verified priorities', () => {
+    const contextStep = testflightWorkflow.jobs.notes.steps.find(
+        (step) => step.name === 'Prepare TestFlight change context',
+    );
+
+    assert.equal(contextStep.env.GH_TOKEN, '${{ github.token }}');
+    assert.equal(contextStep.env.RELEASE_TAG, '${{ inputs.release_tag }}');
+    assert.match(contextStep.run, /if \[\[ "\$CHANNEL" == stable \]\]/u);
+    assert.match(contextStep.run, /gh release view "\$RELEASE_TAG"/u);
+    assert.match(contextStep.run, /## Maintainer-written release notes/u);
+    assert.match(testflightSkill, /use them to prioritize testing but verify every claim/u);
+});
+
 test('TestFlight notes keep the app voice lightly playful without weakening factual rules', () => {
     assert.match(testflightSkill, /warm, lightly playful voice/u);
     assert.match(testflightSkill, /never let it replace a concrete change or testing request/u);

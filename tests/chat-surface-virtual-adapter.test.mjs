@@ -157,8 +157,11 @@ test('composition invalidates global layout changes and offers explicit fault re
     assert.match(source, /updateTauriTavernSettings\(\{ chat_virtualization_enabled: false \}\)/);
     assert.match(source, /cancelButton:\s*startup \? t`Abort startup` : t`Keep stopped`/);
     assert.match(source, /message\.startsWith\('Bounded ChatSurface requires extension "'\)/);
-    assert.match(source, /https:\/\/github\.com\/Darkatse\/JS-Slash-Runner/);
-    assert.match(source, /https:\/\/github\.com\/Darkatse\/LittleWhiteBox/);
+    assert.match(source, /JS-Slash-Runner 4\.9\.1 or later/);
+    assert.match(source, /LittleWhiteBox 3\.0\.4 or later/);
+    assert.match(source, /https:\/\/github\.com\/N0VI028\/JS-Slash-Runner/);
+    assert.match(source, /https:\/\/github\.com\/RT15548\/LittleWhiteBox/);
+    assert.doesNotMatch(source, /github\.com\/Darkatse\/(?:JS-Slash-Runner|LittleWhiteBox)/);
     assert.match(source, /catch \(error\) \{\s*await offerChatVirtualizationRecovery\(error, \{ startup: true \}\);\s*throw error;/);
     assert.match(source, /onFault: error => \{[\s\S]*?offerChatVirtualizationRecovery\(error\);[\s\S]*?\},/);
 });
