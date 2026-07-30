@@ -652,10 +652,10 @@ function offerChatVirtualizationRecovery(fault, { startup = false } = {}) {
         try {
             const message = fault instanceof Error ? fault.message : String(fault);
             const compatibilityHelp = message.startsWith('Bounded ChatSurface requires extension "')
-                ? `<p>${t`If you use either renderer extension below, you can temporarily install its compatible version for Chat DOM virtualization:`}</p>
-                    <div>${t`JS-Slash-Runner compatible version:`} <a href="https://github.com/Darkatse/JS-Slash-Runner" target="_blank" rel="noopener noreferrer">Darkatse/JS-Slash-Runner</a></div>
-                    <div>${t`LittleWhiteBox compatible version:`} <a href="https://github.com/Darkatse/LittleWhiteBox" target="_blank" rel="noopener noreferrer">Darkatse/LittleWhiteBox</a></div>
-                    <p>${t`These compatibility changes are currently being submitted to the original extension authors as pull requests.`}</p>`
+                ? `<p>${t`Chat DOM Virtualization requires renderer extensions that support ChatSurface. Use the official versions listed below or later:`}</p>
+                    <div>${t`JS-Slash-Runner 4.9.1 or later:`} <a href="https://github.com/N0VI028/JS-Slash-Runner" target="_blank" rel="noopener noreferrer">N0VI028/JS-Slash-Runner</a></div>
+                    <div>${t`LittleWhiteBox 3.0.4 or later:`} <a href="https://github.com/RT15548/LittleWhiteBox" target="_blank" rel="noopener noreferrer">RT15548/LittleWhiteBox</a></div>
+                    <p>${t`If an extension was installed from another repository, reinstall it from the official repository to receive upstream updates.`}</p>`
                 : '';
             const result = await Popup.show.confirm(
                 t`Chat DOM Virtualization stopped`,

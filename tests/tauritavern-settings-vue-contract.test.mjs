@@ -49,8 +49,11 @@ test('TauriTavern Settings popup is a host wrapper around the Vue bundle', async
     assert.match(source, /pendingUpdate\.next\.chatVirtualizationEnabled/);
     assert.match(source, /showChatVirtualizationCompatibility/);
     assert.match(source, /zstdCompression:\s*\{[\s\S]*existing backups are converted in the background/);
-    assert.match(source, /https:\/\/github\.com\/Darkatse\/JS-Slash-Runner/);
-    assert.match(source, /https:\/\/github\.com\/Darkatse\/LittleWhiteBox/);
+    assert.match(source, /JS-Slash-Runner 4\.9\.1 or later/);
+    assert.match(source, /LittleWhiteBox 3\.0\.4 or later/);
+    assert.match(source, /https:\/\/github\.com\/N0VI028\/JS-Slash-Runner/);
+    assert.match(source, /https:\/\/github\.com\/RT15548\/LittleWhiteBox/);
+    assert.doesNotMatch(source, /github\.com\/Darkatse\/(?:JS-Slash-Runner|LittleWhiteBox)/);
 });
 
 test('TauriTavern Settings wallpaper options use the no-render background refresh', async () => {
