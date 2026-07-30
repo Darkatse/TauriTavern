@@ -244,16 +244,16 @@ async function showHelpTopic(topicId) {
 async function showChatVirtualizationCompatibility() {
     const content = createPopupColumn();
     const title = document.createElement('b');
-    title.textContent = translate('Compatible renderer extensions');
+    title.textContent = translate('ChatSurface renderer requirements');
     const explanation = document.createElement('div');
     explanation.textContent = translate(
-        'If you use either renderer extension below, you can temporarily install its compatible version for Chat DOM virtualization:',
+        'Chat DOM Virtualization requires renderer extensions that support ChatSurface. Use the official versions listed below or later:',
     );
     content.append(title, explanation);
 
     for (const [labelKey, repository, href] of [
-        ['JS-Slash-Runner compatible version:', 'Darkatse/JS-Slash-Runner', 'https://github.com/Darkatse/JS-Slash-Runner'],
-        ['LittleWhiteBox compatible version:', 'Darkatse/LittleWhiteBox', 'https://github.com/Darkatse/LittleWhiteBox'],
+        ['JS-Slash-Runner 4.9.1 or later:', 'N0VI028/JS-Slash-Runner', 'https://github.com/N0VI028/JS-Slash-Runner'],
+        ['LittleWhiteBox 3.0.4 or later:', 'RT15548/LittleWhiteBox', 'https://github.com/RT15548/LittleWhiteBox'],
     ]) {
         const line = document.createElement('div');
         const link = document.createElement('a');
@@ -265,11 +265,11 @@ async function showChatVirtualizationCompatibility() {
         content.appendChild(line);
     }
 
-    const status = document.createElement('div');
-    status.textContent = translate(
-        'These compatibility changes are currently being submitted to the original extension authors as pull requests.',
+    const repositoryNotice = document.createElement('div');
+    repositoryNotice.textContent = translate(
+        'If an extension was installed from another repository, reinstall it from the official repository to receive upstream updates.',
     );
-    content.appendChild(status);
+    content.appendChild(repositoryNotice);
 
     await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
         okButton: translate('Close'),

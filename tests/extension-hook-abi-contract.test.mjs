@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createExtensionAssetLoader } from '../src/scripts/extensions/runtime/asset-loader.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const EXTENSIONS_ROOT = path.join(REPO_ROOT, 'src/scripts/extensions');
@@ -109,6 +110,48 @@ test('extension startup keeps resource loading at the activation boundary', asyn
 
     assert.doesNotMatch(extensionsSource, /modulepreload|resource-preloader|createExtensionResourcePreloader|prefetchExtensionResources/);
     assert.doesNotMatch(scriptSource, /prefetch(?:StartupSystem|DeferredThirdParty)ExtensionResources/);
+});
+
+test('extension script loading waits for top-level await evaluation', async () => {
+    const originalDocument = globalThis.document;
+    const marker = `__tt_extension_ready_${Date.now()}_${Math.random()}`;
+    const elements = new Map();
+    const scriptUrl = `data:text/javascript,${encodeURIComponent(`
+        await new Promise(resolve => setTimeout(resolve, 10));
+        globalThis[${JSON.stringify(marker)}] = true;
+    `)}`;
+
+    globalThis.document = {
+        getElementById: id => elements.get(id) ?? null,
+        createElement: () => ({ dataset: {} }),
+        body: {
+            appendChild(script) {
+                elements.set(script.id, script);
+                queueMicrotask(() => script.onload());
+            },
+        },
+    };
+
+    try {
+        const loader = createExtensionAssetLoader({
+            sanitizeSelector: value => value.replaceAll('/', '_'),
+            getExtensionResourceUrl: () => scriptUrl,
+            isThirdPartyExtension: () => false,
+            resolveThirdPartyStylesheetUrl: async url => url,
+        });
+
+        await loader.addExtensionScript('third-party/top-level-await', { js: 'index.js' });
+
+        assert.equal(globalThis[marker], true);
+        assert.equal(elements.get('third-party_top-level-await-js').dataset.tauritavernLoaded, 'true');
+    } finally {
+        delete globalThis[marker];
+        if (originalDocument === undefined) {
+            delete globalThis.document;
+        } else {
+            globalThis.document = originalDocument;
+        }
+    }
 });
 
 test('extension discovery ignores stale force-refresh results before mutating globals', async () => {
