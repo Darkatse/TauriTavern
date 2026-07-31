@@ -29,15 +29,10 @@ export function assertSillyTavernThemeAvailable(themeName) {
 /**
  * @param {string} themeName
  */
-export function applySillyTavernTheme(themeName) {
+export async function applySillyTavernTheme(themeName) {
     const targetTheme = assertSillyTavernThemeAvailable(themeName);
-    const selector = getSillyTavernThemeSelector();
-    if (selector.value === targetTheme) {
-        return;
-    }
-
-    selector.value = targetTheme;
-    selector.dispatchEvent(new Event('change', { bubbles: true }));
+    const { applyGlobalTheme } = await import('../../../../scripts/power-user.js');
+    applyGlobalTheme(targetTheme);
 }
 
 /**

@@ -27,12 +27,16 @@ import {
     messageFormatting,
     deleteMessage,
     settingsReady,
+    chat_metadata,
+    this_chid,
+    saveMetadata,
 } from '../script.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
 import {
     groups,
     resetSelectedGroup,
+    selected_group,
 } from './group-chats.js';
 import {
     instruct_presets,
@@ -67,6 +71,7 @@ import { t } from './i18n.js';
 import { extractDominantColor, generateThemePalette, deriveBackgroundName } from './util/ThemeGenerator.js';
 import { getBackgroundPath, isCustomBackgroundUrl } from './backgrounds.js';
 import { CHAT_LAYOUT_CHANGED_EVENT } from '../tauri/main/services/chat-surface/install.js';
+import { resolveThemeBinding } from './theme-binding-policy.js';
 
 export { CHAT_LAYOUT_CHANGED_EVENT };
 
@@ -191,6 +196,13 @@ export const power_user = {
     movingUIPreset: '',
     noShadows: false,
     theme: 'Default (Dark) 1.7.1',
+    theme_fallback: 'Default (Dark) 1.7.1',
+    theme_bindings: {
+        /** @type {Record<string, string>} */
+        characters: {},
+        /** @type {Record<string, string>} */
+        groups: {},
+    },
 
     gestures: true,
     auto_swipe: false,
@@ -1297,10 +1309,10 @@ function showMediaDisplayReloadPrompt() {
 }
 
 function applyTheme(name) {
-    const theme = themes.find(x => x.name == name);
+    const theme = themes.find(x => x.name === name);
 
     if (!theme) {
-        return;
+        throw new Error(`Theme not found: ${name}`);
     }
 
     const themeProperties = [
@@ -1512,6 +1524,205 @@ function applyTheme(name) {
     console.log('theme applied: ' + name);
 }
 
+function getCurrentThemeEntity() {
+    if (selected_group) {
+        return { scope: 'group', id: selected_group };
+    }
+
+    const avatar = characters[this_chid]?.avatar;
+    return avatar ? { scope: 'character', id: avatar } : null;
+}
+
+function getThemeEntityBindings(entity) {
+    return entity.scope === 'group' ? power_user.theme_bindings.groups : power_user.theme_bindings.characters;
+}
+
+function getThemeBindingCandidates() {
+    const candidates = [];
+
+    if (getCurrentChatId()) {
+        candidates.push({ scope: 'chat', name: chat_metadata.theme });
+    }
+
+    const entity = getCurrentThemeEntity();
+    if (entity) {
+        candidates.push({
+            scope: entity.scope,
+            name: getThemeEntityBindings(entity)[entity.id],
+        });
+    }
+
+    candidates.push({ scope: 'fallback', name: power_user.theme_fallback });
+    return candidates;
+}
+
+function updateThemeBindingControls() {
+    const entity = getCurrentThemeEntity();
+    const chatAvailable = Boolean(getCurrentChatId());
+    const entityTheme = entity ? getThemeEntityBindings(entity)[entity.id] : undefined;
+    const chatTheme = chatAvailable ? chat_metadata.theme : undefined;
+
+    const updateButton = (selector, enabled, boundTheme) => {
+        const isActive = enabled && boundTheme === power_user.theme;
+        const button = $(selector);
+        button.prop('disabled', !enabled);
+        button.attr('aria-disabled', String(!enabled));
+        button.attr('aria-pressed', String(isActive));
+        button.toggleClass('active', isActive);
+        button.find('.theme-binding-icon').toggleClass('fa-lock', isActive).toggleClass('fa-unlock', !isActive);
+    };
+
+    const entityLabel = selected_group ? 'Group' : 'Character';
+    $('#theme_bind_character_label')
+        .attr('data-i18n', entityLabel)
+        .text(selected_group ? t`Group` : t`Character`);
+    updateButton('#theme_bind_character', Boolean(entity), entityTheme);
+    updateButton('#theme_bind_chat', chatAvailable, chatTheme);
+}
+
+function activateTheme(name) {
+    applyTheme(name);
+    power_user.theme = name;
+    $('#themes').val(name);
+    updateThemeBindingControls();
+}
+
+function selectTheme(name) {
+    activateTheme(name);
+    power_user.theme_fallback = name;
+    saveSettingsDebounced();
+}
+
+function applyThemeForCurrentContext() {
+    const resolution = resolveThemeBinding(getThemeBindingCandidates(), themes.map(theme => theme.name));
+
+    if (resolution.missing.length > 0) {
+        console.error('Theme binding targets not found', resolution.missing);
+        toastr.error(
+            t`A selected or bound theme is unavailable. Check the console for details.`,
+            t`Theme Binding`,
+        );
+    }
+
+    if (!resolution.selected) {
+        throw new Error('No available theme for the current context');
+    }
+
+    if (power_user.theme !== resolution.selected.name) {
+        activateTheme(resolution.selected.name);
+    } else {
+        $('#themes').val(resolution.selected.name);
+        updateThemeBindingControls();
+    }
+    return resolution.selected.name;
+}
+
+export function applyGlobalTheme(name) {
+    if (!themes.some(theme => theme.name === name)) {
+        throw new Error(`Theme not found: ${name}`);
+    }
+
+    const fallbackChanged = power_user.theme_fallback !== name;
+    power_user.theme_fallback = name;
+    applyThemeForCurrentContext();
+    if (fallbackChanged) {
+        saveSettingsDebounced();
+    }
+}
+
+async function toggleThemeBinding(scope) {
+    const entity = getCurrentThemeEntity();
+    const chatAvailable = Boolean(getCurrentChatId());
+    let bindingOwner;
+    let bindingKey;
+
+    if (scope === 'chat' && chatAvailable) {
+        bindingOwner = chat_metadata;
+        bindingKey = 'theme';
+    } else if (scope === 'entity' && entity) {
+        bindingOwner = getThemeEntityBindings(entity);
+        bindingKey = entity.id;
+    } else {
+        toastr.warning(t`No binding target is selected.`, t`Theme Binding`);
+        return;
+    }
+
+    const themeName = power_user.theme;
+    if (!themes.some(theme => theme.name === themeName)) {
+        toastr.error(t`The current theme is unavailable.`, t`Theme Binding`);
+        return;
+    }
+
+    const previousTheme = bindingOwner[bindingKey];
+    const removing = previousTheme === themeName;
+    if (removing) {
+        delete bindingOwner[bindingKey];
+    } else {
+        bindingOwner[bindingKey] = themeName;
+    }
+    updateThemeBindingControls();
+
+    try {
+        if (scope === 'chat') {
+            await saveMetadata();
+        } else if (!await saveSettings()) {
+            throw new Error('Settings save failed');
+        }
+    } catch (error) {
+        if (previousTheme === undefined) {
+            delete bindingOwner[bindingKey];
+        } else {
+            bindingOwner[bindingKey] = previousTheme;
+        }
+        updateThemeBindingControls();
+        console.error('Theme binding could not be saved', error);
+        toastr.error(t`Could not save the theme binding.`, t`Theme Binding`);
+        return;
+    }
+
+    try {
+        applyThemeForCurrentContext();
+    } catch (error) {
+        console.error('Theme binding was saved but could not be applied', error);
+    }
+    updateThemeBindingControls();
+    toastr[removing ? 'info' : 'success'](
+        removing ? t`Theme binding removed.` : t`Current theme bound.`,
+        t`Theme Binding`,
+    );
+}
+
+function migrateCharacterThemeBinding(oldAvatar, newAvatar) {
+    const bindings = power_user.theme_bindings.characters;
+    if (!Object.hasOwn(bindings, oldAvatar)) {
+        return;
+    }
+
+    bindings[newAvatar] = bindings[oldAvatar];
+    delete bindings[oldAvatar];
+    saveSettingsDebounced();
+    updateThemeBindingControls();
+}
+
+function removeCharacterThemeBinding({ character }) {
+    const avatar = character?.avatar;
+    if (!avatar || !Object.hasOwn(power_user.theme_bindings.characters, avatar)) {
+        return;
+    }
+
+    delete power_user.theme_bindings.characters[avatar];
+    saveSettingsDebounced();
+    updateThemeBindingControls();
+}
+
+function syncThemeForCurrentContext() {
+    try {
+        applyThemeForCurrentContext();
+    } catch (error) {
+        console.error('Failed to apply the theme for the current context', error);
+    }
+}
+
 async function applyMovingUIPreset(name) {
     await resetMovablePanels('quiet');
     const movingUIPreset = movingUIPresets.find(x => x.name == name);
@@ -1627,6 +1838,7 @@ export async function loadPowerUserSettings(settings, data) {
     const defaultStscript = JSON.parse(JSON.stringify(power_user.stscript));
     // Load from settings.json
     if (settings.power_user !== undefined) {
+        const hasThemeFallback = Object.hasOwn(settings.power_user, 'theme_fallback');
         // Migrate old preference to a new setting
         if (settings.power_user.click_to_edit === undefined && settings.power_user.chat_display === chat_styles.DOCUMENT) {
             settings.power_user.click_to_edit = true;
@@ -1636,6 +1848,9 @@ export async function loadPowerUserSettings(settings, data) {
             delete settings.power_user.auto_sort_tags;
         }
         Object.assign(power_user, settings.power_user);
+        if (!hasThemeFallback) {
+            power_user.theme_fallback = power_user.theme;
+        }
     }
 
     if (power_user.stscript === undefined) {
@@ -2553,6 +2768,13 @@ async function updateTheme() {
     toastr.success('Theme saved.');
 }
 
+async function saveThemeAs() {
+    const theme = await saveTheme();
+    if (theme) {
+        selectTheme(theme.name);
+    }
+}
+
 async function deleteTheme() {
     const themeName = power_user.theme;
 
@@ -2584,11 +2806,17 @@ async function deleteTheme() {
     if (themeIndex !== -1) {
         themes.splice(themeIndex, 1);
         $(`#themes option[value="${themeName}"]`).remove();
-        power_user.theme = themes[0]?.name;
-        saveSettingsDebounced();
-        if (power_user.theme) {
-            applyTheme(power_user.theme);
+        if (power_user.theme_fallback === themeName) {
+            power_user.theme_fallback = themes[0]?.name ?? '';
         }
+        if (themes.length > 0) {
+            applyThemeForCurrentContext();
+        } else {
+            power_user.theme = '';
+            $('#themes').val('');
+            updateThemeBindingControls();
+        }
+        saveSettingsDebounced();
         toastr.success('Theme deleted.');
     }
 }
@@ -2631,14 +2859,7 @@ async function importTheme(file) {
         }
     }
 
-    themes.push(parsed);
     await saveTheme(parsed.name, getNewTheme(parsed));
-    const option = document.createElement('option');
-    option.selected = false;
-    option.value = parsed.name;
-    option.innerText = parsed.name;
-    $('#themes').append(option);
-    saveSettingsDebounced();
     toastr.success(parsed.name, 'Theme imported');
 }
 
@@ -2646,7 +2867,7 @@ async function importTheme(file) {
  * Saves the current theme to the server.
  * @param {string|undefined} name Theme name. If undefined, a popup will be shown to enter a name.
  * @param {object|undefined} theme Theme object. If undefined, the current theme will be saved.
- * @returns {Promise<object>} A promise that resolves when the theme is saved.
+ * @returns {Promise<object|undefined>} A promise that resolves when the theme is saved, or undefined when cancelled.
  */
 async function saveTheme(name = undefined, theme = undefined) {
     if (typeof name !== 'string') {
@@ -2680,18 +2901,14 @@ async function saveTheme(name = undefined, theme = undefined) {
     if (themeIndex == -1) {
         themes.push(theme);
         const option = document.createElement('option');
-        option.selected = true;
+        option.selected = false;
         option.value = name;
         option.innerText = name;
         $('#themes').append(option);
     }
     else {
         themes[themeIndex] = theme;
-        $(`#themes option[value="${name}"]`).prop('selected', true);
     }
-
-    power_user.theme = name;
-    saveSettingsDebounced();
 
     return theme;
 }
@@ -3064,7 +3281,7 @@ async function setAvgBG(args) {
     Object.assign(theme, palette);
 
     await saveTheme(themeName, theme);
-    applyTheme(themeName);
+    selectTheme(themeName);
 
     toastr.success(`Theme "${themeName}" generated and applied.`);
     return '';
@@ -3093,10 +3310,7 @@ async function setThemeCallback(_, themeName) {
         return;
     }
 
-    power_user.theme = theme.name;
-    applyTheme(theme.name);
-    $('#themes').val(theme.name);
-    saveSettingsDebounced();
+    selectTheme(theme.name);
     return '';
 }
 
@@ -3644,10 +3858,15 @@ jQuery(() => {
 
     $('#themes').on('change', function () {
         const themeSelected = String($(this).find(':selected').val());
-        power_user.theme = themeSelected;
-        applyTheme(themeSelected);
-        saveSettingsDebounced();
+        selectTheme(themeSelected);
     });
+
+    $('#theme_bind_character').on('click', () => void toggleThemeBinding('entity'));
+    $('#theme_bind_chat').on('click', () => void toggleThemeBinding('chat'));
+    eventSource.on(event_types.APP_READY, syncThemeForCurrentContext);
+    eventSource.on(event_types.CHAT_CHANGED, syncThemeForCurrentContext);
+    eventSource.on(event_types.CHARACTER_RENAMED, migrateCharacterThemeBinding);
+    eventSource.on(event_types.CHARACTER_DELETED, removeCharacterThemeBinding);
 
     $('#movingUIPresets').on('change', async function () {
         console.log('saw MUI preset change');
@@ -3657,7 +3876,7 @@ jQuery(() => {
         saveSettingsDebounced();
     });
 
-    $('#ui-preset-save-button').on('click', () => saveTheme());
+    $('#ui-preset-save-button').on('click', () => saveThemeAs());
     $('#ui-preset-update-button').on('click', () => updateTheme());
     $('#ui-preset-delete-button').on('click', () => deleteTheme());
     $('#movingui-preset-save-button').on('click', saveMovingUI);

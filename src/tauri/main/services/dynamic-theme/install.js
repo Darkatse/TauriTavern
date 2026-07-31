@@ -88,7 +88,7 @@ export function installDynamicTheme() {
             }
 
             if (dynamicTheme.themeEnabled) {
-                applySillyTavernTheme(targetTheme);
+                await applySillyTavernTheme(targetTheme);
                 applied.theme = targetTheme;
             }
 

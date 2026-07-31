@@ -336,7 +336,7 @@ fn install_pnpm() -> Result<()> {
     spinner.enable_steady_tick(Duration::from_millis(100));
 
     let status = Command::new(get_cmd("npm"))
-        .args(&["install", "-g", "pnpm", "--registry", TAOBAO_REGISTRY])
+        .args(["install", "-g", "pnpm", "--registry", TAOBAO_REGISTRY])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -379,7 +379,7 @@ fn check_and_install_dependencies() -> Result<()> {
         if which("npm").is_ok() {
             log_info("设置 npm 镜像源为淘宝源...");
             let _ = Command::new(get_cmd("npm"))
-                .args(&["config", "set", "registry", TAOBAO_REGISTRY])
+                .args(["config", "set", "registry", TAOBAO_REGISTRY])
                 .output();
         } else {
             log_warn("未检测到 npm，跳过镜像源配置");
@@ -439,14 +439,13 @@ fn run_sequential_attempts(candidates: &[(&str, Vec<&str>)]) -> Result<ExitStatu
                 // 如果加上 .cmd 还没找到，尝试不加后缀（可能用户用的 git bash 或 cygwin）
                 if cfg!(windows) && *prog != "corepack" {
                     // corepack 通常也是 cmd
-                    match Command::new(prog)
+                    if let Ok(status) = Command::new(prog)
                         .args(args)
                         .stdout(Stdio::inherit())
                         .stderr(Stdio::inherit())
                         .status()
                     {
-                        Ok(status) => return Ok(status),
-                        Err(_) => {}
+                        return Ok(status);
                     }
                 }
 
@@ -817,7 +816,7 @@ fn show_build_menu() -> Result<()> {
         let selections = &[
             "🖥️ 构建桌面端 (Desktop Build)",
             "🐞 构建桌面端 Debug 版 (Desktop Debug Build)",
-            "🤖 构建 Android (Split ABI)",
+            "🤖 构建 Android (CI ABI)",
             "🍎 构建 iOS (iOS Build)",
             "📦 构建便携版 (Portable Build)",
             "🔙 返回主菜单 (Back)",
@@ -862,27 +861,40 @@ fn run_desktop_build() -> Result<()> {
 
 fn run_desktop_build_debug() -> Result<()> {
     log_info("正在构建桌面端 Debug 版本...");
-    log_info("注意：此模式必须使用 npm（pnpm 无法正确传参 --debug）");
+    let bundles = if cfg!(target_os = "windows") {
+        "nsis"
+    } else if cfg!(target_os = "macos") {
+        "dmg"
+    } else {
+        "appimage,deb,rpm"
+    };
+    let status = run_sequential_attempts(&[
+        (
+            "pnpm",
+            vec!["run", "tauri:build", "--", "--debug", "--bundles", bundles],
+        ),
+        (
+            "corepack",
+            vec![
+                "pnpm",
+                "run",
+                "tauri:build",
+                "--",
+                "--debug",
+                "--bundles",
+                bundles,
+            ],
+        ),
+        (
+            "npm",
+            vec!["run", "tauri:build", "--", "--debug", "--bundles", bundles],
+        ),
+    ])?;
 
-    let cmd_prog = get_cmd("npm");
-    let status = Command::new(&cmd_prog)
-        .args(&["run", "tauri", "build", "--", "--debug"])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
-
-    match status {
-        Ok(status) => {
-            if status.success() {
-                report_collected_artifacts(artifacts::BuildArtifactsKind::DesktopDebug)?;
-            } else {
-                log_error("构建失败");
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            log_error("未找到 npm 命令，请先安装 Node.js（包含 npm）后重试。");
-        }
-        Err(e) => return Err(e.into()),
+    if status.success() {
+        report_collected_artifacts(artifacts::BuildArtifactsKind::DesktopDebug)?;
+    } else {
+        log_error("构建失败");
     }
 
     pause();
@@ -890,33 +902,50 @@ fn run_desktop_build_debug() -> Result<()> {
 }
 
 fn run_android_build_split_abi() -> Result<()> {
-    log_info("正在构建 Android 生产版本 (Split ABI)...");
+    log_info("正在构建 Android 生产版本 (CI ABI: arm64-v8a + armeabi-v7a)...");
 
     let status = run_sequential_attempts(&[
         (
             "pnpm",
-            vec!["tauri", "android", "build", "--apk", "--split-per-abi"],
+            vec![
+                "run",
+                "android:build",
+                "--",
+                "--verbose",
+                "--apk",
+                "--split-per-abi",
+                "--target",
+                "aarch64",
+                "armv7",
+            ],
         ),
         (
             "corepack",
             vec![
                 "pnpm",
-                "tauri",
-                "android",
-                "build",
+                "run",
+                "android:build",
+                "--",
+                "--verbose",
                 "--apk",
                 "--split-per-abi",
+                "--target",
+                "aarch64",
+                "armv7",
             ],
         ),
         (
             "npm",
             vec![
                 "run",
-                "tauri",
-                "android",
-                "build",
+                "android:build",
+                "--",
+                "--verbose",
                 "--apk",
                 "--split-per-abi",
+                "--target",
+                "aarch64",
+                "armv7",
             ],
         ),
     ])?;
@@ -950,6 +979,7 @@ fn run_ios_build() -> Result<()> {
                 "--",
                 "--profile",
                 profile.as_str(),
+                "--verbose",
             ],
         ),
         (
@@ -961,6 +991,7 @@ fn run_ios_build() -> Result<()> {
                 "--",
                 "--profile",
                 profile.as_str(),
+                "--verbose",
             ],
         ),
         (
@@ -971,12 +1002,15 @@ fn run_ios_build() -> Result<()> {
                 "--",
                 "--profile",
                 profile.as_str(),
+                "--verbose",
             ],
         ),
     ])?;
 
     if status.success() {
-        report_collected_artifacts(artifacts::BuildArtifactsKind::IosRelease)?;
+        report_collected_artifacts(artifacts::BuildArtifactsKind::IosRelease {
+            testflight: matches!(profile, IosPolicyProfileSelection::IosExternalBeta),
+        })?;
         pause();
     } else {
         log_error("构建失败");
@@ -1061,7 +1095,7 @@ fn update_repository() -> Result<()> {
         return Ok(());
     }
 
-    let status = Command::new("git").args(&["pull"]).status();
+    let status = Command::new("git").args(["pull"]).status();
 
     match status {
         Ok(s) => {
@@ -1249,7 +1283,7 @@ fn view_logs() -> Result<()> {
     // 读取并显示最后 50 行
     let file = fs::File::open(&log_file_path)?;
     let reader = BufReader::new(file);
-    let lines: Vec<String> = reader.lines().filter_map(Result::ok).collect();
+    let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
 
     let start = if lines.len() > 50 {
         lines.len() - 50
@@ -1468,19 +1502,15 @@ fn run_debug() -> Result<()> {
     // Spawn threads to handle output
     let stdout_handle = std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                process_log_line(&l, false);
-            }
+        for line in reader.lines().map_while(Result::ok) {
+            process_log_line(&line, false);
         }
     });
 
     let stderr_handle = std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                process_log_line(&l, true);
-            }
+        for line in reader.lines().map_while(Result::ok) {
+            process_log_line(&line, true);
         }
     });
 

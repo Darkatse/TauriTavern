@@ -9,7 +9,7 @@ pub enum BuildArtifactsKind {
     DesktopRelease,
     DesktopDebug,
     AndroidSplitApk,
-    IosRelease,
+    IosRelease { testflight: bool },
 }
 
 pub struct CollectedArtifact {
@@ -45,10 +45,14 @@ pub fn collect(project_root: &Path, kind: BuildArtifactsKind) -> Result<Vec<Coll
     })?;
 
     let copies = match kind {
-        BuildArtifactsKind::DesktopRelease => desktop_artifact_copies(project_root, false)?,
-        BuildArtifactsKind::DesktopDebug => desktop_artifact_copies(project_root, true)?,
+        BuildArtifactsKind::DesktopRelease => {
+            desktop_artifact_copies(project_root, &config, false)?
+        }
+        BuildArtifactsKind::DesktopDebug => desktop_artifact_copies(project_root, &config, true)?,
         BuildArtifactsKind::AndroidSplitApk => android_artifact_copies(project_root, &config)?,
-        BuildArtifactsKind::IosRelease => ios_artifact_copies(project_root, &config)?,
+        BuildArtifactsKind::IosRelease { testflight } => {
+            ios_artifact_copies(project_root, &config, testflight)?
+        }
     };
 
     let mut collected = Vec::with_capacity(copies.len());
@@ -75,7 +79,11 @@ fn load_tauri_config(project_root: &Path) -> Result<TauriConfig> {
         .with_context(|| format!("Failed to parse {}", config_path.display()))
 }
 
-fn desktop_artifact_copies(project_root: &Path, debug: bool) -> Result<Vec<ArtifactCopy>> {
+fn desktop_artifact_copies(
+    project_root: &Path,
+    config: &TauriConfig,
+    debug: bool,
+) -> Result<Vec<ArtifactCopy>> {
     let bundle_dir = if debug {
         project_root.join("src-tauri/target/debug/bundle")
     } else {
@@ -89,15 +97,13 @@ fn desktop_artifact_copies(project_root: &Path, debug: bool) -> Result<Vec<Artif
         .map(|entry| entry.into_path())
         .filter(|path| is_desktop_distributable(path))
         .map(|source| {
-            let file_name = source
-                .file_name()
-                .and_then(|value| value.to_str())
-                .with_context(|| format!("Invalid desktop artifact path: {}", source.display()))?;
-            let destination_name = if debug {
-                append_debug_marker(file_name)?
-            } else {
-                file_name.to_owned()
-            };
+            let destination_name = desktop_destination_name(
+                config,
+                &source,
+                debug,
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+            )?;
             Ok(ArtifactCopy {
                 source,
                 destination_name,
@@ -142,6 +148,9 @@ fn android_artifact_copies(project_root: &Path, config: &TauriConfig) -> Result<
         let abi = abi.to_str().with_context(|| {
             format!("Invalid Android ABI directory: {}", entry.path().display())
         })?;
+        let Some(destination_name) = android_destination_name(config, abi) else {
+            continue;
+        };
         let release_dir = entry.path().join("release");
         if !release_dir.is_dir() {
             continue;
@@ -170,12 +179,7 @@ fn android_artifact_copies(project_root: &Path, config: &TauriConfig) -> Result<
 
         copies.push(ArtifactCopy {
             source,
-            destination_name: format!(
-                "{}-{}-{}-release.apk",
-                config.product_name,
-                config.version,
-                normalize_android_abi(abi)
-            ),
+            destination_name,
         });
     }
 
@@ -189,7 +193,11 @@ fn android_artifact_copies(project_root: &Path, config: &TauriConfig) -> Result<
     Ok(copies)
 }
 
-fn ios_artifact_copies(project_root: &Path, config: &TauriConfig) -> Result<Vec<ArtifactCopy>> {
+fn ios_artifact_copies(
+    project_root: &Path,
+    config: &TauriConfig,
+    testflight: bool,
+) -> Result<Vec<ArtifactCopy>> {
     let source = project_root
         .join("src-tauri/crates/tauritavern/gen/apple/build/arm64")
         .join(format!("{}.ipa", config.product_name));
@@ -197,15 +205,80 @@ fn ios_artifact_copies(project_root: &Path, config: &TauriConfig) -> Result<Vec<
 
     Ok(vec![ArtifactCopy {
         source,
-        destination_name: format!("{}-{}.ipa", config.product_name, config.version),
+        destination_name: ios_destination_name(config, testflight),
     }])
 }
 
-fn append_debug_marker(file_name: &str) -> Result<String> {
-    let (stem, extension) = file_name
-        .rsplit_once('.')
-        .with_context(|| format!("Desktop artifact is missing an extension: {file_name}"))?;
-    Ok(format!("{stem}-DEBUG.{extension}"))
+fn release_asset_name(config: &TauriConfig, suffix: &str) -> String {
+    format!("{}-{}-{suffix}", config.product_name, config.version)
+}
+
+fn desktop_destination_name(
+    config: &TauriConfig,
+    source: &Path,
+    debug: bool,
+    os: &str,
+    arch: &str,
+) -> Result<String> {
+    let platform = match os {
+        "windows" => "windows",
+        "macos" => "macos",
+        "linux" => "linux",
+        other => bail!("Unsupported desktop platform: {other}"),
+    };
+    let arch = match arch {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        other => bail!("Unsupported desktop architecture: {other}"),
+    };
+    let extension = if source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| name.ends_with(".AppImage"))
+    {
+        "AppImage"
+    } else {
+        source
+            .extension()
+            .and_then(|value| value.to_str())
+            .with_context(|| {
+                format!(
+                    "Desktop artifact is missing an extension: {}",
+                    source.display()
+                )
+            })?
+    };
+    let variant = match (platform, extension, debug) {
+        ("windows", "exe", false) => "-setup",
+        ("windows", "exe", true) => "-setup-DEBUG",
+        (_, _, true) => "-DEBUG",
+        _ => "",
+    };
+
+    Ok(release_asset_name(
+        config,
+        &format!("{platform}-{arch}{variant}.{extension}"),
+    ))
+}
+
+fn android_destination_name(config: &TauriConfig, abi: &str) -> Option<String> {
+    let abi = match abi {
+        "arm" | "armeabi-v7a" => "armeabi-v7a",
+        "arm64" | "arm64-v8a" => "arm64-v8a",
+        _ => return None,
+    };
+    Some(release_asset_name(config, &format!("android-{abi}.apk")))
+}
+
+fn ios_destination_name(config: &TauriConfig, testflight: bool) -> String {
+    release_asset_name(
+        config,
+        if testflight {
+            "ios-arm64-TestFlight.ipa"
+        } else {
+            "ios-arm64.ipa"
+        },
+    )
 }
 
 fn is_desktop_distributable(path: &Path) -> bool {
@@ -225,16 +298,6 @@ fn is_desktop_distributable(path: &Path) -> bool {
         path.extension().and_then(|value| value.to_str()),
         Some("dmg" | "deb" | "rpm" | "msi" | "exe")
     )
-}
-
-fn normalize_android_abi(abi: &str) -> &str {
-    match abi {
-        "arm" => "armeabi-v7a",
-        "arm64" => "arm64-v8a",
-        "x86" => "x86",
-        "x86_64" => "x86_64",
-        other => other,
-    }
 }
 
 fn ensure_dir(path: &Path) -> Result<()> {

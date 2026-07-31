@@ -1454,6 +1454,7 @@ async function deleteGroup(id) {
         select_rm_info('group_delete', id);
 
         $('#rm_button_selected_ch').children('h2').text('');
+        await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
     }
 }
 
