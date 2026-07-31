@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -31,6 +32,18 @@ function installFakeWindow({ invoke } = {}) {
 function cleanupGlobals() {
     delete global.window;
 }
+
+test('backend readiness follows default content initialization', async () => {
+    const source = await readFile(
+        path.join(REPO_ROOT, 'src-tauri/crates/tauritavern/src/app.rs'),
+        'utf8',
+    );
+    const contentIndex = source.indexOf('.initialize_default_content("default-user")');
+    const stateIndex = source.indexOf('app_handle.manage(state.clone())');
+    const readyIndex = source.indexOf('backend_readiness.mark_ready()');
+
+    assert.ok(contentIndex >= 0 && contentIndex < stateIndex && stateIndex < readyIndex);
+});
 
 test('backend readiness waits on the explicit readiness command', async () => {
     const fake = installFakeWindow({

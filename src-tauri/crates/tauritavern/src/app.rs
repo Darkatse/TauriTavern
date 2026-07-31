@@ -29,6 +29,25 @@ pub fn spawn_initialization(
         match AppState::new(app_handle.clone(), runtime_paths, startup_profile).await {
             Ok(state) => {
                 let state = Arc::new(state);
+                if let Err(error) = state
+                    .services
+                    .content_service
+                    .initialize_default_content("default-user")
+                    .await
+                {
+                    let message = format!("Failed to initialize default content: {error}");
+                    backend_readiness.mark_failed(message.clone());
+                    tracing::error!(
+                        target: crate::observability_targets::USER_VISIBLE_ERROR,
+                        "{message}",
+                    );
+                    if let Err(emit_error) = app_handle.emit("app-error", message) {
+                        tracing::error!("Failed to emit app-error event: {}", emit_error);
+                    }
+                    return;
+                }
+                tracing::debug!("Successfully initialized default content");
+
                 if !app_handle.manage(state.clone()) {
                     let message =
                         "Failed to initialize application state: AppState is already managed"
@@ -53,16 +72,6 @@ pub fn spawn_initialization(
                     .services
                     .settings_service
                     .schedule_chat_backup_reconciliation();
-
-                match state
-                    .services
-                    .content_service
-                    .initialize_default_content("default-user")
-                    .await
-                {
-                    Ok(_) => tracing::debug!("Successfully initialized default content"),
-                    Err(error) => tracing::warn!("Failed to initialize default content: {}", error),
-                }
 
                 let sync_automation_service = state.services.sync_automation_service.clone();
                 let sync_automation_cancel = state.lifecycle.sync_automation_cancel.clone();
