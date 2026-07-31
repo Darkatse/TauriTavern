@@ -1,4 +1,5 @@
 mod agent;
+mod catalog;
 mod chat;
 mod common;
 mod dice;

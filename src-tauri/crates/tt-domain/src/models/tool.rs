@@ -1,6 +1,10 @@
-use std::fmt;
+use std::{
+    collections::{BTreeMap, btree_map::Entry},
+    fmt,
+};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde_json::Value;
 
 use crate::errors::DomainError;
 
@@ -143,6 +147,62 @@ impl<'de> Deserialize<'de> for ToolId {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolDescriptor {
+    pub id: ToolId,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub input_schema: Value,
+    pub output_schema: Option<Value>,
+    pub annotations: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCatalog {
+    descriptors: BTreeMap<ToolId, ToolDescriptor>,
+}
+
+impl ToolCatalog {
+    pub fn try_from_descriptors(
+        descriptors: impl IntoIterator<Item = ToolDescriptor>,
+    ) -> Result<Self, DomainError> {
+        let mut catalog = BTreeMap::new();
+        for descriptor in descriptors {
+            match catalog.entry(descriptor.id.clone()) {
+                Entry::Vacant(entry) => {
+                    entry.insert(descriptor);
+                }
+                Entry::Occupied(entry) => {
+                    return Err(DomainError::Conflict(format!(
+                        "tool.catalog_duplicate_id: duplicate tool id `{}`",
+                        entry.key()
+                    )));
+                }
+            }
+        }
+
+        Ok(Self {
+            descriptors: catalog,
+        })
+    }
+
+    pub fn get(&self, id: &ToolId) -> Option<&ToolDescriptor> {
+        self.descriptors.get(id)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &ToolDescriptor> {
+        self.descriptors.values()
+    }
+
+    pub fn len(&self) -> usize {
+        self.descriptors.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.descriptors.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolChoice {
@@ -156,7 +216,19 @@ pub enum ToolChoice {
 mod tests {
     use serde_json::json;
 
-    use super::{ToolChoice, ToolId, ToolProviderId};
+    use super::{ToolCatalog, ToolChoice, ToolDescriptor, ToolId, ToolProviderId};
+    use crate::errors::DomainError;
+
+    fn descriptor(id: ToolId) -> ToolDescriptor {
+        ToolDescriptor {
+            id,
+            title: None,
+            description: None,
+            input_schema: json!({ "type": "object" }),
+            output_schema: None,
+            annotations: json!({}),
+        }
+    }
 
     #[test]
     fn tool_identity_is_stable_and_opaque() {
@@ -186,5 +258,54 @@ mod tests {
 
         assert_eq!(value, json!({ "specific": "builtin:workspace.finish" }));
         assert_eq!(serde_json::from_value::<ToolChoice>(value).unwrap(), choice);
+    }
+
+    #[test]
+    fn tool_catalog_orders_by_id_and_keeps_provider_namespaces_distinct() {
+        let builtin_id = ToolId::builtin("search").unwrap();
+        let mcp_id = ToolId::new(
+            &ToolProviderId::parse("mcp/registration-1").unwrap(),
+            "search",
+        )
+        .unwrap();
+        let catalog = ToolCatalog::try_from_descriptors([
+            descriptor(mcp_id.clone()),
+            descriptor(builtin_id.clone()),
+        ])
+        .unwrap();
+
+        assert_eq!(catalog.len(), 2);
+        assert!(!catalog.is_empty());
+        assert_eq!(catalog.get(&builtin_id).unwrap().id, builtin_id);
+        assert_eq!(
+            catalog
+                .iter()
+                .map(|descriptor| descriptor.id.as_str())
+                .collect::<Vec<_>>(),
+            ["builtin:search", "mcp/registration-1:search"]
+        );
+    }
+
+    #[test]
+    fn tool_catalog_rejects_duplicate_ids() {
+        let id = ToolId::builtin("workspace.finish").unwrap();
+        let error =
+            ToolCatalog::try_from_descriptors([descriptor(id.clone()), descriptor(id.clone())])
+                .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DomainError::Conflict(message)
+                if message
+                    == "tool.catalog_duplicate_id: duplicate tool id `builtin:workspace.finish`"
+        ));
+    }
+
+    #[test]
+    fn tool_catalog_can_be_empty() {
+        let catalog = ToolCatalog::try_from_descriptors(Vec::new()).unwrap();
+
+        assert!(catalog.is_empty());
+        assert_eq!(catalog.iter().count(), 0);
     }
 }

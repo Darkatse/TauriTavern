@@ -1,6 +1,7 @@
 use super::agent::{
     agent_await_spec, agent_delegate_spec, agent_handoff_spec, agent_list_spec, task_return_spec,
 };
+use super::catalog::project_builtin_catalog;
 use super::chat::{chat_read_messages_spec, chat_search_spec};
 use super::dice::dice_roll_spec;
 use super::skill::{SKILL_READ, skill_list_spec, skill_read_spec, skill_search_spec};
@@ -15,37 +16,45 @@ use crate::errors::ApplicationError;
 use crate::services::agent_workspace_scope::format_model_workspace_roots;
 use tt_domain::models::agent::AgentToolSpec;
 use tt_domain::models::agent::profile::{AgentToolDescriptionOverride, ResolvedAgentProfile};
+use tt_domain::models::tool::ToolCatalog;
 
 #[derive(Debug, Clone)]
 pub struct BuiltinAgentToolRegistry {
     specs: Vec<AgentToolSpec>,
+    catalog: ToolCatalog,
 }
 
 impl BuiltinAgentToolRegistry {
     pub fn all() -> Self {
-        Self {
-            specs: vec![
-                agent_list_spec(),
-                agent_delegate_spec(),
-                agent_handoff_spec(),
-                agent_await_spec(),
-                task_return_spec(),
-                chat_search_spec(),
-                chat_read_messages_spec(),
-                worldinfo_read_activated_spec(),
-                dice_roll_spec(),
-                skill_list_spec(),
-                skill_search_spec(),
-                skill_read_spec(),
-                workspace_list_files_spec(),
-                workspace_search_files_spec(),
-                workspace_read_file_spec(),
-                workspace_write_file_spec(),
-                workspace_apply_patch_spec(),
-                workspace_commit_spec(),
-                workspace_finish_spec(),
-            ],
-        }
+        let specs = vec![
+            agent_list_spec(),
+            agent_delegate_spec(),
+            agent_handoff_spec(),
+            agent_await_spec(),
+            task_return_spec(),
+            chat_search_spec(),
+            chat_read_messages_spec(),
+            worldinfo_read_activated_spec(),
+            dice_roll_spec(),
+            skill_list_spec(),
+            skill_search_spec(),
+            skill_read_spec(),
+            workspace_list_files_spec(),
+            workspace_search_files_spec(),
+            workspace_read_file_spec(),
+            workspace_write_file_spec(),
+            workspace_apply_patch_spec(),
+            workspace_commit_spec(),
+            workspace_finish_spec(),
+        ];
+        let catalog = project_builtin_catalog(&specs)
+            .expect("builtin Agent tool specs must form a valid catalog");
+
+        Self { specs, catalog }
+    }
+
+    pub fn catalog(&self) -> &ToolCatalog {
+        &self.catalog
     }
 
     pub fn specs(&self) -> &[AgentToolSpec] {
@@ -365,6 +374,7 @@ mod tests {
         ResolvedAgentOutputPolicy, ResolvedAgentProfile,
     };
     use tt_domain::models::agent::{AgentRunPresentation, ArtifactSpec, ArtifactTarget};
+    use tt_domain::models::tool::ToolId;
 
     #[test]
     fn registry_uses_openai_safe_model_names() {
@@ -417,6 +427,28 @@ mod tests {
                 .map(|spec| spec.name.as_str()),
             Some(WORKSPACE_FINISH)
         );
+    }
+
+    #[test]
+    fn catalog_preserves_neutral_fields_from_base_specs() {
+        let registry = BuiltinAgentToolRegistry::all();
+
+        assert_eq!(registry.catalog().len(), registry.specs().len());
+        for spec in registry.specs() {
+            let descriptor = registry
+                .catalog()
+                .get(&ToolId::builtin(&spec.name).unwrap())
+                .expect("builtin descriptor");
+
+            assert_eq!(descriptor.title.as_deref(), Some(spec.title.as_str()));
+            assert_eq!(
+                descriptor.description.as_deref(),
+                Some(spec.description.as_str())
+            );
+            assert_eq!(descriptor.input_schema, spec.input_schema);
+            assert_eq!(descriptor.output_schema, spec.output_schema);
+            assert_eq!(descriptor.annotations, spec.annotations);
+        }
     }
 
     #[test]

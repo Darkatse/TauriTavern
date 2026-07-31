@@ -126,7 +126,9 @@ _tauritavern/agent-profiles/
 
 ## 当前工具集
 
-Tool registry 只产 canonical `AgentToolSpec`。Provider-facing alias 由 gateway/payload adapter 渲染，不再由 registry 暴露 OpenAI-shaped tools。
+`BuiltinAgentToolRegistry` 继续以 canonical `AgentToolSpec` 承载现有 runtime、Profile/UI DTO 与 gateway 契约；构造时同时从未经 Profile 过滤或文案覆盖的 base specs 生成中性只读 `ToolCatalog`。当前 19 项 descriptor 的 ID 固定为 `builtin:<AgentToolSpec.name>`，只包含 `id`、title、description、input/output schema 与原始 annotations。Catalog 按 `ToolId` 排序迭代，重复 ID 以 `tool.catalog_duplicate_id` fail-fast；该顺序不替代 registry `Vec` 或 Profile allow list 的模型可见顺序。
+
+Provider-facing alias 仍由 gateway/payload adapter 渲染，`ToolCatalog` 不参与当前 provider advertisement，也不承载 Profile permission、executor、effect、trust、provenance 或 source revision。
 
 Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swipe` 排除当前最后一条 assistant 目标楼层，`regenerate` 排除最后一条非 user 楼层。`chat.search`、`chat.read_messages` 与 persistent state base 解析都只消费这个前缀；这是 runtime 内部语义，不进入 model-facing tool description。
 

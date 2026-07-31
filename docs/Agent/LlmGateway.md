@@ -169,7 +169,7 @@ OpenAI Responses Agent 路径使用 persistent WebSocket session。session 由 `
 
 ## 6. Tool Schema
 
-Tool registry 只产 canonical `AgentToolSpec`。
+Gateway 继续从 tool registry 消费 canonical `AgentToolSpec`。Registry 同时维护的中性 `ToolCatalog` 是后续 control-plane 的只读投影，不进入当前 provider payload 路径。
 
 Gateway/payload adapter 在发送前渲染 provider-facing schema：
 
