@@ -197,8 +197,7 @@ export function applyIosPolicyUiProjection() {
     }
 
     if (caps.llm?.text_completions?.enabled === false) {
-        const textCompletionOption = requireElement('#main_api option[value="textgenerationwebui"]');
-        textCompletionOption.remove();
+        document.querySelector('#main_api option[value="textgenerationwebui"]')?.remove();
         hideElement(requireElement('#textgenerationwebui_api'));
     }
 
