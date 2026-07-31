@@ -6,6 +6,7 @@ use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolSpec,
 };
+use tt_domain::models::tool::ToolChoice;
 
 use super::invocation::model_session_id;
 
@@ -58,7 +59,7 @@ pub(super) fn prepare_agent_tool_request(
         payload: request.payload,
         messages,
         tools: tools.to_vec(),
-        tool_choice: Value::String("auto".to_string()),
+        tool_choice: ToolChoice::Auto,
         provider_state: json!({
             "sessionId": model_session_id(run_id, invocation_id),
             "runId": run_id,
@@ -108,15 +109,13 @@ pub(super) fn reject_external_tool_request(
         .is_some_and(|tools| !tools.is_empty());
     if has_tools {
         return Err(ApplicationError::ValidationError(
-            "agent.external_tools_unsupported: Agent runtime owns the tool registry"
-                .to_string(),
+            "agent.external_tools_unsupported: Agent runtime owns the tool registry".to_string(),
         ));
     }
 
     if payload.contains_key("tool_choice") {
         return Err(ApplicationError::ValidationError(
-            "agent.external_tool_choice_unsupported: Agent runtime owns tool choice"
-                .to_string(),
+            "agent.external_tool_choice_unsupported: Agent runtime owns tool choice".to_string(),
         ));
     }
 
@@ -309,6 +308,7 @@ mod tests {
     };
     use tt_domain::models::agent::profile::ResolvedAgentProfile;
     use tt_domain::models::agent::{AgentModelContentPart, AgentModelRequest, AgentModelRole};
+    use tt_domain::models::tool::ToolChoice;
 
     #[test]
     fn rejects_external_tool_choice_even_when_null() {
@@ -351,6 +351,7 @@ mod tests {
             "Materialized Agent System Prompt."
         );
         assert_eq!(message_text(&request, 2), "hello");
+        assert_eq!(request.tool_choice, ToolChoice::Auto);
     }
 
     #[test]

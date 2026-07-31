@@ -14,11 +14,7 @@ pub fn materialize_agent_system_prompt(
         return prompt.clone();
     }
 
-    let mut lines = vec![
-        "---".to_string(),
-        "tool_choice: required".to_string(),
-        "tools:".to_string(),
-    ];
+    let mut lines = vec!["---".to_string(), "tools:".to_string()];
     lines.extend(
         tools
             .iter()
@@ -29,6 +25,7 @@ pub fn materialize_agent_system_prompt(
         String::new(),
         "# Agent Mode is active.".to_string(),
         "- Work using the available agent tools. Tool results are working context, not chat messages.".to_string(),
+        "- Every model turn must include at least one Agent tool call. Plain text alone does not complete the current stage.".to_string(),
         String::new(),
     ]);
 

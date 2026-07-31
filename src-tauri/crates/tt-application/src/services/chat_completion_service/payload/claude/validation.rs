@@ -30,8 +30,34 @@ pub(super) fn validate_request(payload: &Value) -> Result<(), ApplicationError> 
         })?;
     let contract = ClaudeModelContract::resolve(model);
     let thinking_mode = validate_claude_thinking_request(request, contract, model)?;
+    validate_claude_tool_choice(request, thinking_mode, model)?;
     validate_claude_output_config(request, contract, model)?;
     validate_claude_sampling_request(request, contract.sampling, thinking_mode, model)?;
+
+    Ok(())
+}
+
+fn validate_claude_tool_choice(
+    request: &Map<String, Value>,
+    thinking_mode: Option<ClaudeRequestThinkingMode>,
+    model: &str,
+) -> Result<(), ApplicationError> {
+    let Some(choice_type) = request
+        .get("tool_choice")
+        .and_then(Value::as_object)
+        .and_then(|choice| choice.get("type"))
+        .and_then(Value::as_str)
+    else {
+        return Ok(());
+    };
+
+    if thinking_mode == Some(ClaudeRequestThinkingMode::Enabled)
+        && matches!(choice_type, "any" | "tool")
+    {
+        return Err(ApplicationError::ValidationError(format!(
+            "provider.tool_choice_conflict: Claude model `{model}` does not support forced tool choice with manual extended thinking"
+        )));
+    }
 
     Ok(())
 }

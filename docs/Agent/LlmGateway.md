@@ -66,6 +66,10 @@ AgentModelResponse {
 }
 ```
 
+`tool_choice` 使用 domain-owned `ToolChoice::{None, Auto, Required, Specific(ToolId)}`，不保存 provider JSON。当前 Agent 生产请求显式使用 `Auto`；runtime 的完成约束仍由 invocation exit policy 与 tool effect 执行，不能由单轮 provider choice 代替。
+
+在 invocation snapshot/alias map 落地前，`Specific(ToolId)` 只接受当前请求已经公布的 `builtin` 工具，并解析到该 spec 的现有 `model_name`。空工具集上的 `Required`/`Specific`、非 builtin ID、未公布 ID 都会在发送前失败。原始 prompt payload 中的 `tools`/`tool_choice` 不能覆盖这份 typed contract。
+
 `AgentModelContentPart` 当前支持：
 
 ```text
@@ -115,6 +119,8 @@ provider native response
 ```
 
 这个过渡结构保留了现有 ChatCompletionService 投资，同时让 Agent runtime 摆脱 OpenAI-shaped raw JSON。
+
+Provider payload builder 负责最后一段精确转换：OpenAI Chat/Responses、Claude、Gemini generateContent、Gemini Interactions 和 Cohere 不得把未知 choice 改成 Auto 或静默省略。Provider/model 无法表达的组合必须返回明确错误；例如 Claude manual extended thinking 不能与 forced tool choice 同时使用。
 
 ## 5. Native Metadata Contract
 

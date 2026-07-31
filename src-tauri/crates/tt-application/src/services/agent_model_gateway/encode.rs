@@ -10,6 +10,7 @@ use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolCall,
     AgentToolResult, AgentToolSpec,
 };
+use tt_domain::models::tool::ToolChoice;
 
 pub(crate) fn encode_chat_completion_request(
     request: &AgentModelRequest,
@@ -17,6 +18,8 @@ pub(crate) fn encode_chat_completion_request(
     let (_source, adapter) = resolve_request_adapter(request)?;
     let mut payload = request.payload.clone();
     provider_state::apply_provider_state_to_payload(&mut payload, request, adapter)?;
+    payload.remove("tools");
+    payload.remove("tool_choice");
 
     payload.insert(
         "messages".to_string(),
@@ -29,24 +32,62 @@ pub(crate) fn encode_chat_completion_request(
         ),
     );
 
-    if !request.tools.is_empty() {
+    if request.tools.is_empty() {
+        if matches!(
+            request.tool_choice,
+            ToolChoice::Required | ToolChoice::Specific(_)
+        ) {
+            return Err(ApplicationError::ValidationError(
+                "agent.tool_choice_requires_tools: required and specific tool choice need at least one advertised tool"
+                    .to_string(),
+            ));
+        }
+    } else {
         payload.insert(
             "tools".to_string(),
             Value::Array(schema::render_openai_tools(&request.tools, adapter)),
         );
         payload.insert(
             "tool_choice".to_string(),
-            if request.tool_choice.is_null() {
-                Value::String("auto".to_string())
-            } else {
-                request.tool_choice.clone()
-            },
+            encode_tool_choice(&request.tool_choice, &request.tools)?,
         );
     }
 
     adapter.finalize_payload(&mut payload);
     payload.insert("stream".to_string(), Value::Bool(false));
     Ok(ChatCompletionGenerateRequestDto { payload })
+}
+
+fn encode_tool_choice(
+    choice: &ToolChoice,
+    tools: &[AgentToolSpec],
+) -> Result<Value, ApplicationError> {
+    match choice {
+        ToolChoice::None => Ok(Value::String("none".to_string())),
+        ToolChoice::Auto => Ok(Value::String("auto".to_string())),
+        ToolChoice::Required => Ok(Value::String("required".to_string())),
+        ToolChoice::Specific(tool_id) => {
+            if !tool_id.is_builtin() {
+                return Err(ApplicationError::ValidationError(format!(
+                    "agent.tool_choice_provider_unsupported: tool `{tool_id}` is not provided by the builtin catalog"
+                )));
+            }
+
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == tool_id.native_name())
+                .ok_or_else(|| {
+                    ApplicationError::ValidationError(format!(
+                        "agent.tool_choice_tool_not_advertised: tool `{tool_id}` is not advertised in this request"
+                    ))
+                })?;
+
+            Ok(json!({
+                "type": "function",
+                "function": { "name": tool.model_name },
+            }))
+        }
+    }
 }
 
 fn encode_openai_compatible_message(

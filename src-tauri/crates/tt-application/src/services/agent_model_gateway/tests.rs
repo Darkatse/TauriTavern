@@ -14,6 +14,7 @@ use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolCall,
     AgentToolResult,
 };
+use tt_domain::models::tool::{ToolChoice, ToolId, ToolProviderId};
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionNormalizationReport, ChatCompletionSource,
 };
@@ -130,6 +131,90 @@ fn built_in_bedrock_claude_uses_claude_adapter() {
         let (_, adapter) = resolve_request_adapter(&request).unwrap();
         assert_eq!(adapter, expected, "unexpected adapter for {model}");
     }
+}
+
+#[test]
+fn encodes_typed_tool_choice_against_advertised_tools() {
+    let registry = BuiltinAgentToolRegistry::all();
+    let finish = registry
+        .spec_by_name("workspace.finish")
+        .expect("finish tool")
+        .clone();
+    let cases = [
+        (ToolChoice::None, json!("none")),
+        (ToolChoice::Auto, json!("auto")),
+        (ToolChoice::Required, json!("required")),
+        (
+            ToolChoice::Specific(ToolId::builtin("workspace.finish").unwrap()),
+            json!({
+                "type": "function",
+                "function": { "name": finish.model_name }
+            }),
+        ),
+    ];
+
+    for (tool_choice, expected) in cases {
+        let mut request = basic_request("openai", None, Vec::new());
+        request.tools = vec![finish.clone()];
+        request.tool_choice = tool_choice;
+
+        let dto = encode_chat_completion_request(&request).expect("choice should encode");
+        assert_eq!(dto.payload.get("tool_choice"), Some(&expected));
+    }
+}
+
+#[test]
+fn rejects_tool_choice_outside_the_advertised_builtin_set() {
+    let registry = BuiltinAgentToolRegistry::all();
+    let mut request = basic_request("openai", None, Vec::new());
+    request.tools = vec![
+        registry
+            .spec_by_name("workspace.finish")
+            .expect("finish tool")
+            .clone(),
+    ];
+
+    request.tool_choice = ToolChoice::Specific(ToolId::builtin("workspace.write_file").unwrap());
+    let error =
+        encode_chat_completion_request(&request).expect_err("unadvertised tool choice must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("agent.tool_choice_tool_not_advertised")
+    );
+
+    let external = ToolProviderId::parse("mcp/registration-1").unwrap();
+    request.tool_choice = ToolChoice::Specific(ToolId::new(&external, "search").unwrap());
+    let error = encode_chat_completion_request(&request)
+        .expect_err("non-builtin tool choice must fail before snapshots exist");
+    assert!(
+        error
+            .to_string()
+            .contains("agent.tool_choice_provider_unsupported")
+    );
+}
+
+#[test]
+fn tool_choice_requires_tools_and_ignores_raw_payload_overrides() {
+    let mut request = basic_request("openai", None, Vec::new());
+    request.tool_choice = ToolChoice::Required;
+    let error = encode_chat_completion_request(&request).expect_err("required needs tools");
+    assert!(
+        error
+            .to_string()
+            .contains("agent.tool_choice_requires_tools")
+    );
+
+    request.tool_choice = ToolChoice::Auto;
+    request
+        .payload
+        .insert("tools".to_string(), json!([{"raw": true}]));
+    request
+        .payload
+        .insert("tool_choice".to_string(), json!("required"));
+    let dto = encode_chat_completion_request(&request).expect("auto without tools is valid");
+    assert!(dto.payload.get("tools").is_none());
+    assert!(dto.payload.get("tool_choice").is_none());
 }
 
 #[test]
@@ -340,7 +425,7 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
             tool_result_message("call_1", "workspace.write_file", "ok"),
         ],
         tools: registry.specs().to_vec(),
-        tool_choice: Value::String("auto".to_string()),
+        tool_choice: ToolChoice::Auto,
         provider_state: json!({
             "sessionId": "run_1",
             "providerFormat": "openai_responses",
@@ -673,7 +758,7 @@ fn basic_request(
         payload,
         messages,
         tools: Vec::new(),
-        tool_choice: Value::String("auto".to_string()),
+        tool_choice: ToolChoice::Auto,
         provider_state: json!({ "sessionId": "run_1" }),
     }
 }

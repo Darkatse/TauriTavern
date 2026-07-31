@@ -175,7 +175,7 @@ AgentModelRequest {
     payload,
     messages,
     tools,
-    tool_choice,
+    tool_choice: ToolChoice,
     provider_state,
 }
 
@@ -190,6 +190,8 @@ AgentModelContentPart {
 }
 ```
 
+`ToolChoice` 是 `None / Auto / Required / Specific(ToolId)` 的 domain enum。当前生产路径显式选择 `Auto`，保持既有 provider/model 兼容性；纯文本 drift 仍由 runtime 捕获、提醒并在 `maxRounds` 边界 fail-fast。`Specific` 只解析本轮已经公布的 builtin tool，原始 prompt payload 无法覆盖 Agent-owned tools 或 choice。
+
 当前实现重点：
 
 - `AgentModelGateway` 已拆为 `agent_model_gateway/` 模块目录：`mod.rs` 保留 trait / `ChatCompletionAgentModelGateway` wrapper；`encode.rs` / `decode.rs` 做 canonical IR 与 normalized ChatCompletion exchange 转换；`format.rs` 解析 source / provider format；`schema.rs` 做 tool schema sanitizer；`provider_state.rs` 管理 continuation；`providers/*` 放 provider-specific adapter 规则。
@@ -197,6 +199,7 @@ AgentModelContentPart {
 - Tool call id 必须是 provider 返回的不透明字符串；缺失 `tool_call_id` 会 fail-fast。
 - OpenAI Responses 请求会注入 `include: ["reasoning.encrypted_content"]`，以便保留 reasoning continuation 所需 opaque 内容。
 - Tool schema 在 gateway 边界按 provider format 做深拷贝 sanitizer；canonical schema 本身不被污染。
+- Tool choice 在 gateway 边界从 domain enum 投影到 OpenAI-compatible 中间形态，再由现有 provider builder 精确转换；未知或不支持的组合不得回退 Auto/省略。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native blocks 会进入 normalized `message.native`，再进入 Agent `Native` part。
 
 当前 `provider_state` 契约：

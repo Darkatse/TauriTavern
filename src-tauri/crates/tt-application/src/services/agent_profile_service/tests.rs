@@ -43,7 +43,8 @@ fn default_agent_system_prompt_uses_visible_tool_model_names() {
 
     let prompt = materialize_agent_system_prompt(&tools, &profile);
 
-    assert!(prompt.contains("tool_choice: required"));
+    assert!(!prompt.contains("tool_choice:"));
+    assert!(prompt.contains("Every model turn must include at least one Agent tool call"));
     assert!(prompt.contains("- chat_search_alias"));
     assert!(prompt.contains("- workspace_commit_alias"));
     assert!(prompt.contains("- workspace_finish_alias"));

@@ -13,6 +13,7 @@ use super::tool_calls::{
     OpenAiToolCall, extract_openai_tool_calls, message_tool_call_id,
     validate_openai_chat_tool_transcript,
 };
+use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let request = build_gemini_interactions_payload(&payload)?;
@@ -54,12 +55,7 @@ fn build_gemini_interactions_payload(
         );
     }
 
-    if let Some(generation_config) = build_generation_config(payload) {
-        request.insert(
-            "generation_config".to_string(),
-            Value::Object(generation_config),
-        );
-    }
+    let mut generation_config = build_generation_config(payload);
 
     match payload.get("tools") {
         None | Some(Value::Null) => {}
@@ -69,12 +65,25 @@ fn build_gemini_interactions_payload(
                 "tools".to_string(),
                 Value::Array(map_openai_tools_to_interactions(tools)?),
             );
+            if let Some(tool_choice) = payload.get("tool_choice") {
+                generation_config.insert(
+                    "tool_choice".to_string(),
+                    map_tool_choice_to_interactions(tool_choice)?,
+                );
+            }
         }
         Some(_) => {
             return Err(ApplicationError::ValidationError(
                 "Gemini Interactions tools must be an array".to_string(),
             ));
         }
+    }
+
+    if !generation_config.is_empty() {
+        request.insert(
+            "generation_config".to_string(),
+            Value::Object(generation_config),
+        );
     }
 
     if let Some(json_schema) = payload.get("json_schema").filter(|value| !value.is_null()) {
@@ -104,7 +113,7 @@ fn build_gemini_interactions_payload(
     Ok(request)
 }
 
-fn build_generation_config(payload: &Map<String, Value>) -> Option<Map<String, Value>> {
+fn build_generation_config(payload: &Map<String, Value>) -> Map<String, Value> {
     let mut config = Map::new();
 
     if let Some(temperature) = payload.get("temperature").filter(|value| !value.is_null()) {
@@ -135,11 +144,23 @@ fn build_generation_config(payload: &Map<String, Value>) -> Option<Map<String, V
         );
     }
 
-    if config.is_empty() {
-        None
-    } else {
-        Some(config)
-    }
+    config
+}
+
+fn map_tool_choice_to_interactions(value: &Value) -> Result<Value, ApplicationError> {
+    Ok(
+        match parse_openai_tool_choice(value, "Gemini Interactions")? {
+            OpenAiToolChoice::None => Value::String("none".to_string()),
+            OpenAiToolChoice::Auto => Value::String("auto".to_string()),
+            OpenAiToolChoice::Required => Value::String("any".to_string()),
+            OpenAiToolChoice::Specific(name) => json!({
+                "allowed_tools": {
+                    "mode": "any",
+                    "tools": [name],
+                }
+            }),
+        },
+    )
 }
 
 fn map_openai_tools_to_interactions(tools: &[Value]) -> Result<Vec<Value>, ApplicationError> {
@@ -581,6 +602,58 @@ mod tests {
                 "result": [{ "type": "text", "text": "Sunny" }]
             })
         );
+    }
+
+    #[test]
+    fn gemini_interactions_maps_tool_choice_without_omission() {
+        let cases = [
+            (json!("auto"), json!("auto")),
+            (json!("none"), json!("none")),
+            (json!("required"), json!("any")),
+            (
+                json!({ "type": "function", "function": { "name": "get_weather" } }),
+                json!({
+                    "allowed_tools": { "mode": "any", "tools": ["get_weather"] }
+                }),
+            ),
+        ];
+
+        for (choice, expected) in cases {
+            let payload = json!({
+                "model": "gemini-3-flash-preview",
+                "messages": [{ "role": "user", "content": "hello" }],
+                "tools": [{
+                    "type": "function",
+                    "function": { "name": "get_weather", "parameters": { "type": "object" } }
+                }],
+                "tool_choice": choice
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let (_, upstream) = build(payload).expect("tool choice should map");
+            assert_eq!(
+                upstream.pointer("/generation_config/tool_choice"),
+                Some(&expected)
+            );
+        }
+
+        let payload = json!({
+            "model": "gemini-3-flash-preview",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "tools": [{
+                "type": "function",
+                "function": { "name": "get_weather", "parameters": { "type": "object" } }
+            }],
+            "tool_choice": "unexpected"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("unknown choice must fail");
+        assert!(error.to_string().contains("provider.tool_choice_invalid"));
     }
 
     #[test]

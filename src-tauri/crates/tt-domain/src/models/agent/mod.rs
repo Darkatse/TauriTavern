@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::errors::DomainError;
+use crate::models::tool::ToolChoice;
 
 pub mod plan;
 pub mod profile;
@@ -340,8 +341,7 @@ pub struct AgentModelRequest {
     pub payload: Map<String, Value>,
     pub messages: Vec<AgentModelMessage>,
     pub tools: Vec<AgentToolSpec>,
-    #[serde(default)]
-    pub tool_choice: Value,
+    pub tool_choice: ToolChoice,
     #[serde(default)]
     pub provider_state: Value,
 }

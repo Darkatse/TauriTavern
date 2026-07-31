@@ -1119,6 +1119,36 @@ mod tests {
     }
 
     #[test]
+    fn openai_responses_maps_specific_tool_choice_to_native_shape() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "openai_responses",
+            "model": "gpt-5",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "parameters": { "type": "object" }
+                }
+            }],
+            "tool_choice": {
+                "type": "function",
+                "function": { "name": "get_weather" }
+            }
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(
+            upstream.get("tool_choice"),
+            Some(&json!({ "type": "function", "name": "get_weather" }))
+        );
+    }
+
+    #[test]
     fn openai_responses_payload_replays_native_output_items() {
         let payload = json!({
             "chat_completion_source": "custom",
