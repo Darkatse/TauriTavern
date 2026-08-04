@@ -397,7 +397,10 @@ tool_call_failed
 ```json
 {
   "round": 1,
+  "invocationId": "inv_root",
   "callId": "call_...",
+  "toolId": "builtin:workspace.apply_patch",
+  "snapshotId": "inv_root",
   "name": "workspace.apply_patch",
   "argumentsRef": "tool-args/call_....json",
   "providerMetadata": {}
@@ -409,7 +412,10 @@ tool_call_failed
 ```json
 {
   "round": 1,
+  "invocationId": "inv_root",
   "callId": "call_...",
+  "toolId": "builtin:workspace.apply_patch",
+  "snapshotId": "inv_root",
   "name": "workspace.apply_patch",
   "isError": false,
   "errorCode": null,
@@ -419,7 +425,7 @@ tool_call_failed
 }
 ```
 
-`tool_result_stored` 会携带同一 `round` 与 `path`，用于 UI 读取工具结果详情。
+`tool_call_started`、`tool_call_completed` 与 `tool_call_failed` 保持 `tool_call_requested` 之后的既有顺序，并携带同一 canonical `toolId` / `snapshotId`。预算耗尽属于可恢复的 `tool_call_failed`；turn/snapshot/choice violation 在 requested 后 fail-fast，不会发出 started。`tool_result_stored` 会携带同一 `round`、`toolId` 与 `path`，用于 UI 读取工具结果详情。
 
 ### 4.6 Checkpoint / Diff
 

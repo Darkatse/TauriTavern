@@ -106,6 +106,14 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
             event.event_type == "tool_call_requested" && event.payload["callId"] == "call_write"
         })
         .expect("tool call requested event");
+    assert_eq!(
+        tool_requested.payload["toolId"],
+        "builtin:workspace.write_file"
+    );
+    assert_eq!(
+        tool_requested.payload["snapshotId"],
+        ROOT_AGENT_INVOCATION_ID
+    );
     let arguments_ref = tool_requested.payload["argumentsRef"]
         .as_str()
         .expect("arguments ref");
@@ -118,6 +126,10 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
             event.event_type == "tool_result_stored" && event.payload["callId"] == "call_write"
         })
         .expect("tool result stored event");
+    assert_eq!(
+        result_stored.payload["toolId"],
+        "builtin:workspace.write_file"
+    );
     let result_ref = result_stored.payload["path"].as_str().expect("result ref");
     assert!(result_ref.starts_with("tool-results/call_"));
     let result = read_workspace_json(&fixture.agent_repository, &run.id, result_ref).await;
@@ -177,6 +189,67 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
         vec!["run_contract:inv_root".to_string()],
     )
     .await;
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn agent_runtime_duplicate_tool_call_id_preserves_first_audit_facts() {
+    let root = temp_root("agent-duplicate-tool-call-id");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![model_tool_response(vec![
+            model_tool_call(
+                "duplicate_call",
+                "workspace_write_file",
+                json!({ "path": "output/first.md", "content": "first" }),
+            ),
+            model_tool_call(
+                "duplicate_call",
+                "workspace_write_file",
+                json!({ "path": "output/second.md", "content": "second" }),
+            ),
+        ])],
+    );
+    let mut profile = resolve_contract_profile(&fixture).await;
+    profile.tools.max_rounds = 1;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Background,
+        "duplicate-tool-call-id",
+    )
+    .await;
+
+    let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
+    assert_eq!(run.status, AgentRunStatus::Failed);
+    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    let requested = events
+        .iter()
+        .filter(|event| {
+            event.event_type == "tool_call_requested" && event.payload["callId"] == "duplicate_call"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(requested.len(), 1);
+    let arguments_ref = requested[0].payload["argumentsRef"]
+        .as_str()
+        .expect("arguments ref");
+    let arguments =
+        read_workspace_json(&fixture.agent_repository, &handle.run_id, arguments_ref).await;
+    assert_eq!(arguments["path"], "output/first.md");
+
+    let stored_results = events
+        .iter()
+        .filter(|event| {
+            event.event_type == "tool_result_stored" && event.payload["callId"] == "duplicate_call"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(stored_results.len(), 1);
+    let result_ref = stored_results[0].payload["path"]
+        .as_str()
+        .expect("result ref");
+    let result = read_workspace_json(&fixture.agent_repository, &handle.run_id, result_ref).await;
+    assert_eq!(result["structured"]["path"], "output/first.md");
 
     let _ = fs::remove_dir_all(root).await;
 }

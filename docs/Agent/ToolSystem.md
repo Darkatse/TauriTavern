@@ -103,11 +103,11 @@ compile ToolTurnContract + provider-facing specs
   ↓
 model emits snapshot-bound alias
   ↓
-decode alias through this turn only
+decode alias through this turn only into canonical ToolInvocation
   ↓
-check snapshot membership + frozen invocation budget
+ToolRequestGate checks snapshot/turn/choice and reserves frozen budget
   ↓
-dispatch canonical tool
+adapt to Agent runtime control or builtin dispatcher
   ↓
 write result
   ↓
@@ -126,7 +126,7 @@ tool_call_started
 tool_call_completed / tool_call_failed
 ```
 
-当前 A3 只实现现有 Agent 所需的最小闭环；approval、通用 Request Gate 与多 executor router 属于 A4。执行过程中不得重新读取 Profile 或 global registry 来重算工具可见性。
+当前 A4-Core 已把现有 Agent 工具收敛到 invocation-local `ToolRequestGate`：所有模型调用先以 canonical `ToolId` 检查 snapshot、turn membership、typed choice 与预算，再进入 Agent runtime control handler 或现有 builtin dispatcher。approval 没有真实 consumer，第二 executor 也尚不存在，因此本阶段不建立空 approval port、router 或 facade。执行过程中不得重新读取 Profile 或 global registry 来重算工具可见性。
 
 ## 6. Policy Resolution
 
@@ -160,7 +160,7 @@ budget
 - approval 不是 deny。
 - 未允许工具默认不可见。
 
-模型返回的名称只能是当前 turn 广告的 alias；未知、canonical-name 直呼或其它 snapshot 的 alias 都作为 provider contract violation fail-fast，不再通过全局 registry 猜测。预算耗尽仍是模型可恢复的 tool result。
+模型返回的名称只能是当前 turn 广告的 alias；Gateway 在本次 request 内把 alias 精确解析为 `ToolInvocation { call_id, tool_id, arguments, provider_metadata }`。未知、canonical-name 直呼或其它 snapshot 的 alias 都作为 provider contract violation fail-fast，不再通过全局 registry 猜测。预算耗尽仍是模型可恢复的 tool result。
 
 ## 7. 内置工具
 
@@ -168,7 +168,7 @@ budget
 
 截至 2026-07-31，当前 registry 开放 agent / chat / world info / dice / skill / workspace 六类内建工具。Registry 继续提供 canonical `AgentToolSpec`，并从同一组未经 Profile 处理的 base specs 派生只读 `ToolCatalog`；当前 canonical ID 统一为 `builtin:<AgentToolSpec.name>`。Catalog 只保存中性描述，不承载 model alias、Profile permission、executor 或 policy facts；重复 ID fail-fast。
 
-每个 root、return-mode child 与 handoff invocation 启动时只编译一次 `InvocationToolSnapshot`。Compiler 按 Profile allow 顺序从 Catalog 复制 descriptor，应用 Profile workspace/description facts、deny 与调用上限，再冻结 alias；`ToolTurnContract` 当前以 snapshot 全集和 `ToolChoice::Auto` 生成 provider-facing `AgentToolSpec`。child/handoff 提示词、provider request、continuation hint、alias decode、执行成员校验与预算均消费这份 snapshot/turn，不再各自过滤 Profile。root PromptManager 仍在后端 invocation 创建前通过兼容桥组装，其 Agent prompt preview 使用同一个 compiler；真正 provider advertisement 与执行权限以随后持久化的 root snapshot 为准。return-mode child 由 exit policy 移除 chat commit / run finish / delegation tools，并注入 runtime-only `task.return`；handoff invocation 使用目标 Profile 编译新的 snapshot。child 与请求它的 Agent 使用同一套逻辑 workspace path；runtime 只按 target Profile workspace policy 调整当前 invocation 的 visible/writable roots，不做 child 专用路径映射。
+每个 root、return-mode child 与 handoff invocation 启动时只编译一次 `InvocationToolSnapshot`。Compiler 按 Profile allow 顺序从 Catalog 复制 descriptor，应用 Profile workspace/description facts、deny 与调用上限，再冻结 alias；当前 `ToolTurnContract` 只通过 `all(...)` 使用 snapshot 全集，生产 compiler 固定选择 `ToolChoice::Auto` 并生成 provider-facing `AgentToolSpec`。child/handoff 提示词、provider request、continuation hint、alias decode 与 gate 均消费这份 snapshot/turn，不再各自过滤 Profile。root PromptManager 仍在后端 invocation 创建前通过兼容桥组装，其 Agent prompt preview 使用同一个 compiler；真正 provider advertisement 与执行权限以随后持久化的 root snapshot 为准。return-mode child 由 exit policy 移除 chat commit / run finish / delegation tools，并注入 runtime-only `task.return`；handoff invocation 使用目标 Profile 编译新的 snapshot。child 与请求它的 Agent 使用同一套逻辑 workspace path；runtime 只按 target Profile workspace policy 调整当前 invocation 的 visible/writable roots，不做 child 专用路径映射。
 
 Agent-facing 文案必须从调用或执行 Agent 的角度描述可操作路径：`agent.delegate` 鼓励在 task brief 中给出相关 workspace path 与期望 artifact；`agent.handoff` 鼓励给出 objective、workspace refs、context、constraints 与 completion criteria；return-mode workspace tools 只提示 visible/writable roots 与任务中的普通 workspace path，不暴露 physical mapping、CAS 参数或 runtime id。
 
@@ -206,11 +206,11 @@ persist/
 
 这些前缀由 resolved Profile 写入 run manifest，Profile 只能收窄 root universe。`persist/` 是 chat workspace 级持久 root 的 run projection：模型在 run 中通过普通 workspace 工具写入，`workspace.finish` 收尾成功后才 promote 回稳定 chat workspace；失败或取消的 run 不会写回。
 
-工具参数会写入 `tool-args/call_<sha256_8byte_hex(call-id)>.json`，工具结果会写入 `tool-results/call_<sha256_8byte_hex(call-id)>.json`；本地文件名只使用 SHA-256 前 8 字节 hex。provider 返回的原始 `call_id` 只作为不透明业务 ID 保存在 JSON 内容、journal payload 与下一轮 canonical `ToolResult` part 中，不作为本地文件名。Gateway 会在 provider 边界把它转换为对应 provider 格式。工具结果不会写入 SillyTavern chat 楼层。
+工具参数会以 create-only 语义写入 `tool-args/call_<sha256_8byte_hex(call-id)>.json`，工具结果会以相同语义写入 `tool-results/call_<sha256_8byte_hex(call-id)>.json`；重复 `call_id` 或 digest 路径冲突在覆盖既有审计事实前 fail-fast。本地文件名只使用 SHA-256 前 8 字节 hex。provider 返回的原始 `call_id` 只作为不透明业务 ID 保存在 JSON 内容、journal payload 与下一轮 canonical `ToolResult` part 中，不作为本地文件名。Gateway 会在 provider 边界把它转换为对应 provider 格式。工具结果不会写入 SillyTavern chat 楼层。
 
 完整 snapshot 以 create-only 语义写入 `input/invocations/<invocation-id>/tool_snapshot.json`，同 ID 重复写入 fail-fast；`context_assembled` 记录该路径、紧凑 snapshot 摘要与完整 `ToolTurnContract`，每次 `model_request_created` 再记录本轮 contract。snapshot 文件保存 schema version、冻结 descriptor、alias 与预算，active invocation 不依赖后续 Profile/registry 查询。当前 snapshot ID 在单个 run 内等于 invocation ID；run journal 和 workspace 路径共同构成审计作用域。
 
-Profile 的 `maxCallsPerRun` 是历史字段名，现有 runtime 一直按 `AgentToolSession` 的 invocation 生命周期计数。A3 在 snapshot 中使用真实名称 `maxCallsPerInvocation`，但不为一次纯命名改动单独升级 Profile schema；后续 selector migration 时一次性处理。
+Profile 的 `maxCallsPerRun` 是历史字段名，实际语义一直是 invocation 生命周期。Snapshot 使用真实名称 `maxCallsPerInvocation`；A4-Core 由 invocation-local `ToolRequestGate` 按 canonical `ToolId` 检查并预留总预算和 per-tool 预算。Gate 在当前串行 tool loop 中通过唯一 `&mut` 所有权保证一次“检查并预留”不可交错；预算从承载 workspace/skill 状态的 `AgentToolSession` 中移除。Profile 字段的纯命名迁移留到 selector schema 迁移时一次完成。
 
 `workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。`old_string` 必须来自模型本 run 已读到的文本片段，或来自本 run 创建/完整替换后已经完整已知的文件；runtime 仍会读取当前完整文件检查版本与全文件唯一匹配，但不会把完整文件隐式塞回模型上下文。版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型；基于部分读取的 patch 一旦失败，同文件后续 patch 必须先完整读取，避免模型在不确定上下文上反复试错。`replace_all=true` 可能修改未读位置，因此必须在完整读取后使用。`workspace.write_file` 支持 `mode = replace | append`，默认 `replace`。`replace` 对已存在文件复用同一个 session read-state 做 CAS：模型不需要传 `expectedSha256`，schema 不暴露 overwrite policy；若文件在最近读取/写入后被其他 invocation 修改，会返回可恢复的 stale-file 工具错误，要求重新读取后再写。`append` 会把 `content` 原样追加到文件末尾，目标缺失时创建文件；不会自动补换行，模型需要新行时应把前导 `\n` 放进 `content`。`append` 工具调用本身只在新建文件或追加前文件已完整读入且版本匹配时更新完整 read-state，避免未读既有内容在同一轮内被隐式授权为后续 rewrite/patch 的依据。模型传入的非法 path、空 path、非法 mode、不可见/不可写 path 也作为可恢复工具错误回填；目标 path 实际指向目录的读写请求会作为 `workspace.path_is_directory` 业务错误回填，提示模型改用 `workspace_list_files`。repository 内部 escape/symlink/journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
 

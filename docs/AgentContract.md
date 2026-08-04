@@ -387,9 +387,9 @@ GeneratedArtifact
 - input schema
 - optional output schema
 
-model-facing alias 不是工具身份。每个 invocation 必须从 Catalog + resolved Profile + 宿主 exit policy 编译一份 immutable `InvocationToolSnapshot`，冻结 descriptor、alias 与有效调用预算。当前 A3 只通过 `ToolTurnContract::all` 使用 snapshot 全集与 `Auto`；动态逐轮收窄及其历史 alias 解析由 A4 原子引入。
+model-facing alias 不是工具身份。每个 invocation 必须从 Catalog + resolved Profile + 宿主 exit policy 编译一份 immutable `InvocationToolSnapshot`，冻结 descriptor、alias 与有效调用预算。当前 `ToolTurnContract` 只公开 `all(...)`，生产 compiler 使用 snapshot 全集与 `Auto`；逐轮动态收窄必须与 snapshot-based history alias resolution 原子引入。
 
-模型返回的 alias 必须属于当前 turn。Gateway 必须通过本次 request/turn 精确解析为 canonical tool；不得接受 canonical-name 直呼、其它 snapshot alias 或 global registry fallback。执行器只能处理当前 turn/snapshot 的 canonical tool，并使用 snapshot 中冻结的 budget，不得重新读取 Profile 推导授权。
+模型返回的 alias 必须属于当前 turn。Gateway 必须通过本次 request/turn 精确解析为包含 canonical `ToolId` 的 `ToolInvocation`；不得接受 canonical-name 直呼、其它 snapshot alias 或 global registry fallback。所有 Agent tool call 必须先经过同一个 invocation-local `ToolRequestGate`，完成 snapshot/turn/choice 再验证与预算预留，才能适配到 Agent runtime control handler 或 builtin dispatcher。预算耗尽返回模型可恢复的 tool result；contract violation 与缺失 executor/handler fail-fast。执行路径不得重新读取 Profile 推导授权。
 
 完整 snapshot 必须以 create-only 语义随 run 写入 `input/invocations/<invocation-id>/tool_snapshot.json`，重复写入 fail-fast；journal 记录其路径与 turn manifest，避免历史审计依赖 current registry。
 

@@ -11,17 +11,21 @@ use crate::services::chat_completion_service::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
 };
 use tt_domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolCall,
-    AgentToolResult,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolResult,
 };
-use tt_domain::models::tool::{ToolChoice, ToolId, ToolProviderId};
+use tt_domain::models::tool::{ToolChoice, ToolId, ToolInvocation, ToolProviderId};
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionNormalizationReport, ChatCompletionSource,
 };
 
 #[test]
-fn decodes_tool_call_to_canonical_name() {
+fn decodes_tool_call_to_canonical_identity() {
     let registry = BuiltinAgentToolRegistry::all();
+    let mut write = registry
+        .spec_by_name("workspace.write_file")
+        .expect("write tool")
+        .clone();
+    write.source = "mcp/registration-1".to_string();
     let response = json!({
         "choices": [{
             "message": {
@@ -39,10 +43,17 @@ fn decodes_tool_call_to_canonical_name() {
         }]
     });
 
-    let decoded = decode_chat_completion_response(response, registry.specs()).unwrap();
+    let decoded = decode_chat_completion_response(response, &[write]).unwrap();
     assert_eq!(decoded.tool_calls.len(), 1);
-    assert_eq!(decoded.tool_calls[0].name, "workspace.write_file");
-    assert_eq!(decoded.tool_calls[0].id, "call_1");
+    assert_eq!(
+        decoded.tool_calls[0].tool_id,
+        ToolId::new(
+            &ToolProviderId::parse("mcp/registration-1").unwrap(),
+            "workspace.write_file",
+        )
+        .unwrap()
+    );
+    assert_eq!(decoded.tool_calls[0].call_id, "call_1");
     assert_eq!(
         decoded.tool_calls[0].provider_metadata["signature"],
         "sig_1"
@@ -193,7 +204,7 @@ fn encodes_typed_tool_choice_against_advertised_tools() {
 }
 
 #[test]
-fn rejects_tool_choice_outside_the_advertised_builtin_set() {
+fn rejects_tool_choice_outside_the_advertised_set() {
     let registry = BuiltinAgentToolRegistry::all();
     let mut request = basic_request("openai", None, Vec::new());
     request.tools = vec![
@@ -215,11 +226,11 @@ fn rejects_tool_choice_outside_the_advertised_builtin_set() {
     let external = ToolProviderId::parse("mcp/registration-1").unwrap();
     request.tool_choice = ToolChoice::Specific(ToolId::new(&external, "search").unwrap());
     let error = encode_chat_completion_request(&request)
-        .expect_err("non-builtin tool choice must fail before snapshots exist");
+        .expect_err("unadvertised external tool choice must fail");
     assert!(
         error
             .to_string()
-            .contains("agent.tool_choice_provider_unsupported")
+            .contains("agent.tool_choice_tool_not_advertised")
     );
 }
 
@@ -442,9 +453,9 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
             AgentModelMessage {
                 role: AgentModelRole::Assistant,
                 parts: vec![AgentModelContentPart::ToolCall {
-                    call: AgentToolCall {
-                        id: "call_1".to_string(),
-                        name: "workspace.write_file".to_string(),
+                    call: ToolInvocation {
+                        call_id: "call_1".to_string(),
+                        tool_id: ToolId::builtin("workspace.write_file").unwrap(),
                         arguments: json!({"path":"output/main.md","content":"hi"}),
                         provider_metadata: Value::Null,
                     },

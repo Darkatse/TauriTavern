@@ -158,7 +158,7 @@ LLM Gateway / provider adapter
 - 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，`workspace.finish` 收尾成功后 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`model-responses/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
 - 工具循环最多 80 轮，必须以 `workspace.finish` 结束；前台 run 在 finish 前必须至少成功 `workspace.commit` 一次，后台 run 可无 chat commit；模型直接输出文本会捕获到 workspace `direct_output.md` 并触发 soft drift recovery，只要仍有下一轮模型调用预算就继续用合成 `user` 提醒纠偏，直到恢复、取消或 `maxRounds` 边界触发 fail-fast / partial-success。
 - 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
-- root、return-mode child 与 handoff invocation 各自冻结 `InvocationToolSnapshot` / `ToolTurnContract`；provider alias 只在当前 turn 内解析，dispatch 与 budget 使用冻结 snapshot，完整 manifest 随 run 持久化。
+- root、return-mode child 与 handoff invocation 各自冻结 `InvocationToolSnapshot` / `ToolTurnContract`；provider alias 只在当前 turn 内解析为 canonical `ToolInvocation`，唯一执行入口通过 invocation-local `ToolRequestGate` 检查 contract 并预留冻结预算，完整 manifest 随 run 持久化。
 - Skill profile policy、readDiff、rollback、resume-run、tool approval、profile routing、MCP、timeline UI、streaming Agent loop、主发送按钮 Agent toggle 仍未实现。
 
 ### 5.2 Run 与 Workspace 身份
@@ -304,7 +304,7 @@ Gateway 代码已拆成 `agent_model_gateway/` 模块目录：`mod.rs` 保留 tr
 - 派发 tool call。
 - 把 tool result 写入 journal 与 context store，不写入 chat message。
 
-当前 A3 以 domain types + application pure compiler 落地 builtin Agent vertical slice，没有为了单一 registry 新增 service trait/factory。通用 Request Gate、approval 和多 executor router 在出现相应真实 consumer 时进入 A4。
+当前 A4-Core 以 domain types + application pure compiler + invocation-local Request Gate 落地 builtin Agent vertical slice，没有为了单一 registry/dispatcher 新增 service trait、factory 或 router。Approval 与多 executor router 等到出现真实 consumer 时再落地。
 
 详见 `docs/Agent/ToolSystem.md`。
 

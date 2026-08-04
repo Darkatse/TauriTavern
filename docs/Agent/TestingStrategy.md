@@ -56,6 +56,8 @@ tool recoverable error
 tool policy denied
 root/return-mode child/handoff snapshot compilation and persistence
 snapshot budget remains authoritative throughout invocation
+ToolRequestGate rejects snapshot/choice violations without consuming budget
+ToolRequestGate reserves exact total/per-canonical-ToolId budget boundaries
 plan locked node violation
 profile switch allowed/denied
 agent.list policy filtering

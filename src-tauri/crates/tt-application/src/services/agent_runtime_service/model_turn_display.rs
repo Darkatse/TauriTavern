@@ -162,8 +162,8 @@ fn project_model_turn(
             .tool_calls
             .iter()
             .map(|call| AgentModelTurnToolCallDto {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
+                call_id: call.call_id.clone(),
+                name: call.tool_id.native_name().to_string(),
                 model_name: call
                     .provider_metadata
                     .get("modelName")
@@ -279,7 +279,8 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tt_domain::models::agent::{AgentModelMessage, AgentModelRole, AgentToolCall};
+    use tt_domain::models::agent::{AgentModelMessage, AgentModelRole};
+    use tt_domain::models::tool::{ToolId, ToolInvocation};
 
     #[test]
     fn narration_uses_assistant_text_for_tool_turns() {
@@ -332,7 +333,7 @@ mod tests {
         );
     }
 
-    fn response_with_text(text: &str, tool_calls: Vec<AgentToolCall>) -> AgentModelResponse {
+    fn response_with_text(text: &str, tool_calls: Vec<ToolInvocation>) -> AgentModelResponse {
         AgentModelResponse {
             message: AgentModelMessage {
                 role: AgentModelRole::Assistant,
@@ -348,10 +349,10 @@ mod tests {
         }
     }
 
-    fn tool_call() -> AgentToolCall {
-        AgentToolCall {
-            id: "call_1".to_string(),
-            name: "workspace.write_file".to_string(),
+    fn tool_call() -> ToolInvocation {
+        ToolInvocation {
+            call_id: "call_1".to_string(),
+            tool_id: ToolId::builtin("workspace.write_file").unwrap(),
             arguments: json!({}),
             provider_metadata: Value::Null,
         }

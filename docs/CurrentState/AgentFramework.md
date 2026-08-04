@@ -6,7 +6,7 @@
 
 ## 当前基线
 
-截至 2026-07-31，Agent 当前基线：
+截至 2026-08-03，Agent 当前基线：
 
 - Rust 后端已有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 前端已挂载 `window.__TAURITAVERN__.api.agent` Host ABI。
@@ -21,7 +21,7 @@
 - Profile 已能通过 `preset.mode = "ref"` 使用独立 OpenAI/chat-completion preset，并通过 `model.mode = "connectionRef"` + `modelId` 使用独立 LLM Connection。当前完整 PromptAssemblyBroker 组装覆盖 root run 启动前、return-mode child invocation 与 handoff invocation；运行中 invocation 仍走 host bridge handshake，Rust runtime 不手写替代 PromptManager。
 - Return-mode SubAgent MVP 已落地：root/active invocation 可通过 `agent.list`、`agent.delegate`、`agent.await` 创建、查看或等待子任务；child invocation 使用 `task.return` 结束，不能直接 `workspace.commit`、`workspace.finish` 或 `agent.handoff`。SubAgent 硬运行预算来自 target Agent Profile，`agent.delegate` 不接受 `budget` 参数，也不能覆盖或收窄 `maxRounds` / `maxCallsPerRun`。当前 child task 已由 run-scoped scheduler 后台并行执行；`agent.await` 只等待/查询结果，未显式 await 的 terminal results 会在父 Agent 下一次 tool turn 后注入下一轮模型请求。
 - Handoff MVP 已落地：具备 `delegation.canHandoff` 且显式暴露 `agent.handoff` 的 foreground owner 可把同一 `AgentRun` 的下一阶段交给 `allowAsHandoffTarget` 的 target Profile。handoff 创建 `TransferControl` task 与 `Handoff` invocation，不进入后台 scheduler；当前 invocation 记为 `Transferred` 后，executor 在同一 run 内继续目标 Agent 的工具循环。已经 `workspace.commit` 过的 Agent 仍允许 handoff，最终 handoff owner 可继续修订、再次 commit 并 `workspace.finish`。实现框架、结构体与事件序列见 `docs/Agent/Handoff.md`。
-- Agent Tool Control Plane A3 已落地到现有 Agent vertical slice：root、return-mode child 与 handoff invocation 各自冻结 `InvocationToolSnapshot` 和 `ToolTurnContract`；child/handoff 提示词、provider advertisement、alias decode、执行成员校验与 tool-call budget 使用同一份 invocation facts。root PromptManager 仍先经兼容桥组装，但其工具预览复用同一 compiler，实际 advertisement/执行权限以 root snapshot 为准。完整 snapshot 持久化到 run workspace，模型名称不再通过全局 registry 模糊解析。
+- Agent Tool Control Plane A4-Core 已落地到现有 Agent vertical slice：root、return-mode child 与 handoff invocation 各自冻结 `InvocationToolSnapshot` 和 `ToolTurnContract`；Gateway 把当前 request alias 解码为 canonical `ToolInvocation`，唯一执行入口再通过 invocation-local `ToolRequestGate` 检查 snapshot、turn、typed choice 与冻结预算，之后才进入 Agent control handler 或 builtin dispatcher。root PromptManager 仍先经兼容桥组装，但其工具预览复用同一 compiler，实际 advertisement/执行权限以 root snapshot 为准。完整 snapshot 持久化到 run workspace，模型名称不再通过全局 registry 模糊解析。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；实际 root run 使用扩展设置中的 `activeProfileId`。Profile 面板的 `editingProfileId` 只表示当前正在编辑的配置档案，不影响生成。Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
 - Agent System 前端已提供 run timeline / detail panel；timeline 以 `readEvents(beforeSeq, limit)` 读取最新页并按需补拉更早 journal 页，默认视图只投影用户可见操作，DOM 使用窗口化渲染避免长 run 在低端移动设备上堆积节点；Timeline / Detail 使用 `detailsOpen` 单一事实源驱动互斥视图，不再依赖横向 scroll-snap、smooth scroll 或 scroll 事件反写状态，避免低端 WebView 在切换中进入半页卡住状态；移动端横向滑动只作为 Pointer Events 输入快捷方式，最终仍调用 `openDetails()` / `showTimeline()`，并通过 `touch-action: pan-y pinch-zoom` 保留原生纵向滚动与缩放；关闭 Detail 会 reset detail state 并取消 stale detail load，Detail 打开期间不测量或贴底隐藏的 timeline scroller；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。前端实现将 timeline 数据会话、projection 规范化、详情读取、显示格式与 Vue 外壳拆分：运行中贴片、历史回看弹窗与 SubAgent 局部 timeline 共享同一 session/detail primitives，但各自仍通过 Host ABI 表达运行态、只读历史态与 `invocationId` 局部事件页。
@@ -130,11 +130,11 @@ _tauritavern/agent-profiles/
 
 `BuiltinAgentToolRegistry` 继续以 canonical `AgentToolSpec` 承载 Profile/UI DTO 与已有 handler registry；构造时同时从未经 Profile 过滤或文案覆盖的 base specs 生成中性只读 `ToolCatalog`。当前 19 项 descriptor 的 ID 固定为 `builtin:<AgentToolSpec.name>`，只包含 `id`、title、description、input/output schema 与原始 annotations。Catalog 按 `ToolId` 排序迭代，重复 ID 以 `tool.catalog_duplicate_id` fail-fast；该顺序不替代 Profile allow list 的模型可见顺序。
 
-每个 invocation 启动时，纯 compiler 按 Profile allow 顺序选择 Catalog descriptor，应用 deny、Profile description/workspace facts、exit policy 与调用上限，生成有序 `InvocationToolSnapshot`。`ToolBinding` 冻结 descriptor、model alias 与 per-tool budget；snapshot 冻结 invocation 总预算。当前 `ToolTurnContract` 广告 snapshot 全集并选择 `ToolChoice::Auto`，随后投影为 gateway 使用的 `AgentToolSpec`。return-mode child 在 compiler 中移除 commit/finish/delegation tools 并注入 `task.return`；不再修改 target Profile。
+每个 invocation 启动时，纯 compiler 按 Profile allow 顺序选择 Catalog descriptor，应用 deny、Profile description/workspace facts、exit policy 与调用上限，生成有序 `InvocationToolSnapshot`。`ToolBinding` 冻结 descriptor、model alias 与 per-tool budget；snapshot 冻结 invocation 总预算。当前 `ToolTurnContract` 只公开 `all(...)`，生产 compiler 广告 snapshot 全集并选择 `ToolChoice::Auto`，随后投影为 gateway 使用的 `AgentToolSpec`。return-mode child 在 compiler 中移除 commit/finish/delegation tools 并注入 `task.return`；不再修改 target Profile。
 
-Snapshot 中的 alias 在该 invocation 内唯一。Gateway 只接受当前 request 广告的 alias，并将其解析为 canonical name；canonical name 直呼、其它 invocation 的 alias 或未知名称都以 `model.unknown_tool_call` fail-fast。当前 A3 每轮广告 snapshot 全集，因此同一组 alias 也用于历史 assistant tool call/result 编码；A4 引入逐轮收窄时必须把 snapshot 历史 alias bindings 与 current turn advertisement 分开，不能恢复 global/raw-name fallback。
+Snapshot 中的 alias 在该 invocation 内唯一。Gateway 只接受当前 request 广告的 alias，并将其解析为 canonical `ToolId`；canonical name 直呼、其它 invocation 的 alias 或未知名称都以 `model.unknown_tool_call` fail-fast。当前每轮仍广告 snapshot 全集，因此同一组 alias 也用于历史 assistant tool call/result 编码；未来启用逐轮收窄时必须把 snapshot 历史 alias bindings 与 current turn advertisement 分开，不能恢复 global/raw-name fallback。
 
-`ToolCatalog` 与 snapshot 当前不承载 executor、effect、trust、provenance、approval 或 source revision；这些事实要在 MCP 等第二种真实来源和 A4 Request Gate 出现时按实际契约加入，不提前建立单实现 port/factory。
+`ToolRequestGate` 当前只拥有执行前授权与预算状态，不拥有 Profile、registry、executor 或 Agent effect。`ToolCatalog` 与 snapshot 当前不承载 executor、effect、trust、provenance、approval 或 source revision；approval 与 executor router 要等首个真实 consumer / 第二 executor 出现时按实际契约加入，不提前建立单实现 port/factory。
 
 Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swipe` 排除当前最后一条 assistant 目标楼层，`regenerate` 排除最后一条非 user 楼层。`chat.search`、`chat.read_messages` 与 persistent state base 解析都只消费这个前缀；这是 runtime 内部语义，不进入 model-facing tool description。
 

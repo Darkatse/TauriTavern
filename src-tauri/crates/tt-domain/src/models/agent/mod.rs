@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::errors::DomainError;
-use crate::models::tool::ToolChoice;
+use crate::models::tool::{ToolChoice, ToolInvocation};
 
 pub mod plan;
 pub mod profile;
@@ -307,7 +307,7 @@ pub enum AgentModelContentPart {
         provider_metadata: Value,
     },
     ToolCall {
-        call: AgentToolCall,
+        call: ToolInvocation,
     },
     ToolResult {
         result: AgentToolResult,
@@ -350,7 +350,7 @@ pub struct AgentModelRequest {
 #[serde(rename_all = "camelCase")]
 pub struct AgentModelResponse {
     pub message: AgentModelMessage,
-    pub tool_calls: Vec<AgentToolCall>,
+    pub tool_calls: Vec<ToolInvocation>,
     pub text: String,
     #[serde(default)]
     pub provider_metadata: Value,

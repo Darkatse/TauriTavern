@@ -5,7 +5,6 @@ use super::chat;
 use super::dice;
 use super::session::AgentToolSession;
 use super::skill;
-use super::structured::{ToolErrorStructured, structured_value};
 use super::workspace;
 use super::world_info;
 use crate::errors::ApplicationError;
@@ -22,14 +21,14 @@ use tt_ports::repositories::workspace_repository::{WorkspaceFile, WorkspaceRepos
 const RUN_PROMPT_SNAPSHOT_PATH: &str = "input/prompt_snapshot.json";
 
 #[derive(Debug, Clone)]
-pub struct AgentToolDispatchOutcome {
+pub(crate) struct AgentToolDispatchOutcome {
     pub result: AgentToolResult,
     pub effect: AgentToolEffect,
     pub elapsed_ms: u128,
 }
 
 #[derive(Debug, Clone)]
-pub enum AgentToolEffect {
+pub(crate) enum AgentToolEffect {
     None,
     WorkspaceFileWritten {
         file: WorkspaceFile,
@@ -62,7 +61,7 @@ pub enum AgentToolEffect {
     Finish,
 }
 
-pub struct AgentToolDispatcher {
+pub(crate) struct AgentToolDispatcher {
     run_repository: Arc<dyn AgentRunRepository>,
     chat_repository: Arc<dyn ChatRepository>,
     group_chat_repository: Arc<dyn GroupChatRepository>,
@@ -71,7 +70,7 @@ pub struct AgentToolDispatcher {
 }
 
 impl AgentToolDispatcher {
-    pub fn new(
+    pub(crate) fn new(
         run_repository: Arc<dyn AgentRunRepository>,
         chat_repository: Arc<dyn ChatRepository>,
         group_chat_repository: Arc<dyn GroupChatRepository>,
@@ -87,7 +86,7 @@ impl AgentToolDispatcher {
         }
     }
 
-    pub async fn dispatch(
+    pub(crate) async fn dispatch(
         &self,
         run_id: &str,
         call: &AgentToolCall,
@@ -168,22 +167,9 @@ impl AgentToolDispatcher {
             }
             workspace::WORKSPACE_FINISH => workspace::finish(call)?,
             other => {
-                let message = format!("Unknown or unavailable tool `{other}`.");
-                (
-                    AgentToolResult {
-                        call_id: call.id.clone(),
-                        name: call.name.clone(),
-                        content: message.clone(),
-                        structured: structured_value(ToolErrorStructured::new(
-                            "agent.tool_denied",
-                            &message,
-                        )),
-                        is_error: true,
-                        error_code: Some("agent.tool_denied".to_string()),
-                        resource_refs: Vec::new(),
-                    },
-                    AgentToolEffect::None,
-                )
+                return Err(ApplicationError::InternalError(format!(
+                    "tool.dispatch_handler_missing: admitted builtin tool `{other}` has no execution handler"
+                )));
             }
         };
 

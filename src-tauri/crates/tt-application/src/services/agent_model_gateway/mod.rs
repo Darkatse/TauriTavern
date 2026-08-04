@@ -6,7 +6,8 @@ use tokio::sync::watch;
 
 use crate::errors::ApplicationError;
 use crate::services::chat_completion_service::ChatCompletionService;
-use tt_domain::models::agent::{AgentModelRequest, AgentModelResponse};
+use tt_domain::models::agent::{AgentModelRequest, AgentModelResponse, AgentToolSpec};
+use tt_domain::models::tool::{ToolId, ToolProviderId};
 
 mod decode;
 mod encode;
@@ -17,6 +18,21 @@ mod schema;
 
 #[cfg(test)]
 mod tests;
+
+fn tool_id_for_spec(spec: &AgentToolSpec) -> Result<ToolId, ApplicationError> {
+    let provider_id = ToolProviderId::parse(spec.source.clone()).map_err(|error| {
+        ApplicationError::InternalError(format!(
+            "agent.invalid_tool_spec: tool `{}` has an invalid source: {error}",
+            spec.name
+        ))
+    })?;
+    ToolId::new(&provider_id, &spec.name).map_err(|error| {
+        ApplicationError::InternalError(format!(
+            "agent.invalid_tool_spec: tool `{}` has an invalid identity: {error}",
+            spec.name
+        ))
+    })
+}
 
 #[cfg(feature = "test-support")]
 pub use decode::decode_chat_completion_response;

@@ -1,5 +1,6 @@
 use serde_json::{Map, Value, json};
 
+use super::tool_id_for_spec;
 use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
 use crate::services::agent_model_gateway::format::resolve_request_adapter;
@@ -7,10 +8,10 @@ use crate::services::agent_model_gateway::provider_state;
 use crate::services::agent_model_gateway::providers::AgentProviderAdapter;
 use crate::services::agent_model_gateway::schema;
 use tt_domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolCall,
-    AgentToolResult, AgentToolSpec,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolResult,
+    AgentToolSpec,
 };
-use tt_domain::models::tool::ToolChoice;
+use tt_domain::models::tool::{ToolChoice, ToolId, ToolInvocation};
 
 pub(crate) fn encode_chat_completion_request(
     request: &AgentModelRequest,
@@ -67,20 +68,11 @@ fn encode_tool_choice(
         ToolChoice::Auto => Ok(Value::String("auto".to_string())),
         ToolChoice::Required => Ok(Value::String("required".to_string())),
         ToolChoice::Specific(tool_id) => {
-            if !tool_id.is_builtin() {
-                return Err(ApplicationError::ValidationError(format!(
-                    "agent.tool_choice_provider_unsupported: tool `{tool_id}` is not provided by the builtin catalog"
-                )));
-            }
-
-            let tool = tools
-                .iter()
-                .find(|tool| tool.name == tool_id.native_name())
-                .ok_or_else(|| {
-                    ApplicationError::ValidationError(format!(
-                        "agent.tool_choice_tool_not_advertised: tool `{tool_id}` is not advertised in this request"
-                    ))
-                })?;
+            let tool = spec_for_tool_id(tool_id, tools)?.ok_or_else(|| {
+                ApplicationError::ValidationError(format!(
+                    "agent.tool_choice_tool_not_advertised: tool `{tool_id}` is not advertised in this request"
+                ))
+            })?;
 
             Ok(json!({
                 "type": "function",
@@ -151,7 +143,7 @@ fn encode_openai_compatible_message(
             );
             object.insert(
                 "name".to_string(),
-                Value::String(model_tool_name_for_call(&result.name, tools)?.to_string()),
+                Value::String(model_tool_name_for_result(&result.name, tools)?.to_string()),
             );
             object.insert(
                 "content".to_string(),
@@ -274,16 +266,23 @@ fn copy_reasoning_content(object: &mut Map<String, Value>, parts: &[AgentModelCo
 }
 
 fn encode_openai_tool_call(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     tools: &[AgentToolSpec],
 ) -> Result<Value, ApplicationError> {
-    let model_name = model_tool_name_for_call(&call.name, tools)?;
+    let model_name = spec_for_tool_id(&call.tool_id, tools)?
+        .map(|spec| spec.model_name.as_str())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "agent.tool_history_not_advertised: tool `{}` is not advertised in this request",
+                call.tool_id
+            ))
+        })?;
     let arguments = serde_json::to_string(&call.arguments).map_err(|error| {
         ApplicationError::ValidationError(format!("agent.tool_call_serialize_failed: {error}"))
     })?;
 
     let mut object = Map::new();
-    object.insert("id".to_string(), Value::String(call.id.clone()));
+    object.insert("id".to_string(), Value::String(call.call_id.clone()));
     object.insert("type".to_string(), Value::String("function".to_string()));
     object.insert(
         "function".to_string(),
@@ -305,7 +304,19 @@ fn encode_openai_tool_call(
     Ok(Value::Object(object))
 }
 
-fn model_tool_name_for_call<'a>(
+fn spec_for_tool_id<'a>(
+    tool_id: &ToolId,
+    tools: &'a [AgentToolSpec],
+) -> Result<Option<&'a AgentToolSpec>, ApplicationError> {
+    for spec in tools {
+        if tool_id_for_spec(spec)? == *tool_id {
+            return Ok(Some(spec));
+        }
+    }
+    Ok(None)
+}
+
+fn model_tool_name_for_result<'a>(
     name: &str,
     tools: &'a [AgentToolSpec],
 ) -> Result<&'a str, ApplicationError> {

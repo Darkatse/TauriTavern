@@ -360,6 +360,16 @@ pub enum ToolChoice {
     Specific(ToolId),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolInvocation {
+    pub call_id: String,
+    pub tool_id: ToolId,
+    pub arguments: Value,
+    #[serde(default)]
+    pub provider_metadata: Value,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolTurnContract {
@@ -408,10 +418,6 @@ impl ToolTurnContract {
 
     pub fn choice(&self) -> &ToolChoice {
         &self.choice
-    }
-
-    pub fn contains(&self, tool_id: &ToolId) -> bool {
-        self.tools.iter().any(|candidate| candidate == tool_id)
     }
 }
 

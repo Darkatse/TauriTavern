@@ -11,6 +11,7 @@ use super::prompt_snapshot::request_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::{AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect, AgentToolSession};
+use crate::services::tool_request_gate::ToolRequestGate;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
@@ -46,6 +47,7 @@ impl AgentRuntimeService {
         let exit_policy = prepared.invocation.exit_policy;
         let profile = &prepared.profile;
         let mut tool_session = AgentToolSession::new(prepared.effective_skills.clone());
+        let mut tool_request_gate = ToolRequestGate::default();
         let mut seen_child_result_task_ids = HashSet::new();
         // Counts soft drift recovery nudges for model-facing text and
         // journal events. It is intentionally not a separate budget: the
@@ -205,6 +207,7 @@ impl AgentRuntimeService {
                         prepared,
                         round,
                         &call,
+                        &mut tool_request_gate,
                         &mut tool_session,
                         index + 1 == tool_call_count,
                         commit_ledger,

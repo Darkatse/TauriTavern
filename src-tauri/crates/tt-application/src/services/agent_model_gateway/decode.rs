@@ -1,13 +1,14 @@
 use serde_json::{Map, Value, json};
 
+use super::tool_id_for_spec;
 use crate::errors::ApplicationError;
 use crate::services::chat_completion_service::exchange::{
     ChatCompletionExchange, NormalizedChatCompletionResponse,
 };
 use tt_domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelResponse, AgentModelRole, AgentToolCall,
-    AgentToolSpec,
+    AgentModelContentPart, AgentModelMessage, AgentModelResponse, AgentModelRole, AgentToolSpec,
 };
+use tt_domain::models::tool::ToolInvocation;
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn decode_chat_completion_response(
@@ -147,7 +148,7 @@ fn reject_incomplete_response(response: &Value) -> Result<(), ApplicationError> 
 fn extract_tool_calls_from_message(
     message: &Map<String, Value>,
     tools: &[AgentToolSpec],
-) -> Result<Vec<AgentToolCall>, ApplicationError> {
+) -> Result<Vec<ToolInvocation>, ApplicationError> {
     let Some(calls) = message.get("tool_calls").and_then(Value::as_array) else {
         return Ok(Vec::new());
     };
@@ -161,7 +162,7 @@ fn extract_tool_calls_from_message(
 fn parse_tool_call(
     call: &Value,
     tools: &[AgentToolSpec],
-) -> Result<AgentToolCall, ApplicationError> {
+) -> Result<ToolInvocation, ApplicationError> {
     let object = call.as_object().ok_or_else(|| {
         ApplicationError::ValidationError(
             "model.invalid_tool_call: tool call must be an object".to_string(),
@@ -195,21 +196,21 @@ fn parse_tool_call(
                 "model.invalid_tool_call: tool_call_id is required".to_string(),
             )
         })?;
-    let canonical_name = tools
+    let spec = tools
         .iter()
         .find(|spec| spec.model_name == raw_name)
-        .map(|spec| spec.name.as_str())
         .ok_or_else(|| {
             ApplicationError::ValidationError(format!(
                 "model.unknown_tool_call: model returned unadvertised tool alias `{raw_name}`"
             ))
         })?;
+    let tool_id = tool_id_for_spec(spec)?;
     let arguments =
         parse_tool_call_arguments(function.get("arguments").or_else(|| function.get("args")));
 
-    Ok(AgentToolCall {
-        id: id.to_string(),
-        name: canonical_name.to_string(),
+    Ok(ToolInvocation {
+        call_id: id.to_string(),
+        tool_id,
         arguments,
         provider_metadata: json!({
             "modelName": raw_name,
