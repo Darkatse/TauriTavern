@@ -288,6 +288,21 @@ fn default_writer_does_not_enable_dice_roll() {
 }
 
 #[test]
+fn tool_policy_rejects_duplicate_order_entries() {
+    let registry = BuiltinAgentToolRegistry::all();
+    let mut profile = super::defaults::default_writer_profile().expect("default writer profile");
+    profile.tools.allow.push(profile.tools.allow[0].clone());
+
+    let error = super::validation::validate_tool_policy(&profile.tools, registry.specs())
+        .expect_err("duplicate tool order must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("agent.profile_tools_allow_duplicate")
+    );
+}
+
+#[test]
 fn direct_runnable_false_requires_subagent_entrypoint() {
     let run = tt_domain::models::agent::profile::AgentRunPolicy {
         presentation: tt_domain::models::agent::AgentRunPresentation::Background,

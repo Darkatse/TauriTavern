@@ -122,6 +122,40 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
     assert!(result_ref.starts_with("tool-results/call_"));
     let result = read_workspace_json(&fixture.agent_repository, &run.id, result_ref).await;
     assert_eq!(result["name"], "workspace.write_file");
+    let tool_snapshot = read_workspace_json(
+        &fixture.agent_repository,
+        &run.id,
+        "input/invocations/inv_root/tool_snapshot.json",
+    )
+    .await;
+    assert_eq!(tool_snapshot["schemaVersion"], 1);
+    assert_eq!(tool_snapshot["id"], ROOT_AGENT_INVOCATION_ID);
+    assert!(
+        tool_snapshot["bindings"]
+            .as_array()
+            .is_some_and(|bindings| {
+                bindings.iter().any(|binding| {
+                    binding["descriptor"]["id"] == "builtin:workspace.write_file"
+                        && binding["modelAlias"] == "workspace_write_file"
+                })
+            })
+    );
+    let context_assembled = events
+        .iter()
+        .find(|event| event.event_type == "context_assembled")
+        .expect("context assembled event");
+    assert_eq!(
+        context_assembled.payload["toolSnapshotPath"],
+        "input/invocations/inv_root/tool_snapshot.json"
+    );
+    let model_request_created = events
+        .iter()
+        .find(|event| event.event_type == "model_request_created")
+        .expect("model request created event");
+    assert_eq!(
+        model_request_created.payload["toolTurn"]["snapshotId"],
+        ROOT_AGENT_INVOCATION_ID
+    );
     assert!(
         events
             .iter()
@@ -696,9 +730,37 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
             tool.name.as_str(),
             "workspace.commit"
                 | "workspace.finish"
+                | "agent.list"
                 | "agent.delegate"
                 | "agent.handoff"
                 | "agent.await"
+        )
+    }));
+    let child_snapshot = read_workspace_json(
+        &fixture.agent_repository,
+        &handle.run_id,
+        &format!(
+            "input/invocations/{}/tool_snapshot.json",
+            task.child_invocation_id
+        ),
+    )
+    .await;
+    let child_tool_ids = child_snapshot["bindings"]
+        .as_array()
+        .expect("child snapshot bindings")
+        .iter()
+        .map(|binding| binding["descriptor"]["id"].as_str().expect("tool id"))
+        .collect::<Vec<_>>();
+    assert_eq!(child_tool_ids.last(), Some(&"builtin:task.return"));
+    assert!(child_tool_ids.iter().all(|tool_id| {
+        !matches!(
+            *tool_id,
+            "builtin:workspace.commit"
+                | "builtin:workspace.finish"
+                | "builtin:agent.list"
+                | "builtin:agent.delegate"
+                | "builtin:agent.handoff"
+                | "builtin:agent.await"
         )
     }));
     assert!(message_text_for_role(&requests[1], AgentModelRole::User).contains("# Delegated Task"));
@@ -792,6 +854,7 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
     );
     assert_eq!(target.status, AgentInvocationStatus::Completed);
 
+    wait_for_event_type(&fixture.agent_repository, &handle.run_id, "run_completed").await;
     let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
     let commit = events
         .iter()
@@ -833,6 +896,22 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
             .tools
             .iter()
             .all(|tool| tool.name != "agent.handoff")
+    );
+    let handoff_snapshot = read_workspace_json(
+        &fixture.agent_repository,
+        &handle.run_id,
+        &format!(
+            "input/invocations/{}/tool_snapshot.json",
+            task.child_invocation_id
+        ),
+    )
+    .await;
+    assert!(
+        handoff_snapshot["bindings"]
+            .as_array()
+            .expect("handoff snapshot bindings")
+            .iter()
+            .any(|binding| binding["descriptor"]["id"] == "builtin:workspace.finish")
     );
     assert!(message_text_for_role(&requests[1], AgentModelRole::User).contains("# Handoff Brief"));
     wait_for_closed_sessions(

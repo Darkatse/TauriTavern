@@ -1,7 +1,6 @@
 use serde_json::{Map, Value, json};
 
 use super::super::loop_runner::AgentLoopExit;
-use super::policy::apply_child_invocation_policy;
 use super::rendering::{render_child_task_prompt, render_handoff_task_prompt};
 use super::task_status::task_is_terminal;
 use crate::dto::agent_dto::AgentPromptAssemblyScopeDto;
@@ -16,13 +15,14 @@ use crate::services::agent_runtime_service::prompt_snapshot::{
 use crate::services::agent_runtime_service::skill_scope::{
     skill_event_summary, skill_scope_order_for_profile,
 };
+use crate::services::agent_runtime_service::tool_snapshot::tool_snapshot_summary;
 use crate::services::agent_runtime_service::{
     AgentCancelReceiver, AgentRuntimeService, PreparedInvocation,
 };
 use tt_domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentDelegationContinuation, AgentInvocation, AgentInvocationStatus, AgentRunEventLevel,
-    AgentRunSkillScopeRefs, AgentTaskRecord, AgentTaskStatus, WorkspacePath,
+    AgentRunPresentation, AgentRunSkillScopeRefs, AgentTaskRecord, AgentTaskStatus, WorkspacePath,
 };
 use tt_domain::models::skill::{SkillIndexEntry, SkillScope};
 
@@ -196,7 +196,7 @@ impl AgentRuntimeService {
         ensure_profile_model_configured(&profile)?;
         let (invocation_kind, exit_policy_label, task_prompt) = match task.continuation {
             AgentDelegationContinuation::ReturnToParent => {
-                apply_child_invocation_policy(&mut profile);
+                profile.run.presentation = AgentRunPresentation::Background;
                 (
                     "subagent",
                     "taskReturnRequired",
@@ -218,8 +218,9 @@ impl AgentRuntimeService {
                 "agent.invalid_prompt_snapshot: input/prompt_snapshot.json is invalid JSON: {error}"
             ))
         })?;
-        let visible_tools =
-            self.visible_tool_specs_for_invocation(&profile, invocation.exit_policy)?;
+        let (tool_snapshot, tool_turn, visible_tools) =
+            self.compile_invocation_tools(&profile, invocation.exit_policy, invocation_id)?;
+        let tool_snapshot_path = self.persist_tool_snapshot(run_id, &tool_snapshot).await?;
         let run = self.run_repository.load_run(run_id).await?;
         let invocation_prompt_snapshot = if profile.preset.mode == AgentPresetBindingMode::Ref {
             let scope = AgentPromptAssemblyScopeDto {
@@ -265,7 +266,13 @@ impl AgentRuntimeService {
         };
         self.resolve_model_binding(run_id, &profile, &mut request)
             .await?;
-        let request = prepare_agent_tool_request(request, &visible_tools, run_id, invocation_id)?;
+        let request = prepare_agent_tool_request(
+            request,
+            &visible_tools,
+            tool_turn.choice().clone(),
+            run_id,
+            invocation_id,
+        )?;
         self.event(
             run_id,
             AgentRunEventLevel::Info,
@@ -273,7 +280,9 @@ impl AgentRuntimeService {
             json!({
                 "request": request_summary(&request),
                 "invocationId": invocation_id,
-                "tools": &visible_tools,
+                "toolSnapshot": tool_snapshot_summary(&tool_snapshot),
+                "toolSnapshotPath": tool_snapshot_path.as_str(),
+                "toolTurn": &tool_turn,
                 "maxRounds": profile.tools.max_rounds,
                 "contextPolicy": &profile.context,
             }),
@@ -316,6 +325,8 @@ impl AgentRuntimeService {
             invocation,
             delegation_task_id: Some(task.id.clone()),
             profile,
+            tool_snapshot,
+            tool_turn,
             request,
             effective_skills,
         })

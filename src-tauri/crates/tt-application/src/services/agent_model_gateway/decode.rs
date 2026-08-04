@@ -195,7 +195,15 @@ fn parse_tool_call(
                 "model.invalid_tool_call: tool_call_id is required".to_string(),
             )
         })?;
-    let canonical_name = canonical_tool_name(raw_name, tools).unwrap_or(raw_name);
+    let canonical_name = tools
+        .iter()
+        .find(|spec| spec.model_name == raw_name)
+        .map(|spec| spec.name.as_str())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "model.unknown_tool_call: model returned unadvertised tool alias `{raw_name}`"
+            ))
+        })?;
     let arguments =
         parse_tool_call_arguments(function.get("arguments").or_else(|| function.get("args")));
 
@@ -209,13 +217,6 @@ fn parse_tool_call(
             "raw": call,
         }),
     })
-}
-
-fn canonical_tool_name<'a>(raw: &'a str, tools: &'a [AgentToolSpec]) -> Option<&'a str> {
-    tools
-        .iter()
-        .find(|spec| spec.model_name == raw || spec.name == raw)
-        .map(|spec| spec.name.as_str())
 }
 
 fn parse_tool_call_arguments(value: Option<&Value>) -> Value {

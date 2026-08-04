@@ -149,8 +149,7 @@ pub(super) fn validate_instructions(
 pub(super) fn validate_plan_policy(plan: &AgentPlanPolicy) -> Result<(), ApplicationError> {
     if plan.mode != AgentPlanMode::None {
         return Err(ApplicationError::ValidationError(
-            "agent.plan_mode_unsupported: Agent runtime only supports plan.mode = none"
-                .to_string(),
+            "agent.plan_mode_unsupported: Agent runtime only supports plan.mode = none".to_string(),
         ));
     }
     if !plan.nodes.is_empty() {
@@ -191,6 +190,19 @@ pub(super) fn validate_tool_policy(
         .iter()
         .map(|name| name.as_str())
         .collect::<BTreeSet<_>>();
+
+    if allow.len() != policy.allow.len() {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_tools_allow_duplicate: tools.allow cannot contain duplicate tool names"
+                .to_string(),
+        ));
+    }
+    if deny.len() != policy.deny.len() {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_tools_deny_duplicate: tools.deny cannot contain duplicate tool names"
+                .to_string(),
+        ));
+    }
 
     if allow.is_empty() {
         return Err(ApplicationError::ValidationError(

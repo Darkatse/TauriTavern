@@ -380,17 +380,18 @@ GeneratedArtifact
 
 ## 7. Tool Contract
 
-工具必须有 `ToolSpec`：
+工具必须有 canonical `ToolId`（稳定 provider identity + source-native name）和 `ToolDescriptor`：
 
-- stable name
 - title/display name
 - description
 - input schema
 - optional output schema
-- visibility
-- permission
-- budget
-- source
+
+model-facing alias 不是工具身份。每个 invocation 必须从 Catalog + resolved Profile + 宿主 exit policy 编译一份 immutable `InvocationToolSnapshot`，冻结 descriptor、alias 与有效调用预算。当前 A3 只通过 `ToolTurnContract::all` 使用 snapshot 全集与 `Auto`；动态逐轮收窄及其历史 alias 解析由 A4 原子引入。
+
+模型返回的 alias 必须属于当前 turn。Gateway 必须通过本次 request/turn 精确解析为 canonical tool；不得接受 canonical-name 直呼、其它 snapshot alias 或 global registry fallback。执行器只能处理当前 turn/snapshot 的 canonical tool，并使用 snapshot 中冻结的 budget，不得重新读取 Profile 推导授权。
+
+完整 snapshot 必须以 create-only 语义随 run 写入 `input/invocations/<invocation-id>/tool_snapshot.json`，重复写入 fail-fast；journal 记录其路径与 turn manifest，避免历史审计依赖 current registry。
 
 工具结果必须有 `ToolResult`：
 

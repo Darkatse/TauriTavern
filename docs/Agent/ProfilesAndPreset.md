@@ -471,4 +471,4 @@ profile_switch_denied
 }
 ```
 
-Profile 文件存储在 `_tauritavern/agent-profiles/profiles/<id>.json`。每个 run 会固化 `input/resolved_profile.json`，运行时只消费 resolved profile。后续 profile routing 应在此基础上扩展，而不是绕过现有 resolver、registry 与 dispatcher。
+Profile 文件存储在 `_tauritavern/agent-profiles/profiles/<id>.json`。每个 run 会固化 `input/resolved_profile.json`；每个 invocation 再从 resolved Profile 与宿主 exit policy 编译不可变 tool snapshot，写入 `input/invocations/<invocation-id>/tool_snapshot.json`。后续 profile routing 应在此基础上扩展，而不是绕过现有 resolver、snapshot compiler 与 dispatcher。

@@ -6,7 +6,7 @@
 
 ## 1. 当前基线
 
-截至 2026-05-27，Agent 当前核心已经落地：
+截至 2026-07-31，Agent 当前核心已经落地：
 
 - Rust 后端拥有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 聊天删除会清理对应 Agent chat workspace；active run 存在时删除 fail-fast。
@@ -23,6 +23,7 @@
 - Profile `preset.mode = "ref"` 可加载独立 OpenAI/chat-completion preset；`model.mode = "connectionRef"` + `modelId` 可通过 LLM Connection 解耦 preset source/model，并在 runtime 发送前再次权威覆盖 payload。
 - Profile `run.modelRetry` 已落地，默认对单次模型调用的 rate limit / transient transport-provider 错误重试 3 次，间隔 3000ms；非瞬时契约错误继续 fail-fast。
 - `instructions.agentSystemPrompt` 可完整替换默认 Agent system prompt；缺省时使用 resolved profile 默认 prompt。Preset / PromptManager 控制其位置与 role；前端在该位置 materialize Profile 内容，runtime 只消费最终 messages。`tools.toolDescriptions` 可替换 model-facing tool/property descriptions；缺省时使用默认描述。
+- 每个 root、return-mode child 与 handoff invocation 会从 builtin Catalog、resolved Profile 和 exit policy 编译 immutable tool snapshot 与最小 turn contract；child/handoff prompt、provider request、alias decode、dispatch membership 和 tool-call budget 共享该事实，并把完整 snapshot 写入 run workspace。root prompt preview 仍由启动前兼容桥生成，但使用同一 compiler。
 
 历史计划只保留为这些不变量：
 
@@ -105,6 +106,7 @@ AgentRuntimeService
 - Agent payload 内部字段 `_tauritavern_provider_state` 不进入 LLM API log，也不会发送给上游 provider。
 - missing `tool_call_id` fail-fast，不再 fallback 生成 `tool_call_{index}`。
 - response decode 保留 text、reasoning、tool calls、native metadata。
+- tool name 只通过当前 request 的 snapshot-bound alias 精确解析；canonical/raw/global registry fallback 已删除。
 
 仍待：
 
@@ -132,7 +134,7 @@ Provider native data 是 opaque state，不是 Agent 业务语义。Runtime 可�
 
 ## 5. 当前工具集
 
-Tool registry 只产 canonical `AgentToolSpec`，不再暴露 OpenAI-shaped `openai_tools()`。
+Builtin registry 从同一组 base `AgentToolSpec` 构造中性 `ToolCatalog`；invocation compiler 再生成 frozen bindings 与 provider-facing specs，不再暴露 OpenAI-shaped `openai_tools()`。
 
 | Canonical name | Model alias | 类型 |
 | --- | --- | --- |
@@ -194,7 +196,9 @@ resolve Profile
   ↓
 initialize_run 写 manifest / prompt snapshot / resolved profile / workspace root
   ↓
-prepare_agent_tool_request 按 Profile 生成 AgentModelRequest 与 visible tool specs
+compile + persist invocation tool snapshot / turn
+  ↓
+prepare_agent_tool_request 从 turn 生成 AgentModelRequest 与 model-facing specs
   ↓
 model -> read-only context tools / skill tools / workspace tools -> model -> ... -> workspace.commit? -> workspace.finish
   ↓
@@ -237,8 +241,9 @@ workspace.finish 收尾并提交 persist projection
 已完成：
 
 - Rust runtime 独占推进 tool loop，不递归调用前端 `Generate()`。
-- Tool registry 产 canonical `AgentToolSpec`，provider-facing alias 由 gateway 渲染。
+- Catalog + Profile/exit-policy compiler 产 immutable snapshot 与 turn；provider-facing spec 由该 turn 投影。
 - 工具调用、工具结果、recoverable tool error、fatal runtime error 与 journal 语义已落地。
+- Provider alias、dispatch membership 与调用预算绑定当前 invocation snapshot，不再重算 Profile visibility。
 
 ### Workspace 读写工具
 
@@ -367,7 +372,7 @@ cargo test --manifest-path src-tauri/Cargo.toml normalize_
 ```bash
 pnpm run check:types
 pnpm run check:frontend
-pnpm run check:contracts
+pnpm run test:contracts
 ```
 
 ## 10. 每次修改必须同步的文档

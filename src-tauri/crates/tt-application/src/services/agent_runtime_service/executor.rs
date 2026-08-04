@@ -8,6 +8,7 @@ use super::error_payload::{run_failure_payload, run_partial_success_payload};
 use super::invocation::model_session_id;
 use super::loop_runner::AgentLoopExit;
 use super::prompt_snapshot::{prepare_agent_tool_request, request_summary};
+use super::tool_snapshot::tool_snapshot_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
@@ -263,18 +264,20 @@ impl AgentRuntimeService {
             )
             .await?;
 
+        let (tool_snapshot, tool_turn, visible_tools) = self.compile_invocation_tools(
+            &resolved_profile,
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            root_invocation.id.as_str(),
+        )?;
+        let tool_snapshot_path = self.persist_tool_snapshot(run_id, &tool_snapshot).await?;
         let mut request = request;
         self.resolve_model_binding(run_id, &resolved_profile, &mut request)
             .await?;
         self.ensure_not_cancelled(cancel)?;
-
-        let visible_tools = self.visible_tool_specs_for_invocation(
-            &resolved_profile,
-            AgentInvocationExitPolicy::RunFinishAllowed,
-        )?;
         let request = prepare_agent_tool_request(
             request,
             &visible_tools,
+            tool_turn.choice().clone(),
             run_id,
             root_invocation.id.as_str(),
         )?;
@@ -287,7 +290,9 @@ impl AgentRuntimeService {
             json!({
                 "request": request_summary(&request),
                 "invocationId": root_invocation.id.as_str(),
-                "tools": &visible_tools,
+                "toolSnapshot": tool_snapshot_summary(&tool_snapshot),
+                "toolSnapshotPath": tool_snapshot_path.as_str(),
+                "toolTurn": &tool_turn,
                 "maxRounds": resolved_profile.tools.max_rounds,
                 "contextPolicy": &resolved_profile.context,
                 "modelRetry": {
@@ -304,6 +309,8 @@ impl AgentRuntimeService {
                 invocation: root_invocation,
                 delegation_task_id: None,
                 profile: resolved_profile,
+                tool_snapshot,
+                tool_turn,
                 request,
                 effective_skills,
             },

@@ -76,6 +76,7 @@ chatWorkspaceId = "chat_" + sha256({ kind, stableChatId })[0..16]
 一次 Agent Run 拥有独立 run workspace：
 
 - 本次输入快照。
+- 每个 invocation 的冻结 tool snapshot。
 - 本次计划。
 - 本次 scratch。
 - 本次输出 artifact。
@@ -105,6 +106,7 @@ GeneratedArtifact
 
 ```text
 input/prompt_snapshot.json          MaterializedFile
+input/invocations/inv_root/tool_snapshot.json  MaterializedFile
 input/world/activated.md            MaterializedFile
 input/preset/instructions.md        MaterializedFile
 input/character/card.md             MaterializedFile

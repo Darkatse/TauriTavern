@@ -142,7 +142,7 @@ LLM Gateway / provider adapter
 
 ### 5.1 当前落地边界
 
-截至 2026-05-02，当前已落地的是 canonical model IR + provider native metadata 保真 + provider_state continuation + 上下文只读工具 + workspace 读改工具循环，而不是完整 Agent 产品面：
+截至 2026-07-31，当前已落地的是 canonical model IR + provider native metadata 保真 + provider_state continuation + invocation tool snapshot/turn + 上下文只读工具 + workspace 读改工具循环，而不是完整 Agent 产品面：
 
 - Public Host ABI 入口为 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`，没有 `startRun()` alias。
 - `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义与本轮最终 `worldInfoActivation`，同时禁用 Legacy ToolManager tools。
@@ -158,6 +158,7 @@ LLM Gateway / provider adapter
 - 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，`workspace.finish` 收尾成功后 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`model-responses/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
 - 工具循环最多 80 轮，必须以 `workspace.finish` 结束；前台 run 在 finish 前必须至少成功 `workspace.commit` 一次，后台 run 可无 chat commit；模型直接输出文本会捕获到 workspace `direct_output.md` 并触发 soft drift recovery，只要仍有下一轮模型调用预算就继续用合成 `user` 提醒纠偏，直到恢复、取消或 `maxRounds` 边界触发 fail-fast / partial-success。
 - 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
+- root、return-mode child 与 handoff invocation 各自冻结 `InvocationToolSnapshot` / `ToolTurnContract`；provider alias 只在当前 turn 内解析，dispatch 与 budget 使用冻结 snapshot，完整 manifest 随 run 持久化。
 - Skill profile policy、readDiff、rollback、resume-run、tool approval、profile routing、MCP、timeline UI、streaming Agent loop、主发送按钮 Agent toggle 仍未实现。
 
 ### 5.2 Run 与 Workspace 身份
@@ -292,14 +293,18 @@ Gateway 代码已拆成 `agent_model_gateway/` 模块目录：`mod.rs` 保留 tr
 
 当前 `ChatCompletionStreamEvent::Chunk` 只是 provider SSE `data` 字符串的桥接，不是 Agent timeline 语义事件。Agent 必须定义自己的 `AgentRunEvent`，不能把 provider stream chunk 当作 run event。
 
-### 7.5 ToolRegistryService / ToolDispatchService
+### 7.5 Tool Catalog / Snapshot Compiler / Tool Dispatch
 
 职责：
 
-- 注册内置工具、MCP 工具、未来 extension bridge 工具。
-- 根据 profile/preset/plan/run policy 解析可见工具与审批要求。
+- 聚合内置工具、MCP 工具、未来 extension bridge 工具。
+- 根据宿主拥有的 profile/plan/run facts 编译 immutable invocation snapshot。
+- 从 snapshot 编译当前 turn 的 advertised/requestable tools 与 typed choice。
+- 只通过当前 turn 的 alias manifest 解析模型调用。
 - 派发 tool call。
 - 把 tool result 写入 journal 与 context store，不写入 chat message。
+
+当前 A3 以 domain types + application pure compiler 落地 builtin Agent vertical slice，没有为了单一 registry 新增 service trait/factory。通用 Request Gate、approval 和多 executor router 在出现相应真实 consumer 时进入 A4。
 
 详见 `docs/Agent/ToolSystem.md`。
 

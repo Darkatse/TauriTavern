@@ -50,6 +50,35 @@ fn decodes_tool_call_to_canonical_name() {
 }
 
 #[test]
+fn rejects_tool_names_outside_the_current_turn_aliases() {
+    let registry = BuiltinAgentToolRegistry::all();
+    let write = registry
+        .spec_by_name("workspace.write_file")
+        .expect("write tool")
+        .clone();
+
+    for (raw_name, tools) in [
+        ("workspace_write_file", Vec::new()),
+        ("workspace.write_file", vec![write.clone()]),
+    ] {
+        let response = json!({
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": raw_name, "arguments": "{}" }
+                    }]
+                }
+            }]
+        });
+
+        let error = decode_chat_completion_response(response, &tools).unwrap_err();
+        assert!(error.to_string().contains("model.unknown_tool_call"));
+    }
+}
+
+#[test]
 fn rejects_tool_call_without_id() {
     let registry = BuiltinAgentToolRegistry::all();
     let response = json!({
@@ -438,6 +467,7 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
     let messages = dto.payload["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["role"], "tool");
+    assert_eq!(messages[0]["name"], "workspace_write_file");
     assert_eq!(dto.payload["previous_response_id"], "resp_1");
     assert!(
         dto.payload

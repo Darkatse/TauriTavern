@@ -13,11 +13,11 @@ use crate::services::agent_tools::{
     AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, AgentToolDispatchOutcome,
     AgentToolEffect, AgentToolSession, TASK_RETURN,
 };
-use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
     AgentToolCall, AgentToolResult, WorkspacePath,
 };
+use tt_domain::models::tool::ToolId;
 
 const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
 
@@ -40,17 +40,6 @@ impl AgentRuntimeService {
         let invocation_id = prepared.invocation.id.as_str();
         let exit_policy = prepared.invocation.exit_policy;
         let profile = &prepared.profile;
-        let canonical_call = self
-            .tool_registry
-            .spec_by_name_or_model_name(&call.name)
-            .filter(|spec| spec.name != call.name)
-            .map(|spec| AgentToolCall {
-                id: call.id.clone(),
-                name: spec.name.clone(),
-                arguments: call.arguments.clone(),
-                provider_metadata: call.provider_metadata.clone(),
-            });
-        let call = canonical_call.as_ref().unwrap_or(call);
         let arguments_ref = self.store_tool_arguments(run_id, call).await?;
         self.event(
             run_id,
@@ -68,9 +57,14 @@ impl AgentRuntimeService {
         .await?;
         let started = Instant::now();
 
-        if self.tool_registry.spec_by_name(&call.name).is_none() {
+        let tool_id = ToolId::builtin(&call.name)?;
+        let binding = prepared
+            .tool_snapshot
+            .binding(&tool_id)
+            .filter(|_| prepared.tool_turn.contains(&tool_id));
+        let Some(binding) = binding else {
             let error = ApplicationError::ValidationError(format!(
-                "model.unknown_tool_call: model requested unknown Agent tool `{}`",
+                "model.unknown_tool_call: model requested Agent tool `{}` that is not advertised in the current turn",
                 call.name
             ));
             self.event(
@@ -87,30 +81,15 @@ impl AgentRuntimeService {
             )
             .await?;
             return Err(error);
-        }
+        };
 
-        if !tool_is_visible(profile, call.name.as_str(), exit_policy) {
-            let outcome = recoverable_tool_error(
-                call,
-                "agent.tool_policy_denied",
-                &format!(
-                    "Tool `{}` is not available in the current Agent profile.",
-                    call.name
-                ),
-                started.elapsed().as_millis(),
-            );
-            self.record_tool_outcome(run_id, invocation_id, round, &outcome)
-                .await?;
-            return Ok(outcome);
-        }
-
-        if session.total_calls() >= profile.tools.max_calls_per_run {
+        if session.total_calls() >= prepared.tool_snapshot.max_calls_per_invocation() {
             let outcome = recoverable_tool_error(
                 call,
                 "agent.tool_budget_exhausted",
                 &format!(
-                    "Agent profile tool call budget is exhausted for this run (max {}).",
-                    profile.tools.max_calls_per_run
+                    "Agent tool call budget is exhausted for this invocation (max {}).",
+                    prepared.tool_snapshot.max_calls_per_invocation()
                 ),
                 started.elapsed().as_millis(),
             );
@@ -119,8 +98,8 @@ impl AgentRuntimeService {
             return Ok(outcome);
         }
 
-        if let Some(max_calls) = profile.tools.max_calls_per_tool.get(&call.name)
-            && session.calls_for_tool(&call.name) >= *max_calls
+        if let Some(max_calls) = binding.max_calls()
+            && session.calls_for_tool(&call.name) >= max_calls
         {
             let outcome = recoverable_tool_error(
                 call,
@@ -166,15 +145,8 @@ impl AgentRuntimeService {
             ))
             .await
         } else if call.name == AGENT_AWAIT {
-            self.dispatch_agent_await_tool(
-                run_id,
-                invocation_id,
-                call,
-                profile,
-                commit_ledger.len(),
-                cancel,
-            )
-            .await
+            self.dispatch_agent_await_tool(prepared, call, commit_ledger.len(), cancel)
+                .await
         } else if call.name == AGENT_HANDOFF {
             self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile, is_last_call)
                 .await
@@ -374,29 +346,6 @@ fn tool_call_audit_file_stem(call_id: &str) -> String {
         "call_{}",
         hex_lower(&digest[..TOOL_CALL_AUDIT_DIGEST_BYTES])
     )
-}
-
-fn tool_is_visible(
-    profile: &ResolvedAgentProfile,
-    name: &str,
-    exit_policy: AgentInvocationExitPolicy,
-) -> bool {
-    if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-        if name == TASK_RETURN {
-            return true;
-        }
-        if name == "workspace.commit"
-            || name == "workspace.finish"
-            || name == AGENT_LIST
-            || name == AGENT_DELEGATE
-            || name == AGENT_HANDOFF
-            || name == AGENT_AWAIT
-        {
-            return false;
-        }
-    }
-    profile.tools.allow.iter().any(|allowed| allowed == name)
-        && !profile.tools.deny.iter().any(|denied| denied == name)
 }
 
 fn recoverable_tool_error(

@@ -42,6 +42,7 @@ pub(super) fn request_from_prompt_snapshot(
 pub(super) fn prepare_agent_tool_request(
     mut request: ChatCompletionGenerateRequestDto,
     tools: &[AgentToolSpec],
+    tool_choice: ToolChoice,
     run_id: &str,
     invocation_id: &str,
 ) -> Result<AgentModelRequest, ApplicationError> {
@@ -59,7 +60,7 @@ pub(super) fn prepare_agent_tool_request(
         payload: request.payload,
         messages,
         tools: tools.to_vec(),
-        tool_choice: ToolChoice::Auto,
+        tool_choice,
         provider_state: json!({
             "sessionId": model_session_id(run_id, invocation_id),
             "runId": run_id,
@@ -341,8 +342,9 @@ mod tests {
         }))
         .expect("request");
 
-        let request = prepare_agent_tool_request(request, &[], "run_test", "inv_root")
-            .expect("agent request");
+        let request =
+            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
+                .expect("agent request");
 
         assert_eq!(message_text(&request, 0), "Before Agent prompt.");
         assert_eq!(request.messages[1].role, AgentModelRole::User);
@@ -366,8 +368,9 @@ mod tests {
         }))
         .expect("request");
 
-        let error = prepare_agent_tool_request(request, &[], "run_test", "inv_root")
-            .expect_err("marker leak fails");
+        let error =
+            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
+                .expect_err("marker leak fails");
 
         assert!(
             error

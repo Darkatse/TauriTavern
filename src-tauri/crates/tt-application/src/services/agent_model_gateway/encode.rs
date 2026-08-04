@@ -149,7 +149,10 @@ fn encode_openai_compatible_message(
                 "tool_call_id".to_string(),
                 Value::String(result.call_id.clone()),
             );
-            object.insert("name".to_string(), Value::String(result.name.clone()));
+            object.insert(
+                "name".to_string(),
+                Value::String(model_tool_name_for_call(&result.name, tools)?.to_string()),
+            );
             object.insert(
                 "content".to_string(),
                 Value::String(tool_result_message_content(result)?),
@@ -274,7 +277,7 @@ fn encode_openai_tool_call(
     call: &AgentToolCall,
     tools: &[AgentToolSpec],
 ) -> Result<Value, ApplicationError> {
-    let model_name = model_tool_name_for_call(&call.name, tools);
+    let model_name = model_tool_name_for_call(&call.name, tools)?;
     let arguments = serde_json::to_string(&call.arguments).map_err(|error| {
         ApplicationError::ValidationError(format!("agent.tool_call_serialize_failed: {error}"))
     })?;
@@ -302,12 +305,19 @@ fn encode_openai_tool_call(
     Ok(Value::Object(object))
 }
 
-fn model_tool_name_for_call(name: &str, tools: &[AgentToolSpec]) -> String {
+fn model_tool_name_for_call<'a>(
+    name: &str,
+    tools: &'a [AgentToolSpec],
+) -> Result<&'a str, ApplicationError> {
     tools
         .iter()
-        .find(|spec| spec.name == name || spec.model_name == name)
-        .map(|spec| spec.model_name.clone())
-        .unwrap_or_else(|| name.to_string())
+        .find(|spec| spec.name == name)
+        .map(|spec| spec.model_name.as_str())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "agent.tool_history_not_advertised: tool `{name}` is not advertised in this request"
+            ))
+        })
 }
 
 fn tool_result_message_content(result: &AgentToolResult) -> Result<String, ApplicationError> {
