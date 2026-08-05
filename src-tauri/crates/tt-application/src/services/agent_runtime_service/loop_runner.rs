@@ -418,7 +418,10 @@ fn remember_seen_child_results_from_await(
     seen_task_ids: &mut HashSet<String>,
 ) {
     for result in tool_results {
-        if result.name != AGENT_AWAIT || result.is_error {
+        if !result.tool_id.is_builtin()
+            || result.tool_id.native_name() != AGENT_AWAIT
+            || result.is_error
+        {
             continue;
         }
         let Some(tasks) = result.structured.get("tasks").and_then(Value::as_array) else {

@@ -1,10 +1,10 @@
+mod descriptors;
 mod read_messages;
 mod search;
-mod specs;
 
+pub(super) use descriptors::{chat_read_messages_descriptor, chat_search_descriptor};
 pub(super) use read_messages::read_messages;
 pub(super) use search::search;
-pub(super) use specs::{chat_read_messages_spec, chat_search_spec};
 
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::{AgentChatRef, AgentRun};

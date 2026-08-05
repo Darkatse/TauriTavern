@@ -11,7 +11,8 @@ use crate::services::agent_tools::common::{
 };
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::{AgentChatRef, AgentToolCall, AgentToolResult};
+use tt_domain::models::agent::{AgentChatRef, AgentToolResult};
+use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::{
@@ -46,7 +47,7 @@ pub(in crate::services::agent_tools) async fn search(
     chat_repository: &dyn ChatRepository,
     group_chat_repository: &dyn GroupChatRepository,
     run_id: &str,
-    call: &AgentToolCall,
+    call: &ToolInvocation,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let Some(args) = object_args(call) else {
         return Ok((
@@ -122,8 +123,8 @@ pub(in crate::services::agent_tools) async fn search(
 
     Ok((
         AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content,
             structured: structured_value(ChatSearchStructured {
                 query: search_query.query.as_str(),
@@ -176,11 +177,11 @@ fn constrain_search_query(
     Some(query)
 }
 
-fn empty_result(call: &AgentToolCall, query: &str) -> (AgentToolResult, AgentToolEffect) {
+fn empty_result(call: &ToolInvocation, query: &str) -> (AgentToolResult, AgentToolEffect) {
     (
         AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content: render_content(query, &[]),
             structured: structured_value(ChatSearchStructured {
                 query,

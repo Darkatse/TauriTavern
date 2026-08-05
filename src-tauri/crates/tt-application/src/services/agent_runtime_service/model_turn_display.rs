@@ -163,10 +163,11 @@ fn project_model_turn(
             .iter()
             .map(|call| AgentModelTurnToolCallDto {
                 call_id: call.call_id.clone(),
+                tool_id: call.tool_id.clone(),
                 name: call.tool_id.native_name().to_string(),
-                model_name: call
+                model_alias: call
                     .provider_metadata
-                    .get("modelName")
+                    .get("modelAlias")
                     .and_then(Value::as_str)
                     .map(str::to_string),
             })
@@ -280,7 +281,29 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 mod tests {
     use super::*;
     use tt_domain::models::agent::{AgentModelMessage, AgentModelRole};
-    use tt_domain::models::tool::{ToolId, ToolInvocation};
+    use tt_domain::models::tool::{ToolId, ToolInvocation, ToolProviderId};
+
+    #[test]
+    fn model_turn_projection_preserves_canonical_tool_identity() {
+        let tool_id = ToolId::new(
+            &ToolProviderId::parse("mcp/registration-1").unwrap(),
+            "workspace.finish",
+        )
+        .unwrap();
+        let response = response_with_text(
+            "",
+            vec![ToolInvocation {
+                call_id: "call_mcp".to_string(),
+                tool_id: tool_id.clone(),
+                arguments: Value::Null,
+                provider_metadata: Value::Null,
+            }],
+        );
+
+        let turn = project_model_turn("run-1", "model-responses/round-001.json", 1, &response, 80);
+        assert_eq!(turn.tool_calls[0].tool_id, tool_id);
+        assert_eq!(turn.tool_calls[0].name, "workspace.finish");
+    }
 
     #[test]
     fn narration_uses_assistant_text_for_tool_turns() {

@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use tt_domain::models::agent::{AgentRunPresentation, AgentTaskRecord, AgentToolSpec};
+use tt_domain::models::agent::{AgentModelTool, AgentRunPresentation, AgentTaskRecord};
 
 pub(super) struct DelegatedResultContinuationHint {
     commit_tool: Option<String>,
@@ -11,13 +11,13 @@ pub(super) struct DelegatedResultContinuationHint {
 
 impl DelegatedResultContinuationHint {
     pub(super) fn from_parent_tools(
-        tools: &[AgentToolSpec],
+        tools: &[AgentModelTool],
         presentation: AgentRunPresentation,
         committed_count: usize,
     ) -> Self {
         Self {
-            commit_tool: model_tool_name(tools, "workspace.commit"),
-            finish_tool: model_tool_name(tools, "workspace.finish"),
+            commit_tool: builtin_model_alias(tools, "workspace.commit"),
+            finish_tool: builtin_model_alias(tools, "workspace.finish"),
             presentation,
             committed_count,
         }
@@ -300,11 +300,11 @@ fn push_continuation_hint(lines: &mut Vec<String>, hint: &DelegatedResultContinu
     }
 }
 
-fn model_tool_name(tools: &[AgentToolSpec], name: &str) -> Option<String> {
+fn builtin_model_alias(tools: &[AgentModelTool], name: &str) -> Option<String> {
     tools
         .iter()
-        .find(|tool| tool.name == name)
-        .map(|tool| tool.model_name.clone())
+        .find(|tool| tool.tool_id.is_builtin() && tool.tool_id.native_name() == name)
+        .map(|tool| tool.model_alias.clone())
 }
 
 fn push_task_section(lines: &mut Vec<String>, title: &str, value: Option<&Value>) {

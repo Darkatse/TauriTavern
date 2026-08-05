@@ -1,68 +1,61 @@
 use super::agent::{
-    agent_await_spec, agent_delegate_spec, agent_handoff_spec, agent_list_spec, task_return_spec,
+    agent_await_descriptor, agent_delegate_descriptor, agent_handoff_descriptor,
+    agent_list_descriptor, task_return_descriptor,
 };
-use super::catalog::project_builtin_catalog;
-use super::chat::{chat_read_messages_spec, chat_search_spec};
-use super::dice::dice_roll_spec;
-use super::skill::{SKILL_READ, skill_list_spec, skill_read_spec, skill_search_spec};
+use super::chat::{chat_read_messages_descriptor, chat_search_descriptor};
+use super::dice::dice_roll_descriptor;
+use super::skill::{
+    SKILL_READ, skill_list_descriptor, skill_read_descriptor, skill_search_descriptor,
+};
 use super::workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
-    WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_WRITE_FILE, workspace_apply_patch_spec,
-    workspace_commit_spec, workspace_finish_spec, workspace_list_files_spec,
-    workspace_read_file_spec, workspace_search_files_spec, workspace_write_file_spec,
+    WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_WRITE_FILE,
+    workspace_apply_patch_descriptor, workspace_commit_descriptor, workspace_finish_descriptor,
+    workspace_list_files_descriptor, workspace_read_file_descriptor,
+    workspace_search_files_descriptor, workspace_write_file_descriptor,
 };
-use super::world_info::worldinfo_read_activated_spec;
+use super::world_info::worldinfo_read_activated_descriptor;
 use crate::errors::ApplicationError;
 use crate::services::agent_workspace_scope::format_model_workspace_roots;
-use tt_domain::models::agent::AgentToolSpec;
 use tt_domain::models::agent::profile::{AgentToolDescriptionOverride, ResolvedAgentProfile};
 use tt_domain::models::tool::{ToolCatalog, ToolDescriptor, ToolId};
 
 #[derive(Debug, Clone)]
 pub struct BuiltinAgentToolRegistry {
-    specs: Vec<AgentToolSpec>,
     catalog: ToolCatalog,
 }
 
 impl BuiltinAgentToolRegistry {
     pub fn all() -> Self {
-        let specs = vec![
-            agent_list_spec(),
-            agent_delegate_spec(),
-            agent_handoff_spec(),
-            agent_await_spec(),
-            task_return_spec(),
-            chat_search_spec(),
-            chat_read_messages_spec(),
-            worldinfo_read_activated_spec(),
-            dice_roll_spec(),
-            skill_list_spec(),
-            skill_search_spec(),
-            skill_read_spec(),
-            workspace_list_files_spec(),
-            workspace_search_files_spec(),
-            workspace_read_file_spec(),
-            workspace_write_file_spec(),
-            workspace_apply_patch_spec(),
-            workspace_commit_spec(),
-            workspace_finish_spec(),
+        let descriptors = vec![
+            agent_list_descriptor(),
+            agent_delegate_descriptor(),
+            agent_handoff_descriptor(),
+            agent_await_descriptor(),
+            task_return_descriptor(),
+            chat_search_descriptor(),
+            chat_read_messages_descriptor(),
+            worldinfo_read_activated_descriptor(),
+            dice_roll_descriptor(),
+            skill_list_descriptor(),
+            skill_search_descriptor(),
+            skill_read_descriptor(),
+            workspace_list_files_descriptor(),
+            workspace_search_files_descriptor(),
+            workspace_read_file_descriptor(),
+            workspace_write_file_descriptor(),
+            workspace_apply_patch_descriptor(),
+            workspace_commit_descriptor(),
+            workspace_finish_descriptor(),
         ];
-        let catalog = project_builtin_catalog(&specs)
-            .expect("builtin Agent tool specs must form a valid catalog");
+        let catalog = ToolCatalog::try_from_descriptors(descriptors)
+            .expect("builtin Agent tool descriptors must form a valid catalog");
 
-        Self { specs, catalog }
+        Self { catalog }
     }
 
     pub fn catalog(&self) -> &ToolCatalog {
         &self.catalog
-    }
-
-    pub fn specs(&self) -> &[AgentToolSpec] {
-        &self.specs
-    }
-
-    pub fn spec_by_name(&self, name: &str) -> Option<&AgentToolSpec> {
-        self.specs.iter().find(|spec| spec.name == name)
     }
 
     pub(crate) fn materialize_profile_descriptor(
@@ -89,16 +82,6 @@ impl BuiltinAgentToolRegistry {
         profile: &ResolvedAgentProfile,
     ) -> Result<(), ApplicationError> {
         apply_return_mode_context(descriptor, profile)
-    }
-
-    pub(crate) fn model_alias(&self, tool_id: &ToolId) -> Result<&str, ApplicationError> {
-        self.spec_by_name(tool_id.native_name())
-            .map(|spec| spec.model_name.as_str())
-            .ok_or_else(|| {
-                ApplicationError::ValidationError(format!(
-                    "agent.tool_alias_missing: tool `{tool_id}` has no model alias"
-                ))
-            })
     }
 }
 
@@ -357,9 +340,8 @@ mod tests {
     use super::super::agent::{
         AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, TASK_RETURN,
     };
-    use super::super::dice::DICE_ROLL;
-    use super::super::policy::{compile_invocation_tool_snapshot, project_agent_tool_specs};
-    use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE, WORKSPACE_WRITE_FILE};
+    use super::super::policy::{compile_invocation_tool_snapshot, project_agent_model_tools};
+    use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE};
     use super::*;
     use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
     use tt_domain::models::agent::profile::{
@@ -375,77 +357,50 @@ mod tests {
     use tt_domain::models::tool::{ToolChoice, ToolId, ToolSnapshotId, ToolTurnContract};
 
     #[test]
-    fn registry_uses_openai_safe_model_names() {
+    fn snapshot_compiler_derives_builtin_model_aliases() {
         let registry = BuiltinAgentToolRegistry::all();
-        let tools = registry.specs();
+        let mut profile = profile_with_skill_budget(100_000, 100_000);
+        profile.tools.allow = registry
+            .catalog()
+            .iter()
+            .map(|descriptor| descriptor.id.native_name().to_string())
+            .filter(|name| name != TASK_RETURN)
+            .collect();
+        let snapshot = compile_invocation_tool_snapshot(
+            &registry,
+            &profile,
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            ToolSnapshotId::parse("aliases").unwrap(),
+        )
+        .unwrap();
 
-        assert_eq!(tools[0].model_name, "agent_list");
-        assert_eq!(tools[0].name, AGENT_LIST);
-        assert_eq!(tools[1].model_name, "agent_delegate");
-        assert_eq!(tools[1].name, AGENT_DELEGATE);
-        assert_eq!(tools[2].model_name, "agent_handoff");
-        assert_eq!(tools[2].name, AGENT_HANDOFF);
-        assert_eq!(tools[3].model_name, "agent_await");
-        assert_eq!(tools[3].name, AGENT_AWAIT);
-        assert_eq!(tools[4].model_name, "task_return");
-        assert_eq!(tools[4].name, TASK_RETURN);
-        assert_eq!(tools[5].model_name, "chat_search");
-        assert_eq!(
-            tools
-                .iter()
-                .find(|spec| spec.model_name == "dice_roll")
-                .map(|spec| spec.name.as_str()),
-            Some(DICE_ROLL)
-        );
-        assert_eq!(
-            tools
-                .iter()
-                .find(|spec| spec.model_name == "skill_read")
-                .map(|spec| spec.name.as_str()),
-            Some("skill.read")
-        );
-        assert_eq!(
-            tools
-                .iter()
-                .find(|spec| spec.model_name == "workspace_write_file")
-                .map(|spec| spec.name.as_str()),
-            Some(WORKSPACE_WRITE_FILE)
-        );
-        assert_eq!(
-            tools
-                .iter()
-                .find(|spec| spec.model_name == "workspace_read_file")
-                .map(|spec| spec.name.as_str()),
-            Some(WORKSPACE_READ_FILE)
-        );
-        assert_eq!(
-            tools
-                .iter()
-                .find(|spec| spec.name == WORKSPACE_FINISH)
-                .map(|spec| spec.name.as_str()),
-            Some(WORKSPACE_FINISH)
-        );
+        for binding in snapshot.bindings() {
+            assert_eq!(
+                binding.model_alias(),
+                binding.tool_id().native_name().replace('.', "_")
+            );
+        }
     }
 
     #[test]
-    fn catalog_preserves_neutral_fields_from_base_specs() {
+    fn registry_declares_canonical_builtin_descriptors() {
         let registry = BuiltinAgentToolRegistry::all();
 
-        assert_eq!(registry.catalog().len(), registry.specs().len());
-        for spec in registry.specs() {
-            let descriptor = registry
-                .catalog()
-                .get(&ToolId::builtin(&spec.name).unwrap())
-                .expect("builtin descriptor");
-
-            assert_eq!(descriptor.title.as_deref(), Some(spec.title.as_str()));
-            assert_eq!(
-                descriptor.description.as_deref(),
-                Some(spec.description.as_str())
+        assert_eq!(registry.catalog().len(), 19);
+        for descriptor in registry.catalog().iter() {
+            assert!(descriptor.id.is_builtin());
+            assert!(
+                descriptor
+                    .title
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
             );
-            assert_eq!(descriptor.input_schema, spec.input_schema);
-            assert_eq!(descriptor.output_schema, spec.output_schema);
-            assert_eq!(descriptor.annotations, spec.annotations);
+            assert!(
+                descriptor
+                    .description
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+            );
         }
     }
 
@@ -453,10 +408,9 @@ mod tests {
     fn agent_delegate_requires_objective_but_not_title() {
         let registry = BuiltinAgentToolRegistry::all();
         let delegate = registry
-            .specs()
-            .iter()
-            .find(|spec| spec.name == AGENT_DELEGATE)
-            .expect("agent.delegate spec");
+            .catalog()
+            .get(&ToolId::builtin(AGENT_DELEGATE).unwrap())
+            .expect("agent.delegate descriptor");
 
         assert_eq!(
             delegate
@@ -480,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_specs_expose_profile_skill_read_budget() {
+    fn visible_model_tools_expose_profile_skill_read_budget() {
         let registry = BuiltinAgentToolRegistry::all();
         let profile = profile_with_skill_budget(100_000, 100_000);
         let snapshot = compile_invocation_tool_snapshot(
@@ -491,11 +445,11 @@ mod tests {
         )
         .expect("snapshot");
         let turn = ToolTurnContract::all(&snapshot, ToolChoice::Auto).expect("turn");
-        let tools = project_agent_tool_specs(&snapshot, &turn).expect("visible specs");
+        let tools = project_agent_model_tools(&snapshot, &turn).expect("visible model tools");
         let skill_read = tools
             .iter()
-            .find(|tool| tool.name == SKILL_READ)
-            .expect("skill.read spec");
+            .find(|tool| tool.tool_id.native_name() == SKILL_READ)
+            .expect("skill.read model tool");
         let max_chars = skill_read
             .input_schema
             .pointer("/properties/max_chars")
@@ -589,14 +543,14 @@ mod tests {
     }
 
     #[test]
-    fn agent_tool_specs_keep_runtime_terms_out_of_model_descriptions() {
+    fn agent_tool_descriptors_keep_runtime_terms_out_of_model_descriptions() {
         let registry = BuiltinAgentToolRegistry::all();
         let agent_tools = registry
-            .specs()
+            .catalog()
             .iter()
             .filter(|tool| {
                 matches!(
-                    tool.name.as_str(),
+                    tool.id.native_name(),
                     AGENT_LIST | AGENT_DELEGATE | AGENT_HANDOFF | AGENT_AWAIT | TASK_RETURN
                 )
             })
@@ -605,20 +559,20 @@ mod tests {
         for tool in agent_tools {
             let text = format!(
                 "{} {}",
-                tool.description,
+                tool.description.as_deref().expect("builtin description"),
                 serde_json::to_string(&tool.input_schema).expect("schema JSON")
             );
-            assert!(!text.contains("invocation"), "{}", tool.name);
-            assert!(!text.contains("parent Agent"), "{}", tool.name);
-            assert!(!text.contains("child Agent"), "{}", tool.name);
-            assert!(!text.contains("This Agent"), "{}", tool.name);
-            assert!(!text.contains("active control"), "{}", tool.name);
-            assert!(!text.contains("active owner"), "{}", tool.name);
-            assert!(!text.contains("delegated result to you"), "{}", tool.name);
-            assert!(!text.contains("workspace_finish"), "{}", tool.name);
-            assert!(!text.contains("to collect it"), "{}", tool.name);
-            assert!(!text.contains("before finalizing"), "{}", tool.name);
-            assert!(!text.contains("first version"), "{}", tool.name);
+            assert!(!text.contains("invocation"), "{}", tool.id);
+            assert!(!text.contains("parent Agent"), "{}", tool.id);
+            assert!(!text.contains("child Agent"), "{}", tool.id);
+            assert!(!text.contains("This Agent"), "{}", tool.id);
+            assert!(!text.contains("active control"), "{}", tool.id);
+            assert!(!text.contains("active owner"), "{}", tool.id);
+            assert!(!text.contains("delegated result to you"), "{}", tool.id);
+            assert!(!text.contains("workspace_finish"), "{}", tool.id);
+            assert!(!text.contains("to collect it"), "{}", tool.id);
+            assert!(!text.contains("before finalizing"), "{}", tool.id);
+            assert!(!text.contains("first version"), "{}", tool.id);
         }
     }
 

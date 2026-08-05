@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::errors::DomainError;
-use crate::models::tool::{ToolChoice, ToolInvocation};
+use crate::models::tool::{ToolChoice, ToolId, ToolInvocation};
 
 pub mod plan;
 pub mod profile;
@@ -245,34 +245,19 @@ pub enum AgentRunEventLevel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentToolSpec {
-    pub name: String,
-    pub model_name: String,
-    pub title: String,
-    pub description: String,
-    pub input_schema: Value,
+pub struct AgentModelTool {
+    pub tool_id: ToolId,
+    pub model_alias: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_schema: Option<Value>,
-    #[serde(default)]
-    pub annotations: Value,
-    pub source: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: Value,
-    #[serde(default)]
-    pub provider_metadata: Value,
+    pub description: Option<String>,
+    pub input_schema: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentToolResult {
     pub call_id: String,
-    pub name: String,
+    pub tool_id: ToolId,
     pub content: String,
     #[serde(default)]
     pub structured: Value,
@@ -340,7 +325,7 @@ pub struct AgentModelMessage {
 pub struct AgentModelRequest {
     pub payload: Map<String, Value>,
     pub messages: Vec<AgentModelMessage>,
-    pub tools: Vec<AgentToolSpec>,
+    pub tools: Vec<AgentModelTool>,
     pub tool_choice: ToolChoice,
     #[serde(default)]
     pub provider_state: Value,

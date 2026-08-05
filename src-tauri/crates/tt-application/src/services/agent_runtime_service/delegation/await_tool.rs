@@ -13,9 +13,9 @@ use crate::services::agent_runtime_service::{
 };
 use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
 use tt_domain::models::agent::{
-    AgentRunEventLevel, AgentTaskRecord, AgentTaskStatus, AgentToolCall, AgentToolResult,
-    WorkspacePath,
+    AgentRunEventLevel, AgentTaskRecord, AgentTaskStatus, AgentToolResult, WorkspacePath,
 };
+use tt_domain::models::tool::ToolInvocation;
 
 const DEFAULT_AGENT_AWAIT_TIMEOUT_MS: u64 = 120_000;
 const MAX_AGENT_AWAIT_TIMEOUT_MS: u64 = 300_000;
@@ -67,7 +67,7 @@ impl AgentRuntimeService {
     pub(in crate::services::agent_runtime_service) async fn dispatch_agent_await_tool(
         &self,
         prepared: &PreparedInvocation,
-        call: &AgentToolCall,
+        call: &ToolInvocation,
         committed_count: usize,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
@@ -203,8 +203,8 @@ impl AgentRuntimeService {
 
         Ok(AgentToolDispatchOutcome {
             result: AgentToolResult {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
+                call_id: call.call_id.clone(),
+                tool_id: call.tool_id.clone(),
                 content,
                 structured,
                 is_error: false,

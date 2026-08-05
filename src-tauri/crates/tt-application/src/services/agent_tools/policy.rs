@@ -4,7 +4,7 @@ use super::{
 };
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentToolSpec};
+use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
 use tt_domain::models::tool::{
     InvocationToolSnapshot, ToolBinding, ToolId, ToolSnapshotId, ToolTurnContract,
 };
@@ -61,17 +61,17 @@ fn materialize_binding(
     if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
         registry.apply_return_mode_context(&mut descriptor, profile)?;
     }
-    let alias = registry.model_alias(&tool_id)?.to_string();
+    let alias = name.replace('.', "_");
     let max_calls = profile.tools.max_calls_per_tool.get(name).copied();
     ToolBinding::new(descriptor, alias, max_calls).map_err(Into::into)
 }
 
-pub(crate) fn project_agent_tool_specs(
+pub(crate) fn project_agent_model_tools(
     snapshot: &InvocationToolSnapshot,
     turn: &ToolTurnContract,
-) -> Result<Vec<AgentToolSpec>, ApplicationError> {
+) -> Result<Vec<AgentModelTool>, ApplicationError> {
     if turn.snapshot_id() != snapshot.id() {
-        return Err(ApplicationError::ValidationError(format!(
+        return Err(ApplicationError::InternalError(format!(
             "tool.turn_snapshot_mismatch: turn references snapshot `{}` but `{}` was supplied",
             turn.snapshot_id(),
             snapshot.id()
@@ -82,32 +82,17 @@ pub(crate) fn project_agent_tool_specs(
         .iter()
         .map(|tool_id| {
             let binding = snapshot.binding(tool_id).ok_or_else(|| {
-                ApplicationError::ValidationError(format!(
+                ApplicationError::InternalError(format!(
                     "tool.turn_tool_not_in_snapshot: tool `{tool_id}` is not in snapshot `{}`",
                     snapshot.id()
                 ))
             })?;
             let descriptor = binding.descriptor();
-            let title = descriptor.title.clone().ok_or_else(|| {
-                ApplicationError::ValidationError(format!(
-                    "agent.tool_title_required: builtin tool `{tool_id}` has no title"
-                ))
-            })?;
-            let description = descriptor.description.clone().ok_or_else(|| {
-                ApplicationError::ValidationError(format!(
-                    "agent.tool_description_required: builtin tool `{tool_id}` has no description"
-                ))
-            })?;
-
-            Ok(AgentToolSpec {
-                name: tool_id.native_name().to_string(),
-                model_name: binding.model_alias().to_string(),
-                title,
-                description,
+            Ok(AgentModelTool {
+                tool_id: tool_id.clone(),
+                model_alias: binding.model_alias().to_string(),
+                description: descriptor.description.clone(),
                 input_schema: descriptor.input_schema.clone(),
-                output_schema: descriptor.output_schema.clone(),
-                annotations: descriptor.annotations.clone(),
-                source: tool_id.provider_id().to_string(),
             })
         })
         .collect()

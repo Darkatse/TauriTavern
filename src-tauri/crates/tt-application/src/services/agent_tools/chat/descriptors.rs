@@ -1,17 +1,13 @@
 use serde_json::json;
 
 use super::{CHAT_READ_MESSAGES, CHAT_SEARCH};
-use tt_domain::models::agent::AgentToolSpec;
+use tt_domain::models::tool::{ToolDescriptor, ToolId};
 
-const MODEL_CHAT_READ_MESSAGES: &str = "chat_read_messages";
-const MODEL_CHAT_SEARCH: &str = "chat_search";
-
-pub(in crate::services::agent_tools) fn chat_read_messages_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: CHAT_READ_MESSAGES.to_string(),
-        model_name: MODEL_CHAT_READ_MESSAGES.to_string(),
-        title: "Chat Read Messages".to_string(),
-        description: "Read selected messages from the current chat by 0-based message index. Use chat_search first when you do not know the message index. For long messages, set start_char and max_chars on that message.".to_string(),
+pub(in crate::services::agent_tools) fn chat_read_messages_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(CHAT_READ_MESSAGES).expect("builtin tool name must be valid"),
+        title: Some("Chat Read Messages".to_string()),
+        description: Some("Read selected messages from the current chat by 0-based message index. Use chat_search first when you do not know the message index. For long messages, set start_char and max_chars on that message.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -45,16 +41,14 @@ pub(in crate::services::agent_tools) fn chat_read_messages_spec() -> AgentToolSp
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true, "sourceKind": "chat" }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn chat_search_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: CHAT_SEARCH.to_string(),
-        model_name: MODEL_CHAT_SEARCH.to_string(),
-        title: "Chat Search".to_string(),
-        description: "Search messages in the current chat. Only query is required. Results return message indexes and snippets; call chat_read_messages to read exact messages or ranges.".to_string(),
+pub(in crate::services::agent_tools) fn chat_search_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(CHAT_SEARCH).expect("builtin tool name must be valid"),
+        title: Some("Chat Search".to_string()),
+        description: Some("Search messages in the current chat. Only query is required. Results return message indexes and snippets; call chat_read_messages to read exact messages or ranges.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -89,6 +83,5 @@ pub(in crate::services::agent_tools) fn chat_search_spec() -> AgentToolSpec {
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true, "sourceKind": "chat" }),
-        source: "builtin".to_string(),
     }
 }

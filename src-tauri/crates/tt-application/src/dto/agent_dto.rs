@@ -8,8 +8,9 @@ use tt_domain::models::agent::profile::{
 use tt_domain::models::agent::{
     AgentChatRef, AgentDelegationContinuation, AgentInvocationExitPolicy, AgentInvocationKind,
     AgentInvocationStatus, AgentRunEvent, AgentRunPresentation, AgentRunSkillScopeRefs,
-    AgentRunStatus, AgentTaskStatus, AgentToolSpec,
+    AgentRunStatus, AgentTaskStatus,
 };
+use tt_domain::models::tool::ToolId;
 use tt_ports::repositories::agent_profile_storage_health_repository::{
     AgentProfileStorageIssue, AgentProfileStorageRepairAction,
 };
@@ -231,8 +232,21 @@ pub struct AgentRepairProfileFileDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentListToolSpecsResultDto {
-    pub tools: Vec<AgentToolSpec>,
+pub struct AgentListToolsResultDto {
+    pub tools: Vec<AgentToolCatalogItemDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentToolCatalogItemDto {
+    pub name: String,
+    pub title: String,
+    pub description: String,
+    pub input_schema: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    pub annotations: Value,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -641,8 +655,9 @@ pub struct AgentModelTurnNarrationDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentModelTurnToolCallDto {
     pub call_id: String,
+    pub tool_id: ToolId,
     pub name: String,
-    pub model_name: Option<String>,
+    pub model_alias: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -8,9 +8,10 @@ use super::super::session::AgentToolSession;
 use super::list::skill_is_visible;
 use crate::errors::ApplicationError;
 use crate::services::skill_service::SkillService;
+use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult};
 use tt_domain::models::skill::{SkillSearchHit, SkillSearchRequest};
+use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 
 use super::super::structured::{TextMetricsPayload, structured_value};
@@ -49,7 +50,7 @@ struct SkillSearchHitStructured<'a> {
 
 pub(in crate::services::agent_tools) async fn search(
     skill_service: &SkillService,
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     session: &mut AgentToolSession,
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
@@ -226,8 +227,8 @@ pub(in crate::services::agent_tools) async fn search(
     });
     Ok((
         AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content,
             structured,
             is_error: false,

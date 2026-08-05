@@ -135,10 +135,9 @@ MCP prompt 可以成为 PromptComponent，但不能覆盖 TauriTavern preset pol
 Agent 看到的是：
 
 ```text
-mcp.<server>.<tool> -> ToolRegistry ToolSpec
-mcp resource        -> WorkspaceResource / ContextFrame
-mcp prompt          -> PromptComponent
+mcp/<registration-id>:<native-name> -> ToolCatalog contribution + snapshot binding
+mcp resource                         -> WorkspaceResource / ContextFrame
+mcp prompt                           -> PromptComponent
 ```
 
 Agent 不直接操作 MCP config。
-

@@ -8,7 +8,8 @@ use super::policy::workspace_access_policy;
 use super::render::{format_lines_with_numbers, split_lines_for_display};
 use super::{MAX_PARTIAL_READ_CHARS, MAX_READ_BYTES, MAX_READ_LINES};
 use crate::errors::ApplicationError;
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult};
+use tt_domain::models::agent::AgentToolResult;
+use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 
@@ -32,7 +33,7 @@ struct WorkspaceReadFileStructured<'a> {
 pub(in crate::services::agent_tools) async fn read_file(
     workspace_repository: &dyn WorkspaceRepository,
     run_id: &str,
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     session: &mut AgentToolSession,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = workspace_access_policy(workspace_repository, run_id).await?;
@@ -278,8 +279,8 @@ pub(in crate::services::agent_tools) async fn read_file(
 
     Ok((
         AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content,
             structured: structured_value(WorkspaceReadFileStructured {
                 path: file.path.as_str(),
@@ -304,7 +305,7 @@ pub(in crate::services::agent_tools) async fn read_file(
 }
 
 fn read_char_range(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     session: &mut AgentToolSession,
     file: tt_ports::repositories::workspace_repository::WorkspaceFile,
     start_char: usize,
@@ -360,8 +361,8 @@ fn read_char_range(
 
     Ok((
         AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content,
             structured: structured_value(WorkspaceReadFileStructured {
                 path: file.path.as_str(),

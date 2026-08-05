@@ -39,7 +39,7 @@ MCP / Tool Direct Call
   非 Agent 模式下也可显式调用 MCP 或工具，但不拥有 Agent Run
 ```
 
-三条路径可以共享 LLM gateway、tool registry、MCP client、chat repository、只读历史查询和 tokenization service，但不能互相污染。
+三条路径可以共享 LLM gateway、Tool Catalog/control-plane primitives、MCP client、chat repository、只读历史查询和 tokenization service，但不能互相污染。
 
 ## 2. Ground of Truth
 
@@ -239,7 +239,7 @@ src-tauri/
 
 - `presentation` 只做 DTO 校验、权限/通道参数拆解、调用 application service、错误映射。
 - `crates/tt-application/src/services/agent_runtime` 是编排中心，但它不直接操作文件系统、不直接发 HTTP、不直接管理 MCP subprocess。
-- `domain` 定义纯模型与 repository/tool/gateway trait，不依赖 Tauri、tokio process、WebView、HTTP client。
+- `tt-domain` 定义纯模型与纯规则；repository/gateway/runtime trait 位于 `tt-ports`。两者都不依赖 Tauri、tokio process、WebView 或 HTTP client implementation。
 - `infrastructure` 实现文件存储、MCP client、diff、外部 API 适配。
 - 新服务必须在 `composition::build_services()` 装配，并挂入 `AppState`，与现有服务生命周期一致。
 
@@ -304,7 +304,7 @@ Gateway 代码已拆成 `agent_model_gateway/` 模块目录：`mod.rs` 保留 tr
 - 派发 tool call。
 - 把 tool result 写入 journal 与 context store，不写入 chat message。
 
-当前 A4-Core 以 domain types + application pure compiler + invocation-local Request Gate 落地 builtin Agent vertical slice，没有为了单一 registry/dispatcher 新增 service trait、factory 或 router。Approval 与多 executor router 等到出现真实 consumer 时再落地。
+当前 builtin Agent vertical slice 已通过 domain types、application pure compiler 与 invocation-local Request Gate 落地，没有为了单一 registry/dispatcher 新增 service trait、factory 或 router。Approval 与多 executor router 等到出现真实 consumer 时再落地。
 
 详见 `docs/Agent/ToolSystem.md`。
 

@@ -7,7 +7,8 @@ use super::args::{
 use super::policy::workspace_access_policy;
 use crate::errors::ApplicationError;
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult};
+use tt_domain::models::agent::AgentToolResult;
+use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
 
@@ -29,7 +30,7 @@ struct WorkspaceApplyPatchStructured<'a> {
 pub(in crate::services::agent_tools) async fn apply_patch(
     workspace_repository: &dyn WorkspaceRepository,
     run_id: &str,
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     session: &mut AgentToolSession,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = workspace_access_policy(workspace_repository, run_id).await?;
@@ -239,8 +240,8 @@ pub(in crate::services::agent_tools) async fn apply_patch(
     let metrics = TextMetrics::from_text(&file.text);
 
     let result = AgentToolResult {
-        call_id: call.id.clone(),
-        name: call.name.clone(),
+        call_id: call.call_id.clone(),
+        tool_id: call.tool_id.clone(),
         content: format!(
             "Patched {} with {} replacement(s); file now has {} chars / {} words.",
             file.path.as_str(),
@@ -281,7 +282,7 @@ fn patch_not_unique_message(matches: usize, require_full_read: bool) -> String {
 }
 
 fn patch_conflict_error(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     kind: WorkspaceWriteConflictKind,
     require_full_read: bool,
 ) -> AgentToolResult {

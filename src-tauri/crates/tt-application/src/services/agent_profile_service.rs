@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use tt_domain::models::agent::AgentToolSpec;
 use tt_domain::models::agent::profile::{AgentProfileId, AgentProfileSummary};
+use tt_domain::models::tool::ToolCatalog;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::{
     AgentProfileStorageHealthRepository, AgentProfileStorageIssue,
@@ -38,7 +38,7 @@ pub struct AgentProfileService {
 
 pub struct AgentProfileResolveInput<'a> {
     pub profile_id: Option<&'a str>,
-    pub known_tools: &'a [AgentToolSpec],
+    pub tool_catalog: &'a ToolCatalog,
 }
 
 #[derive(Debug, Clone, Default)]

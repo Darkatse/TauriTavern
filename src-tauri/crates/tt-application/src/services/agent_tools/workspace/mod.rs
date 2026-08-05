@@ -1,13 +1,13 @@
 mod apply_patch;
 mod args;
 mod commit;
+mod descriptors;
 mod finish;
 mod list_files;
 mod policy;
 mod read_file;
 mod render;
 mod search_files;
-mod specs;
 mod write_file;
 
 #[cfg(test)]
@@ -15,15 +15,15 @@ mod tests;
 
 pub(super) use self::apply_patch::apply_patch;
 pub(super) use self::commit::commit;
+pub(super) use self::descriptors::{
+    workspace_apply_patch_descriptor, workspace_commit_descriptor, workspace_finish_descriptor,
+    workspace_list_files_descriptor, workspace_read_file_descriptor,
+    workspace_search_files_descriptor, workspace_write_file_descriptor,
+};
 pub(super) use self::finish::finish;
 pub(super) use self::list_files::list_files;
 pub(super) use self::read_file::read_file;
 pub(super) use self::search_files::search_files;
-pub(super) use self::specs::{
-    workspace_apply_patch_spec, workspace_commit_spec, workspace_finish_spec,
-    workspace_list_files_spec, workspace_read_file_spec, workspace_search_files_spec,
-    workspace_write_file_spec,
-};
 pub(super) use self::write_file::write_file;
 
 pub(super) const WORKSPACE_LIST_FILES: &str = "workspace.list_files";

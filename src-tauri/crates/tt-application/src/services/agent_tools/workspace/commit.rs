@@ -7,7 +7,8 @@ use super::args::{
 use super::policy::workspace_access_policy;
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentChatCommitMode, AgentToolCall, AgentToolResult};
+use tt_domain::models::agent::{AgentChatCommitMode, AgentToolResult};
+use tt_domain::models::tool::ToolInvocation;
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 
 use super::super::dispatcher::AgentToolEffect;
@@ -24,7 +25,7 @@ struct WorkspaceCommitStructured<'a> {
 pub(in crate::services::agent_tools) async fn commit(
     workspace_repository: &dyn WorkspaceRepository,
     run_id: &str,
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = workspace_access_policy(workspace_repository, run_id).await?;
@@ -60,8 +61,8 @@ pub(in crate::services::agent_tools) async fn commit(
 
     Ok((
         AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content: format!(
                 "Requested chat commit of {} with mode {:?}.",
                 path.as_str(),

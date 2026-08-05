@@ -1,9 +1,9 @@
 use crate::errors::ApplicationError;
-use tt_domain::models::agent::AgentToolSpec;
 use tt_domain::models::agent::profile::{
     AgentProfileDefinition, AgentProfileId, AgentProfileSourceTrace, DEFAULT_AGENT_PROFILE_ID,
     ResolvedAgentProfile,
 };
+use tt_domain::models::tool::ToolCatalog;
 
 use super::defaults::default_writer_profile;
 use super::output_policy::resolve_output_policy;
@@ -25,7 +25,7 @@ impl AgentProfileService {
         self.resolve_definition(
             definition,
             source,
-            input.known_tools,
+            input.tool_catalog,
             AgentProfileExternalReferencePolicy::Strict,
         )
         .await
@@ -40,7 +40,7 @@ impl AgentProfileService {
         self.resolve_definition(
             definition,
             source,
-            input.known_tools,
+            input.tool_catalog,
             AgentProfileExternalReferencePolicy::AllowDangling,
         )
         .await
@@ -48,7 +48,7 @@ impl AgentProfileService {
 
     pub async fn list_resolved_profiles_for_discovery(
         &self,
-        known_tools: &[AgentToolSpec],
+        tool_catalog: &ToolCatalog,
     ) -> Result<Vec<ResolvedAgentProfile>, ApplicationError> {
         let summaries = self.list_profiles().await?.profiles;
         let mut profiles = Vec::with_capacity(summaries.len());
@@ -56,7 +56,7 @@ impl AgentProfileService {
             match self
                 .resolve_profile(AgentProfileResolveInput {
                     profile_id: Some(summary.id.as_str()),
-                    known_tools,
+                    tool_catalog,
                 })
                 .await
             {
@@ -99,7 +99,7 @@ impl AgentProfileService {
         &self,
         mut definition: AgentProfileDefinition,
         source: String,
-        known_tools: &[AgentToolSpec],
+        tool_catalog: &ToolCatalog,
         external_reference_policy: AgentProfileExternalReferencePolicy,
     ) -> Result<ResolvedAgentProfile, ApplicationError> {
         migrate_profile_schema(&mut definition)?;
@@ -114,7 +114,7 @@ impl AgentProfileService {
         normalize_context_policy(&mut definition.context)?;
         validate_instructions(&definition.instructions)?;
         validate_plan_policy(&definition.plan)?;
-        validate_tool_policy(&definition.tools, known_tools)?;
+        validate_tool_policy(&definition.tools, tool_catalog)?;
         validate_delegation_policy(&definition.delegation, &definition.tools)?;
         validate_run_policy(&definition.run, &definition.delegation, &definition.tools)?;
         validate_skill_policy(&definition.skills)?;

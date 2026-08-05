@@ -108,7 +108,7 @@ summaries/<workspace-key>-result.md
 
 ## 4. Tool Surface
 
-当前模型可见工具位于 `src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs`：
+当前 canonical 工具声明位于 `src-tauri/crates/tt-application/src/services/agent_tools/agent/descriptors.rs`：
 
 | Canonical | Model alias | 可见范围 | 语义 |
 | --- | --- | --- | --- |
@@ -264,7 +264,7 @@ src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_executio
 Tool registry / dispatcher：
 
 ```text
-src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs
+src-tauri/crates/tt-application/src/services/agent_tools/agent/descriptors.rs
 src-tauri/crates/tt-application/src/services/agent_tools/registry.rs
 src-tauri/crates/tt-application/src/services/agent_tools/dispatcher.rs
 ```

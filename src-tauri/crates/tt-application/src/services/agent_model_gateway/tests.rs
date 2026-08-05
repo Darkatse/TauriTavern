@@ -11,21 +11,43 @@ use crate::services::chat_completion_service::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
 };
 use tt_domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolResult,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
+    AgentToolResult,
 };
 use tt_domain::models::tool::{ToolChoice, ToolId, ToolInvocation, ToolProviderId};
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionNormalizationReport, ChatCompletionSource,
 };
 
+fn model_tools(registry: &BuiltinAgentToolRegistry) -> Vec<AgentModelTool> {
+    registry
+        .catalog()
+        .iter()
+        .map(|descriptor| AgentModelTool {
+            tool_id: descriptor.id.clone(),
+            model_alias: descriptor.id.native_name().replace('.', "_"),
+            description: descriptor.description.clone(),
+            input_schema: descriptor.input_schema.clone(),
+        })
+        .collect()
+}
+
+fn model_tool(registry: &BuiltinAgentToolRegistry, name: &str) -> AgentModelTool {
+    model_tools(registry)
+        .into_iter()
+        .find(|tool| tool.tool_id.native_name() == name)
+        .expect("builtin model tool")
+}
+
 #[test]
 fn decodes_tool_call_to_canonical_identity() {
     let registry = BuiltinAgentToolRegistry::all();
-    let mut write = registry
-        .spec_by_name("workspace.write_file")
-        .expect("write tool")
-        .clone();
-    write.source = "mcp/registration-1".to_string();
+    let mut write = model_tool(&registry, "workspace.write_file");
+    write.tool_id = ToolId::new(
+        &ToolProviderId::parse("mcp/registration-1").unwrap(),
+        "workspace.write_file",
+    )
+    .unwrap();
     let response = json!({
         "choices": [{
             "message": {
@@ -63,10 +85,7 @@ fn decodes_tool_call_to_canonical_identity() {
 #[test]
 fn rejects_tool_names_outside_the_current_turn_aliases() {
     let registry = BuiltinAgentToolRegistry::all();
-    let write = registry
-        .spec_by_name("workspace.write_file")
-        .expect("write tool")
-        .clone();
+    let write = model_tool(&registry, "workspace.write_file");
 
     for (raw_name, tools) in [
         ("workspace_write_file", Vec::new()),
@@ -103,7 +122,7 @@ fn rejects_tool_call_without_id() {
         }]
     });
 
-    let error = decode_chat_completion_response(response, registry.specs()).unwrap_err();
+    let error = decode_chat_completion_response(response, &model_tools(&registry)).unwrap_err();
     assert!(error.to_string().contains("tool_call_id is required"));
 }
 
@@ -130,7 +149,7 @@ fn rejects_normalizer_synthetic_tool_call_id() {
         normalization_report: report,
     };
 
-    let error = decode_chat_completion_exchange(exchange, registry.specs()).unwrap_err();
+    let error = decode_chat_completion_exchange(exchange, &model_tools(&registry)).unwrap_err();
     assert!(
         error
             .to_string()
@@ -176,10 +195,7 @@ fn built_in_bedrock_claude_uses_claude_adapter() {
 #[test]
 fn encodes_typed_tool_choice_against_advertised_tools() {
     let registry = BuiltinAgentToolRegistry::all();
-    let finish = registry
-        .spec_by_name("workspace.finish")
-        .expect("finish tool")
-        .clone();
+    let finish = model_tool(&registry, "workspace.finish");
     let cases = [
         (ToolChoice::None, json!("none")),
         (ToolChoice::Auto, json!("auto")),
@@ -188,7 +204,7 @@ fn encodes_typed_tool_choice_against_advertised_tools() {
             ToolChoice::Specific(ToolId::builtin("workspace.finish").unwrap()),
             json!({
                 "type": "function",
-                "function": { "name": finish.model_name }
+                "function": { "name": finish.model_alias }
             }),
         ),
     ];
@@ -207,12 +223,7 @@ fn encodes_typed_tool_choice_against_advertised_tools() {
 fn rejects_tool_choice_outside_the_advertised_set() {
     let registry = BuiltinAgentToolRegistry::all();
     let mut request = basic_request("openai", None, Vec::new());
-    request.tools = vec![
-        registry
-            .spec_by_name("workspace.finish")
-            .expect("finish tool")
-            .clone(),
-    ];
+    request.tools = vec![model_tool(&registry, "workspace.finish")];
 
     request.tool_choice = ToolChoice::Specific(ToolId::builtin("workspace.write_file").unwrap());
     let error =
@@ -232,6 +243,49 @@ fn rejects_tool_choice_outside_the_advertised_set() {
             .to_string()
             .contains("agent.tool_choice_tool_not_advertised")
     );
+}
+
+#[test]
+fn encodes_tool_result_alias_from_canonical_identity() {
+    let builtin_id = ToolId::builtin("search").unwrap();
+    let mcp_id = ToolId::new(
+        &ToolProviderId::parse("mcp/registration-1").unwrap(),
+        "search",
+    )
+    .unwrap();
+    let mut request = basic_request("openai", None, Vec::new());
+    request.tools = vec![
+        AgentModelTool {
+            tool_id: builtin_id,
+            model_alias: "builtin_search".to_string(),
+            description: None,
+            input_schema: json!({ "type": "object" }),
+        },
+        AgentModelTool {
+            tool_id: mcp_id.clone(),
+            model_alias: "mcp_search".to_string(),
+            description: None,
+            input_schema: json!({ "type": "object" }),
+        },
+    ];
+    request.messages = vec![AgentModelMessage {
+        role: AgentModelRole::Tool,
+        parts: vec![AgentModelContentPart::ToolResult {
+            result: AgentToolResult {
+                call_id: "call_mcp".to_string(),
+                tool_id: mcp_id,
+                content: "done".to_string(),
+                structured: Value::Null,
+                is_error: false,
+                error_code: None,
+                resource_refs: Vec::new(),
+            },
+        }],
+        provider_metadata: Value::Null,
+    }];
+
+    let dto = encode_chat_completion_request(&request).unwrap();
+    assert_eq!(dto.payload["messages"][0]["name"], "mcp_search");
 }
 
 #[test]
@@ -383,7 +437,7 @@ fn gemini_schema_sanitizer_projects_nested_objects_to_agent_friendly_schema() {
 #[test]
 fn gemini_builtin_tool_schemas_do_not_emit_nested_required() {
     let registry = BuiltinAgentToolRegistry::all();
-    let tools = render_openai_tools(registry.specs(), AgentProviderAdapter::Gemini);
+    let tools = render_openai_tools(&model_tools(&registry), AgentProviderAdapter::Gemini);
     for tool in &tools {
         let name = tool["function"]["name"].as_str().unwrap_or("<unknown>");
         assert_gemini_required_shape(
@@ -464,7 +518,7 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
             },
             tool_result_message("call_1", "workspace.write_file", "ok"),
         ],
-        tools: registry.specs().to_vec(),
+        tools: model_tools(&registry),
         tool_choice: ToolChoice::Auto,
         provider_state: json!({
             "sessionId": "run_1",
@@ -495,7 +549,7 @@ fn openai_responses_continuation_requires_valid_cursor() {
         Some("openai_responses"),
         vec![text_message(AgentModelRole::User, "hi")],
     );
-    request.tools = registry.specs().to_vec();
+    request.tools = model_tools(&registry);
     request.provider_state = json!({
         "sessionId": "run_1",
         "previousResponseId": "resp_1"
@@ -540,7 +594,7 @@ fn same_provider_native_metadata_loss_fails_for_native_formats() {
 
     let registry = BuiltinAgentToolRegistry::all();
     let raw = response_with_tool_call_without_native();
-    let response = decode_chat_completion_response(raw, registry.specs()).unwrap();
+    let response = decode_chat_completion_response(raw, &model_tools(&registry)).unwrap();
 
     for (source, adapter, provider) in cases {
         let error = next_provider_state(
@@ -566,7 +620,7 @@ fn provider_state_requires_session_id() {
         "model": "test",
         "choices": [{ "message": { "role": "assistant", "content": "hello" } }]
     });
-    let response = decode_chat_completion_response(raw, registry.specs()).unwrap();
+    let response = decode_chat_completion_response(raw, &model_tools(&registry)).unwrap();
     let mut request = provider_state_test_request("run_1");
     request.provider_state = Value::Null;
 
@@ -622,7 +676,7 @@ fn claude_provider_state_records_native_continuation() {
         normalization_report: ChatCompletionNormalizationReport::default(),
     };
 
-    let response = decode_chat_completion_exchange(exchange, registry.specs()).unwrap();
+    let response = decode_chat_completion_exchange(exchange, &model_tools(&registry)).unwrap();
     let state = next_provider_state(
         &request,
         ChatCompletionSource::Claude,
@@ -680,7 +734,7 @@ fn gemini_provider_state_records_native_continuation() {
         normalization_report: ChatCompletionNormalizationReport::default(),
     };
 
-    let response = decode_chat_completion_exchange(exchange, registry.specs()).unwrap();
+    let response = decode_chat_completion_exchange(exchange, &model_tools(&registry)).unwrap();
     let state = next_provider_state(
         &request,
         ChatCompletionSource::Makersuite,
@@ -771,7 +825,7 @@ fn assert_gemini_required_shape(schema: &Value, root: bool, context: &str) {
 
 fn provider_state_test_request(session_id: &str) -> AgentModelRequest {
     let mut request = basic_request("claude", None, Vec::new());
-    request.tools = BuiltinAgentToolRegistry::all().specs().to_vec();
+    request.tools = model_tools(&BuiltinAgentToolRegistry::all());
     request.provider_state = json!({ "sessionId": session_id });
     request
 }
@@ -841,7 +895,7 @@ fn tool_result_message(call_id: &str, name: &str, content: &str) -> AgentModelMe
         parts: vec![AgentModelContentPart::ToolResult {
             result: AgentToolResult {
                 call_id: call_id.to_string(),
-                name: name.to_string(),
+                tool_id: ToolId::builtin(name).unwrap(),
                 content: content.to_string(),
                 structured: Value::Null,
                 is_error: false,

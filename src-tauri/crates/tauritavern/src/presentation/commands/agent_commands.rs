@@ -12,10 +12,10 @@ use tt_application::dto::agent_dto::{
     AgentApplyCurrentModelConnectionSnapshotDto, AgentApplyCurrentModelConnectionSnapshotResultDto,
     AgentApplyRunPruneDto, AgentBuildCurrentModelConnectionSnapshotDto,
     AgentBuildCurrentModelConnectionSnapshotResultDto, AgentCancelRunDto,
-    AgentListProfilesResultDto, AgentListRunsDto, AgentListRunsResultDto,
-    AgentListToolSpecsResultDto, AgentLoadProfileResultDto, AgentModelTurnDisplayDto,
-    AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto,
-    AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto, AgentPruneChatPersistentStatesDto,
+    AgentListProfilesResultDto, AgentListRunsDto, AgentListRunsResultDto, AgentListToolsResultDto,
+    AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentPlanRunPruneDto,
+    AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto, AgentProfileIdDto,
+    AgentPromptAssemblyBrokerRequestDto, AgentPruneChatPersistentStatesDto,
     AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto, AgentReadEventsResultDto,
     AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto, AgentReadWorkspaceFileDto,
     AgentRepairProfileFileDto, AgentResolveChatCommitDto,
@@ -58,7 +58,7 @@ pub async fn prepare_agent_prompt_assembly(
         .prompt_assembly_service
         .resolve_profile(
             dto.profile_id.as_deref(),
-            app_state.services.agent_runtime_service.tool_specs(),
+            app_state.services.agent_runtime_service.tool_catalog(),
         )
         .await
         .map_err(map_command_error(
@@ -67,7 +67,7 @@ pub async fn prepare_agent_prompt_assembly(
     let visible_tools = app_state
         .services
         .agent_runtime_service
-        .visible_tool_specs(&profile)
+        .visible_model_tools(&profile)
         .map_err(map_command_error(
             "Failed to resolve agent prompt assembly tool surface",
         ))?;
@@ -141,18 +141,17 @@ pub async fn list_agent_profiles(
 }
 
 #[tauri::command]
-pub async fn list_agent_tool_specs(
+pub async fn list_agent_tools(
     app_state: State<'_, Arc<AppState>>,
-) -> Result<AgentListToolSpecsResultDto, CommandError> {
-    log_command("list_agent_tool_specs");
+) -> Result<AgentListToolsResultDto, CommandError> {
+    log_command("list_agent_tools");
 
-    Ok(AgentListToolSpecsResultDto {
-        tools: app_state
-            .services
-            .agent_runtime_service
-            .tool_specs()
-            .to_vec(),
-    })
+    let tools = app_state
+        .services
+        .agent_runtime_service
+        .tool_catalog_items()
+        .map_err(map_command_error("Failed to list agent tools"))?;
+    Ok(AgentListToolsResultDto { tools })
 }
 
 #[tauri::command]
@@ -201,7 +200,7 @@ pub async fn diagnose_agent_profile(
         .agent_profile_diagnostic_service
         .diagnose_profile(
             &dto.profile_id,
-            app_state.services.agent_runtime_service.tool_specs(),
+            app_state.services.agent_runtime_service.tool_catalog(),
         )
         .await
         .map_err(map_command_error("Failed to diagnose agent profile"))
@@ -214,15 +213,13 @@ pub async fn save_agent_profile(
 ) -> Result<(), CommandError> {
     log_command("save_agent_profile");
 
-    let known_tools = app_state
-        .services
-        .agent_runtime_service
-        .tool_specs()
-        .to_vec();
     app_state
         .services
         .agent_profile_service
-        .save_profile(dto.profile, &known_tools)
+        .save_profile(
+            dto.profile,
+            app_state.services.agent_runtime_service.tool_catalog(),
+        )
         .await
         .map_err(map_command_error("Failed to save agent profile"))
 }

@@ -14,7 +14,7 @@
 | [RunEventJournal.md](RunEventJournal.md) | Run Event、状态机、订阅、恢复、取消与审批 |
 | [ProfilesAndPreset.md](ProfilesAndPreset.md) | Agent Profile、Preset agent schema、ContextFrame、Plan Policy |
 | [PromptAssembly.md](PromptAssembly.md) | Agent 独立 Preset / 独立 Model、FrozenRunInputSnapshot 与前后端 prompt assembly 链路 |
-| [ToolSystem.md](ToolSystem.md) | ToolSpec、ToolResult、Tool Registry、Policy、审批与 Legacy ToolManager 边界 |
+| [ToolSystem.md](ToolSystem.md) | ToolId、Catalog、Snapshot、request projection、执行结果、Policy 与 Legacy ToolManager 边界 |
 | [SubAgent.md](SubAgent.md) | return-mode SubAgent、AgentInvocation / AgentTask、shared workspace 语义与开发定位 |
 | [Handoff.md](Handoff.md) | `agent.handoff` 接力流程、TransferControl task、Handoff invocation、prompt brief 与代码定位 |
 | [LlmGateway.md](LlmGateway.md) | provider-agnostic LLM gateway 与现有 `ChatCompletionService` 的复用边界 |
@@ -26,4 +26,4 @@
 
 实时开发进度不写在本目录；请更新 `docs/CurrentState/AgentFramework.md`。
 
-截至 2026-06-06，canonical model IR、provider native metadata 保真、invocation-scoped provider_state continuation、上下文只读工具、Skill 管理与读取、workspace 读改工具循环、前端 dryRun adapter、Agent Profile 基线、独立 Preset 与 `model.connectionRef + modelId` 组装链路、return-mode SubAgent MVP、run-scoped SubAgent scheduler 基线、`agent.handoff` foreground 接力已落地。当前真实能力边界以 `docs/CurrentState/AgentFramework.md`、`docs/CurrentState/AgentProviderState.md`、`docs/Agent/PromptAssembly.md`、`docs/Agent/SubAgent.md` 与 `docs/Agent/Handoff.md` 为准；MCP、diff/rollback、模型可见 task cancel、Plan Mode runtime 仍是后续设计。
+当前已落地 canonical model IR、provider native metadata 保真、invocation-scoped provider state、canonical Tool Control Plane、上下文与 workspace 工具循环、Agent Profile、独立 Preset/Model、return-mode SubAgent 和 foreground handoff。真实能力边界以 `docs/CurrentState/AgentFramework.md` 为准；专题文档只解释各自契约，不单独维护进度副本。

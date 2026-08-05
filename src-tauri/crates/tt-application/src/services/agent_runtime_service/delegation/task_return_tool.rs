@@ -14,16 +14,16 @@ use crate::services::agent_workspace_scope::{
 };
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
-    AgentInvocationExitPolicy, AgentRunEventLevel, AgentTaskRecord, AgentToolCall, AgentToolResult,
-    WorkspacePath,
+    AgentInvocationExitPolicy, AgentRunEventLevel, AgentTaskRecord, AgentToolResult, WorkspacePath,
 };
+use tt_domain::models::tool::ToolInvocation;
 
 impl AgentRuntimeService {
     pub(in crate::services::agent_runtime_service) async fn dispatch_task_return_tool(
         &self,
         run_id: &str,
         invocation_id: &str,
-        call: &AgentToolCall,
+        call: &ToolInvocation,
         exit_policy: AgentInvocationExitPolicy,
         profile: &ResolvedAgentProfile,
         is_last_call: bool,
@@ -166,8 +166,8 @@ impl AgentRuntimeService {
 
         Ok(AgentToolDispatchOutcome {
             result: AgentToolResult {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
+                call_id: call.call_id.clone(),
+                tool_id: call.tool_id.clone(),
                 content: format!(
                     "Returned {} result for delegated task {}.",
                     task_status_label(status),

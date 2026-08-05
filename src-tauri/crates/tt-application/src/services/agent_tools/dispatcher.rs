@@ -11,8 +11,9 @@ use crate::errors::ApplicationError;
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
-    AgentChatCommitMode, AgentToolCall, AgentToolResult, WorkspaceFileWriteMode, WorkspacePath,
+    AgentChatCommitMode, AgentToolResult, WorkspaceFileWriteMode, WorkspacePath,
 };
+use tt_domain::models::tool::{ToolId, ToolInvocation};
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
@@ -89,7 +90,7 @@ impl AgentToolDispatcher {
     pub(crate) async fn dispatch(
         &self,
         run_id: &str,
-        call: &AgentToolCall,
+        call: &ToolInvocation,
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
@@ -106,13 +107,13 @@ impl AgentToolDispatcher {
     pub(crate) async fn dispatch_with_model_workspace_repository(
         &self,
         run_id: &str,
-        call: &AgentToolCall,
+        call: &ToolInvocation,
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
         model_workspace_repository: &dyn WorkspaceRepository,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
-        let outcome = match call.name.as_str() {
+        let outcome = match builtin_tool_name(&call.tool_id)? {
             chat::CHAT_SEARCH => {
                 chat::search(
                     self.run_repository.as_ref(),
@@ -168,7 +169,7 @@ impl AgentToolDispatcher {
             workspace::WORKSPACE_FINISH => workspace::finish(call)?,
             other => {
                 return Err(ApplicationError::InternalError(format!(
-                    "tool.dispatch_handler_missing: admitted builtin tool `{other}` has no execution handler"
+                    "tool.dispatch_handler_missing: admitted builtin tool `builtin:{other}` has no execution handler"
                 )));
             }
         };
@@ -195,5 +196,33 @@ impl AgentToolDispatcher {
                 "agent.invalid_prompt_snapshot_file: failed to parse prompt snapshot JSON: {error}"
             ))
         })
+    }
+}
+
+fn builtin_tool_name(tool_id: &ToolId) -> Result<&str, ApplicationError> {
+    if tool_id.is_builtin() {
+        return Ok(tool_id.native_name());
+    }
+    Err(ApplicationError::InternalError(format!(
+        "tool.executor_unavailable: no executor is registered for tool `{tool_id}`"
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use tt_domain::models::tool::{ToolId, ToolProviderId};
+
+    use super::builtin_tool_name;
+
+    #[test]
+    fn builtin_dispatch_does_not_accept_external_tools_with_the_same_native_name() {
+        let external = ToolId::new(
+            &ToolProviderId::parse("mcp/registration-1").unwrap(),
+            "workspace.finish",
+        )
+        .unwrap();
+
+        let error = builtin_tool_name(&external).unwrap_err();
+        assert!(error.to_string().contains("tool.executor_unavailable"));
     }
 }

@@ -16,9 +16,9 @@ use crate::services::agent_tools::{
 };
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentToolCall, AgentToolResult, WorkspacePath,
+    AgentToolResult, WorkspacePath,
 };
-use tt_domain::models::tool::{ToolId, ToolInvocation};
+use tt_domain::models::tool::ToolInvocation;
 use tt_ports::repositories::workspace_repository::WorkspaceWriteGuard;
 
 const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
@@ -89,7 +89,7 @@ impl AgentRuntimeService {
                     run_id,
                     invocation_id,
                     round,
-                    &tool_invocation.tool_id,
+                    tool_invocation,
                     snapshot_id,
                     &outcome,
                 )
@@ -123,8 +123,7 @@ impl AgentRuntimeService {
             return Err(error);
         }
 
-        let agent_call = builtin_agent_tool_call(tool_invocation)?;
-        let call = &agent_call;
+        let call = tool_invocation;
         if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed {
             self.transition_status(run_id, AgentRunStatus::DispatchingTool)
                 .await?;
@@ -136,17 +135,18 @@ impl AgentRuntimeService {
             json!({
                 "round": round,
                 "invocationId": invocation_id,
-                "callId": call.id.as_str(),
+                "callId": call.call_id.as_str(),
                 "toolId": tool_invocation.tool_id.as_str(),
                 "snapshotId": snapshot_id,
-                "name": call.name.as_str(),
+                "name": tool_name,
             }),
         )
         .await?;
 
-        let dispatch_result = if call.name == AGENT_LIST {
+        let builtin_name = call.tool_id.is_builtin().then_some(tool_name);
+        let dispatch_result = if builtin_name == Some(AGENT_LIST) {
             self.dispatch_agent_list_tool(call, profile).await
-        } else if call.name == AGENT_DELEGATE {
+        } else if builtin_name == Some(AGENT_DELEGATE) {
             Box::pin(self.dispatch_agent_delegate_tool(
                 run_id,
                 invocation_id,
@@ -155,13 +155,13 @@ impl AgentRuntimeService {
                 cancel,
             ))
             .await
-        } else if call.name == AGENT_AWAIT {
+        } else if builtin_name == Some(AGENT_AWAIT) {
             self.dispatch_agent_await_tool(prepared, call, commit_ledger.len(), cancel)
                 .await
-        } else if call.name == AGENT_HANDOFF {
+        } else if builtin_name == Some(AGENT_HANDOFF) {
             self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile, is_last_call)
                 .await
-        } else if call.name == TASK_RETURN {
+        } else if builtin_name == Some(TASK_RETURN) {
             self.dispatch_task_return_tool(
                 run_id,
                 invocation_id,
@@ -191,6 +191,7 @@ impl AgentRuntimeService {
 
         match dispatch_result {
             Ok(outcome) => {
+                ensure_tool_result_identity(tool_invocation, &outcome.result)?;
                 let outcome = match outcome.effect.clone() {
                     AgentToolEffect::Finish => {
                         if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
@@ -242,7 +243,7 @@ impl AgentRuntimeService {
                     run_id,
                     invocation_id,
                     round,
-                    &tool_invocation.tool_id,
+                    tool_invocation,
                     snapshot_id,
                     &outcome,
                 )
@@ -257,10 +258,10 @@ impl AgentRuntimeService {
                     json!({
                     "round": round,
                     "invocationId": invocation_id,
-                    "callId": call.id.as_str(),
+                    "callId": call.call_id.as_str(),
                     "toolId": tool_invocation.tool_id.as_str(),
                     "snapshotId": snapshot_id,
-                    "name": call.name.as_str(),
+                    "name": tool_name,
                     "message": error.to_string(),
                     }),
                 )
@@ -275,11 +276,12 @@ impl AgentRuntimeService {
         run_id: &str,
         invocation_id: &str,
         round: usize,
-        tool_id: &ToolId,
+        invocation: &ToolInvocation,
         snapshot_id: &str,
         outcome: &AgentToolDispatchOutcome,
     ) -> Result<(), ApplicationError> {
-        self.store_tool_result(run_id, round, tool_id, &outcome.result)
+        ensure_tool_result_identity(invocation, &outcome.result)?;
+        self.store_tool_result(run_id, round, &outcome.result)
             .await?;
         self.event(
             run_id,
@@ -297,9 +299,9 @@ impl AgentRuntimeService {
                 "round": round,
                 "invocationId": invocation_id,
                 "callId": outcome.result.call_id.as_str(),
-                "toolId": tool_id.as_str(),
+                "toolId": outcome.result.tool_id.as_str(),
                 "snapshotId": snapshot_id,
-                "name": outcome.result.name.as_str(),
+                "name": outcome.result.tool_id.native_name(),
                 "isError": outcome.result.is_error,
                 "errorCode": outcome.result.error_code.as_deref(),
                 "message": outcome.result.is_error.then_some(outcome.result.content.as_str()),
@@ -315,7 +317,6 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
         round: usize,
-        tool_id: &ToolId,
         result: &AgentToolResult,
     ) -> Result<(), ApplicationError> {
         let path = WorkspacePath::parse(format!(
@@ -337,7 +338,7 @@ impl AgentRuntimeService {
             json!({
                 "round": round,
                 "callId": result.call_id.as_str(),
-                "toolId": tool_id.as_str(),
+                "toolId": result.tool_id.as_str(),
                 "path": path.as_str(),
             }),
         )
@@ -383,7 +384,7 @@ fn recoverable_tool_error(
     AgentToolDispatchOutcome {
         result: AgentToolResult {
             call_id: call.call_id.clone(),
-            name: call.tool_id.native_name().to_string(),
+            tool_id: call.tool_id.clone(),
             content: message.to_string(),
             structured: json!({
                 "error": {
@@ -400,18 +401,46 @@ fn recoverable_tool_error(
     }
 }
 
-fn builtin_agent_tool_call(invocation: &ToolInvocation) -> Result<AgentToolCall, ApplicationError> {
-    if !invocation.tool_id.is_builtin() {
-        return Err(ApplicationError::InternalError(format!(
-            "tool.executor_unavailable: no executor is registered for tool `{}`",
-            invocation.tool_id
-        )));
+fn ensure_tool_result_identity(
+    invocation: &ToolInvocation,
+    result: &AgentToolResult,
+) -> Result<(), ApplicationError> {
+    if result.call_id == invocation.call_id && result.tool_id == invocation.tool_id {
+        return Ok(());
     }
+    Err(ApplicationError::InternalError(format!(
+        "tool.result_identity_mismatch: invocation `{}` / `{}` produced result `{}` / `{}`",
+        invocation.call_id, invocation.tool_id, result.call_id, result.tool_id
+    )))
+}
 
-    Ok(AgentToolCall {
-        id: invocation.call_id.clone(),
-        name: invocation.tool_id.native_name().to_string(),
-        arguments: invocation.arguments.clone(),
-        provider_metadata: invocation.provider_metadata.clone(),
-    })
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+    use tt_domain::models::agent::AgentToolResult;
+    use tt_domain::models::tool::{ToolId, ToolInvocation};
+
+    use super::ensure_tool_result_identity;
+
+    #[test]
+    fn tool_result_identity_must_match_its_invocation() {
+        let invocation = ToolInvocation {
+            call_id: "call_1".to_string(),
+            tool_id: ToolId::builtin("workspace.finish").unwrap(),
+            arguments: Value::Null,
+            provider_metadata: Value::Null,
+        };
+        let result = AgentToolResult {
+            call_id: invocation.call_id.clone(),
+            tool_id: ToolId::builtin("workspace.commit").unwrap(),
+            content: String::new(),
+            structured: Value::Null,
+            is_error: false,
+            error_code: None,
+            resource_refs: Vec::new(),
+        };
+
+        let error = ensure_tool_result_identity(&invocation, &result).unwrap_err();
+        assert!(error.to_string().contains("tool.result_identity_mismatch"));
+    }
 }

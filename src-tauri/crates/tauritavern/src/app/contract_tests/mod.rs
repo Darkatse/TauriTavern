@@ -273,7 +273,7 @@ async fn resolve_contract_profile(
         .profile_service
         .resolve_profile(AgentProfileResolveInput {
             profile_id: None,
-            known_tools: registry.specs(),
+            tool_catalog: registry.catalog(),
         })
         .await
         .expect("resolve default profile")
@@ -627,7 +627,9 @@ fn tool_result_structured_values(request: &AgentModelRequest, name: &str) -> Vec
         .iter()
         .flat_map(|message| message.parts.iter())
         .filter_map(|part| match part {
-            AgentModelContentPart::ToolResult { result } if result.name == name => {
+            AgentModelContentPart::ToolResult { result }
+                if result.tool_id.is_builtin() && result.tool_id.native_name() == name =>
+            {
                 Some(result.structured.clone())
             }
             _ => None,

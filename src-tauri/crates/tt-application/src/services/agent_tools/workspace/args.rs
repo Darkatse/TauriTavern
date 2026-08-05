@@ -2,7 +2,8 @@ use serde_json::{Map, Value};
 
 use super::policy::WorkspaceAccessPolicy;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult, WorkspacePath};
+use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
+use tt_domain::models::tool::ToolInvocation;
 
 pub(super) use crate::services::agent_tools::common::{
     WORKSPACE_PATH_IS_DIRECTORY_CODE, object_args, optional_bool_arg, optional_usize_arg,
@@ -16,7 +17,7 @@ pub(super) struct WorkspaceToolError {
 }
 
 impl WorkspaceToolError {
-    pub(super) fn into_tool_result(self, call: &AgentToolCall) -> AgentToolResult {
+    pub(super) fn into_tool_result(self, call: &ToolInvocation) -> AgentToolResult {
         tool_error(call, self.code, &self.message)
     }
 }
@@ -26,7 +27,7 @@ impl WorkspaceToolError {
 /// recoverable model-facing tool errors instead of bubbling up as
 /// `agent.internal_error`.
 pub(super) fn classify_workspace_io_error(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     error: DomainError,
 ) -> Result<AgentToolResult, DomainError> {
     match error {

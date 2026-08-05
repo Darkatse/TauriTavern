@@ -4,7 +4,7 @@ use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use tt_domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolSpec,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
 };
 use tt_domain::models::tool::ToolChoice;
 
@@ -41,7 +41,7 @@ pub(super) fn request_from_prompt_snapshot(
 
 pub(super) fn prepare_agent_tool_request(
     mut request: ChatCompletionGenerateRequestDto,
-    tools: &[AgentToolSpec],
+    tools: &[AgentModelTool],
     tool_choice: ToolChoice,
     run_id: &str,
     invocation_id: &str,

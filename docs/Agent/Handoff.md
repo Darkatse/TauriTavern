@@ -42,10 +42,10 @@ finalizer verifies, commits, finish
 
 ## 3. 模型可见工具
 
-当前 `agent.handoff` ToolSpec 位于：
+当前 `agent.handoff` 的 canonical descriptor 位于：
 
 ```text
-src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs
+src-tauri/crates/tt-application/src/services/agent_tools/agent/descriptors.rs
 ```
 
 模型看到的是调用 Agent 视角的工具：
@@ -355,7 +355,7 @@ Timeline UI 不应只依赖当前分页内的 journal 事件推断 active chain�
 模型可见工具：
 
 ```text
-src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs
+src-tauri/crates/tt-application/src/services/agent_tools/agent/descriptors.rs
 src-tauri/crates/tt-application/src/services/agent_tools/agent/mod.rs
 src-tauri/crates/tt-application/src/services/agent_tools/registry.rs
 src-tauri/crates/tt-application/src/services/agent_tools/dispatcher.rs

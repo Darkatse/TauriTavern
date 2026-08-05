@@ -9,8 +9,9 @@ use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::profile_model_requires_configuration;
 use crate::services::agent_runtime_service::AgentRuntimeService;
 use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
+use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult};
+use tt_domain::models::tool::ToolInvocation;
 
 const DEFAULT_AGENT_LIST_LIMIT: usize = 8;
 const MAX_AGENT_LIST_LIMIT: usize = 20;
@@ -46,7 +47,7 @@ struct AgentListItem {
 impl AgentRuntimeService {
     pub(in crate::services::agent_runtime_service) async fn dispatch_agent_list_tool(
         &self,
-        call: &AgentToolCall,
+        call: &ToolInvocation,
         profile: &ResolvedAgentProfile,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
@@ -94,7 +95,7 @@ impl AgentRuntimeService {
 
         let profiles = self
             .profile_service
-            .list_resolved_profiles_for_discovery(self.tool_registry.specs())
+            .list_resolved_profiles_for_discovery(self.tool_registry.catalog())
             .await?;
         let mut agents = profiles
             .into_iter()
@@ -116,8 +117,8 @@ impl AgentRuntimeService {
 
         Ok(AgentToolDispatchOutcome {
             result: AgentToolResult {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
+                call_id: call.call_id.clone(),
+                tool_id: call.tool_id.clone(),
                 content,
                 structured,
                 is_error: false,

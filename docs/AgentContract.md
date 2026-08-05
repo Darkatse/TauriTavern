@@ -200,10 +200,12 @@ Domain 可以定义：
 - `Checkpoint`
 - `AgentProfile`
 - `PlanPolicy`
-- `ToolSpec`
-- `ToolResult`
-- repository trait
-- gateway/dispatcher trait
+- `ToolId`
+- `ToolDescriptor`
+- `ToolInvocation`
+- `AgentToolResult`
+
+Repository、gateway 与 runtime port trait 属于 `tt-ports`；use case、compiler、gate 与 concrete builtin dispatcher 属于 `tt-application`。Domain 只定义纯模型和纯规则。
 
 Domain 禁止依赖：
 
@@ -393,16 +395,18 @@ model-facing alias 不是工具身份。每个 invocation 必须从 Catalog + re
 
 完整 snapshot 必须以 create-only 语义随 run 写入 `input/invocations/<invocation-id>/tool_snapshot.json`，重复写入 fail-fast；journal 记录其路径与 turn manifest，避免历史审计依赖 current registry。
 
-工具结果必须有 `ToolResult`：
+Agent 工具结果必须有 `AgentToolResult`：
 
 - call id
-- content blocks
+- canonical tool id
+- content
 - structured value
 - is_error
+- error code
 - resource refs
-- usage/cost/duration
 
 工具错误必须能被模型看到，也必须能被用户 timeline 看到。系统错误与模型可恢复错误应区分。
+结果进入 transcript 或审计存储前，call id 与 canonical tool id 必须和原始 `ToolInvocation` 一致；Provider alias 只能从当前 request 的 model-tool projection 反查。
 
 ## 8. MCP Contract
 
@@ -411,7 +415,7 @@ MCP 是独立模块，不依附 Agent Mode。
 Agent 可以消费 MCP：
 
 ```text
-MCP Tools     -> ToolRegistry
+MCP Tools     -> ToolCatalog contribution + executor route
 MCP Resources -> WorkspaceResource / ContextFrame
 MCP Prompts   -> PromptComponent
 ```

@@ -1,7 +1,8 @@
-mod specs;
+mod descriptors;
 
-pub(super) use specs::{
-    agent_await_spec, agent_delegate_spec, agent_handoff_spec, agent_list_spec, task_return_spec,
+pub(super) use descriptors::{
+    agent_await_descriptor, agent_delegate_descriptor, agent_handoff_descriptor,
+    agent_list_descriptor, task_return_descriptor,
 };
 
 pub(crate) const AGENT_AWAIT: &str = "agent.await";

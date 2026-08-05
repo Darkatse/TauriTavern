@@ -159,7 +159,7 @@ impl AgentRuntimeService {
         self.profile_service
             .resolve_profile(AgentProfileResolveInput {
                 profile_id: Some(task.target_profile_id.as_str()),
-                known_tools: self.tool_registry.specs(),
+                tool_catalog: self.tool_registry.catalog(),
             })
             .await
     }

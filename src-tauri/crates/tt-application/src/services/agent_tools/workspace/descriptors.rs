@@ -4,24 +4,15 @@ use super::{
     MODEL_WORKSPACE_ROOTS_FOR_MODEL, WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH,
     WORKSPACE_LIST_FILES, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_WRITE_FILE,
 };
-use tt_domain::models::agent::AgentToolSpec;
+use tt_domain::models::tool::{ToolDescriptor, ToolId};
 
-const MODEL_WORKSPACE_LIST_FILES: &str = "workspace_list_files";
-const MODEL_WORKSPACE_SEARCH_FILES: &str = "workspace_search_files";
-const MODEL_WORKSPACE_READ_FILE: &str = "workspace_read_file";
-const MODEL_WORKSPACE_WRITE_FILE: &str = "workspace_write_file";
-const MODEL_WORKSPACE_APPLY_PATCH: &str = "workspace_apply_patch";
-const MODEL_WORKSPACE_COMMIT: &str = "workspace_commit";
-const MODEL_WORKSPACE_FINISH: &str = "workspace_finish";
-
-pub(in crate::services::agent_tools) fn workspace_list_files_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: WORKSPACE_LIST_FILES.to_string(),
-        model_name: MODEL_WORKSPACE_LIST_FILES.to_string(),
-        title: "Workspace List Files".to_string(),
-        description: format!(
+pub(in crate::services::agent_tools) fn workspace_list_files_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(WORKSPACE_LIST_FILES).expect("builtin tool name must be valid"),
+        title: Some("Workspace List Files".to_string()),
+        description: Some(format!(
             "List visible Agent workspace files under {MODEL_WORKSPACE_ROOTS_FOR_MODEL}. Use this before reading when you need to inspect available artifacts."
-        ),
+        )),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -38,16 +29,14 @@ pub(in crate::services::agent_tools) fn workspace_list_files_spec() -> AgentTool
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn workspace_read_file_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: WORKSPACE_READ_FILE.to_string(),
-        model_name: MODEL_WORKSPACE_READ_FILE.to_string(),
-        title: "Workspace Read File".to_string(),
-        description: "Read a visible UTF-8 Agent workspace file with line numbers. Read the exact text you want to replace before using workspace_apply_patch; if a patch fails, fully read the file before retrying. `path` MUST refer to a regular file (e.g. `persist/MEMORY.md`), NOT a directory or workspace root (`persist`, `output`, ...). Call workspace_list_files first when you do not know which file to open.".to_string(),
+pub(in crate::services::agent_tools) fn workspace_read_file_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(WORKSPACE_READ_FILE).expect("builtin tool name must be valid"),
+        title: Some("Workspace Read File".to_string()),
+        description: Some("Read a visible UTF-8 Agent workspace file with line numbers. Read the exact text you want to replace before using workspace_apply_patch; if a patch fails, fully read the file before retrying. `path` MUST refer to a regular file (e.g. `persist/MEMORY.md`), NOT a directory or workspace root (`persist`, `output`, ...). Call workspace_list_files first when you do not know which file to open.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -77,18 +66,16 @@ pub(in crate::services::agent_tools) fn workspace_read_file_spec() -> AgentToolS
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn workspace_search_files_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: WORKSPACE_SEARCH_FILES.to_string(),
-        model_name: MODEL_WORKSPACE_SEARCH_FILES.to_string(),
-        title: "Workspace Search Files".to_string(),
-        description: format!(
+pub(in crate::services::agent_tools) fn workspace_search_files_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(WORKSPACE_SEARCH_FILES).expect("builtin tool name must be valid"),
+        title: Some("Workspace Search Files".to_string()),
+        description: Some(format!(
             "Search visible UTF-8 Agent workspace files under {MODEL_WORKSPACE_ROOTS_FOR_MODEL}. Results return snippets and refs; use workspace_read_file to read exact ranges."
-        ),
+        )),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -114,16 +101,14 @@ pub(in crate::services::agent_tools) fn workspace_search_files_spec() -> AgentTo
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn workspace_write_file_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: WORKSPACE_WRITE_FILE.to_string(),
-        model_name: MODEL_WORKSPACE_WRITE_FILE.to_string(),
-        title: "Workspace Write File".to_string(),
-        description: "Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file. mode append adds content exactly to the end and creates the file when missing; include a leading newline in content when you want a new line.".to_string(),
+pub(in crate::services::agent_tools) fn workspace_write_file_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(WORKSPACE_WRITE_FILE).expect("builtin tool name must be valid"),
+        title: Some("Workspace Write File".to_string()),
+        description: Some("Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file. mode append adds content exactly to the end and creates the file when missing; include a leading newline in content when you want a new line.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -146,16 +131,14 @@ pub(in crate::services::agent_tools) fn workspace_write_file_spec() -> AgentTool
         }),
         output_schema: None,
         annotations: json!({ "mutating": true }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn workspace_apply_patch_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: WORKSPACE_APPLY_PATCH.to_string(),
-        model_name: MODEL_WORKSPACE_APPLY_PATCH.to_string(),
-        title: "Workspace Apply Patch".to_string(),
-        description: "Apply a precise single-file string replacement. old_string must come from text you already read with workspace_read_file or from a file you created/replaced in this run. old_string must match exactly and uniquely unless replace_all is true. If a patch fails, fully read the file before retrying.".to_string(),
+pub(in crate::services::agent_tools) fn workspace_apply_patch_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(WORKSPACE_APPLY_PATCH).expect("builtin tool name must be valid"),
+        title: Some("Workspace Apply Patch".to_string()),
+        description: Some("Apply a precise single-file string replacement. old_string must come from text you already read with workspace_read_file or from a file you created/replaced in this run. old_string must match exactly and uniquely unless replace_all is true. If a patch fails, fully read the file before retrying.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -181,16 +164,14 @@ pub(in crate::services::agent_tools) fn workspace_apply_patch_spec() -> AgentToo
         }),
         output_schema: None,
         annotations: json!({ "mutating": true }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn workspace_finish_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: WORKSPACE_FINISH.to_string(),
-        model_name: MODEL_WORKSPACE_FINISH.to_string(),
-        title: "Workspace Finish".to_string(),
-        description: "Finish the Agent run after required foreground chat commits and workspace changes are complete.".to_string(),
+pub(in crate::services::agent_tools) fn workspace_finish_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(WORKSPACE_FINISH).expect("builtin tool name must be valid"),
+        title: Some("Workspace Finish".to_string()),
+        description: Some("Finish the Agent run after required foreground chat commits and workspace changes are complete.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -203,16 +184,14 @@ pub(in crate::services::agent_tools) fn workspace_finish_spec() -> AgentToolSpec
         }),
         output_schema: None,
         annotations: json!({ "control": true }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn workspace_commit_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: WORKSPACE_COMMIT.to_string(),
-        model_name: MODEL_WORKSPACE_COMMIT.to_string(),
-        title: "Workspace Commit".to_string(),
-        description: "Commit a workspace text file to the current chat message. With no arguments, replace the current run message with output/main.md. append adds the file text to the same message, creating it when this run has not committed yet. You may keep editing and commit again as needed; after the final commit, call workspace_finish to close the run. Do not reply in plain text as the final answer.".to_string(),
+pub(in crate::services::agent_tools) fn workspace_commit_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(WORKSPACE_COMMIT).expect("builtin tool name must be valid"),
+        title: Some("Workspace Commit".to_string()),
+        description: Some("Commit a workspace text file to the current chat message. With no arguments, replace the current run message with output/main.md. append adds the file text to the same message, creating it when this run has not committed yet. You may keep editing and commit again as needed; after the final commit, call workspace_finish to close the run. Do not reply in plain text as the final answer.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -234,6 +213,5 @@ pub(in crate::services::agent_tools) fn workspace_commit_spec() -> AgentToolSpec
         }),
         output_schema: None,
         annotations: json!({ "control": true, "mutating": true }),
-        source: "builtin".to_string(),
     }
 }

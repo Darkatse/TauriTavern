@@ -9,7 +9,8 @@ use super::render::filter_visible_entries;
 use super::{MAX_SEARCH_CONTEXT_LINES, MAX_SEARCH_DEPTH, MAX_SEARCH_FILES, MAX_SEARCH_LIMIT};
 use crate::errors::ApplicationError;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult, WorkspacePath};
+use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
+use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 use tt_domain::text_search::PreparedTextSearch;
 use tt_ports::repositories::workspace_repository::{
@@ -62,7 +63,7 @@ struct WorkspaceSearchHit {
 pub(in crate::services::agent_tools) async fn search_files(
     workspace_repository: &dyn WorkspaceRepository,
     run_id: &str,
-    call: &AgentToolCall,
+    call: &ToolInvocation,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = workspace_access_policy(workspace_repository, run_id).await?;
     let Some(args) = object_args(call) else {
@@ -191,8 +192,8 @@ pub(in crate::services::agent_tools) async fn search_files(
         .collect::<Vec<_>>();
     Ok((
         AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content,
             structured: structured_value(WorkspaceSearchFilesStructured {
                 query,

@@ -11,9 +11,8 @@ use crate::services::agent_runtime_service::AgentRuntimeService;
 use crate::services::agent_runtime_service::loop_runner::tool_after_finish_error;
 use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
 use tt_domain::models::agent::profile::{AgentProfileId, ResolvedAgentProfile};
-use tt_domain::models::agent::{
-    AgentDelegationContinuation, AgentRunEventLevel, AgentToolCall, AgentToolResult,
-};
+use tt_domain::models::agent::{AgentDelegationContinuation, AgentRunEventLevel, AgentToolResult};
+use tt_domain::models::tool::ToolInvocation;
 
 const MAX_AGENT_HANDOFF_FIELD_CHARS: usize = 8_000;
 
@@ -37,7 +36,7 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
         invocation_id: &str,
-        call: &AgentToolCall,
+        call: &ToolInvocation,
         profile: &ResolvedAgentProfile,
         is_last_call: bool,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
@@ -127,7 +126,7 @@ impl AgentRuntimeService {
             .profile_service
             .resolve_profile(AgentProfileResolveInput {
                 profile_id: Some(target_id.as_str()),
-                known_tools: self.tool_registry.specs(),
+                tool_catalog: self.tool_registry.catalog(),
             })
             .await
         {
@@ -159,7 +158,7 @@ impl AgentRuntimeService {
                 run_id,
                 invocation_id,
                 target.id.as_str(),
-                call.id.as_str(),
+                call.call_id.as_str(),
                 args.handoff,
             )
             .await?;
@@ -185,8 +184,8 @@ impl AgentRuntimeService {
         });
         Ok(AgentToolDispatchOutcome {
             result: AgentToolResult {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
+                call_id: call.call_id.clone(),
+                tool_id: call.tool_id.clone(),
                 content: format!(
                     "Handoff accepted for Agent {}. Your part is complete.",
                     target.id.as_str()

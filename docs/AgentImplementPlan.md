@@ -99,7 +99,7 @@ AgentRuntimeService
 
 - `AgentModelGateway` 已从旧单文件拆成 `agent_model_gateway/` 模块目录：`mod.rs` 只保留 trait / wrapper，`encode.rs` / `decode.rs` / `format.rs` / `schema.rs` / `provider_state.rs` / `providers/*` 分别承担转换、格式解析、schema 清洗、continuation 与 provider-specific 规则。
 - provider format detection：OpenAI-compatible、OpenAI Responses、Claude Messages、Gemini、Gemini Interactions。
-- canonical tool specs 到 provider-facing function tools 的转换。
+- request-scoped `AgentModelTool` 到 provider-facing function tools 的转换。
 - provider-specific schema sanitizer。Gemini / Gemini Interactions 会移除当前不兼容的 JSON Schema 关键字；Claude 只做轻量清洗；OpenAI / Responses 保持完整 schema。
 - OpenAI Responses 请求自动 include `reasoning.encrypted_content`。
 - Agent OpenAI Responses 续接会使用 `provider_state.previousResponseId` 注入 `previous_response_id`，并用 `messageCursor` 只发送新消息。
@@ -134,7 +134,7 @@ Provider native data 是 opaque state，不是 Agent 业务语义。Runtime 可�
 
 ## 5. 当前工具集
 
-Builtin registry 从同一组 base `AgentToolSpec` 构造中性 `ToolCatalog`；invocation compiler 再生成 frozen bindings 与 provider-facing specs，不再暴露 OpenAI-shaped `openai_tools()`。
+Builtin 工具直接声明中性 `ToolDescriptor` 并构造 `ToolCatalog`；invocation compiler 再生成 frozen bindings 与 request-scoped `AgentModelTool`，不再维护全局 alias 或暴露 OpenAI-shaped `openai_tools()`。
 
 | Canonical name | Model alias | 类型 |
 | --- | --- | --- |

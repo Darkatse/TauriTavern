@@ -116,6 +116,9 @@ native metadata round-trip
 canonical AgentModelRequest/AgentModelResponse encode-decode
 provider tool name resolves only through current turn alias
 canonical/raw/unadvertised tool name fails without global fallback
+same-native cross-provider tool results encode through canonical ToolId
+same-native external timeline events do not inherit builtin side-effect semantics
+tool result call/tool identity mismatch fails before effects and audit persistence
 recent workspace write/patch tool result hydration
 tool args/results use short hashed local audit file names while preserving opaque provider tool_call_id
 ```

@@ -2,9 +2,10 @@ use serde_json::{Map, Value};
 
 use super::structured::{ToolErrorStructured, structured_value};
 
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult};
+use tt_domain::models::agent::AgentToolResult;
+use tt_domain::models::tool::ToolInvocation;
 
-pub(super) fn object_args(call: &AgentToolCall) -> Option<&Map<String, Value>> {
+pub(super) fn object_args(call: &ToolInvocation) -> Option<&Map<String, Value>> {
     call.arguments.as_object()
 }
 
@@ -64,10 +65,14 @@ pub(crate) fn workspace_path_is_directory_message(path: &str) -> String {
     )
 }
 
-pub(super) fn tool_error(call: &AgentToolCall, error_code: &str, message: &str) -> AgentToolResult {
+pub(super) fn tool_error(
+    call: &ToolInvocation,
+    error_code: &str,
+    message: &str,
+) -> AgentToolResult {
     AgentToolResult {
-        call_id: call.id.clone(),
-        name: call.name.clone(),
+        call_id: call.call_id.clone(),
+        tool_id: call.tool_id.clone(),
         content: message.to_string(),
         structured: structured_value(ToolErrorStructured::new(error_code, message)),
         is_error: true,

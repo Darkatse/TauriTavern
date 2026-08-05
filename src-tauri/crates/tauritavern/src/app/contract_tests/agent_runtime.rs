@@ -13,7 +13,7 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
         .profile_service
         .resolve_profile(AgentProfileResolveInput {
             profile_id: None,
-            known_tools: registry.specs(),
+            tool_catalog: registry.catalog(),
         })
         .await
         .expect("resolve default profile");
@@ -133,7 +133,7 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
     let result_ref = result_stored.payload["path"].as_str().expect("result ref");
     assert!(result_ref.starts_with("tool-results/call_"));
     let result = read_workspace_json(&fixture.agent_repository, &run.id, result_ref).await;
-    assert_eq!(result["name"], "workspace.write_file");
+    assert_eq!(result["toolId"], "builtin:workspace.write_file");
     let tool_snapshot = read_workspace_json(
         &fixture.agent_repository,
         &run.id,
@@ -182,7 +182,7 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
             .any(|request| request
                 .tools
                 .iter()
-                .any(|tool| tool.name == "workspace.write_file"))
+                .any(|tool| tool.tool_id.native_name() == "workspace.write_file"))
     );
     wait_for_closed_sessions(
         &fixture.model_gateway,
@@ -328,7 +328,7 @@ async fn agent_runtime_agent_list_discovers_callable_profiles_with_real_reposito
     };
     fixture
         .profile_service
-        .save_profile(callable, fixture.service.tool_specs())
+        .save_profile(callable, fixture.service.tool_catalog())
         .await
         .expect("save callable profile");
     let mut profile = resolve_contract_profile(&fixture).await;
@@ -796,11 +796,11 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
         requests[1]
             .tools
             .iter()
-            .any(|tool| tool.name == "task.return")
+            .any(|tool| tool.tool_id.native_name() == "task.return")
     );
     assert!(requests[1].tools.iter().all(|tool| {
         !matches!(
-            tool.name.as_str(),
+            tool.tool_id.native_name(),
             "workspace.commit"
                 | "workspace.finish"
                 | "agent.list"
@@ -962,13 +962,13 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
         requests[1]
             .tools
             .iter()
-            .any(|tool| tool.name == "workspace.finish")
+            .any(|tool| tool.tool_id.native_name() == "workspace.finish")
     );
     assert!(
         requests[1]
             .tools
             .iter()
-            .all(|tool| tool.name != "agent.handoff")
+            .all(|tool| tool.tool_id.native_name() != "agent.handoff")
     );
     let handoff_snapshot = read_workspace_json(
         &fixture.agent_repository,
@@ -1165,12 +1165,12 @@ async fn configure_return_mode_profiles(
     allow_profile_tool(&mut root.tools.allow, "agent.await");
     fixture
         .profile_service
-        .save_profile(child, fixture.service.tool_specs())
+        .save_profile(child, fixture.service.tool_catalog())
         .await
         .expect("save child profile");
     fixture
         .profile_service
-        .save_profile(root, fixture.service.tool_specs())
+        .save_profile(root, fixture.service.tool_catalog())
         .await
         .expect("save root profile");
     resolve_contract_profile(fixture).await
@@ -1207,12 +1207,12 @@ async fn configure_handoff_profiles(
     allow_profile_tool(&mut root.tools.allow, "agent.handoff");
     fixture
         .profile_service
-        .save_profile(target, fixture.service.tool_specs())
+        .save_profile(target, fixture.service.tool_catalog())
         .await
         .expect("save handoff target profile");
     fixture
         .profile_service
-        .save_profile(root, fixture.service.tool_specs())
+        .save_profile(root, fixture.service.tool_catalog())
         .await
         .expect("save root profile");
     resolve_contract_profile(fixture).await

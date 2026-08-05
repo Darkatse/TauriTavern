@@ -6,9 +6,9 @@
 
 - MCP 是独立平台集成能力，不是 Agent Runtime 本体。
 - Skill 是渐进披露的文本/资源包，不是自动吞入 prompt 的大文件。
-- Agent 可以消费 MCP 和 Skill，但必须经过 ToolRegistry、Policy 与 Journal；不得由 prompt 直接打开旁路。
+- Agent 可以消费 MCP 和 Skill，但必须经过 Tool Catalog、invocation snapshot、Request Gate 与 Journal；不得由 prompt 直接打开旁路。
 
-当前状态（2026-05-02）：尚未实现 `window.__TAURITAVERN__.api.mcp`，MCP 也未接入 Agent tool registry。Skill 已落地 `window.__TAURITAVERN__.api.skill`，并已通过 `skill.list` / `skill.search` / `skill.read` 接入 Agent tool registry。当前 Skill 细节以 `docs/Agent/Skill.md` 与 `docs/API/Skill.md` 为准。
+当前状态：尚未实现 `window.__TAURITAVERN__.api.mcp`，MCP 也未贡献到 Agent Tool Catalog。Skill 已落地 `window.__TAURITAVERN__.api.skill`，并通过 builtin `skill.list` / `skill.search` / `skill.read` 接入现有控制面。当前 Skill 细节以 `docs/Agent/Skill.md` 与 `docs/API/Skill.md` 为准。
 
 ## 1. MCP 边界
 
@@ -30,7 +30,7 @@ McpClientService
 Agent 消费方式：
 
 ```text
-MCP Tools     -> ToolRegistry
+MCP Tools     -> ToolCatalog contribution + MCP executor
 MCP Resources -> WorkspaceResource / ContextFrame
 MCP Prompts   -> PromptComponent / Preset macro / slash command
 ```
@@ -74,17 +74,17 @@ API 草案见 `docs/API/MCP.md`。
 
 ## 4. MCP Tool Result
 
-MCP tool result 应映射为 Agent `ToolResult`：
+MCP tool result 在 Agent 边界应映射为携带 canonical `ToolId` 的 `AgentToolResult`：
 
 ```text
-Text content        -> ToolContentBlock::Text
-Image/audio/file    -> ResourceRef / FileRef
+Text content        -> bounded content string
 Structured content  -> structured JSON
-Resource link       -> WorkspaceResource ref
-Error               -> is_error = true
+Image/audio/file    -> resource_refs
+Resource link       -> resource_refs
+Error               -> is_error + error_code
 ```
 
-大结果不能直接塞进 journal；应写 resource ref。
+大结果不能直接塞进 journal；应写 resource ref。若 MCP production 需要保留一条结果中的多个 typed content block，应先原子扩展 canonical result model，不得在 adapter 中有损拍平成文本。
 
 ## 5. MCP Resources
 

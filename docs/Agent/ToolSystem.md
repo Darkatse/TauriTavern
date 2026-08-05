@@ -1,6 +1,6 @@
 # TauriTavern Agent Tool System
 
-本文档定义 Agent Tool System 的 Registry、Policy、Tool Call、Tool Result、审批与前端/扩展/MCP 边界。
+本文档定义 Agent Tool System 的 Catalog、Snapshot、Request Gate、执行结果、审批与前端/扩展/MCP 边界。
 
 Agent 的能力上限很大程度由工具决定，但第一期更重要的是工具架构正确，而不是工具数量多。
 
@@ -14,7 +14,7 @@ Agent 的能力上限很大程度由工具决定，但第一期更重要的是�
 - 工具结果能进入 ContextFrame。
 - 工具错误能被模型和用户理解。
 - 工具副作用可 checkpoint/rollback 或明确不可回滚。
-- MCP/extension/内置工具使用同一抽象。
+- MCP、extension 与 builtin 工具使用同一控制面契约，并保留各自 executor。
 
 ## 2. 非目标
 
@@ -27,70 +27,46 @@ Agent 的能力上限很大程度由工具决定，但第一期更重要的是�
 - MCP Sampling 自动模型调用。
 - 大而全的插件市场。
 
-## 3. ToolSpec
+## 3. Canonical 模型与事实所有权
 
-建议模型：
+工具系统没有万能 Spec。每类事实只属于一个模型：
 
-```rust
-ToolSpec {
-    name,
-    title,
-    description,
-    input_schema,
-    output_schema,
-    annotations,
-    visibility,
-    permission,
-    budget,
-    source,
-}
-```
+| 模型 | 拥有的事实 | 不应拥有 |
+| --- | --- | --- |
+| `ToolId` | 跨来源稳定身份：provider + native name | model alias、显示名 |
+| `ToolDescriptor` | title、description、input/output schema、raw annotations | Profile 权限、预算、executor、model alias |
+| `ToolCatalog` | 当前来源贡献的基础 descriptor 集合 | invocation 状态 |
+| `ToolBinding` / `InvocationToolSnapshot` | invocation 冻结后的 descriptor、alias、预算 | 当前 registry 查询 |
+| `ToolTurnContract` | 当前模型调用可请求的 ToolId 与 typed choice | Provider JSON |
+| `AgentModelTool` | 当前 request 的 ToolId、alias、description、input schema | UI 字段、执行 handler |
+| `AgentToolCatalogItemDto` | Profile UI 所需的展示与 schema 字段 | model alias、执行权限 |
 
-字段说明：
+维护规则：新增字段先判断它由哪个边界拥有；不要重新引入同时服务 Catalog、Provider、UI 和执行器的复合类型。
 
-- `name`：稳定 ID，例如 `workspace.apply_patch`。
-- `title`：UI 展示名。
-- `description`：给模型和用户看的能力说明。
-- `input_schema`：JSON Schema。
-- `output_schema`：可选 JSON Schema。
-- `annotations`：side effect、read only、destructive、idempotent、cost 等。
-- `visibility`：模型是否可见、是否只对用户可见。
-- `permission`：always allow、approval required、deny。
-- `budget`：最大调用次数、最大输出 token、超时。
-- `source`：built_in、mcp、extension、skill。
+## 4. AgentToolResult
 
-## 4. ToolResult
-
-建议模型：
+当前 Agent 执行结果使用：
 
 ```rust
-ToolResult {
+AgentToolResult {
     call_id,
+    tool_id,
     content,
     structured,
     is_error,
+    error_code,
     resource_refs,
-    usage,
 }
 ```
 
-`content` 支持：
-
-```text
-Text
-Json
-ImageRef
-AudioRef
-FileRef
-ResourceRef
-DiffRef
-```
+`call_id + tool_id` 必须与原始 `ToolInvocation` 完全一致。结果进入 effect 解释、审计存储或 provider transcript 前都要验证该身份。
 
 原则：
 
 - 大结果写 resource ref，不内联到 journal。
 - `is_error = true` 可以是模型可恢复错误，不一定让 run Failed。
-- 系统级错误，如 workspace path escape、journal append failed，必须让 run Failed。
+- 系统级错误，如 journal append failed、序列化失败或身份不一致，必须让 run Failed。
+- 多模态 content block、usage 和 provenance 等到出现真实消费者时再扩展，不预建通用 `ToolOutput`。
 
 ## 5. Tool Call 生命周期
 
@@ -99,7 +75,7 @@ resolved Profile + invocation exit policy
   ↓
 compile immutable InvocationToolSnapshot
   ↓
-compile ToolTurnContract + provider-facing specs
+compile ToolTurnContract + request-scoped AgentModelTool projection
   ↓
 model emits snapshot-bound alias
   ↓
@@ -113,7 +89,7 @@ write result
   ↓
 append journal
   ↓
-ContextFrame includes ToolResults if policy allows
+next AgentModelRequest includes AgentToolResult
 ```
 
 Journal：
@@ -126,7 +102,7 @@ tool_call_started
 tool_call_completed / tool_call_failed
 ```
 
-当前 A4-Core 已把现有 Agent 工具收敛到 invocation-local `ToolRequestGate`：所有模型调用先以 canonical `ToolId` 检查 snapshot、turn membership、typed choice 与预算，再进入 Agent runtime control handler 或现有 builtin dispatcher。approval 没有真实 consumer，第二 executor 也尚不存在，因此本阶段不建立空 approval port、router 或 facade。执行过程中不得重新读取 Profile 或 global registry 来重算工具可见性。
+现有 Agent 工具已收敛到 invocation-local `ToolRequestGate`：所有模型调用先以 canonical `ToolId` 检查 snapshot、turn membership、typed choice 与预算，再进入 Agent runtime control handler 或现有 builtin dispatcher。approval 没有真实 consumer，第二 executor 也尚不存在，因此当前不建立空 approval port、router 或 facade。执行过程中不得重新读取 Profile 或 global registry 来重算工具可见性。
 
 ## 6. Policy Resolution
 
@@ -166,9 +142,9 @@ budget
 
 ### 7.0 当前实现
 
-截至 2026-07-31，当前 registry 开放 agent / chat / world info / dice / skill / workspace 六类内建工具。Registry 继续提供 canonical `AgentToolSpec`，并从同一组未经 Profile 处理的 base specs 派生只读 `ToolCatalog`；当前 canonical ID 统一为 `builtin:<AgentToolSpec.name>`。Catalog 只保存中性描述，不承载 model alias、Profile permission、executor 或 policy facts；重复 ID fail-fast。
+截至 2026-08-04，当前 registry 开放 agent / chat / world info / dice / skill / workspace 六类内建工具。每个 builtin 直接声明 canonical `ToolDescriptor`，Registry 只从这些声明构造 `ToolCatalog`；canonical ID 统一为 `builtin:<native-name>`。Catalog 只保存中性描述，不承载 model alias、Profile permission、executor 或 policy facts；重复 ID fail-fast。`tools.list()` 使用专用 UI DTO 投影，Profile 校验直接消费 Catalog，两者都不持有 model alias。
 
-每个 root、return-mode child 与 handoff invocation 启动时只编译一次 `InvocationToolSnapshot`。Compiler 按 Profile allow 顺序从 Catalog 复制 descriptor，应用 Profile workspace/description facts、deny 与调用上限，再冻结 alias；当前 `ToolTurnContract` 只通过 `all(...)` 使用 snapshot 全集，生产 compiler 固定选择 `ToolChoice::Auto` 并生成 provider-facing `AgentToolSpec`。child/handoff 提示词、provider request、continuation hint、alias decode 与 gate 均消费这份 snapshot/turn，不再各自过滤 Profile。root PromptManager 仍在后端 invocation 创建前通过兼容桥组装，其 Agent prompt preview 使用同一个 compiler；真正 provider advertisement 与执行权限以随后持久化的 root snapshot 为准。return-mode child 由 exit policy 移除 chat commit / run finish / delegation tools，并注入 runtime-only `task.return`；handoff invocation 使用目标 Profile 编译新的 snapshot。child 与请求它的 Agent 使用同一套逻辑 workspace path；runtime 只按 target Profile workspace policy 调整当前 invocation 的 visible/writable roots，不做 child 专用路径映射。
+每个 root、return-mode child 与 handoff invocation 启动时只编译一次 `InvocationToolSnapshot`。Compiler 按 Profile allow 顺序从 Catalog 复制 descriptor，应用 Profile workspace/description facts、deny 与调用上限，再冻结 alias；当前 `ToolTurnContract` 只通过 `all(...)` 使用 snapshot 全集，生产 compiler 固定选择 `ToolChoice::Auto` 并生成 request-scoped `AgentModelTool`。child/handoff 提示词、provider request、continuation hint、alias decode 与 gate 均消费这份 snapshot/turn，不再各自过滤 Profile。root PromptManager 仍在后端 invocation 创建前通过兼容桥组装，其 Agent prompt preview 使用同一个 compiler；真正 provider advertisement 与执行权限以随后持久化的 root snapshot 为准。return-mode child 由 exit policy 移除 chat commit / run finish / delegation tools，并注入 runtime-only `task.return`；handoff invocation 使用目标 Profile 编译新的 snapshot。child 与请求它的 Agent 使用同一套逻辑 workspace path；runtime 只按 target Profile workspace policy 调整当前 invocation 的 visible/writable roots，不做 child 专用路径映射。
 
 Agent-facing 文案必须从调用或执行 Agent 的角度描述可操作路径：`agent.delegate` 鼓励在 task brief 中给出相关 workspace path 与期望 artifact；`agent.handoff` 鼓励给出 objective、workspace refs、context、constraints 与 completion criteria；return-mode workspace tools 只提示 visible/writable roots 与任务中的普通 workspace path，不暴露 physical mapping、CAS 参数或 runtime id。
 
@@ -206,11 +182,13 @@ persist/
 
 这些前缀由 resolved Profile 写入 run manifest，Profile 只能收窄 root universe。`persist/` 是 chat workspace 级持久 root 的 run projection：模型在 run 中通过普通 workspace 工具写入，`workspace.finish` 收尾成功后才 promote 回稳定 chat workspace；失败或取消的 run 不会写回。
 
-工具参数会以 create-only 语义写入 `tool-args/call_<sha256_8byte_hex(call-id)>.json`，工具结果会以相同语义写入 `tool-results/call_<sha256_8byte_hex(call-id)>.json`；重复 `call_id` 或 digest 路径冲突在覆盖既有审计事实前 fail-fast。本地文件名只使用 SHA-256 前 8 字节 hex。provider 返回的原始 `call_id` 只作为不透明业务 ID 保存在 JSON 内容、journal payload 与下一轮 canonical `ToolResult` part 中，不作为本地文件名。Gateway 会在 provider 边界把它转换为对应 provider 格式。工具结果不会写入 SillyTavern chat 楼层。
+工具参数会以 create-only 语义写入 `tool-args/call_<sha256_8byte_hex(call-id)>.json`，工具结果会以相同语义写入 `tool-results/call_<sha256_8byte_hex(call-id)>.json`；重复 `call_id` 或 digest 路径冲突在覆盖既有审计事实前 fail-fast。本地文件名只使用 SHA-256 前 8 字节 hex。provider 返回的原始 `call_id` 只作为不透明业务 ID 保存在 JSON 内容、journal payload 与下一轮 `AgentModelContentPart::ToolResult` 中，不作为本地文件名。`AgentToolResult` 同时保存 canonical `ToolId`；dispatcher outcome 在解释 `AgentToolEffect` 前必须匹配原始 `ToolInvocation`，最终结果落盘前再次验证。Gateway 只通过当前 request 的 `ToolId -> model alias` 投影编码历史结果。工具结果不会写入 SillyTavern chat 楼层。
+
+Timeline 的隐藏、side-effect 关联与 builtin 类型判定只使用 journal 中的 canonical `toolId`；native `name` 仅用于用户可读标题。Model Turn UI 投影保留 `toolId`，同 native name 的外部工具以 canonical identity 区分。
 
 完整 snapshot 以 create-only 语义写入 `input/invocations/<invocation-id>/tool_snapshot.json`，同 ID 重复写入 fail-fast；`context_assembled` 记录该路径、紧凑 snapshot 摘要与完整 `ToolTurnContract`，每次 `model_request_created` 再记录本轮 contract。snapshot 文件保存 schema version、冻结 descriptor、alias 与预算，active invocation 不依赖后续 Profile/registry 查询。当前 snapshot ID 在单个 run 内等于 invocation ID；run journal 和 workspace 路径共同构成审计作用域。
 
-Profile 的 `maxCallsPerRun` 是历史字段名，实际语义一直是 invocation 生命周期。Snapshot 使用真实名称 `maxCallsPerInvocation`；A4-Core 由 invocation-local `ToolRequestGate` 按 canonical `ToolId` 检查并预留总预算和 per-tool 预算。Gate 在当前串行 tool loop 中通过唯一 `&mut` 所有权保证一次“检查并预留”不可交错；预算从承载 workspace/skill 状态的 `AgentToolSession` 中移除。Profile 字段的纯命名迁移留到 selector schema 迁移时一次完成。
+Profile 的 `maxCallsPerRun` 是历史字段名，实际语义一直是 invocation 生命周期。Snapshot 使用真实名称 `maxCallsPerInvocation`；invocation-local `ToolRequestGate` 按 canonical `ToolId` 检查并预留总预算和 per-tool 预算。Gate 在当前串行 tool loop 中通过唯一 `&mut` 所有权保证一次“检查并预留”不可交错；预算从承载 workspace/skill 状态的 `AgentToolSession` 中移除。Profile 字段的纯命名迁移留到 selector schema 迁移时一次完成。
 
 `workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。`old_string` 必须来自模型本 run 已读到的文本片段，或来自本 run 创建/完整替换后已经完整已知的文件；runtime 仍会读取当前完整文件检查版本与全文件唯一匹配，但不会把完整文件隐式塞回模型上下文。版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型；基于部分读取的 patch 一旦失败，同文件后续 patch 必须先完整读取，避免模型在不确定上下文上反复试错。`replace_all=true` 可能修改未读位置，因此必须在完整读取后使用。`workspace.write_file` 支持 `mode = replace | append`，默认 `replace`。`replace` 对已存在文件复用同一个 session read-state 做 CAS：模型不需要传 `expectedSha256`，schema 不暴露 overwrite policy；若文件在最近读取/写入后被其他 invocation 修改，会返回可恢复的 stale-file 工具错误，要求重新读取后再写。`append` 会把 `content` 原样追加到文件末尾，目标缺失时创建文件；不会自动补换行，模型需要新行时应把前导 `\n` 放进 `content`。`append` 工具调用本身只在新建文件或追加前文件已完整读入且版本匹配时更新完整 read-state，避免未读既有内容在同一轮内被隐式授权为后续 rewrite/patch 的依据。模型传入的非法 path、空 path、非法 mode、不可见/不可写 path 也作为可恢复工具错误回填；目标 path 实际指向目录的读写请求会作为 `workspace.path_is_directory` 业务错误回填，提示模型改用 `workspace_list_files`。repository 内部 escape/symlink/journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
 
@@ -403,48 +381,41 @@ workspace.create_checkpoint
 
 ## 8. Provider Tool Call Adapter
 
-不同 provider tool call 格式不同。Tool System 内部必须使用统一格式：
+Provider 边界只负责格式转换：
 
 ```text
-ToolCall {
-  id,
-  name,
-  arguments,
-  providerMetadata,
-}
+AgentModelTool
+  -> provider function schema
+
+provider alias + call id + arguments
+  -> ToolInvocation { call_id, tool_id, arguments, provider_metadata }
+
+AgentToolResult.tool_id
+  -> current request 的 AgentModelTool
+  -> provider result alias
 ```
 
-Provider adapter 负责：
+alias 只能在当前 request 的 `AgentModelTool` 集合中解析。缺失 call id、未知 alias、历史 ToolId 不在当前 request 或 provider metadata 丢失都必须 fail-fast；不得查询全局 registry、按 native name 猜测或生成 fallback id。
 
-- 把 `ToolSpec` 转成 provider schema。
-- 把 provider-native tool call 转回 `ToolCall`。
-- 保留必要 native metadata，例如 reasoning signature、tool call id。
-- 缺失 tool call id 时 fail-fast，不生成 fallback id。
+上层 runtime 不应关心 OpenAI、Claude 或 Gemini 的 wire 格式。
 
-上层 runtime 不应关心 OpenAI/Claude/Gemini 的工具字段差异。
-
-## 9. Tool Result 进入 Prompt
+## 9. AgentToolResult 进入 Prompt
 
 工具结果不写 chat message。
 
-工具结果进入后续模型请求的路径：
+当前路径：
 
 ```text
-ToolResult store
+AgentToolResult
   ↓
-ContextAssemblyService
+AgentModelContentPart::ToolResult
   ↓
-PromptComponentKind::ToolResults
+下一轮 AgentModelRequest
   ↓
-ModelRequest
+provider adapter
 ```
 
-Preset 可以控制：
-
-- tool result 是否可见。
-- 原文还是摘要。
-- 预算。
-- 与 chat history/world info/workspace file 的顺序。
+结果正文可以按真实上下文预算裁剪或转为 resource ref，但 canonical `call_id + tool_id` 不能丢失。未来需要摘要、可见性或顺序策略时，应在 context/request assembly 边界实现，不修改基础 descriptor。
 
 ## 10. Approval
 
@@ -519,13 +490,13 @@ Agent Tool System 不能复用它作为运行时真相。
 ```text
 extension registers tool metadata
   ↓
-ToolRegistry marks source=extension
+host contributes canonical ToolDescriptor to ToolCatalog
   ↓
-Agent requests tool
+snapshot / turn / ToolRequestGate
   ↓
-frontend bridge asks extension to execute
+executor router asks frontend bridge to execute
   ↓
-result returns to backend journal
+AgentToolResult returns to backend journal
 ```
 
 要求：
@@ -534,15 +505,16 @@ result returns to backend journal
 - bridge 调用必须有 timeout。
 - result 必须结构化。
 - extension 不得直接写 Agent workspace，必须通过 tool result 或受控 workspace tool。
+- 第二 executor 出现前不建立 router、port 或空 bridge skeleton。
 
 ## 14. 当前 Tool System 基线
 
 当前已经具备真正多轮 Agent loop 所需的最小工具系统：
 
-- `ToolSpec` / `ToolCall` / `ToolResult` domain model。
-- Rust-owned builtin registry。
-- canonical tool specs 与 provider-safe model alias。
-- Agent runtime 使用 canonical `ToolCall` / `ToolResult` part，provider 边界负责格式转换。
+- `ToolDescriptor` / `ToolInvocation` / `AgentToolResult` domain model。
+- Rust-owned builtin `ToolCatalog`。
+- canonical descriptor 与 snapshot-bound model alias。
+- Agent runtime 使用 `AgentModelContentPart::ToolCall(ToolInvocation)` / `ToolResult(AgentToolResult)`，provider 边界负责格式转换。
 - chat search/read_messages、worldinfo read_activated、dice roll、skill list/read、workspace list/read/write/apply_patch/finish。
 - agent list/delegate/await 与 runtime-only task.return 的 return-mode SubAgent MVP。
 - tool arguments / tool results resource refs。
@@ -551,4 +523,4 @@ result returns to backend journal
 - workspace mutation checkpoint。
 - journal events。
 
-下一步新增 MCP 或 extension bridge 工具时，应复用这一套 registry/dispatcher/result/error 语义，而不是新建旁路。Skill policy 已留在现有 `skill.list` / `skill.search` / `skill.read` dispatcher 与 profile resolver 之间；后续不要新建第二套 Skill 读取入口。
+下一步新增 MCP 或 extension bridge 工具时，应复用这一套 Catalog/Snapshot/Gate/result/error 语义，只在第二 executor 出现时增加最小 router。Skill policy 已留在现有 `skill.list` / `skill.search` / `skill.read` dispatcher 与 profile resolver 之间；后续不要新建第二套 Skill 读取入口。
