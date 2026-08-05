@@ -1,16 +1,14 @@
 use serde_json::json;
 
 use super::WORLDINFO_READ_ACTIVATED;
-use tt_domain::models::agent::AgentToolSpec;
+use tt_domain::models::tool::{ToolDescriptor, ToolId};
 
-const MODEL_WORLDINFO_READ_ACTIVATED: &str = "worldinfo_read_activated";
-
-pub(in crate::services::agent_tools) fn worldinfo_read_activated_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: WORLDINFO_READ_ACTIVATED.to_string(),
-        model_name: MODEL_WORLDINFO_READ_ACTIVATED.to_string(),
-        title: "World Info Read Activated".to_string(),
-        description: "Inspect World Info entries activated for this Agent run. Omit arguments to list active refs without content; pass entries with refs and optional character ranges to read selected lore text. Reads the run prompt snapshot, not global World Info.".to_string(),
+pub(in crate::services::agent_tools) fn worldinfo_read_activated_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(WORLDINFO_READ_ACTIVATED)
+            .expect("builtin tool name must be valid"),
+        title: Some("World Info Read Activated".to_string()),
+        description: Some("Inspect World Info entries activated for this Agent run. Omit arguments to list active refs without content; pass entries with refs and optional character ranges to read selected lore text. Reads the run prompt snapshot, not global World Info.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -43,6 +41,5 @@ pub(in crate::services::agent_tools) fn worldinfo_read_activated_spec() -> Agent
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true, "sourceKind": "worldInfo" }),
-        source: "builtin".to_string(),
     }
 }

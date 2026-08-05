@@ -12,7 +12,7 @@ use crate::dto::agent_dto::{
 use crate::errors::ApplicationError;
 use crate::services::prompt_assembly_service::AgentInvocationPromptAssemblyContext;
 use tt_domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
-use tt_domain::models::agent::{AgentRunEventLevel, AgentToolSpec, WorkspacePath};
+use tt_domain::models::agent::{AgentModelTool, AgentRunEventLevel, WorkspacePath};
 
 impl AgentRuntimeService {
     pub async fn read_prompt_assembly_request(
@@ -106,7 +106,7 @@ impl AgentRuntimeService {
     pub(super) async fn assemble_invocation_prompt_snapshot(
         &self,
         profile: &ResolvedAgentProfile,
-        visible_tools: &[AgentToolSpec],
+        visible_tools: &[AgentModelTool],
         generation_type: &str,
         frozen_run_input_snapshot: Value,
         scope: &AgentPromptAssemblyScopeDto,

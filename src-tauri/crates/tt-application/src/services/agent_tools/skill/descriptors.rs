@@ -1,18 +1,13 @@
 use serde_json::json;
 
 use super::{SKILL_LIST, SKILL_READ, SKILL_SEARCH};
-use tt_domain::models::agent::AgentToolSpec;
+use tt_domain::models::tool::{ToolDescriptor, ToolId};
 
-const MODEL_SKILL_LIST: &str = "skill_list";
-const MODEL_SKILL_SEARCH: &str = "skill_search";
-const MODEL_SKILL_READ: &str = "skill_read";
-
-pub(in crate::services::agent_tools) fn skill_list_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: SKILL_LIST.to_string(),
-        model_name: MODEL_SKILL_LIST.to_string(),
-        title: "Skill List".to_string(),
-        description: "List installed Agent Skills by name and description. Use this before skill_search or skill_read when reusable writing, editing, planning, or character guidance may help.".to_string(),
+pub(in crate::services::agent_tools) fn skill_list_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(SKILL_LIST).expect("builtin tool name must be valid"),
+        title: Some("Skill List".to_string()),
+        description: Some("List installed Agent Skills by name and description. Use this before skill_search or skill_read when reusable writing, editing, planning, or character guidance may help.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -20,16 +15,14 @@ pub(in crate::services::agent_tools) fn skill_list_spec() -> AgentToolSpec {
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true, "sourceKind": "skill" }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn skill_search_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: SKILL_SEARCH.to_string(),
-        model_name: MODEL_SKILL_SEARCH.to_string(),
-        title: "Skill Search".to_string(),
-        description: "Search UTF-8 text files inside one visible installed Agent Skill. Results return snippets and refs; call skill_read with path and a range to read exact text.".to_string(),
+pub(in crate::services::agent_tools) fn skill_search_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(SKILL_SEARCH).expect("builtin tool name must be valid"),
+        title: Some("Skill Search".to_string()),
+        description: Some("Search UTF-8 text files inside one visible installed Agent Skill. Results return snippets and refs; call skill_read with path and a range to read exact text.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -59,16 +52,14 @@ pub(in crate::services::agent_tools) fn skill_search_spec() -> AgentToolSpec {
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true, "sourceKind": "skill" }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn skill_read_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: SKILL_READ.to_string(),
-        model_name: MODEL_SKILL_READ.to_string(),
-        title: "Skill Read".to_string(),
-        description: "Read a UTF-8 file or range from an installed Agent Skill. Start with SKILL.md, use skill_search for large files, then read exact referenced ranges as needed.".to_string(),
+pub(in crate::services::agent_tools) fn skill_read_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(SKILL_READ).expect("builtin tool name must be valid"),
+        title: Some("Skill Read".to_string()),
+        description: Some("Read a UTF-8 file or range from an installed Agent Skill. Start with SKILL.md, use skill_search for large files, then read exact referenced ranges as needed.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -102,6 +93,5 @@ pub(in crate::services::agent_tools) fn skill_read_spec() -> AgentToolSpec {
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true, "sourceKind": "skill" }),
-        source: "builtin".to_string(),
     }
 }

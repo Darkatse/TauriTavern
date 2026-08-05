@@ -17,6 +17,7 @@ use super::tool_calls::{
     OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
     message_tool_name, message_tool_result_text, normalize_tool_result_payload,
 };
+use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
 
 const GOOGLE_IMAGE_GENERATION_MODELS: &[&str] = &[
     "gemini-2.0-flash-exp",
@@ -278,14 +279,14 @@ fn build_google_payload(
     if !tools.is_empty() {
         request.insert("tools".to_string(), Value::Array(tools));
 
-        if let Some(tool_choice) = payload
-            .get("tool_choice")
-            .and_then(map_tool_choice_to_makersuite)
-            .filter(|_| request_has_function_declarations(&request))
+        if request_has_function_declarations(&request)
+            && let Some(tool_choice) = payload.get("tool_choice")
         {
             request.insert(
                 "toolConfig".to_string(),
-                json!({ "functionCallingConfig": tool_choice }),
+                json!({
+                    "functionCallingConfig": map_tool_choice_to_makersuite(tool_choice)?
+                }),
             );
         }
     }
@@ -779,37 +780,16 @@ fn split_openai_tools(tools: &Value) -> (Vec<Value>, Vec<Value>) {
     (function_declarations, custom_tools)
 }
 
-fn map_tool_choice_to_makersuite(value: &Value) -> Option<Value> {
-    if let Some(choice) = value
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return match choice {
-            "none" => Some(json!({ "mode": "NONE" })),
-            "required" => Some(json!({ "mode": "ANY" })),
-            "auto" => Some(json!({ "mode": "AUTO" })),
-            _ => None,
-        };
-    }
-
-    let object = value.as_object()?;
-    let function_name = object
-        .get("function")
-        .and_then(Value::as_object)
-        .and_then(|function| function.get("name"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-
-    if let Some(function_name) = function_name {
-        return Some(json!({
+fn map_tool_choice_to_makersuite(value: &Value) -> Result<Value, ApplicationError> {
+    Ok(match parse_openai_tool_choice(value, "Gemini")? {
+        OpenAiToolChoice::None => json!({ "mode": "NONE" }),
+        OpenAiToolChoice::Auto => json!({ "mode": "AUTO" }),
+        OpenAiToolChoice::Required => json!({ "mode": "ANY" }),
+        OpenAiToolChoice::Specific(name) => json!({
             "mode": "ANY",
-            "allowedFunctionNames": [function_name],
-        }));
-    }
-
-    None
+            "allowedFunctionNames": [name],
+        }),
+    })
 }
 
 fn inject_google_thinking_config(
@@ -1825,6 +1805,56 @@ mod tests {
             .expect("tools must be array");
 
         assert!(tools.iter().any(|tool| tool.get("google_search").is_some()));
+    }
+
+    #[test]
+    fn makersuite_maps_tool_choice_and_rejects_unknown_values() {
+        let cases = [
+            (json!("auto"), json!({ "mode": "AUTO" })),
+            (json!("none"), json!({ "mode": "NONE" })),
+            (json!("required"), json!({ "mode": "ANY" })),
+            (
+                json!({ "type": "function", "function": { "name": "weather" } }),
+                json!({ "mode": "ANY", "allowedFunctionNames": ["weather"] }),
+            ),
+        ];
+
+        for (choice, expected) in cases {
+            let payload = json!({
+                "model": "gemini-2.5-flash",
+                "messages": [{"role": "user", "content": "hello"}],
+                "tools": [{
+                    "type": "function",
+                    "function": { "name": "weather", "parameters": { "type": "object" } }
+                }],
+                "tool_choice": choice
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let (_, upstream) = build(payload).expect("tool choice should map");
+            assert_eq!(
+                upstream.pointer("/toolConfig/functionCallingConfig"),
+                Some(&expected)
+            );
+        }
+
+        let payload = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [{
+                "type": "function",
+                "function": { "name": "weather", "parameters": { "type": "object" } }
+            }],
+            "tool_choice": "unexpected"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("unknown choice must fail");
+        assert!(error.to_string().contains("provider.tool_choice_invalid"));
     }
 
     #[test]

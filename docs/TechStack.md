@@ -137,12 +137,12 @@ TauriTavern 的数据兼容目标是浏览器、扩展和用户数据可观察�
 
 ```bash
 pnpm run check
+pnpm test
 pnpm run check:frontend
 pnpm run check:types
-pnpm run check:contracts
+pnpm run test:contracts
 pnpm run check:rust-boundaries
-pnpm run test:rust:split-crates
-pnpm run test:rust:host-resources
+pnpm run test:rust
 pnpm run check:rust:dev
 ```
 

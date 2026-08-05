@@ -8,14 +8,14 @@ use super::rendering::{DelegatedResultContinuationHint, render_await_content};
 use super::task_status::task_is_terminal;
 use super::tool_error::tool_error_outcome;
 use crate::errors::ApplicationError;
-use crate::services::agent_runtime_service::AgentCancelReceiver;
-use crate::services::agent_runtime_service::AgentRuntimeService;
-use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
-use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{
-    AgentInvocationExitPolicy, AgentRunEventLevel, AgentTaskRecord, AgentTaskStatus, AgentToolCall,
-    AgentToolResult, WorkspacePath,
+use crate::services::agent_runtime_service::{
+    AgentCancelReceiver, AgentRuntimeService, PreparedInvocation,
 };
+use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
+use tt_domain::models::agent::{
+    AgentRunEventLevel, AgentTaskRecord, AgentTaskStatus, AgentToolResult, WorkspacePath,
+};
+use tt_domain::models::tool::ToolInvocation;
 
 const DEFAULT_AGENT_AWAIT_TIMEOUT_MS: u64 = 120_000;
 const MAX_AGENT_AWAIT_TIMEOUT_MS: u64 = 300_000;
@@ -66,13 +66,15 @@ pub(in crate::services::agent_runtime_service) struct AwaitTaskView {
 impl AgentRuntimeService {
     pub(in crate::services::agent_runtime_service) async fn dispatch_agent_await_tool(
         &self,
-        run_id: &str,
-        invocation_id: &str,
-        call: &AgentToolCall,
-        profile: &ResolvedAgentProfile,
+        prepared: &PreparedInvocation,
+        call: &ToolInvocation,
         committed_count: usize,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
+        let run_id = prepared.invocation.run_id.as_str();
+        let invocation_id = prepared.invocation.id.as_str();
+        let profile = &prepared.profile;
+        let parent_tools = &prepared.request.tools;
         let started = Instant::now();
         let args = match serde_json::from_value::<AgentAwaitArgs>(call.arguments.clone()) {
             Ok(args) => args,
@@ -176,12 +178,8 @@ impl AgentRuntimeService {
             "timedOut": timed_out,
             "tasks": views,
         });
-        let visible_tools = self.visible_tool_specs_for_invocation(
-            profile,
-            AgentInvocationExitPolicy::RunFinishAllowed,
-        )?;
         let continuation_hint = DelegatedResultContinuationHint::from_parent_tools(
-            &visible_tools,
+            parent_tools,
             profile.run.presentation,
             committed_count,
         );
@@ -205,8 +203,8 @@ impl AgentRuntimeService {
 
         Ok(AgentToolDispatchOutcome {
             result: AgentToolResult {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
+                call_id: call.call_id.clone(),
+                tool_id: call.tool_id.clone(),
                 content,
                 structured,
                 is_error: false,
@@ -292,12 +290,14 @@ impl AgentRuntimeService {
 
     pub(in crate::services::agent_runtime_service) async fn completed_child_results_message(
         &self,
-        run_id: &str,
-        invocation_id: &str,
+        prepared: &PreparedInvocation,
         seen_task_ids: &mut HashSet<String>,
-        profile: &ResolvedAgentProfile,
         committed_count: usize,
     ) -> Result<Option<String>, ApplicationError> {
+        let run_id = prepared.invocation.run_id.as_str();
+        let invocation_id = prepared.invocation.id.as_str();
+        let profile = &prepared.profile;
+        let parent_tools = &prepared.request.tools;
         let tasks = self
             .invocation_repository
             .list_tasks(run_id)
@@ -319,12 +319,8 @@ impl AgentRuntimeService {
             "timedOut": false,
             "tasks": views,
         });
-        let visible_tools = self.visible_tool_specs_for_invocation(
-            profile,
-            AgentInvocationExitPolicy::RunFinishAllowed,
-        )?;
         let continuation_hint = DelegatedResultContinuationHint::from_parent_tools(
-            &visible_tools,
+            parent_tools,
             profile.run.presentation,
             committed_count,
         );

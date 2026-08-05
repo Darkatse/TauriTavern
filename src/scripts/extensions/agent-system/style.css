@@ -3940,10 +3940,6 @@ textarea.ttas-json {
     line-height: 1.25;
 }
 
-.ttas-tool-badge-row .ttas-tool-model-name {
-    font-family: var(--ttas-mono);
-}
-
 .ttas-tool-badge-custom {
     color: color-mix(in srgb, var(--ttas-accent) 78%, var(--SmartThemeBodyColor));
     border-color: color-mix(in srgb, var(--ttas-accent) 50%, var(--ttas-border));

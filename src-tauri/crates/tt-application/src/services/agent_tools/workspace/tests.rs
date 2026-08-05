@@ -12,13 +12,14 @@ use super::{apply_patch, read_file, write_file};
 use crate::services::agent_tools::{AgentToolEffect, AgentToolSession};
 use crate::services::hashing::hex_lower;
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
+use tt_domain::models::agent::WorkspaceRootSpec;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentChatRef, AgentRun, ArtifactTarget, CommitPolicy, WorkspaceFileWriteMode,
     WorkspaceInputManifest, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
     WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope,
 };
-use tt_domain::models::agent::{AgentToolCall, WorkspaceRootSpec};
+use tt_domain::models::tool::{ToolId, ToolInvocation};
 use tt_ports::repositories::workspace_repository::{
     WorkspaceAppendResult, WorkspaceEntry, WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
     WorkspaceWriteGuard,
@@ -76,10 +77,10 @@ fn list_path_arg_treats_empty_and_dot_as_workspace_root() {
     }
 }
 
-fn make_test_tool_call(name: &str) -> AgentToolCall {
-    AgentToolCall {
-        id: "call_test".to_string(),
-        name: name.to_string(),
+fn make_test_tool_call(name: &str) -> ToolInvocation {
+    ToolInvocation {
+        call_id: "call_test".to_string(),
+        tool_id: ToolId::builtin(name).unwrap(),
         arguments: json!({}),
         provider_metadata: json!({}),
     }
@@ -149,8 +150,8 @@ async fn workspace_read_invalid_path_returns_canonical_tool_error() {
 
     let message = "Invalid data: Workspace path cannot contain ..";
     assert!(matches!(effect, AgentToolEffect::None));
-    assert_eq!(result.call_id, call.id);
-    assert_eq!(result.name, call.name);
+    assert_eq!(result.call_id, call.call_id);
+    assert_eq!(result.tool_id, call.tool_id);
     assert_eq!(result.content, message);
     assert_eq!(
         result.structured,
@@ -378,10 +379,10 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
     );
 }
 
-fn workspace_call(name: &str, arguments: serde_json::Value) -> AgentToolCall {
-    AgentToolCall {
-        id: format!("call_{}", name.replace('.', "_")),
-        name: name.to_string(),
+fn workspace_call(name: &str, arguments: serde_json::Value) -> ToolInvocation {
+    ToolInvocation {
+        call_id: format!("call_{}", name.replace('.', "_")),
+        tool_id: ToolId::builtin(name).unwrap(),
         arguments,
         provider_metadata: serde_json::Value::Null,
     }

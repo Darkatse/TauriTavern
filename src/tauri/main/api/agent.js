@@ -90,8 +90,8 @@ function createAgentApi({ safeInvoke }) {
         });
     }
 
-    async function listToolSpecs() {
-        return safeInvoke('list_agent_tool_specs');
+    async function listTools() {
+        return safeInvoke('list_agent_tools');
     }
 
     return {
@@ -107,7 +107,7 @@ function createAgentApi({ safeInvoke }) {
         subscribe: runtime.subscribe,
         profiles,
         tools: {
-            list: listToolSpecs,
+            list: listTools,
         },
         promptAssembly,
         approveToolCall() {

@@ -7,9 +7,10 @@ use crate::services::agent_model_gateway::provider_state;
 use crate::services::agent_model_gateway::providers::AgentProviderAdapter;
 use crate::services::agent_model_gateway::schema;
 use tt_domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolCall,
-    AgentToolResult, AgentToolSpec,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
+    AgentToolResult,
 };
+use tt_domain::models::tool::{ToolChoice, ToolId, ToolInvocation};
 
 pub(crate) fn encode_chat_completion_request(
     request: &AgentModelRequest,
@@ -17,6 +18,8 @@ pub(crate) fn encode_chat_completion_request(
     let (_source, adapter) = resolve_request_adapter(request)?;
     let mut payload = request.payload.clone();
     provider_state::apply_provider_state_to_payload(&mut payload, request, adapter)?;
+    payload.remove("tools");
+    payload.remove("tool_choice");
 
     payload.insert(
         "messages".to_string(),
@@ -29,18 +32,24 @@ pub(crate) fn encode_chat_completion_request(
         ),
     );
 
-    if !request.tools.is_empty() {
+    if request.tools.is_empty() {
+        if matches!(
+            request.tool_choice,
+            ToolChoice::Required | ToolChoice::Specific(_)
+        ) {
+            return Err(ApplicationError::ValidationError(
+                "agent.tool_choice_requires_tools: required and specific tool choice need at least one advertised tool"
+                    .to_string(),
+            ));
+        }
+    } else {
         payload.insert(
             "tools".to_string(),
             Value::Array(schema::render_openai_tools(&request.tools, adapter)),
         );
         payload.insert(
             "tool_choice".to_string(),
-            if request.tool_choice.is_null() {
-                Value::String("auto".to_string())
-            } else {
-                request.tool_choice.clone()
-            },
+            encode_tool_choice(&request.tool_choice, &request.tools)?,
         );
     }
 
@@ -49,9 +58,32 @@ pub(crate) fn encode_chat_completion_request(
     Ok(ChatCompletionGenerateRequestDto { payload })
 }
 
+fn encode_tool_choice(
+    choice: &ToolChoice,
+    tools: &[AgentModelTool],
+) -> Result<Value, ApplicationError> {
+    match choice {
+        ToolChoice::None => Ok(Value::String("none".to_string())),
+        ToolChoice::Auto => Ok(Value::String("auto".to_string())),
+        ToolChoice::Required => Ok(Value::String("required".to_string())),
+        ToolChoice::Specific(tool_id) => {
+            let tool = model_tool_for_id(tool_id, tools).ok_or_else(|| {
+                ApplicationError::ValidationError(format!(
+                    "agent.tool_choice_tool_not_advertised: tool `{tool_id}` is not advertised in this request"
+                ))
+            })?;
+
+            Ok(json!({
+                "type": "function",
+                "function": { "name": tool.model_alias },
+            }))
+        }
+    }
+}
+
 fn encode_openai_compatible_message(
     message: &AgentModelMessage,
-    tools: &[AgentToolSpec],
+    tools: &[AgentModelTool],
     adapter: AgentProviderAdapter,
 ) -> Result<Value, ApplicationError> {
     let mut object = Map::new();
@@ -108,7 +140,15 @@ fn encode_openai_compatible_message(
                 "tool_call_id".to_string(),
                 Value::String(result.call_id.clone()),
             );
-            object.insert("name".to_string(), Value::String(result.name.clone()));
+            object.insert(
+                "name".to_string(),
+                Value::String(
+                    model_tool_for_id(&result.tool_id, tools)
+                        .ok_or_else(|| tool_history_not_advertised(&result.tool_id))?
+                        .model_alias
+                        .clone(),
+                ),
+            );
             object.insert(
                 "content".to_string(),
                 Value::String(tool_result_message_content(result)?),
@@ -230,21 +270,23 @@ fn copy_reasoning_content(object: &mut Map<String, Value>, parts: &[AgentModelCo
 }
 
 fn encode_openai_tool_call(
-    call: &AgentToolCall,
-    tools: &[AgentToolSpec],
+    call: &ToolInvocation,
+    tools: &[AgentModelTool],
 ) -> Result<Value, ApplicationError> {
-    let model_name = model_tool_name_for_call(&call.name, tools);
+    let model_alias = model_tool_for_id(&call.tool_id, tools)
+        .map(|tool| tool.model_alias.as_str())
+        .ok_or_else(|| tool_history_not_advertised(&call.tool_id))?;
     let arguments = serde_json::to_string(&call.arguments).map_err(|error| {
         ApplicationError::ValidationError(format!("agent.tool_call_serialize_failed: {error}"))
     })?;
 
     let mut object = Map::new();
-    object.insert("id".to_string(), Value::String(call.id.clone()));
+    object.insert("id".to_string(), Value::String(call.call_id.clone()));
     object.insert("type".to_string(), Value::String("function".to_string()));
     object.insert(
         "function".to_string(),
         json!({
-            "name": model_name,
+            "name": model_alias,
             "arguments": arguments,
         }),
     );
@@ -261,12 +303,17 @@ fn encode_openai_tool_call(
     Ok(Value::Object(object))
 }
 
-fn model_tool_name_for_call(name: &str, tools: &[AgentToolSpec]) -> String {
-    tools
-        .iter()
-        .find(|spec| spec.name == name || spec.model_name == name)
-        .map(|spec| spec.model_name.clone())
-        .unwrap_or_else(|| name.to_string())
+fn model_tool_for_id<'a>(
+    tool_id: &ToolId,
+    tools: &'a [AgentModelTool],
+) -> Option<&'a AgentModelTool> {
+    tools.iter().find(|tool| tool.tool_id == *tool_id)
+}
+
+fn tool_history_not_advertised(tool_id: &ToolId) -> ApplicationError {
+    ApplicationError::ValidationError(format!(
+        "agent.tool_history_not_advertised: tool `{tool_id}` is not advertised in this request"
+    ))
 }
 
 fn tool_result_message_content(result: &AgentToolResult) -> Result<String, ApplicationError> {

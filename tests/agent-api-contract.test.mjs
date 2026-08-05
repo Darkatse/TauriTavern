@@ -195,14 +195,14 @@ test('api.agent.profiles fails fast on invalid profile inputs', async () => {
     );
 });
 
-test('api.agent.tools lists canonical tool specs', async () => {
+test('api.agent.tools lists canonical catalog items', async () => {
     const { calls, agent } = await installHarness();
 
     assert.ok(agent.tools);
     await agent.tools.list();
 
     assert.deepEqual(calls, [
-        { command: 'list_agent_tool_specs', args: undefined },
+        { command: 'list_agent_tools', args: undefined },
     ]);
 });
 

@@ -176,11 +176,13 @@ fn build_claude_payload_inner(
     if !claude_tools.is_empty() {
         request.insert("tools".to_string(), Value::Array(claude_tools));
 
-        let tool_choice = forced_tool_choice.or_else(|| {
-            payload
+        let tool_choice = match forced_tool_choice {
+            Some(choice) => Some(choice),
+            None => payload
                 .get("tool_choice")
-                .and_then(map_tool_choice_to_claude)
-        });
+                .map(map_tool_choice_to_claude)
+                .transpose()?,
+        };
         if let Some(choice) = tool_choice {
             request.insert("tool_choice".to_string(), choice);
         }

@@ -46,23 +46,23 @@ const NARRATION_EXPANDED_ROW_SPAN = 2;
 export const TERMINAL_EVENT_TYPES = Object.freeze(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 
 const SIDE_EFFECT_TOOL_COMPLETIONS = new Set([
-    'agent.delegate',
-    'agent.handoff',
-    'task.return',
-    'workspace.write_file',
-    'workspace.apply_patch',
-    'workspace.commit',
-    'workspace.finish',
+    'builtin:agent.delegate',
+    'builtin:agent.handoff',
+    'builtin:task.return',
+    'builtin:workspace.write_file',
+    'builtin:workspace.apply_patch',
+    'builtin:workspace.commit',
+    'builtin:workspace.finish',
 ]);
 
 const SIDE_EFFECT_TOOL_BY_EVENT_TYPE = Object.freeze({
-    workspace_file_written: 'workspace.write_file',
-    workspace_patch_applied: 'workspace.apply_patch',
-    chat_commit_requested: 'workspace.commit',
-    chat_commit_completed: 'workspace.commit',
-    chat_commit_failed: 'workspace.commit',
-    persistent_changes_committed: 'workspace.finish',
-    run_completed: 'workspace.finish',
+    workspace_file_written: 'builtin:workspace.write_file',
+    workspace_patch_applied: 'builtin:workspace.apply_patch',
+    chat_commit_requested: 'builtin:workspace.commit',
+    chat_commit_completed: 'builtin:workspace.commit',
+    chat_commit_failed: 'builtin:workspace.commit',
+    persistent_changes_committed: 'builtin:workspace.finish',
+    run_completed: 'builtin:workspace.finish',
 });
 
 const EVENT_META = Object.freeze({
@@ -329,7 +329,7 @@ function buildGuidanceDetailTarget(payload) {
 function buildPatchDiffTarget(event, events) {
     const payload = plainObject(event?.payload) ? event.payload : {};
     const path = String(payload.path || '').trim();
-    const completed = findSideEffectToolCompletion(events, event, 'workspace.apply_patch', path);
+    const completed = findSideEffectToolCompletion(events, event, 'builtin:workspace.apply_patch', path);
     const callId = String(completed?.payload?.callId || '').trim();
     const requested = callId ? findToolRequest(events, callId) : null;
     const requestPayload = plainObject(requested?.payload) ? requested.payload : {};
@@ -393,7 +393,7 @@ function shouldShowEvent(event, completedToolCalls, resolvedCommits, options = {
         return !callId || !completedToolCalls.has(callId);
     }
     if (event.type === 'tool_call_completed') {
-        return !SIDE_EFFECT_TOOL_COMPLETIONS.has(String(payload.name || ''));
+        return !SIDE_EFFECT_TOOL_COMPLETIONS.has(String(payload.toolId || ''));
     }
     if (event.type === 'chat_commit_requested') {
         const commitId = String(payload.commitId || '').trim();
@@ -544,13 +544,13 @@ function findAssociatedToolTurn(event, events) {
         return findToolEventTurn(events, callId);
     }
 
-    const toolName = SIDE_EFFECT_TOOL_BY_EVENT_TYPE[event?.type];
-    if (!toolName) {
+    const toolId = SIDE_EFFECT_TOOL_BY_EVENT_TYPE[event?.type];
+    if (!toolId) {
         return null;
     }
 
     const path = String(payload.path || '').trim();
-    const completed = findSideEffectToolCompletion(events, event, toolName, path);
+    const completed = findSideEffectToolCompletion(events, event, toolId, path);
     return completed
         ? {
             round: completed?.payload?.round,
@@ -576,7 +576,7 @@ function findToolEventTurn(events, callId) {
         : null;
 }
 
-function findSideEffectToolCompletion(events, sideEffectEvent, toolName, path) {
+function findSideEffectToolCompletion(events, sideEffectEvent, toolId, path) {
     const sideEffectSeq = Number(sideEffectEvent?.seq || 0);
     return [...events]
         .reverse()
@@ -586,7 +586,7 @@ function findSideEffectToolCompletion(events, sideEffectEvent, toolName, path) {
             }
 
             const payload = plainObject(event?.payload) ? event.payload : {};
-            if (payload.name !== toolName) {
+            if (payload.toolId !== toolId) {
                 return false;
             }
 
@@ -730,15 +730,18 @@ function eventKind(type, payload, fallback) {
         return 'guidance';
     }
     if (type === 'tool_call_requested' || type === 'tool_call_completed') {
-        return toolKind(payload.name);
+        return toolKind(payload.toolId);
     }
     return fallback || 'event';
 }
 
-function toolKind(name) {
-    const normalized = String(name || '');
-    if (normalized.startsWith('agent.') || normalized === 'task.return') {
+function toolKind(toolId) {
+    const normalized = String(toolId || '');
+    if (normalized.startsWith('builtin:agent.') || normalized === 'builtin:task.return') {
         return 'subagent';
+    }
+    if (!normalized.startsWith('builtin:')) {
+        return 'tool';
     }
     if (normalized.includes('read')) {
         return 'read';
@@ -749,16 +752,16 @@ function toolKind(name) {
     if (normalized.includes('list')) {
         return 'list';
     }
-    if (normalized === 'workspace.write_file') {
+    if (normalized === 'builtin:workspace.write_file') {
         return 'write';
     }
-    if (normalized === 'workspace.apply_patch') {
+    if (normalized === 'builtin:workspace.apply_patch') {
         return 'patch';
     }
-    if (normalized === 'workspace.commit') {
+    if (normalized === 'builtin:workspace.commit') {
         return 'commit';
     }
-    if (normalized === 'workspace.finish') {
+    if (normalized === 'builtin:workspace.finish') {
         return 'done';
     }
     return 'tool';

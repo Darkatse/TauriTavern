@@ -11,13 +11,14 @@ use super::prompt_snapshot::request_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::{AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect, AgentToolSession};
+use crate::services::tool_request_gate::ToolRequestGate;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
     AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunStatus, AgentToolResult,
     WorkspacePath,
 };
+use tt_domain::models::tool::ToolTurnContract;
 use tt_domain::text_metrics::TextMetrics;
 
 pub(super) enum AgentLoopExit {
@@ -46,6 +47,7 @@ impl AgentRuntimeService {
         let exit_policy = prepared.invocation.exit_policy;
         let profile = &prepared.profile;
         let mut tool_session = AgentToolSession::new(prepared.effective_skills.clone());
+        let mut tool_request_gate = ToolRequestGate::default();
         let mut seen_child_result_task_ids = HashSet::new();
         // Counts soft drift recovery nudges for model-facing text and
         // journal events. It is intentionally not a separate budget: the
@@ -73,6 +75,7 @@ impl AgentRuntimeService {
                 json!({
                     "round": round,
                     "invocationId": invocation_id,
+                    "toolTurn": &prepared.tool_turn,
                     "request": request_summary(&prepared.request),
                 }),
             )
@@ -154,7 +157,7 @@ impl AgentRuntimeService {
                         drift_recovery_attempts,
                         direct_output_path.as_ref(),
                         exit_policy,
-                        profile,
+                        &prepared.tool_turn,
                     );
                     prepared.request.messages.push(response.message.clone());
                     prepared.request.messages.push(AgentModelMessage {
@@ -183,7 +186,7 @@ impl AgentRuntimeService {
                 }
                 return Err(ApplicationError::ValidationError(format!(
                     "model.tool_call_required: model must use Agent tools and complete through {}",
-                    completion_tool_name(exit_policy, profile)
+                    completion_tool_name(exit_policy, &prepared.tool_turn)
                 )));
             }
 
@@ -192,7 +195,7 @@ impl AgentRuntimeService {
             let mut finished = false;
             let mut handoff = None;
             let tool_call_count = tool_calls.len();
-            let completion_tool = completion_tool_name(exit_policy, profile);
+            let completion_tool = completion_tool_name(exit_policy, &prepared.tool_turn);
 
             for (index, call) in tool_calls.into_iter().enumerate() {
                 if finished {
@@ -204,6 +207,7 @@ impl AgentRuntimeService {
                         prepared,
                         round,
                         &call,
+                        &mut tool_request_gate,
                         &mut tool_session,
                         index + 1 == tool_call_count,
                         commit_ledger,
@@ -350,10 +354,8 @@ impl AgentRuntimeService {
             if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed
                 && let Some(message) = self
                     .completed_child_results_message(
-                        run_id,
-                        invocation_id,
+                        prepared,
                         &mut seen_child_result_task_ids,
-                        profile,
                         commit_ledger.len(),
                     )
                     .await?
@@ -416,7 +418,10 @@ fn remember_seen_child_results_from_await(
     seen_task_ids: &mut HashSet<String>,
 ) {
     for result in tool_results {
-        if result.name != AGENT_AWAIT || result.is_error {
+        if !result.tool_id.is_builtin()
+            || result.tool_id.native_name() != AGENT_AWAIT
+            || result.is_error
+        {
             continue;
         }
         let Some(tasks) = result.structured.get("tasks").and_then(Value::as_array) else {
@@ -443,13 +448,13 @@ fn remember_seen_child_results_from_await(
 
 fn completion_tool_name(
     exit_policy: AgentInvocationExitPolicy,
-    profile: &ResolvedAgentProfile,
+    turn: &ToolTurnContract,
 ) -> &'static str {
     match exit_policy {
         AgentInvocationExitPolicy::RunFinishAllowed => {
-            if profile_tool_visible(profile, "workspace.finish") {
+            if turn_has_builtin(turn, "workspace.finish") {
                 "workspace_finish"
-            } else if profile_tool_visible(profile, AGENT_HANDOFF) {
+            } else if turn_has_builtin(turn, AGENT_HANDOFF) {
                 "agent_handoff"
             } else {
                 "an available Agent control tool"
@@ -459,9 +464,10 @@ fn completion_tool_name(
     }
 }
 
-fn profile_tool_visible(profile: &ResolvedAgentProfile, tool_name: &str) -> bool {
-    profile.tools.allow.iter().any(|name| name == tool_name)
-        && !profile.tools.deny.iter().any(|name| name == tool_name)
+fn turn_has_builtin(turn: &ToolTurnContract, native_name: &str) -> bool {
+    turn.tools()
+        .iter()
+        .any(|tool_id| tool_id.is_builtin() && tool_id.native_name() == native_name)
 }
 
 fn drift_recovery_attempt_limit(max_rounds: usize) -> usize {
@@ -486,11 +492,11 @@ fn build_drift_recovery_nudge(
     attempt: usize,
     direct_output_path: Option<&WorkspacePath>,
     exit_policy: AgentInvocationExitPolicy,
-    profile: &ResolvedAgentProfile,
+    turn: &ToolTurnContract,
 ) -> String {
     match exit_policy {
         AgentInvocationExitPolicy::RunFinishAllowed => {
-            if profile_tool_visible(profile, "workspace.finish") {
+            if turn_has_builtin(turn, "workspace.finish") {
                 let direct_output_hint = direct_output_path
                     .map(|path| {
                         format!(
@@ -520,7 +526,7 @@ fn build_drift_recovery_nudge(
                          Do NOT answer directly in plain text."
                     )
                 }
-            } else if profile_tool_visible(profile, AGENT_HANDOFF) {
+            } else if turn_has_builtin(turn, AGENT_HANDOFF) {
                 let direct_output_hint = direct_output_path
                     .map(|path| {
                         format!(

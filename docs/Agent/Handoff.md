@@ -32,7 +32,7 @@ finalizer verifies, commits, finish
 ## 2. 核心不变量
 
 - Handoff 仍在同一个 `AgentRun` 内运行，共享 run workspace、journal、cancel、checkpoint、commit ledger 与 persistent projection。
-- 每个 handoff stage 是独立 `AgentInvocation`，拥有自己的 provider session id、target Profile、工具面、Skill 解析与 prompt assembly。
+- 每个 handoff stage 是独立 `AgentInvocation`，拥有自己的 provider session id、target Profile、冻结 tool snapshot/turn、Skill 解析与 prompt assembly。
 - `agent.handoff` 是模型可见工具，`TransferControl` 是 runtime 内部 continuation。不要把 `continuation`、`invocationId` 或 provider state 暴露给模型参数。
 - 当前 Agent 成功 handoff 后必须停止工具调用。runtime 将当前 invocation 记为 `Transferred`。
 - Handoff task 不进入 `AgentTaskScheduler`。scheduler 只运行 `ReturnToParent` child tasks。
@@ -42,10 +42,10 @@ finalizer verifies, commits, finish
 
 ## 3. 模型可见工具
 
-当前 `agent.handoff` ToolSpec 位于：
+当前 `agent.handoff` 的 canonical descriptor 位于：
 
 ```text
-src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs
+src-tauri/crates/tt-application/src/services/agent_tools/agent/descriptors.rs
 ```
 
 模型看到的是调用 Agent 视角的工具：
@@ -280,6 +280,7 @@ Prompt assembly 路径：
 - 应用 target Profile 的 model binding。
 - 注入 target Profile 可见工具。
 - 使用 `provider_state.sessionId = runId:invocationId`。
+- 从 target Profile + `RunFinishAllowed` 编译新的 `InvocationToolSnapshot`，写入 `input/invocations/<invocationId>/tool_snapshot.json`；不继承或重算 source invocation 的工具面。
 - 按 target Profile 解析 Skill scope，并写入 `input/invocations/<invocationId>/resolved_skills.json`。
 
 ## 7. Profile 与工具面策略
@@ -354,7 +355,7 @@ Timeline UI 不应只依赖当前分页内的 journal 事件推断 active chain�
 模型可见工具：
 
 ```text
-src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs
+src-tauri/crates/tt-application/src/services/agent_tools/agent/descriptors.rs
 src-tauri/crates/tt-application/src/services/agent_tools/agent/mod.rs
 src-tauri/crates/tt-application/src/services/agent_tools/registry.rs
 src-tauri/crates/tt-application/src/services/agent_tools/dispatcher.rs

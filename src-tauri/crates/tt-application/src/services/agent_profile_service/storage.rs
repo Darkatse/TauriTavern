@@ -53,14 +53,14 @@ impl AgentProfileService {
     pub async fn save_profile(
         &self,
         mut profile: AgentProfileDefinition,
-        known_tools: &[tt_domain::models::agent::AgentToolSpec],
+        tool_catalog: &tt_domain::models::tool::ToolCatalog,
     ) -> Result<(), ApplicationError> {
         migrate_profile_schema(&mut profile)?;
         normalize_context_policy(&mut profile.context)?;
         self.resolve_definition(
             profile.clone(),
             format!("file:{}", profile.id.as_str()),
-            known_tools,
+            tool_catalog,
             AgentProfileExternalReferencePolicy::AllowDangling,
         )
         .await?;

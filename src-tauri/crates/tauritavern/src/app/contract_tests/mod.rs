@@ -273,7 +273,7 @@ async fn resolve_contract_profile(
         .profile_service
         .resolve_profile(AgentProfileResolveInput {
             profile_id: None,
-            known_tools: registry.specs(),
+            tool_catalog: registry.catalog(),
         })
         .await
         .expect("resolve default profile")
@@ -578,6 +578,23 @@ async fn wait_for_event_field(
     .map_err(|_| ApplicationError::InternalError(format!("{event_type}.{field} timed out")))?
 }
 
+async fn wait_for_event_type(repository: &FileAgentRepository, run_id: &str, event_type: &str) {
+    tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
+        loop {
+            if read_agent_events(repository, run_id)
+                .await
+                .iter()
+                .any(|event| event.event_type == event_type)
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{event_type} event timed out"));
+}
+
 async fn read_agent_events(
     repository: &FileAgentRepository,
     run_id: &str,
@@ -610,7 +627,9 @@ fn tool_result_structured_values(request: &AgentModelRequest, name: &str) -> Vec
         .iter()
         .flat_map(|message| message.parts.iter())
         .filter_map(|part| match part {
-            AgentModelContentPart::ToolResult { result } if result.name == name => {
+            AgentModelContentPart::ToolResult { result }
+                if result.tool_id.is_builtin() && result.tool_id.native_name() == name =>
+            {
                 Some(result.structured.clone())
             }
             _ => None,

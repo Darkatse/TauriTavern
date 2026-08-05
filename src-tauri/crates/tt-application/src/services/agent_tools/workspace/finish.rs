@@ -1,7 +1,8 @@
 use serde::Serialize;
 
 use crate::errors::ApplicationError;
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult};
+use tt_domain::models::agent::AgentToolResult;
+use tt_domain::models::tool::ToolInvocation;
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::structured::structured_value;
@@ -13,12 +14,12 @@ struct WorkspaceFinishStructured<'a> {
 }
 
 pub(in crate::services::agent_tools) fn finish(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let args = call.arguments.as_object();
     let result = AgentToolResult {
-        call_id: call.id.clone(),
-        name: call.name.clone(),
+        call_id: call.call_id.clone(),
+        tool_id: call.tool_id.clone(),
         content: "Finished the Agent run.".to_string(),
         structured: structured_value(WorkspaceFinishStructured {
             reason: args
@@ -39,13 +40,13 @@ mod tests {
 
     use super::finish;
     use crate::services::agent_tools::AgentToolEffect;
-    use tt_domain::models::agent::AgentToolCall;
+    use tt_domain::models::tool::{ToolId, ToolInvocation};
 
     #[test]
     fn finish_returns_control_effect() {
-        let call = AgentToolCall {
-            id: "call_1".to_string(),
-            name: "workspace.finish".to_string(),
+        let call = ToolInvocation {
+            call_id: "call_1".to_string(),
+            tool_id: ToolId::builtin("workspace.finish").unwrap(),
             arguments: json!({}),
             provider_metadata: json!(null),
         };

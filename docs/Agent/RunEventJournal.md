@@ -331,6 +331,8 @@ context_assembly_failed
 
 Policy 拒绝不是 skipped，而是 failure。
 
+当前每个 Agent invocation 的 `context_assembled` 会记录 `invocationId`、canonical request summary、`toolSnapshotPath`、紧凑 `toolSnapshot` 摘要与完整 `toolTurn`。冻结 descriptor/schema 只在 `input/invocations/<invocation-id>/tool_snapshot.json` 写一次；journal 不重复内联大 schema。`toolTurn` 包含 `snapshotId`、有序 canonical ToolId 列表与 typed choice，因此可以证明本轮 provider 实际看到的能力边界。
+
 ### 4.4 Model
 
 ```text
@@ -345,7 +347,7 @@ direct_output_captured
 model_failed
 ```
 
-当前 `model_request_created` 记录 canonical request summary（source、custom format、model、message count、tool count、round），不默认记录完整 prompt。长期应记录 request ref、profile id、provider/source、model、token estimate；完整 prompt 是否保存取决于调试设置与隐私策略。
+当前 `model_request_created` 记录 canonical request summary（source、custom format、model、message count、tool count）、`round`、`invocationId` 与同一 invocation 的 `toolTurn`，不默认记录完整 prompt。长期应记录 request ref、profile id、provider/source、model、token estimate；完整 prompt 是否保存取决于调试设置与隐私策略。
 
 当前 `model_response_stored` 会把完整 `AgentModelResponse` 写入 `model-responses/round-XXX.json`，event 只记录路径与摘要。`provider_state_updated` 只记录 `provider_state` 摘要字段，不记录完整内部 payload。
 
@@ -395,7 +397,10 @@ tool_call_failed
 ```json
 {
   "round": 1,
+  "invocationId": "inv_root",
   "callId": "call_...",
+  "toolId": "builtin:workspace.apply_patch",
+  "snapshotId": "inv_root",
   "name": "workspace.apply_patch",
   "argumentsRef": "tool-args/call_....json",
   "providerMetadata": {}
@@ -407,7 +412,10 @@ tool_call_failed
 ```json
 {
   "round": 1,
+  "invocationId": "inv_root",
   "callId": "call_...",
+  "toolId": "builtin:workspace.apply_patch",
+  "snapshotId": "inv_root",
   "name": "workspace.apply_patch",
   "isError": false,
   "errorCode": null,
@@ -417,7 +425,7 @@ tool_call_failed
 }
 ```
 
-`tool_result_stored` 会携带同一 `round` 与 `path`，用于 UI 读取工具结果详情。
+`tool_call_started`、`tool_call_completed` 与 `tool_call_failed` 保持 `tool_call_requested` 之后的既有顺序，并携带同一 canonical `toolId` / `snapshotId`。预算耗尽属于可恢复的 `tool_call_failed`；turn/snapshot/choice violation 在 requested 后 fail-fast，不会发出 started。`tool_result_stored` 会携带同一 `round`、`toolId` 与 `path`，用于 UI 读取工具结果详情。
 
 ### 4.6 Checkpoint / Diff
 

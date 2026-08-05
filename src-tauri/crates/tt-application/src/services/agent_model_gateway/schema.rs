@@ -1,22 +1,25 @@
 use serde_json::{Value, json};
 
 use crate::services::agent_model_gateway::providers::AgentProviderAdapter;
-use tt_domain::models::agent::AgentToolSpec;
+use tt_domain::models::agent::AgentModelTool;
 
 pub(super) fn render_openai_tools(
-    tools: &[AgentToolSpec],
+    tools: &[AgentModelTool],
     adapter: AgentProviderAdapter,
 ) -> Vec<Value> {
     tools
         .iter()
-        .map(|spec| {
+        .map(|tool| {
+            let mut function = json!({
+                "name": tool.model_alias.as_str(),
+                "parameters": sanitize_schema_for_provider(&tool.input_schema, adapter),
+            });
+            if let Some(description) = &tool.description {
+                function["description"] = Value::String(description.clone());
+            }
             json!({
                 "type": "function",
-                "function": {
-                    "name": spec.model_name.as_str(),
-                    "description": spec.description.as_str(),
-                    "parameters": sanitize_schema_for_provider(&spec.input_schema, adapter),
-                }
+                "function": function,
             })
         })
         .collect()

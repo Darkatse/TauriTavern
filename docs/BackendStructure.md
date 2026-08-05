@@ -331,8 +331,7 @@ pnpm run check:rust-boundaries
 按影响面追加：
 
 ```bash
-pnpm run test:rust:split-crates
-pnpm run test:rust:host-resources
+pnpm run test:rust
 pnpm run check:rust:dev
 cargo test --manifest-path src-tauri/Cargo.toml -p <affected-crate> <focused-test>
 ```
@@ -342,7 +341,7 @@ cargo test --manifest-path src-tauri/Cargo.toml -p <affected-crate> <focused-tes
 ```bash
 pnpm run check:frontend
 pnpm run check:types
-pnpm run check:contracts
+pnpm run test:contracts
 ```
 
 ## 14. 常见误区

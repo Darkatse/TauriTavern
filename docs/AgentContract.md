@@ -200,10 +200,12 @@ Domain 可以定义：
 - `Checkpoint`
 - `AgentProfile`
 - `PlanPolicy`
-- `ToolSpec`
-- `ToolResult`
-- repository trait
-- gateway/dispatcher trait
+- `ToolId`
+- `ToolDescriptor`
+- `ToolInvocation`
+- `AgentToolResult`
+
+Repository、gateway 与 runtime port trait 属于 `tt-ports`；use case、compiler、gate 与 concrete builtin dispatcher 属于 `tt-application`。Domain 只定义纯模型和纯规则。
 
 Domain 禁止依赖：
 
@@ -380,28 +382,31 @@ GeneratedArtifact
 
 ## 7. Tool Contract
 
-工具必须有 `ToolSpec`：
+工具必须有 canonical `ToolId`（稳定 provider identity + source-native name）和 `ToolDescriptor`：
 
-- stable name
 - title/display name
 - description
 - input schema
 - optional output schema
-- visibility
-- permission
-- budget
-- source
 
-工具结果必须有 `ToolResult`：
+model-facing alias 不是工具身份。每个 invocation 必须从 Catalog + resolved Profile + 宿主 exit policy 编译一份 immutable `InvocationToolSnapshot`，冻结 descriptor、alias 与有效调用预算。当前 `ToolTurnContract` 只公开 `all(...)`，生产 compiler 使用 snapshot 全集与 `Auto`；逐轮动态收窄必须与 snapshot-based history alias resolution 原子引入。
+
+模型返回的 alias 必须属于当前 turn。Gateway 必须通过本次 request/turn 精确解析为包含 canonical `ToolId` 的 `ToolInvocation`；不得接受 canonical-name 直呼、其它 snapshot alias 或 global registry fallback。所有 Agent tool call 必须先经过同一个 invocation-local `ToolRequestGate`，完成 snapshot/turn/choice 再验证与预算预留，才能适配到 Agent runtime control handler 或 builtin dispatcher。预算耗尽返回模型可恢复的 tool result；contract violation 与缺失 executor/handler fail-fast。执行路径不得重新读取 Profile 推导授权。
+
+完整 snapshot 必须以 create-only 语义随 run 写入 `input/invocations/<invocation-id>/tool_snapshot.json`，重复写入 fail-fast；journal 记录其路径与 turn manifest，避免历史审计依赖 current registry。
+
+Agent 工具结果必须有 `AgentToolResult`：
 
 - call id
-- content blocks
+- canonical tool id
+- content
 - structured value
 - is_error
+- error code
 - resource refs
-- usage/cost/duration
 
 工具错误必须能被模型看到，也必须能被用户 timeline 看到。系统错误与模型可恢复错误应区分。
+结果进入 transcript 或审计存储前，call id 与 canonical tool id 必须和原始 `ToolInvocation` 一致；Provider alias 只能从当前 request 的 model-tool projection 反查。
 
 ## 8. MCP Contract
 
@@ -410,7 +415,7 @@ MCP 是独立模块，不依附 Agent Mode。
 Agent 可以消费 MCP：
 
 ```text
-MCP Tools     -> ToolRegistry
+MCP Tools     -> ToolCatalog contribution + executor route
 MCP Resources -> WorkspaceResource / ContextFrame
 MCP Prompts   -> PromptComponent
 ```

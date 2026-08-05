@@ -23,6 +23,7 @@ mod openrouter;
 mod prompt_post_processing;
 mod shared;
 mod tool_calls;
+mod tool_choice;
 mod vertexai;
 mod workers_ai;
 mod zai;

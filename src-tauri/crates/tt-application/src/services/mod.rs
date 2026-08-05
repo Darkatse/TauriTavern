@@ -52,6 +52,7 @@ pub mod sync_job_coordinator;
 pub mod sync_policy;
 pub mod theme_service;
 pub mod tokenization_service;
+pub(crate) mod tool_request_gate;
 pub mod translate_service;
 pub mod tt_sync_service;
 pub mod tts_service;

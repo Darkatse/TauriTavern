@@ -3,9 +3,10 @@ use serde::Serialize;
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
 use crate::errors::ApplicationError;
+use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::agent::profile::{AgentSkillPolicy, ResolvedAgentProfile};
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult};
 use tt_domain::models::skill::SkillIndexEntry;
+use tt_domain::models::tool::ToolInvocation;
 
 use super::super::structured::structured_value;
 
@@ -23,7 +24,7 @@ struct SkillListItem<'a> {
 }
 
 pub(in crate::services::agent_tools) async fn list(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     session: &AgentToolSession,
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
@@ -34,7 +35,7 @@ pub(in crate::services::agent_tools) async fn list(
 }
 
 fn build_result(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     effective_skills: &[SkillIndexEntry],
     policy: &AgentSkillPolicy,
 ) -> AgentToolResult {
@@ -45,8 +46,8 @@ fn build_result(
     });
 
     AgentToolResult {
-        call_id: call.id.clone(),
-        name: call.name.clone(),
+        call_id: call.call_id.clone(),
+        tool_id: call.tool_id.clone(),
         content,
         structured,
         is_error: false,
@@ -111,9 +112,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{build_result, skill_is_visible};
-    use tt_domain::models::agent::AgentToolCall;
     use tt_domain::models::agent::profile::AgentSkillPolicy;
     use tt_domain::models::skill::{SkillIndexEntry, SkillScope, SkillSourceRef};
+    use tt_domain::models::tool::{ToolId, ToolInvocation};
 
     #[test]
     fn wildcard_deny_hides_skills_even_when_visible_allows_all() {
@@ -137,9 +138,9 @@ mod tests {
             max_read_chars_per_call: 1,
             max_read_chars_per_run: 1,
         };
-        let call = AgentToolCall {
-            id: "call_skill_list".to_string(),
-            name: "skill.list".to_string(),
+        let call = ToolInvocation {
+            call_id: "call_skill_list".to_string(),
+            tool_id: ToolId::builtin("skill.list").unwrap(),
             arguments: json!({}),
             provider_metadata: Value::Null,
         };

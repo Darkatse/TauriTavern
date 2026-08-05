@@ -66,6 +66,10 @@ AgentModelResponse {
 }
 ```
 
+`tool_choice` 使用 domain-owned `ToolChoice::{None, Auto, Required, Specific(ToolId)}`，不保存 provider JSON。当前 Agent 生产请求显式使用 `Auto`；runtime 的完成约束仍由 invocation exit policy 与 tool effect 执行，不能由单轮 provider choice 代替。
+
+`Specific(ToolId)` 只接受当前 request-scoped `AgentModelTool` 中已广告的 canonical 工具，并解析到 snapshot 冻结的 `modelAlias`。空工具集上的 `Required`/`Specific`、未公布 ID 都会在发送前失败。原始 prompt payload 中的 `tools`/`tool_choice` 不能覆盖这份 typed contract。
+
 `AgentModelContentPart` 当前支持：
 
 ```text
@@ -116,6 +120,8 @@ provider native response
 
 这个过渡结构保留了现有 ChatCompletionService 投资，同时让 Agent runtime 摆脱 OpenAI-shaped raw JSON。
 
+Provider payload builder 负责最后一段精确转换：OpenAI Chat/Responses、Claude、Gemini generateContent、Gemini Interactions 和 Cohere 不得把未知 choice 改成 Auto 或静默省略。Provider/model 无法表达的组合必须返回明确错误；例如 Claude manual extended thinking 不能与 forced tool choice 同时使用。
+
 ## 5. Native Metadata Contract
 
 Provider native metadata 必须当作 opaque continuation state。
@@ -163,12 +169,13 @@ OpenAI Responses Agent 路径使用 persistent WebSocket session。session 由 `
 
 ## 6. Tool Schema
 
-Tool registry 只产 canonical `AgentToolSpec`。
+Gateway 消费从当前 invocation snapshot/turn 单向生成的 `AgentModelTool`；它只包含 canonical `ToolId`、本 invocation 冻结的 model alias、description 与 input schema。Base `ToolCatalog` 与 UI DTO 不进入 provider payload 路径。
 
 Gateway/payload adapter 在发送前渲染 provider-facing schema：
 
 ```text
-AgentToolSpec
+InvocationToolSnapshot + ToolTurnContract
+  -> AgentModelTool
   -> provider-specific schema sanitizer
   -> OpenAI-compatible function tool shape
   -> existing provider payload builder maps to native shape
@@ -188,12 +195,12 @@ Tool call id 必须是不透明字符串：
 
 ```text
 Provider tool call id
-  -> AgentToolCall.id
+  -> ToolInvocation.call_id + ToolInvocation.tool_id
   -> AgentToolResult.call_id
   -> provider tool result id
 ```
 
-缺失 id 是 `model.invalid_tool_call`，不得静默生成 `tool_call_{index}`。
+缺失 id 是 `model.invalid_tool_call`，不得静默生成 `tool_call_{index}`。`AgentToolResult` 同时携带 canonical `ToolId`；历史 call/result 的 alias 都只能通过当前 request 的 model-tool projection 精确编码，不按 native name 猜测。
 
 Tool result 当前会编码为 JSON 字符串，包含：
 

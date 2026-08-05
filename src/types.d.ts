@@ -300,8 +300,9 @@ type TauriTavernAgentModelTurn = {
     }>;
     toolCalls: Array<{
         callId: string;
+        toolId: string;
         name: string;
-        modelName?: string;
+        modelAlias?: string;
     }>;
 };
 
@@ -312,9 +313,8 @@ type TauriTavernAgentProfileSummary = {
     directRunnable: boolean;
 };
 
-type TauriTavernAgentToolSpec = {
+type TauriTavernAgentToolCatalogItem = {
     name: string;
-    modelName: string;
     title: string;
     description: string;
     inputSchema: any;
@@ -451,7 +451,7 @@ type TauriTavernAgentProfilesApi = {
 };
 
 type TauriTavernAgentToolsApi = {
-    list: () => Promise<{ tools: TauriTavernAgentToolSpec[] }>;
+    list: () => Promise<{ tools: TauriTavernAgentToolCatalogItem[] }>;
 };
 
 type TauriTavernAgentPromptAssemblyApi = {

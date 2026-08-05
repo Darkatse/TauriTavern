@@ -18,8 +18,9 @@ use crate::services::agent_tools::{
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{
     AgentChatCommitMode, AgentInvocationStatus, AgentRun, AgentRunEventLevel, AgentRunStatus,
-    AgentToolCall, AgentToolResult, ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
+    AgentToolResult, ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
 };
+use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 
 impl AgentRuntimeService {
@@ -113,7 +114,7 @@ impl AgentRuntimeService {
     pub(super) async fn perform_host_chat_commit(
         &self,
         run_id: &str,
-        call: &AgentToolCall,
+        call: &ToolInvocation,
         path: WorkspacePath,
         mode: AgentChatCommitMode,
         reason: Option<String>,
@@ -168,7 +169,7 @@ impl AgentRuntimeService {
                 json!({
                     "commitId": commit_id.as_str(),
                     "invocationId": invocation_id,
-                    "callId": call.id.as_str(),
+                    "callId": call.call_id.as_str(),
                     "path": path.as_str(),
                     "mode": mode,
                     "reason": reason.as_deref(),
@@ -222,7 +223,7 @@ impl AgentRuntimeService {
             json!({
                 "commitId": commit_id,
                 "invocationId": invocation_id,
-                "callId": call.id.as_str(),
+                "callId": call.call_id.as_str(),
                 "runId": run.id.as_str(),
                 "workspaceId": run.workspace_id.as_str(),
                 "stableChatId": run.stable_chat_id.as_str(),
@@ -270,7 +271,7 @@ impl AgentRuntimeService {
                     json!({
                         "commitId": commit_id,
                         "invocationId": invocation_id,
-                        "callId": call.id.as_str(),
+                        "callId": call.call_id.as_str(),
                         "path": path.as_str(),
                         "mode": mode,
                         "messageId": result.message_id.as_deref(),
@@ -281,8 +282,8 @@ impl AgentRuntimeService {
 
                 Ok(AgentToolDispatchOutcome {
                     result: AgentToolResult {
-                        call_id: call.id.clone(),
-                        name: call.name.clone(),
+                        call_id: call.call_id.clone(),
+                        tool_id: call.tool_id.clone(),
                         content: format!(
                             "Committed {} to the current chat message with mode {:?}. \
                              You may continue editing and commit again if needed. When all intended \
@@ -320,7 +321,7 @@ impl AgentRuntimeService {
                     json!({
                         "commitId": commit_id,
                         "invocationId": invocation_id,
-                        "callId": call.id.as_str(),
+                        "callId": call.call_id.as_str(),
                         "path": path.as_str(),
                         "mode": mode,
                         "message": message,
@@ -567,15 +568,15 @@ fn message_index_from_message_id(message_id: Option<&str>) -> Option<usize> {
 }
 
 fn recoverable_tool_error(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     code: &str,
     message: &str,
     elapsed_ms: u128,
 ) -> AgentToolDispatchOutcome {
     AgentToolDispatchOutcome {
         result: AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content: message.to_string(),
             structured: json!({
                 "error": {

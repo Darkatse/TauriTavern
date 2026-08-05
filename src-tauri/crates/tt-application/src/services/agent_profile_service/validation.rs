@@ -4,7 +4,6 @@ use serde_json::Value;
 
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::AgentRunPresentation;
-use tt_domain::models::agent::AgentToolSpec;
 use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
 use tt_domain::models::agent::profile::{
     AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentDelegationPolicy,
@@ -12,6 +11,7 @@ use tt_domain::models::agent::profile::{
     AgentProfileInstructions, AgentRunPolicy, AgentSkillPolicy, AgentToolDescriptionOverride,
     AgentToolPolicy, AgentWorkspacePolicy,
 };
+use tt_domain::models::tool::{ToolCatalog, ToolDescriptor};
 
 use super::constants::{
     AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, AGENT_LIST_TOOL, TASK_RETURN_TOOL,
@@ -149,8 +149,7 @@ pub(super) fn validate_instructions(
 pub(super) fn validate_plan_policy(plan: &AgentPlanPolicy) -> Result<(), ApplicationError> {
     if plan.mode != AgentPlanMode::None {
         return Err(ApplicationError::ValidationError(
-            "agent.plan_mode_unsupported: Agent runtime only supports plan.mode = none"
-                .to_string(),
+            "agent.plan_mode_unsupported: Agent runtime only supports plan.mode = none".to_string(),
         ));
     }
     if !plan.nodes.is_empty() {
@@ -164,7 +163,7 @@ pub(super) fn validate_plan_policy(plan: &AgentPlanPolicy) -> Result<(), Applica
 
 pub(super) fn validate_tool_policy(
     policy: &AgentToolPolicy,
-    known_tools: &[AgentToolSpec],
+    tool_catalog: &ToolCatalog,
 ) -> Result<(), ApplicationError> {
     if policy.max_rounds == 0 {
         return Err(ApplicationError::ValidationError(
@@ -177,9 +176,9 @@ pub(super) fn validate_tool_policy(
         ));
     }
 
-    let known = known_tools
+    let known = tool_catalog
         .iter()
-        .map(|tool| tool.name.as_str())
+        .map(|tool| tool.id.native_name())
         .collect::<BTreeSet<_>>();
     let allow = policy
         .allow
@@ -191,6 +190,19 @@ pub(super) fn validate_tool_policy(
         .iter()
         .map(|name| name.as_str())
         .collect::<BTreeSet<_>>();
+
+    if allow.len() != policy.allow.len() {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_tools_allow_duplicate: tools.allow cannot contain duplicate tool names"
+                .to_string(),
+        ));
+    }
+    if deny.len() != policy.deny.len() {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_tools_deny_duplicate: tools.deny cannot contain duplicate tool names"
+                .to_string(),
+        ));
+    }
 
     if allow.is_empty() {
         return Err(ApplicationError::ValidationError(
@@ -217,11 +229,11 @@ pub(super) fn validate_tool_policy(
                 "agent.profile_tool_description_invisible: `{name}` is not visible"
             )));
         }
-        let spec = known_tools
+        let descriptor = tool_catalog
             .iter()
-            .find(|tool| tool.name == *name)
+            .find(|tool| tool.id.native_name() == name)
             .expect("known tool already checked");
-        validate_tool_description_override(spec, override_)?;
+        validate_tool_description_override(descriptor, override_)?;
     }
 
     for (name, max) in &policy.max_calls_per_tool {
@@ -465,41 +477,38 @@ fn tool_is_visible(tools: &AgentToolPolicy, name: &str) -> bool {
 }
 
 fn validate_tool_description_override(
-    spec: &AgentToolSpec,
+    descriptor: &ToolDescriptor,
     override_: &AgentToolDescriptionOverride,
 ) -> Result<(), ApplicationError> {
+    let name = descriptor.id.native_name();
     if let Some(description) = override_.description.as_ref()
         && description.trim().is_empty()
     {
         return Err(ApplicationError::ValidationError(format!(
-            "agent.profile_tool_description_empty: description for `{}` cannot be empty",
-            spec.name
+            "agent.profile_tool_description_empty: description for `{name}` cannot be empty"
         )));
     }
     if override_.properties.is_empty() {
         return Ok(());
     }
-    let properties = spec
+    let properties = descriptor
         .input_schema
         .get("properties")
         .and_then(Value::as_object)
         .ok_or_else(|| {
             ApplicationError::ValidationError(format!(
-                "agent.profile_tool_properties_invalid: `{}` has no object properties",
-                spec.name
+                "agent.profile_tool_properties_invalid: `{name}` has no object properties"
             ))
         })?;
     for (property, description) in &override_.properties {
         if !properties.contains_key(property) {
             return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_unknown_tool_property: `{}` has no property `{property}`",
-                spec.name
+                "agent.profile_unknown_tool_property: `{name}` has no property `{property}`"
             )));
         }
         if description.trim().is_empty() {
             return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_tool_property_description_empty: `{}` property `{property}` cannot be empty",
-                spec.name
+                "agent.profile_tool_property_description_empty: `{name}` property `{property}` cannot be empty"
             )));
         }
     }

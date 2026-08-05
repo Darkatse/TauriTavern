@@ -6,7 +6,8 @@ use crate::errors::ApplicationError;
 use crate::services::agent_tools::common::{object_args, required_trimmed_string_arg, tool_error};
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use crate::services::agent_tools::structured::structured_value;
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult};
+use tt_domain::models::agent::AgentToolResult;
+use tt_domain::models::tool::ToolInvocation;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DiceFormula {
@@ -30,7 +31,7 @@ struct DiceRollStructured<'a> {
 }
 
 pub(in crate::services::agent_tools) async fn roll(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let Some(args) = object_args(call) else {
         return Ok((
@@ -67,8 +68,8 @@ pub(in crate::services::agent_tools) async fn roll(
 
     Ok((
         AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content,
             structured: structured_value(DiceRollStructured {
                 formula: formula.normalized.as_str(),
@@ -223,7 +224,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{MAX_DICE, MAX_SIDES, parse_formula, render_content};
-    use tt_domain::models::agent::AgentToolCall;
+    use tt_domain::models::tool::{ToolId, ToolInvocation};
 
     #[test]
     fn parse_plain_number_as_single_die() {
@@ -295,9 +296,9 @@ mod tests {
 
     #[tokio::test]
     async fn roll_tool_returns_structured_result() {
-        let call = AgentToolCall {
-            id: "call_dice".to_string(),
-            name: "dice.roll".to_string(),
+        let call = ToolInvocation {
+            call_id: "call_dice".to_string(),
+            tool_id: ToolId::builtin("dice.roll").unwrap(),
             arguments: json!({ "formula": "1d1+2" }),
             provider_metadata: Value::Null,
         };

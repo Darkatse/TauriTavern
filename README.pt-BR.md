@@ -54,9 +54,11 @@ scoop install Darkatse/TauriTavern
 
 ### macOS · Homebrew
 
-O cask do TauriTavern para Homebrew está aguardando análise. Até que seja aceito, use o botão acima para baixar o instalador do macOS.
+Execute no Terminal:
 
-[Acompanhar a análise no Homebrew](https://github.com/Homebrew/homebrew-cask/pull/275888)
+```sh
+brew install --cask tauritavern
+```
 
 ### Linux
 

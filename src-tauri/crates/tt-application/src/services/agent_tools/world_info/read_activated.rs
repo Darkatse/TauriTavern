@@ -8,7 +8,8 @@ use super::{
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::common::{object_args, tool_error};
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult};
+use tt_domain::models::agent::AgentToolResult;
+use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 
 use super::super::structured::{
@@ -105,7 +106,7 @@ struct RenderedEntry {
 
 pub(in crate::services::agent_tools) fn read_activated(
     prompt_snapshot: &Value,
-    call: &AgentToolCall,
+    call: &ToolInvocation,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let Some(args) = object_args(call) else {
         return Ok((
@@ -296,7 +297,7 @@ fn normalize_entry(index: usize, entry: &Value) -> Result<ActivatedEntry, Applic
 }
 
 fn build_index_result(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     batch: &Value,
     entries: &[ActivatedEntry],
 ) -> AgentToolResult {
@@ -307,8 +308,8 @@ fn build_index_result(
     let content = render_index_content(entries);
 
     AgentToolResult {
-        call_id: call.id.clone(),
-        name: call.name.clone(),
+        call_id: call.call_id.clone(),
+        tool_id: call.tool_id.clone(),
         content,
         structured: structured_value(WorldInfoIndexStructured {
             mode: "index",
@@ -324,7 +325,7 @@ fn build_index_result(
 }
 
 fn build_content_result(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     batch: &Value,
     entries: &[ActivatedEntry],
     requests: &[EntryContentRequest],
@@ -363,8 +364,8 @@ fn build_content_result(
     let content = render_content_entries(&rendered);
 
     Ok(AgentToolResult {
-        call_id: call.id.clone(),
-        name: call.name.clone(),
+        call_id: call.call_id.clone(),
+        tool_id: call.tool_id.clone(),
         content,
         structured: structured_value(WorldInfoContentStructured {
             mode: "content",

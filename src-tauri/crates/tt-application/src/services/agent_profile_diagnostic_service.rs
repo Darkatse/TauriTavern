@@ -5,7 +5,6 @@ use crate::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService, preset_exists_for_type,
 };
 use crate::services::llm_connection_service::LlmConnectionService;
-use tt_domain::models::agent::AgentToolSpec;
 use tt_domain::models::agent::profile::{
     AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef, AgentProfileId,
     ResolvedAgentProfile,
@@ -16,6 +15,7 @@ use tt_domain::models::agent::profile_diagnostic::{
     AgentProfileDiagnosticSeverity, AgentProfileHealth,
 };
 use tt_domain::models::preset::PresetType;
+use tt_domain::models::tool::ToolCatalog;
 use tt_ports::repositories::preset_repository::PresetRepository;
 
 pub struct AgentProfileDiagnosticService {
@@ -40,7 +40,7 @@ impl AgentProfileDiagnosticService {
     pub async fn diagnose_profile(
         &self,
         profile_id: &str,
-        known_tools: &[AgentToolSpec],
+        tool_catalog: &ToolCatalog,
     ) -> Result<AgentProfileHealth, ApplicationError> {
         let profile_id =
             AgentProfileId::parse(profile_id).map_err(ApplicationError::ValidationError)?;
@@ -48,7 +48,7 @@ impl AgentProfileDiagnosticService {
             .profile_service
             .resolve_profile_for_preview(AgentProfileResolveInput {
                 profile_id: Some(profile_id.as_str()),
-                known_tools,
+                tool_catalog,
             })
             .await
         {
@@ -372,7 +372,7 @@ mod tests {
         );
 
         let health = diagnostic_service
-            .diagnose_profile("default-writer", registry.specs())
+            .diagnose_profile("default-writer", registry.catalog())
             .await
             .expect("diagnose default profile");
 
@@ -404,12 +404,12 @@ mod tests {
         });
         profile.preset.required = true;
         profile_service
-            .save_profile(profile, registry.specs())
+            .save_profile(profile, registry.catalog())
             .await
             .expect("dangling preset profile remains editable");
 
         let health = diagnostic_service
-            .diagnose_profile("dangling-writer", registry.specs())
+            .diagnose_profile("dangling-writer", registry.catalog())
             .await
             .expect("diagnose dangling profile");
 
@@ -450,12 +450,12 @@ mod tests {
         });
         profile.preset.required = true;
         profile_service
-            .save_profile(profile, registry.specs())
+            .save_profile(profile, registry.catalog())
             .await
             .expect("supported preset type remains editable even if assembly cannot use it");
 
         let health = diagnostic_service
-            .diagnose_profile("textgen-writer", registry.specs())
+            .diagnose_profile("textgen-writer", registry.catalog())
             .await
             .expect("diagnose textgen preset profile");
 
@@ -489,12 +489,12 @@ mod tests {
         profile.model.connection_ref = None;
         profile.model.model_id = None;
         profile_service
-            .save_profile(profile, registry.specs())
+            .save_profile(profile, registry.catalog())
             .await
             .expect("requiresConfiguration profile remains editable");
 
         let health = diagnostic_service
-            .diagnose_profile("imported-writer", registry.specs())
+            .diagnose_profile("imported-writer", registry.catalog())
             .await
             .expect("diagnose imported profile");
 
@@ -530,12 +530,12 @@ mod tests {
         profile.model.connection_ref = Some("missing-connection".to_string());
         profile.model.model_id = Some("test-model".to_string());
         profile_service
-            .save_profile(profile, registry.specs())
+            .save_profile(profile, registry.catalog())
             .await
             .expect("missing connection profile remains editable");
 
         let health = diagnostic_service
-            .diagnose_profile("connection-writer", registry.specs())
+            .diagnose_profile("connection-writer", registry.catalog())
             .await
             .expect("diagnose connection profile");
 

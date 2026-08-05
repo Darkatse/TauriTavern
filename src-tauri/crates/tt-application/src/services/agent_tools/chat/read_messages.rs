@@ -11,7 +11,8 @@ use crate::errors::ApplicationError;
 use crate::services::agent_tools::common::{object_args, tool_error};
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::{AgentChatRef, AgentToolCall, AgentToolResult};
+use tt_domain::models::agent::{AgentChatRef, AgentToolResult};
+use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::{ChatMessageReadItem, ChatRepository};
@@ -68,7 +69,7 @@ pub(in crate::services::agent_tools) async fn read_messages(
     chat_repository: &dyn ChatRepository,
     group_chat_repository: &dyn GroupChatRepository,
     run_id: &str,
-    call: &AgentToolCall,
+    call: &ToolInvocation,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let Some(args) = object_args(call) else {
         return Ok((
@@ -220,8 +221,8 @@ pub(in crate::services::agent_tools) async fn read_messages(
 
     Ok((
         AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content,
             structured: structured_value(ChatReadMessagesStructured {
                 total_messages: visible_total,

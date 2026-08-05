@@ -8,7 +8,8 @@ use super::args::{
 use super::policy::workspace_access_policy;
 use crate::errors::ApplicationError;
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult, WorkspaceFileWriteMode};
+use tt_domain::models::agent::{AgentToolResult, WorkspaceFileWriteMode};
+use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::repositories::workspace_repository::WorkspaceAppendResult;
 use tt_ports::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
@@ -32,7 +33,7 @@ struct WorkspaceWriteFileStructured<'a> {
 pub(in crate::services::agent_tools) async fn write_file(
     workspace_repository: &dyn WorkspaceRepository,
     run_id: &str,
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     session: &mut AgentToolSession,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = workspace_access_policy(workspace_repository, run_id).await?;
@@ -142,8 +143,8 @@ pub(in crate::services::agent_tools) async fn write_file(
     let metrics = TextMetrics::from_text(&file.text);
 
     let result = AgentToolResult {
-        call_id: call.id.clone(),
-        name: call.name.clone(),
+        call_id: call.call_id.clone(),
+        tool_id: call.tool_id.clone(),
         content: format!(
             "{} {} chars / {} words to {}.",
             write_mode_past_tense(mode),
@@ -199,7 +200,10 @@ fn write_mode_past_tense(mode: WorkspaceFileWriteMode) -> &'static str {
     }
 }
 
-fn write_conflict_error(call: &AgentToolCall, kind: WorkspaceWriteConflictKind) -> AgentToolResult {
+fn write_conflict_error(
+    call: &ToolInvocation,
+    kind: WorkspaceWriteConflictKind,
+) -> AgentToolResult {
     match kind {
         WorkspaceWriteConflictKind::AlreadyExists { .. } => tool_error(
             call,

@@ -67,6 +67,67 @@ fn claude_reasoning_accepts_shared_minimal_alias() {
 }
 
 #[test]
+fn claude_maps_all_canonical_tool_choices_without_downgrade() {
+    let cases = [
+        (json!("auto"), json!({ "type": "auto" })),
+        (json!("none"), json!({ "type": "none" })),
+        (json!("required"), json!({ "type": "any" })),
+        (
+            json!({ "type": "function", "function": { "name": "weather" } }),
+            json!({ "type": "tool", "name": "weather" }),
+        ),
+    ];
+
+    for (choice, expected) in cases {
+        let mut payload = claude_payload("claude-sonnet-4-5");
+        payload.insert(
+            "tools".to_string(),
+            json!([{
+                "type": "function",
+                "function": { "name": "weather", "parameters": { "type": "object" } }
+            }]),
+        );
+        payload.insert("tool_choice".to_string(), choice);
+
+        let (_, upstream) = build(payload).expect("tool choice should map");
+        assert_eq!(upstream["tool_choice"], expected);
+    }
+}
+
+#[test]
+fn claude_rejects_unknown_tool_choice_instead_of_using_auto() {
+    let mut payload = claude_payload("claude-sonnet-4-5");
+    payload.insert(
+        "tools".to_string(),
+        json!([{
+            "type": "function",
+            "function": { "name": "weather", "parameters": { "type": "object" } }
+        }]),
+    );
+    payload.insert("tool_choice".to_string(), json!("unexpected"));
+
+    let error = build(payload).expect_err("unknown choice must fail");
+    assert!(error.to_string().contains("provider.tool_choice_invalid"));
+}
+
+#[test]
+fn claude_rejects_forced_tool_choice_with_manual_thinking() {
+    let mut payload = claude_payload("claude-sonnet-4-5");
+    payload.insert("reasoning_effort".to_string(), json!("medium"));
+    payload.insert(
+        "tools".to_string(),
+        json!([{
+            "type": "function",
+            "function": { "name": "weather", "parameters": { "type": "object" } }
+        }]),
+    );
+    payload.insert("tool_choice".to_string(), json!("required"));
+
+    let error = build(payload).expect_err("manual thinking conflict must fail");
+    assert!(error.to_string().contains("provider.tool_choice_conflict"));
+}
+
+#[test]
 fn claude_opus_4_5_uses_legacy_thinking_with_output_effort() {
     let mut payload = claude_payload("claude-opus-4-5");
     payload.insert("max_tokens".to_string(), json!(4096));

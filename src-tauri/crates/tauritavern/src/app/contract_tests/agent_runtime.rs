@@ -13,7 +13,7 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
         .profile_service
         .resolve_profile(AgentProfileResolveInput {
             profile_id: None,
-            known_tools: registry.specs(),
+            tool_catalog: registry.catalog(),
         })
         .await
         .expect("resolve default profile");
@@ -106,6 +106,14 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
             event.event_type == "tool_call_requested" && event.payload["callId"] == "call_write"
         })
         .expect("tool call requested event");
+    assert_eq!(
+        tool_requested.payload["toolId"],
+        "builtin:workspace.write_file"
+    );
+    assert_eq!(
+        tool_requested.payload["snapshotId"],
+        ROOT_AGENT_INVOCATION_ID
+    );
     let arguments_ref = tool_requested.payload["argumentsRef"]
         .as_str()
         .expect("arguments ref");
@@ -118,10 +126,48 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
             event.event_type == "tool_result_stored" && event.payload["callId"] == "call_write"
         })
         .expect("tool result stored event");
+    assert_eq!(
+        result_stored.payload["toolId"],
+        "builtin:workspace.write_file"
+    );
     let result_ref = result_stored.payload["path"].as_str().expect("result ref");
     assert!(result_ref.starts_with("tool-results/call_"));
     let result = read_workspace_json(&fixture.agent_repository, &run.id, result_ref).await;
-    assert_eq!(result["name"], "workspace.write_file");
+    assert_eq!(result["toolId"], "builtin:workspace.write_file");
+    let tool_snapshot = read_workspace_json(
+        &fixture.agent_repository,
+        &run.id,
+        "input/invocations/inv_root/tool_snapshot.json",
+    )
+    .await;
+    assert_eq!(tool_snapshot["schemaVersion"], 1);
+    assert_eq!(tool_snapshot["id"], ROOT_AGENT_INVOCATION_ID);
+    assert!(
+        tool_snapshot["bindings"]
+            .as_array()
+            .is_some_and(|bindings| {
+                bindings.iter().any(|binding| {
+                    binding["descriptor"]["id"] == "builtin:workspace.write_file"
+                        && binding["modelAlias"] == "workspace_write_file"
+                })
+            })
+    );
+    let context_assembled = events
+        .iter()
+        .find(|event| event.event_type == "context_assembled")
+        .expect("context assembled event");
+    assert_eq!(
+        context_assembled.payload["toolSnapshotPath"],
+        "input/invocations/inv_root/tool_snapshot.json"
+    );
+    let model_request_created = events
+        .iter()
+        .find(|event| event.event_type == "model_request_created")
+        .expect("model request created event");
+    assert_eq!(
+        model_request_created.payload["toolTurn"]["snapshotId"],
+        ROOT_AGENT_INVOCATION_ID
+    );
     assert!(
         events
             .iter()
@@ -136,13 +182,74 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
             .any(|request| request
                 .tools
                 .iter()
-                .any(|tool| tool.name == "workspace.write_file"))
+                .any(|tool| tool.tool_id.native_name() == "workspace.write_file"))
     );
     wait_for_closed_sessions(
         &fixture.model_gateway,
         vec!["run_contract:inv_root".to_string()],
     )
     .await;
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn agent_runtime_duplicate_tool_call_id_preserves_first_audit_facts() {
+    let root = temp_root("agent-duplicate-tool-call-id");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![model_tool_response(vec![
+            model_tool_call(
+                "duplicate_call",
+                "workspace_write_file",
+                json!({ "path": "output/first.md", "content": "first" }),
+            ),
+            model_tool_call(
+                "duplicate_call",
+                "workspace_write_file",
+                json!({ "path": "output/second.md", "content": "second" }),
+            ),
+        ])],
+    );
+    let mut profile = resolve_contract_profile(&fixture).await;
+    profile.tools.max_rounds = 1;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Background,
+        "duplicate-tool-call-id",
+    )
+    .await;
+
+    let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
+    assert_eq!(run.status, AgentRunStatus::Failed);
+    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    let requested = events
+        .iter()
+        .filter(|event| {
+            event.event_type == "tool_call_requested" && event.payload["callId"] == "duplicate_call"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(requested.len(), 1);
+    let arguments_ref = requested[0].payload["argumentsRef"]
+        .as_str()
+        .expect("arguments ref");
+    let arguments =
+        read_workspace_json(&fixture.agent_repository, &handle.run_id, arguments_ref).await;
+    assert_eq!(arguments["path"], "output/first.md");
+
+    let stored_results = events
+        .iter()
+        .filter(|event| {
+            event.event_type == "tool_result_stored" && event.payload["callId"] == "duplicate_call"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(stored_results.len(), 1);
+    let result_ref = stored_results[0].payload["path"]
+        .as_str()
+        .expect("result ref");
+    let result = read_workspace_json(&fixture.agent_repository, &handle.run_id, result_ref).await;
+    assert_eq!(result["structured"]["path"], "output/first.md");
 
     let _ = fs::remove_dir_all(root).await;
 }
@@ -221,7 +328,7 @@ async fn agent_runtime_agent_list_discovers_callable_profiles_with_real_reposito
     };
     fixture
         .profile_service
-        .save_profile(callable, fixture.service.tool_specs())
+        .save_profile(callable, fixture.service.tool_catalog())
         .await
         .expect("save callable profile");
     let mut profile = resolve_contract_profile(&fixture).await;
@@ -689,16 +796,44 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
         requests[1]
             .tools
             .iter()
-            .any(|tool| tool.name == "task.return")
+            .any(|tool| tool.tool_id.native_name() == "task.return")
     );
     assert!(requests[1].tools.iter().all(|tool| {
         !matches!(
-            tool.name.as_str(),
+            tool.tool_id.native_name(),
             "workspace.commit"
                 | "workspace.finish"
+                | "agent.list"
                 | "agent.delegate"
                 | "agent.handoff"
                 | "agent.await"
+        )
+    }));
+    let child_snapshot = read_workspace_json(
+        &fixture.agent_repository,
+        &handle.run_id,
+        &format!(
+            "input/invocations/{}/tool_snapshot.json",
+            task.child_invocation_id
+        ),
+    )
+    .await;
+    let child_tool_ids = child_snapshot["bindings"]
+        .as_array()
+        .expect("child snapshot bindings")
+        .iter()
+        .map(|binding| binding["descriptor"]["id"].as_str().expect("tool id"))
+        .collect::<Vec<_>>();
+    assert_eq!(child_tool_ids.last(), Some(&"builtin:task.return"));
+    assert!(child_tool_ids.iter().all(|tool_id| {
+        !matches!(
+            *tool_id,
+            "builtin:workspace.commit"
+                | "builtin:workspace.finish"
+                | "builtin:agent.list"
+                | "builtin:agent.delegate"
+                | "builtin:agent.handoff"
+                | "builtin:agent.await"
         )
     }));
     assert!(message_text_for_role(&requests[1], AgentModelRole::User).contains("# Delegated Task"));
@@ -792,6 +927,7 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
     );
     assert_eq!(target.status, AgentInvocationStatus::Completed);
 
+    wait_for_event_type(&fixture.agent_repository, &handle.run_id, "run_completed").await;
     let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
     let commit = events
         .iter()
@@ -826,13 +962,29 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
         requests[1]
             .tools
             .iter()
-            .any(|tool| tool.name == "workspace.finish")
+            .any(|tool| tool.tool_id.native_name() == "workspace.finish")
     );
     assert!(
         requests[1]
             .tools
             .iter()
-            .all(|tool| tool.name != "agent.handoff")
+            .all(|tool| tool.tool_id.native_name() != "agent.handoff")
+    );
+    let handoff_snapshot = read_workspace_json(
+        &fixture.agent_repository,
+        &handle.run_id,
+        &format!(
+            "input/invocations/{}/tool_snapshot.json",
+            task.child_invocation_id
+        ),
+    )
+    .await;
+    assert!(
+        handoff_snapshot["bindings"]
+            .as_array()
+            .expect("handoff snapshot bindings")
+            .iter()
+            .any(|binding| binding["descriptor"]["id"] == "builtin:workspace.finish")
     );
     assert!(message_text_for_role(&requests[1], AgentModelRole::User).contains("# Handoff Brief"));
     wait_for_closed_sessions(
@@ -1013,12 +1165,12 @@ async fn configure_return_mode_profiles(
     allow_profile_tool(&mut root.tools.allow, "agent.await");
     fixture
         .profile_service
-        .save_profile(child, fixture.service.tool_specs())
+        .save_profile(child, fixture.service.tool_catalog())
         .await
         .expect("save child profile");
     fixture
         .profile_service
-        .save_profile(root, fixture.service.tool_specs())
+        .save_profile(root, fixture.service.tool_catalog())
         .await
         .expect("save root profile");
     resolve_contract_profile(fixture).await
@@ -1055,12 +1207,12 @@ async fn configure_handoff_profiles(
     allow_profile_tool(&mut root.tools.allow, "agent.handoff");
     fixture
         .profile_service
-        .save_profile(target, fixture.service.tool_specs())
+        .save_profile(target, fixture.service.tool_catalog())
         .await
         .expect("save handoff target profile");
     fixture
         .profile_service
-        .save_profile(root, fixture.service.tool_specs())
+        .save_profile(root, fixture.service.tool_catalog())
         .await
         .expect("save root profile");
     resolve_contract_profile(fixture).await

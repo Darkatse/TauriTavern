@@ -3,24 +3,27 @@ use std::sync::Arc;
 
 use tokio::sync::{RwLock, oneshot, watch};
 
-use crate::dto::agent_dto::AgentPromptAssemblyBrokerRequestDto;
+use crate::dto::agent_dto::{AgentPromptAssemblyBrokerRequestDto, AgentToolCatalogItemDto};
 use crate::errors::ApplicationError;
 use crate::services::agent_model_gateway::AgentModelGateway;
 use crate::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService, materialize_agent_system_prompt,
 };
 use crate::services::agent_tools::{
-    AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, AgentToolDispatcher,
-    BuiltinAgentToolRegistry, TASK_RETURN,
+    AgentToolDispatcher, BuiltinAgentToolRegistry, compile_invocation_tool_snapshot,
+    project_agent_model_tools,
 };
 use crate::services::llm_connection_service::LlmConnectionService;
 use crate::services::prompt_assembly_service::PromptAssemblyService;
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
-    AgentInvocation, AgentInvocationExitPolicy, AgentModelRequest, AgentToolSpec,
+    AgentInvocation, AgentInvocationExitPolicy, AgentModelRequest, AgentModelTool,
 };
 use tt_domain::models::skill::SkillIndexEntry;
+use tt_domain::models::tool::{
+    InvocationToolSnapshot, ToolCatalog, ToolChoice, ToolSnapshotId, ToolTurnContract,
+};
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
@@ -50,6 +53,7 @@ mod scheduler;
 mod skill_scope;
 mod timeline_projection;
 mod tool_execution;
+mod tool_snapshot;
 
 #[cfg(test)]
 mod tests;
@@ -89,6 +93,8 @@ struct PreparedInvocation {
     invocation: AgentInvocation,
     delegation_task_id: Option<String>,
     profile: ResolvedAgentProfile,
+    tool_snapshot: InvocationToolSnapshot,
+    tool_turn: ToolTurnContract,
     request: AgentModelRequest,
     effective_skills: Vec<SkillIndexEntry>,
 }
@@ -161,51 +167,74 @@ impl AgentRuntimeService {
         }
     }
 
-    pub fn tool_specs(&self) -> &[AgentToolSpec] {
-        self.tool_registry.specs()
+    pub fn tool_catalog(&self) -> &ToolCatalog {
+        self.tool_registry.catalog()
     }
 
-    pub fn visible_tool_specs(
+    pub fn tool_catalog_items(&self) -> Result<Vec<AgentToolCatalogItemDto>, ApplicationError> {
+        self.tool_registry
+            .catalog()
+            .iter()
+            .map(|descriptor| {
+                let title = descriptor.title.clone().ok_or_else(|| {
+                    ApplicationError::InternalError(format!(
+                        "agent.tool_title_required: builtin tool `{}` has no title",
+                        descriptor.id
+                    ))
+                })?;
+                let description = descriptor.description.clone().ok_or_else(|| {
+                    ApplicationError::InternalError(format!(
+                        "agent.tool_description_required: builtin tool `{}` has no description",
+                        descriptor.id
+                    ))
+                })?;
+                Ok(AgentToolCatalogItemDto {
+                    name: descriptor.id.native_name().to_string(),
+                    title,
+                    description,
+                    input_schema: descriptor.input_schema.clone(),
+                    output_schema: descriptor.output_schema.clone(),
+                    annotations: descriptor.annotations.clone(),
+                    source: descriptor.id.provider_id().to_string(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn visible_model_tools(
         &self,
         profile: &ResolvedAgentProfile,
-    ) -> Result<Vec<AgentToolSpec>, ApplicationError> {
-        self.tool_registry.visible_specs(profile)
+    ) -> Result<Vec<AgentModelTool>, ApplicationError> {
+        let (_, _, tools) = self.compile_invocation_tools(
+            profile,
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            "profile_preview",
+        )?;
+        Ok(tools)
     }
 
-    pub(super) fn visible_tool_specs_for_invocation(
+    pub(super) fn compile_invocation_tools(
         &self,
         profile: &ResolvedAgentProfile,
         exit_policy: AgentInvocationExitPolicy,
-    ) -> Result<Vec<AgentToolSpec>, ApplicationError> {
-        let mut tools = self.tool_registry.visible_specs(profile)?;
-        if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-            tools.retain(|tool| {
-                !matches!(
-                    tool.name.as_str(),
-                    "workspace.commit"
-                        | "workspace.finish"
-                        | AGENT_LIST
-                        | AGENT_DELEGATE
-                        | AGENT_HANDOFF
-                        | AGENT_AWAIT
-                )
-            });
-            if !tools.iter().any(|tool| tool.name == TASK_RETURN) {
-                let task_return =
-                    self.tool_registry
-                        .spec_by_name(TASK_RETURN)
-                        .ok_or_else(|| {
-                            ApplicationError::ValidationError(
-                                "agent.task_return_tool_missing: task.return is not registered"
-                                    .to_string(),
-                            )
-                        })?;
-                tools.push(task_return.clone());
-            }
-            self.tool_registry
-                .apply_return_mode_context(&mut tools, profile)?;
-        }
-        Ok(tools)
+        snapshot_id: &str,
+    ) -> Result<
+        (
+            InvocationToolSnapshot,
+            ToolTurnContract,
+            Vec<AgentModelTool>,
+        ),
+        ApplicationError,
+    > {
+        let snapshot = compile_invocation_tool_snapshot(
+            &self.tool_registry,
+            profile,
+            exit_policy,
+            ToolSnapshotId::parse(snapshot_id.to_string())?,
+        )?;
+        let turn = ToolTurnContract::all(&snapshot, ToolChoice::Auto)?;
+        let tools = project_agent_model_tools(&snapshot, &turn)?;
+        Ok((snapshot, turn, tools))
     }
 
     pub async fn resolve_agent_system_prompt(
@@ -216,10 +245,10 @@ impl AgentRuntimeService {
             .profile_service
             .resolve_profile_for_preview(AgentProfileResolveInput {
                 profile_id,
-                known_tools: self.tool_registry.specs(),
+                tool_catalog: self.tool_registry.catalog(),
             })
             .await?;
-        let visible_tools = self.tool_registry.visible_specs(&profile)?;
+        let visible_tools = self.visible_model_tools(&profile)?;
 
         Ok(materialize_agent_system_prompt(&visible_tools, &profile))
     }

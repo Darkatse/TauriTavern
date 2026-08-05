@@ -192,7 +192,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     { id: 'profiles', labelKey: 'profiles', icon: 'fa-id-card-clip' },
                     { id: 'runs', labelKey: 'runs', icon: 'fa-clock-rotate-left' },
                 ],
-                toolSpecs: [],
+                toolItems: [],
                 toolNames: [...KNOWN_TOOLS],
                 selectedToolName: KNOWN_TOOLS[0],
                 workspaceRoots: WORKSPACE_ROOTS,
@@ -418,19 +418,19 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 }
                 return groups;
             },
-            toolSpecsByName() {
-                return Object.fromEntries(this.toolSpecs.map((spec) => [spec.name, spec]));
+            toolItemsByName() {
+                return Object.fromEntries(this.toolItems.map((spec) => [spec.name, spec]));
             },
-            selectedToolSpec() {
-                return this.toolSpecsByName[this.selectedToolName] || null;
+            selectedToolItem() {
+                return this.toolItemsByName[this.selectedToolName] || null;
             },
             selectedToolEnabled() {
                 return Array.isArray(this.draft?.tools?.allow) && this.draft.tools.allow.includes(this.selectedToolName);
             },
             selectedToolProperties() {
-                const properties = this.selectedToolSpec?.inputSchema?.properties || {};
-                const required = new Set(Array.isArray(this.selectedToolSpec?.inputSchema?.required)
-                    ? this.selectedToolSpec.inputSchema.required
+                const properties = this.selectedToolItem?.inputSchema?.properties || {};
+                const required = new Set(Array.isArray(this.selectedToolItem?.inputSchema?.required)
+                    ? this.selectedToolItem.inputSchema.required
                     : []);
                 return Object.entries(properties).map(([name, schema]) => ({
                     name,
@@ -467,7 +467,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                         this.settings = await patchSettings(this.settings, { activeTab: 'profiles' });
                     }
                     await Promise.all([
-                        this.refreshToolSpecs(),
+                        this.refreshToolCatalog(),
                         this.refreshProfiles(),
                         this.refreshPresetOptions(),
                         this.refreshModelTargets(),
@@ -713,14 +713,14 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 const selectionToken = this.profileSelectionToken;
                 await this.refreshProfileRuntimeState(requireAgentApi().profiles, profileId, selectionToken);
             },
-            async refreshToolSpecs() {
+            async refreshToolCatalog() {
                 const api = requireAgentApi().tools;
                 if (!api?.list) {
                     throw new Error(tr('hostAgentToolApiUnavailable'));
                 }
                 const result = await api.list();
-                this.toolSpecs = result.tools;
-                this.toolNames = this.toolSpecs
+                this.toolItems = result.tools;
+                this.toolNames = this.toolItems
                     .map((tool) => tool.name)
                     .filter((tool) => !PROFILE_TOOL_MATRIX_HIDDEN.has(tool));
                 if (!this.toolNames.includes(this.selectedToolName)) {
@@ -1029,7 +1029,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.draft.tools.allow = normalizeDelegationToolAllowList(
                     this.draft?.tools?.allow,
                     this.draft?.delegation,
-                    this.toolSpecs.map((tool) => tool.name),
+                    this.toolItems.map((tool) => tool.name),
                 );
             },
             async persistProfileModelBinding(profile) {
@@ -1069,17 +1069,14 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             selectTool(toolName) {
                 this.selectedToolName = toolName;
             },
-            toolSpec(toolName) {
-                return this.toolSpecsByName[toolName];
+            toolItem(toolName) {
+                return this.toolItemsByName[toolName];
             },
             toolTitle(toolName) {
-                return this.toolSpec(toolName)?.title || toolName;
-            },
-            toolModelName(toolName) {
-                return this.toolSpec(toolName)?.modelName || toolName.replace(/\./g, '_');
+                return this.toolItem(toolName)?.title || toolName;
             },
             toolSource(toolName) {
-                return this.toolSpec(toolName)?.source || '';
+                return this.toolItem(toolName)?.source || '';
             },
             schemaType(schema) {
                 const type = schema?.type;
@@ -1089,7 +1086,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 return String(type || tr('value'));
             },
             toolBadges(toolName) {
-                const spec = this.toolSpec(toolName);
+                const spec = this.toolItem(toolName);
                 const annotations = spec?.annotations || {};
                 const badges = [];
                 if (annotations.readOnly) {
@@ -1723,11 +1720,11 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                             </div>
                                         </div>
 
-                                        <aside v-if="selectedToolSpec" class="ttas-tool-editor-panel">
+                                        <aside v-if="selectedToolItem" class="ttas-tool-editor-panel">
                                             <header class="ttas-tool-editor-header">
                                                 <div>
                                                     <div class="ttas-eyebrow">{{ selectedToolName }}</div>
-                                                    <h5>{{ selectedToolSpec.title }}</h5>
+                                                    <h5>{{ selectedToolItem.title }}</h5>
                                                 </div>
                                                 <button
                                                     type="button"
@@ -1741,7 +1738,6 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                             </header>
 
                                             <div class="ttas-tool-badge-row">
-                                                <span class="ttas-tool-model-name">{{ toolModelName(selectedToolName) }}</span>
                                                 <span v-if="toolSource(selectedToolName)">{{ toolSource(selectedToolName) }}</span>
                                                 <span v-for="badge in toolBadges(selectedToolName)" :key="badge.key" :class="'ttas-tool-badge-' + badge.key">{{ badge.label }}</span>
                                                 <span v-if="!selectedToolEnabled" class="ttas-tool-badge-disabled">{{ tr('disabledTool') }}</span>
@@ -1749,7 +1745,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
 
                                             <div class="ttas-tool-default-description">
                                                 <span>{{ tr('defaultDescription') }}</span>
-                                                <p>{{ selectedToolSpec.description }}</p>
+                                                <p>{{ selectedToolItem.description }}</p>
                                             </div>
 
                                             <label class="ttas-field">
@@ -1758,7 +1754,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                                     class="text_pole textarea_compact ttas-tool-description-textarea"
                                                     rows="5"
                                                     :value="getToolDescriptionOverride(selectedToolName)"
-                                                    :placeholder="selectedToolSpec.description"
+                                                    :placeholder="selectedToolItem.description"
                                                     :disabled="isBuiltinProfile || !selectedToolEnabled"
                                                     @input="setToolDescriptionOverride(selectedToolName, $event.target.value)"
                                                 ></textarea>

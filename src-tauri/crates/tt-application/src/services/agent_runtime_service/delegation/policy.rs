@@ -1,7 +1,6 @@
 use crate::services::agent_profile_service::{
     profile_model_configuration_error, profile_model_requires_configuration,
 };
-use tt_domain::models::agent::AgentRunPresentation;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 
 pub(super) fn caller_allowed(source: &ResolvedAgentProfile, target: &ResolvedAgentProfile) -> bool {
@@ -67,16 +66,4 @@ pub(super) fn validate_handoff_target(
         return Err(profile_model_configuration_error(target));
     }
     Ok(())
-}
-
-pub(super) fn apply_child_invocation_policy(profile: &mut ResolvedAgentProfile) {
-    profile.run.presentation = AgentRunPresentation::Background;
-    profile.tools.allow.retain(|name| {
-        name != "workspace.commit"
-            && name != "workspace.finish"
-            && name != "agent.list"
-            && name != "agent.delegate"
-            && name != "agent.handoff"
-            && name != "agent.await"
-    });
 }

@@ -60,7 +60,7 @@ impl AgentRuntimeService {
             .profile_service
             .resolve_profile(AgentProfileResolveInput {
                 profile_id: dto.profile_id.as_deref(),
-                known_tools: self.tool_registry.specs(),
+                tool_catalog: self.tool_registry.catalog(),
             })
             .await?;
         if !resolved_profile.run.direct_runnable {

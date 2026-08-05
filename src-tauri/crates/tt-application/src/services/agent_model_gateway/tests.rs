@@ -11,16 +11,43 @@ use crate::services::chat_completion_service::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
 };
 use tt_domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolCall,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
     AgentToolResult,
 };
+use tt_domain::models::tool::{ToolChoice, ToolId, ToolInvocation, ToolProviderId};
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionNormalizationReport, ChatCompletionSource,
 };
 
+fn model_tools(registry: &BuiltinAgentToolRegistry) -> Vec<AgentModelTool> {
+    registry
+        .catalog()
+        .iter()
+        .map(|descriptor| AgentModelTool {
+            tool_id: descriptor.id.clone(),
+            model_alias: descriptor.id.native_name().replace('.', "_"),
+            description: descriptor.description.clone(),
+            input_schema: descriptor.input_schema.clone(),
+        })
+        .collect()
+}
+
+fn model_tool(registry: &BuiltinAgentToolRegistry, name: &str) -> AgentModelTool {
+    model_tools(registry)
+        .into_iter()
+        .find(|tool| tool.tool_id.native_name() == name)
+        .expect("builtin model tool")
+}
+
 #[test]
-fn decodes_tool_call_to_canonical_name() {
+fn decodes_tool_call_to_canonical_identity() {
     let registry = BuiltinAgentToolRegistry::all();
+    let mut write = model_tool(&registry, "workspace.write_file");
+    write.tool_id = ToolId::new(
+        &ToolProviderId::parse("mcp/registration-1").unwrap(),
+        "workspace.write_file",
+    )
+    .unwrap();
     let response = json!({
         "choices": [{
             "message": {
@@ -38,14 +65,47 @@ fn decodes_tool_call_to_canonical_name() {
         }]
     });
 
-    let decoded = decode_chat_completion_response(response, registry.specs()).unwrap();
+    let decoded = decode_chat_completion_response(response, &[write]).unwrap();
     assert_eq!(decoded.tool_calls.len(), 1);
-    assert_eq!(decoded.tool_calls[0].name, "workspace.write_file");
-    assert_eq!(decoded.tool_calls[0].id, "call_1");
+    assert_eq!(
+        decoded.tool_calls[0].tool_id,
+        ToolId::new(
+            &ToolProviderId::parse("mcp/registration-1").unwrap(),
+            "workspace.write_file",
+        )
+        .unwrap()
+    );
+    assert_eq!(decoded.tool_calls[0].call_id, "call_1");
     assert_eq!(
         decoded.tool_calls[0].provider_metadata["signature"],
         "sig_1"
     );
+}
+
+#[test]
+fn rejects_tool_names_outside_the_current_turn_aliases() {
+    let registry = BuiltinAgentToolRegistry::all();
+    let write = model_tool(&registry, "workspace.write_file");
+
+    for (raw_name, tools) in [
+        ("workspace_write_file", Vec::new()),
+        ("workspace.write_file", vec![write.clone()]),
+    ] {
+        let response = json!({
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": raw_name, "arguments": "{}" }
+                    }]
+                }
+            }]
+        });
+
+        let error = decode_chat_completion_response(response, &tools).unwrap_err();
+        assert!(error.to_string().contains("model.unknown_tool_call"));
+    }
 }
 
 #[test]
@@ -62,7 +122,7 @@ fn rejects_tool_call_without_id() {
         }]
     });
 
-    let error = decode_chat_completion_response(response, registry.specs()).unwrap_err();
+    let error = decode_chat_completion_response(response, &model_tools(&registry)).unwrap_err();
     assert!(error.to_string().contains("tool_call_id is required"));
 }
 
@@ -89,7 +149,7 @@ fn rejects_normalizer_synthetic_tool_call_id() {
         normalization_report: report,
     };
 
-    let error = decode_chat_completion_exchange(exchange, registry.specs()).unwrap_err();
+    let error = decode_chat_completion_exchange(exchange, &model_tools(&registry)).unwrap_err();
     assert!(
         error
             .to_string()
@@ -130,6 +190,125 @@ fn built_in_bedrock_claude_uses_claude_adapter() {
         let (_, adapter) = resolve_request_adapter(&request).unwrap();
         assert_eq!(adapter, expected, "unexpected adapter for {model}");
     }
+}
+
+#[test]
+fn encodes_typed_tool_choice_against_advertised_tools() {
+    let registry = BuiltinAgentToolRegistry::all();
+    let finish = model_tool(&registry, "workspace.finish");
+    let cases = [
+        (ToolChoice::None, json!("none")),
+        (ToolChoice::Auto, json!("auto")),
+        (ToolChoice::Required, json!("required")),
+        (
+            ToolChoice::Specific(ToolId::builtin("workspace.finish").unwrap()),
+            json!({
+                "type": "function",
+                "function": { "name": finish.model_alias }
+            }),
+        ),
+    ];
+
+    for (tool_choice, expected) in cases {
+        let mut request = basic_request("openai", None, Vec::new());
+        request.tools = vec![finish.clone()];
+        request.tool_choice = tool_choice;
+
+        let dto = encode_chat_completion_request(&request).expect("choice should encode");
+        assert_eq!(dto.payload.get("tool_choice"), Some(&expected));
+    }
+}
+
+#[test]
+fn rejects_tool_choice_outside_the_advertised_set() {
+    let registry = BuiltinAgentToolRegistry::all();
+    let mut request = basic_request("openai", None, Vec::new());
+    request.tools = vec![model_tool(&registry, "workspace.finish")];
+
+    request.tool_choice = ToolChoice::Specific(ToolId::builtin("workspace.write_file").unwrap());
+    let error =
+        encode_chat_completion_request(&request).expect_err("unadvertised tool choice must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("agent.tool_choice_tool_not_advertised")
+    );
+
+    let external = ToolProviderId::parse("mcp/registration-1").unwrap();
+    request.tool_choice = ToolChoice::Specific(ToolId::new(&external, "search").unwrap());
+    let error = encode_chat_completion_request(&request)
+        .expect_err("unadvertised external tool choice must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("agent.tool_choice_tool_not_advertised")
+    );
+}
+
+#[test]
+fn encodes_tool_result_alias_from_canonical_identity() {
+    let builtin_id = ToolId::builtin("search").unwrap();
+    let mcp_id = ToolId::new(
+        &ToolProviderId::parse("mcp/registration-1").unwrap(),
+        "search",
+    )
+    .unwrap();
+    let mut request = basic_request("openai", None, Vec::new());
+    request.tools = vec![
+        AgentModelTool {
+            tool_id: builtin_id,
+            model_alias: "builtin_search".to_string(),
+            description: None,
+            input_schema: json!({ "type": "object" }),
+        },
+        AgentModelTool {
+            tool_id: mcp_id.clone(),
+            model_alias: "mcp_search".to_string(),
+            description: None,
+            input_schema: json!({ "type": "object" }),
+        },
+    ];
+    request.messages = vec![AgentModelMessage {
+        role: AgentModelRole::Tool,
+        parts: vec![AgentModelContentPart::ToolResult {
+            result: AgentToolResult {
+                call_id: "call_mcp".to_string(),
+                tool_id: mcp_id,
+                content: "done".to_string(),
+                structured: Value::Null,
+                is_error: false,
+                error_code: None,
+                resource_refs: Vec::new(),
+            },
+        }],
+        provider_metadata: Value::Null,
+    }];
+
+    let dto = encode_chat_completion_request(&request).unwrap();
+    assert_eq!(dto.payload["messages"][0]["name"], "mcp_search");
+}
+
+#[test]
+fn tool_choice_requires_tools_and_ignores_raw_payload_overrides() {
+    let mut request = basic_request("openai", None, Vec::new());
+    request.tool_choice = ToolChoice::Required;
+    let error = encode_chat_completion_request(&request).expect_err("required needs tools");
+    assert!(
+        error
+            .to_string()
+            .contains("agent.tool_choice_requires_tools")
+    );
+
+    request.tool_choice = ToolChoice::Auto;
+    request
+        .payload
+        .insert("tools".to_string(), json!([{"raw": true}]));
+    request
+        .payload
+        .insert("tool_choice".to_string(), json!("required"));
+    let dto = encode_chat_completion_request(&request).expect("auto without tools is valid");
+    assert!(dto.payload.get("tools").is_none());
+    assert!(dto.payload.get("tool_choice").is_none());
 }
 
 #[test]
@@ -258,7 +437,7 @@ fn gemini_schema_sanitizer_projects_nested_objects_to_agent_friendly_schema() {
 #[test]
 fn gemini_builtin_tool_schemas_do_not_emit_nested_required() {
     let registry = BuiltinAgentToolRegistry::all();
-    let tools = render_openai_tools(registry.specs(), AgentProviderAdapter::Gemini);
+    let tools = render_openai_tools(&model_tools(&registry), AgentProviderAdapter::Gemini);
     for tool in &tools {
         let name = tool["function"]["name"].as_str().unwrap_or("<unknown>");
         assert_gemini_required_shape(
@@ -328,9 +507,9 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
             AgentModelMessage {
                 role: AgentModelRole::Assistant,
                 parts: vec![AgentModelContentPart::ToolCall {
-                    call: AgentToolCall {
-                        id: "call_1".to_string(),
-                        name: "workspace.write_file".to_string(),
+                    call: ToolInvocation {
+                        call_id: "call_1".to_string(),
+                        tool_id: ToolId::builtin("workspace.write_file").unwrap(),
                         arguments: json!({"path":"output/main.md","content":"hi"}),
                         provider_metadata: Value::Null,
                     },
@@ -339,8 +518,8 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
             },
             tool_result_message("call_1", "workspace.write_file", "ok"),
         ],
-        tools: registry.specs().to_vec(),
-        tool_choice: Value::String("auto".to_string()),
+        tools: model_tools(&registry),
+        tool_choice: ToolChoice::Auto,
         provider_state: json!({
             "sessionId": "run_1",
             "providerFormat": "openai_responses",
@@ -353,6 +532,7 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
     let messages = dto.payload["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["role"], "tool");
+    assert_eq!(messages[0]["name"], "workspace_write_file");
     assert_eq!(dto.payload["previous_response_id"], "resp_1");
     assert!(
         dto.payload
@@ -369,7 +549,7 @@ fn openai_responses_continuation_requires_valid_cursor() {
         Some("openai_responses"),
         vec![text_message(AgentModelRole::User, "hi")],
     );
-    request.tools = registry.specs().to_vec();
+    request.tools = model_tools(&registry);
     request.provider_state = json!({
         "sessionId": "run_1",
         "previousResponseId": "resp_1"
@@ -414,7 +594,7 @@ fn same_provider_native_metadata_loss_fails_for_native_formats() {
 
     let registry = BuiltinAgentToolRegistry::all();
     let raw = response_with_tool_call_without_native();
-    let response = decode_chat_completion_response(raw, registry.specs()).unwrap();
+    let response = decode_chat_completion_response(raw, &model_tools(&registry)).unwrap();
 
     for (source, adapter, provider) in cases {
         let error = next_provider_state(
@@ -440,7 +620,7 @@ fn provider_state_requires_session_id() {
         "model": "test",
         "choices": [{ "message": { "role": "assistant", "content": "hello" } }]
     });
-    let response = decode_chat_completion_response(raw, registry.specs()).unwrap();
+    let response = decode_chat_completion_response(raw, &model_tools(&registry)).unwrap();
     let mut request = provider_state_test_request("run_1");
     request.provider_state = Value::Null;
 
@@ -496,7 +676,7 @@ fn claude_provider_state_records_native_continuation() {
         normalization_report: ChatCompletionNormalizationReport::default(),
     };
 
-    let response = decode_chat_completion_exchange(exchange, registry.specs()).unwrap();
+    let response = decode_chat_completion_exchange(exchange, &model_tools(&registry)).unwrap();
     let state = next_provider_state(
         &request,
         ChatCompletionSource::Claude,
@@ -554,7 +734,7 @@ fn gemini_provider_state_records_native_continuation() {
         normalization_report: ChatCompletionNormalizationReport::default(),
     };
 
-    let response = decode_chat_completion_exchange(exchange, registry.specs()).unwrap();
+    let response = decode_chat_completion_exchange(exchange, &model_tools(&registry)).unwrap();
     let state = next_provider_state(
         &request,
         ChatCompletionSource::Makersuite,
@@ -645,7 +825,7 @@ fn assert_gemini_required_shape(schema: &Value, root: bool, context: &str) {
 
 fn provider_state_test_request(session_id: &str) -> AgentModelRequest {
     let mut request = basic_request("claude", None, Vec::new());
-    request.tools = BuiltinAgentToolRegistry::all().specs().to_vec();
+    request.tools = model_tools(&BuiltinAgentToolRegistry::all());
     request.provider_state = json!({ "sessionId": session_id });
     request
 }
@@ -673,7 +853,7 @@ fn basic_request(
         payload,
         messages,
         tools: Vec::new(),
-        tool_choice: Value::String("auto".to_string()),
+        tool_choice: ToolChoice::Auto,
         provider_state: json!({ "sessionId": "run_1" }),
     }
 }
@@ -715,7 +895,7 @@ fn tool_result_message(call_id: &str, name: &str, content: &str) -> AgentModelMe
         parts: vec![AgentModelContentPart::ToolResult {
             result: AgentToolResult {
                 call_id: call_id.to_string(),
-                name: name.to_string(),
+                tool_id: ToolId::builtin(name).unwrap(),
                 content: content.to_string(),
                 structured: Value::Null,
                 is_error: false,

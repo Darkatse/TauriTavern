@@ -5,14 +5,14 @@ use crate::services::chat_completion_service::exchange::{
     ChatCompletionExchange, NormalizedChatCompletionResponse,
 };
 use tt_domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelResponse, AgentModelRole, AgentToolCall,
-    AgentToolSpec,
+    AgentModelContentPart, AgentModelMessage, AgentModelResponse, AgentModelRole, AgentModelTool,
 };
+use tt_domain::models::tool::ToolInvocation;
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn decode_chat_completion_response(
     response: Value,
-    tools: &[AgentToolSpec],
+    tools: &[AgentModelTool],
 ) -> Result<AgentModelResponse, ApplicationError> {
     let normalized = NormalizedChatCompletionResponse::from_value(response)?;
     decode_normalized_chat_completion_response(&normalized, tools)
@@ -20,7 +20,7 @@ pub fn decode_chat_completion_response(
 
 pub(super) fn decode_chat_completion_exchange(
     exchange: ChatCompletionExchange,
-    tools: &[AgentToolSpec],
+    tools: &[AgentModelTool],
 ) -> Result<AgentModelResponse, ApplicationError> {
     if !exchange
         .normalization_report
@@ -51,7 +51,7 @@ pub(super) fn decode_chat_completion_exchange(
 
 fn decode_normalized_chat_completion_response(
     response: &NormalizedChatCompletionResponse,
-    tools: &[AgentToolSpec],
+    tools: &[AgentModelTool],
 ) -> Result<AgentModelResponse, ApplicationError> {
     let message = response.assistant_message();
     let raw_response = response.raw();
@@ -146,8 +146,8 @@ fn reject_incomplete_response(response: &Value) -> Result<(), ApplicationError> 
 
 fn extract_tool_calls_from_message(
     message: &Map<String, Value>,
-    tools: &[AgentToolSpec],
-) -> Result<Vec<AgentToolCall>, ApplicationError> {
+    tools: &[AgentModelTool],
+) -> Result<Vec<ToolInvocation>, ApplicationError> {
     let Some(calls) = message.get("tool_calls").and_then(Value::as_array) else {
         return Ok(Vec::new());
     };
@@ -160,8 +160,8 @@ fn extract_tool_calls_from_message(
 
 fn parse_tool_call(
     call: &Value,
-    tools: &[AgentToolSpec],
-) -> Result<AgentToolCall, ApplicationError> {
+    tools: &[AgentModelTool],
+) -> Result<ToolInvocation, ApplicationError> {
     let object = call.as_object().ok_or_else(|| {
         ApplicationError::ValidationError(
             "model.invalid_tool_call: tool call must be an object".to_string(),
@@ -195,27 +195,27 @@ fn parse_tool_call(
                 "model.invalid_tool_call: tool_call_id is required".to_string(),
             )
         })?;
-    let canonical_name = canonical_tool_name(raw_name, tools).unwrap_or(raw_name);
+    let tool = tools
+        .iter()
+        .find(|tool| tool.model_alias == raw_name)
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "model.unknown_tool_call: model returned unadvertised tool alias `{raw_name}`"
+            ))
+        })?;
     let arguments =
         parse_tool_call_arguments(function.get("arguments").or_else(|| function.get("args")));
 
-    Ok(AgentToolCall {
-        id: id.to_string(),
-        name: canonical_name.to_string(),
+    Ok(ToolInvocation {
+        call_id: id.to_string(),
+        tool_id: tool.tool_id.clone(),
         arguments,
         provider_metadata: json!({
-            "modelName": raw_name,
+            "modelAlias": raw_name,
             "signature": object.get("signature"),
             "raw": call,
         }),
     })
-}
-
-fn canonical_tool_name<'a>(raw: &'a str, tools: &'a [AgentToolSpec]) -> Option<&'a str> {
-    tools
-        .iter()
-        .find(|spec| spec.model_name == raw || spec.name == raw)
-        .map(|spec| spec.name.as_str())
 }
 
 fn parse_tool_call_arguments(value: Option<&Value>) -> Value {

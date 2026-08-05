@@ -1,6 +1,6 @@
 # `window.__TAURITAVERN__.api.agent` — Agent API
 
-本文档是 Agent Host ABI 当前参考。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
+本文档是 Agent Host ABI 当前参考。Run 控制入口属于 Public Contract；明确标注为 Project Contract 的 UI/诊断投影可以随 Agent 实验能力演进，不等同于 Rust 内部 service/repository。
 
 状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing、Agent run retention facade / dry-run plan preview / manual apply prune / backend auto prune，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval 等未来设计。
 
@@ -60,7 +60,7 @@ type TauriTavernAgentApi = {
     buildSnapshot(input: AgentPromptAssemblyBrokerRequest): Promise<AgentPromptAssemblyBuildResult>;
   };
   tools: {
-    list(): Promise<{ tools: AgentToolSpec[] }>;
+    list(): Promise<{ tools: AgentToolCatalogItem[] }>;
   };
 
   approveToolCall(): never;
@@ -384,7 +384,7 @@ type AgentWorkspaceFile = {
 路径必须是 workspace relative path。非法路径直接 reject。
 当前 Host ABI 只读当前 run workspace 的 UTF-8 文本文件，不支持 `checkpointId` 参数。模型侧读取应使用 `workspace_read_file` 工具，前端/扩展侧读取应使用本方法。
 
-## 10. readModelTurn
+## 10. readModelTurn（Project Contract）
 
 ```ts
 type AgentReadModelTurnInput = {
@@ -427,8 +427,9 @@ type AgentModelTurn = {
   }>;
   toolCalls: Array<{
     callId: string;
+    toolId: string;
     name: string;
-    modelName?: string;
+    modelAlias?: string;
   }>;
 };
 ```
@@ -602,12 +603,11 @@ type AgentProfileDiagnostic = {
 
 `promptAssembly.prepare()` 调用 Rust `prepare_agent_prompt_assembly`，返回 `currentPromptSnapshot` 或 `frontendPromptAssembly`。`promptAssembly.buildSnapshot()` 是前端 broker：它只能使用 `frozenRunInputSnapshot` 内的 `promptInputs`、`worldInfoActivation`、`macroContext`，并调用真实 SillyTavern PromptManager 组装 `promptSnapshot.chatCompletionPayload`。该 API 是 Agent orchestration 内部边界，不是第三方扩展任意改写 prompt 的入口。
 
-### tools.list
+### tools.list（Project Contract）
 
 ```ts
-type AgentToolSpec = {
+type AgentToolCatalogItem = {
   name: string;
-  modelName: string;
   title: string;
   description: string;
   inputSchema: unknown;
@@ -617,7 +617,9 @@ type AgentToolSpec = {
 };
 ```
 
-`tools.list()` 返回当前后端 Agent Tool Registry 的 canonical specs。Profile 面板可以用它编辑 `tools.toolDescriptions`，但不得把返回值当作可修改的 registry。
+`tools.list()` 返回当前后端 Agent Tool Catalog 的 UI 投影。Profile 面板可以用它编辑 `tools.toolDescriptions`，但不得把返回值当作可修改的 catalog。Model alias 属于 invocation snapshot，不进入此 DTO。
+
+该 DTO 只服务当前 Agent Profile UI，不是跨来源 selector schema。MCP 工具进入 Profile 前，必须与 typed selector 迁移一起原子升级；不要向此 DTO 增加全局 alias 或 name fallback。
 
 ## 14. readDiff
 
@@ -739,7 +741,7 @@ commit.save_failed
 
 ```text
 start_agent_run(dto)
-list_agent_tool_specs()
+list_agent_tools()
 cancel_agent_run(dto)
 list_agent_runs(dto)
 plan_agent_run_prune(dto)

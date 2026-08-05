@@ -5,12 +5,13 @@ use serde_json::json;
 
 use crate::services::agent_tools::BuiltinAgentToolRegistry;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::AgentToolSpec;
+use tt_domain::models::agent::AgentModelTool;
 use tt_domain::models::agent::profile::{
     AgentContextPolicy, AgentModelBinding, AgentModelBindingMode, AgentPresetBindingMode,
     AgentPresetRef, AgentProfileDefinition, AgentProfileId, ResolvedAgentProfile,
 };
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
+use tt_domain::models::tool::ToolId;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::{
     AgentProfileStorageHealthRepository, AgentProfileStorageScan,
@@ -33,7 +34,7 @@ fn materialized_agent_system_prompt_uses_profile_override_exactly() {
 }
 
 #[test]
-fn default_agent_system_prompt_uses_visible_tool_model_names() {
+fn default_agent_system_prompt_uses_visible_tool_aliases() {
     let profile = test_profile(None, "foreground");
     let tools = vec![
         tool("chat.search", "chat_search_alias"),
@@ -43,7 +44,8 @@ fn default_agent_system_prompt_uses_visible_tool_model_names() {
 
     let prompt = materialize_agent_system_prompt(&tools, &profile);
 
-    assert!(prompt.contains("tool_choice: required"));
+    assert!(!prompt.contains("tool_choice:"));
+    assert!(prompt.contains("Every model turn must include at least one Agent tool call"));
     assert!(prompt.contains("- chat_search_alias"));
     assert!(prompt.contains("- workspace_commit_alias"));
     assert!(prompt.contains("- workspace_finish_alias"));
@@ -283,6 +285,21 @@ fn default_writer_does_not_enable_dice_roll() {
     assert!(
         !profile.tools.allow.iter().any(|tool| tool == "dice.roll"),
         "dice.roll must stay opt-in so normal Agent flows do not roll accidentally"
+    );
+}
+
+#[test]
+fn tool_policy_rejects_duplicate_order_entries() {
+    let registry = BuiltinAgentToolRegistry::all();
+    let mut profile = super::defaults::default_writer_profile().expect("default writer profile");
+    profile.tools.allow.push(profile.tools.allow[0].clone());
+
+    let error = super::validation::validate_tool_policy(&profile.tools, registry.catalog())
+        .expect_err("duplicate tool order must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("agent.profile_tools_allow_duplicate")
     );
 }
 
@@ -545,7 +562,7 @@ async fn save_profile_with_preset_ref(
     profile.preset.required = true;
     let registry = BuiltinAgentToolRegistry::all();
     profile_service
-        .save_profile(profile, registry.specs())
+        .save_profile(profile, registry.catalog())
         .await
         .expect("save profile");
 }
@@ -668,16 +685,12 @@ impl PresetRepository for TestPresetRepository {
     }
 }
 
-fn tool(name: &str, model_name: &str) -> AgentToolSpec {
-    AgentToolSpec {
-        name: name.to_string(),
-        model_name: model_name.to_string(),
-        title: name.to_string(),
-        description: String::new(),
+fn tool(name: &str, model_alias: &str) -> AgentModelTool {
+    AgentModelTool {
+        tool_id: ToolId::builtin(name).unwrap(),
+        model_alias: model_alias.to_string(),
+        description: None,
         input_schema: json!({}),
-        output_schema: None,
-        annotations: json!({}),
-        source: "test".to_string(),
     }
 }
 

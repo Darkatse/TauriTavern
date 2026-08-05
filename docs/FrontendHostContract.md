@@ -175,11 +175,12 @@
   - `startRunWithPromptSnapshot()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。
   - 不存在公共 `startRun()` alias；启动入口必须通过名称表达来源和职责。
   - Legacy `Generate(..., dryRun = true)` 不返回 payload；Agent adapter 必须通过 `GENERATE_AFTER_DATA` 事件捕获 `generate_data`。
-  - 当前模型可见工具为 `chat_search`、`chat_read_messages`、`worldinfo_read_activated`、`skill_list`、`skill_search`、`skill_read`、`workspace_list_files`、`workspace_search_files`、`workspace_read_file`、`workspace_write_file`、`workspace_apply_patch`、`workspace_commit`、`workspace_finish`；工具注册由 Rust runtime 独占，前端 Legacy ToolManager tools 必须禁用。
+  - 当前 Rust registry 包含 `agent_list`、`agent_delegate`、`agent_handoff`、`agent_await`、`task_return`、`chat_search`、`chat_read_messages`、`worldinfo_read_activated`、`dice_roll`、`skill_list`、`skill_search`、`skill_read`、`workspace_list_files`、`workspace_search_files`、`workspace_read_file`、`workspace_write_file`、`workspace_apply_patch`、`workspace_commit`、`workspace_finish`；实际模型可见集合由 Profile 与 invocation exit policy 收窄，`task_return` 只注入 return-mode child。工具注册由 Rust runtime 独占，前端 Legacy ToolManager tools 必须禁用。
   - 当前显式拒绝 `stream: true`、external tools、external tool choice 和已有 tool turns。
   - 可恢复工具错误会写入 Agent journal 并回填下一轮模型；宿主级错误仍让 run failed。
   - Agent event 属于 Agent Run journal/timeline 投影，不得伪装成上游 SillyTavern `GENERATION_*` / `TOOL_CALLS_*` 事件。
   - `subscribe()` 当前是 polling wrapper，必须返回幂等 `unsubscribe`；底层 Tauri 事件名与 Rust command 名属于 Internal，不是第三方 Public Contract。
+  - `tools.list()` 与 `readModelTurn()` 是 Agent System UI/诊断使用的 Project Contract；其 DTO 可以随实验性 Agent control plane 演进，但必须在 `docs/API/Agent.md` 明确记录。不得为了兼容返回全局 model alias 或从 native name 猜测 canonical identity。
   - Agent Mode off 时，Legacy `Generate()`、`ToolManager`、`api.chat` 行为必须不变。
 
 - `api.llmConnections`：TauriTavern LLM Connection 管理 API。用于保存和读取 Agent Profile 可引用的 LLM 连接定义。

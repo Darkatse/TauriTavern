@@ -21,6 +21,7 @@ pub mod secret;
 pub mod settings;
 pub mod skill;
 pub mod theme;
+pub mod tool;
 pub mod tt_sync;
 pub mod update;
 pub mod upstream_failure;

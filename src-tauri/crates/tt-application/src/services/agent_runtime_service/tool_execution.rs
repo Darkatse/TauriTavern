@@ -8,16 +8,18 @@ use super::delegation::workspace_policy::InvocationWorkspaceRepository;
 use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::hashing::hex_lower;
+use crate::services::tool_request_gate::{ToolRequestGate, ToolRequestGateError};
 
 use crate::services::agent_tools::{
     AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, AgentToolDispatchOutcome,
     AgentToolEffect, AgentToolSession, TASK_RETURN,
 };
-use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentToolCall, AgentToolResult, WorkspacePath,
+    AgentToolResult, WorkspacePath,
 };
+use tt_domain::models::tool::ToolInvocation;
+use tt_ports::repositories::workspace_repository::WorkspaceWriteGuard;
 
 const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
 
@@ -30,7 +32,8 @@ impl AgentRuntimeService {
         &self,
         prepared: &PreparedInvocation,
         round: usize,
-        call: &AgentToolCall,
+        tool_invocation: &ToolInvocation,
+        gate: &mut ToolRequestGate,
         session: &mut AgentToolSession,
         is_last_call: bool,
         commit_ledger: &mut RunCommitLedger,
@@ -40,18 +43,9 @@ impl AgentRuntimeService {
         let invocation_id = prepared.invocation.id.as_str();
         let exit_policy = prepared.invocation.exit_policy;
         let profile = &prepared.profile;
-        let canonical_call = self
-            .tool_registry
-            .spec_by_name_or_model_name(&call.name)
-            .filter(|spec| spec.name != call.name)
-            .map(|spec| AgentToolCall {
-                id: call.id.clone(),
-                name: spec.name.clone(),
-                arguments: call.arguments.clone(),
-                provider_metadata: call.provider_metadata.clone(),
-            });
-        let call = canonical_call.as_ref().unwrap_or(call);
-        let arguments_ref = self.store_tool_arguments(run_id, call).await?;
+        let tool_name = tool_invocation.tool_id.native_name();
+        let snapshot_id = prepared.tool_snapshot.id().as_str();
+        let arguments_ref = self.store_tool_arguments(run_id, tool_invocation).await?;
         self.event(
             run_id,
             AgentRunEventLevel::Info,
@@ -59,20 +53,58 @@ impl AgentRuntimeService {
             json!({
                 "round": round,
                 "invocationId": invocation_id,
-                "callId": call.id.as_str(),
-                "name": call.name.as_str(),
+                "callId": tool_invocation.call_id.as_str(),
+                "toolId": tool_invocation.tool_id.as_str(),
+                "snapshotId": snapshot_id,
+                "name": tool_name,
                 "argumentsRef": arguments_ref.as_str(),
-                "providerMetadata": &call.provider_metadata,
+                "providerMetadata": &tool_invocation.provider_metadata,
             }),
         )
         .await?;
         let started = Instant::now();
 
-        if self.tool_registry.spec_by_name(&call.name).is_none() {
-            let error = ApplicationError::ValidationError(format!(
-                "model.unknown_tool_call: model requested unknown Agent tool `{}`",
-                call.name
-            ));
+        if let Err(rejection) = gate.authorize_and_reserve(
+            &prepared.tool_snapshot,
+            &prepared.tool_turn,
+            tool_invocation,
+        ) {
+            let budget_message = match &rejection {
+                ToolRequestGateError::InvocationBudgetExhausted { max_calls } => Some(format!(
+                    "Agent tool call budget is exhausted for this invocation (max {max_calls})."
+                )),
+                ToolRequestGateError::ToolBudgetExhausted { max_calls, .. } => Some(format!(
+                    "Agent profile tool call budget for `{tool_name}` is exhausted (max {max_calls})."
+                )),
+                _ => None,
+            };
+            if let Some(message) = budget_message {
+                let outcome = recoverable_tool_error(
+                    tool_invocation,
+                    "agent.tool_budget_exhausted",
+                    &message,
+                    started.elapsed().as_millis(),
+                );
+                self.record_tool_outcome(
+                    run_id,
+                    invocation_id,
+                    round,
+                    tool_invocation,
+                    snapshot_id,
+                    &outcome,
+                )
+                .await?;
+                return Ok(outcome);
+            }
+
+            let error = if matches!(
+                &rejection,
+                ToolRequestGateError::TurnSnapshotMismatch { .. }
+            ) {
+                ApplicationError::InternalError(rejection.to_string())
+            } else {
+                ApplicationError::ValidationError(rejection.to_string())
+            };
             self.event(
                 run_id,
                 AgentRunEventLevel::Error,
@@ -80,8 +112,10 @@ impl AgentRuntimeService {
                 json!({
                     "round": round,
                     "invocationId": invocation_id,
-                    "callId": call.id.as_str(),
-                    "name": call.name.as_str(),
+                    "callId": tool_invocation.call_id.as_str(),
+                    "toolId": tool_invocation.tool_id.as_str(),
+                    "snapshotId": snapshot_id,
+                    "name": tool_name,
                     "message": error.to_string(),
                 }),
             )
@@ -89,54 +123,7 @@ impl AgentRuntimeService {
             return Err(error);
         }
 
-        if !tool_is_visible(profile, call.name.as_str(), exit_policy) {
-            let outcome = recoverable_tool_error(
-                call,
-                "agent.tool_policy_denied",
-                &format!(
-                    "Tool `{}` is not available in the current Agent profile.",
-                    call.name
-                ),
-                started.elapsed().as_millis(),
-            );
-            self.record_tool_outcome(run_id, invocation_id, round, &outcome)
-                .await?;
-            return Ok(outcome);
-        }
-
-        if session.total_calls() >= profile.tools.max_calls_per_run {
-            let outcome = recoverable_tool_error(
-                call,
-                "agent.tool_budget_exhausted",
-                &format!(
-                    "Agent profile tool call budget is exhausted for this run (max {}).",
-                    profile.tools.max_calls_per_run
-                ),
-                started.elapsed().as_millis(),
-            );
-            self.record_tool_outcome(run_id, invocation_id, round, &outcome)
-                .await?;
-            return Ok(outcome);
-        }
-
-        if let Some(max_calls) = profile.tools.max_calls_per_tool.get(&call.name)
-            && session.calls_for_tool(&call.name) >= *max_calls
-        {
-            let outcome = recoverable_tool_error(
-                call,
-                "agent.tool_budget_exhausted",
-                &format!(
-                    "Agent profile tool call budget for `{}` is exhausted (max {}).",
-                    call.name, max_calls
-                ),
-                started.elapsed().as_millis(),
-            );
-            self.record_tool_outcome(run_id, invocation_id, round, &outcome)
-                .await?;
-            return Ok(outcome);
-        }
-
-        session.remember_tool_call(&call.name);
+        let call = tool_invocation;
         if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed {
             self.transition_status(run_id, AgentRunStatus::DispatchingTool)
                 .await?;
@@ -148,15 +135,18 @@ impl AgentRuntimeService {
             json!({
                 "round": round,
                 "invocationId": invocation_id,
-                "callId": call.id.as_str(),
-                "name": call.name.as_str(),
+                "callId": call.call_id.as_str(),
+                "toolId": tool_invocation.tool_id.as_str(),
+                "snapshotId": snapshot_id,
+                "name": tool_name,
             }),
         )
         .await?;
 
-        let dispatch_result = if call.name == AGENT_LIST {
+        let builtin_name = call.tool_id.is_builtin().then_some(tool_name);
+        let dispatch_result = if builtin_name == Some(AGENT_LIST) {
             self.dispatch_agent_list_tool(call, profile).await
-        } else if call.name == AGENT_DELEGATE {
+        } else if builtin_name == Some(AGENT_DELEGATE) {
             Box::pin(self.dispatch_agent_delegate_tool(
                 run_id,
                 invocation_id,
@@ -165,20 +155,13 @@ impl AgentRuntimeService {
                 cancel,
             ))
             .await
-        } else if call.name == AGENT_AWAIT {
-            self.dispatch_agent_await_tool(
-                run_id,
-                invocation_id,
-                call,
-                profile,
-                commit_ledger.len(),
-                cancel,
-            )
-            .await
-        } else if call.name == AGENT_HANDOFF {
+        } else if builtin_name == Some(AGENT_AWAIT) {
+            self.dispatch_agent_await_tool(prepared, call, commit_ledger.len(), cancel)
+                .await
+        } else if builtin_name == Some(AGENT_HANDOFF) {
             self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile, is_last_call)
                 .await
-        } else if call.name == TASK_RETURN {
+        } else if builtin_name == Some(TASK_RETURN) {
             self.dispatch_task_return_tool(
                 run_id,
                 invocation_id,
@@ -208,11 +191,12 @@ impl AgentRuntimeService {
 
         match dispatch_result {
             Ok(outcome) => {
+                ensure_tool_result_identity(tool_invocation, &outcome.result)?;
                 let outcome = match outcome.effect.clone() {
                     AgentToolEffect::Finish => {
                         if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
                             recoverable_tool_error(
-                                call,
+                                tool_invocation,
                                 "agent.child_finish_denied",
                                 "Return-mode child Agent invocations must complete with task.return, not workspace.finish.",
                                 outcome.elapsed_ms,
@@ -222,7 +206,7 @@ impl AgentRuntimeService {
                                 == AgentRunPresentation::Foreground
                         {
                             recoverable_tool_error(
-                                call,
+                                tool_invocation,
                                 "agent.foreground_commit_required",
                                 "Foreground Agent runs must call workspace.commit successfully before workspace.finish.",
                                 outcome.elapsed_ms,
@@ -255,8 +239,15 @@ impl AgentRuntimeService {
                     }
                     _ => outcome,
                 };
-                self.record_tool_outcome(run_id, invocation_id, round, &outcome)
-                    .await?;
+                self.record_tool_outcome(
+                    run_id,
+                    invocation_id,
+                    round,
+                    tool_invocation,
+                    snapshot_id,
+                    &outcome,
+                )
+                .await?;
                 Ok(outcome)
             }
             Err(error) => {
@@ -267,8 +258,10 @@ impl AgentRuntimeService {
                     json!({
                     "round": round,
                     "invocationId": invocation_id,
-                    "callId": call.id.as_str(),
-                    "name": call.name.as_str(),
+                    "callId": call.call_id.as_str(),
+                    "toolId": tool_invocation.tool_id.as_str(),
+                    "snapshotId": snapshot_id,
+                    "name": tool_name,
                     "message": error.to_string(),
                     }),
                 )
@@ -283,8 +276,11 @@ impl AgentRuntimeService {
         run_id: &str,
         invocation_id: &str,
         round: usize,
+        invocation: &ToolInvocation,
+        snapshot_id: &str,
         outcome: &AgentToolDispatchOutcome,
     ) -> Result<(), ApplicationError> {
+        ensure_tool_result_identity(invocation, &outcome.result)?;
         self.store_tool_result(run_id, round, &outcome.result)
             .await?;
         self.event(
@@ -303,7 +299,9 @@ impl AgentRuntimeService {
                 "round": round,
                 "invocationId": invocation_id,
                 "callId": outcome.result.call_id.as_str(),
-                "name": outcome.result.name.as_str(),
+                "toolId": outcome.result.tool_id.as_str(),
+                "snapshotId": snapshot_id,
+                "name": outcome.result.tool_id.native_name(),
                 "isError": outcome.result.is_error,
                 "errorCode": outcome.result.error_code.as_deref(),
                 "message": outcome.result.is_error.then_some(outcome.result.content.as_str()),
@@ -331,7 +329,7 @@ impl AgentRuntimeService {
             ))
         })?;
         self.workspace_repository
-            .write_text(run_id, &path, &text)
+            .write_text_guarded(run_id, &path, &text, WorkspaceWriteGuard::MustNotExist)
             .await?;
         self.event(
             run_id,
@@ -340,6 +338,7 @@ impl AgentRuntimeService {
             json!({
                 "round": round,
                 "callId": result.call_id.as_str(),
+                "toolId": result.tool_id.as_str(),
                 "path": path.as_str(),
             }),
         )
@@ -350,11 +349,11 @@ impl AgentRuntimeService {
     async fn store_tool_arguments(
         &self,
         run_id: &str,
-        call: &AgentToolCall,
+        call: &ToolInvocation,
     ) -> Result<WorkspacePath, ApplicationError> {
         let path = WorkspacePath::parse(format!(
             "tool-args/{}.json",
-            tool_call_audit_file_stem(&call.id)
+            tool_call_audit_file_stem(&call.call_id)
         ))?;
         let text = serde_json::to_string_pretty(&call.arguments).map_err(|error| {
             ApplicationError::ValidationError(format!(
@@ -362,7 +361,7 @@ impl AgentRuntimeService {
             ))
         })?;
         self.workspace_repository
-            .write_text(run_id, &path, &text)
+            .write_text_guarded(run_id, &path, &text, WorkspaceWriteGuard::MustNotExist)
             .await?;
         Ok(path)
     }
@@ -376,39 +375,16 @@ fn tool_call_audit_file_stem(call_id: &str) -> String {
     )
 }
 
-fn tool_is_visible(
-    profile: &ResolvedAgentProfile,
-    name: &str,
-    exit_policy: AgentInvocationExitPolicy,
-) -> bool {
-    if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-        if name == TASK_RETURN {
-            return true;
-        }
-        if name == "workspace.commit"
-            || name == "workspace.finish"
-            || name == AGENT_LIST
-            || name == AGENT_DELEGATE
-            || name == AGENT_HANDOFF
-            || name == AGENT_AWAIT
-        {
-            return false;
-        }
-    }
-    profile.tools.allow.iter().any(|allowed| allowed == name)
-        && !profile.tools.deny.iter().any(|denied| denied == name)
-}
-
 fn recoverable_tool_error(
-    call: &AgentToolCall,
+    call: &ToolInvocation,
     code: &str,
     message: &str,
     elapsed_ms: u128,
 ) -> AgentToolDispatchOutcome {
     AgentToolDispatchOutcome {
         result: AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content: message.to_string(),
             structured: json!({
                 "error": {
@@ -422,5 +398,49 @@ fn recoverable_tool_error(
         },
         effect: AgentToolEffect::None,
         elapsed_ms,
+    }
+}
+
+fn ensure_tool_result_identity(
+    invocation: &ToolInvocation,
+    result: &AgentToolResult,
+) -> Result<(), ApplicationError> {
+    if result.call_id == invocation.call_id && result.tool_id == invocation.tool_id {
+        return Ok(());
+    }
+    Err(ApplicationError::InternalError(format!(
+        "tool.result_identity_mismatch: invocation `{}` / `{}` produced result `{}` / `{}`",
+        invocation.call_id, invocation.tool_id, result.call_id, result.tool_id
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+    use tt_domain::models::agent::AgentToolResult;
+    use tt_domain::models::tool::{ToolId, ToolInvocation};
+
+    use super::ensure_tool_result_identity;
+
+    #[test]
+    fn tool_result_identity_must_match_its_invocation() {
+        let invocation = ToolInvocation {
+            call_id: "call_1".to_string(),
+            tool_id: ToolId::builtin("workspace.finish").unwrap(),
+            arguments: Value::Null,
+            provider_metadata: Value::Null,
+        };
+        let result = AgentToolResult {
+            call_id: invocation.call_id.clone(),
+            tool_id: ToolId::builtin("workspace.commit").unwrap(),
+            content: String::new(),
+            structured: Value::Null,
+            is_error: false,
+            error_code: None,
+            resource_refs: Vec::new(),
+        };
+
+        let error = ensure_tool_result_identity(&invocation, &result).unwrap_err();
+        assert!(error.to_string().contains("tool.result_identity_mismatch"));
     }
 }

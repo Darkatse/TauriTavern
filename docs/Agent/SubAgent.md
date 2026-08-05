@@ -108,7 +108,7 @@ summaries/<workspace-key>-result.md
 
 ## 4. Tool Surface
 
-当前模型可见工具位于 `src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs`：
+当前 canonical 工具声明位于 `src-tauri/crates/tt-application/src/services/agent_tools/agent/descriptors.rs`：
 
 | Canonical | Model alias | 可见范围 | 语义 |
 | --- | --- | --- | --- |
@@ -118,7 +118,7 @@ summaries/<workspace-key>-result.md
 | `agent.await` | `agent_await` | `delegation.canDelegate = true` | 查询或等待自己创建的子任务结果 |
 | `task.return` | `task_return` | runtime 只注入 return-mode child invocation | 提交 delegated task 结果并结束 child work |
 
-不要把 `task.return` 写入 Profile `tools.allow`。它是 runtime-only 工具，由 `visible_tool_specs_for_invocation(..., TaskReturnRequired)` 注入。
+不要把 `task.return` 写入 Profile `tools.allow`。它是 runtime-only 工具，由 invocation snapshot compiler 根据 `TaskReturnRequired` exit policy 注入。
 
 `agent.delegate` 当前只接受：
 
@@ -148,6 +148,7 @@ return-mode child Agent 必须遵守更窄的执行契约：
 - 注入 `task.return`。
 - `exit_policy = TaskReturnRequired`。
 - 使用 target Agent Profile 的 model binding 与工具预算；delegate call 不能覆盖或收窄 `maxRounds` / `maxCallsPerRun`。
+- `maxCallsPerRun` 是现有 Profile 字段名；runtime 会把它冻结为该 child invocation 自己的 `maxCallsPerInvocation`，不与 parent 或 sibling 共享计数。
 - child 与请求它的 Agent 使用同一套逻辑 workspace path，不存在 return-mode 专用目录映射；可见/可写 root 仍由 target Agent Profile 的 `workspace.visibleRoots` / `workspace.writableRoots` 决定。
 
 实现入口：
@@ -158,7 +159,7 @@ src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/ch
 src-tauri/crates/tt-application/src/services/agent_runtime_service.rs
 ```
 
-子 Agent 如果调用 `workspace.finish`，runtime 会返回 recoverable tool error；如果在最大轮数内没有调用 `task.return`，child invocation 失败并把 task 标记为 failed。
+`workspace.finish` 不属于 child turn；provider 若返回它的 alias、canonical name 或任何其它未广告名称，会以 `model.unknown_tool_call` fail-fast，不通过全局 registry 猜测或回填 recoverable policy error。如果在最大轮数内没有调用 `task.return`，child invocation 失败并把 task 标记为 failed。
 
 ## 6. Prompt 与 Result
 
@@ -166,6 +167,8 @@ child invocation 先解析 target Agent Profile 并应用 child policy。随后�
 
 - `preset.mode = ref`：runtime 从 root `input/prompt_snapshot.json` 读取 `frozenRunInputSnapshot`，注册 pending broker request，并通过轻量 `prompt_assembly_requested` 事件通知前端。前端用 `read_agent_prompt_assembly_request` 按 `assemblyId` 读取完整 request，让 PromptAssemblyBroker 使用 target Profile 的 `preset.ref`、Agent system prompt、child task prompt 与 frozen input 重新组装 child prompt snapshot。前端完成后调用 `resolve_agent_prompt_assembly` 回填；runtime 校验 `contextPolicy`，把组装结果写入 `input/invocations/<childInvocationId>/prompt_snapshot.json`，并把 request metadata / result metadata 写入 `input/invocations/<childInvocationId>/prompt_assembly.json`，再进入 child tool loop。
 - `preset.mode = currentPromptSnapshot` / `none`：保持兼容路径，使用同一个 run 的 `input/prompt_snapshot.json` 作为 provider payload 基底，并由后端替换为 target Profile 的 materialized Agent system prompt + markdown task prompt。
+
+两条 prompt 路径都消费同一份 child `InvocationToolSnapshot` 投影出来的工具定义。完整 snapshot 固化到 `input/invocations/<childInvocationId>/tool_snapshot.json`；prompt、provider request、continuation hint、alias decode 与执行预算不得重新从 target Profile 计算另一套工具面。
 
 两条路径都会在进入模型前调用 `resolve_model_binding()` 覆盖 target profile 的模型连接，并生成 child invocation 自己的 provider_state session id：`runId:invocationId`。
 
@@ -261,7 +264,7 @@ src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_executio
 Tool registry / dispatcher：
 
 ```text
-src-tauri/crates/tt-application/src/services/agent_tools/agent/specs.rs
+src-tauri/crates/tt-application/src/services/agent_tools/agent/descriptors.rs
 src-tauri/crates/tt-application/src/services/agent_tools/registry.rs
 src-tauri/crates/tt-application/src/services/agent_tools/dispatcher.rs
 ```

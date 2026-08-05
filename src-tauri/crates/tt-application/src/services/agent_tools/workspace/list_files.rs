@@ -9,7 +9,8 @@ use super::render::{filter_visible_entries, render_file_list};
 use super::{DEFAULT_LIST_DEPTH, MAX_LIST_DEPTH, MAX_LIST_ENTRIES};
 use crate::errors::ApplicationError;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::{AgentToolCall, AgentToolResult};
+use tt_domain::models::agent::AgentToolResult;
+use tt_domain::models::tool::ToolInvocation;
 use tt_ports::repositories::workspace_repository::{WorkspaceEntryKind, WorkspaceRepository};
 
 use super::super::dispatcher::AgentToolEffect;
@@ -32,7 +33,7 @@ struct WorkspaceListEntryStructured<'a> {
 pub(in crate::services::agent_tools) async fn list_files(
     workspace_repository: &dyn WorkspaceRepository,
     run_id: &str,
-    call: &AgentToolCall,
+    call: &ToolInvocation,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = workspace_access_policy(workspace_repository, run_id).await?;
     let Some(args) = object_args(call) else {
@@ -108,8 +109,8 @@ pub(in crate::services::agent_tools) async fn list_files(
 
     Ok((
         AgentToolResult {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
             content,
             structured: structured_value(WorkspaceListFilesStructured {
                 entries,

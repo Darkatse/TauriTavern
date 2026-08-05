@@ -8,6 +8,7 @@ use super::content_parts::{
 use super::prompt_post_processing::PromptNames;
 use super::shared::insert_if_present;
 use super::shared::message_content_to_text;
+use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
 
 const PROMPT_PLACEHOLDER: &str = "Let's get started.";
 
@@ -58,6 +59,26 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
         let mut tools = tools.clone();
         sanitize_openai_tools(&mut tools);
         request.insert("tools".to_string(), Value::Array(tools));
+        if let Some(choice) = payload.get("tool_choice") {
+            match parse_openai_tool_choice(choice, "Cohere")? {
+                OpenAiToolChoice::Auto => {}
+                OpenAiToolChoice::None => {
+                    request.insert("tool_choice".to_string(), Value::String("NONE".to_string()));
+                }
+                OpenAiToolChoice::Required => {
+                    request.insert(
+                        "tool_choice".to_string(),
+                        Value::String("REQUIRED".to_string()),
+                    );
+                }
+                OpenAiToolChoice::Specific(_) => {
+                    return Err(ApplicationError::ValidationError(
+                        "provider.tool_choice_unsupported: Cohere does not support forcing a specific tool"
+                            .to_string(),
+                    ));
+                }
+            }
+        }
     }
 
     if model.ends_with("08-2024") {
@@ -476,6 +497,53 @@ mod tests {
         let parameters = &body["tools"][0]["function"]["parameters"];
         assert!(parameters.get("$schema").is_none());
         assert_eq!(parameters["type"], "object");
+    }
+
+    #[test]
+    fn cohere_maps_supported_modes_and_rejects_specific_choice() {
+        for (choice, expected) in [("none", "NONE"), ("required", "REQUIRED")] {
+            let payload = json!({
+                "model": "command-r7b-12-2024",
+                "messages": [{"role": "user", "content": "hi"}],
+                "tools": [{
+                    "type": "function",
+                    "function": { "name": "weather", "parameters": { "type": "object" } }
+                }],
+                "tool_choice": choice
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let (_, upstream) = build(payload).expect("tool choice should map");
+            assert_eq!(
+                upstream.get("tool_choice").and_then(Value::as_str),
+                Some(expected)
+            );
+        }
+
+        let payload = json!({
+            "model": "command-r7b-12-2024",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{
+                "type": "function",
+                "function": { "name": "weather", "parameters": { "type": "object" } }
+            }],
+            "tool_choice": {
+                "type": "function",
+                "function": { "name": "weather" }
+            }
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("specific choice must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("provider.tool_choice_unsupported")
+        );
     }
 
     #[test]

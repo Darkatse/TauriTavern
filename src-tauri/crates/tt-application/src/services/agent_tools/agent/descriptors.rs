@@ -1,20 +1,13 @@
 use serde_json::json;
 
 use super::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, TASK_RETURN};
-use tt_domain::models::agent::AgentToolSpec;
+use tt_domain::models::tool::{ToolDescriptor, ToolId};
 
-const MODEL_AGENT_AWAIT: &str = "agent_await";
-const MODEL_AGENT_DELEGATE: &str = "agent_delegate";
-const MODEL_AGENT_HANDOFF: &str = "agent_handoff";
-const MODEL_AGENT_LIST: &str = "agent_list";
-const MODEL_TASK_RETURN: &str = "task_return";
-
-pub(in crate::services::agent_tools) fn agent_list_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: AGENT_LIST.to_string(),
-        model_name: MODEL_AGENT_LIST.to_string(),
-        title: "Agent List".to_string(),
-        description: "Find other Agents you can ask for focused help. This tool is read-only and does not start any work.".to_string(),
+pub(in crate::services::agent_tools) fn agent_list_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(AGENT_LIST).expect("builtin tool name must be valid"),
+        title: Some("Agent List".to_string()),
+        description: Some("Find other Agents you can ask for focused help. This tool is read-only and does not start any work.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -36,16 +29,14 @@ pub(in crate::services::agent_tools) fn agent_list_spec() -> AgentToolSpec {
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true, "sourceKind": "agent" }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn agent_delegate_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: AGENT_DELEGATE.to_string(),
-        model_name: MODEL_AGENT_DELEGATE.to_string(),
-        title: "Agent Delegate".to_string(),
-        description: "Ask another Agent to start a focused task. Include any workspace paths it should read or write in the task brief. You can continue other work after delegating; use agent_await when you need its result or status before deciding.".to_string(),
+pub(in crate::services::agent_tools) fn agent_delegate_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(AGENT_DELEGATE).expect("builtin tool name must be valid"),
+        title: Some("Agent Delegate".to_string()),
+        description: Some("Ask another Agent to start a focused task. Include any workspace paths it should read or write in the task brief. You can continue other work after delegating; use agent_await when you need its result or status before deciding.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -85,16 +76,14 @@ pub(in crate::services::agent_tools) fn agent_delegate_spec() -> AgentToolSpec {
         }),
         output_schema: None,
         annotations: json!({ "readOnly": false, "sourceKind": "agent" }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn agent_await_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: AGENT_AWAIT.to_string(),
-        model_name: MODEL_AGENT_AWAIT.to_string(),
-        title: "Agent Await".to_string(),
-        description: "Wait for or inspect tasks you started with agent_delegate. Use nextCompleted when one finished result is enough, allCompleted when all selected tasks are needed, or statusOnly to check progress without waiting.".to_string(),
+pub(in crate::services::agent_tools) fn agent_await_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(AGENT_AWAIT).expect("builtin tool name must be valid"),
+        title: Some("Agent Await".to_string()),
+        description: Some("Wait for or inspect tasks you started with agent_delegate. Use nextCompleted when one finished result is enough, allCompleted when all selected tasks are needed, or statusOnly to check progress without waiting.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -117,16 +106,14 @@ pub(in crate::services::agent_tools) fn agent_await_spec() -> AgentToolSpec {
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true, "sourceKind": "agent" }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn agent_handoff_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: AGENT_HANDOFF.to_string(),
-        model_name: MODEL_AGENT_HANDOFF.to_string(),
-        title: "Agent Handoff".to_string(),
-        description: "Ask another Agent to take over the next stage of this run. Use this when you have done your part and the next Agent should continue from the shared workspace.".to_string(),
+pub(in crate::services::agent_tools) fn agent_handoff_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(AGENT_HANDOFF).expect("builtin tool name must be valid"),
+        title: Some("Agent Handoff".to_string()),
+        description: Some("Ask another Agent to take over the next stage of this run. Use this when you have done your part and the next Agent should continue from the shared workspace.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -184,16 +171,16 @@ pub(in crate::services::agent_tools) fn agent_handoff_spec() -> AgentToolSpec {
         }),
         output_schema: None,
         annotations: json!({ "readOnly": false, "sourceKind": "agent" }),
-        source: "builtin".to_string(),
     }
 }
 
-pub(in crate::services::agent_tools) fn task_return_spec() -> AgentToolSpec {
-    AgentToolSpec {
-        name: TASK_RETURN.to_string(),
-        model_name: MODEL_TASK_RETURN.to_string(),
-        title: "Task Return".to_string(),
-        description: "Send your result for the delegated task and end your work on it.".to_string(),
+pub(in crate::services::agent_tools) fn task_return_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(TASK_RETURN).expect("builtin tool name must be valid"),
+        title: Some("Task Return".to_string()),
+        description: Some(
+            "Send your result for the delegated task and end your work on it.".to_string(),
+        ),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -255,6 +242,5 @@ pub(in crate::services::agent_tools) fn task_return_spec() -> AgentToolSpec {
         }),
         output_schema: None,
         annotations: json!({ "readOnly": false, "sourceKind": "agent" }),
-        source: "builtin".to_string(),
     }
 }

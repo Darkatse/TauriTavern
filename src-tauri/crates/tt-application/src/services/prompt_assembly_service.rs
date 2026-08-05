@@ -17,11 +17,12 @@ use crate::services::hashing::hex_lower;
 use crate::services::llm_connection_service::{
     self, LlmConnectionService, ResolvedLlmModelBinding,
 };
-use tt_domain::models::agent::AgentToolSpec;
+use tt_domain::models::agent::AgentModelTool;
 use tt_domain::models::agent::profile::{
     AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef, ResolvedAgentProfile,
 };
 use tt_domain::models::preset::{Preset, PresetType};
+use tt_domain::models::tool::ToolCatalog;
 use tt_ports::repositories::preset_repository::PresetRepository;
 
 const PROMPT_ASSEMBLY_REQUEST_KIND: &str = "tauritavern.agentPromptAssemblyRequest";
@@ -102,12 +103,12 @@ impl PromptAssemblyService {
     pub async fn resolve_profile(
         &self,
         profile_id: Option<&str>,
-        known_tools: &[AgentToolSpec],
+        tool_catalog: &ToolCatalog,
     ) -> Result<ResolvedAgentProfile, ApplicationError> {
         self.profile_service
             .resolve_profile(AgentProfileResolveInput {
                 profile_id,
-                known_tools,
+                tool_catalog,
             })
             .await
     }
@@ -116,7 +117,7 @@ impl PromptAssemblyService {
         &self,
         dto: AgentPreparePromptAssemblyDto,
         profile: ResolvedAgentProfile,
-        visible_tools: &[AgentToolSpec],
+        visible_tools: &[AgentModelTool],
     ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
         self.prepare_frontend_prompt_assembly_with_context(dto, profile, visible_tools, None)
             .await
@@ -126,7 +127,7 @@ impl PromptAssemblyService {
         &self,
         dto: AgentPreparePromptAssemblyDto,
         profile: ResolvedAgentProfile,
-        visible_tools: &[AgentToolSpec],
+        visible_tools: &[AgentModelTool],
         context: AgentInvocationPromptAssemblyContext,
     ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
         self.prepare_frontend_prompt_assembly_with_context(
@@ -164,7 +165,7 @@ impl PromptAssemblyService {
         &self,
         dto: AgentPreparePromptAssemblyDto,
         profile: ResolvedAgentProfile,
-        visible_tools: &[AgentToolSpec],
+        visible_tools: &[AgentModelTool],
         invocation_context: Option<AgentInvocationPromptAssemblyContext>,
     ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
         let generation_type = normalize_generation_type(&dto.generation_type)?;

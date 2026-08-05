@@ -726,9 +726,30 @@ async fn guarded_workspace_writes_are_atomic_per_path() {
 
     let path = WorkspacePath::parse("output/main.md").expect("workspace path");
     let seeded = repository
-        .write_text(&run.id, &path, "first")
+        .write_text_guarded(&run.id, &path, "first", WorkspaceWriteGuard::MustNotExist)
         .await
         .expect("seed text");
+    let duplicate = repository
+        .write_text_guarded(
+            &run.id,
+            &path,
+            "replacement",
+            WorkspaceWriteGuard::MustNotExist,
+        )
+        .await
+        .expect_err("must-not-exist guard must reject replacement");
+    assert!(matches!(
+        duplicate,
+        DomainError::WorkspaceWriteConflict { .. }
+    ));
+    assert_eq!(
+        repository
+            .read_text(&run.id, &path)
+            .await
+            .expect("read original text")
+            .text,
+        "first"
+    );
     let guard = WorkspaceWriteGuard::MustMatchSha256(seeded.sha256);
 
     let (left, right) = tokio::join!(

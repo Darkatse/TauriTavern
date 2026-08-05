@@ -1,8 +1,8 @@
+mod descriptors;
 mod roll;
-mod specs;
 
+pub(super) use descriptors::dice_roll_descriptor;
 pub(super) use roll::roll;
-pub(super) use specs::dice_roll_spec;
 
 pub(super) const DICE_ROLL: &str = "dice.roll";
 

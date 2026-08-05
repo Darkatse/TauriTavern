@@ -365,8 +365,9 @@ function formatArgumentsSection(target, file, args) {
 }
 
 function formatToolResultSection(target, file, result) {
+    const name = nativeToolName(result.toolId);
     const structured = plainObject(result.structured) ? result.structured : {};
-    const fields = [field(tr('timelineDetailFieldOperation'), displayToolName(result.name))];
+    const fields = [field(tr('timelineDetailFieldOperation'), displayToolName(name))];
     const blocks = [];
 
     addToolResultSummaryFields(fields, result, structured);
@@ -375,7 +376,7 @@ function formatToolResultSection(target, file, result) {
     if (hits.length > 0) {
         addBlock(blocks, 'timelineMatches', renderHits(hits), NESTED_TEXT_LIMIT);
     } else if (typeof result.content === 'string' && result.content.trim()) {
-        addBlock(blocks, 'timelineResultText', toolContentForDisplay(result));
+        addBlock(blocks, 'timelineResultText', toolContentForDisplay(result, name));
     }
 
     return {
@@ -388,9 +389,10 @@ function formatToolResultSection(target, file, result) {
 
 function renderModelToolCalls(toolCalls) {
     return toolCalls.map((call, index) => {
-        const name = displayToolName(call.name || call.modelName);
+        const name = displayToolName(call.name);
+        const identity = call.toolId.startsWith('builtin:') ? '' : ` [${call.toolId}]`;
         const id = call.callId ? ` ${call.callId}` : '';
-        return `${index + 1}. ${name}${id}`;
+        return `${index + 1}. ${name}${identity}${id}`;
     }).join('\n');
 }
 
@@ -462,12 +464,20 @@ function rangeSummary(structured) {
     return '';
 }
 
-function toolContentForDisplay(result) {
+function toolContentForDisplay(result, name) {
     const content = String(result.content || '').trim();
-    if ((result.name === 'workspace.read_file' || result.name === 'skill.read') && content.includes('\n')) {
+    if ((name === 'workspace.read_file' || name === 'skill.read') && content.includes('\n')) {
         return content.slice(content.indexOf('\n') + 1).trim();
     }
     return content;
+}
+
+function nativeToolName(toolId) {
+    const separator = toolId.indexOf(':');
+    if (separator <= 0 || separator === toolId.length - 1) {
+        throw new TypeError('tool result requires a canonical toolId');
+    }
+    return toolId.slice(separator + 1);
 }
 
 function formatTextFileSection(target, file, text) {
