@@ -4,7 +4,7 @@ use std::path::Path;
 use gix::bstr::ByteSlice;
 
 use tt_domain::errors::DomainError;
-use tt_domain::models::extension::{ExtensionInstallResult, ExtensionManifestMetadata};
+use tt_domain::models::extension::ExtensionInstallResult;
 
 use super::FileExtensionRepository;
 use super::directory_ops::{cleanup_temp_directory, create_temp_directory};
@@ -14,8 +14,9 @@ use super::git_remote::{
     remote_ref_name, remote_symbolic_target, tag_ref,
 };
 use super::git_worktree::{
-    ManagedRef, configure_install, create_tracking_ref, finalize_install_ref, init_embedded,
-    materialize_candidate, prepare_candidate, validate_install_folder,
+    ExtensionManifestMetadata, ManagedRef, configure_install, create_tracking_ref,
+    finalize_install_ref, init_embedded, materialize_candidate, prepare_candidate,
+    validate_install_folder,
 };
 
 const DEFAULT_HEAD_DESTINATION: &str = "refs/remotes/origin/HEAD";

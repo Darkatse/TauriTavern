@@ -351,19 +351,13 @@ function getNameSelector(name, { prefix = 'third-party' } = {}) {
  * @returns {Promise<{name: string, type: string}[]>}
  */
 async function discoverExtensions() {
-    try {
-        const response = await fetch('/api/extensions/discover');
-
-        if (response.ok) {
-            const extensions = await response.json();
-            return extensions;
-        } else {
-            return [];
-        }
-    } catch (err) {
-        console.error(err);
-        return [];
+    const response = await fetch('/api/extensions/discover');
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Extension discovery failed: HTTP ${response.status}`);
     }
+
+    return response.json();
 }
 
 export function startOfflineExtensionsDiscovery({ forceRefresh = false } = {}) {
@@ -707,11 +701,18 @@ async function getManifests(names) {
     await Promise.all(names.map(async name => {
         try {
             const response = await fetch(getExtensionResourceUrl(name, 'manifest.json'));
-            if (response.ok) {
-                obj[name] = await response.json();
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
+
+            const manifest = await response.json();
+            if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+                throw new Error('manifest.json must contain a JSON object');
+            }
+
+            obj[name] = manifest;
         } catch (err) {
-            console.log('Could not load manifest.json for ' + name, err);
+            console.warn('Could not load manifest.json for ' + name, err);
         }
     }));
 
@@ -803,30 +804,30 @@ async function activateExtensions({ parallelism = 1, includeExtension = () => tr
     };
 
     const activateSingleExtension = async ({ name, manifest }) => {
-        const decision = shouldActivateExtension({ name, manifest });
         const displayName = manifest.display_name || name;
 
-        if (!decision.activate) {
-            if (decision.reason === 'missing-modules') {
-                console.warn(t`Extension "${name}" did not load. Missing required Extras module(s): "${decision.missingModules.join(', ')}"`);
-                extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required Extras module(s): "${decision.missingModules.join(', ')}"`);
-            } else if (decision.reason === 'missing-deps') {
-                if (decision.disabledDependencies.length > 0) {
-                    console.warn(t`Extension "${name}" did not load. Required extensions exist but are disabled: "${decision.disabledDependencies.join(', ')}". Enable them first, then reload.`);
-                    extensionLoadErrors.add(t`Extension "${displayName}" did not load. Required extensions exist but are disabled: "${decision.disabledDependencies.join(', ')}". Enable them first, then reload.`);
-                } else {
-                    console.warn(t`Extension "${name}" did not load. Missing required extensions: "${decision.missingDependencies.join(', ')}"`);
-                    extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required extensions: "${decision.missingDependencies.join(', ')}"`);
+        try {
+            const decision = shouldActivateExtension({ name, manifest });
+            if (!decision.activate) {
+                if (decision.reason === 'missing-modules') {
+                    console.warn(t`Extension "${name}" did not load. Missing required Extras module(s): "${decision.missingModules.join(', ')}"`);
+                    extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required Extras module(s): "${decision.missingModules.join(', ')}"`);
+                } else if (decision.reason === 'missing-deps') {
+                    if (decision.disabledDependencies.length > 0) {
+                        console.warn(t`Extension "${name}" did not load. Required extensions exist but are disabled: "${decision.disabledDependencies.join(', ')}". Enable them first, then reload.`);
+                        extensionLoadErrors.add(t`Extension "${displayName}" did not load. Required extensions exist but are disabled: "${decision.disabledDependencies.join(', ')}". Enable them first, then reload.`);
+                    } else {
+                        console.warn(t`Extension "${name}" did not load. Missing required extensions: "${decision.missingDependencies.join(', ')}"`);
+                        extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required extensions: "${decision.missingDependencies.join(', ')}"`);
+                    }
+                } else if (decision.reason === 'min-client-version') {
+                    console.warn(t`Extension "${name}" did not load. Requires ST client version ${decision.minClientVersion}, but current version is ${clientVersion}.`);
+                    extensionLoadErrors.add(t`Extension "${displayName}" did not load. Requires ST client version ${decision.minClientVersion}, but current version is ${clientVersion}.`);
                 }
-            } else if (decision.reason === 'min-client-version') {
-                console.warn(t`Extension "${name}" did not load. Requires ST client version ${decision.minClientVersion}, but current version is ${clientVersion}.`);
-                extensionLoadErrors.add(t`Extension "${displayName}" did not load. Requires ST client version ${decision.minClientVersion}, but current version is ${clientVersion}.`);
+
+                return;
             }
 
-            return;
-        }
-
-        try {
             console.debug('Activating extension', name);
             if (isThirdPartyExtension(name)) {
                 thirdPartyHljsPromise ??= getHljs();

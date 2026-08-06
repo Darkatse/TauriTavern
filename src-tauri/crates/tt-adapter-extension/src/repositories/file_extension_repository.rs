@@ -3,11 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tt_adapter_http::HttpClientPool;
-use tt_adapter_storage_core::file_system::read_json_file;
 use tt_domain::errors::DomainError;
 use tt_domain::models::extension::{
-    Extension, ExtensionBranch, ExtensionInstallResult, ExtensionManifestMetadata,
-    ExtensionUpdateResult, ExtensionVersion,
+    Extension, ExtensionBranch, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
 };
 use tt_ports::repositories::extension_repository::ExtensionRepository;
 
@@ -149,19 +147,6 @@ impl FileExtensionRepository {
 
     fn resolve_extension_path(&self, extension_folder_name: &str, global: bool) -> PathBuf {
         self.extension_base_dir(global).join(extension_folder_name)
-    }
-
-    async fn read_manifest_metadata(
-        &self,
-        extension_path: &Path,
-    ) -> Result<Option<ExtensionManifestMetadata>, DomainError> {
-        let manifest_path = extension_path.join("manifest.json");
-        if !manifest_path.exists() {
-            return Ok(None);
-        }
-
-        let manifest: ExtensionManifestMetadata = read_json_file(&manifest_path).await?;
-        Ok(Some(manifest))
     }
 }
 

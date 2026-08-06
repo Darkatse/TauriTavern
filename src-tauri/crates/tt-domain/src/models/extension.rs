@@ -12,32 +12,6 @@ pub enum ExtensionType {
     Global,
 }
 
-/// Backend-facing extension manifest summary.
-///
-/// This intentionally keeps only the metadata that the Rust installation and discovery
-/// pipeline actually needs. Frontend runtime fields such as `js`, `css`, `i18n`, and
-/// other browser-loading semantics are loaded from the raw `manifest.json` by the web
-/// runtime instead of being re-modeled here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExtensionManifestMetadata {
-    /// Display name of the extension
-    pub display_name: String,
-    /// Version of the extension
-    pub version: String,
-    /// Author of the extension
-    pub author: String,
-    /// Description of the extension
-    #[serde(default)]
-    pub description: String,
-    /// Loading order
-    #[serde(default = "default_loading_order")]
-    pub loading_order: i32,
-}
-
-fn default_loading_order() -> i32 {
-    100
-}
-
 /// Extension struct
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Extension {
@@ -50,8 +24,6 @@ pub struct Extension {
     /// Managed extensions have a supported embedded Git repository or legacy source metadata.
     /// Unmanaged extensions are still discoverable/loadable but cannot be updated.
     pub managed: bool,
-    /// Backend-facing manifest summary of the extension
-    pub manifest: Option<ExtensionManifestMetadata>,
     /// Path to the extension
     pub path: PathBuf,
     /// Remote URL of the extension repository

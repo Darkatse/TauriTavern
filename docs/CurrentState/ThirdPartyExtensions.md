@@ -31,8 +31,9 @@
 
 补充约束：
 
-- Rust 侧扩展仓储当前只读取 manifest 摘要元数据（如 `display_name` / `version` / `author` / `description` / `loading_order`）。
-- `js` / `css` / `i18n` 等浏览器运行时字段不再由后端建模解释，而是由前端从原始 `manifest.json` 直接消费。
+- discovery 只投影扩展目录、类型与 Git/source 管理状态，不读取或建模 manifest；单个损坏的 legacy source 状态只会使对应扩展降为 unmanaged。
+- 浏览器运行时 manifest 由前端从原始 `manifest.json` 读取并消费，包括 `display_name` / `version` / `author` 与 `js` / `css` / `i18n` 等字段；缺失、损坏或非 object manifest 以及单扩展激活异常都不会阻断其他扩展。
+- install/update/switch 的 candidate preflight 仍要求根 `manifest.json` 存在、是普通文件且为 JSON object；`display_name` / `version` / `author` 仅作为安装结果展示元数据提取，缺失或非字符串值不影响候选合法性。
 
 扩展命名约定：
 
@@ -59,7 +60,7 @@
 - legacy JSON extension 的 version/branches 只读 Git advertisement；central source JSON优先，早期扩展根目录内的 inline V1/V2 JSON作为只读 fallback，不在启动或读取时搬迁。首次 update（即使 OID 相同）或切换到不同 branch 时，在 sibling `.tmp-*` 中建立标准 embedded repo，验证完成后替换活动 snapshot并删除或自然淘汰 JSON。失败保留旧 snapshot与来源状态。
 - provider REST、archive ZIP 与 host allowlist 后端已删除；所有 Git 错误均 fail-fast，不存在 REST/ZIP runtime fallback。
 
-candidate preflight 会在删除活动 payload 之前验证完整 tree：portable UTF-8 path、大小写/NFC collision、file/directory shape、ODB object header kind、根 `manifest.json`内容。checkout 不执行 external filter/LFS/submodule；symlink 以普通文件物化，gitlink 只生成空目录占位。
+candidate preflight 会在删除活动 payload 之前验证完整 tree：portable UTF-8 path、大小写/NFC collision、file/directory shape、ODB object header kind、根 `manifest.json` 的 JSON object 结构。checkout 不执行 external filter/LFS/submodule；symlink 以普通文件物化，gitlink 只生成空目录占位。
 
 install/update/switch/delete/move 与 LAN/TT Sync 的本地写操作共享一个 application-layer fail-fast permit；busy 映射为 409。discovery/version/branches 是只读操作，不占 permit。update 前端不会再用 AbortSignal 假取消已经进入 Rust 的磁盘写操作。
 

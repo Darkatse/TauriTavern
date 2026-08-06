@@ -173,3 +173,39 @@ test('extension discovery ignores stale force-refresh results before mutating gl
     assert.ok(commitIndex > staleGuardIndex, 'global discovery state must be committed only after stale guard');
     assert.doesNotMatch(source, /manifestFetchPromises/);
 });
+
+test('extension discovery propagates API failures', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions.js'), 'utf8');
+    const start = source.indexOf('async function discoverExtensions');
+    assert.ok(start >= 0, 'discoverExtensions must exist');
+    const end = source.indexOf('export function startOfflineExtensionsDiscovery', start);
+    assert.ok(end > start, 'discoverExtensions must end before startOfflineExtensionsDiscovery');
+    const section = source.slice(start, end);
+
+    assert.match(section, /if \(!response\.ok\)/);
+    assert.match(section, /throw new Error\(/);
+    assert.doesNotMatch(section, /return \[\]/);
+    assert.doesNotMatch(section, /catch\s*\(/);
+});
+
+test('extension manifest failures stay scoped to one extension', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions.js'), 'utf8');
+
+    const manifestStart = source.indexOf('async function getManifests');
+    const manifestEnd = source.indexOf('/**\n * Tries to activate all available extensions', manifestStart);
+    assert.ok(manifestStart >= 0 && manifestEnd > manifestStart, 'getManifests section must exist');
+    const manifestSection = source.slice(manifestStart, manifestEnd);
+    assert.match(manifestSection, /!manifest \|\| typeof manifest !== 'object' \|\| Array\.isArray\(manifest\)/);
+    assert.match(manifestSection, /catch \(err\)/);
+
+    const activationStart = source.indexOf('const activateSingleExtension = async');
+    const activationEnd = source.indexOf('let currentGroup = [];', activationStart);
+    assert.ok(activationStart >= 0 && activationEnd > activationStart, 'single extension activation section must exist');
+    const activationSection = source.slice(activationStart, activationEnd);
+    const tryIndex = activationSection.indexOf('try {');
+    const decisionIndex = activationSection.indexOf('shouldActivateExtension({ name, manifest })');
+    assert.ok(
+        tryIndex >= 0 && decisionIndex > tryIndex,
+        'manifest semantics must be evaluated inside the per-extension error boundary',
+    );
+});

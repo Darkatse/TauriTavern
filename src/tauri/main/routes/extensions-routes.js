@@ -103,12 +103,10 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
 
     router.all('/api/extensions/discover', async () => {
         const extensions = await context.safeInvoke('get_extensions');
-        const mapped = Array.isArray(extensions)
-            ? extensions.map((extension) => ({
-                name: extension.name,
-                type: String(extension.extension_type || 'local').toLowerCase(),
-            }))
-            : [];
+        const mapped = extensions.map((extension) => ({
+            name: extension.name,
+            type: String(extension.extension_type || 'local').toLowerCase(),
+        }));
 
         return jsonResponse(mapped);
     });
