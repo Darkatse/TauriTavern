@@ -602,7 +602,8 @@ input[type='checkbox']:focus-visible {
 }
 
 .mes_text pre code,
-.mes_reasoning pre code {
+.mes_reasoning pre code,
+:where(.mes_tool_calls) pre code {
     position: relative;
     display: block;
     overflow-x: auto;
@@ -704,6 +705,39 @@ small {
     display: none;
     height: unset;
     min-height: unset;
+}
+
+.mes_tool_calls {
+    margin-bottom: 0.75em;
+    padding-bottom: 0.5em;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+    font-size: calc(var(--mainFontSize) * 0.9);
+}
+
+.mes_tool_calls summary,
+.mes.toolCall summary {
+    cursor: pointer;
+}
+
+.toolInvocationList,
+.toolInvocation {
+    display: grid;
+    gap: 5px;
+    margin-top: 8px;
+    text-align: left;
+}
+
+.toolInvocation + .toolInvocation {
+    padding-top: 10px;
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+.toolInvocationLabel {
+    opacity: 0.7;
+}
+
+.toolInvocation pre {
+    margin: 0;
 }
 
 code {

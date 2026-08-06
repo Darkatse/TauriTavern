@@ -128,14 +128,18 @@ pub(super) fn convert_messages(
                     }
                     native_content
                 } else if !tool_calls.is_empty() {
+                    let mut blocks =
+                        convert_message_content_to_claude_blocks(message.get("content"), name)?;
                     if use_tools {
-                        convert_openai_tool_calls_to_claude_blocks(&tool_calls)
+                        blocks.extend(convert_openai_tool_calls_to_claude_blocks(&tool_calls));
                     } else {
-                        tool_calls
-                            .iter()
-                            .map(|call| normalize_claude_text_block(&call.arguments.to_string()))
-                            .collect()
+                        blocks.extend(
+                            tool_calls.iter().map(|call| {
+                                normalize_claude_text_block(&call.arguments.to_string())
+                            }),
+                        );
                     }
+                    blocks
                 } else {
                     convert_message_content_to_claude_blocks(message.get("content"), name)?
                 };

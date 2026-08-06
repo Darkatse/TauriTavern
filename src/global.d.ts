@@ -78,8 +78,24 @@ declare global {
         swipes?: string[];
         swipe_info?: SwipeInfo[];
         swipe_id?: number;
+        /** Present only on first-class tool result messages. */
+        role?: 'tool';
+        /** Calls emitted by this Assistant response. */
+        tool_calls?: ChatToolCall[];
+        /** Call answered by this Tool message. */
+        tool_call_id?: string;
+        /** Whether this Tool result represents an execution error. */
+        error?: boolean;
         extra?: ChatMessageExtra;
     };
+
+    interface ChatToolCall {
+        id: string;
+        name: string;
+        parameters: string;
+        displayName?: string;
+        signature?: string | null;
+    }
 
     interface SwipeInfo {
         send_date?: MessageTimestamp;
@@ -98,6 +114,7 @@ declare global {
         memory?: string;
         display_text?: string;
         reasoning_display_text?: string;
+        /** @deprecated Read-only compatibility for legacy synthetic tool floors. */
         tool_invocations?: ToolInvocation[];
         title?: string;
         isSmallSys?: boolean;

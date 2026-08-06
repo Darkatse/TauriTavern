@@ -1122,7 +1122,7 @@ type TauriTavernChatWindowInfo = {
 };
 
 type TauriTavernChatMessageSearchFilters = {
-    role?: 'user' | 'assistant' | 'system';
+    role?: 'user' | 'assistant' | 'system' | 'tool';
     startIndex?: number;
     endIndex?: number;
     scanLimit?: number;
@@ -1132,7 +1132,7 @@ type TauriTavernChatMessageSearchHit = {
     index: number;
     score: number;
     snippet: string;
-    role: 'user' | 'assistant' | 'system';
+    role: 'user' | 'assistant' | 'system' | 'tool';
     text: string;
 };
 

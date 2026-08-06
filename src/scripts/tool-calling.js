@@ -1,6 +1,6 @@
 import { DOMPurify } from '../lib.js';
 
-import { addOneMessage, chat, event_types, eventSource, getGeneratingApi, getGeneratingModel, main_api, saveChatConditional, system_avatar, systemUserName, withChatSurfaceStructureMutation } from '../script.js';
+import { addOneMessage, chat, event_types, eventSource, main_api, saveChatConditional, system_avatar, withChatSurfaceStructureMutation } from '../script.js';
 import { chat_completion_sources, custom_prompt_post_processing_types, getChatCompletionModel, model_list, oai_settings } from './openai.js';
 import { Popup } from './popup.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
@@ -332,7 +332,14 @@ export class ToolManager {
             const invokeParameters = this.#parseParameters(parameters);
             const tool = this.#tools.get(name);
             const result = await tool.invoke(invokeParameters);
-            return typeof result === 'string' ? result : JSON.stringify(result);
+            if (typeof result === 'string') {
+                return result;
+            }
+            const serializedResult = JSON.stringify(result);
+            if (typeof serializedResult !== 'string') {
+                throw new TypeError(`Tool "${name}" returned a result that is not JSON-serializable.`);
+            }
+            return serializedResult;
         } catch (error) {
             console.error(`[ToolManager] An error occurred while invoking the tool "${name}":`, error);
 
@@ -770,10 +777,10 @@ export class ToolManager {
     /**
      * Check for function tool calls in the response data and invoke them.
      * @param {any} data Reply data
-     * @param {{reasoningText?: string?}} options Invocation options
+     * @param {{reasoningText?: string?, onCallsReady?: (calls: ChatToolCall[]) => void, onInvocationComplete?: (invocation: ToolInvocation) => void}} options Invocation options
      * @returns {Promise<ToolInvocationResult>} Tool invocation result
      */
-    static async invokeFunctionTools(data, { reasoningText = null } = {}) {
+    static async invokeFunctionTools(data, { reasoningText = null, onCallsReady = null, onInvocationComplete = null } = {}) {
         /** @type {ToolInvocationResult} */
         const result = {
             invocations: [],
@@ -786,17 +793,61 @@ export class ToolManager {
             return result;
         }
 
+        const normalizedToolCalls = [];
+        const toolCallIds = new Set();
         for (const toolCall of toolCalls) {
             if (!toolCall || !toolCall.function || typeof toolCall.function !== 'object') {
+                const error = new Error('Provider returned a malformed tool call');
+                error.cause = 'Unknown tool';
+                result.errors.push(error);
                 continue;
             }
 
-            console.log('[ToolManager] Function tool call:', toolCall);
             const id = toolCall.id;
             const parameters = toolCall.function.arguments;
             const name = toolCall.function.name;
-            const displayName = ToolManager.getDisplayName(name);
-            const isStealth = ToolManager.isStealthTool(name);
+            const serializedParameters = stringify(parameters);
+            if (typeof id !== 'string' || !id.trim() || typeof name !== 'string' || !name.trim() || typeof serializedParameters !== 'string') {
+                const error = new Error('Provider returned a tool call without a valid id, name, or arguments');
+                error.cause = typeof name === 'string' && name ? name : 'Unknown tool';
+                result.errors.push(error);
+                continue;
+            }
+            if (toolCallIds.has(id)) {
+                const error = new Error(`Provider returned duplicate tool call id "${id}"`);
+                error.cause = name;
+                result.errors.push(error);
+                continue;
+            }
+            toolCallIds.add(id);
+            normalizedToolCalls.push({
+                toolCall,
+                id,
+                parameters,
+                serializedParameters,
+                name,
+                displayName: ToolManager.getDisplayName(name),
+                isStealth: ToolManager.isStealthTool(name),
+            });
+        }
+
+        if (result.errors.length > 0) {
+            return result;
+        }
+
+        const projectProgress = normalizedToolCalls.length > 0 && normalizedToolCalls.every(call => !call.isStealth);
+        if (projectProgress && typeof onCallsReady === 'function') {
+            onCallsReady(normalizedToolCalls.map(({ toolCall, id, serializedParameters, name, displayName }) => ({
+                id,
+                name,
+                displayName,
+                parameters: serializedParameters,
+                signature: toolCall.signature || null,
+            })));
+        }
+
+        for (const { toolCall, id, parameters, serializedParameters, name, displayName, isStealth } of normalizedToolCalls) {
+            console.log('[ToolManager] Function tool call:', toolCall);
             const message = await ToolManager.formatToolCallMessage(name, parameters);
             const toast = message && toastr.info(message, 'Tool Calling', { timeOut: 0 });
             const toolResult = await ToolManager.invokeFunctionTool(name, parameters);
@@ -809,16 +860,18 @@ export class ToolManager {
                 if (isStealth) {
                     result.stealthCalls.push(name);
                 } else {
-                    result.invocations.push({
+                    const invocation = {
                         id,
                         displayName,
                         name,
-                        parameters: stringify(parameters),
+                        parameters: serializedParameters,
                         result: toolResult.toString(),
                         error: true,
                         signature: toolCall.signature || null,
                         reasoning: reasoningText || null,
-                    });
+                    };
+                    result.invocations.push(invocation);
+                    projectProgress && onInvocationComplete?.(invocation);
                 }
                 continue;
             }
@@ -833,13 +886,14 @@ export class ToolManager {
                 id,
                 displayName,
                 name,
-                parameters: stringify(parameters),
+                parameters: serializedParameters,
                 result: toolResult,
                 error: false,
                 signature: toolCall.signature || null,
                 reasoning: reasoningText || null,
             };
             result.invocations.push(invocation);
+            projectProgress && onInvocationComplete?.(invocation);
         }
 
         return result;
@@ -860,57 +914,94 @@ export class ToolManager {
 
     /**
      * Formats a message with tool invocations.
-     * @param {ToolInvocation[]} invocations Tool invocations.
+     * @param {Array<ToolInvocation|ChatToolCall>} invocations Tool invocations, optionally without a result while running.
      * @returns {string} Formatted message with tool invocations.
      */
-    static #formatToolInvocationMessage(invocations) {
-        const data = structuredClone(invocations);
+    static formatToolInvocationMessage(invocations) {
         const detailsElement = document.createElement('details');
         const summaryElement = document.createElement('summary');
-        const preElement = document.createElement('pre');
-        const codeElement = document.createElement('code');
-        codeElement.classList.add('language-json');
-        data.forEach(i => {
-            i.parameters = tryParse(i.parameters);
-            i.result = tryParse(i.result);
-        });
-        codeElement.textContent = JSON.stringify(data, null, 2);
-        const toolNames = data.map(i => i.displayName || i.name);
+        const listElement = document.createElement('div');
+        listElement.classList.add('toolInvocationList');
+        const toolNames = invocations.map(i => i.displayName || i.name);
         summaryElement.textContent = `Tool calls: ${this.#groupToolNames(toolNames)}`;
-        preElement.append(codeElement);
-        detailsElement.append(summaryElement, preElement);
+
+        for (const invocation of invocations) {
+            const invocationElement = document.createElement('section');
+            const titleElement = document.createElement('strong');
+            titleElement.textContent = invocation.displayName || invocation.name;
+            invocationElement.classList.add('toolInvocation');
+            invocationElement.append(titleElement);
+
+            const fields = [
+                ['Arguments', invocation.parameters],
+                invocation.result === undefined ? ['Status', 'Running…'] : ['Result', invocation.result],
+            ];
+            for (const [label, value] of fields) {
+                const labelElement = document.createElement('span');
+                const preElement = document.createElement('pre');
+                const codeElement = document.createElement('code');
+                const parsed = tryParse(value);
+                labelElement.classList.add('toolInvocationLabel');
+                labelElement.textContent = label;
+                codeElement.classList.add('language-json');
+                codeElement.textContent = typeof parsed === 'string' ? parsed : (JSON.stringify(parsed, null, 2) ?? '');
+                preElement.append(codeElement);
+                invocationElement.append(labelElement, preElement);
+            }
+
+            listElement.append(invocationElement);
+        }
+
+        detailsElement.append(summaryElement, listElement);
         return detailsElement.outerHTML;
     }
 
     /**
-     * Saves function tool invocations to the last user chat message extra metadata.
+     * Atomically commits one Assistant tool turn after every tool has finished.
      * @param {ToolInvocation[]} invocations Tool invocations to persist
-     * @param {any?} native Provider-native metadata to persist for future turns
-     * @param {string?} reasoningContent Provider reasoning content needed to continue tool-call turns
+     * @param {ChatMessage} ownerMessage Assistant message that emitted the calls
+     * @param {string?} reasoningContent Provider reasoning content needed to continue the turn
      */
-    static async saveFunctionToolInvocations(invocations, native = null, reasoningContent = null) {
-        if (!Array.isArray(invocations) || invocations.length === 0) {
-            return;
-        }
-        const message = {
-            name: systemUserName,
+    static async saveFunctionToolTurn(invocations, ownerMessage, reasoningContent = null) {
+        const toolCalls = invocations.map(({ id, name, displayName, parameters, signature }) => ({
+            id,
+            name,
+            displayName,
+            parameters,
+            signature,
+        }));
+        const toolMessages = invocations.map(invocation => ({
+            role: /** @type {const} */ ('tool'),
+            name: invocation.name,
             force_avatar: system_avatar,
             is_system: true,
             is_user: false,
-            mes: ToolManager.#formatToolInvocationMessage(invocations),
-            extra: {
-                isSmallSys: true,
-                tool_invocations: invocations,
-                api: getGeneratingApi(),
-                model: getGeneratingModel(),
-                ...(native !== null && native !== undefined ? { native } : {}),
-                ...(reasoningContent ? { tool_reasoning_content: reasoningContent } : {}),
-            },
-        };
+            send_date: Date.now(),
+            mes: invocation.result,
+            tool_call_id: invocation.id,
+            error: invocation.error === true,
+        }));
+
         await withChatSurfaceStructureMutation(async () => {
-            chat.push(message);
+            const ownerIndex = chat.indexOf(ownerMessage);
+            if (ownerIndex < 0) {
+                throw new Error('Cannot save tool results because the Assistant owner left the active chat');
+            }
+            ownerMessage.tool_calls = toolCalls;
+            ownerMessage.extra ??= {};
+            if (reasoningContent) {
+                ownerMessage.extra.tool_reasoning_content = reasoningContent;
+            } else {
+                delete ownerMessage.extra.tool_reasoning_content;
+            }
+            const firstToolMessageId = chat.length;
+            chat.push(...toolMessages);
             await eventSource.emit(event_types.TOOL_CALLS_PERFORMED, invocations);
-            addOneMessage(message);
+            toolMessages.forEach((message, index) => addOneMessage(message, {
+                forceId: firstToolMessageId + index,
+                scroll: index === toolMessages.length - 1,
+                showSwipes: index === toolMessages.length - 1,
+            }));
         });
         await eventSource.emit(event_types.TOOL_CALLS_RENDERED, invocations);
         await saveChatConditional();

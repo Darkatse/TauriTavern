@@ -134,6 +134,13 @@ test('hide and unhide keep upstream range-only command semantics', async () => {
     assert.doesNotMatch(commands, /loaded window|unloaded|SlashCommandEnumValue\(['"](?:all|before)/);
 });
 
+test('slash swipe commands target the physical chat tail', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/slash-commands.js'), 'utf8');
+
+    assert.match(source, /async function addSwipeCallback[\s\S]*const lastMessage = chat\[chat\.length - 1\]/);
+    assert.match(source, /async function deleteSwipeCallback[\s\S]*deleteSwipe\(swipeId, chat\.length - 1\)/);
+});
+
 test('inactive chat DOM keeps content-visibility containment', async () => {
     const style = await readFile(path.join(REPO_ROOT, 'src/style.css'), 'utf8');
 

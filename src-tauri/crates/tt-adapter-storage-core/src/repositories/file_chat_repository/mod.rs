@@ -4,6 +4,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use tokio::sync::{Mutex, RwLock};
+use tt_ports::repositories::chat_repository::ChatMessageRole;
 
 mod backup;
 mod backup_codec;
@@ -37,6 +38,18 @@ use self::summary::SummaryCache;
 use crate::chat_directory_identity::{
     SharedChatAliasStore, chat_alias_path_for_user_dir, new_shared_chat_alias_store,
 };
+
+fn classify_message_role(role: Option<&str>, is_user: bool, is_system: bool) -> ChatMessageRole {
+    if role == Some("tool") {
+        ChatMessageRole::Tool
+    } else if is_user {
+        ChatMessageRole::User
+    } else if is_system {
+        ChatMessageRole::System
+    } else {
+        ChatMessageRole::Assistant
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ContentSignature {

@@ -226,15 +226,10 @@ test('projection lifecycle does not import or emit SillyTavern business events',
 
 test('regeneration animation keeps chat data and ChatSurface structure aligned', async () => {
     const script = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
-    const branchStart = script.indexOf('const removedMessageId = chat.length - 1;');
+    const branchStart = script.indexOf("type !== 'quiet' && type !== 'swipe' && !isImpersonate && !dryRun && !depth && lastMessageId !== null");
     const branch = script.slice(branchStart, script.indexOf('const isContinue', branchStart));
-    const hideIndex = branch.indexOf('await hideMessageBeforeRemoval(removedMessageId);');
-    const truncateIndex = branch.indexOf('chat.length = removedMessageId;');
-    const reconcileIndex = branch.indexOf('reconcileMountedChatSurface();');
-    const eventIndex = branch.indexOf('await eventSource.emit(event_types.MESSAGE_DELETED');
 
     assert.ok(branchStart >= 0);
-    assert.ok(hideIndex < truncateIndex);
-    assert.ok(truncateIndex < reconcileIndex);
-    assert.ok(reconcileIndex < eventIndex);
+    assert.ok(branch.indexOf('await hideMessageBeforeRemoval(lastMessageId);') < branch.indexOf('await deleteMessage(lastMessageId);'));
+    assert.match(script, /deleteItemizedPromptForMessage\(id\);[\s\S]*chat\.splice\(id, 1\);[\s\S]*updateViewMessageIds\(\);[\s\S]*eventSource\.emit\(event_types\.MESSAGE_DELETED/);
 });

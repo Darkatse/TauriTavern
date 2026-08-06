@@ -19,14 +19,29 @@ test('OpenAI tool reasoning sync preserves Tauri native reasoning lanes', async 
     assert.match(source, /tool_call_recurse_limit:\s*\['#tool_call_recurse_limit', 'tool_call_recurse_limit', false, false\]/);
     assert.match(source, /tool_reasoning_mode:\s*tool_reasoning_modes\.DISABLED/);
     assert.match(source, /tool_call_recurse_limit:\s*5/);
+    assert.match(source, /const projectedChat = projectToolTurns\(chat\)/);
+    assert.doesNotMatch(source, /projection\.issues/);
     assert.match(source, /const canReplayProviderTurnMetadata = isSameModel && !isOtherGroupMember/);
-    assert.match(source, /const reasoning = canReplayProviderTurnMetadata \? String\(chat\[j\]\?\.extra\?\.reasoning \?\? ''\) : ''/);
+    assert.match(source, /const reasoning = canReplayProviderTurnMetadata \? String\(contentMessage\?\.extra\?\.reasoning \?\? ''\) : ''/);
     assert.match(source, /const includeClaudeNative = usesClaudeMessagesSemantics\(oai_settings, currentModel\)/);
-    assert.match(source, /&& \(!includeClaudeNative \|\| hasClaudeToolUse\(chat\[j\]\?\.extra\?\.native\)\)/);
+    assert.match(source, /&& \(!includeClaudeNative \|\| hasClaudeToolUse\(metadataMessage\?\.extra\?\.native\)\)/);
     assert.match(source, /&& canReplayProviderTurnMetadata/);
     assert.match(source, /if \(!canReplayProviderTurnMetadata && \(invocation\.signature \|\| invocation\.reasoning\)\) \{/);
     assert.match(source, /delete cloneInvocation\.reasoning/);
-    assert.match(source, /toolCallMessage\.setToolCalls\(invocations, includeSignature, includeToolReasoning\)/);
+    assert.match(source, /chatMessage\.setToolCalls\(invocations, includeSignature, includeToolReasoning, assemblyTokenHandler\)/);
+    assert.match(source, /const sourceCount = entry\.type === 'tool-turn' \? entry\.sourceIndices\.length : 1/);
+    assert.match(source, /if \(Array\.isArray\(chatPrompt\.invocations\)\)/);
+    assert.doesNotMatch(source, /canUseTools && Array\.isArray\(chatPrompt\.invocations\)/);
+    assert.doesNotMatch(source, /canUseTools && Array\.isArray\(candidate\.invocations\)/);
+    assert.match(source, /Message\.createAsync\('tool', invocation\.result, invocation\.id, assemblyTokenHandler\)/);
+    assert.doesNotMatch(source, /invocation\.result \|\| '\[No content\]'/);
+    assert.equal(source.match(/message\.content \|\| message\.tool_calls \|\| message\.role === 'tool'/g)?.length, 2);
+    assert.equal(source.match(/item\.content \|\| item\.tool_calls \|\| item\.role === 'tool'/g)?.length, 1);
+    assert.match(source, /sourceCount \+= chatPrompt\.sourceCount/);
+    assert.match(source, /sourceCount \+= promptSource\.sourceCount \?\? 0/);
+    assert.match(source, /openai_messages_count = chatSourceCount/);
+    assert.match(source, /content: this\.content,[\s\S]*tool_calls: JSON\.stringify\(this\.tool_calls\)/);
+    assert.doesNotMatch(source, /const toolCallMessage =/);
     assert.match(source, /\.\.\.\(item\.reasoning \? \{ reasoning: item\.reasoning \} : \{\}\)/);
     assert.match(source, /\.\.\.\(item\.reasoningContent \? \{ reasoning_content: item\.reasoningContent \} : \{\}\)/);
     assert.match(source, /function getEffectiveToolReasoningMode\(settings = oai_settings\)/);
@@ -34,17 +49,51 @@ test('OpenAI tool reasoning sync preserves Tauri native reasoning lanes', async 
 });
 
 test('ToolManager stores plaintext reasoning and failed tool invocations without dropping native metadata persistence', async () => {
-    const source = await readProjectFile('src/scripts/tool-calling.js');
+    const [source, scriptSource, openaiSource] = await Promise.all([
+        readProjectFile('src/scripts/tool-calling.js'),
+        readProjectFile('src/script.js'),
+        readProjectFile('src/scripts/openai.js'),
+    ]);
 
     assert.match(source, /@property \{string\?\} reasoning - The plaintext reasoning associated with this tool call turn\./);
     assert.match(source, /@property \{boolean\} \[error\] - Whether the tool invocation failed\./);
     assert.match(source, /return error;/);
-    assert.match(source, /static async invokeFunctionTools\(data, \{ reasoningText = null \} = \{\}\)/);
+    assert.match(source, /static async invokeFunctionTools\(data, \{ reasoningText = null, onCallsReady = null, onInvocationComplete = null \} = \{\}\)/);
     assert.match(source, /error:\s*true,\s*signature:\s*toolCall\.signature \|\| null,\s*reasoning:\s*reasoningText \|\| null/s);
     assert.match(source, /error:\s*false,\s*signature:\s*toolCall\.signature \|\| null,\s*reasoning:\s*reasoningText \|\| null/s);
-    assert.match(source, /static async saveFunctionToolInvocations\(invocations, native = null, reasoningContent = null\)/);
-    assert.match(source, /\.\.\.\(native !== null && native !== undefined \? \{ native \} : \{\}\)/);
-    assert.match(source, /\.\.\.\(reasoningContent \? \{ tool_reasoning_content: reasoningContent \} : \{\}\)/);
+    assert.match(source, /static async saveFunctionToolTurn\(invocations, ownerMessage, reasoningContent = null\)/);
+    assert.match(source, /Tool .* returned a result that is not JSON-serializable/);
+    assert.match(source, /Provider returned duplicate tool call id/);
+    assert.match(source, /if \(result\.errors\.length > 0\) \{\s*return result;/);
+    const invokeFunctionTools = source.slice(
+        source.indexOf('static async invokeFunctionTools'),
+        source.indexOf('\n    /**', source.indexOf('static async invokeFunctionTools') + 1),
+    );
+    assert.ok(invokeFunctionTools.indexOf('onCallsReady(') < invokeFunctionTools.indexOf('ToolManager.invokeFunctionTool('));
+    assert.match(invokeFunctionTools, /projectProgress && onInvocationComplete\?\.\(invocation\)/);
+    assert.match(source, /invocation\.result === undefined \? \['Status', 'Running…'\] : \['Result', invocation\.result\]/);
+    assert.match(source, /ownerMessage\.tool_calls = toolCalls/);
+    assert.match(source, /chat\.push\(\.\.\.toolMessages\)/);
+    assert.match(source, /ownerMessage\.extra\.tool_reasoning_content = reasoningContent/);
+    assert.doesNotMatch(source, /tool_call_standalone|chat\.splice\(insertionIndex|tool_invocations:\s*invocations/);
+    assert.equal(scriptSource.match(/const shouldStopGeneration = !invocationResult\.invocations\.length \|\| invocationResult\.stealthCalls\.length/g)?.length, 2);
+    assert.equal(scriptSource.match(/allowToolCalls: canPerformToolCalls/g)?.length, 3);
+    assert.equal(scriptSource.match(/ToolManager\.saveFunctionToolTurn\(invocationResult\.invocations, toolTurnOwner,/g)?.length, 2);
+    assert.match(scriptSource, /const pendingToolInvocations = new WeakMap\(\)/);
+    assert.match(scriptSource, /const invocations = pendingToolInvocations\.get\(chat\[messageId\]\) \?\? \[\]/);
+    assert.match(scriptSource, /updateReasoningUI\(messageElement\);\s*updateToolCallUI\(messageElement, messageId\);/);
+    assert.doesNotMatch(scriptSource, /syncMountedToolProjection|projectToolTurns/);
+    assert.equal(scriptSource.match(/onCallsReady: calls => showPendingToolCalls\(toolTurnOwner, calls\)/g)?.length, 2);
+    assert.equal(scriptSource.match(/onInvocationComplete: invocation => completePendingToolCall\(toolTurnOwner, invocation\)/g)?.length, 2);
+    assert.equal(scriptSource.match(/finally \{\s*clearPendingToolCalls\(toolTurnOwner\)/g)?.length, 2);
+    assert.doesNotMatch(scriptSource, /hasToolCalls && shouldDeleteMessage && await deleteLastMessage\(\)/);
+    assert.match(scriptSource, /export async function deleteLastMessage\(\) \{\s*await deleteMessage\(chat\.length - 1\);\s*\}/);
+    assert.match(scriptSource, /lastMessage\?\.role === 'tool' && \['append', 'continue', 'appendFinal', 'swipe'\]\.includes\(type\)\) \{\s*type = 'normal';\s*\}/);
+    assert.match(scriptSource, /message\?\.role === 'tool' \|\| Array\.isArray\(message\?\.tool_calls\)/);
+    assert.doesNotMatch(scriptSource, /getLastNonToolMessageId|toolCallProjection(?:Owner|Source|Tail)|getOwnedToolResultMessageIds/);
+    assert.match(openaiSource, /allowToolCalls && !canMultiSwipe && ToolManager\.canPerformToolCalls/);
+    assert.match(openaiSource, /!agentMode && allowToolCalls && ToolManager\.canPerformToolCalls\(type, settings\)/);
+    assert.match(openaiSource, /clone\.reasoning = String\(chatPrompt\.reasoning \|\| previousAssistantReasoning \|\| ''\)/);
 });
 
 test('Theme bgcol sync uses upstream ThemeGenerator flow with explicit overwrite semantics', async () => {

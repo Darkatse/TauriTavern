@@ -8,7 +8,7 @@ use tt_ports::repositories::chat_repository::{
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery,
 };
 
-use super::FileChatRepository;
+use super::{FileChatRepository, classify_message_role};
 
 const MAX_QUERY_TOKENS: usize = 64;
 const MAX_BIGRAM_TOKENS_PER_SEGMENT: usize = 32;
@@ -19,6 +19,8 @@ const SNIPPET_CONTEXT_BEFORE: usize = 40;
 #[derive(Debug, Deserialize)]
 struct SearchableChatMessage {
     #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
     is_user: bool,
     #[serde(default)]
     is_system: bool,
@@ -27,13 +29,7 @@ struct SearchableChatMessage {
 }
 
 fn role_from_message(message: &SearchableChatMessage) -> ChatMessageRole {
-    if message.is_user {
-        ChatMessageRole::User
-    } else if message.is_system {
-        ChatMessageRole::System
-    } else {
-        ChatMessageRole::Assistant
-    }
+    classify_message_role(message.role.as_deref(), message.is_user, message.is_system)
 }
 
 fn normalize_query(value: &str) -> String {

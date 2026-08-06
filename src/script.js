@@ -47,6 +47,7 @@ import {
 import { agentErrorMessage } from './scripts/tauritavern/agent/agent-error-presenter.js';
 import { normalizeAgentContextPolicy } from './scripts/tauritavern/agent/agent-context-policy.js';
 import { normalizeAgentSystemPrompt } from './scripts/tauritavern/agent/agent-system-prompt.js';
+import { readLegacyToolInvocations } from './scripts/tauritavern/tool-turn-projection.js';
 import {
     buildFrozenRunInputSnapshot,
     buildCurrentModelConnectionSnapshot,
@@ -2115,15 +2116,7 @@ export async function clearChat({ clearData = false } = {}) {
 }
 
 export async function deleteLastMessage() {
-    const deletedAgentStateIds = collectAgentPersistStateIdsFromMessage(chat[chat.length - 1]);
-    deleteItemizedPromptForMessage(chat.length - 1);
-    chat.length = chat.length - 1;
-    reconcileMountedChatSurface();
-    await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
-    if (deletedAgentStateIds.length > 0) {
-        await saveChatConditional();
-        await pruneAgentPersistentStatesAfterDeletion(deletedAgentStateIds);
-    }
+    await deleteMessage(chat.length - 1);
 }
 
 /**
@@ -2168,11 +2161,11 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     }
 
     const deletedAgentStateIds = collectAgentPersistStateIdsFromMessage(chat[id]);
+    deleteItemizedPromptForMessage(id);
     chat.splice(id, 1);
 
     chat_metadata.tainted = true;
 
-    deleteItemizedPromptForMessage(id);
     updateViewMessageIds();
     saveChatDebounced();
 
@@ -2240,7 +2233,7 @@ export async function sendTextareaMessage() {
         // message was sent from a character (not the user or the system).
         const textareaText = String($('#send_textarea').val());
         const isSlashCommand = textareaText.trim().startsWith('/');
-        const lastMessage = chat[chat.length - 1];
+        const lastMessage = chat.at(-1);
         if (power_user.continue_on_send &&
             !hasPendingFileAttachment() &&
             !textareaText &&
@@ -3101,16 +3094,72 @@ function getMessageTextHTML(message, { messageId = chat.indexOf(message) }) {
     // if mes.extra.uses_system_ui is true, set an override on the sanitizer options
     /** @type {Partial<DOMPurify.Config>} */
     const sanitizerOverrides = message.extra?.uses_system_ui ? { MESSAGE_ALLOW_SYSTEM_UI: true } : {};
+    const isToolFloor = message.is_system === true
+        && message.is_user !== true
+        && Array.isArray(message.extra?.tool_invocations);
+    const invocations = isToolFloor
+        ? readLegacyToolInvocations(message, messageId).invocations
+        : null;
 
     return messageFormatting(
-        message.extra?.display_text || message.mes,
-        message.name,
-        message.is_system,
+        invocations ? ToolManager.formatToolInvocationMessage(invocations) : (message.extra?.display_text || message.mes),
+        isToolFloor ? systemUserName : message.name,
+        isToolFloor || message.is_system,
         message.is_user,
         messageId,
         sanitizerOverrides,
         false,
     );
+}
+
+/** @type {WeakMap<ChatMessage, Array<ChatToolCall & { result?: string, error?: boolean }>>} */
+const pendingToolInvocations = new WeakMap();
+
+/** @param {ChatMessage} ownerMessage */
+function refreshToolCallUI(ownerMessage) {
+    const ownerId = chat.indexOf(ownerMessage);
+    const element = ownerId >= 0 ? chatSurface.getMessageElement(ownerId) : null;
+    if (element instanceof HTMLElement) {
+        updateToolCallUI($(element), ownerId);
+    }
+}
+
+/** @param {ChatMessage} ownerMessage @param {ChatToolCall[]} calls */
+function showPendingToolCalls(ownerMessage, calls) {
+    pendingToolInvocations.set(ownerMessage, calls.map(call => ({ ...call })));
+    refreshToolCallUI(ownerMessage);
+}
+
+/** @param {ChatMessage} ownerMessage @param {import('./scripts/tool-calling.js').ToolInvocation} invocation */
+function completePendingToolCall(ownerMessage, invocation) {
+    const calls = pendingToolInvocations.get(ownerMessage);
+    const call = calls.find(call => call.id === invocation.id);
+    Object.assign(call, { result: invocation.result, error: invocation.error === true });
+    refreshToolCallUI(ownerMessage);
+}
+
+/** @param {ChatMessage} ownerMessage */
+function clearPendingToolCalls(ownerMessage) {
+    if (pendingToolInvocations.delete(ownerMessage)) {
+        refreshToolCallUI(ownerMessage);
+    }
+}
+
+/** @param {JQuery<HTMLElement>} messageElement @param {number} messageId */
+function updateToolCallUI(messageElement, messageId) {
+    const host = /** @type {HTMLElement & { __ttToolProjectionHtml?: string }} */ (messageElement.find('.mes_tool_calls')[0]);
+    if (!(host instanceof HTMLElement)) {
+        throw new Error(`Message ${messageId} is missing its tool-call projection host`);
+    }
+
+    const invocations = pendingToolInvocations.get(chat[messageId]) ?? [];
+    const html = invocations.length > 0 ? ToolManager.formatToolInvocationMessage(invocations) : '';
+    if (host.__ttToolProjectionHtml !== html) {
+        host.innerHTML = html;
+        host.__ttToolProjectionHtml = html;
+    }
+    host.hidden = invocations.length === 0;
+    host.setAttribute('aria-busy', invocations.length > 0 ? 'true' : 'false');
 }
 
 /**
@@ -3243,6 +3292,7 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
     }
 
     updateReasoningUI(messageElement);
+    updateToolCallUI(messageElement, messageId);
 
     if (power_user.timestamp_model_icon && mes.extra?.api) {
         insertSVGIcon(messageElement, mes.extra);
@@ -3252,9 +3302,8 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
         messageElement.addClass('smallSysMes');
     }
 
-    if (Array.isArray(mes?.extra?.tool_invocations)) {
-        messageElement.addClass('toolCall');
-    }
+    messageElement.toggleClass('toolCall', mes.role === 'tool' || Array.isArray(mes?.extra?.tool_invocations));
+    messageElement.attr('data-message-role', mes.role === 'tool' ? 'tool' : null);
 
     updateMessageItemizedPromptButton(mes, { messageId, messageElement });
 
@@ -3270,7 +3319,7 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
         { frontendSourceHandoffEvent },
     );
     // Set the swipes counter for all non-user messages.
-    if (!mes.is_user) {
+    if (!mes.is_user && mes.role !== 'tool') {
         updateSwipeCounter(messageId, { message: mes, messageElement });
     }
 
@@ -4250,13 +4299,6 @@ class StreamingProcessor {
         this.reasoningHandler.updateDom(messageId);
     }
 
-    #updateMessageBlockVisibility() {
-        if (this.messageDom instanceof HTMLElement && Array.isArray(this.toolCalls) && this.toolCalls.length > 0) {
-            const shouldHide = ['', '...'].includes(this.result) && !this.reasoningHandler.reasoning;
-            this.messageDom.classList.toggle('displayNone', shouldHide);
-        }
-    }
-
     markUIGenStarted() {
         deactivateSendButtons();
     }
@@ -4325,7 +4367,6 @@ class StreamingProcessor {
         } else {
             const mesChanged = chat[messageId].mes !== processedText;
             await this.#checkDomElements(messageId);
-            this.#updateMessageBlockVisibility();
             const currentTime = new Date();
             chat[messageId].mes = processedText;
             chat[messageId].gen_started = this.timeStarted;
@@ -5164,7 +5205,8 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         return Promise.resolve();
     }
 
-    const lastMessage = chat[chat.length - 1];
+    const lastMessageId = chat.length > 0 ? chat.length - 1 : null;
+    const lastMessage = chat.at(-1);
 
     let textareaText;
     if (type !== 'regenerate' && type !== 'swipe' && type !== 'quiet' && !isImpersonate && !dryRun && !depth) {
@@ -5173,20 +5215,11 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
     } else {
         textareaText = '';
-        if (chat.length && lastMessage.is_user) {
+        if (lastMessage?.is_user) {
             //do nothing? why does this check exist?
-        } else if (type !== 'quiet' && type !== 'swipe' && !isImpersonate && !dryRun && !depth && chat.length) {
-            const removedMessageId = chat.length - 1;
-            const deletedAgentStateIds = collectAgentPersistStateIdsFromMessage(chat[removedMessageId]);
-            deleteItemizedPromptForMessage(removedMessageId);
-            await hideMessageBeforeRemoval(removedMessageId);
-            chat.length = removedMessageId;
-            reconcileMountedChatSurface();
-            await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
-            if (deletedAgentStateIds.length > 0) {
-                await saveChatConditional();
-                await pruneAgentPersistentStatesAfterDeletion(deletedAgentStateIds);
-            }
+        } else if (type !== 'quiet' && type !== 'swipe' && !isImpersonate && !dryRun && !depth && lastMessageId !== null) {
+            await hideMessageBeforeRemoval(lastMessageId);
+            await deleteMessage(lastMessageId);
         }
     }
 
@@ -5272,20 +5305,23 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     // Collect messages with usable content
-    const canUseTools = ToolManager.isToolCallingSupported();
     const canPerformToolCalls = !dryRun && ToolManager.canPerformToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
-    let coreChat = chat.filter(x => !x.is_system || (canUseTools && Array.isArray(x.extra?.tool_invocations)));
+    let coreChat = chat.filter(x => !x.is_system
+        || (main_api === 'openai' && (x.role === 'tool' || Object.hasOwn(x.extra ?? {}, 'tool_invocations'))));
     if (type === 'swipe') {
         coreChat.pop();
     }
 
     const coreChatRegexedMessages = await getRegexedStringBatchAsync(coreChat.map((/** @type {ChatMessage} */ chatItem, index) => ({
-        rawString: chatItem.mes,
+        rawString: chatItem.role === 'tool' ? '' : chatItem.mes,
         placement: chatItem.is_user ? regex_placement.USER_INPUT : regex_placement.AI_OUTPUT,
         params: { isPrompt: true, depth: (coreChat.length - index - (isContinue ? 2 : 1)) },
     })));
 
     coreChat = await Promise.all(coreChat.map(async (/** @type {ChatMessage} */ chatItem, index) => {
+        if (chatItem.role === 'tool') {
+            return { ...chatItem, index };
+        }
         let regexedMessage = coreChatRegexedMessages[index];
         regexedMessage = await appendFileContent(chatItem, regexedMessage);
 
@@ -5319,6 +5355,9 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     })));
 
     for (let i = coreChat.length - 1; i >= 0; i--) {
+        if (coreChat[i].role === 'tool') {
+            continue;
+        }
         const isPrefix = isContinue && i === coreChat.length - 1;
 
         // In group chats, only include reasoning from the currently generating character
@@ -6096,6 +6135,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             };
             let [prompt, counts] = await prepareOpenAIMessages({
                 ...promptInputs,
+                allowToolCalls: canPerformToolCalls,
                 agentMode,
                 agentContextPolicy: resolvedAgentContextPolicy,
                 agentSystemPrompt: resolvedAgentSystemPrompt,
@@ -6210,7 +6250,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 streamingProcessor.firstMessageText = '';
             }
 
-            streamingProcessor.generator = await sendStreamingRequest(type, generate_data, { jsonSchema });
+            streamingProcessor.generator = await sendStreamingRequest(type, generate_data, { jsonSchema, allowToolCalls: canPerformToolCalls });
 
             hideSwipeButtons();
             let getMessage = await streamingProcessor.generate();
@@ -6228,21 +6268,21 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             const isStreamFinished = streamingProcessor && !streamingProcessor.isStopped && streamingProcessor.isFinished;
             const isStreamWithToolCalls = streamingProcessor && Array.isArray(streamingProcessor.toolCalls) && streamingProcessor.toolCalls.length;
             if (canPerformToolCalls && isStreamFinished && isStreamWithToolCalls) {
-                const lastMessage = chat[chat.length - 1];
                 const hasToolCalls = ToolManager.hasToolCalls(streamingProcessor.toolCalls);
-                const shouldDeleteMessage = type !== 'swipe' && ['', '...'].includes(lastMessage?.mes) && !lastMessage?.extra?.reasoning && ['', '...'].includes(streamingProcessor?.result);
-                hasToolCalls && shouldDeleteMessage && await deleteLastMessage();
-                const native = streamingProcessor?.native ?? null;
+                const toolTurnOwner = chat[streamingProcessor.messageId];
                 const reasoningContent = streamingProcessor?.reasoningHandler?.reasoning || null;
-                if (hasToolCalls && !shouldDeleteMessage) {
+                if (hasToolCalls) {
                     await streamingProcessor.finalizeIntermediaryMessage(streamingProcessor.messageId, getMessage, { unlockUI: false });
                 }
                 const invocationResult = await ToolManager.invokeFunctionTools(streamingProcessor.toolCalls, {
                     reasoningText: reasoningContent,
+                    onCallsReady: calls => showPendingToolCalls(toolTurnOwner, calls),
+                    onInvocationComplete: invocation => completePendingToolCall(toolTurnOwner, invocation),
                 });
-                const shouldStopGeneration = (!invocationResult.invocations.length && shouldDeleteMessage) || invocationResult.stealthCalls.length;
+                const shouldStopGeneration = !invocationResult.invocations.length || invocationResult.stealthCalls.length;
                 if (hasToolCalls) {
                     if (shouldStopGeneration) {
+                        clearPendingToolCalls(toolTurnOwner);
                         if (Array.isArray(invocationResult.errors) && invocationResult.errors.length) {
                             ToolManager.showToolCallError(invocationResult.errors);
                         }
@@ -6253,7 +6293,11 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
                     streamingProcessor = null;
                     depth = depth + 1;
-                    await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native, reasoningContent);
+                    try {
+                        await ToolManager.saveFunctionToolTurn(invocationResult.invocations, toolTurnOwner, reasoningContent);
+                    } finally {
+                        clearPendingToolCalls(toolTurnOwner);
+                    }
                     return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
                 }
             }
@@ -6268,7 +6312,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 });
             }
         } else {
-            return await sendGenerationRequest(type, generate_data, { jsonSchema });
+            return await sendGenerationRequest(type, generate_data, { jsonSchema, allowToolCalls: canPerformToolCalls });
         }
     }
 
@@ -6288,6 +6332,8 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         }
 
         let messageChunk = '';
+        /** @type {ChatMessage|null} */
+        let toolTurnOwner = null;
 
         // if an error was returned in data (textgenwebui), show it and throw it
         if (data.error) {
@@ -6373,6 +6419,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             } else {
                 ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native }));
             }
+            toolTurnOwner = chat.at(-1) ?? null;
 
             // This relies on `saveReply` having been called to add the message to the chat, so it must be last.
             parseAndSaveLogprobs(data, continue_mag);
@@ -6380,12 +6427,15 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
         if (canPerformToolCalls) {
             const hasToolCalls = ToolManager.hasToolCalls(data);
-            const shouldDeleteMessage = type !== 'swipe' && ['', '...'].includes(getMessage) && !reasoning;
-            hasToolCalls && shouldDeleteMessage && await deleteLastMessage();
-            const invocationResult = await ToolManager.invokeFunctionTools(data, { reasoningText: reasoning });
-            const shouldStopGeneration = (!invocationResult.invocations.length && shouldDeleteMessage) || invocationResult.stealthCalls.length;
+            const invocationResult = await ToolManager.invokeFunctionTools(data, {
+                reasoningText: reasoning,
+                onCallsReady: calls => showPendingToolCalls(toolTurnOwner, calls),
+                onInvocationComplete: invocation => completePendingToolCall(toolTurnOwner, invocation),
+            });
+            const shouldStopGeneration = !invocationResult.invocations.length || invocationResult.stealthCalls.length;
             if (hasToolCalls) {
                 if (shouldStopGeneration) {
+                    clearPendingToolCalls(toolTurnOwner);
                     if (Array.isArray(invocationResult.errors) && invocationResult.errors.length) {
                         ToolManager.showToolCallError(invocationResult.errors);
                     }
@@ -6394,7 +6444,11 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 }
 
                 depth = depth + 1;
-                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native, toolReasoning);
+                try {
+                    await ToolManager.saveFunctionToolTurn(invocationResult.invocations, toolTurnOwner, toolReasoning);
+                } finally {
+                    clearPendingToolCalls(toolTurnOwner);
+                }
                 return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
             }
         }
@@ -7137,6 +7191,7 @@ function syncLastInContextMessageMarker() {
 /**
  * @typedef {object} AdditionalRequestOptions
  * @property {JsonSchema} [jsonSchema]
+ * @property {boolean} [allowToolCalls]
  */
 
 /**
@@ -7690,6 +7745,9 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     }
 
     const lastMessage = chat[chat.length - 1];
+    if (lastMessage?.role === 'tool' && ['append', 'continue', 'appendFinal', 'swipe'].includes(type)) {
+        type = 'normal';
+    }
 
     if (type != 'append' && type != 'continue' && type != 'appendFinal' && chat.length && (lastMessage.swipe_id === undefined ||
         lastMessage.is_user)) {
@@ -7898,8 +7956,8 @@ export function ensureSwipes(message) {
         return updated;
     }
 
-    //Small system messages and user messages should not have swipes.
-    if (message?.is_user || message?.extra?.isSmallSys) {
+    //Small system messages, Tool turns, and user messages should not have swipes.
+    if (message?.is_user || message?.role === 'tool' || Array.isArray(message?.tool_calls) || message?.extra?.isSmallSys) {
         return updated;
     }
 
@@ -9360,18 +9418,6 @@ function updateMessage(div) {
     if (mes.mes !== text) {
         delete mes.extra.reasoning_signature;
         delete mes.extra.native;
-
-        const nextMessage = chat[messageId + 1];
-        const pairedMessageId = Array.isArray(mes.extra.tool_invocations)
-            ? messageId - 1
-            : !mes.is_user && !mes.is_system && Array.isArray(nextMessage?.extra?.tool_invocations)
-                ? messageId + 1
-                : null;
-        if (pairedMessageId !== null) {
-            const pairedMessage = chat[pairedMessageId];
-            delete pairedMessage?.extra?.native;
-            syncMesToSwipe(pairedMessageId);
-        }
     }
     mes.mes = text;
 
@@ -9437,7 +9483,6 @@ export async function messageEdit(editMessageId) {
         console.warn(`Message with id ${editMessageId} not found in chat array.`);
         return;
     }
-
     const messageElement = chatElement.find(`.mes[mesid="${editMessageId}"]`);
     if (messageElement.length === 0) {
         console.warn(`Message element with id ${editMessageId} not found in DOM.`);
@@ -9572,7 +9617,6 @@ async function messageEditMove(sourceId, targetId) {
         console.error(`Message #${sourceId} or #${targetId} is unavailable for move.`);
         return false;
     }
-
     /** @param {string} selector */
     const captureTextarea = (selector) => {
         const textarea = sourceElement.querySelector(selector);
@@ -10438,8 +10482,10 @@ export function isMessageSwipeable(messageId, message = undefined) {
         ((messageId > (this_edit_mes_id ?? -1)) && (swipeState != SWIPE_STATE.EDITING)) &&
 
         //If the message is the last message, and it exists.
-        (messageId == chat.length - 1) &&
+        (messageId === chat.length - 1) &&
         (message &&
+            message.role !== 'tool' &&
+            !Array.isArray(message.tool_calls) &&
             //Small system messages cannot be swiped.
             !(message?.extra?.isSmallSys) &&
             //Some messages, like the welcome screen, are not swipeable.
@@ -11428,7 +11474,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
 
         await updateSwipeCounter(mesId);
         //Fallback.
-        if (mesId != chat.length - 1) {
+        if (mesId !== chat.length - 1) {
             await updateSwipeCounter(chat.length - 1);
         }
 
@@ -13389,7 +13435,7 @@ jQuery(async function () {
             }
         } else if (id == 'option_regenerate') {
             //Attempting to regenerate a user message will instead generate a new message.
-            if (chat.length && chat.length - 1 === this_edit_mes_id && chat[this_edit_mes_id]?.is_user == false) {
+            if (chat.length - 1 === this_edit_mes_id && chat[this_edit_mes_id]?.is_user == false) {
                 toastr.warning(t`Finish the edit before starting a generation.`, t`You cannot regenerate the message you are editing.`);
                 return;
             }
@@ -13417,7 +13463,7 @@ jQuery(async function () {
                 toastr.warning(t`Confirm the edit to start a generation.`, t`You cannot send a message during a swipe-edit.`);
                 return;
             }
-            if (chat.length && chat.length - 1 === this_edit_mes_id) {
+            if (chat.length - 1 === this_edit_mes_id) {
                 toastr.warning(t`Finish the edit before starting a generation.`, t`You cannot continue the message you are editing.`);
                 return;
             }
@@ -13604,7 +13650,7 @@ jQuery(async function () {
 
             if (this_edit_mes_id >= 0) {
                 let mes_edited = chatElement.find(`[mesid="${this_edit_mes_id}"]`).find('.mes_edit_done');
-                if (Number(edit_mes_id) == chat.length - 1) { //if the generating swipe (...)
+                if (Number(edit_mes_id) === chat.length - 1) { //if the generating swipe (...)
                     let run_edit = true;
                     if (chat[edit_mes_id].swipe_id !== undefined) {
                         if (chat[edit_mes_id].swipes.length === chat[edit_mes_id].swipe_id) {
