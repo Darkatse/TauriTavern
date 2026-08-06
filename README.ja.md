@@ -41,7 +41,7 @@
 </div>
 
 <details>
-<summary><b>📦 パッケージマネージャーでインストール</b>（Windows · macOS · Linux · Canary）</summary>
+<summary><b>📦 パッケージマネージャーでインストール</b>（Windows · macOS · Linux）</summary>
 
 ### Windows · Scoop
 
@@ -82,23 +82,12 @@ yay -S tauritavern-bin
 curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
 ```
 
-**Canary**
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
-  | sh -s -- --channel canary
-```
-
 **Nix / NixOS**
 
 Nixが導入済みの場合は、TauriTavernをユーザープロファイルへ直接追加できます。
 
 ```sh
-# 安定版
 nix profile add github:Darkatse/TauriTavern#tauritavern
-
-# Canary
-nix profile add github:Darkatse/TauriTavern/Canary#canary
 ```
 
 **Flatpak**
@@ -110,7 +99,29 @@ flatpak remote-add --user --if-not-exists \
 flatpak install --user tauritavern com.tauritavern.client
 ```
 
-Canaryには最新の変更が含まれますが、安定版ほど安定していない場合があります。Windows、macOS、モバイル版は[Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary)から入手できます。
+</details>
+
+### Canary
+
+Canary版は毎日更新され、最新の機能や修正が含まれますが、安定性は安定版に及ばない場合があります。新しいバージョンを試したい場合や、安定版で問題が発生している場合は、Canary版でその問題が修正されているか確認してみてください。
+
+Windows、macOS、モバイル向けビルドは[Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary)から入手できます。
+
+<details>
+<summary><b>Linux向けCanaryのインストール</b></summary>
+
+**Linux**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  | sh -s -- --channel canary
+```
+
+**Nix / NixOS**
+
+```sh
+nix profile add github:Darkatse/TauriTavern/Canary#canary
+```
 
 </details>
 

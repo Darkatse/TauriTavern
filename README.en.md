@@ -41,7 +41,7 @@
 </div>
 
 <details>
-<summary><b>📦 Install with a package manager</b> (Windows · macOS · Linux · Canary)</summary>
+<summary><b>📦 Install with a package manager</b> (Windows · macOS · Linux)</summary>
 
 ### Windows · Scoop
 
@@ -82,23 +82,12 @@ The script detects your system and chooses the appropriate installation method. 
 curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
 ```
 
-**Canary**
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
-  | sh -s -- --channel canary
-```
-
 **Nix / NixOS**
 
 If Nix is already installed, add TauriTavern directly to your user profile:
 
 ```sh
-# Stable
 nix profile add github:Darkatse/TauriTavern#tauritavern
-
-# Canary
-nix profile add github:Darkatse/TauriTavern/Canary#canary
 ```
 
 **Flatpak**
@@ -110,7 +99,29 @@ flatpak remote-add --user --if-not-exists \
 flatpak install --user tauritavern com.tauritavern.client
 ```
 
-Canary includes the latest improvements and may be less reliable than Stable. Windows, macOS, and mobile builds are available from the [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary).
+</details>
+
+### Canary
+
+Canary receives daily updates with new features and fixes, but may be less reliable than Stable. If you want to try the latest build or are having an issue with Stable, check whether Canary already includes a fix.
+
+Windows, macOS, and mobile builds are available from the [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary).
+
+<details>
+<summary><b>Install Canary on Linux</b></summary>
+
+**Linux**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  | sh -s -- --channel canary
+```
+
+**Nix / NixOS**
+
+```sh
+nix profile add github:Darkatse/TauriTavern/Canary#canary
+```
 
 </details>
 

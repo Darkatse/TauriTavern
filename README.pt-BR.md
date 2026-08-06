@@ -41,7 +41,7 @@
 </div>
 
 <details>
-<summary><b>📦 Instalação com um gerenciador de pacotes</b> (Windows · macOS · Linux · Canary)</summary>
+<summary><b>📦 Instalação com um gerenciador de pacotes</b> (Windows · macOS · Linux)</summary>
 
 ### Windows · Scoop
 
@@ -82,23 +82,12 @@ O script identifica seu sistema e escolhe o método de instalação adequado. El
 curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
 ```
 
-**Canary**
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
-  | sh -s -- --channel canary
-```
-
 **Nix / NixOS**
 
 Se o Nix já estiver instalado, adicione o TauriTavern diretamente ao seu perfil de usuário:
 
 ```sh
-# Versão estável
 nix profile add github:Darkatse/TauriTavern#tauritavern
-
-# Canary
-nix profile add github:Darkatse/TauriTavern/Canary#canary
 ```
 
 **Flatpak**
@@ -110,7 +99,29 @@ flatpak remote-add --user --if-not-exists \
 flatpak install --user tauritavern com.tauritavern.client
 ```
 
-A versão Canary contém as mudanças mais recentes, mas pode ser menos estável. As compilações para Windows, macOS e dispositivos móveis estão disponíveis na página da [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary).
+</details>
+
+### Canary
+
+A versão Canary recebe atualizações diárias com novos recursos e correções, mas pode ser menos estável que a versão estável. Se quiser testar a versão mais recente ou estiver enfrentando algum problema na versão estável, verifique se a correção já está disponível na Canary.
+
+As compilações para Windows, macOS e dispositivos móveis estão disponíveis na página da [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary).
+
+<details>
+<summary><b>Instalar a Canary no Linux</b></summary>
+
+**Linux**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  | sh -s -- --channel canary
+```
+
+**Nix / NixOS**
+
+```sh
+nix profile add github:Darkatse/TauriTavern/Canary#canary
+```
 
 </details>
 
