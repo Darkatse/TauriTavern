@@ -80,6 +80,9 @@ test('ToolManager stores plaintext reasoning and failed tool invocations without
     assert.equal(scriptSource.match(/allowToolCalls: canPerformToolCalls/g)?.length, 3);
     assert.equal(scriptSource.match(/ToolManager\.saveFunctionToolTurn\(invocationResult\.invocations, toolTurnOwner,/g)?.length, 2);
     assert.match(scriptSource, /const pendingToolInvocations = new WeakMap\(\)/);
+    assert.match(scriptSource, /function getToolMessageHTML\(message, messageId\) \{[\s\S]*for \(let index = messageId - 1; index >= 0; index--\)[\s\S]*Array\.isArray\(calls\) && calls\.find\(call => call\.id === message\.tool_call_id\)[\s\S]*ToolManager\.formatToolInvocationMessage\(\[\{[\s\S]*result: message\.extra\?\.display_text \?\? message\.mes/);
+    assert.equal(scriptSource.match(/getToolMessageHTML\(/g)?.length, 5);
+    assert.match(scriptSource, /toggleClass\('smallSysMes', mes\?\.extra\?\.isSmallSys === true \|\| mes\.role === 'tool'\)/);
     assert.match(scriptSource, /const invocations = pendingToolInvocations\.get\(chat\[messageId\]\) \?\? \[\]/);
     assert.match(scriptSource, /updateReasoningUI\(messageElement\);\s*updateToolCallUI\(messageElement, messageId\);/);
     assert.doesNotMatch(scriptSource, /syncMountedToolProjection|projectToolTurns/);

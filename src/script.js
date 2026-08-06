@@ -2586,7 +2586,8 @@ export function updateMessageBlock(messageId, message, { rerenderMessage = true 
         const text = message?.extra?.display_text ?? message.mes;
         replaceMesTextHtmlWithRuntimePolicy(
             /** @type {HTMLElement} */ (messageElement[0]),
-            messageFormatting(text, message.name, message.is_system, message.is_user, messageId, {}, false),
+            getToolMessageHTML(message, messageId)
+                ?? messageFormatting(text, message.name, message.is_system, message.is_user, messageId, {}, false),
         );
     }
 
@@ -3083,6 +3084,25 @@ function updateMessageItemizedPromptButton(message, { messageId = chat.indexOf(m
     }
 }
 
+/** @param {ChatMessage} message @param {number} messageId @returns {string | null} */
+function getToolMessageHTML(message, messageId) {
+    if (message.role !== 'tool') {
+        return null;
+    }
+
+    for (let index = messageId - 1; index >= 0; index--) {
+        const calls = chat[index]?.tool_calls;
+        const call = Array.isArray(calls) && calls.find(call => call.id === message.tool_call_id);
+        if (call) {
+            return ToolManager.formatToolInvocationMessage([{
+                ...call,
+                result: message.extra?.display_text ?? message.mes,
+            }]);
+        }
+    }
+    return null;
+}
+
 /**
  * Gets messageFormatting for a ChatMessage object.
  * @param {ChatMessage} message
@@ -3101,15 +3121,16 @@ function getMessageTextHTML(message, { messageId = chat.indexOf(message) }) {
         ? readLegacyToolInvocations(message, messageId).invocations
         : null;
 
-    return messageFormatting(
-        invocations ? ToolManager.formatToolInvocationMessage(invocations) : (message.extra?.display_text || message.mes),
-        isToolFloor ? systemUserName : message.name,
-        isToolFloor || message.is_system,
-        message.is_user,
-        messageId,
-        sanitizerOverrides,
-        false,
-    );
+    return getToolMessageHTML(message, messageId)
+        ?? messageFormatting(
+            invocations ? ToolManager.formatToolInvocationMessage(invocations) : (message.extra?.display_text || message.mes),
+            isToolFloor ? systemUserName : message.name,
+            isToolFloor || message.is_system,
+            message.is_user,
+            messageId,
+            sanitizerOverrides,
+            false,
+        );
 }
 
 /** @type {WeakMap<ChatMessage, Array<ChatToolCall & { result?: string, error?: boolean }>>} */
@@ -3298,10 +3319,7 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
         insertSVGIcon(messageElement, mes.extra);
     }
 
-    if (mes?.extra?.isSmallSys === true) {
-        messageElement.addClass('smallSysMes');
-    }
-
+    messageElement.toggleClass('smallSysMes', mes?.extra?.isSmallSys === true || mes.role === 'tool');
     messageElement.toggleClass('toolCall', mes.role === 'tool' || Array.isArray(mes?.extra?.tool_invocations));
     messageElement.attr('data-message-role', mes.role === 'tool' ? 'tool' : null);
 
@@ -9565,15 +9583,16 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
 
     replaceMesTextHtmlWithRuntimePolicy(
         /** @type {HTMLElement} */ (thisMesDiv[0]),
-        messageFormatting(
-            text,
-            this_edit_mes_chname,
-            chat[messageId].is_system,
-            chat[messageId].is_user,
-            messageId,
-            {},
-            false,
-        ),
+        getToolMessageHTML(chat[messageId], messageId)
+            ?? messageFormatting(
+                text,
+                this_edit_mes_chname,
+                chat[messageId].is_system,
+                chat[messageId].is_user,
+                messageId,
+                {},
+                false,
+            ),
     );
     appendMediaToMessage(chat[messageId], thisMesDiv);
 
@@ -9699,15 +9718,16 @@ async function messageEditDone(div) {
 
     replaceMesTextHtmlWithRuntimePolicy(
         /** @type {HTMLElement} */ (div.closest('.mes')[0]),
-        messageFormatting(
-            text,
-            this_edit_mes_chname,
-            mes.is_system,
-            mes.is_user,
-            this_edit_mes_id,
-            {},
-            false,
-        ),
+        getToolMessageHTML(mes, this_edit_mes_id)
+            ?? messageFormatting(
+                text,
+                this_edit_mes_chname,
+                mes.is_system,
+                mes.is_user,
+                this_edit_mes_id,
+                {},
+                false,
+            ),
     );
     mesBlock.find('.mes_bias').empty();
     mesBlock.find('.mes_bias').append(messageFormatting(bias, '', false, false, -1, {}, false));
