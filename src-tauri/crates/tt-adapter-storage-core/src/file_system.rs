@@ -203,7 +203,6 @@ pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, Domai
 
     // Use tokio's async file operations
     let contents = read_to_string(path).await.map_err(|e| {
-        tracing::error!("Failed to read file {:?}: {}", path, e);
         if e.kind() == std::io::ErrorKind::NotFound {
             DomainError::NotFound(format!("File not found: {}", path.display()))
         } else {
@@ -211,10 +210,8 @@ pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, Domai
         }
     })?;
 
-    serde_json::from_str(&contents).map_err(|e| {
-        tracing::error!("Failed to parse JSON from file {:?}: {}", path, e);
-        DomainError::InvalidData(format!("Invalid JSON: {}", e))
-    })
+    serde_json::from_str(&contents)
+        .map_err(|e| DomainError::InvalidData(format!("Invalid JSON: {}", e)))
 }
 
 /// Generate a unique temporary file path adjacent to `target_path`.

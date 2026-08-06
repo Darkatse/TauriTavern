@@ -268,6 +268,7 @@ fn choose_archive_layout(
         let layout_candidates = candidates
             .iter()
             .filter(|candidate| candidate.policy == policy)
+            .filter(|candidate| !is_nested_user_handle_candidate(candidate, candidates))
             .collect::<Vec<_>>();
         if layout_candidates.is_empty() {
             continue;
@@ -281,6 +282,20 @@ fn choose_archive_layout(
     Err(DomainError::InvalidData(
         "Archive does not contain a recognizable data directory".to_string(),
     ))
+}
+
+fn is_nested_user_handle_candidate(
+    candidate: &ArchiveLayoutCandidate,
+    candidates: &[ArchiveLayoutCandidate],
+) -> bool {
+    candidate.policy == ArchiveLayoutPolicy::UserHandleRoot
+        && candidates.iter().any(|root| {
+            root.policy == ArchiveLayoutPolicy::SillyTavernUserRoot
+                && root.archive_root_components.len() < candidate.archive_root_components.len()
+                && candidate
+                    .archive_root_components
+                    .starts_with(&root.archive_root_components)
+        })
 }
 
 fn assert_no_ambiguous_layouts_for_same_root(
@@ -446,6 +461,22 @@ mod tests {
     }
 
     #[test]
+    fn detects_sillytavern_user_root_layout_with_extension_content_paths() {
+        let layout = detect_layout(&["settings.json", "extensions/SomeExtension/assets/icon.png"])
+            .expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
+        assert!(layout.archive_root_prefix.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn detects_sillytavern_user_root_layout_with_unknown_content_namespace() {
+        let layout = detect_layout(&["settings.json", "custom/SomePlugin/assets/icon.png"])
+            .expect("scan layout");
+        assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
+        assert!(layout.archive_root_prefix.as_os_str().is_empty());
+    }
+
+    #[test]
     fn detects_single_file_settings_layout() {
         let layout = detect_layout(&["settings.json"]).expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
@@ -472,6 +503,13 @@ mod tests {
     #[test]
     fn rejects_mixed_data_root_and_sillytavern_user_root_at_same_prefix() {
         let error = detect_layout(&["_tauritavern/state.json", "characters/a.json"]).unwrap_err();
+        assert!(matches!(error, DomainError::InvalidData(_)));
+    }
+
+    #[test]
+    fn rejects_data_root_nested_inside_sillytavern_user_root() {
+        let error =
+            detect_layout(&["settings.json", "data/default-user/characters/a.json"]).unwrap_err();
         assert!(matches!(error, DomainError::InvalidData(_)));
     }
 
