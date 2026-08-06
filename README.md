@@ -41,7 +41,7 @@
 </div>
 
 <details>
-<summary><b>📦 使用包管理器安装</b>（Windows · macOS · Linux · Canary）</summary>
+<summary><b>📦 使用包管理器安装</b>（Windows · macOS · Linux）</summary>
 
 ### Windows · Scoop
 
@@ -82,23 +82,12 @@ yay -S tauritavern-bin
 curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
 ```
 
-**Canary**
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
-  | sh -s -- --channel canary
-```
-
 **Nix / NixOS**
 
 已经安装 Nix 的用户可以直接加入当前用户 profile：
 
 ```sh
-# 稳定版
 nix profile add github:Darkatse/TauriTavern#tauritavern
-
-# Canary
-nix profile add github:Darkatse/TauriTavern/Canary#canary
 ```
 
 **Flatpak**
@@ -110,7 +99,29 @@ flatpak remote-add --user --if-not-exists \
 flatpak install --user tauritavern com.tauritavern.client
 ```
 
-Canary 包含最新改进，也可能不如稳定版可靠。Windows、macOS 和移动平台可从 [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary) 下载。
+</details>
+
+### Canary
+
+Canary 版本每天更新，包含最新功能和修复，但稳定性可能不如稳定版。如果你希望体验最新版本，或在稳定版中遇到问题，可以先尝试 Canary，确认问题是否已经修复。
+
+Windows、macOS 和移动平台可从 [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary) 下载。
+
+<details>
+<summary><b>Linux Canary 安装</b></summary>
+
+**Linux**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  | sh -s -- --channel canary
+```
+
+**Nix / NixOS**
+
+```sh
+nix profile add github:Darkatse/TauriTavern/Canary#canary
+```
 
 </details>
 

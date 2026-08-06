@@ -210,7 +210,7 @@ fn parse_search_query(
     let role = match args.get("role") {
         Some(Value::String(value)) => Some(
             parse_role(value)
-                .ok_or_else(|| "role must be user, assistant, or system".to_string())?,
+                .ok_or_else(|| "role must be user, assistant, system, or tool".to_string())?,
         ),
         Some(_) => return Err("role must be a string".to_string()),
         None => None,

@@ -4767,7 +4767,7 @@ async function deleteSwipeCallback(_, arg) {
     // Take the provided argument. Null if none provided, which will target the current swipe.
     const swipeId = arg && !isNaN(Number(arg)) ? (Number(arg) - 1) : null;
 
-    const newSwipeId = await deleteSwipe(swipeId);
+    const newSwipeId = await deleteSwipe(swipeId, chat.length - 1);
 
     return String(newSwipeId);
 }

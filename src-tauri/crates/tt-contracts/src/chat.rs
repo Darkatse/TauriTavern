@@ -102,13 +102,14 @@ pub struct ChatPayloadChunk {
     pub has_more_before: bool,
 }
 
-/// Chat message role used for locate queries.
+/// Chat message role used by locate, read, and search operations.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum ChatMessageRole {
     User,
     Assistant,
     System,
+    Tool,
 }
 
 /// Query for locating the last matching message in a chat payload.

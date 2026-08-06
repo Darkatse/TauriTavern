@@ -149,10 +149,11 @@ test('Legacy refusal keeps provider output and appends a visible warning', async
     assert.doesNotMatch(scriptSource, /appendClaudeRefusalWarning|initialChatLength|initialMessage|initialTextareaValue|discardOutput/);
 });
 
-test('Editing a split assistant turn invalidates both native copies', async () => {
+test('Editing a first-class Assistant turn invalidates its canonical native metadata', async () => {
     const source = await readFile(new URL('../src/script.js', import.meta.url), 'utf8');
     assert.match(
         source,
-        /if \(mes\.mes !== text\) \{[\s\S]*?delete mes\.extra\.native;[\s\S]*?pairedMessageId[\s\S]*?delete pairedMessage\?\.extra\?\.native;/,
+        /if \(mes\.mes !== text\) \{[\s\S]*?delete mes\.extra\.reasoning_signature;[\s\S]*?delete mes\.extra\.native;/,
     );
+    assert.doesNotMatch(source, /pairedMessageId|delete pairedMessage\?\.extra\?\.native/);
 });

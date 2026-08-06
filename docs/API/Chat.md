@@ -96,7 +96,7 @@ const hits = await handle.searchMessages({
 | `index` | 绝对索引（0-based） |
 | `score` | 匹配评分（0~1，越大越匹配） |
 | `snippet` | 可直接用于 UI 展示的短片段 |
-| `role` | `'user' \| 'assistant' \| 'system'` |
+| `role` | `'user' \| 'assistant' \| 'system' \| 'tool'` |
 | `text` | 命中消息的完整 `mes` 文本 |
 
 **技术特点**：

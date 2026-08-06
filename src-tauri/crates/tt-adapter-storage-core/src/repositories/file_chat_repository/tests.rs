@@ -18,7 +18,7 @@ use tt_ports::repositories::chat_payload_commit_repository::{
 };
 use tt_ports::repositories::chat_repository::{
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchQuery, ChatRepository,
-    PinnedCharacterChat, PinnedGroupChat,
+    FindLastMessageQuery, PinnedCharacterChat, PinnedGroupChat,
 };
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::settings::ChatBackupRuntime;
@@ -3562,6 +3562,154 @@ async fn read_character_chat_messages_returns_selected_messages_and_total_count(
     assert_eq!(result.messages[0].text, "first message");
     assert_eq!(result.messages[1].index, 2);
     assert_eq!(result.messages[1].role, ChatMessageRole::System);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn tool_role_roundtrips_and_is_distinct_from_system() {
+    let (repository, root) = setup_repository().await;
+    let payload = vec![
+        json!({
+            "chat_metadata": { "integrity": "tool-role-a" },
+            "user_name": "User",
+            "character_name": "Alice",
+        }),
+        json!({
+            "name": "Alice",
+            "is_user": false,
+            "is_system": false,
+            "send_date": "2026-01-01T00:00:00.000Z",
+            "mes": "",
+            "tool_calls": [{
+                "id": "call_weather",
+                "name": "lookup_weather",
+                "parameters": "{\"city\":\"Paris\"}",
+            }],
+            "extra": {},
+        }),
+        json!({
+            "role": "tool",
+            "name": "lookup_weather",
+            "is_user": false,
+            "is_system": true,
+            "send_date": "2026-01-01T00:00:01.000Z",
+            "mes": "weather result: sunny",
+            "tool_call_id": "call_weather",
+            "error": false,
+            "extra": {},
+        }),
+    ];
+
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
+        .await
+        .expect("save payload");
+
+    let chat = repository
+        .get_chat("alice", "session")
+        .await
+        .expect("load typed chat");
+    let tool_message = &chat.messages[1];
+    assert_eq!(
+        tool_message.additional.get("role").and_then(Value::as_str),
+        Some("tool")
+    );
+    assert_eq!(
+        tool_message
+            .additional
+            .get("tool_call_id")
+            .and_then(Value::as_str),
+        Some("call_weather")
+    );
+
+    repository
+        .save_with_options(&chat, true)
+        .await
+        .expect("rewrite typed chat");
+    let rewritten = repository
+        .get_chat_payload("alice", "session")
+        .await
+        .expect("read rewritten payload");
+    assert_eq!(rewritten[2]["role"], json!("tool"));
+    assert_eq!(rewritten[2]["tool_call_id"], json!("call_weather"));
+    assert_eq!(rewritten[1]["tool_calls"][0]["id"], json!("call_weather"));
+
+    let read = repository
+        .read_character_chat_messages("alice", "session", &[1])
+        .await
+        .expect("read tool message");
+    assert_eq!(read.messages[0].role, ChatMessageRole::Tool);
+
+    let tool_hits = repository
+        .search_character_chat_messages(
+            "alice",
+            "session",
+            ChatMessageSearchQuery {
+                query: "weather result".to_string(),
+                limit: 10,
+                filters: Some(ChatMessageSearchFilters {
+                    role: Some(ChatMessageRole::Tool),
+                    start_index: None,
+                    end_index: None,
+                    scan_limit: None,
+                }),
+            },
+        )
+        .await
+        .expect("search tool messages");
+    assert_eq!(tool_hits.len(), 1);
+    assert_eq!(tool_hits[0].index, 1);
+    assert_eq!(tool_hits[0].role, ChatMessageRole::Tool);
+
+    let system_hits = repository
+        .search_character_chat_messages(
+            "alice",
+            "session",
+            ChatMessageSearchQuery {
+                query: "weather result".to_string(),
+                limit: 10,
+                filters: Some(ChatMessageSearchFilters {
+                    role: Some(ChatMessageRole::System),
+                    start_index: None,
+                    end_index: None,
+                    scan_limit: None,
+                }),
+            },
+        )
+        .await
+        .expect("search system messages");
+    assert!(system_hits.is_empty());
+
+    let located = repository
+        .find_last_character_chat_message(
+            "alice",
+            "session",
+            FindLastMessageQuery {
+                role: Some(ChatMessageRole::Tool),
+                has_top_level_keys: None,
+                has_extra_keys: None,
+                scan_limit: None,
+            },
+        )
+        .await
+        .expect("locate tool message")
+        .expect("tool message should exist");
+    assert_eq!(located.index, 1);
+
+    let system = repository
+        .find_last_character_chat_message(
+            "alice",
+            "session",
+            FindLastMessageQuery {
+                role: Some(ChatMessageRole::System),
+                has_top_level_keys: None,
+                has_extra_keys: None,
+                scan_limit: None,
+            },
+        )
+        .await
+        .expect("locate system message");
+    assert!(system.is_none());
 
     let _ = fs::remove_dir_all(&root).await;
 }

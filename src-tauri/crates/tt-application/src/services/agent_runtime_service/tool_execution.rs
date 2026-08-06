@@ -89,7 +89,6 @@ impl AgentRuntimeService {
                     run_id,
                     invocation_id,
                     round,
-                    tool_invocation,
                     snapshot_id,
                     &outcome,
                 )
@@ -243,7 +242,6 @@ impl AgentRuntimeService {
                     run_id,
                     invocation_id,
                     round,
-                    tool_invocation,
                     snapshot_id,
                     &outcome,
                 )
@@ -276,11 +274,9 @@ impl AgentRuntimeService {
         run_id: &str,
         invocation_id: &str,
         round: usize,
-        invocation: &ToolInvocation,
         snapshot_id: &str,
         outcome: &AgentToolDispatchOutcome,
     ) -> Result<(), ApplicationError> {
-        ensure_tool_result_identity(invocation, &outcome.result)?;
         self.store_tool_result(run_id, round, &outcome.result)
             .await?;
         self.event(

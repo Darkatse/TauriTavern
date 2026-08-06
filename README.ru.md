@@ -41,7 +41,7 @@
 </div>
 
 <details>
-<summary><b>📦 Установка через менеджер пакетов</b> (Windows · macOS · Linux · Canary)</summary>
+<summary><b>📦 Установка через менеджер пакетов</b> (Windows · macOS · Linux)</summary>
 
 ### Windows · Scoop
 
@@ -82,23 +82,12 @@ yay -S tauritavern-bin
 curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
 ```
 
-**Canary**
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
-  | sh -s -- --channel canary
-```
-
 **Nix / NixOS**
 
 Если Nix уже установлен, добавьте TauriTavern прямо в профиль пользователя:
 
 ```sh
-# Стабильная версия
 nix profile add github:Darkatse/TauriTavern#tauritavern
-
-# Canary
-nix profile add github:Darkatse/TauriTavern/Canary#canary
 ```
 
 **Flatpak**
@@ -110,7 +99,29 @@ flatpak remote-add --user --if-not-exists \
 flatpak install --user tauritavern com.tauritavern.client
 ```
 
-Canary содержит последние изменения, но может работать менее стабильно. Сборки для Windows, macOS и мобильных платформ доступны в разделе [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary).
+</details>
+
+### Canary
+
+Canary обновляется ежедневно и включает новые функции и исправления, но может быть менее стабильной, чем стабильная версия. Если вы хотите попробовать последнюю сборку или столкнулись с проблемой в стабильной версии, проверьте, исправлена ли эта проблема в Canary.
+
+Сборки для Windows, macOS и мобильных платформ доступны в разделе [Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary).
+
+<details>
+<summary><b>Установка Canary в Linux</b></summary>
+
+**Linux**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  | sh -s -- --channel canary
+```
+
+**Nix / NixOS**
+
+```sh
+nix profile add github:Darkatse/TauriTavern/Canary#canary
+```
 
 </details>
 

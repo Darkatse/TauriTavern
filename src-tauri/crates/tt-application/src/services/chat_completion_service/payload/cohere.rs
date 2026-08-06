@@ -229,6 +229,21 @@ fn apply_tool_call_primer(messages: &mut Vec<Value>) {
             continue;
         }
 
+        let has_content = messages
+            .get(index)
+            .and_then(Value::as_object)
+            .and_then(|object| object.get("content"))
+            .is_some_and(|content| match content {
+                Value::String(text) => !text.is_empty(),
+                Value::Array(parts) => !parts.is_empty(),
+                Value::Null => false,
+                _ => true,
+            });
+        if has_content {
+            index += 1;
+            continue;
+        }
+
         if index > 0 {
             let previous_role = messages
                 .get(index - 1)
@@ -604,6 +619,29 @@ mod tests {
         assert_eq!(
             messages[0].get("content").and_then(Value::as_str),
             Some("previous")
+        );
+    }
+
+    #[test]
+    fn cohere_tool_calls_keep_merged_assistant_content() {
+        let payload = json!({
+            "model": "command-r-plus",
+            "messages": [{
+                "role": "assistant",
+                "content": "checking weather",
+                "tool_calls": [{ "function": { "name": "weather" } }]
+            }],
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(
+            upstream
+                .pointer("/messages/0/content")
+                .and_then(Value::as_str),
+            Some("checking weather")
         );
     }
 

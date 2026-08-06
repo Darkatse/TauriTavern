@@ -20,7 +20,6 @@ pub(super) async fn discover_extensions(
             name: name.to_string(),
             extension_type: ExtensionType::System,
             managed: true,
-            manifest: None,
             path: PathBuf::from(format!("scripts/extensions/{}", name)),
             remote_url: None,
             commit_hash: None,
@@ -89,15 +88,24 @@ async fn discover_scoped_extensions(
             Ok(None) => match repository
                 .source_store
                 .read(scope, &extension_folder_name, &path)
-                .await?
+                .await
             {
-                Some(source) => (
+                Ok(Some(source)) => (
                     true,
                     Some(source.remote_url),
                     Some(source.installed_commit),
                     Some(source.reference),
                 ),
-                None => (false, None, None, None),
+                Ok(None) => (false, None, None, None),
+                Err(error) => {
+                    tracing::warn!(
+                        "Ignoring invalid source state for '{}' at '{}': {}",
+                        extension_folder_name,
+                        path.display(),
+                        error
+                    );
+                    (false, None, None, None)
+                }
             },
             Err(error) => {
                 tracing::warn!(
@@ -110,7 +118,6 @@ async fn discover_scoped_extensions(
             }
         };
 
-        let manifest = repository.read_manifest_metadata(&path).await?;
         extensions.push(Extension {
             name: extension_name,
             extension_type: match scope {
@@ -118,7 +125,6 @@ async fn discover_scoped_extensions(
                 ExtensionStoreScope::Global => ExtensionType::Global,
             },
             managed,
-            manifest,
             path,
             remote_url,
             commit_hash,

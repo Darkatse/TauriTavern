@@ -91,7 +91,6 @@ impl GitTestServer {
         let manifest = serde_json::json!({
             "display_name": "Smart HTTP Fixture",
             "version": version,
-            "author": "TauriTavern",
         });
         let manifest = serde_json::to_vec_pretty(&manifest).unwrap();
         let manifest = repo

@@ -5,7 +5,7 @@ use tt_ports::repositories::chat_repository::{
     ChatMessageRole, FindLastMessageQuery, LocatedChatMessage,
 };
 
-use super::FileChatRepository;
+use super::{FileChatRepository, classify_message_role};
 
 fn parse_message_line(line: &str) -> Result<Value, DomainError> {
     serde_json::from_str::<Value>(line).map_err(|error| {
@@ -14,6 +14,7 @@ fn parse_message_line(line: &str) -> Result<Value, DomainError> {
 }
 
 fn matches_role(message: &Value, role: ChatMessageRole) -> bool {
+    let declared_role = message.get("role").and_then(Value::as_str);
     let is_user = message
         .get("is_user")
         .and_then(Value::as_bool)
@@ -23,11 +24,7 @@ fn matches_role(message: &Value, role: ChatMessageRole) -> bool {
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    match role {
-        ChatMessageRole::User => is_user,
-        ChatMessageRole::System => is_system,
-        ChatMessageRole::Assistant => !is_user && !is_system,
-    }
+    classify_message_role(declared_role, is_user, is_system) == role
 }
 
 fn has_top_level_keys(message: &Value, keys: &[String]) -> bool {

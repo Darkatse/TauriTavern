@@ -950,6 +950,7 @@ mod tests {
                 ("groups/group.json", br#"{ "id": "group" }"#),
                 ("group chats/group-session.jsonl", b"group chat"),
                 ("assets/worlds/cover.png", b"image"),
+                ("extensions/SomeExtension/assets/icon.png", b"icon"),
             ],
         );
 
@@ -989,6 +990,16 @@ mod tests {
                 .join("cover.png")
                 .is_file(),
             "marker-like asset paths should remain user-root content"
+        );
+        assert!(
+            data_root
+                .join("default-user")
+                .join("extensions")
+                .join("SomeExtension")
+                .join("assets")
+                .join("icon.png")
+                .is_file(),
+            "extension content paths should remain user-root content"
         );
 
         cleanup_directory_sync(&root);

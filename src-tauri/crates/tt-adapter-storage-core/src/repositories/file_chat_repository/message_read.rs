@@ -10,7 +10,7 @@ use tt_ports::repositories::chat_types::{
     ChatMessageReadItem, ChatMessageRole, ChatMessagesReadResult,
 };
 
-use super::FileChatRepository;
+use super::{FileChatRepository, classify_message_role};
 
 impl FileChatRepository {
     pub(super) async fn read_character_chat_messages_internal(
@@ -137,19 +137,15 @@ fn read_item_from_value(index: usize, value: &Value) -> Result<ChatMessageReadIt
 }
 
 fn role_from_message_value(value: &Value) -> ChatMessageRole {
-    if value
+    let role = value.get("role").and_then(Value::as_str);
+    let is_user = value
         .get("is_user")
         .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        ChatMessageRole::User
-    } else if value
+        .unwrap_or(false);
+    let is_system = value
         .get("is_system")
         .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        ChatMessageRole::System
-    } else {
-        ChatMessageRole::Assistant
-    }
+        .unwrap_or(false);
+
+    classify_message_role(role, is_user, is_system)
 }

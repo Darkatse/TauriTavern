@@ -352,6 +352,49 @@ fn claude_tool_calls_and_results_are_structured() {
 }
 
 #[test]
+fn claude_merged_assistant_content_precedes_tool_use_without_native() {
+    let payload = json!({
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [{
+            "role": "assistant",
+            "content": "checking weather",
+            "tool_calls": [{
+                "id": "call_weather",
+                "type": "function",
+                "function": {
+                    "name": "weather",
+                    "arguments": "{\"city\":\"Paris\"}"
+                }
+            }]
+        }],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "description": "get weather",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let blocks = upstream
+        .pointer("/messages/0/content")
+        .and_then(Value::as_array)
+        .expect("assistant content must be an array");
+
+    assert_eq!(
+        blocks[0],
+        json!({ "type": "text", "text": "checking weather" })
+    );
+    assert_eq!(blocks[1]["type"], "tool_use");
+    assert_eq!(blocks[1]["id"], "call_weather");
+}
+
+#[test]
 fn claude_native_content_blocks_are_replayed() {
     let payload = json!({
         "model": "claude-sonnet-4-20250514",

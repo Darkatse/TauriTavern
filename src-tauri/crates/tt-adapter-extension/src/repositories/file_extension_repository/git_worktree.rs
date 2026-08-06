@@ -11,7 +11,6 @@ use gix::refs::Target;
 use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit};
 
 use tt_domain::errors::DomainError;
-use tt_domain::models::extension::ExtensionManifestMetadata;
 
 use super::git_remote::{branch_ref, parse_remote_url, tag_ref};
 
@@ -86,6 +85,12 @@ pub(super) struct PreparedCandidate {
     pub(super) manifest: ExtensionManifestMetadata,
     gitlinks: Vec<PathBuf>,
     index: gix::index::File,
+}
+
+pub(super) struct ExtensionManifestMetadata {
+    pub(super) display_name: String,
+    pub(super) version: String,
+    pub(super) author: String,
 }
 
 pub(super) fn has_standard_embedded_git(extension_path: &Path) -> Result<bool, DomainError> {
@@ -282,9 +287,22 @@ pub(super) fn prepare_candidate(
                     "Extension manifest.json has the wrong object kind".to_string(),
                 ));
             }
-            manifest = Some(serde_json::from_slice(&object.data).map_err(|error| {
-                DomainError::InvalidData(format!("Invalid extension manifest.json: {error}"))
-            })?);
+            let value: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_slice(&object.data).map_err(|error| {
+                    DomainError::InvalidData(format!("Invalid extension manifest.json: {error}"))
+                })?;
+            let string = |field| {
+                value
+                    .get(field)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            manifest = Some(ExtensionManifestMetadata {
+                display_name: string("display_name"),
+                version: string("version"),
+                author: string("author"),
+            });
         } else {
             let header = repo.find_header(entry.oid).map_err(|error| {
                 git_error(
@@ -873,7 +891,7 @@ mod tests {
         let manifest = br#"{
             "display_name":"Fixture",
             "version":"1.2.3",
-            "author":"TauriTavern"
+            "author":{"name":"TauriTavern"}
         }"#;
         let missing_gitlink =
             gix::ObjectId::from_hex(b"1111111111111111111111111111111111111111").unwrap();
@@ -915,6 +933,7 @@ mod tests {
         create_tracking_ref(&repo, selected.fetch_destination(), commit).unwrap();
         let mut prepared = prepare_candidate(&repo, commit).expect("preflight candidate");
         assert_eq!(prepared.manifest.display_name, "Fixture");
+        assert_eq!(prepared.manifest.author, "");
         materialize_candidate(&repo, &path, &mut prepared).expect("materialize candidate");
         configure_install(
             &repo,

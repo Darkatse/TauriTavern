@@ -28,6 +28,7 @@ fn role_as_str(role: ChatMessageRole) -> &'static str {
         ChatMessageRole::User => "user",
         ChatMessageRole::Assistant => "assistant",
         ChatMessageRole::System => "system",
+        ChatMessageRole::Tool => "tool",
     }
 }
 
@@ -36,6 +37,7 @@ fn parse_role(value: &str) -> Option<ChatMessageRole> {
         "user" => Some(ChatMessageRole::User),
         "assistant" => Some(ChatMessageRole::Assistant),
         "system" => Some(ChatMessageRole::System),
+        "tool" => Some(ChatMessageRole::Tool),
         _ => None,
     }
 }
@@ -84,5 +86,27 @@ fn visible_total_messages(
         }
         Some(input_message_count) => Ok(input_message_count),
         None => Ok(raw_total_messages),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::{chat_search_descriptor, parse_role, role_as_str};
+    use tt_ports::repositories::chat_repository::ChatMessageRole;
+
+    #[test]
+    fn tool_role_is_supported_by_chat_search() {
+        assert_eq!(parse_role("tool"), Some(ChatMessageRole::Tool));
+        assert_eq!(role_as_str(ChatMessageRole::Tool), "tool");
+
+        let descriptor = chat_search_descriptor();
+        let roles = descriptor
+            .input_schema
+            .pointer("/properties/role/enum")
+            .and_then(Value::as_array)
+            .expect("chat search role enum");
+        assert!(roles.iter().any(|role| role.as_str() == Some("tool")));
     }
 }

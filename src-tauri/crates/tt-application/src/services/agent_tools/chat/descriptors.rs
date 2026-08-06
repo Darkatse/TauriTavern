@@ -63,7 +63,7 @@ pub(in crate::services::agent_tools) fn chat_search_descriptor() -> ToolDescript
                 },
                 "role": {
                     "type": "string",
-                    "enum": ["user", "assistant", "system"],
+                    "enum": ["user", "assistant", "system", "tool"],
                     "description": "Optional role filter."
                 },
                 "start_message": {
