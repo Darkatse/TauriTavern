@@ -141,7 +141,7 @@ pub async fn update_tauritavern_settings(
 pub async fn save_user_settings(
     settings: UserSettingsDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
+) -> Result<UserSettingsSaveResultDto, CommandError> {
     log_command("save_user_settings");
 
     app_state

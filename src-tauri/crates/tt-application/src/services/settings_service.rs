@@ -1,6 +1,5 @@
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::io::Write;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -21,11 +20,10 @@ use tt_domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, DevLoggingSettings,
     RequestProxySettings, UserSettings,
 };
-use tt_ports::repositories::settings_repository::{
-    SettingsAggregateSignature, SettingsRepository, UserSettingsRevision,
-};
+use tt_ports::repositories::settings_repository::{SettingsAggregateSignature, SettingsRepository};
 pub use tt_ports::settings::{ChatBackupRuntime, ChatBackupStorageStats, RequestProxyRuntime};
 
+/// Strong validator derived from the exact user settings value; never stored independently.
 pub const USER_SETTINGS_HASH_ALGORITHM: &str = "tt-user-settings-stable-sha256-v1";
 
 #[derive(Clone)]
@@ -131,23 +129,6 @@ impl SettingsService {
                     repair_report
                 );
                 settings_repository.save_user_settings(&settings).await?;
-                let settings_hash =
-                    Self::stable_user_settings_hash(&settings.data).map_err(|error| {
-                        tt_domain::errors::DomainError::InternalError(error.to_string())
-                    })?;
-                let revision = UserSettingsRevision {
-                    hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
-                    settings_hash,
-                };
-                if let Err(error) = settings_repository
-                    .save_user_settings_revision(&revision)
-                    .await
-                {
-                    tracing::warn!(
-                        "Failed to refresh user settings revision after delayed repair: {}",
-                        error
-                    );
-                }
                 Ok(true)
             }
             .await;
@@ -434,7 +415,7 @@ impl SettingsService {
     pub async fn save_user_settings(
         &self,
         settings: UserSettingsDto,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<UserSettingsSaveResultDto, ApplicationError> {
         tracing::info!("Saving user settings");
 
         let mut user_settings = settings.into();
@@ -442,23 +423,16 @@ impl SettingsService {
         let next_hash = Self::stable_user_settings_hash(&user_settings.data)?;
 
         let _guard = self.user_settings_save_lock.lock().await;
-        if self.cached_user_settings_hash_matches(&next_hash).await? {
-            tracing::debug!("Skipping unchanged user settings save from revision cache");
-            return Ok(());
-        }
-
         let current_settings = self.settings_repository.load_user_settings().await?;
         let current_hash = Self::stable_user_settings_hash(&current_settings.data)?;
         if current_hash == next_hash {
             tracing::debug!("Skipping unchanged user settings save");
-            self.refresh_user_settings_revision(&next_hash).await;
-            return Ok(());
+            return Ok(Self::user_settings_save_result("full-noop", next_hash));
         }
 
-        self.persist_user_settings(&user_settings, &next_hash)
-            .await?;
+        self.persist_user_settings(&user_settings).await?;
 
-        Ok(())
+        Ok(Self::user_settings_save_result("full", next_hash))
     }
 
     pub async fn save_user_settings_patch(
@@ -490,7 +464,6 @@ impl SettingsService {
 
         if patched_hash == current_hash && !current_repaired && !patched_repaired {
             tracing::debug!("Skipping unchanged user settings patch save");
-            self.refresh_user_settings_revision(&patched_hash).await;
             return Ok(Self::user_settings_save_result("patch-noop", patched_hash));
         }
 
@@ -499,8 +472,7 @@ impl SettingsService {
         } else {
             "patch"
         };
-        self.persist_user_settings(&patched_settings, &patched_hash)
-            .await?;
+        self.persist_user_settings(&patched_settings).await?;
 
         Ok(Self::user_settings_save_result(mode, patched_hash))
     }
@@ -508,46 +480,13 @@ impl SettingsService {
     async fn persist_user_settings(
         &self,
         user_settings: &UserSettings,
-        settings_hash: &str,
     ) -> Result<(), ApplicationError> {
         self.settings_repository
             .save_user_settings(user_settings)
             .await?;
-        self.refresh_user_settings_revision(settings_hash).await;
         self.clear_sillytavern_settings_cache().await;
 
         Ok(())
-    }
-
-    async fn cached_user_settings_hash_matches(
-        &self,
-        settings_hash: &str,
-    ) -> Result<bool, ApplicationError> {
-        let Some(revision) = self
-            .settings_repository
-            .load_user_settings_revision()
-            .await?
-        else {
-            return Ok(false);
-        };
-
-        Ok(revision.hash_algorithm == USER_SETTINGS_HASH_ALGORITHM
-            && revision.settings_hash == settings_hash)
-    }
-
-    async fn refresh_user_settings_revision(&self, settings_hash: &str) {
-        let revision = UserSettingsRevision {
-            hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
-            settings_hash: settings_hash.to_string(),
-        };
-
-        if let Err(error) = self
-            .settings_repository
-            .save_user_settings_revision(&revision)
-            .await
-        {
-            tracing::warn!("Failed to refresh user settings revision: {}", error);
-        }
     }
 
     fn repair_user_settings_before_save(settings: &mut UserSettings, context: &str) -> bool {
@@ -704,57 +643,11 @@ impl SettingsService {
     }
 
     fn stable_user_settings_hash(value: &Value) -> Result<String, ApplicationError> {
-        let mut canonical = Vec::new();
-        Self::write_canonical_json(value, &mut canonical)?;
-        let digest = Sha256::digest(&canonical);
+        let serialized = serde_json::to_vec(value).map_err(|error| {
+            ApplicationError::InternalError(format!("Failed to serialize settings: {}", error))
+        })?;
+        let digest = Sha256::digest(&serialized);
         Ok(hex_lower(&digest))
-    }
-
-    fn write_canonical_json<W: Write>(
-        value: &Value,
-        writer: &mut W,
-    ) -> Result<(), ApplicationError> {
-        match value {
-            Value::Array(items) => {
-                writer.write_all(b"[").map_err(Self::canonical_json_error)?;
-                for (index, item) in items.iter().enumerate() {
-                    if index > 0 {
-                        writer.write_all(b",").map_err(Self::canonical_json_error)?;
-                    }
-                    Self::write_canonical_json(item, writer)?;
-                }
-                writer.write_all(b"]").map_err(Self::canonical_json_error)?;
-            }
-            Value::Object(object) => {
-                writer.write_all(b"{").map_err(Self::canonical_json_error)?;
-                let mut entries = object.iter().collect::<Vec<_>>();
-                entries.sort_by_key(|(key, _)| *key);
-                for (index, (key, nested)) in entries.into_iter().enumerate() {
-                    if index > 0 {
-                        writer.write_all(b",").map_err(Self::canonical_json_error)?;
-                    }
-                    serde_json::to_writer(&mut *writer, key)
-                        .map_err(Self::canonical_json_serialize_error)?;
-                    writer.write_all(b":").map_err(Self::canonical_json_error)?;
-                    Self::write_canonical_json(nested, writer)?;
-                }
-                writer.write_all(b"}").map_err(Self::canonical_json_error)?;
-            }
-            _ => {
-                serde_json::to_writer(writer, value)
-                    .map_err(Self::canonical_json_serialize_error)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn canonical_json_error(error: std::io::Error) -> ApplicationError {
-        ApplicationError::InternalError(format!("Failed to canonicalize settings: {}", error))
-    }
-
-    fn canonical_json_serialize_error(error: serde_json::Error) -> ApplicationError {
-        ApplicationError::InternalError(format!("Failed to serialize settings: {}", error))
     }
 
     pub async fn get_sillytavern_settings(
@@ -798,27 +691,9 @@ impl SettingsService {
                 self.schedule_delayed_user_settings_repair_writeback();
             }
 
-            let cached_revision = if repaired {
-                None
-            } else {
-                self.settings_repository
-                    .load_user_settings_revision()
-                    .await?
-            };
-            let revision = if let Some(revision) = cached_revision
-                && revision.hash_algorithm == USER_SETTINGS_HASH_ALGORITHM
-                && Self::validate_user_settings_hash("settings_hash", &revision.settings_hash)
-                    .is_ok()
-            {
-                UserSettingsRevisionDto {
-                    hash_algorithm: revision.hash_algorithm,
-                    settings_hash: revision.settings_hash,
-                }
-            } else {
-                UserSettingsRevisionDto {
-                    hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
-                    settings_hash: Self::stable_user_settings_hash(&user_settings.data)?,
-                }
+            let revision = UserSettingsRevisionDto {
+                hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
+                settings_hash: Self::stable_user_settings_hash(&user_settings.data)?,
             };
             let settings_json = serde_json::to_string(&user_settings.data).map_err(|error| {
                 ApplicationError::InternalError(format!("Failed to serialize settings: {}", error))
@@ -963,9 +838,6 @@ impl SettingsService {
 
         let _guard = self.user_settings_save_lock.lock().await;
         self.settings_repository.restore_snapshot(name).await?;
-        let settings = self.settings_repository.load_user_settings().await?;
-        let settings_hash = Self::stable_user_settings_hash(&settings.data)?;
-        self.refresh_user_settings_revision(&settings_hash).await;
         self.clear_sillytavern_settings_cache().await;
 
         Ok(())
@@ -1415,6 +1287,11 @@ mod tests {
 
         assert_eq!(repository.load_user_settings_count().await, 2);
         assert_eq!(settings_value(&third), json!({"username": "two"}));
+        assert_eq!(
+            third.tauritavern_settings_revision.settings_hash,
+            SettingsService::stable_user_settings_hash(&json!({"username": "two"}))
+                .expect("hash updated settings")
+        );
     }
 
     #[tokio::test]
@@ -1463,13 +1340,19 @@ mod tests {
             Arc::new(TestChatBackupRuntime::default()),
         );
 
-        service
+        let result = service
             .save_user_settings(UserSettingsDto {
                 data: json!({"username": "same"}),
             })
             .await
             .expect("save unchanged settings");
 
+        assert_eq!(result.mode, "full-noop");
+        assert_eq!(
+            result.settings_hash,
+            SettingsService::stable_user_settings_hash(&json!({"username": "same"}))
+                .expect("hash unchanged settings")
+        );
         assert_eq!(repository.save_user_settings_count().await, 0);
         assert_eq!(repository.load_user_settings_count().await, 1);
     }
@@ -1511,29 +1394,6 @@ mod tests {
             unicode_key_order_hash,
             "b80f11d0d2b9f8a24fa66a8d485776a5def012c48b9d3da47d626f42c199569a"
         );
-    }
-
-    #[tokio::test]
-    async fn save_user_settings_skips_disk_read_when_revision_cache_matches() {
-        let repository = Arc::new(TestSettingsRepository::default());
-        let data = json!({"username": "same"});
-        let settings_hash =
-            SettingsService::stable_user_settings_hash(&data).expect("hash settings");
-        repository.store_user_settings(data.clone()).await;
-        repository.store_user_settings_revision(settings_hash).await;
-        let service = SettingsService::new(
-            repository.clone(),
-            Arc::new(TestRequestProxyRuntime::default()),
-            Arc::new(TestChatBackupRuntime::default()),
-        );
-
-        service
-            .save_user_settings(UserSettingsDto { data })
-            .await
-            .expect("save unchanged settings");
-
-        assert_eq!(repository.save_user_settings_count().await, 0);
-        assert_eq!(repository.load_user_settings_count().await, 0);
     }
 
     #[tokio::test]
@@ -1584,7 +1444,6 @@ mod tests {
         assert_eq!(result.settings_hash, next_hash);
         assert_eq!(repository.save_user_settings_count().await, 1);
         assert_eq!(repository.user_settings_data().await, next);
-        assert_eq!(repository.save_user_settings_revision_count().await, 1);
     }
 
     #[tokio::test]
@@ -1614,6 +1473,34 @@ mod tests {
             .expect_err("stale patch should conflict");
 
         assert!(matches!(error, ApplicationError::Conflict(_)));
+        assert_eq!(repository.save_user_settings_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn save_user_settings_patch_skips_unchanged_payload() {
+        let repository = Arc::new(TestSettingsRepository::default());
+        let current = json!({"username": "same"});
+        let base_hash =
+            SettingsService::stable_user_settings_hash(&current).expect("hash current settings");
+        repository.store_user_settings(current).await;
+        let service = SettingsService::new(
+            repository.clone(),
+            Arc::new(TestRequestProxyRuntime::default()),
+            Arc::new(TestChatBackupRuntime::default()),
+        );
+
+        let result = service
+            .save_user_settings_patch(UserSettingsPatchDto {
+                hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
+                base_hash: base_hash.clone(),
+                ops: Vec::new(),
+            })
+            .await
+            .expect("save unchanged settings patch");
+
+        assert_eq!(result.mode, "patch-noop");
+        assert_eq!(result.settings_hash, base_hash);
+        assert_eq!(repository.load_user_settings_count().await, 1);
         assert_eq!(repository.save_user_settings_count().await, 0);
     }
 
@@ -1674,7 +1561,6 @@ mod tests {
         assert_eq!(result.settings_hash, base_hash);
         assert_eq!(repository.save_user_settings_count().await, 1);
         assert_eq!(repository.user_settings_data().await, repaired);
-        assert_eq!(repository.save_user_settings_revision_count().await, 1);
     }
 
     #[tokio::test]
@@ -1696,13 +1582,19 @@ mod tests {
             .expect("prime settings aggregate cache");
         assert_eq!(settings_value(&first), json!({"username": "old"}));
 
-        service
+        let result = service
             .save_user_settings(UserSettingsDto {
                 data: json!({"username": "new"}),
             })
             .await
             .expect("save changed settings");
 
+        assert_eq!(result.mode, "full");
+        assert_eq!(
+            result.settings_hash,
+            SettingsService::stable_user_settings_hash(&json!({"username": "new"}))
+                .expect("hash changed settings")
+        );
         let second = service
             .get_sillytavern_settings()
             .await
@@ -1717,11 +1609,9 @@ mod tests {
     struct TestSettingsRepository {
         settings: Mutex<TauriTavernSettings>,
         user_settings: Mutex<UserSettings>,
-        user_settings_revision: Mutex<Option<UserSettingsRevision>>,
         settings_signature: Mutex<SettingsAggregateSignature>,
         save_user_settings_count: Mutex<u32>,
         load_user_settings_count: Mutex<u32>,
-        save_user_settings_revision_count: Mutex<u32>,
     }
 
     impl TestSettingsRepository {
@@ -1731,13 +1621,6 @@ mod tests {
 
         async fn store_signature(&self, signature: SettingsAggregateSignature) {
             *self.settings_signature.lock().await = signature;
-        }
-
-        async fn store_user_settings_revision(&self, settings_hash: String) {
-            *self.user_settings_revision.lock().await = Some(UserSettingsRevision {
-                hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
-                settings_hash,
-            });
         }
 
         async fn user_settings_data(&self) -> Value {
@@ -1750,10 +1633,6 @@ mod tests {
 
         async fn load_user_settings_count(&self) -> u32 {
             *self.load_user_settings_count.lock().await
-        }
-
-        async fn save_user_settings_revision_count(&self) -> u32 {
-            *self.save_user_settings_revision_count.lock().await
         }
     }
 
@@ -1780,21 +1659,6 @@ mod tests {
         async fn load_user_settings(&self) -> Result<UserSettings, DomainError> {
             *self.load_user_settings_count.lock().await += 1;
             Ok(self.user_settings.lock().await.clone())
-        }
-
-        async fn load_user_settings_revision(
-            &self,
-        ) -> Result<Option<UserSettingsRevision>, DomainError> {
-            Ok(self.user_settings_revision.lock().await.clone())
-        }
-
-        async fn save_user_settings_revision(
-            &self,
-            revision: &UserSettingsRevision,
-        ) -> Result<(), DomainError> {
-            *self.user_settings_revision.lock().await = Some(revision.clone());
-            *self.save_user_settings_revision_count.lock().await += 1;
-            Ok(())
         }
 
         async fn create_snapshot(&self) -> Result<(), DomainError> {
@@ -1869,7 +1733,7 @@ mod tests {
     }
 
     fn test_signature(label: &str) -> SettingsAggregateSignature {
-        SettingsAggregateSignature::from_revision(label)
+        SettingsAggregateSignature::new(label)
     }
 
     fn settings_value(response: &SillyTavernSettingsResponseDto) -> Value {

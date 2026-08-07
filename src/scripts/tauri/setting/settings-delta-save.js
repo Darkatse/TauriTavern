@@ -58,6 +58,16 @@ function normalizeSettingsRevision(revision) {
     };
 }
 
+/** @param {unknown} revision */
+export function requireSettingsRevision(revision) {
+    const normalizedRevision = normalizeSettingsRevision(revision);
+    if (!normalizedRevision) {
+        throw new Error('Settings save response missing revision');
+    }
+
+    return normalizedRevision;
+}
+
 /**
  * @param {any} payload
  * @returns {PreparedSettingsPayload}
@@ -231,15 +241,11 @@ export async function trySaveSettingsDelta(prepared, headers) {
 
     if (response.ok) {
         const result = await response.json();
-        const revision = normalizeSettingsRevision(result);
-        if (!revision) {
-            throw new Error('Settings patch response missing revision');
-        }
 
         return {
             saved: true,
             mode: result?.mode || 'patch',
-            revision,
+            revision: requireSettingsRevision(result),
         };
     }
 

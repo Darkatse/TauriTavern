@@ -69,6 +69,7 @@ import {
     clearSettingsSaveBaseline,
     isSettingsPatchConflictError,
     prepareSettingsSavePayload,
+    requireSettingsRevision,
     trySaveSettingsDelta,
 } from './scripts/tauri/setting/settings-delta-save.js';
 
@@ -9349,6 +9350,10 @@ async function saveSettingsNow(loopCounter = 0) {
 
             if (!result.ok) {
                 throw new Error(`Failed to save settings: ${result.statusText}`);
+            }
+
+            if (deltaResult.reason === 'fallback') {
+                savedRevision = requireSettingsRevision(await result.json());
             }
         }
 

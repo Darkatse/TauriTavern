@@ -281,8 +281,8 @@ mod tests {
             b"[]",
         )
         .expect("write excluded paired servers");
-        std::fs::write(user_cache_dir.join("settings_revision_v1.json"), b"{}")
-            .expect("write excluded settings revision cache");
+        std::fs::write(user_cache_dir.join("runtime-state.json"), b"{}")
+            .expect("write excluded runtime cache state");
 
         std::fs::create_dir_all(
             root.join("_tauritavern")
@@ -479,7 +479,7 @@ mod tests {
             "default-user/user/lan-sync/v2/peers.json",
             "default-user/user/lan-sync/tt-sync-v2/identity.json",
             "default-user/user/lan-sync/tt-sync-v2/paired-servers.json",
-            "default-user/user/cache/settings_revision_v1.json",
+            "default-user/user/cache/runtime-state.json",
             "default-user/.staging/chat-commits/session.partial",
         ] {
             assert!(

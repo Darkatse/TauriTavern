@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
     buildSettingsPatchSaveRequest,
@@ -7,6 +8,7 @@ import {
     clearSettingsSaveBaseline,
     isSettingsPatchConflictError,
     prepareSettingsSavePayload,
+    requireSettingsRevision,
     SETTINGS_HASH_ALGORITHM,
     trySaveSettingsDelta,
 } from '../src/scripts/tauri/setting/settings-delta-save.js';
@@ -31,6 +33,17 @@ function restoreGlobals() {
 test.afterEach(() => {
     clearSettingsSaveBaseline();
     restoreGlobals();
+});
+
+test('requireSettingsRevision validates full-save revision responses', () => {
+    assert.deepEqual(requireSettingsRevision({ result: 'ok', mode: 'full', ...revision }), revision);
+    assert.throws(() => requireSettingsRevision({ result: 'ok' }), /missing revision/);
+});
+
+test('Tauri full-save fallback restores the returned revision as the next patch baseline', async () => {
+    const source = await readFile(new URL('../src/script.js', import.meta.url), 'utf8');
+
+    assert.match(source, /if \(deltaResult\.reason === 'fallback'\) \{\s*savedRevision = requireSettingsRevision\(await result\.json\(\)\);\s*\}[\s\S]*?captureSettingsSaveBaseline\(preparedPayload\.value, savedRevision\)/);
 });
 
 test('buildSettingsPatchSaveRequest emits backend-revision CAS object diffs and replaces arrays whole', () => {

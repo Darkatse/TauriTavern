@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
 
@@ -7,15 +6,9 @@ use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSet
 pub struct SettingsAggregateSignature(String);
 
 impl SettingsAggregateSignature {
-    pub fn from_revision(revision: impl Into<String>) -> Self {
-        Self(revision.into())
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct UserSettingsRevision {
-    pub hash_algorithm: String,
-    pub settings_hash: String,
 }
 
 #[async_trait]
@@ -28,13 +21,6 @@ pub trait SettingsRepository: Send + Sync {
 
     async fn save_user_settings(&self, settings: &UserSettings) -> Result<(), DomainError>;
     async fn load_user_settings(&self) -> Result<UserSettings, DomainError>;
-    async fn load_user_settings_revision(
-        &self,
-    ) -> Result<Option<UserSettingsRevision>, DomainError>;
-    async fn save_user_settings_revision(
-        &self,
-        revision: &UserSettingsRevision,
-    ) -> Result<(), DomainError>;
 
     async fn create_snapshot(&self) -> Result<(), DomainError>;
     async fn get_snapshots(&self) -> Result<Vec<SettingsSnapshot>, DomainError>;
