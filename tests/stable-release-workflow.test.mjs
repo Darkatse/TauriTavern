@@ -18,6 +18,7 @@ test('stable release workflow starts from a published release or an explicit tag
 test('stable release workflow preserves manually written release notes', () => {
     assert.doesNotMatch(JSON.stringify(workflow.jobs['publish-release']), /codex|release edit|notes-file/i);
     assert.match(workflowSource, /Upload assets without changing release notes/);
+    assert.match(JSON.stringify(workflow.jobs['publish-release']), /--clobber/);
 });
 
 test('stable release builds Windows and macOS debug installers in parallel', () => {
@@ -54,6 +55,18 @@ test('stable release workflow publishes release assets before optional repositor
     assert.equal(flatpak['continue-on-error'], true);
 });
 
+test('stable release publishes WinGet only after the release assets are complete', () => {
+    const winget = workflow.jobs['publish-winget'];
+
+    assert.deepEqual(winget.needs, ['prepare', 'publish-release']);
+    assert.equal(winget.uses, './.github/workflows/winget-release.yml');
+    assert.equal(winget.with.release_tag, '${{ needs.prepare.outputs.tag }}');
+    assert.equal(
+        winget.secrets.WINGET_CREATE_GITHUB_TOKEN,
+        '${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}',
+    );
+});
+
 test('stable release workflow keeps repository credentials in GitHub secrets', () => {
     assert.match(workflowSource, /secrets\.R2_ACCESS_KEY_ID/);
     assert.match(workflowSource, /secrets\.R2_SECRET_ACCESS_KEY/);
@@ -61,6 +74,7 @@ test('stable release workflow keeps repository credentials in GitHub secrets', (
     assert.match(workflowSource, /secrets\.NIX_CACHE_PRIVATE_KEY_BASE64/);
     assert.match(workflowSource, /secrets\.FLATPAK_R2_ACCESS_KEY_ID/);
     assert.match(workflowSource, /secrets\.FLATPAK_R2_SECRET_ACCESS_KEY/);
+    assert.match(workflowSource, /secrets\.WINGET_CREATE_GITHUB_TOKEN/);
     assert.doesNotMatch(workflowSource, /BEGIN (?:PGP|OPENSSH|PRIVATE) PRIVATE KEY/);
 });
 
