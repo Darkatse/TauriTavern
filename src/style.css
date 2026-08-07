@@ -701,6 +701,24 @@ small {
     display: none;
 }
 
+.mes.smallSysMes[data-message-role="tool"]:not(:has(.edit_textarea)) .ch_name {
+    display: flex;
+    position: absolute;
+    inset-block-start: 5px;
+    inset-inline-end: 5px;
+    min-height: 0;
+    z-index: 1;
+}
+
+.mes.smallSysMes[data-message-role="tool"]:not(:has(.edit_textarea)) .ch_name > :first-child,
+.mes.smallSysMes[data-message-role="tool"]:not(:has(.edit_textarea)) .mes_buttons > :not(.mes_edit) {
+    display: none;
+}
+
+.mes.smallSysMes[data-message-role="tool"] .mes_text > details > summary {
+    padding-inline-end: 2em;
+}
+
 .mes.smallSysMes .mesAvatarWrapper {
     display: none;
     height: unset;

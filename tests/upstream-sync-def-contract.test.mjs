@@ -49,10 +49,11 @@ test('OpenAI tool reasoning sync preserves Tauri native reasoning lanes', async 
 });
 
 test('ToolManager stores plaintext reasoning and failed tool invocations without dropping native metadata persistence', async () => {
-    const [source, scriptSource, openaiSource] = await Promise.all([
+    const [source, scriptSource, openaiSource, styleSource] = await Promise.all([
         readProjectFile('src/scripts/tool-calling.js'),
         readProjectFile('src/script.js'),
         readProjectFile('src/scripts/openai.js'),
+        readProjectFile('src/style.css'),
     ]);
 
     assert.match(source, /@property \{string\?\} reasoning - The plaintext reasoning associated with this tool call turn\./);
@@ -83,6 +84,9 @@ test('ToolManager stores plaintext reasoning and failed tool invocations without
     assert.match(scriptSource, /function getToolMessageHTML\(message, messageId\) \{[\s\S]*for \(let index = messageId - 1; index >= 0; index--\)[\s\S]*Array\.isArray\(calls\) && calls\.find\(call => call\.id === message\.tool_call_id\)[\s\S]*ToolManager\.formatToolInvocationMessage\(\[\{[\s\S]*result: message\.extra\?\.display_text \?\? message\.mes/);
     assert.equal(scriptSource.match(/getToolMessageHTML\(/g)?.length, 5);
     assert.match(scriptSource, /toggleClass\('smallSysMes', mes\?\.extra\?\.isSmallSys === true \|\| mes\.role === 'tool'\)/);
+    assert.match(styleSource, /\.mes\.smallSysMes\[data-message-role="tool"\]:not\(:has\(\.edit_textarea\)\) \.ch_name \{[^}]*display: flex;[^}]*position: absolute;[^}]*z-index: 1;/s);
+    assert.match(styleSource, /\.mes\.smallSysMes\[data-message-role="tool"\]:not\(:has\(\.edit_textarea\)\) \.mes_buttons > :not\(\.mes_edit\) \{\s*display: none;/);
+    assert.match(styleSource, /\.mes\.smallSysMes\[data-message-role="tool"\] \.mes_text > details > summary \{\s*padding-inline-end: 2em;/);
     assert.match(scriptSource, /const invocations = pendingToolInvocations\.get\(chat\[messageId\]\) \?\? \[\]/);
     assert.match(scriptSource, /updateReasoningUI\(messageElement\);\s*updateToolCallUI\(messageElement, messageId\);/);
     assert.doesNotMatch(scriptSource, /syncMountedToolProjection|projectToolTurns/);
