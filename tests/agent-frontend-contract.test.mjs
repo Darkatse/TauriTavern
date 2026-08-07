@@ -18,6 +18,11 @@ async function createAgentPanelHarness() {
     return createComponentHarness(options);
 }
 
+async function createSkillPanelHarness() {
+    const { createSkillManagerPanelRoot } = await importFresh('src/scripts/extensions/agent-system/src/skill-manager/panel-app.js');
+    return createComponentHarness(createSkillManagerPanelRoot());
+}
+
 function createComponentHarness(options) {
     const vm = options.data();
     for (const [name, method] of Object.entries(options.methods || {})) {
@@ -2707,6 +2712,10 @@ test('Agent System profile panel no longer owns legacy Skill management UI', asy
         REPO_ROOT,
         'src/scripts/extensions/agent-system/src/skill-manager/panel-app.js',
     ), 'utf8');
+    const skillExtensionStyles = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/style.css',
+    ), 'utf8');
     const skillFileViewerSource = await readFile(path.join(
         REPO_ROOT,
         'src/scripts/extensions/agent-system/src/skill-manager/file-viewer.js',
@@ -2723,8 +2732,151 @@ test('Agent System profile panel no longer owns legacy Skill management UI', asy
     assert.match(skillExtensionSource, /syncSelectedProfileFromSettings/);
     assert.match(skillExtensionSource, /writeFile/);
     assert.match(skillExtensionSource, /<SkillFileViewer/);
+    assert.equal((skillExtensionSource.match(/@click="openImportScopeDialog\('archive'\)"/g) || []).length, 1);
+    assert.doesNotMatch(skillExtensionSource, /@click="openImportScopeDialog\('directory'\)"/);
+    assert.match(skillExtensionSource, /v-model="scopeDialog\.importKind" type="radio" value="archive"/);
+    assert.match(skillExtensionSource, /v-model="scopeDialog\.importKind" type="radio" value="directory"/);
+    assert.match(skillExtensionSource, /class="ttas-skill-import-directory-hint"[\s\S]*:aria-hidden="scopeDialog\.importKind !== 'directory'"[\s\S]*tr\('skillImportDirectoryHint'\)/);
+    assert.match(skillExtensionStyles, /\.ttas-skill-import-directory-hint\s*\{[\s\S]*visibility:\s*hidden;[\s\S]*\}/);
+    assert.match(skillExtensionStyles, /\.ttas-skill-import-directory-hint\.visible\s*\{\s*visibility:\s*visible;/);
     assert.doesNotMatch(skillFileViewerSource, /showModal/);
     assert.doesNotMatch(skillFileViewerSource, /createApp/);
+});
+
+test('Skill Manager previews and installs selected imports sequentially with per-item failure isolation', async (t) => {
+    const previewEvents = [];
+    const installs = [];
+    const errors = [];
+    const successes = [];
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    t.after(() => {
+        console.error = originalConsoleError;
+    });
+    let refreshes = 0;
+    let discards = 0;
+    globalThis.toastr = {
+        error: (message) => errors.push(message),
+        success: (message) => successes.push(message),
+    };
+    installWindow({
+        skill: {
+            async previewImport({ input }) {
+                previewEvents.push(`start:${input.path}`);
+                await Promise.resolve();
+                previewEvents.push(`end:${input.path}`);
+                if (input.path === '/tmp/bad.zip') {
+                    throw new Error('invalid archive');
+                }
+                return {
+                    skill: { name: path.basename(input.path, '.zip') },
+                    conflict: { kind: input.path === '/tmp/last.zip' ? 'different' : 'new' },
+                    warnings: [],
+                };
+            },
+            async installImport(request) {
+                installs.push(request);
+                if (request.input.path === '/tmp/install-fail.zip') {
+                    throw new Error('install failed');
+                }
+                return {
+                    action: 'installed',
+                    name: path.basename(request.input.path, '.zip'),
+                    scope: { kind: 'global' },
+                };
+            },
+            async discardPickedImport() {
+                discards += 1;
+            },
+        },
+    });
+
+    const vm = await createSkillPanelHarness();
+    vm.sections = [{
+        id: 'global',
+        available: true,
+        scope: { kind: 'global' },
+        labelKey: 'skillScopeGlobal',
+        skills: [],
+    }];
+    vm.refreshSection = async () => {
+        refreshes += 1;
+    };
+    const inputs = ['one', 'bad', 'install-fail', 'last']
+        .map((name) => ({ kind: 'archiveFile', path: `/tmp/${name}.zip` }));
+
+    await vm.previewImportInputs(vm.sections[0], inputs);
+    assert.deepEqual(previewEvents, [
+        'start:/tmp/one.zip', 'end:/tmp/one.zip',
+        'start:/tmp/bad.zip', 'end:/tmp/bad.zip',
+        'start:/tmp/install-fail.zip', 'end:/tmp/install-fail.zip',
+        'start:/tmp/last.zip', 'end:/tmp/last.zip',
+    ]);
+    assert.equal(vm.importDraft.items[1].error, 'invalid archive');
+    vm.importDraft.items[3].conflictStrategy = 'replace';
+
+    await vm.installImports();
+    assert.deepEqual(installs.map((request) => request.input.path), [
+        '/tmp/one.zip',
+        '/tmp/install-fail.zip',
+        '/tmp/last.zip',
+    ]);
+    assert.equal(installs[2].conflictStrategy, 'replace');
+    assert.equal(discards, 1);
+    assert.equal(refreshes, 1);
+    assert.deepEqual(vm.importDraft.items, []);
+    assert.ok(successes.some((message) => message === 'Processed 2 of 4 Skills.'));
+    assert.ok(errors.some((message) => message === '2 Skills could not be imported.'));
+});
+
+test('Skill Manager keeps the single-import result when the list refresh fails', async (t) => {
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    t.after(() => {
+        console.error = originalConsoleError;
+    });
+
+    const errors = [];
+    const successes = [];
+    globalThis.toastr = {
+        error: (message) => errors.push(message),
+        success: (message) => successes.push(message),
+    };
+    installWindow({
+        skill: {
+            async previewImport({ input }) {
+                if (input.path.endsWith('bad.zip')) {
+                    throw new Error('invalid archive');
+                }
+                return {
+                    skill: { name: 'single' },
+                    conflict: { kind: 'new' },
+                    warnings: [],
+                };
+            },
+            async installImport() {
+                return { action: 'installed', name: 'single', scope: { kind: 'global' } };
+            },
+            async discardPickedImport() {},
+            async list() {
+                throw new Error('refresh failed');
+            },
+        },
+    });
+
+    const vm = await createSkillPanelHarness();
+    vm.sections = [{ id: 'global', available: true, scope: { kind: 'global' }, skills: [] }];
+
+    await assert.rejects(
+        () => vm.previewImportInputs(vm.sections[0], [{ kind: 'archiveFile', path: '/tmp/bad.zip' }]),
+        /invalid archive/,
+    );
+    assert.deepEqual(vm.importDraft.items, []);
+
+    await vm.previewImportInputs(vm.sections[0], [{ kind: 'archiveFile', path: '/tmp/single.zip' }]);
+    await vm.installImports();
+    assert.deepEqual(successes, ['Skill installed: single']);
+    assert.deepEqual(errors, ['refresh failed']);
 });
 
 test('Agent System profile panel does not statically bundle main app modules', async () => {

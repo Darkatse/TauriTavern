@@ -4332,6 +4332,91 @@ textarea.ttas-json {
     font-size: 0.78rem;
 }
 
+.ttas-skill-import-batch {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--ttas-accent) 34%, var(--ttas-border-soft));
+    border-radius: var(--ttas-radius-sm);
+    background-color: color-mix(in srgb, var(--ttas-accent) 7%, transparent);
+}
+
+.ttas-skill-import-batch-head,
+.ttas-skill-import-batch-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+}
+
+.ttas-skill-import-batch-head > div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ttas-skill-import-batch-head i,
+.ttas-skill-import-batch-status {
+    color: var(--ttas-accent);
+}
+
+.ttas-skill-import-batch-head small,
+.ttas-skill-import-batch-copy small {
+    color: color-mix(in srgb, var(--SmartThemeBodyColor) 62%, transparent);
+    font-size: 0.72rem;
+}
+
+.ttas-skill-import-batch-list {
+    max-height: 280px;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+    border-block: 1px solid var(--ttas-border-soft);
+}
+
+.ttas-skill-import-batch-item {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) max-content;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 7px 10px;
+}
+
+.ttas-skill-import-batch-item + .ttas-skill-import-batch-item {
+    border-top: 1px solid var(--ttas-border-soft);
+}
+
+.ttas-skill-import-batch-item.has-error {
+    background-color: color-mix(in srgb, var(--ttas-danger) 8%, transparent);
+}
+
+.ttas-skill-import-batch-item.has-error .ttas-skill-import-batch-status,
+.ttas-skill-import-error {
+    color: var(--ttas-danger) !important;
+}
+
+.ttas-skill-import-batch-copy,
+.ttas-skill-import-batch-copy strong,
+.ttas-skill-import-batch-copy small {
+    display: block;
+    min-width: 0;
+}
+
+.ttas-skill-import-batch-copy strong,
+.ttas-skill-import-batch-copy small {
+    overflow-wrap: anywhere;
+}
+
+.ttas-skill-import-batch-copy .ttas-skill-import-warnings {
+    margin-top: 3px;
+}
+
+.ttas-skill-import-batch-actions {
+    justify-content: flex-end;
+}
+
 .ttas-skill-section-loading {
     min-height: 52px;
 }
@@ -4495,6 +4580,25 @@ textarea.ttas-json {
     min-width: 0;
     padding: 8px;
     overflow: auto;
+}
+
+.ttas-skill-import-kind {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 8px 8px 0;
+}
+
+.ttas-skill-import-directory-hint {
+    grid-column: 1 / -1;
+    color: color-mix(in srgb, var(--SmartThemeBodyColor) 62%, transparent);
+    font-size: 0.72rem;
+    line-height: 1.2;
+    visibility: hidden;
+}
+
+.ttas-skill-import-directory-hint.visible {
+    visibility: visible;
 }
 
 .ttas-scope-option {
@@ -4943,6 +5047,15 @@ textarea.ttas-json {
 
     .ttas-skill-row-main {
         grid-template-columns: 24px minmax(0, 1fr);
+    }
+
+    .ttas-skill-import-batch-item {
+        grid-template-columns: 22px minmax(0, 1fr);
+    }
+
+    .ttas-skill-import-batch-item > select {
+        grid-column: 2;
+        width: 100%;
     }
 
     .ttas-stat-grid {

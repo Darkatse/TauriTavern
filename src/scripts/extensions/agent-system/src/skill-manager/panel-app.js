@@ -3,6 +3,7 @@ import { confirmAction, errorText, requireAgentApi, requireSkillApi } from '../h
 import { translateAgentSystem as tr, translateSkillInstallAction } from '../i18n.js';
 import { loadSettings, subscribeSettings } from '../settings-store.js';
 import { downloadBlobWithRuntime } from '../../../../file-export.js';
+import { isAndroidRuntime, isIosRuntime } from '../../../../util/mobile-runtime.js';
 import { subscribeAgentProfilesChanged } from '../../../../tauritavern/agent/agent-profile-events.js';
 import { buildSkillFileTree } from './file-tree.js';
 import { SkillFileTreeNode } from './file-tree-node.js';
@@ -31,11 +32,18 @@ const HOST_SCOPE_EVENT_KEYS = Object.freeze([
 
 function emptyImportDraft() {
     return {
-        input: null,
-        preview: null,
-        conflictStrategy: 'skip',
-        loading: false,
+        items: [],
+        installing: false,
         sectionId: '',
+    };
+}
+
+function createImportItem(input) {
+    return {
+        input,
+        preview: null,
+        error: '',
+        conflictStrategy: 'skip',
     };
 }
 
@@ -113,6 +121,16 @@ export function createSkillManagerPanelRoot() {
             currentImportSection() {
                 return this.findSection(this.importDraft.sectionId);
             },
+            supportsSkillDirectoryImport() {
+                return !isAndroidRuntime() && !isIosRuntime();
+            },
+            importBusy() {
+                return this.importDraft.installing
+                    || this.importDraft.items.some((item) => !item.preview && !item.error);
+            },
+            hasImportableItems() {
+                return this.importDraft.items.some((item) => item.preview && !item.error);
+            },
             normalizedSearchQuery() {
                 return String(this.searchQuery || '').trim().toLowerCase();
             },
@@ -138,7 +156,7 @@ export function createSkillManagerPanelRoot() {
         unmounted() {
             this.unsubscribeHostScopeEvents();
             this.unsubscribeExtensionEvents();
-            if (this.importDraft.input) {
+            if (this.importDraft.items.length > 0) {
                 this.handleAsyncEvent(() => this.clearImportDraft());
             }
         },
@@ -450,6 +468,9 @@ export function createSkillManagerPanelRoot() {
                 if (kind === 'download') {
                     return tr('skillImportSourceDownload');
                 }
+                if (kind === 'directory') {
+                    return tr('skillImportSourceDirectory');
+                }
                 return tr('skillImportSourceArchive');
             },
             resetScopeDialog() {
@@ -518,7 +539,7 @@ export function createSkillManagerPanelRoot() {
                         await this.openSourceDialog(request.importKind, target);
                         return;
                     }
-                    await this.pickAndPreviewImport(target);
+                    await this.pickAndPreviewImport(target, request.importKind);
                     return;
                 }
 
@@ -570,26 +591,35 @@ export function createSkillManagerPanelRoot() {
             sourceDialogConfirmLabel() {
                 return this.sourceDialog.mode === 'download' ? tr('download') : tr('confirm');
             },
-            importInputSourceKind(input = this.importDraft.input) {
+            singleImportItem() {
+                return this.importDraft.items.length === 1 ? this.importDraft.items[0] : null;
+            },
+            importInputSourceKind(input) {
                 return String(input?.source?.kind || '').trim();
             },
-            importDraftLoadingTitle() {
-                const kind = this.importInputSourceKind();
+            importDraftLoadingTitle(item = this.singleImportItem()) {
+                const kind = this.importInputSourceKind(item?.input);
                 if (kind === 'manual') {
                     return tr('newSkillImport');
                 }
                 if (kind === 'url') {
                     return tr('downloadSkillImport');
                 }
+                if (item?.input?.kind === 'directory') {
+                    return tr('importSkillDirectories');
+                }
                 return tr('importSkillArchive');
             },
-            importDraftIcon() {
-                const kind = this.importInputSourceKind();
+            importDraftIcon(item = this.singleImportItem()) {
+                const kind = this.importInputSourceKind(item?.input);
                 if (kind === 'manual') {
                     return 'fa-file-circle-plus';
                 }
                 if (kind === 'url') {
                     return 'fa-cloud-arrow-down';
+                }
+                if (item?.input?.kind === 'directory') {
+                    return 'fa-folder-open';
                 }
                 return 'fa-file-import';
             },
@@ -637,18 +667,25 @@ export function createSkillManagerPanelRoot() {
                     throw error;
                 }
             },
-            importPreviewSkill() {
-                return this.importDraft.preview?.skill || null;
+            importItemLabel(item) {
+                const skill = item?.preview?.skill;
+                if (skill) {
+                    return skill.displayName || skill.name;
+                }
+                const path = String(item?.input?.path || '').replace(/[\\/]+$/, '');
+                return path.split(/[\\/]/).pop()
+                    || String(item?.input?.source?.label || '').trim()
+                    || this.importDraftLoadingTitle(item);
             },
-            importWarnings() {
-                const warnings = this.importDraft.preview?.warnings;
+            importWarnings(item = this.singleImportItem()) {
+                const warnings = item?.preview?.warnings;
                 return Array.isArray(warnings) ? warnings : [];
             },
-            importHasConflict() {
-                return this.importDraft.preview?.conflict?.kind === 'different';
+            importHasConflict(item = this.singleImportItem()) {
+                return item?.preview?.conflict?.kind === 'different';
             },
-            importConflictText() {
-                const kind = this.importDraft.preview?.conflict?.kind;
+            importConflictText(item = this.singleImportItem()) {
+                const kind = item?.preview?.conflict?.kind;
                 if (kind === 'new') {
                     return tr('conflictNew');
                 }
@@ -661,22 +698,25 @@ export function createSkillManagerPanelRoot() {
                 return '';
             },
             async clearImportDraft() {
-                if (this.importDraft.input) {
-                    await requireSkillApi().discardPickedImport(this.importDraft.input);
+                if (this.importDraft.items.length > 0) {
+                    await requireSkillApi().discardPickedImport();
                 }
                 this.importDraft = emptyImportDraft();
             },
-            async pickAndPreviewImport(section) {
+            async pickAndPreviewImport(section, importKind = 'archive') {
                 if (!section.available) {
                     throw new Error(this.sectionUnavailableText(section));
                 }
                 try {
-                    await this.clearImportDraft();
-                    const input = await requireSkillApi().pickImportArchive();
-                    if (!input) {
+                    this.importDraft = emptyImportDraft();
+                    const api = requireSkillApi();
+                    const inputs = importKind === 'directory'
+                        ? await api.pickImportDirectories()
+                        : await api.pickImportArchives();
+                    if (!inputs) {
                         return;
                     }
-                    await this.previewImportInput(section, input);
+                    await this.previewImportInputs(section, inputs);
                 } catch (error) {
                     this.importDraft = emptyImportDraft();
                     this.reportError(error);
@@ -684,57 +724,100 @@ export function createSkillManagerPanelRoot() {
                 }
             },
             async previewImportInput(section, input) {
+                await this.clearImportDraft();
+                await this.previewImportInputs(section, [input]);
+            },
+            async previewImportInputs(section, inputs) {
                 if (!section.available) {
                     throw new Error(this.sectionUnavailableText(section));
                 }
-                await this.clearImportDraft();
+                const items = inputs.map(createImportItem);
                 this.importDraft = {
                     ...emptyImportDraft(),
-                    input,
-                    loading: true,
+                    items,
                     sectionId: section.id,
                 };
-                try {
-                    const preview = await requireSkillApi().previewImport({
-                        input,
-                        targetScope: section.scope,
-                    });
-                    this.setImportDraft({ preview, loading: false });
-                } catch (error) {
-                    this.importDraft = emptyImportDraft();
-                    throw error;
+                const api = requireSkillApi();
+                for (const item of items) {
+                    try {
+                        item.preview = await api.previewImport({
+                            input: item.input,
+                            targetScope: section.scope,
+                        });
+                    } catch (error) {
+                        if (items.length === 1) {
+                            this.importDraft = emptyImportDraft();
+                            throw error;
+                        }
+                        item.error = errorText(error);
+                        console.error('[AgentSystem:SkillManager] Failed to preview Skill import:', error);
+                    }
                 }
             },
-            async installImport() {
+            async installImports() {
                 const section = this.currentImportSection;
                 const draft = this.importDraft;
                 if (!section?.available) {
                     throw new Error(tr('skillScopeNotFound', { id: draft.sectionId }));
                 }
-                if (!draft.input || !draft.preview) {
+                const items = draft.items.filter((item) => item.preview && !item.error);
+                if (items.length === 0) {
                     throw new Error(tr('previewSkillImportFirst'));
                 }
 
-                try {
+                this.setImportDraft({ installing: true });
+                const results = [];
+                for (const item of items) {
                     const request = {
-                        input: draft.input,
+                        input: item.input,
                         targetScope: section.scope,
                     };
-                    if (this.importHasConflict()) {
-                        request.conflictStrategy = draft.conflictStrategy;
+                    if (this.importHasConflict(item)) {
+                        request.conflictStrategy = item.conflictStrategy;
                     }
-                    const result = await requireSkillApi().installImport(request);
-                    await syncSkillInstallPortability(result);
-                    this.importDraft = emptyImportDraft();
+                    try {
+                        const result = await requireSkillApi().installImport(request);
+                        await syncSkillInstallPortability(result);
+                        results.push(result);
+                    } catch (error) {
+                        if (draft.items.length === 1) {
+                            await this.clearImportDraft();
+                            this.reportError(error);
+                            throw error;
+                        }
+                        console.error('[AgentSystem:SkillManager] Failed to install Skill import:', error);
+                        toastr.error(tr('skillImportItemFailed', {
+                            name: this.importItemLabel(item),
+                            error: errorText(error),
+                        }));
+                    }
+                }
+
+                await this.clearImportDraft();
+                try {
                     await this.refreshSection(section.id);
+                } catch {
+                    // refreshSection already reports the UI sync failure; the install result remains valid.
+                }
+
+                if (draft.items.length === 1) {
+                    const result = results[0];
                     this.toast(tr('skillInstallToast', {
                         action: translateSkillInstallAction(result.action),
                         name: result.name,
                     }));
-                } catch (error) {
-                    this.importDraft = emptyImportDraft();
-                    this.reportError(error);
-                    throw error;
+                    return;
+                }
+
+                if (results.length > 0) {
+                    this.toast(tr('skillBatchInstallToast', {
+                        count: results.length,
+                        total: draft.items.length,
+                    }));
+                }
+                const failureCount = draft.items.length - results.length;
+                if (failureCount > 0) {
+                    toastr.error(tr('skillBatchInstallFailed', { count: failureCount }));
                 }
             },
             async openSkillPreview(section, skill) {
@@ -993,13 +1076,13 @@ export function createSkillManagerPanelRoot() {
                                 </select>
                             </label>
                             <div class="ttas-skill-toolbar-actions">
-                                <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="importDraft.loading" :title="tr('newSkillImport')" :aria-label="tr('newSkillImport')" @click="openImportScopeDialog('manual')">
+                                <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="importBusy" :title="tr('newSkillImport')" :aria-label="tr('newSkillImport')" @click="openImportScopeDialog('manual')">
                                     <i class="fa-solid fa-file-circle-plus"></i>
                                 </button>
-                                <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="importDraft.loading" :title="tr('downloadSkillImport')" :aria-label="tr('downloadSkillImport')" @click="openImportScopeDialog('download')">
+                                <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="importBusy" :title="tr('downloadSkillImport')" :aria-label="tr('downloadSkillImport')" @click="openImportScopeDialog('download')">
                                     <i class="fa-solid fa-cloud-arrow-down"></i>
                                 </button>
-                                <button type="button" class="menu_button menu_button_icon" :disabled="importDraft.loading" :title="tr('importSkillArchive')" :aria-label="tr('importSkillArchive')" @click="openImportScopeDialog('archive')">
+                                <button type="button" class="menu_button menu_button_icon" :disabled="importBusy" :title="tr('importSkill')" :aria-label="tr('importSkill')" @click="openImportScopeDialog('archive')">
                                     <i class="fa-solid fa-file-import"></i>
                                 </button>
                                 <button type="button" class="menu_button menu_button_icon" :title="tr('refresh')" :aria-label="tr('refresh')" @click="refreshAll">
@@ -1013,28 +1096,30 @@ export function createSkillManagerPanelRoot() {
                         </label>
                     </div>
 
-                    <div v-if="importDraft.loading || importDraft.preview" class="ttas-skill-import-inline ttas-skill-import-global">
+                    <div v-if="importDraft.items.length === 1" class="ttas-skill-import-inline ttas-skill-import-global">
                         <div class="ttas-skill-import-inline-main">
-                            <i class="fa-solid" :class="importDraft.loading ? 'fa-spinner fa-spin' : importDraftIcon()"></i>
+                            <i class="fa-solid" :class="importBusy ? 'fa-spinner fa-spin' : importDraftIcon()"></i>
                             <div>
-                                <strong v-if="importDraft.preview">{{ importPreviewSkill().displayName || importPreviewSkill().name }}</strong>
+                                <strong v-if="singleImportItem().preview">{{ importItemLabel(singleImportItem()) }}</strong>
                                 <strong v-else>{{ importDraftLoadingTitle() }}</strong>
                                 <small v-if="currentImportSection">{{ tr('importTargetScope') }}: {{ tr(currentImportSection.labelKey) }} / {{ importConflictText() || tr('loadingSkillFiles') }}</small>
                             </div>
                         </div>
                         <select
-                            v-if="importDraft.preview && importHasConflict()"
-                            :value="importDraft.conflictStrategy"
-                            @change="setImportDraft({ conflictStrategy: $event.target.value })"
+                            v-if="singleImportItem().preview && importHasConflict()"
+                            :value="singleImportItem().conflictStrategy"
+                            :disabled="importBusy"
+                            :aria-label="tr('importConflictAction', { name: importItemLabel(singleImportItem()) })"
+                            @change="singleImportItem().conflictStrategy = $event.target.value"
                         >
                             <option value="skip">{{ tr('skipConflict') }}</option>
                             <option value="replace">{{ tr('replaceConflict') }}</option>
                         </select>
-                        <button v-if="importDraft.preview" type="button" class="menu_button menu_button_icon ttas-primary-button" @click="installImport">
-                            <i class="fa-solid fa-check"></i>
+                        <button v-if="singleImportItem().preview" type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="importBusy" @click="installImports">
+                            <i class="fa-solid" :class="importDraft.installing ? 'fa-spinner fa-spin' : 'fa-check'"></i>
                             <span>{{ tr('install') }}</span>
                         </button>
-                        <button type="button" class="menu_button menu_button_icon" @click="clearImportDraft">
+                        <button type="button" class="menu_button menu_button_icon" :disabled="importBusy" @click="clearImportDraft">
                             <i class="fa-solid fa-xmark"></i>
                             <span>{{ tr('cancel') }}</span>
                         </button>
@@ -1042,6 +1127,51 @@ export function createSkillManagerPanelRoot() {
                             <li v-for="warning in importWarnings()" :key="warning">{{ warning }}</li>
                         </ul>
                     </div>
+
+                    <section v-else-if="importDraft.items.length > 1" class="ttas-skill-import-batch ttas-skill-import-global" :aria-label="tr('skillImportBatchTitle', { count: importDraft.items.length })">
+                        <header class="ttas-skill-import-batch-head">
+                            <div>
+                                <i class="fa-solid" :class="importBusy ? 'fa-spinner fa-spin' : 'fa-layer-group'"></i>
+                                <strong>{{ tr('skillImportBatchTitle', { count: importDraft.items.length }) }}</strong>
+                            </div>
+                            <small v-if="currentImportSection">{{ tr('importTargetScope') }}: {{ tr(currentImportSection.labelKey) }}</small>
+                        </header>
+                        <ol class="ttas-skill-import-batch-list">
+                            <li v-for="item in importDraft.items" :key="item.input.path" class="ttas-skill-import-batch-item" :class="{ 'has-error': item.error }">
+                                <i
+                                    class="fa-solid ttas-skill-import-batch-status"
+                                    :class="item.error ? 'fa-triangle-exclamation' : item.preview ? 'fa-circle-check' : 'fa-spinner fa-spin'"
+                                ></i>
+                                <div class="ttas-skill-import-batch-copy">
+                                    <strong>{{ importItemLabel(item) }}</strong>
+                                    <small v-if="item.error" class="ttas-skill-import-error">{{ item.error }}</small>
+                                    <small v-else>{{ importConflictText(item) || tr('loadingSkillFiles') }}</small>
+                                    <ul v-if="importWarnings(item).length > 0" class="ttas-skill-import-warnings">
+                                        <li v-for="warning in importWarnings(item)" :key="warning">{{ warning }}</li>
+                                    </ul>
+                                </div>
+                                <select
+                                    v-if="item.preview && importHasConflict(item)"
+                                    v-model="item.conflictStrategy"
+                                    :disabled="importBusy"
+                                    :aria-label="tr('importConflictAction', { name: importItemLabel(item) })"
+                                >
+                                    <option value="skip">{{ tr('skipConflict') }}</option>
+                                    <option value="replace">{{ tr('replaceConflict') }}</option>
+                                </select>
+                            </li>
+                        </ol>
+                        <footer class="ttas-skill-import-batch-actions">
+                            <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="importBusy || !hasImportableItems" @click="installImports">
+                                <i class="fa-solid" :class="importDraft.installing ? 'fa-spinner fa-spin' : 'fa-check-double'"></i>
+                                <span>{{ tr('install') }}</span>
+                            </button>
+                            <button type="button" class="menu_button menu_button_icon" :disabled="importBusy" @click="clearImportDraft">
+                                <i class="fa-solid fa-xmark"></i>
+                                <span>{{ tr('cancel') }}</span>
+                            </button>
+                        </footer>
+                    </section>
 
                     <div class="ttas-skill-section-list">
                         <section
@@ -1126,6 +1256,28 @@ export function createSkillManagerPanelRoot() {
                                 <i class="fa-solid fa-xmark"></i>
                             </button>
                         </header>
+                        <div
+                            v-if="scopeDialog.mode === 'import' && supportsSkillDirectoryImport && ['archive', 'directory'].includes(scopeDialog.importKind)"
+                            class="ttas-skill-import-kind"
+                            role="radiogroup"
+                            :aria-label="tr('importSkill')"
+                        >
+                            <label class="ttas-scope-option" :class="{ active: scopeDialog.importKind === 'archive' }">
+                                <input v-model="scopeDialog.importKind" type="radio" value="archive" />
+                                <i class="fa-solid fa-file-zipper"></i>
+                                <span><strong>{{ tr('skillImportSourceArchive') }}</strong></span>
+                            </label>
+                            <label class="ttas-scope-option" :class="{ active: scopeDialog.importKind === 'directory' }">
+                                <input v-model="scopeDialog.importKind" type="radio" value="directory" />
+                                <i class="fa-solid fa-folder-open"></i>
+                                <span><strong>{{ tr('skillImportSourceDirectory') }}</strong></span>
+                            </label>
+                            <small
+                                class="ttas-skill-import-directory-hint"
+                                :class="{ visible: scopeDialog.importKind === 'directory' }"
+                                :aria-hidden="scopeDialog.importKind !== 'directory'"
+                            >{{ tr('skillImportDirectoryHint') }}</small>
+                        </div>
                         <div class="ttas-scope-list">
                             <label
                                 v-for="target in scopeDialogTargets"

@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-async function installHarness() {
+async function installHarness(overrides = {}) {
     const calls = [];
     globalThis.window = {
         __TAURITAVERN__: { api: {} },
@@ -17,6 +17,7 @@ async function installHarness() {
             calls.push({ command, args });
             return { command, args };
         },
+        ...overrides,
     });
 
     return {
@@ -130,12 +131,7 @@ test('api.skill maps archiveBase64 command fields to Rust DTO names', async () =
 
 test('api.skill downloads remote SKILL.md through host command', async () => {
     const calls = [];
-    globalThis.window = {
-        __TAURITAVERN__: { api: {} },
-    };
-
-    const { installSkillApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/skill.js')));
-    installSkillApi({
+    const { skill } = await installHarness({
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
             return {
@@ -149,7 +145,7 @@ test('api.skill downloads remote SKILL.md through host command', async () => {
         },
     });
 
-    const input = await globalThis.window.__TAURITAVERN__.api.skill.downloadImport({
+    const input = await skill.downloadImport({
         url: 'https://example.com/SKILL.md',
     });
 
@@ -284,42 +280,60 @@ test('api.skill rejects non-string file writes', async () => {
 
 test('api.skill picks import archives through the host dialog', async () => {
     const calls = [];
-    globalThis.window = {
-        __TAURITAVERN__: { api: {} },
-    };
-
-    const { installSkillApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/skill.js')));
-    installSkillApi({
+    const { skill } = await installHarness({
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
             return '/tmp/test-skill.zip';
         },
     });
 
-    const input = await globalThis.window.__TAURITAVERN__.api.skill.pickImportArchive();
+    const input = await skill.pickImportArchive();
 
     assert.deepEqual(input, { kind: 'archiveFile', path: '/tmp/test-skill.zip' });
     assert.equal(calls[0].command, 'plugin:dialog|open');
+    assert.equal(calls[0].args.options.multiple, false);
+    assert.equal(calls[0].args.options.directory, false);
     assert.deepEqual(calls[0].args.options.filters, [
         { name: 'Agent Skill Archive', extensions: ['zip', 'ttskill'] },
     ]);
+});
+
+test('api.skill picks multiple archives and Skill folders through desktop dialogs', async () => {
+    const calls = [];
+    const { skill } = await installHarness({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            return args.options.directory
+                ? ['/tmp/skill-one', '/tmp/skill-two']
+                : ['/tmp/one.zip', '/tmp/two.ttskill'];
+        },
+    });
+
+    assert.deepEqual(await skill.pickImportArchives(), [
+        { kind: 'archiveFile', path: '/tmp/one.zip' },
+        { kind: 'archiveFile', path: '/tmp/two.ttskill' },
+    ]);
+    assert.deepEqual(await skill.pickImportDirectories(), [
+        { kind: 'directory', path: '/tmp/skill-one' },
+        { kind: 'directory', path: '/tmp/skill-two' },
+    ]);
+    assert.deepEqual(calls.map(({ command }) => command), ['plugin:dialog|open', 'plugin:dialog|open']);
+    assert.equal(calls[0].args.options.multiple, true);
+    assert.equal(calls[0].args.options.directory, false);
+    assert.equal(calls[1].args.options.multiple, true);
+    assert.equal(calls[1].args.options.directory, true);
+    assert.equal(calls[1].args.options.recursive, true);
 });
 
 test('api.skill stages Android picked content URIs as archive files', async () => {
     await withNavigatorUserAgent('Mozilla/5.0 (Linux; Android 15)', async () => {
         const calls = [];
         const cleanups = [];
-        globalThis.window = {
-            __TAURITAVERN__: { api: {} },
-        };
-
-        const { installSkillApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/skill.js')));
-        installSkillApi({
+        const { skill } = await installHarness({
             safeInvoke: async (command, args) => {
                 calls.push({ command, args });
-                return { command, args };
+                return 'content://picked-skill';
             },
-            pickAndroidImportArchive: async () => 'content://picked-skill',
             materializeAndroidSkillImportArchive: async (contentUri) => {
                 assert.equal(contentUri, 'content://picked-skill');
                 return {
@@ -329,16 +343,88 @@ test('api.skill stages Android picked content URIs as archive files', async () =
             },
         });
 
-        const skill = globalThis.window.__TAURITAVERN__.api.skill;
         const input = await skill.pickImportArchive();
         assert.deepEqual(input, {
             kind: 'archiveFile',
             path: '/cache/tauritavern-skill-import-staging/picked.zip',
         });
-        assert.deepEqual(calls, []);
+        assert.equal(calls[0].command, 'plugin:dialog|open');
+        assert.equal(calls[0].args.options.multiple, false);
 
         await skill.discardPickedImport(input);
         assert.deepEqual(cleanups, ['picked.zip']);
+    });
+});
+
+test('api.skill keeps Android archive cleanup failures from blocking the next pick', async (t) => {
+    const originalConsoleWarn = console.warn;
+    console.warn = () => {};
+    t.after(() => {
+        console.warn = originalConsoleWarn;
+    });
+
+    await withNavigatorUserAgent('Mozilla/5.0 (Linux; Android 15)', async () => {
+        const cleanups = [];
+        let pickerCalls = 0;
+        const { skill } = await installHarness({
+            safeInvoke: async (command) => {
+                if (command !== 'plugin:dialog|open') {
+                    return { action: 'installed', name: 'one' };
+                }
+                pickerCalls += 1;
+                return pickerCalls === 1
+                    ? ['content://one', 'content://two']
+                    : ['content://three'];
+            },
+            materializeAndroidSkillImportArchive: async (contentUri) => ({
+                filePath: `/cache/${contentUri.split('//')[1]}.zip`,
+                cleanup: async () => {
+                    cleanups.push(contentUri);
+                    if (contentUri === 'content://two') {
+                        throw new Error('cleanup failed');
+                    }
+                },
+            }),
+        });
+
+        const inputs = await skill.pickImportArchives();
+        assert.deepEqual(inputs, [
+            { kind: 'archiveFile', path: '/cache/one.zip' },
+            { kind: 'archiveFile', path: '/cache/two.zip' },
+        ]);
+
+        await skill.installImport({ input: inputs[0] });
+        assert.deepEqual(cleanups, ['content://one']);
+
+        assert.deepEqual(await skill.pickImportArchives(), [
+            { kind: 'archiveFile', path: '/cache/three.zip' },
+        ]);
+        assert.equal(pickerCalls, 2);
+        assert.deepEqual(cleanups, ['content://one', 'content://two']);
+
+        await skill.discardPickedImport();
+        assert.deepEqual(cleanups, ['content://one', 'content://two', 'content://three']);
+    });
+});
+
+test('api.skill cleans staged Android archives when a later selection cannot be staged', async () => {
+    await withNavigatorUserAgent('Mozilla/5.0 (Linux; Android 15)', async () => {
+        const cleanups = [];
+        const { skill } = await installHarness({
+            safeInvoke: async () => ['content://one', 'content://broken'],
+            materializeAndroidSkillImportArchive: async (contentUri) => {
+                if (contentUri.endsWith('broken')) {
+                    throw new Error('staging failed');
+                }
+                return {
+                    filePath: '/cache/one.zip',
+                    cleanup: async () => cleanups.push(contentUri),
+                };
+            },
+        });
+
+        await assert.rejects(() => skill.pickImportArchives(), /staging failed/);
+        assert.deepEqual(cleanups, ['content://one']);
     });
 });
 
@@ -346,29 +432,59 @@ test('api.skill stages iOS picked files through the native command', async () =>
     await withNavigatorUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', async () => {
         const calls = [];
         const cleanups = [];
-        globalThis.window = {
-            __TAURITAVERN__: { api: {} },
-        };
-
-        const { installSkillApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/skill.js')));
-        installSkillApi({
+        const { skill } = await installHarness({
             safeInvoke: async (command, args) => {
                 calls.push({ command, args });
-                return { cancelled: false, filePath: '/cache/tauritavern-skill-import-staging/picked.zip' };
+                return {
+                    cancelled: false,
+                    filePaths: ['/cache/tauritavern-skill-import-staging/picked.zip'],
+                };
             },
             removeTemporaryFile: async (filePath) => cleanups.push(filePath),
         });
 
-        const skill = globalThis.window.__TAURITAVERN__.api.skill;
         const input = await skill.pickImportArchive();
         assert.deepEqual(input, {
             kind: 'archiveFile',
             path: '/cache/tauritavern-skill-import-staging/picked.zip',
         });
-        assert.equal(calls[0].command, 'ios_pick_skill_import_archive');
+        assert.deepEqual(calls[0], {
+            command: 'ios_pick_skill_import_archives',
+            args: { multiple: false },
+        });
 
         await skill.discardPickedImport(input);
         assert.deepEqual(cleanups, ['/cache/tauritavern-skill-import-staging/picked.zip']);
+    });
+});
+
+test('api.skill stages and cleans multiple iOS archives', async () => {
+    await withNavigatorUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', async () => {
+        const calls = [];
+        const cleanups = [];
+        const { skill } = await installHarness({
+            safeInvoke: async (command, args) => {
+                calls.push({ command, args });
+                return {
+                    cancelled: false,
+                    filePaths: ['/cache/one.zip', '/cache/two.zip'],
+                };
+            },
+            removeTemporaryFile: async (filePath) => cleanups.push(filePath),
+        });
+
+        assert.deepEqual(await skill.pickImportArchives(), [
+            { kind: 'archiveFile', path: '/cache/one.zip' },
+            { kind: 'archiveFile', path: '/cache/two.zip' },
+        ]);
+        assert.deepEqual(calls[0], {
+            command: 'ios_pick_skill_import_archives',
+            args: { multiple: true },
+        });
+
+        await skill.discardPickedImport();
+        assert.deepEqual(cleanups, ['/cache/one.zip', '/cache/two.zip']);
+        await assert.rejects(() => skill.pickImportDirectories(), /only available on desktop/);
     });
 });
 

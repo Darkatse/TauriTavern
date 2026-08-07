@@ -58,6 +58,8 @@ data_root/_tauritavern/skills/
 - `archiveFile`：zip 包；`.ttskill` 作为历史扩展名保持导入兼容。
 - `downloadImport()`：Host API 后端下载远程 HTTPS raw `SKILL.md` 后转为 `inlineFiles`；当前不递归抓取远程目录。
 
+Skill Manager 保持一个本地导入入口，在层级弹窗中选择 ZIP 或文件夹来源；选择文件夹时，每个目录都必须包含 `SKILL.md`。系统选择器支持一次选择多个 ZIP；桌面端还支持一次选择多个 Skill 目录。选择一个来源时继续使用原有单项预览卡片，选择多个来源时统一展示逐项预览和冲突决策。预览与安装按选择顺序逐项执行，复用同一个 `SkillImportInput` / `SkillInstallRequest` 契约；单个 Skill 的安装保持原子性，某一项失败不会回滚已经成功安装的其他项，也不会阻止后续项继续处理。
+
 导入流程：
 
 ```text

@@ -111,7 +111,7 @@ export {};
  *   | 'install_skill_import'
  *   | 'ios_import_data_archive_from_picker'
  *   | 'ios_pick_character_card'
- *   | 'ios_pick_skill_import_archive'
+ *   | 'ios_pick_skill_import_archives'
  *   | 'ios_share_file'
  *   | 'ios_share_export_data_archive'
  *   | 'list_character_chat_store_keys'

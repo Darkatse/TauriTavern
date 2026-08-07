@@ -191,7 +191,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         #[cfg(target_os = "ios")]
         super::ios_file_bridge_commands::ios_import_data_archive_from_picker,
         #[cfg(target_os = "ios")]
-        super::ios_file_bridge_commands::ios_pick_skill_import_archive,
+        super::ios_file_bridge_commands::ios_pick_skill_import_archives,
         #[cfg(target_os = "ios")]
         super::ios_file_bridge_commands::ios_pick_character_card,
         #[cfg(target_os = "ios")]

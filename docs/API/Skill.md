@@ -17,6 +17,8 @@ type TauriTavernSkillApi = {
   list(options?: { scope?: TauriTavernSkillScopeFilter }): Promise<TauriTavernSkillIndexEntry[]>;
   listFiles(options: { scope?: TauriTavernSkillScope; name: string }): Promise<TauriTavernSkillFileRef[]>;
   pickImportArchive(): Promise<TauriTavernSkillImportInput | null>;
+  pickImportArchives(): Promise<TauriTavernSkillImportInput[] | null>;
+  pickImportDirectories(): Promise<TauriTavernSkillImportInput[] | null>;
   discardPickedImport(input?: TauriTavernSkillImportInput | null): Promise<void>;
   downloadImport(options: { url: string }): Promise<TauriTavernSkillImportInput>;
   previewImport(options: {
@@ -59,15 +61,21 @@ type TauriTavernSkillApi = {
 
 ## 导入输入
 
-用户从本机选择 `.zip` Skill 归档时应优先调用 `pickImportArchive()`；历史 `.ttskill` 归档仍保持导入兼容。该方法只负责唤起系统文件选择器并返回：
+用户从本机选择 Skill 来源时可调用：
+
+- `pickImportArchive()`：选择一个 `.zip` / `.ttskill` 归档，保留既有单选契约；
+- `pickImportArchives()`：在同一个选择窗口中选择一个或多个 `.zip` / `.ttskill` 归档；
+- `pickImportDirectories()`：在桌面端选择一个或多个 Skill 目录；移动端不提供目录选择。
+
+单选方法返回：
 
 ```ts
 { kind: 'archiveFile', path: string }
 ```
 
-用户取消选择时返回 `null`。实际解包、校验、hash、冲突判断与安装仍必须走 `previewImport()` / `installImport()`。
+复数方法返回对应输入数组；用户取消选择时均返回 `null`。选择器只负责生成输入，实际解包、校验、hash、冲突判断与安装仍必须对每个输入调用现有 `previewImport()` / `installImport()`。Host API 不提供批量事务；每个 Skill 保持独立原子安装，调用方应明确呈现逐项失败。
 
-移动端文件选择器可能返回宿主私有的临时归档路径。调用方如果放弃这次导入（例如关闭面板、重新选择、删除当前 Skill）必须调用 `discardPickedImport(input)` 释放该临时文件；`installImport()` 成功或失败后会自动释放对应的已选归档。
+移动端文件选择器可能返回宿主私有的临时归档路径。调用方如果放弃某个输入，应调用 `discardPickedImport(input)`；放弃整个选择批次时调用无参数的 `discardPickedImport()`，它会释放所有尚未消费的临时文件。`installImport()` 成功或失败后会自动释放对应输入的临时归档。
 
 `downloadImport({ url })` 由 Rust 后端下载远程 `SKILL.md`，并返回等价的 `inlineFiles` 导入输入。当前仅支持 HTTPS raw `SKILL.md` 单文件链接；完整解包、frontmatter 校验、hash、冲突判断与安装仍必须继续走 `previewImport()` / `installImport()`。
 

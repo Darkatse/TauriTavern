@@ -435,10 +435,10 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 
 当前契约：
 
-- Kotlin 侧仍复用 `MainActivity` 中的数据归档选择器入口，返回 `content://` 给前端桥；
-- 前端 `android-archive-service.js` 只在 Skill 导入场景把该 URI 物化到 app cache/temp 下的 `tauritavern-skill-import-staging`；
-- `api.skill.pickImportArchive()` 对 UI 返回 `{ kind: 'archiveFile', path }`，保持 Skill 后端只消费普通文件路径；
-- 如果用户放弃本次导入，UI 必须调用 `api.skill.discardPickedImport(input)` 清理 staged 文件；`installImport()` 完成后会自动清理。
+- `api.skill.pickImportArchive()` 与 `pickImportArchives()` 统一使用 Tauri dialog 的 Android 文件选择能力，分别取得一个或多个 `content://` URI；
+- 前端 `android-archive-service.js` 逐个把 URI 物化到 app cache/temp 下的 `tauritavern-skill-import-staging`；
+- Host API 对 UI 只返回一个或多个 `{ kind: 'archiveFile', path }`，保持 Skill 后端只消费普通文件路径；
+- 如果用户放弃某个输入，UI 调用 `api.skill.discardPickedImport(input)`；放弃整个批次时调用无参数的 `discardPickedImport()`。`installImport()` 完成后会自动清理对应输入。
 
 维护原则：
 

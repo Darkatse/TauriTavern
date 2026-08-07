@@ -14,39 +14,33 @@ import {
     toSkillImportCommandInput,
 } from './skill-normalizers.js';
 
-function normalizePickedImportArchivePath(value) {
+function normalizePickedImportPaths(value) {
     if (value === null || value === undefined) {
         return null;
     }
 
-    const path = String(value).trim();
-    if (!path) {
+    const values = Array.isArray(value) ? value : [value];
+    if (values.length === 0) {
         return null;
     }
 
-    return path;
-}
-
-function isAndroidPickerCancel(error) {
-    return String(error?.message || error || '').trim() === 'Import archive selection cancelled';
+    return values.map((path) => requireNonEmptyString(path, 'Skill import path'));
 }
 
 /**
  * @param {{
  *   safeInvoke: (command: string, args?: any) => Promise<any>;
  *   materializeAndroidSkillImportArchive?: (contentUri: string) => Promise<any>;
- *   pickAndroidImportArchive?: () => Promise<string>;
  *   removeTemporaryFile?: (filePath: string) => Promise<void>;
  * }} deps
  */
 function createSkillApi({
     safeInvoke,
     materializeAndroidSkillImportArchive,
-    pickAndroidImportArchive,
     removeTemporaryFile,
 }) {
-    /** @type {{ path: string; cleanup: () => Promise<void> } | null} */
-    let pendingPickedImport = null;
+    /** @type {Map<string, () => Promise<void>>} */
+    const pendingPickedImports = new Map();
 
     function pickedImportPath(input) {
         if (input === null || input === undefined) {
@@ -61,50 +55,33 @@ function createSkillApi({
     }
 
     function rememberPickedImport(input, cleanup) {
-        pendingPickedImport = {
-            path: input.path,
-            cleanup,
-        };
+        pendingPickedImports.set(input.path, cleanup);
         return input;
     }
 
-    async function discardPickedImport(input = null, { throwOnError = true } = {}) {
-        if (!pendingPickedImport) {
-            return;
-        }
-        const path = pickedImportPath(input);
-        if (input !== null && input !== undefined && path !== pendingPickedImport.path) {
-            return;
-        }
+    async function discardPickedImport(input = null) {
+        const pickedPath = pickedImportPath(input);
+        const paths = input === null || input === undefined
+            ? [...pendingPickedImports.keys()]
+            : pickedPath ? [pickedPath] : [];
 
-        const current = pendingPickedImport;
-        pendingPickedImport = null;
-        try {
-            await current.cleanup();
-        } catch (error) {
-            if (throwOnError) {
-                throw error;
+        for (const path of paths) {
+            const cleanup = pendingPickedImports.get(path);
+            if (!cleanup) {
+                continue;
             }
-            console.warn('Failed to cleanup staged Skill import archive:', error);
+            pendingPickedImports.delete(path);
+            try {
+                await cleanup();
+            } catch (error) {
+                console.warn('Failed to cleanup staged Skill import archive:', error);
+            }
         }
     }
 
-    async function pickAndroidSkillImportArchive() {
-        if (typeof pickAndroidImportArchive !== 'function') {
-            throw new Error('Android import picker is unavailable');
-        }
+    async function stageAndroidSkillImportArchive(contentUri) {
         if (typeof materializeAndroidSkillImportArchive !== 'function') {
             throw new Error('Android Skill import staging is unavailable');
-        }
-
-        let contentUri;
-        try {
-            contentUri = await pickAndroidImportArchive();
-        } catch (error) {
-            if (isAndroidPickerCancel(error)) {
-                return null;
-            }
-            throw error;
         }
 
         const fileInfo = await materializeAndroidSkillImportArchive(contentUri);
@@ -124,23 +101,84 @@ function createSkillApi({
         );
     }
 
-    async function pickIosSkillImportArchive() {
+    async function pickAndroidSkillImportArchives(multiple) {
+        const contentUris = normalizePickedImportPaths(await safeInvoke('plugin:dialog|open', {
+            options: {
+                multiple,
+                directory: false,
+                filters: [
+                    {
+                        name: 'Agent Skill Archive',
+                        extensions: ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+                    },
+                ],
+            },
+        }));
+        if (!contentUris) {
+            return null;
+        }
+
+        try {
+            const inputs = [];
+            for (const contentUri of contentUris) {
+                inputs.push(await stageAndroidSkillImportArchive(contentUri));
+            }
+            return inputs;
+        } catch (error) {
+            await discardPickedImport();
+            throw error;
+        }
+    }
+
+    async function pickIosSkillImportArchives(multiple) {
         if (typeof removeTemporaryFile !== 'function') {
             throw new Error('iOS Skill import cleanup is unavailable');
         }
 
-        const result = await safeInvoke('ios_pick_skill_import_archive');
+        const result = await safeInvoke('ios_pick_skill_import_archives', { multiple });
         if (result?.cancelled) {
             return null;
         }
 
-        const path = requireNonEmptyString(result?.filePath ?? result?.file_path, 'iOS Skill import file path');
-        return rememberPickedImport(
-            { kind: 'archiveFile', path },
-            async () => {
-                await removeTemporaryFile(path);
+        if (!Array.isArray(result?.filePaths) || result.filePaths.length === 0) {
+            throw new Error('iOS Skill import picker returned no files');
+        }
+        return result.filePaths.map((filePath) => {
+            const path = requireNonEmptyString(filePath, 'iOS Skill import file path');
+            return rememberPickedImport(
+                { kind: 'archiveFile', path },
+                async () => {
+                    await removeTemporaryFile(path);
+                },
+            );
+        });
+    }
+
+    async function pickImportArchiveInputs(multiple) {
+        await discardPickedImport();
+
+        if (isAndroidRuntime()) {
+            return pickAndroidSkillImportArchives(multiple);
+        }
+
+        if (isIosRuntime()) {
+            return pickIosSkillImportArchives(multiple);
+        }
+
+        const paths = normalizePickedImportPaths(await safeInvoke('plugin:dialog|open', {
+            options: {
+                title: multiple ? 'Import Agent Skill Archives' : 'Import Agent Skill',
+                multiple,
+                directory: false,
+                filters: [
+                    {
+                        name: 'Agent Skill Archive',
+                        extensions: ['zip', 'ttskill'],
+                    },
+                ],
             },
-        );
+        }));
+        return paths?.map((path) => ({ kind: 'archiveFile', path })) ?? null;
     }
 
     async function list(options = {}) {
@@ -159,31 +197,29 @@ function createSkillApi({
     }
 
     async function pickImportArchive() {
+        const inputs = await pickImportArchiveInputs(false);
+        return inputs?.[0] ?? null;
+    }
+
+    async function pickImportArchives() {
+        return pickImportArchiveInputs(true);
+    }
+
+    async function pickImportDirectories() {
+        if (isAndroidRuntime() || isIosRuntime()) {
+            throw new Error('Skill directory import is only available on desktop');
+        }
         await discardPickedImport();
 
-        if (isAndroidRuntime()) {
-            return pickAndroidSkillImportArchive();
-        }
-
-        if (isIosRuntime()) {
-            return pickIosSkillImportArchive();
-        }
-
-        const path = normalizePickedImportArchivePath(await safeInvoke('plugin:dialog|open', {
+        const paths = normalizePickedImportPaths(await safeInvoke('plugin:dialog|open', {
             options: {
-                title: 'Import Agent Skill',
-                multiple: false,
-                directory: false,
-                filters: [
-                    {
-                        name: 'Agent Skill Archive',
-                        extensions: ['zip', 'ttskill'],
-                    },
-                ],
+                title: 'Import Agent Skill Folders',
+                multiple: true,
+                directory: true,
+                recursive: true,
             },
         }));
-
-        return path ? { kind: 'archiveFile', path } : null;
+        return paths?.map((path) => ({ kind: 'directory', path })) ?? null;
     }
 
     async function downloadImport(options) {
@@ -202,7 +238,7 @@ function createSkillApi({
                 ...(targetScope ? { targetScope } : {}),
             });
         } catch (error) {
-            await discardPickedImport(request.input, { throwOnError: false });
+            await discardPickedImport(request.input);
             throw error;
         }
     }
@@ -213,7 +249,7 @@ function createSkillApi({
                 request: normalizeSkillInstallRequest(request),
             });
         } finally {
-            await discardPickedImport(request?.input, { throwOnError: false });
+            await discardPickedImport(request?.input);
         }
     }
 
@@ -287,6 +323,8 @@ function createSkillApi({
         list,
         listFiles,
         pickImportArchive,
+        pickImportArchives,
+        pickImportDirectories,
         discardPickedImport,
         downloadImport,
         previewImport,
@@ -322,7 +360,6 @@ export function installSkillApi(context) {
     hostAbi.api.skill = createSkillApi({
         safeInvoke,
         materializeAndroidSkillImportArchive: context.materializeAndroidSkillImportArchive,
-        pickAndroidImportArchive: context.pickAndroidImportArchive,
         removeTemporaryFile: context.removeTemporaryFile,
     });
 }

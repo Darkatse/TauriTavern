@@ -39,12 +39,12 @@ pub struct PickedUrl {
 
 pub enum PickDocumentResult {
     Cancelled,
-    Picked(PickedUrl),
+    Picked(Vec<PickedUrl>),
 }
 
 enum PickOutcome {
     Cancelled,
-    Picked(PickedUrl),
+    Picked(Vec<PickedUrl>),
     Failed(String),
 }
 
@@ -78,14 +78,7 @@ define_class!(
             _controller: &UIDocumentPickerViewController,
             urls: &NSArray<NSURL>,
         ) {
-            let Some(url) = urls.firstObject() else {
-                self.send(PickOutcome::Failed(
-                    "Document picker did not return any selected URLs".to_string(),
-                ));
-                return;
-            };
-
-            self.send(Self::picked_url_to_outcome(&url));
+            self.send(Self::picked_urls_to_outcome(urls));
         }
 
         #[unsafe(method(documentPickerWasCancelled:))]
@@ -99,7 +92,10 @@ define_class!(
             _controller: &UIDocumentPickerViewController,
             url: &NSURL,
         ) {
-            self.send(Self::picked_url_to_outcome(url));
+            self.send(match Self::picked_url(url) {
+                Ok(picked) => PickOutcome::Picked(vec![picked]),
+                Err(message) => PickOutcome::Failed(message),
+            });
         }
     }
 );
@@ -121,9 +117,27 @@ impl DocumentPickerDelegate {
         }
     }
 
-    fn picked_url_to_outcome(url: &NSURL) -> PickOutcome {
+    fn picked_urls_to_outcome(urls: &NSArray<NSURL>) -> PickOutcome {
+        let urls = urls.to_vec();
+        if urls.is_empty() {
+            return PickOutcome::Failed(
+                "Document picker did not return any selected URLs".to_string(),
+            );
+        }
+
+        let mut picked = Vec::with_capacity(urls.len());
+        for url in urls {
+            match Self::picked_url(&url) {
+                Ok(url) => picked.push(url),
+                Err(message) => return PickOutcome::Failed(message),
+            }
+        }
+        PickOutcome::Picked(picked)
+    }
+
+    fn picked_url(url: &NSURL) -> Result<PickedUrl, String> {
         if !url.isFileURL() {
-            return PickOutcome::Failed("Picked document URL is not a file URL".to_string());
+            return Err("Picked document URL is not a file URL".to_string());
         }
 
         let file_name = url
@@ -131,7 +145,7 @@ impl DocumentPickerDelegate {
             .map(|value| value.to_string())
             .unwrap_or_default();
 
-        PickOutcome::Picked(PickedUrl {
+        Ok(PickedUrl {
             url: Retained::from(url),
             file_name,
         })
@@ -176,6 +190,7 @@ fn resolve_content_types(identifiers: &[&str]) -> Result<Retained<NSArray<UTType
 async fn pick_document_with_content_types(
     window: &WebviewWindow,
     identifiers: &'static [&'static str],
+    allows_multiple_selection: bool,
 ) -> Result<PickDocumentResult, DomainError> {
     let (sender, receiver) = oneshot::channel::<PickOutcome>();
 
@@ -227,7 +242,7 @@ async fn pick_document_with_content_types(
                 true,
             );
 
-            picker.setAllowsMultipleSelection(false);
+            picker.setAllowsMultipleSelection(allows_multiple_selection);
             picker.setShouldShowFileExtensions(true);
             picker.setDelegate(Some(&delegate_protocol_object));
 
@@ -256,19 +271,25 @@ async fn pick_document_with_content_types(
 }
 
 pub async fn pick_data_archive(window: &WebviewWindow) -> Result<PickDocumentResult, DomainError> {
-    pick_document_with_content_types(window, DATA_ARCHIVE_CONTENT_TYPES).await
+    pick_document_with_content_types(window, DATA_ARCHIVE_CONTENT_TYPES, false).await
 }
 
-pub async fn pick_skill_import_archive(
+pub async fn pick_skill_import_archives(
     window: &WebviewWindow,
+    allows_multiple_selection: bool,
 ) -> Result<PickDocumentResult, DomainError> {
-    pick_document_with_content_types(window, SKILL_IMPORT_CONTENT_TYPES).await
+    pick_document_with_content_types(
+        window,
+        SKILL_IMPORT_CONTENT_TYPES,
+        allows_multiple_selection,
+    )
+    .await
 }
 
 pub async fn pick_character_card(
     window: &WebviewWindow,
 ) -> Result<PickDocumentResult, DomainError> {
-    pick_document_with_content_types(window, CHARACTER_CARD_CONTENT_TYPES).await
+    pick_document_with_content_types(window, CHARACTER_CARD_CONTENT_TYPES, false).await
 }
 
 struct SecurityScopedAccess<'a> {

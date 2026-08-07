@@ -768,6 +768,8 @@ type TauriTavernSkillApi = {
     list: (options?: { scope?: TauriTavernSkillScopeFilter; filter?: TauriTavernSkillScopeFilter }) => Promise<TauriTavernSkillIndexEntry[]>;
     listFiles: (options: { scope?: TauriTavernSkillScope; name: string }) => Promise<TauriTavernSkillFileRef[]>;
     pickImportArchive: () => Promise<TauriTavernSkillImportInput | null>;
+    pickImportArchives: () => Promise<TauriTavernSkillImportInput[] | null>;
+    pickImportDirectories: () => Promise<TauriTavernSkillImportInput[] | null>;
     discardPickedImport: (input?: TauriTavernSkillImportInput | null) => Promise<void>;
     downloadImport: (options: { url: string }) => Promise<TauriTavernSkillImportInput>;
     previewImport: (options: {
