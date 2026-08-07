@@ -469,6 +469,16 @@ jobs:
                 --repo "$GITHUB_REPOSITORY" \
                 --clobber
 
+  publish-winget:
+    needs: [prepare, publish-release]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/winget-release.yml
+    with:
+      release_tag: ${{ needs.prepare.outputs.tag }}
+    secrets:
+      WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+
   publish-package-repositories:
     needs: [prepare, publish-release]
     continue-on-error: true

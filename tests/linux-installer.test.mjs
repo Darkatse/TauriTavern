@@ -84,7 +84,9 @@ test('Linux installer test paths use the shell filesystem namespace', () => {
     assert.equal(shellPath('/tmp/os-release', 'linux'), '/tmp/os-release');
 });
 
-test('Linux installer is syntactically valid in available common shells', () => {
+test('Linux installer is syntactically valid in available common shells', {
+    skip: process.platform === 'win32' ? 'requires POSIX filesystem paths' : false,
+}, () => {
     const shells = ['sh', 'dash', 'bash', 'zsh'];
     const availableShells = shells.filter(commandExists);
 

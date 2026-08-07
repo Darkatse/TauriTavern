@@ -90,3 +90,7 @@
 19. `docs/CurrentState/LinuxRepository.md`
    - APT、RPM 与 Nix 的分发现状
    - 包含支持范围、签名身份、安装入口、缓存配置和维护边界
+
+20. `docs/CurrentState/WindowsDistribution.md`
+   - WinGet Stable 发布链路与 Windows installer 契约
+   - 包含 Package ID、幂等更新、一次性 seed manifest 与凭据维护边界
