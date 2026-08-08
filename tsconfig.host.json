@@ -8,6 +8,8 @@
     "allowJs": true,
     "checkJs": false,
     "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": ".cache/tsconfig.host.tsbuildinfo",
 
     "strict": true,
     "exactOptionalPropertyTypes": true,
@@ -27,4 +29,3 @@
     "src/tauri/main/context.js"
   ]
 }
-

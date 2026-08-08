@@ -4,6 +4,7 @@
     "jsx": "react-jsx",
     "isolatedModules": true,
     "module": "ESNext",
+    "tsBuildInfoFile": ".cache/tsconfig.ui.tsbuildinfo",
     "verbatimModuleSyntax": true,
     "types": ["react", "react-dom"]
   },

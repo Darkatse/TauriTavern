@@ -13,7 +13,7 @@
     "check:frontend": "node scripts/check-frontend-guardrails.mjs",
     "check:frontend:baseline": "node scripts/check-frontend-guardrails.mjs --update-baseline",
     "check:types": "tsc -p tsconfig.host.json && tsc -p tsconfig.ui.json",
-    "check:lint": "eslint \"src/scripts/extensions/**/*.{ts,tsx}\"",
+    "check:lint": "eslint --cache --cache-strategy content --cache-location .cache/eslint \"src/scripts/extensions/**/*.{ts,tsx}\"",
     "check:logging-boundaries": "node scripts/check-logging-boundaries.mjs",
     "check:rust-boundaries": "node scripts/check-rust-crate-boundaries.mjs",
     "check:rust:dev": "cargo check --manifest-path src-tauri/Cargo.toml --workspace --no-default-features",
