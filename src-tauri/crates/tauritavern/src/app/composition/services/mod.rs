@@ -10,6 +10,7 @@ use tokio::sync::Semaphore;
 use crate::app::{AppServices, StartupProfile};
 use crate::infrastructure::apis::http_external_import_downloader::HttpExternalImportDownloader;
 use tt_adapter_http::HttpClientPool;
+use tt_adapter_mcp::RmcpMcpGateway;
 use tt_adapter_storage_core::file_system::DataDirectory;
 use tt_application::services::asset_service::AssetService;
 use tt_application::services::avatar_service::AvatarService;
@@ -27,6 +28,7 @@ use tt_application::services::group_chat_service::GroupChatService;
 use tt_application::services::group_service::GroupService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
+use tt_application::services::mcp_service::McpService;
 use tt_application::services::native_regex_service::NativeRegexService;
 use tt_application::services::preset_service::PresetService;
 use tt_application::services::provider_metadata_service::ProviderMetadataService;
@@ -64,7 +66,7 @@ pub(super) async fn build(
     let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
     let external_import_downloader: Arc<dyn ExternalImportDownloader> =
         Arc::new(HttpExternalImportDownloader::new(http_client_pool.clone()));
-    let request_proxy_runtime: Arc<dyn RequestProxyRuntime> = http_client_pool;
+    let request_proxy_runtime: Arc<dyn RequestProxyRuntime> = http_client_pool.clone();
 
     let content_service = Arc::new(ContentService::new(
         repositories.content_repository.clone(),
@@ -101,6 +103,11 @@ pub(super) async fn build(
     ));
     let llm_connection_service = Arc::new(LlmConnectionService::new(
         repositories.llm_connection_repository.clone(),
+    ));
+    let mcp_gateway = Arc::new(RmcpMcpGateway::new(http_client_pool));
+    let mcp_service = Arc::new(McpService::new(
+        repositories.mcp_server_repository.clone(),
+        mcp_gateway,
     ));
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository.clone(),
@@ -239,6 +246,7 @@ pub(super) async fn build(
         agent_runtime_service: agent_services.agent_runtime_service,
         chat_completion_service,
         llm_connection_service,
+        mcp_service,
         provider_metadata_service,
         tokenization_service,
         stable_diffusion_service,

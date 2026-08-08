@@ -19,7 +19,7 @@ tracing = "0.1"
 tt-adapter-http = { path = "../tt-adapter-http" }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
-url = "2.4"
+url = { workspace = true }
 uuid = { workspace = true }
 yup-oauth2 = { version = "12.1.2", default-features = false, features = ["hyper-rustls", "aws-lc-rs", "service-account"] }
 

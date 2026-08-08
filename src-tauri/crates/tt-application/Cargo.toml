@@ -30,7 +30,7 @@ tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 ttsync-contract = { workspace = true }
 ttsync-core = { workspace = true }
-url = "2.4"
+url = { workspace = true }
 uuid = { workspace = true }
 
 [lints.rust]

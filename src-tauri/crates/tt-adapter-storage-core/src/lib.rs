@@ -9,7 +9,7 @@ pub mod sillytavern_sorting;
 pub use file_system::DataDirectory;
 pub use repositories::{
     FileAssetRepository, FileChatRepository, FileExtensionStoreRepository, FileGroupRepository,
-    FileLlmConnectionRepository, FilePromptCacheRepository, FileQuickReplyRepository,
-    FileSecretRepository, FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository,
-    FileUserRepository,
+    FileLlmConnectionRepository, FileMcpServerRepository, FilePromptCacheRepository,
+    FileQuickReplyRepository, FileSecretRepository, FileSettingsRepository, FileThemeRepository,
+    FileUserDirectoryRepository, FileUserRepository,
 };

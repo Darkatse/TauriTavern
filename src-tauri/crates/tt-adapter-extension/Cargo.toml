@@ -17,7 +17,7 @@ tt-adapter-http = { path = "../tt-adapter-http" }
 tt-adapter-storage-core = { path = "../tt-adapter-storage-core" }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
-url = "2.4"
+url = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

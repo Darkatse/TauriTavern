@@ -6,6 +6,7 @@ members = [
     "crates/tt-ports",
     "crates/tt-application",
     "crates/tt-adapter-http",
+    "crates/tt-adapter-mcp",
     "crates/tt-adapter-tokenization",
     "crates/tt-adapter-sync",
     "crates/tt-adapter-archive",
@@ -31,6 +32,7 @@ ttsync-core = { version = "2", default-features = false }
 ttsync-http = "2"
 ttsync-client = "2"
 uuid = { version = "1.4", default-features = false, features = ["serde", "std", "v4"] }
+url = "2.5.8"
 # Keep bundled libzstd target SIMD/assembly auto-detection; `no_asm` and `thin` disable fast paths.
 zstd = { version = "0.13.3", default-features = false }
 

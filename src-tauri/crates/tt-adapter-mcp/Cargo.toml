@@ -1,0 +1,24 @@
+[package]
+name = "tt-adapter-mcp"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+futures-util = "0.3"
+http = "1"
+jsonschema = { version = "0.49.7", default-features = false }
+reqwest = { workspace = true, features = ["json", "stream"] }
+rmcp = { version = "3.1.2", default-features = false, features = ["client", "transport-streamable-http-client-reqwest"] }
+serde_json = { workspace = true }
+sse-stream = "0.2.5"
+thiserror = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["time"] }
+tracing = "0.1"
+tt-adapter-http = { path = "../tt-adapter-http" }
+tt-domain = { path = "../tt-domain" }
+tt-ports = { path = "../tt-ports" }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }

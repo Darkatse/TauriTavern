@@ -23,7 +23,7 @@ ttsync-client = { workspace = true }
 ttsync-contract = { workspace = true }
 ttsync-core = { workspace = true }
 ttsync-http = { workspace = true }
-url = "2.4"
+url = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

@@ -15,6 +15,7 @@ pub mod group;
 pub mod image_metadata;
 pub mod lan_sync;
 pub mod llm_connection;
+pub mod mcp;
 pub mod preset;
 pub mod quick_reply;
 pub mod secret;

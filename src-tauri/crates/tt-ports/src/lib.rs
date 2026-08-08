@@ -3,6 +3,7 @@ pub mod data_archive;
 pub mod external_import;
 pub mod host_resource;
 pub mod lan_sync;
+pub mod mcp;
 pub mod repositories;
 pub mod runtime_paths;
 pub mod settings;

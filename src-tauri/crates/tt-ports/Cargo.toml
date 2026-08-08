@@ -13,4 +13,4 @@ tokio = { version = "1", default-features = false, features = ["sync"] }
 tt-contracts = { path = "../tt-contracts" }
 tt-domain = { path = "../tt-domain" }
 ttsync-contract = { workspace = true }
-url = "2.4"
+url = { workspace = true }

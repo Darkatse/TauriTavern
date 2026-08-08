@@ -636,6 +636,59 @@ type TauriTavernLlmConnectionsApi = {
     delete: (input: string | { connectionId: string } | { connection_id: string }) => Promise<void>;
 };
 
+type TauriTavernMcpServerState = 'active' | 'paused';
+type TauriTavernMcpToolPermission = 'off' | 'ask' | 'allow';
+
+type TauriTavernMcpServer = {
+    id: string;
+    displayName: string;
+    endpoint: string;
+    state: TauriTavernMcpServerState;
+    toolPermissions: Record<string, Exclude<TauriTavernMcpToolPermission, 'off'>>;
+};
+
+type TauriTavernMcpTool = {
+    id: string;
+    nativeName: string;
+    title?: string;
+    description?: string;
+    inputSchema: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
+    annotations: Record<string, unknown>;
+    permission: TauriTavernMcpToolPermission;
+};
+
+type TauriTavernMcpDiscoveryResult = {
+    registrationId: string;
+    protocolVersion: string;
+    serverName?: string;
+    serverVersion?: string;
+    tools: TauriTavernMcpTool[];
+    diagnostics: Array<{ code: string; nativeName?: string; message: string }>;
+    staleTools: Array<{ nativeName: string; permission: Exclude<TauriTavernMcpToolPermission, 'off'> }>;
+};
+
+type TauriTavernMcpApi = {
+    servers: {
+        list: () => Promise<{
+            servers: TauriTavernMcpServer[];
+            storageIssues: Array<{ fileName: string; message: string }>;
+        }>;
+        create: (input: { displayName: string; endpoint: string }) => Promise<TauriTavernMcpServer>;
+        rename: (input: { registrationId: string; displayName: string }) => Promise<TauriTavernMcpServer>;
+        setState: (input: { registrationId: string; state: TauriTavernMcpServerState }) => Promise<TauriTavernMcpServer>;
+        remove: (input: string | { registrationId: string }) => Promise<void>;
+        discover: (input: string | { registrationId: string }) => Promise<TauriTavernMcpDiscoveryResult>;
+    };
+    tools: {
+        setPermission: (input: {
+            registrationId: string;
+            nativeName: string;
+            permission: TauriTavernMcpToolPermission;
+        }) => Promise<TauriTavernMcpServer>;
+    };
+};
+
 type TauriTavernSkillFileKind = 'text' | 'binary';
 
 type TauriTavernSkillImportConflictKind = 'new' | 'same' | 'different';
@@ -991,6 +1044,7 @@ type TauriTavernHostApi = {
     characterCards?: TauriTavernCharacterCardsApi;
     agent?: TauriTavernAgentApi;
     llmConnections?: TauriTavernLlmConnectionsApi;
+    mcp?: TauriTavernMcpApi;
     skill?: TauriTavernSkillApi;
     layout?: TauriTavernLayoutApi;
     dev?: TauriTavernDevApi;

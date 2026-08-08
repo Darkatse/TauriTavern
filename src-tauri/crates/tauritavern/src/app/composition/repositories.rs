@@ -19,9 +19,9 @@ use tt_adapter_provider_http::{
 };
 use tt_adapter_storage_core::{
     DataDirectory, FileAssetRepository, FileChatRepository, FileExtensionStoreRepository,
-    FileGroupRepository, FileLlmConnectionRepository, FilePromptCacheRepository,
-    FileQuickReplyRepository, FileSecretRepository, FileSettingsRepository, FileThemeRepository,
-    FileUserDirectoryRepository, FileUserRepository,
+    FileGroupRepository, FileLlmConnectionRepository, FileMcpServerRepository,
+    FilePromptCacheRepository, FileQuickReplyRepository, FileSecretRepository,
+    FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository, FileUserRepository,
     chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
 };
 use tt_adapter_storage_userdata::FileAgentProfileRepository;
@@ -52,6 +52,7 @@ use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::group_repository::GroupRepository;
 use tt_ports::repositories::image_metadata_repository::ImageMetadataRepository;
 use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
+use tt_ports::repositories::mcp_server_repository::McpServerRepository;
 use tt_ports::repositories::preset_repository::PresetRepository;
 use tt_ports::repositories::prompt_cache_repository::PromptCacheRepository;
 use tt_ports::repositories::provider_metadata_repository::ProviderMetadataRepository;
@@ -103,6 +104,7 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) agent_workspace_lifecycle_repository:
         Arc<dyn AgentWorkspaceLifecycleRepository>,
     pub(in crate::app::composition) llm_connection_repository: Arc<dyn LlmConnectionRepository>,
+    pub(in crate::app::composition) mcp_server_repository: Arc<dyn McpServerRepository>,
     pub(in crate::app::composition) workspace_repository: Arc<dyn WorkspaceRepository>,
     pub(in crate::app::composition) checkpoint_repository: Arc<dyn CheckpointRepository>,
     pub(in crate::app::composition) chat_completion_repository: Arc<dyn ChatCompletionRepository>,
@@ -241,6 +243,9 @@ pub(super) async fn build(
     let llm_connection_repository: Arc<dyn LlmConnectionRepository> = Arc::new(
         FileLlmConnectionRepository::new(data_root.join("_tauritavern").join("llm-connections")),
     );
+    let mcp_server_repository: Arc<dyn McpServerRepository> = Arc::new(
+        FileMcpServerRepository::new(data_root.join("_tauritavern").join("mcp")),
+    );
 
     let file_agent_repository = Arc::new(FileAgentRepository::new(
         data_root.join("_tauritavern").join("agent-workspaces"),
@@ -315,6 +320,7 @@ pub(super) async fn build(
         agent_invocation_repository,
         agent_workspace_lifecycle_repository,
         llm_connection_repository,
+        mcp_server_repository,
         workspace_repository,
         checkpoint_repository,
         chat_completion_repository,

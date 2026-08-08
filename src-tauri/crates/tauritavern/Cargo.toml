@@ -40,7 +40,7 @@ rand = { workspace = true }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 uuid = { workspace = true }
 async-trait = "0.1"
-url = "2.4"
+url = { workspace = true }
 percent-encoding = "2"
 regress = "0.11.1"
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
@@ -53,6 +53,7 @@ tt-contracts = { path = "../tt-contracts" }
 tt-ports = { path = "../tt-ports" }
 tt-application = { path = "../tt-application" }
 tt-adapter-http = { path = "../tt-adapter-http" }
+tt-adapter-mcp = { path = "../tt-adapter-mcp" }
 tt-adapter-tokenization = { path = "../tt-adapter-tokenization" }
 tt-adapter-sync = { path = "../tt-adapter-sync" }
 tt-adapter-archive = { path = "../tt-adapter-archive" }

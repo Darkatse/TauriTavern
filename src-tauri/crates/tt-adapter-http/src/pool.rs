@@ -25,6 +25,8 @@ pub const TTS_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 pub const TTS_REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 pub const GIT_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 pub const GIT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+pub const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+pub const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HttpClientProfile {
@@ -38,6 +40,7 @@ pub enum HttpClientProfile {
     ImageGeneration,
     Translation,
     Tts,
+    Mcp,
 }
 
 #[derive(Default)]
@@ -219,6 +222,13 @@ fn build_profile_client(
         HttpClientProfile::Tts => builder
             .connect_timeout(TTS_CONNECT_TIMEOUT)
             .timeout(TTS_REQUEST_TIMEOUT),
+        // Match RMCP's default client: idle reuse can stall on delayed ACK when a prior body
+        // was not fully consumed.
+        HttpClientProfile::Mcp => builder
+            .redirect(Policy::none())
+            .pool_max_idle_per_host(0)
+            .connect_timeout(MCP_CONNECT_TIMEOUT)
+            .timeout(MCP_REQUEST_TIMEOUT),
     };
 
     if let Some(proxy) = proxy {
