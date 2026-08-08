@@ -8,8 +8,8 @@ use tar::{Archive as TarArchive, EntryType};
 use zip::ZipArchive;
 
 use crate::data_archive::shared::{
-    COPY_BUFFER_BYTES, FILE_IO_BUFFER_BYTES, MAX_ARCHIVE_ENTRIES, PROGRESS_REPORT_MIN_DELTA,
-    ensure_not_cancelled, internal_error, is_macos_resource_fork_path, progress_percent,
+    ByteProgress, COPY_BUFFER_BYTES, FILE_IO_BUFFER_BYTES, MAX_ARCHIVE_ENTRIES,
+    ensure_not_cancelled, internal_error, is_macos_resource_fork_path,
     validate_archive_compression_ratio, validate_archive_entry_limits,
 };
 use crate::zipkit;
@@ -35,6 +35,7 @@ impl ArchiveFormat {
 #[derive(Debug, Clone, Copy)]
 pub struct ScannedArchive {
     pub scanned_entries: usize,
+    pub total_uncompressed_bytes: u64,
 }
 
 pub enum PreparedArchive {
@@ -53,14 +54,12 @@ impl PreparedArchive {
 
 pub struct ZipImportArchive {
     archive: ZipArchive<BufReader<File>>,
-    scanned_entries: usize,
+    scanned_archive: ScannedArchive,
 }
 
 impl ZipImportArchive {
     fn scanned_archive(&self) -> ScannedArchive {
-        ScannedArchive {
-            scanned_entries: self.scanned_entries,
-        }
+        self.scanned_archive
     }
 
     pub fn read_entries(
@@ -158,7 +157,7 @@ pub fn prepare_archive_for_import(
             let scanned_archive = scan_zip_archive(&mut archive, is_cancelled, visit)?;
             Ok(PreparedArchive::Zip(ZipImportArchive {
                 archive,
-                scanned_entries: scanned_archive.scanned_entries,
+                scanned_archive,
             }))
         }
         Err(error) if bytes_read >= 2 && magic[..2] == *b"PK" => {
@@ -208,7 +207,10 @@ fn scan_zip_archive<R: Read + Seek>(
         visit(&sanitized_path)?;
     }
 
-    Ok(ScannedArchive { scanned_entries })
+    Ok(ScannedArchive {
+        scanned_entries,
+        total_uncompressed_bytes,
+    })
 }
 
 fn read_zip_entries<R: Read + Seek>(
@@ -260,23 +262,26 @@ fn stage_tar_archive(
     let archive_file = File::open(archive_path)
         .map_err(|error| internal_error("Failed to open archive file", error))?;
     let archive_reader = BufReader::with_capacity(FILE_IO_BUFFER_BYTES, archive_file);
+    report_progress("extracting", 15.0, "Extracting archive data");
 
     let staged_archive = match format {
         ArchiveFormat::Tar => stage_tar_reader(
-            archive_reader,
+            ProgressReader::new(archive_reader, compressed_size, report_progress),
             format,
             Some(compressed_size),
             raw_root,
-            report_progress,
             is_cancelled,
             visit,
         )?,
         ArchiveFormat::TarGz => stage_tar_reader(
-            GzDecoder::new(archive_reader),
+            GzDecoder::new(ProgressReader::new(
+                archive_reader,
+                compressed_size,
+                report_progress,
+            )),
             format,
             Some(compressed_size),
             raw_root,
-            report_progress,
             is_cancelled,
             visit,
         )?,
@@ -294,14 +299,12 @@ fn stage_tar_reader<R: Read>(
     format: ArchiveFormat,
     compressed_size: Option<u64>,
     raw_root: &Path,
-    report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
     visit: &mut dyn FnMut(&Path) -> Result<(), DomainError>,
 ) -> Result<StagedArchive, DomainError> {
     let mut archive = TarArchive::new(CancellableReader::new(reader, is_cancelled));
     let mut scanned_entries = 0usize;
     let mut total_uncompressed_bytes = 0u64;
-    let mut last_reported_percent = 0.0f32;
     let mut copy_buffer = vec![0u8; COPY_BUFFER_BYTES];
     let payload_root = raw_root.join("payloads");
     let mut staged_entries = Vec::new();
@@ -350,11 +353,6 @@ fn stage_tar_reader<R: Read>(
             if entry_type.is_file() {
                 drain_entry_data_with_cancel(&mut entry, &mut copy_buffer, is_cancelled)?;
             }
-            maybe_report_staging_progress(
-                scanned_entries,
-                &mut last_reported_percent,
-                report_progress,
-            );
             continue;
         }
 
@@ -370,12 +368,13 @@ fn stage_tar_reader<R: Read>(
                 payload_path,
             });
         }
-
-        maybe_report_staging_progress(scanned_entries, &mut last_reported_percent, report_progress);
     }
 
     Ok(StagedArchive {
-        scanned_archive: ScannedArchive { scanned_entries },
+        scanned_archive: ScannedArchive {
+            scanned_entries,
+            total_uncompressed_bytes,
+        },
         entries: staged_entries,
     })
 }
@@ -412,30 +411,43 @@ fn stage_archive_file(
     Ok(())
 }
 
-fn maybe_report_staging_progress(
-    processed_entries: usize,
-    last_reported_percent: &mut f32,
-    report_progress: &mut dyn FnMut(&str, f32, &str),
-) {
-    let percent = progress_percent(
-        processed_entries as u64,
-        MAX_ARCHIVE_ENTRIES as u64,
-        15.0,
-        89.0,
-    );
-    let should_report =
-        processed_entries == 1 || percent - *last_reported_percent >= PROGRESS_REPORT_MIN_DELTA;
-    if !should_report {
-        return;
-    }
-
-    *last_reported_percent = percent;
-    report_progress("extracting", percent, "Extracting archive");
-}
-
 struct CancellableReader<'a, R> {
     inner: R,
     is_cancelled: &'a dyn Fn() -> bool,
+}
+
+struct ProgressReader<'a, R> {
+    inner: R,
+    progress: ByteProgress,
+    report_progress: &'a mut dyn FnMut(&str, f32, &str),
+}
+
+impl<'a, R> ProgressReader<'a, R> {
+    fn new(
+        inner: R,
+        total_bytes: u64,
+        report_progress: &'a mut dyn FnMut(&str, f32, &str),
+    ) -> Self {
+        Self {
+            inner,
+            // Input may reach EOF before tar staging finishes; reserve 90% for completed staging.
+            progress: ByteProgress::new(total_bytes, 15.0, 89.0),
+            report_progress,
+        }
+    }
+}
+
+impl<R: Read> Read for ProgressReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let bytes_read = self.inner.read(buffer)?;
+        self.progress.advance(
+            bytes_read as u64,
+            "extracting",
+            "Extracting archive data",
+            self.report_progress,
+        );
+        Ok(bytes_read)
+    }
 }
 
 impl<'a, R> CancellableReader<'a, R> {

@@ -74,6 +74,62 @@ pub const COPY_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 pub const FILE_IO_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 pub const PROGRESS_REPORT_MIN_DELTA: f32 = 0.5;
 
+#[derive(Debug)]
+pub struct ByteProgress {
+    processed_bytes: u64,
+    total_bytes: u64,
+    min_percent: f32,
+    max_percent: f32,
+    last_reported_percent: f32,
+}
+
+impl ByteProgress {
+    pub fn new(total_bytes: u64, min_percent: f32, max_percent: f32) -> Self {
+        Self {
+            processed_bytes: 0,
+            total_bytes,
+            min_percent,
+            max_percent,
+            last_reported_percent: min_percent,
+        }
+    }
+
+    pub fn advance(
+        &mut self,
+        bytes: u64,
+        stage: &str,
+        message: &str,
+        report_progress: &mut dyn FnMut(&str, f32, &str),
+    ) {
+        self.processed_bytes = self.processed_bytes.saturating_add(bytes);
+        let percent = progress_percent(
+            self.processed_bytes,
+            self.total_bytes,
+            self.min_percent,
+            self.max_percent,
+        );
+        let delta = percent - self.last_reported_percent;
+        if percent <= self.last_reported_percent
+            || (self.processed_bytes < self.total_bytes && delta < PROGRESS_REPORT_MIN_DELTA)
+        {
+            return;
+        }
+
+        self.last_reported_percent = percent;
+        report_progress(stage, percent, message);
+    }
+
+    pub fn complete(
+        &mut self,
+        stage: &str,
+        message: &str,
+        report_progress: &mut dyn FnMut(&str, f32, &str),
+    ) {
+        self.last_reported_percent = self.max_percent;
+        report_progress(stage, self.max_percent, message);
+    }
+}
+
 pub fn validate_archive_entry_limits(
     entry_name: &str,
     uncompressed_size: u64,
@@ -191,10 +247,10 @@ pub fn copy_stream_with_cancel<R: Read + ?Sized, W: Write + ?Sized>(
     writer: &mut W,
     copy_buffer: &mut [u8],
     is_cancelled: &dyn Fn() -> bool,
+    on_bytes_copied: &mut dyn FnMut(u64),
     read_error_context: &str,
     write_error_context: &str,
-) -> Result<u64, DomainError> {
-    let mut bytes_written = 0u64;
+) -> Result<(), DomainError> {
     loop {
         ensure_not_cancelled(is_cancelled)?;
 
@@ -208,10 +264,10 @@ pub fn copy_stream_with_cancel<R: Read + ?Sized, W: Write + ?Sized>(
         writer
             .write_all(&copy_buffer[..bytes_read])
             .map_err(|error| internal_error(write_error_context, error))?;
-        bytes_written = bytes_written.saturating_add(bytes_read as u64);
+        on_bytes_copied(bytes_read as u64);
     }
 
-    Ok(bytes_written)
+    Ok(())
 }
 
 pub fn ensure_output_directory(path: &Path) -> Result<(), DomainError> {
@@ -276,4 +332,58 @@ pub fn progress_percent(processed: u64, total: u64, min: f32, max: f32) -> f32 {
 
 pub fn internal_error(context: &str, error: impl std::fmt::Display) -> DomainError {
     DomainError::InternalError(format!("{}: {}", context, error))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    #[test]
+    fn stream_copy_reports_bytes_and_stops_at_the_next_cancel_check() {
+        let mut reader = Cursor::new(b"abcdefgh".to_vec());
+        let mut writer = Vec::new();
+        let mut buffer = [0u8; 4];
+        let checks = AtomicUsize::new(0);
+        let is_cancelled = || checks.fetch_add(1, Ordering::SeqCst) >= 1;
+        let mut copied_chunks = Vec::new();
+        let mut on_bytes_copied = |bytes| copied_chunks.push(bytes);
+
+        let error = copy_stream_with_cancel(
+            &mut reader,
+            &mut writer,
+            &mut buffer,
+            &is_cancelled,
+            &mut on_bytes_copied,
+            "Failed to read test stream",
+            "Failed to write test stream",
+        )
+        .expect_err("second chunk should be cancelled");
+
+        assert!(matches!(error, DomainError::Cancelled(_)));
+        assert_eq!(writer, b"abcd");
+        assert_eq!(copied_chunks, vec![4]);
+    }
+
+    #[test]
+    fn byte_progress_complete_reports_the_terminal_message() {
+        let mut progress = ByteProgress::new(4, 10.0, 20.0);
+        let mut reports = Vec::new();
+        let mut report = |stage: &str, percent: f32, message: &str| {
+            reports.push((stage.to_string(), percent, message.to_string()));
+        };
+
+        progress.advance(4, "copying", "Copying", &mut report);
+        progress.complete("copying", "Copied", &mut report);
+
+        assert_eq!(
+            reports,
+            vec![
+                ("copying".to_string(), 20.0, "Copying".to_string()),
+                ("copying".to_string(), 20.0, "Copied".to_string()),
+            ]
+        );
+    }
 }

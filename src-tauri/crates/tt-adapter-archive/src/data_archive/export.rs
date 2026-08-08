@@ -9,17 +9,10 @@ use tt_domain::errors::DomainError;
 
 use super::DataArchiveExportResult;
 use super::shared::{
-    COPY_BUFFER_BYTES, FILE_IO_BUFFER_BYTES, PROGRESS_REPORT_MIN_DELTA, copy_stream_with_cancel,
+    ByteProgress, COPY_BUFFER_BYTES, FILE_IO_BUFFER_BYTES, copy_stream_with_cancel,
     ensure_not_cancelled, internal_error, normalize_archive_entry_path, path_components,
-    progress_percent, read_directory_sorted,
+    read_directory_sorted,
 };
-
-#[derive(Debug, Clone)]
-struct ExportProgress {
-    processed_steps: u64,
-    total_steps: u64,
-    last_reported_percent: f32,
-}
 
 pub(crate) fn run_export_data_archive(
     data_root: &Path,
@@ -54,7 +47,6 @@ pub(crate) fn run_export_user_backup_archive(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_export_archive(
     source_root: &Path,
     output_path: &Path,
@@ -79,14 +71,9 @@ fn run_export_archive(
     }
 
     let normalized_archive_root_prefix = archive_root_prefix.trim_matches('/');
-    let root_step_count = u64::from(!normalized_archive_root_prefix.is_empty());
-    let total_steps = count_export_entries(source_root, source_root, include_entry, is_cancelled)?
-        .saturating_add(root_step_count);
-    let mut progress = ExportProgress {
-        processed_steps: 0,
-        total_steps,
-        last_reported_percent: 0.0,
-    };
+    let total_bytes = total_export_bytes(source_root, source_root, include_entry, is_cancelled)?;
+    let mut progress = ByteProgress::new(total_bytes, 3.0, 96.0);
+    report_progress("zipping", 3.0, "Writing archive data");
 
     let dir_options = FileOptions::default()
         .compression_method(CompressionMethod::Stored)
@@ -104,8 +91,6 @@ fn run_export_archive(
         writer
             .add_directory(format!("{}/", normalized_archive_root_prefix), dir_options)
             .map_err(|error| internal_error("Failed to add archive root directory", error))?;
-        progress.processed_steps = progress.processed_steps.saturating_add(1);
-        report_export_progress(&mut progress, report_progress);
     }
 
     let mut copy_buffer = vec![0u8; COPY_BUFFER_BYTES];
@@ -121,6 +106,7 @@ fn run_export_archive(
         report_progress,
         is_cancelled,
     )?;
+    progress.complete("zipping", "Archive data written", report_progress);
 
     let mut buffered_output = writer
         .finish()
@@ -137,13 +123,13 @@ fn run_export_archive(
     })
 }
 
-fn count_export_entries(
+fn total_export_bytes(
     root: &Path,
     current: &Path,
     include_entry: &dyn Fn(&Path) -> bool,
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<u64, DomainError> {
-    let mut count = 0u64;
+    let mut total_bytes = 0u64;
 
     for entry in read_directory_sorted(current)? {
         ensure_not_cancelled(is_cancelled)?;
@@ -160,8 +146,7 @@ fn count_export_entries(
         }
 
         if file_type.is_dir() {
-            count = count.saturating_add(1);
-            count = count.saturating_add(count_export_entries(
+            total_bytes = total_bytes.saturating_add(total_export_bytes(
                 root,
                 &path,
                 include_entry,
@@ -171,11 +156,15 @@ fn count_export_entries(
         }
 
         if file_type.is_file() {
-            count = count.saturating_add(1);
+            let file_size = entry
+                .metadata()
+                .map_err(|error| internal_error("Failed to read export file metadata", error))?
+                .len();
+            total_bytes = total_bytes.saturating_add(file_size);
         }
     }
 
-    Ok(count)
+    Ok(total_bytes)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -186,7 +175,7 @@ fn write_export_entries(
     archive_root_prefix: &str,
     include_entry: &dyn Fn(&Path) -> bool,
     dir_options: FileOptions,
-    progress: &mut ExportProgress,
+    progress: &mut ByteProgress,
     copy_buffer: &mut [u8],
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
@@ -212,8 +201,6 @@ fn write_export_entries(
             writer
                 .add_directory(format!("{}/", entry_path), dir_options)
                 .map_err(|error| internal_error("Failed to add directory to archive", error))?;
-            progress.processed_steps = progress.processed_steps.saturating_add(1);
-            report_export_progress(progress, report_progress);
 
             write_export_entries(
                 writer,
@@ -241,17 +228,18 @@ fn write_export_entries(
 
         let mut source_file = File::open(&path)
             .map_err(|error| internal_error("Failed to open export source file", error))?;
+        let mut on_bytes_copied = |bytes| {
+            progress.advance(bytes, "zipping", "Writing archive data", report_progress);
+        };
         copy_stream_with_cancel(
             &mut source_file,
             writer,
             copy_buffer,
             is_cancelled,
+            &mut on_bytes_copied,
             "Failed to read export source file",
             "Failed to write file to archive",
         )?;
-
-        progress.processed_steps = progress.processed_steps.saturating_add(1);
-        report_export_progress(progress, report_progress);
     }
 
     Ok(())
@@ -318,21 +306,6 @@ fn is_chat_commit_staging_entry(relative_path: &Path) -> bool {
 
 fn is_transient_chat_entry(relative_path: &Path) -> bool {
     is_chat_backup_staging_entry(relative_path) || is_chat_commit_staging_entry(relative_path)
-}
-
-fn report_export_progress(
-    progress: &mut ExportProgress,
-    report_progress: &mut dyn FnMut(&str, f32, &str),
-) {
-    let percent = progress_percent(progress.processed_steps, progress.total_steps, 3.0, 96.0);
-    let should_report = progress.processed_steps >= progress.total_steps
-        || percent - progress.last_reported_percent >= PROGRESS_REPORT_MIN_DELTA;
-    if !should_report {
-        return;
-    }
-
-    progress.last_reported_percent = percent;
-    report_progress("zipping", percent, "Writing archive entries");
 }
 
 #[cfg(test)]
@@ -444,6 +417,30 @@ mod tests {
             fs::read(&output_path).expect("read existing output"),
             b"keep me"
         );
+
+        fs::remove_dir_all(root).expect("cleanup temp root");
+    }
+
+    #[test]
+    fn export_progress_is_weighted_by_file_bytes() {
+        let root = temp_root("byte-progress");
+        let source_root = root.join("source");
+        let output_path = root.join("export.zip");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::write(source_root.join("a.json"), b"a").expect("write small source file");
+        fs::write(source_root.join("b.json"), vec![b'b'; 99]).expect("write large source file");
+
+        let mut reports = Vec::new();
+        let mut report_progress = |stage: &str, percent: f32, _message: &str| {
+            if stage == "zipping" {
+                reports.push(percent);
+            }
+        };
+        run_export_data_archive(&source_root, &output_path, &mut report_progress, &|| false)
+            .expect("export archive");
+
+        assert!(reports.iter().any(|percent| (3.8..4.1).contains(percent)));
+        assert_eq!(reports.last().copied(), Some(96.0));
 
         fs::remove_dir_all(root).expect("cleanup temp root");
     }

@@ -51,7 +51,8 @@ pub(crate) fn run_import_data_archive(
         is_cancelled,
         &mut |path| layout_scan.visit_path(path),
     )?;
-    let layout = layout_scan.finish(archive.scanned_archive())?;
+    let scanned_archive = archive.scanned_archive();
+    let layout = layout_scan.finish(scanned_archive)?;
     ensure_not_cancelled(is_cancelled)?;
 
     match &mut archive {
@@ -61,6 +62,7 @@ pub(crate) fn run_import_data_archive(
                 zip_archive,
                 &layout,
                 &normalized_root,
+                scanned_archive.total_uncompressed_bytes,
                 report_progress,
                 is_cancelled,
             )?;
@@ -79,8 +81,13 @@ pub(crate) fn run_import_data_archive(
 
     report_progress("applying", 92.0, "Merging data directory");
     ensure_not_cancelled(is_cancelled)?;
-    let local_applied =
-        apply::apply_overlay(&normalized_root, data_root, report_progress, is_cancelled)?;
+    let local_applied = apply::apply_overlay(
+        &normalized_root,
+        data_root,
+        scanned_archive.total_uncompressed_bytes,
+        report_progress,
+        is_cancelled,
+    )?;
 
     report_progress("completed", 100.0, "Import completed");
 
@@ -294,9 +301,8 @@ mod tests {
             &mut |path| layout_scan.visit_path(path),
         )
         .expect("prepare zip archive");
-        let layout = layout_scan
-            .finish(prepared.scanned_archive())
-            .expect("finish layout");
+        let scanned_archive = prepared.scanned_archive();
+        let layout = layout_scan.finish(scanned_archive).expect("finish layout");
 
         fs::remove_file(&archive_path).expect("remove source archive");
         let archive::PreparedArchive::Zip(zip_archive) = &mut prepared else {
@@ -306,6 +312,7 @@ mod tests {
             zip_archive,
             &layout,
             &normalized_root,
+            scanned_archive.total_uncompressed_bytes,
             &mut report_progress,
             &is_cancelled,
         )

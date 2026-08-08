@@ -3,12 +3,11 @@ import { t, translate } from '../../i18n.js';
 import { Popup } from '../../popup.js';
 import { isAndroidRuntime, isIosRuntime } from '../../util/mobile-runtime.js';
 import { getActiveIosPolicyActivationReport } from '../../tauritavern/ios-policy.js';
+import { openDialog } from '../../../tauri-bridge.js';
 
 const MODULE_NAME = 'data-migration';
 const JOB_POLL_INTERVAL_MS = 1200;
 const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'cancelled']);
-const PREPARING_PROGRESS_INTERVAL_MS = 320;
-const PREPARING_PROGRESS_MAX_BEFORE_JOB = 96;
 
 const SILLYTAVERN_MIGRATION_COPY_KEY = 'Import a SillyTavern data archive (zip, tar, tar.gz, or tgz) and migrate it to TauriTavern.';
 const TAURITAVERN_MIGRATION_COPY_KEY = 'Import a TauriTavern data zip archive from another device and migrate it to this TauriTavern.';
@@ -71,12 +70,29 @@ async function requestImportJob(url, init) {
     return requireJobId(payload, t`Import job id is missing`);
 }
 
-async function startImportJobFromMultipart(file) {
-    const formData = new FormData();
-    formData.append('archive', file);
+async function startImportJobFromDesktopPicker() {
+    const picked = await openDialog({
+        title: t`Select Data Archive`,
+        multiple: false,
+        directory: false,
+        filters: [
+            {
+                name: t`Data Archive`,
+                extensions: ['zip', 'tar', 'gz', 'tgz'],
+            },
+        ],
+    });
+    const archivePath = Array.isArray(picked) ? picked[0] : picked;
+    if (typeof archivePath !== 'string' || archivePath.trim() === '') {
+        return null;
+    }
+
     return requestImportJob('/api/extensions/data-migration/import', {
         method: 'POST',
-        body: formData,
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ archive_path: archivePath }),
     });
 }
 
@@ -291,7 +307,7 @@ async function onImportButtonClick() {
             return;
         }
 
-        $('#data_migration_import_input').trigger('click');
+        await runConfirmedImport(startImportJobFromDesktopPicker);
     } catch (error) {
         const failureMessage = normalizeCaughtError(error);
         toastr.error(failureMessage, t`Data import failed`);
@@ -410,49 +426,14 @@ async function requestCancelActiveJob() {
     }
 }
 
-function createPreparingImportProgress() {
-    let progress = 0;
-    let timerId = null;
-
-    const render = () => {
-        setStatusText(`${t`Preparing import...`} ${progress}%`);
-    };
-
-    return {
-        start() {
-            progress = 0;
-            render();
-
-            timerId = window.setInterval(() => {
-                const step = progress < 60 ? 4 : progress < 85 ? 2 : 1;
-                progress = Math.min(PREPARING_PROGRESS_MAX_BEFORE_JOB, progress + step);
-                render();
-            }, PREPARING_PROGRESS_INTERVAL_MS);
-        },
-        complete() {
-            if (timerId !== null) {
-                clearInterval(timerId);
-                timerId = null;
-            }
-            progress = 100;
-            render();
-        },
-        stop() {
-            if (timerId !== null) {
-                clearInterval(timerId);
-                timerId = null;
-            }
-        },
-    };
-}
-
 async function runMigrationJob(kind, startJob) {
     const failureTitle = kind === 'import' ? t`Data import failed` : t`Data export failed`;
-    const preparingProgress = kind === 'import' ? createPreparingImportProgress() : null;
 
     try {
         markJobStarting();
-        preparingProgress?.start();
+        if (kind === 'import') {
+            setStatusText(t`Preparing import...`);
+        }
         const jobId = await startJob();
         if (!jobId) {
             if (kind === 'import') {
@@ -463,7 +444,6 @@ async function runMigrationJob(kind, startJob) {
 
             throw new Error(t`Migration job did not return a job id`);
         }
-        preparingProgress?.complete();
         startJobTracking(jobId);
 
         const finalStatus = await pollUntilTerminal(jobId);
@@ -554,26 +534,8 @@ async function runMigrationJob(kind, startJob) {
         toastr.error(failureMessage, failureTitle);
         setStatusText(failureMessage);
     } finally {
-        preparingProgress?.stop();
         stopJobTracking();
     }
-}
-
-async function onImportInputChange(event) {
-    if (hasActiveJob()) {
-        toastr.warning(t`A migration job is already running`);
-        return;
-    }
-
-    const input = event.currentTarget;
-    const file = input?.files?.[0];
-    input.value = '';
-
-    if (!file) {
-        return;
-    }
-
-    await runConfirmedImport(() => startImportJobFromMultipart(file));
 }
 
 async function onAndroidImportButtonClick() {
@@ -632,7 +594,6 @@ jQuery(async () => {
     }
 
     $('#data_migration_import_button').on('click', onImportButtonClick);
-    $('#data_migration_import_input').on('change', onImportInputChange);
     $('#data_migration_export_button').on('click', onExportClick);
     $('#data_migration_cancel_button').on('click', requestCancelActiveJob);
     $('#data_migration_reveal_export_button').on('click', onRevealExportClick);

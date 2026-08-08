@@ -7,22 +7,25 @@ use tt_domain::errors::DomainError;
 use super::archive::{ArchiveReadEntry, StagedArchive, StagedEntry, ZipImportArchive};
 use super::layout::{ArchiveLayoutPolicy, DetectedArchiveLayout};
 use crate::data_archive::shared::{
-    COPY_BUFFER_BYTES, IMPORT_TARGET_USER_HANDLE, PROGRESS_REPORT_MIN_DELTA,
-    components_after_prefix, copy_stream_with_cancel, create_output_file_replacing_directory,
-    ensure_not_cancelled, ensure_output_directory, internal_error, is_macos_resource_fork_path,
-    progress_percent,
+    ByteProgress, COPY_BUFFER_BYTES, IMPORT_TARGET_USER_HANDLE, components_after_prefix,
+    copy_stream_with_cancel, create_output_file_replacing_directory, ensure_not_cancelled,
+    ensure_output_directory, internal_error, is_macos_resource_fork_path,
 };
 
 pub fn extract_zip_to_normalized_root(
     archive: &mut ZipImportArchive,
     layout: &DetectedArchiveLayout,
     normalized_root: &Path,
+    total_uncompressed_bytes: u64,
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<(), DomainError> {
-    let total_entries = layout.scanned_entries.max(1) as u64;
-    let mut processed_entries = 0u64;
-    let mut last_reported_percent = 0.0f32;
+    report_progress(
+        "extracting",
+        15.0,
+        "Extracting and normalizing archive data",
+    );
+    let mut progress = ByteProgress::new(total_uncompressed_bytes, 15.0, 90.0);
     let mut copy_buffer = vec![0u8; COPY_BUFFER_BYTES];
     let mut last_ensured_parent: Option<PathBuf> = None;
     let detected_user_handles = layout.detected_user_handles().clone();
@@ -31,29 +34,16 @@ pub fn extract_zip_to_normalized_root(
         ensure_not_cancelled(is_cancelled)?;
 
         let sanitized_path = archive_entry.path().to_path_buf();
-        processed_entries = processed_entries.saturating_add(1);
 
         let Some(target_relative_path) =
             target_relative_path(&sanitized_path, layout, &detected_user_handles)
         else {
-            maybe_report_extraction_progress(
-                processed_entries,
-                total_entries,
-                &mut last_reported_percent,
-                report_progress,
-            );
             return Ok(());
         };
         let output_path = normalized_root.join(target_relative_path);
 
         if archive_entry.is_dir() {
             ensure_output_directory(&output_path)?;
-            maybe_report_extraction_progress(
-                processed_entries,
-                total_entries,
-                &mut last_reported_percent,
-                report_progress,
-            );
             return Ok(());
         }
 
@@ -76,24 +66,33 @@ pub fn extract_zip_to_normalized_root(
                 "Archive entry reader is missing".to_string(),
             ));
         };
+        let mut on_bytes_copied = |bytes| {
+            progress.advance(
+                bytes,
+                "extracting",
+                "Extracting and normalizing archive data",
+                report_progress,
+            );
+        };
         copy_stream_with_cancel(
             reader,
             &mut output_file,
             &mut copy_buffer,
             is_cancelled,
+            &mut on_bytes_copied,
             "Failed to read archive entry data",
             "Failed to write normalized output file",
         )?;
 
-        maybe_report_extraction_progress(
-            processed_entries,
-            total_entries,
-            &mut last_reported_percent,
-            report_progress,
-        );
-
         Ok(())
-    })
+    })?;
+
+    progress.complete(
+        "extracting",
+        "Archive extracted and normalized",
+        report_progress,
+    );
+    Ok(())
 }
 
 pub fn normalize_staged_archive(
@@ -199,21 +198,4 @@ fn move_staged_file_into_place(source_path: &Path, target_path: &Path) -> Result
 
     fs::rename(source_path, target_path)
         .map_err(|error| internal_error("Failed to move staged archive file", error))
-}
-
-fn maybe_report_extraction_progress(
-    processed_entries: u64,
-    total_entries: u64,
-    last_reported_percent: &mut f32,
-    report_progress: &mut dyn FnMut(&str, f32, &str),
-) {
-    let percent = progress_percent(processed_entries, total_entries, 15.0, 90.0);
-    let should_report = processed_entries >= total_entries
-        || percent - *last_reported_percent >= PROGRESS_REPORT_MIN_DELTA;
-    if !should_report {
-        return;
-    }
-
-    *last_reported_percent = percent;
-    report_progress("extracting", percent, "Extracting and normalizing archive");
 }

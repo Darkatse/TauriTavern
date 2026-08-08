@@ -50,6 +50,92 @@ function completedExportStatus(result = {}) {
     };
 }
 
+test('/api/extensions/data-migration/import preserves the exact native desktop path', async () => {
+    const calls = [];
+    const router = createExtensionRouter({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            assert.equal(command, 'start_import_data_archive');
+            return 'import-job-1';
+        },
+        materializeUploadFile: async () => {
+            throw new Error('native desktop paths must not use upload staging');
+        },
+    });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/extensions/data-migration/import',
+        body: { archive_path: '/Users/example/archive.zip ' },
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+        ok: true,
+        job_id: 'import-job-1',
+    });
+    assert.deepEqual(calls, [
+        {
+            command: 'start_import_data_archive',
+            args: {
+                archive_path: '/Users/example/archive.zip ',
+                archive_is_temporary: false,
+            },
+        },
+    ]);
+});
+
+test('/api/extensions/data-migration/import keeps multipart upload staging compatible', async () => {
+    const calls = [];
+    let cleaned = false;
+    const router = createExtensionRouter({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            return 'import-job-2';
+        },
+        materializeUploadFile: async (archive, options) => {
+            assert.ok(archive instanceof Blob);
+            assert.deepEqual(options, {
+                kind: 'data-archive',
+                preferredName: 'archive.zip',
+            });
+            return {
+                filePath: '/tmp/uploaded-archive.zip',
+                isTemporary: true,
+                cleanup: async () => {
+                    cleaned = true;
+                },
+            };
+        },
+    });
+    const body = new FormData();
+    body.append('archive', new Blob(['zip']), 'archive.zip');
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/extensions/data-migration/import',
+        body,
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+        ok: true,
+        job_id: 'import-job-2',
+    });
+    assert.deepEqual(calls, [
+        {
+            command: 'start_import_data_archive',
+            args: {
+                archive_path: '/tmp/uploaded-archive.zip',
+                archive_is_temporary: true,
+            },
+        },
+    ]);
+    assert.equal(cleaned, true);
+});
+
 test('/api/extensions/data-migration/export/android/save finalizes delivered artifacts', async () => {
     const calls = [];
     const router = createExtensionRouter({

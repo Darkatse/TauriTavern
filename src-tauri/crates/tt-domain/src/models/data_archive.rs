@@ -3,6 +3,7 @@ use crate::errors::DomainError;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DataArchiveLocalMutationSummary {
     pub files_written: usize,
+    /// Logical payload bytes committed to target paths, independent of the physical I/O strategy.
     pub bytes_written: u64,
     pub target_changed: bool,
 }
