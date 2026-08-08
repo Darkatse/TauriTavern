@@ -1,143 +1,111 @@
-# `window.__TAURITAVERN__.api.mcp` — MCP API Draft
+# `window.__TAURITAVERN__.api.mcp` — MCP Manager API
 
-本文档是 MCP Host ABI 草案。MCP 是独立平台能力，Agent 只是它的消费者之一。
+本文档描述已经落地的 MCP M1 Host ABI。MCP 是独立平台能力；当前只提供 registration 与只读 tool discovery，尚未接入 Agent 或 Legacy 生成。
 
-状态：规划中，尚未实现。
+状态：M1 已实现，Project Contract（实验性）。
+
+第一方管理 UI 位于 Extensions 抽屉的 MCP 内置扩展中。该扩展只是 `api.mcp` 的 React/strict TSX presentation；TauriTavern Settings 不再提供平行入口。
 
 ## 1. 入口
 
 ```js
 await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
-
 const mcp = window.__TAURITAVERN__.api.mcp;
 ```
 
-## 2. 方法概览
+## 2. API
 
 ```ts
 type TauriTavernMcpApi = {
-  listServers(): Promise<McpServerSummary[]>;
-  connectServer(input: McpConnectServerInput): Promise<McpServerStatus>;
-  disconnectServer(serverId: string): Promise<void>;
-  listTools(serverId: string): Promise<McpToolSummary[]>;
-  callTool(input: McpCallToolInput): Promise<McpToolResult>;
-  listResources(serverId: string): Promise<McpResourceSummary[]>;
-  readResource(input: McpReadResourceInput): Promise<McpResourceContent>;
-  listPrompts(serverId: string): Promise<McpPromptSummary[]>;
-  getPrompt(input: McpGetPromptInput): Promise<McpPromptContent>;
-};
-```
-
-## 3. Server
-
-```ts
-type McpServerSummary = {
-  id: string;
-  displayName: string;
-  transport: 'stdio' | 'http' | 'sse';
-  enabled: boolean;
-  connected: boolean;
-  capabilities: {
-    tools?: boolean;
-    resources?: boolean;
-    prompts?: boolean;
-    sampling?: boolean;
+  servers: {
+    list(): Promise<{ servers: McpServer[]; storageIssues: McpStorageIssue[] }>;
+    create(input: { displayName: string; endpoint: string }): Promise<McpServer>;
+    rename(input: { registrationId: string; displayName: string }): Promise<McpServer>;
+    setState(input: { registrationId: string; state: 'active' | 'paused' }): Promise<McpServer>;
+    remove(input: string | { registrationId: string }): Promise<void>;
+    discover(input: string | { registrationId: string }): Promise<McpDiscoveryResult>;
+  };
+  tools: {
+    setPermission(input: {
+      registrationId: string;
+      nativeName: string;
+      permission: 'off' | 'ask' | 'allow';
+    }): Promise<McpServer>;
   };
 };
 ```
 
-`connectServer()` 不应接受任意 command 字符串作为扩展/Agent 可传入参数。stdio server 配置必须来自用户设置或 allowlist。
+没有 `connect`、`disconnect` 或 `connected`。M1 每次 discovery 都建立短生命周期 RMCP client，完成全分页后关闭；`active` 只表示允许向该 registration 的 endpoint 发起显式 discovery。
 
-## 4. Tools
-
-```ts
-type McpToolSummary = {
-  serverId: string;
-  name: string;
-  title?: string;
-  description?: string;
-  inputSchema?: unknown;
-  annotations?: unknown;
-  approvalRequired?: boolean;
-};
-
-type McpCallToolInput = {
-  serverId: string;
-  name: string;
-  arguments?: unknown;
-  approvalToken?: string;
-};
-```
-
-语义：
-
-- 危险工具默认需要审批。
-- call result 可以被 Agent 映射为 `ToolResult`。
-- call 必须有超时与取消策略。
-
-## 5. Resources
+## 3. DTO
 
 ```ts
-type McpResourceSummary = {
-  serverId: string;
-  uri: string;
-  name?: string;
-  description?: string;
-  mimeType?: string;
+type McpServer = {
+  id: string;                    // canonical lowercase UUID
+  displayName: string;
+  endpoint: string;              // normalized, immutable
+  state: 'active' | 'paused';
+  toolPermissions: Record<string, 'ask' | 'allow'>;
 };
 
-type McpReadResourceInput = {
-  serverId: string;
-  uri: string;
+type McpDiscoveryResult = {
+  registrationId: string;
+  protocolVersion: string;
+  serverName?: string;
+  serverVersion?: string;
+  tools: Array<{
+    id: string;                  // mcp/<registration-uuid>:<native-name>
+    nativeName: string;
+    title?: string;
+    description?: string;
+    inputSchema: object;
+    outputSchema?: object;
+    annotations: object;         // untrusted hints only
+    permission: 'off' | 'ask' | 'allow';
+  }>;
+  diagnostics: Array<{
+    code: string;
+    nativeName?: string;
+    message: string;
+  }>;
+  staleTools: Array<{
+    nativeName: string;
+    permission: 'ask' | 'allow';
+  }>;
 };
 ```
 
-MCP resource 不应自动进入 prompt。宿主、用户、profile 或 preset 决定是否纳入 ContextFrame。
+`storageIssues` 显式报告损坏、未知 schema/kind、非 canonical 文件名或文件内 ID 不匹配；健康 registration 仍正常返回。
 
-## 6. Prompts
+## 4. Registration 契约
 
-```ts
-type McpPromptSummary = {
-  serverId: string;
-  name: string;
-  title?: string;
-  description?: string;
-  arguments?: unknown;
-};
+- `create()` 总是创建 `paused` registration；Manager 在切换为 Active 前展示并确认 exact endpoint。
+- endpoint 是 registration 的信任身份事实，M1 不提供修改方法。更换 endpoint 必须新建 UUID，工具权限重新从 Off 开始。
+- display name 可以修改，不影响 UUID 或 ToolId。
+- `off` 是缺省值，不写入 `toolPermissions`；`setPermission(..., 'off')` 删除对应持久设置。
+- discovery 消失的 Ask/Allow 设置作为 `staleTools` 返回，但不会成为可用工具。
+- registration 保存为 `_tauritavern/mcp/registrations/<uuid>.json` 的严格 v1 单文件记录；没有旧 schema reader、revision 或持久 catalog cache。
 
-type McpGetPromptInput = {
-  serverId: string;
-  name: string;
-  arguments?: unknown;
-};
-```
+## 5. Discovery 契约
 
-MCP prompt 可以成为 PromptComponent，但不能覆盖 TauriTavern preset policy。
+- transport 仅支持 unauthenticated Streamable HTTP。
+- endpoint 支持 HTTPS。HTTP 只允许明确的本机/内网目标：localhost、单标签主机名、`.local` / `.home.arpa`，IPv4 loopback/private/link-local/shared address space，以及 IPv6 loopback/ULA/link-local；公网 HTTP 域名和地址仍被拒绝。userinfo、query、fragment 与 redirect 均被拒绝。
+- 使用 RMCP 3.1.2 `ClientLifecycleMode::Auto` 优先协商 `2026-07-28`；标准 `-32022` 协商与 SDK 可见的 `-32601` legacy fallback 由 RMCP 处理。若 Auto 启动返回 implementation-defined `-32000`，或有限 SSE error 响应在 SDK 中退化为 `ConnectionClosed`，则用新 Peer 单次尝试 `2025-11-25` initialize；该额外路径不匹配其他错误。
+- `tools/list` 必须完整分页；cursor 循环、页数/工具数/catalog 总量超限或分页失败会使该 server 的本次 discovery 失败，不返回 partial catalog。
+- duplicate native name 隔离整个同名组；无效 schema、单工具超限或名称无效只隔离该工具并返回 diagnostic。
+- input/output schema 按 JSON Schema 2020-12 编译验证；不会读取远端 `$ref`。
+- annotations 只原样展示，不授予权限。
+- 每次 refresh 使用新的 RMCP Peer。SDK 自带 cache 保持默认语义，但其生命周期止于本次 refresh；应用层不维护 last-complete/stale catalog，也不会在失败时静默返回旧结果。
 
-## 7. Security Contract
+## 6. 明确未支持
 
-禁止：
+M1 没有以下 API 或行为：
 
-- Agent/Preset/角色卡/世界书直接写 MCP stdio command。
-- 从远端 config 自动创建本地 stdio server。
-- 初期启用 MCP Sampling 自动模型调用。
-- 未经审批调用 destructive/high-cost tool。
+- `tools/call`、test call、审批与结果投影；
+- Agent ToolSet 或 Legacy ToolManager/generation overlay；
+- OAuth、credential、stdio、2024 HTTP+SSE；
+- Resources、Prompts、Tasks、Apps、subscriptions/list-changed；
+- background discovery、discovery/list 通用 retry、persistent catalog cache；
+- endpoint migration、scope hierarchy、model alias。
 
-要求：
-
-- server/command/args 对用户可见。
-- per-server capability allowlist。
-- per-tool approval。
-- MCP call 写入 Agent journal 或 MCP audit log。
-
-## 8. Agent Integration
-
-Agent 看到的是：
-
-```text
-mcp/<registration-id>:<native-name> -> ToolCatalog contribution + snapshot binding
-mcp resource                         -> WorkspaceResource / ContextFrame
-mcp prompt                           -> PromptComponent
-```
-
-Agent 不直接操作 MCP config。
+model alias 属于未来 invocation `ToolBinding`，不属于 registration/discovery。M1 不把 MCP tool 注册进全局 SillyTavern `ToolManager`。

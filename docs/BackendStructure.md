@@ -54,6 +54,7 @@ src-tauri/
     ├── tt-ports
     ├── tt-application
     ├── tt-adapter-http
+    ├── tt-adapter-mcp
     ├── tt-adapter-provider-http
     ├── tt-adapter-tokenization
     ├── tt-adapter-storage-core
@@ -74,6 +75,7 @@ src-tauri/
 | `tt-ports` | repository / gateway / runtime trait、Host Resource opened-source port |
 | `tt-application` | 用例服务、业务编排、任务协调、policy 执行 |
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
+| `tt-adapter-mcp` | RMCP client、Streamable HTTP lifecycle、bounded response、tools/list pagination 与 tool validation |
 | `tt-adapter-provider-http` | LLM、SD、Translate、TTS、provider metadata 的 HTTP repository |
 | `tt-adapter-tokenization` | tokenizer concrete repository |
 | `tt-adapter-storage-core` | `DataDirectory`、基础文件系统 helper、chat/settings/user/theme/secret/quick reply/prompt cache/asset/llm connection/extension-store |
@@ -112,6 +114,7 @@ flowchart TB
 
 ```text
 tt-adapter-provider-http    -> tt-adapter-http
+tt-adapter-mcp              -> tt-adapter-http
 tt-adapter-tokenization     -> tt-adapter-http
 tt-adapter-extension        -> tt-adapter-http + tt-adapter-storage-core
 tt-adapter-storage-userdata -> tt-adapter-storage-core
@@ -225,7 +228,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 - `tt-adapter-storage-userdata` 承载长期用户数据仓储，例如角色卡、世界书、Agent workspace/profile、Skill package。它关心 data root / user data 语义，而不是泛泛的“文件”。
 - `tt-adapter-extension` 承载 third-party extension 发现、安装、版本检查、更新、分支查询/切换、删除与移动，以及 Git transport、repository 与 worktree 物化边界。扩展仓库不是普通 user data JSON。
 - `tt-adapter-media` 承载浏览器可见的 avatar/background/user media 资源契约。
-- `tt-adapter-provider-http` 和 `tt-adapter-tokenization` 可以复用 `tt-adapter-http`，但 provider 规则不能下沉到通用 HTTP helper。
+- `tt-adapter-provider-http`、`tt-adapter-mcp` 和 `tt-adapter-tokenization` 可以复用 `tt-adapter-http`，但协议/provider 规则不能下沉到通用 HTTP helper。
 - `tt-adapter-sync` 与 `tt-adapter-archive` 是独立运行时/执行器边界，Tauri UI glue 仍留在 host。
 
 如果一个新 adapter 只是为了两个调用点提前抽象，先不要建 crate。等它有明确 bounded context、独立依赖成本或稳定变化原因时再拆。

@@ -199,6 +199,19 @@ src/
 - `src/scripts/extensions/runtime/third-party-runtime.js` 不再承担 JS 源码重写或伪服务器职责，主要只保留第三方样式兼容修复。
 - 面向持续开发的现状说明见 `docs/CurrentState/ThirdPartyExtensions.md`；涉及实现边界或改动前，先读该文档，再决定是改前端 runtime 还是改后端资源端点。
 
+### 7.3.2 First-party React extension
+
+TauriTavern 自有的新 UI 可以作为 SillyTavern first-party extension 挂载 React client island。当前基线由 `src/scripts/extensions/mcp-manager/` 建立：
+
+- manifest、locale 和 SmartTheme CSS 仍遵循现有扩展资源契约；不引入 Next.js、独立页面 shell 或第二套路由。
+- `src/index.tsx` 只负责等待 Host ABI、解析 concrete actions、创建 extension container 与 `createRoot()`。
+- React presentation 只接收 strict typed initial state、actions 与 translator；不得直接 `invoke()`、操作 jQuery 或读取 Rust command 名。
+- 跨窗口和长期数据继续由 Rust/Host service 拥有；局部 React state 只表示当前视图，不能成为平台事实源或持久 cache。
+- 样式必须使用 `--SmartTheme*`、字体、动画与边框变量，保留 SillyTavern vanilla 视觉和用户主题覆盖能力。
+- `tsconfig.ui.json`、React Hooks/TypeScript lint 与 Rstest/Testing Library 组成最小验证闭环；`pnpm check` 是统一验收入口。
+
+后续迁移应以单个完整 extension root 为单位。迁移期间允许 Vue 与 React 共存，但不建立跨框架组件桥；最后一个 Vue root 移除后再删除 Vue runtime。
+
 ### 7.4 契约与约束
 
 - third-party 扩展命名约定为 `third-party/<folder>`，前后端均按该约定解析。

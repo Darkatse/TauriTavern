@@ -94,3 +94,7 @@
 20. `docs/CurrentState/WindowsDistribution.md`
    - WinGet Stable 发布链路与 Windows installer 契约
    - 包含 Package ID、幂等更新、一次性 seed manifest 与凭据维护边界
+
+21. `docs/CurrentState/MCP.md`
+   - MCP M1 registration/discovery 当前实现快照
+   - 包含 crate/Host ABI、identity、cache、故障域与明确未支持边界

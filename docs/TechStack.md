@@ -22,8 +22,8 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | Cargo workspace | 后端 crate 边界、依赖方向、focused tests |
 | Node.js `>=22.12.0` | 前端工具链与 guard scripts |
 | pnpm | JavaScript 包管理与项目脚本 |
-| Rspack | 前端 core/optional vendor bundle 构建 |
-| TypeScript | Tauri Host Kernel 类型检查 |
+| Rspack | 前端 vendor、Agent、Settings 与 first-party React extension 构建 |
+| TypeScript | Tauri Host Kernel 与 first-party React UI 的严格类型检查 |
 
 ## 3. 后端架构
 
@@ -39,6 +39,7 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | `tt-ports` | repository / gateway / runtime trait |
 | `tt-application` | use case、service、job coordinator、policy 编排 |
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
+| `tt-adapter-mcp` | RMCP Streamable HTTP discovery、响应边界、分页与 schema validation |
 | `tt-adapter-provider-http` | LLM、SD、Translate、TTS、provider metadata 的 HTTP repository |
 | `tt-adapter-tokenization` | tokenizer concrete repository |
 | `tt-adapter-storage-core` | `DataDirectory`、基础文件系统 helper、chat/settings/user/theme/secret 等基础存储 |
@@ -58,6 +59,7 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | `serde` / `serde_json` / `serde_yaml` | DTO、配置、SillyTavern 兼容数据格式 |
 | `tokio` / `tokio-util` | 异步任务、文件 IO、取消与运行时能力 |
 | `reqwest` / `hyper-util` / `tokio-tungstenite` | provider HTTP、stream、移动端 HTTP client 适配 |
+| `rmcp` / `jsonschema` | MCP lifecycle/protocol 与离线 JSON Schema 2020-12 校验 |
 | `gix` / `gix-transport` | third-party extension Git smart HTTP、embedded repository/worktree |
 | `tracing` / `tracing-subscriber` / `tracing-appender` | 后端日志、过滤、rolling file、Dev observability |
 | `thiserror` | 分层错误类型 |
@@ -85,7 +87,11 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | DOMPurify | HTML 净化 |
 | Highlight.js | 代码高亮 |
 | localForage | 浏览器侧存储 |
-| Vue | 本项目前端扩展新增引入 |
+| Vue | 既有 TauriTavern 扩展 UI；迁移期间继续维护 |
+| React / React DOM | 新的 TauriTavern first-party UI 基线；当前从 MCP 内置扩展开始使用 |
+| strict TypeScript / TSX | React presentation、typed actions 与组件测试 |
+
+first-party React UI 采用 client island，而不是 Next.js 或独立 SPA：SillyTavern 继续拥有文档与扩展生命周期，Tauri/Rust 与 Host ABI 继续拥有平台能力和数据事实，React 只挂载到独立 extension container。构建复用 Rspack `builtin:swc-loader`，`tsc` 独立执行类型检查；当前不引入路由、全局状态库、query cache、CSS-in-JS 或 UI framework。
 
 TauriTavern 自己维护的前端集成层位于 `src/tauri/main/*`，按 `context/kernel/services/adapters/routes` 拆分：
 

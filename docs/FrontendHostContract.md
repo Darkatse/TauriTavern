@@ -200,9 +200,12 @@
   - Preset / Character embedded skill 导入必须经过用户确认；同名不同 hash 必须显式 skip 或 replace，不自动改名。
   - Skill import/export 不触发上游 SillyTavern `GENERATION_*`、`TOOL_CALLS_*` 或 regex 事件。
 
-- `api.mcp`（规划中）：MCP Server/Tool/Resource/Prompt 的独立平台 API。Agent Mode 可以消费 MCP，但 MCP 不依附 Agent Mode。
-  - 详细草案见：`docs/API/MCP.md`。
-  - MCP stdio command/config 不得由 Agent/Preset/角色卡/世界书直接写入；危险工具调用必须经过 capability policy 与审批。
+- `api.mcp`：MCP registration 与只读 tool discovery 的独立平台 API。Agent Mode 未来可以消费 MCP，但 MCP 不依附 Agent Mode。
+  - 当前为实验性的 Project Contract；详细签名见 `docs/API/MCP.md`。
+  - 当前只暴露 `servers.list/create/rename/setState/remove/discover` 与 `tools.setPermission`，不暴露 raw RPC、tool call、RMCP session 或 endpoint mutation。
+  - server 新建后总是 Paused；工具缺省 Off。discovery annotations 不构成 authority。
+  - 当前没有 Agent/Legacy model exposure，也不会修改全局 SillyTavern ToolManager。
+  - 第一方 MCP 管理 UI 是独立内置扩展；它只消费本 API，不把 React 状态升格为平台事实，也不在 TauriTavern Settings 中维护第二入口。
 
 > 注意：`window.__TAURITAVERN__` 是“平台 ABI”，应保持**小而稳定**；不要把内部实现对象整个暴露出去。
 

@@ -40,9 +40,9 @@ const api = host?.api;
 - `api.skill`（已落地）
   - 面向本地 Agent Skill 管理。
   - 当前提供 scope-aware 的 list、previewImport、installImport、readFile、writeFile、move、export、delete；Agent run 内只能通过 `skill.list` / `skill.search` / `skill.read` 工具消费已安装 Skill。
-- `api.mcp`（规划中）
-  - 面向 MCP server/tool/resource/prompt 的独立平台能力。
-  - Agent 可以消费 MCP，但 MCP 不依附 Agent Mode。
+- `api.mcp`（M1 已落地）
+  - 面向 MCP registration 与只读 tool discovery 的独立平台能力。
+  - 当前提供 Active/Paused、Off/Ask/Allow、完整分页与 diagnostics；尚无 call 或 Agent/Legacy model exposure。
 
 ## 文档
 
@@ -56,7 +56,7 @@ const api = host?.api;
 | [Agent.md](Agent.md) | `api.agent` 当前参考（Agent Run / workspace / timeline） |
 | [LlmConnections.md](LlmConnections.md) | `api.llmConnections` 完整参考（Agent LLM 连接定义） |
 | [Skill.md](Skill.md) | `api.skill` 完整参考（Skill 管理、导入导出、读取） |
-| [MCP.md](MCP.md) | `api.mcp` 草案（MCP server/tool/resource/prompt） |
+| [MCP.md](MCP.md) | `api.mcp` M1 当前参考（registration/tool discovery） |
 | [Migration.md](Migration.md) | 从 SillyTavern 扩展迁移到 TauriTavern 的适配指南 |
 
 ## 契约说明
@@ -66,4 +66,4 @@ const api = host?.api;
 - Agent 已落地当前 Host ABI、canonical model IR、provider_state continuation、上下文只读工具、Skill tools 与 workspace 读改工具；真实边界见 `docs/API/Agent.md`、`docs/CurrentState/AgentFramework.md` 与 `docs/CurrentState/AgentProviderState.md`
 - LLM Connection 管理 API 真实边界见 `docs/API/LlmConnections.md` 与 `docs/Agent/PromptAssembly.md`
 - Skill 管理 API 真实边界见 `docs/API/Skill.md` 与 `docs/Agent/Skill.md`
-- MCP 仍处于规划阶段；实现前请以 `docs/API/MCP.md` 与 `docs/FrontendHostContract.md` 的草案约束为准
+- MCP M1 当前边界见 `docs/API/MCP.md` 与 `docs/CurrentState/MCP.md`
