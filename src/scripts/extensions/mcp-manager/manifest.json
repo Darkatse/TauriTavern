@@ -1,0 +1,16 @@
+{
+    "display_name": "MCP",
+    "loading_order": 26,
+    "requires": [],
+    "optional": [],
+    "js": "dist/index.bundle.js",
+    "css": "style.css",
+    "i18n": {
+        "zh-cn": "i18n/zh-cn.json",
+        "zh-tw": "i18n/zh-tw.json"
+    },
+    "author": "TauriTavern",
+    "version": "0.1.0",
+    "description": "First-party MCP server registration, discovery, and permission manager.",
+    "homePage": "https://github.com/Darkatse/TauriTavern"
+}

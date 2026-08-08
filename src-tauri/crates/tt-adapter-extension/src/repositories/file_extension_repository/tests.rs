@@ -68,6 +68,29 @@ fn test_http_clients() -> Arc<HttpClientPool> {
 }
 
 #[tokio::test]
+async fn discovery_includes_the_first_party_mcp_manager() {
+    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let repository = FileExtensionRepository::new(
+        user_extensions_dir,
+        global_extensions_dir,
+        source_store_root,
+        test_http_clients(),
+    );
+
+    let extensions = repository
+        .discover_extensions()
+        .await
+        .expect("discover extensions");
+    assert!(
+        extensions
+            .iter()
+            .any(|extension| extension.name == "mcp-manager")
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup temp root");
+}
+
+#[tokio::test]
 async fn embedded_install_version_and_update_round_trip_over_smart_http() {
     let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
     let mut server = GitTestServer::start(root.join("git-origin"));

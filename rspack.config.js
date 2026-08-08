@@ -25,22 +25,27 @@ const libraryCacheInputs = [
 
 const agentSystemCacheInputs = [
   ...commonCacheInputs,
-  ...listJavaScriptFiles('src/scripts/extensions/agent-system/src'),
-  ...listJavaScriptFiles('src/scripts/tauritavern/agent'),
+  ...listScriptFiles('src/scripts/extensions/agent-system/src'),
+  ...listScriptFiles('src/scripts/tauritavern/agent'),
+];
+
+const mcpManagerCacheInputs = [
+  ...commonCacheInputs,
+  ...listScriptFiles('src/scripts/extensions/mcp-manager/src'),
 ];
 
 const tauriSettingUiCacheInputs = [
   ...commonCacheInputs,
-  ...listJavaScriptFiles('src/scripts/tauri/setting/settings-app'),
-  ...listJavaScriptFiles('src/scripts/tauri/setting/dev-logs-app'),
-  ...listJavaScriptFiles('src/scripts/tauri/setting/sync-app'),
+  ...listScriptFiles('src/scripts/tauri/setting/settings-app'),
+  ...listScriptFiles('src/scripts/tauri/setting/dev-logs-app'),
+  ...listScriptFiles('src/scripts/tauri/setting/sync-app'),
 ];
 
 function resolveRepoPath(file) {
   return path.resolve(__dirname, file);
 }
 
-function listJavaScriptFiles(relativeDir) {
+function listScriptFiles(relativeDir) {
   const root = resolveRepoPath(relativeDir);
   const results = [];
   const stack = [root];
@@ -55,7 +60,7 @@ function listJavaScriptFiles(relativeDir) {
         continue;
       }
 
-      if (entry.isFile() && path.extname(entry.name) === '.js') {
+      if (entry.isFile() && ['.js', '.ts', '.tsx'].includes(path.extname(entry.name))) {
         results.push(path.relative(__dirname, fullPath).replace(/\\/g, '/'));
       }
     }
@@ -94,7 +99,7 @@ function createPersistentCache(name, inputFiles) {
 }
 
 const sharedResolve = {
-  extensions: ['.js'],
+  extensions: ['.tsx', '.ts', '.js'],
   alias: {
     '/lib.js': path.resolve(__dirname, 'src/lib.js'),
     '/script.js': path.resolve(__dirname, 'src/script.js'),
@@ -152,6 +157,31 @@ function createVueDefinePlugin() {
   });
 }
 
+function createReactModule() {
+  return {
+    rules: [
+      {
+        test: /\.tsx?$/,
+        exclude: /node_modules/,
+        type: 'javascript/auto',
+        use: {
+          loader: 'builtin:swc-loader',
+          options: {
+            detectSyntax: 'auto',
+            jsc: {
+              transform: {
+                react: {
+                  runtime: 'automatic',
+                },
+              },
+            },
+          },
+        },
+      },
+    ],
+  };
+}
+
 const coreConfig = {
   name: 'vendor-libs',
   mode: 'production',
@@ -205,6 +235,31 @@ const agentSystemConfig = {
   ],
 };
 
+const mcpManagerConfig = {
+  name: 'mcp-manager',
+  mode: 'production',
+  bail: true,
+  target: ['web', 'es2020'],
+  cache: createPersistentCache('mcp-manager', mcpManagerCacheInputs),
+  entry: {
+    index: './src/scripts/extensions/mcp-manager/src/index.tsx',
+  },
+  output: {
+    filename: '[name].bundle.js',
+    path: path.resolve(__dirname, 'src/scripts/extensions/mcp-manager/dist'),
+    module: true,
+    library: {
+      type: 'module'
+    },
+    clean: true,
+  },
+  module: createReactModule(),
+  resolve: sharedResolve,
+  optimization: sharedOptimization,
+  performance: sharedPerformance,
+  stats: sharedStats,
+};
+
 const tauriTavernSettingsConfig = {
   name: 'tauritavern-settings',
   dependencies: ['vendor-libs'],
@@ -235,4 +290,4 @@ const tauriTavernSettingsConfig = {
   ],
 };
 
-export default [coreConfig, agentSystemConfig, tauriTavernSettingsConfig];
+export default [coreConfig, agentSystemConfig, mcpManagerConfig, tauriTavernSettingsConfig];

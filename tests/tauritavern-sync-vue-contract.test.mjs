@@ -323,7 +323,7 @@ test('Rspack exposes a dedicated TauriTavern Sync Vue entry', async () => {
     const source = await readRepoFile('rspack.config.js');
 
     assert.match(source, /sync:\s*['"]\.\/src\/scripts\/tauri\/setting\/sync-app\/index\.js['"]/);
-    assert.match(source, /listJavaScriptFiles\(['"]src\/scripts\/tauri\/setting\/sync-app['"]\)/);
+    assert.match(source, /listScriptFiles\(['"]src\/scripts\/tauri\/setting\/sync-app['"]\)/);
     assert.match(source, /src\/scripts\/tauri\/setting\/dist/);
 });
 

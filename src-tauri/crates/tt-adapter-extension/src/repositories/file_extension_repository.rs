@@ -50,6 +50,7 @@ const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "vectors",
     "tauritavern-version",
     "agent-system",
+    "mcp-manager",
     "translate",
     "tts",
 ];

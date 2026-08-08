@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.host.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "isolatedModules": true,
+    "module": "ESNext",
+    "verbatimModuleSyntax": true,
+    "types": ["react", "react-dom"]
+  },
+  "include": [
+    "src/types.d.ts",
+    "src/scripts/extensions/**/*.ts",
+    "src/scripts/extensions/**/*.tsx"
+  ]
+}
