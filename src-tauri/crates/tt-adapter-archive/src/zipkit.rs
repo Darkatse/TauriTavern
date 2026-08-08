@@ -32,12 +32,6 @@ pub(crate) fn export_file_options(path: impl AsRef<Path>) -> FileOptions {
         .unix_permissions(0o644)
 }
 
-pub(crate) fn enclosed_zip_entry_path<R: Read + ?Sized>(
-    entry: &ZipFile<'_, R>,
-) -> Result<PathBuf, DomainError> {
-    Ok(enclosed_zip_entry_path_with_name(entry)?.0)
-}
-
 pub(crate) fn enclosed_zip_entry_path_with_name<'a, 'b, R: Read + ?Sized>(
     entry: &'b ZipFile<'a, R>,
 ) -> Result<(PathBuf, &'b str), DomainError> {

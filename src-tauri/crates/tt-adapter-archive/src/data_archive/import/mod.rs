@@ -44,7 +44,7 @@ pub(crate) fn run_import_data_archive(
         .map_err(|error| internal_error("Failed to create normalized workspace", error))?;
 
     let mut layout_scan = layout::ArchiveLayoutScan::new();
-    let mut archive = archive::prepare_archive_for_import(
+    let archive = archive::prepare_archive_for_import(
         archive_path,
         &raw_root,
         report_progress,
@@ -55,29 +55,25 @@ pub(crate) fn run_import_data_archive(
     let layout = layout_scan.finish(scanned_archive)?;
     ensure_not_cancelled(is_cancelled)?;
 
-    match &mut archive {
+    let staged_archive = match archive {
         archive::PreparedArchive::Zip(zip_archive) => {
             report_progress("scanning", 10.0, "Archive layout detected");
-            extract::extract_zip_to_normalized_root(
-                zip_archive,
-                &layout,
-                &normalized_root,
-                scanned_archive.total_uncompressed_bytes,
+            zip_archive.stage(
+                &raw_root,
+                &|path| {
+                    extract::target_relative_path(path, &layout, layout.detected_user_handles())
+                        .is_some()
+                },
                 report_progress,
                 is_cancelled,
-            )?;
+            )?
         }
-        archive::PreparedArchive::Staged(staged_archive) => {
-            report_progress("normalizing", 90.0, "Normalizing archive layout");
-            extract::normalize_staged_archive(
-                staged_archive,
-                &layout,
-                &normalized_root,
-                is_cancelled,
-            )?;
-        }
-    }
-    drop(archive);
+        archive::PreparedArchive::Staged(staged_archive) => staged_archive,
+    };
+
+    report_progress("normalizing", 90.0, "Normalizing archive layout");
+    extract::normalize_staged_archive(&staged_archive, &layout, &normalized_root, is_cancelled)?;
+    drop(staged_archive);
 
     report_progress("applying", 92.0, "Merging data directory");
     ensure_not_cancelled(is_cancelled)?;
@@ -108,7 +104,7 @@ mod tests {
     use std::fs;
     use std::io::Cursor;
     use std::io::Write;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tar::{Builder as TarBuilder, EntryType, Header};
     use zip::CompressionMethod;
     use zip::ZipWriter;
@@ -293,7 +289,7 @@ mod tests {
         let mut layout_scan = layout::ArchiveLayoutScan::new();
         let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
         let is_cancelled = || false;
-        let mut prepared = archive::prepare_archive_for_import(
+        let prepared = archive::prepare_archive_for_import(
             &archive_path,
             &raw_root,
             &mut report_progress,
@@ -305,18 +301,27 @@ mod tests {
         let layout = layout_scan.finish(scanned_archive).expect("finish layout");
 
         fs::remove_file(&archive_path).expect("remove source archive");
-        let archive::PreparedArchive::Zip(zip_archive) = &mut prepared else {
+        let archive::PreparedArchive::Zip(zip_archive) = prepared else {
             panic!("zip fixture should prepare as zip");
         };
-        extract::extract_zip_to_normalized_root(
-            zip_archive,
+        let staged_archive = zip_archive
+            .stage(
+                &raw_root,
+                &|path| {
+                    extract::target_relative_path(path, &layout, layout.detected_user_handles())
+                        .is_some()
+                },
+                &mut report_progress,
+                &is_cancelled,
+            )
+            .expect("extract from prepared zip archive");
+        extract::normalize_staged_archive(
+            &staged_archive,
             &layout,
             &normalized_root,
-            scanned_archive.total_uncompressed_bytes,
-            &mut report_progress,
             &is_cancelled,
         )
-        .expect("extract from prepared zip archive");
+        .expect("normalize staged zip archive");
 
         assert_eq!(
             fs::read(normalized_root.join("default-user/characters/zip.json"))
@@ -409,6 +414,98 @@ mod tests {
                 .expect("read imported conflict target"),
             b"third"
         );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn zip_import_preserves_archive_order_for_target_conflicts() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-zip-order-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.zip");
+
+        fs::create_dir_all(&workspace_root).expect("create workspace");
+        write_zip(
+            &archive_path,
+            &[
+                ("alice/characters/a.json", b"first"),
+                ("bob/characters/a.json", b"second"),
+                ("carol/characters/a.json", b"third"),
+            ],
+        );
+
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &|| false,
+        )
+        .expect("import zip archive");
+
+        assert_eq!(
+            fs::read(data_root.join("default-user/characters/a.json"))
+                .expect("read imported conflict target"),
+            b"third"
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn cancelling_parallel_zip_staging_does_not_apply_partial_data() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-zip-cancel-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.zip");
+        let payload = vec![b'x'; crate::data_archive::shared::COPY_BUFFER_BYTES * 3];
+
+        fs::create_dir_all(&workspace_root).expect("create workspace");
+        fs::write(
+            &archive_path,
+            write_zip_bytes(
+                &[
+                    ("data/default-user/characters/first.bin", payload.as_slice()),
+                    (
+                        "data/default-user/characters/second.bin",
+                        payload.as_slice(),
+                    ),
+                ],
+                FileOptions::default().compression_method(CompressionMethod::Stored),
+            ),
+        )
+        .expect("write zip");
+
+        let cancelled = AtomicBool::new(false);
+        let mut report_progress = |stage: &str, percent: f32, _message: &str| {
+            if stage == "extracting" && percent > 15.0 {
+                cancelled.store(true, Ordering::SeqCst);
+            }
+        };
+        let is_cancelled = || cancelled.load(Ordering::SeqCst);
+        let failure = run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &is_cancelled,
+        )
+        .expect_err("cancelled import should fail");
+
+        assert!(
+            matches!(&failure.error, DomainError::Cancelled(_)),
+            "unexpected failure: {:?}",
+            failure.error
+        );
+        assert!(!data_root.exists());
 
         cleanup_directory_sync(&root);
     }

@@ -1,5 +1,5 @@
 use std::ffi::OsStr;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path};
 
@@ -281,28 +281,6 @@ pub fn ensure_output_directory(path: &Path) -> Result<(), DomainError> {
     }
 
     fs::create_dir_all(path).map_err(|error| internal_error("Failed to create directory", error))
-}
-
-pub fn create_output_file_replacing_directory(path: &Path) -> Result<File, DomainError> {
-    match File::create(path) {
-        Ok(file) => Ok(file),
-        Err(error) if error.kind() == io::ErrorKind::IsADirectory => {
-            fs::remove_dir_all(path).map_err(|remove_error| {
-                internal_error(
-                    "Failed to replace directory with file while applying overlay",
-                    remove_error,
-                )
-            })?;
-
-            File::create(path).map_err(|create_error| {
-                internal_error("Failed to create overlay output file", create_error)
-            })
-        }
-        Err(error) => Err(internal_error(
-            "Failed to create overlay output file",
-            error,
-        )),
-    }
 }
 
 pub fn cleanup_directory_sync(path: &Path) {
