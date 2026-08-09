@@ -19,6 +19,7 @@ const DISPLAY_EVENT_TYPES = new Set([
     'agent_task_completed',
     'agent_task_failed',
     'agent_task_cancelled',
+    'context_assembled',
     'task_return_completed',
     'tool_call_requested',
     'tool_call_completed',
@@ -76,6 +77,7 @@ const EVENT_META = Object.freeze({
     agent_task_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'subagent', titleKey: 'timelineEventSubAgentTaskCompleted' },
     agent_task_failed: { icon: 'fa-triangle-exclamation', tone: 'error', kind: 'subagent', titleKey: 'timelineEventSubAgentTaskFailed' },
     agent_task_cancelled: { icon: 'fa-ban', tone: 'warn', kind: 'subagent', titleKey: 'timelineEventSubAgentTaskCancelled' },
+    context_assembled: { icon: 'fa-triangle-exclamation', tone: 'warn', kind: 'tool', titleKey: 'timelineEventToolConfigurationWarning' },
     task_return_completed: { icon: 'fa-reply', tone: 'success', kind: 'subagent', titleKey: 'timelineEventTaskReturned' },
     tool_call_requested: { icon: 'fa-screwdriver-wrench', tone: 'active', kind: 'tool', titleKey: 'timelineEventToolRequested' },
     tool_call_completed: { icon: 'fa-check', tone: 'success', kind: 'tool', titleKey: 'timelineEventToolCompleted' },
@@ -99,7 +101,11 @@ const EVENT_META = Object.freeze({
 });
 
 export function isDisplayableRunEvent(event) {
-    return DISPLAY_EVENT_TYPES.has(String(event?.type || ''));
+    const type = String(event?.type || '');
+    return DISPLAY_EVENT_TYPES.has(type)
+        && (type !== 'context_assembled'
+            || (Array.isArray(event?.payload?.toolDiagnostics)
+                && event.payload.toolDiagnostics.length > 0));
 }
 
 export function hasModelTurnNarration(event) {
@@ -635,6 +641,8 @@ function eventTitleParams(type, payload) {
             return { agent: payload.profileId || payload.invocationId || '' };
         case 'task_return_completed':
             return { task: payload.taskId || '' };
+        case 'context_assembled':
+            return { count: payload.toolDiagnostics?.length || 0 };
         case 'tool_call_requested':
         case 'tool_call_completed':
         case 'tool_call_failed':
@@ -678,6 +686,10 @@ function eventSummary(type, payload, allEvents) {
             return [payload.status, payload.kind].filter(Boolean).join(' | ');
         case 'task_return_completed':
             return [payload.status, payload.summaryRef || payload.resultRef].filter(Boolean).join(' | ');
+        case 'context_assembled':
+            return Array.isArray(payload.toolDiagnostics)
+                ? payload.toolDiagnostics.map((diagnostic) => diagnostic?.message).filter(Boolean).join(' | ')
+                : '';
         case 'tool_call_requested':
             return payload.callId || '';
         case 'tool_call_completed':

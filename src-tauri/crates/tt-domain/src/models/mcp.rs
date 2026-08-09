@@ -41,6 +41,17 @@ impl McpRegistrationId {
         ToolProviderId::parse(format!("{MCP_PROVIDER_PREFIX}{self}"))
             .expect("canonical MCP registration IDs form valid provider IDs")
     }
+
+    pub fn from_provider_id(provider_id: &str) -> Result<Self, DomainError> {
+        let raw = provider_id
+            .strip_prefix(MCP_PROVIDER_PREFIX)
+            .ok_or_else(|| {
+                DomainError::InvalidData(format!(
+                    "mcp.provider_id_invalid: `{provider_id}` is not an MCP provider id"
+                ))
+            })?;
+        Self::parse(raw)
+    }
 }
 
 impl fmt::Display for McpRegistrationId {
@@ -284,6 +295,10 @@ mod tests {
         assert_eq!(
             tool_id.as_str(),
             "mcp/550e8400-e29b-41d4-a716-446655440000:search:exact"
+        );
+        assert_eq!(
+            McpRegistrationId::from_provider_id(tool_id.provider_id()).unwrap(),
+            id
         );
         assert!(McpRegistrationId::parse("550E8400-E29B-41D4-A716-446655440000").is_err());
     }

@@ -9,6 +9,7 @@ use crate::mcp::McpDiscoveryResult;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpRegistrationStorageIssue {
+    pub registration_id: Option<McpRegistrationId>,
     pub file_name: String,
     pub message: String,
 }

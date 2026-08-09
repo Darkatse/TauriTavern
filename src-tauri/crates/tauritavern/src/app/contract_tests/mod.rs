@@ -10,11 +10,12 @@ use image::{DynamicImage, ImageFormat, RgbaImage};
 use serde_json::{Value, json};
 use tokio::fs;
 use tokio::sync::{Mutex, watch};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use tt_adapter_storage_core::FileChatRepository;
-use tt_adapter_storage_core::FileLlmConnectionRepository;
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use tt_adapter_storage_core::{FileLlmConnectionRepository, FileMcpServerRepository};
 use tt_adapter_storage_userdata::FileAgentProfileRepository;
 use tt_adapter_storage_userdata::FileAgentRepository;
 use tt_adapter_storage_userdata::FileCharacterRepository;
@@ -50,6 +51,7 @@ use tt_application::services::agent_workspace_lifecycle_service::{
 use tt_application::services::character_service::CharacterService;
 use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_application::services::llm_connection_service::LlmConnectionService;
+use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
 use tt_domain::errors::DomainError;
@@ -59,7 +61,12 @@ use tt_domain::models::agent::{
     AgentRunPresentation, AgentRunStatus, WorkspacePath,
 };
 use tt_domain::models::chat::Chat;
+use tt_domain::models::mcp::{McpEndpoint, McpToolPermission};
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
+use tt_ports::mcp::{
+    McpCallIssue, McpCallOutcome, McpDiscoveredTool, McpDiscoveryResult, McpGateway,
+    McpKnownResponse, McpTextContent, McpToolCallResult,
+};
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
@@ -86,6 +93,8 @@ struct AgentRuntimeFixture {
     chat_repository: Arc<FileChatRepository>,
     profile_service: Arc<AgentProfileService>,
     model_gateway: Arc<MockAgentModelGateway>,
+    mcp_service: Arc<McpService>,
+    mcp_gateway: Arc<ContractMcpGateway>,
 }
 
 fn temp_root(label: &str) -> PathBuf {
@@ -205,6 +214,11 @@ fn agent_runtime_fixture_with_results(
         llm_connection_service.clone(),
     ));
     let model_gateway = Arc::new(MockAgentModelGateway::with_results(responses));
+    let mcp_gateway = Arc::new(ContractMcpGateway::default());
+    let mcp_service = Arc::new(McpService::new(
+        Arc::new(FileMcpServerRepository::new(root.join("_tauritavern/mcp"))),
+        mcp_gateway.clone(),
+    ));
     let service = Arc::new(AgentRuntimeService::new(
         agent_repository.clone() as Arc<dyn AgentRunRepository>,
         agent_repository.clone() as Arc<dyn AgentInvocationRepository>,
@@ -217,6 +231,7 @@ fn agent_runtime_fixture_with_results(
         profile_service.clone(),
         llm_connection_service,
         prompt_assembly_service,
+        mcp_service.clone(),
     ));
 
     AgentRuntimeFixture {
@@ -225,6 +240,8 @@ fn agent_runtime_fixture_with_results(
         chat_repository: chat_file_repository,
         profile_service,
         model_gateway,
+        mcp_service,
+        mcp_gateway,
     }
 }
 
@@ -737,6 +754,66 @@ impl PresetRepository for NullPresetRepository {
         _preset_type: &PresetType,
     ) -> Result<Option<DefaultPreset>, DomainError> {
         Ok(None)
+    }
+}
+
+#[derive(Default)]
+struct ContractMcpGateway {
+    calls: Mutex<Vec<(String, serde_json::Map<String, Value>)>>,
+    outcomes: Mutex<VecDeque<McpCallOutcome>>,
+}
+
+#[async_trait]
+impl McpGateway for ContractMcpGateway {
+    async fn discover_tools(
+        &self,
+        _endpoint: &McpEndpoint,
+    ) -> Result<McpDiscoveryResult, DomainError> {
+        Ok(McpDiscoveryResult {
+            protocol_version: "2026-07-28".to_string(),
+            server_name: Some("contract-mcp".to_string()),
+            server_version: Some("1.0".to_string()),
+            tools: vec![McpDiscoveredTool {
+                native_name: "issue.create".to_string(),
+                title: Some("Create issue".to_string()),
+                description: Some("Create an issue in the contract fixture.".to_string()),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "title": { "type": "string" } },
+                    "required": ["title"]
+                }),
+                output_schema: None,
+                annotations: json!({ "readOnlyHint": false }),
+            }],
+            diagnostics: Vec::new(),
+        })
+    }
+
+    async fn call_tool(
+        &self,
+        _endpoint: &McpEndpoint,
+        native_name: &str,
+        arguments: serde_json::Map<String, Value>,
+        _cancel: CancellationToken,
+    ) -> Result<McpCallOutcome, DomainError> {
+        self.calls
+            .lock()
+            .await
+            .push((native_name.to_string(), arguments));
+        if let Some(outcome) = self.outcomes.lock().await.pop_front() {
+            return Ok(outcome);
+        }
+        Ok(McpCallOutcome::KnownResponse(McpKnownResponse::ToolResult(
+            McpToolCallResult {
+                is_error: false,
+                text: vec![McpTextContent {
+                    index: 0,
+                    text: "x".repeat(60_000),
+                }],
+                structured_content: Some(json!({ "issueId": 42 })),
+                diagnostics: Vec::new(),
+            },
+        )))
     }
 }
 

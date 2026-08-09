@@ -607,19 +607,28 @@ type AgentProfileDiagnostic = {
 
 ```ts
 type AgentToolCatalogItem = {
-  name: string;
+  id: string;                  // canonical ToolId
+  nativeName: string;
   title: string;
   description: string;
   inputSchema: unknown;
   outputSchema?: unknown;
   annotations?: unknown;
-  source: string;
+  source: 'builtin' | 'mcp';
+  registrationId?: string;
+  serverDisplayName?: string;
+  permission?: 'off' | 'ask' | 'allow';
+};
+
+type AgentListToolsResult = {
+  tools: AgentToolCatalogItem[];
+  diagnostics: Array<{ toolId?: string; code: string; message: string }>;
 };
 ```
 
-`tools.list()` 返回当前后端 Agent Tool Catalog 的 UI 投影。Profile 面板可以用它编辑 `tools.toolDescriptions`，但不得把返回值当作可修改的 catalog。Model alias 属于 invocation snapshot，不进入此 DTO。
+`tools.list()` 返回 builtin catalog 与当前可用于 Agent 的 MCP cached catalog 的 UI 投影。Profile 面板以 `id` 编辑 `tools.allow`、`tools.deny` 与 `tools.toolDescriptions`，但不得把返回值当作可修改的 catalog。MCP 只读取 application memory/disk snapshot，不在该命令或 Agent 启动时隐式联网；缺失 snapshot、Paused/Off、目录中缺失或 root input schema 不是显式 `object` 的工具不会进入 `tools`，并在 Profile 配置警告中显示 diagnostic。用户通过 MCP Manager discovery/refresh 更新目录。
 
-该 DTO 只服务当前 Agent Profile UI，不是跨来源 selector schema。MCP 工具进入 Profile 前，必须与 typed selector 迁移一起原子升级；不要向此 DTO 增加全局 alias 或 name fallback。
+Model alias 属于 invocation snapshot，不进入此 DTO。Profile v3 的所有 tool-keyed 字段只接受 canonical ToolId：builtin 为 `builtin:<native-name>`，MCP 为 `mcp/<registration-uuid>:<native-name>`；v1/v2 载入后一次性迁移并写回，不保留 shorthand 双语法。
 
 ## 14. readDiff
 
@@ -799,7 +808,11 @@ Agent Mode on：
 | `workspace.commit` | `workspace_commit` | 提交可见 workspace 文件到当前聊天；无参数默认 replace `output/main.md`；append 将本次读取到的文件文本追加到同一消息 |
 | `workspace.finish` | `workspace_finish` | 结束工具循环；前台 run 要求已有成功 commit，后台 run 可直接结束 |
 
-当前不存在 MCP、shell 或 extension bridge 工具。
+Profile 显式选择且在 MCP Manager 中为 Ask/Allow 的 MCP 工具会加入 invocation snapshot。模型侧 alias 为 `mcp__<规范化 server displayName>__<规范化 nativeName>`；碰撞使用确定性 `__2`、`__3` 后缀，provider 的 64-byte 上限内优先保留工具动作部分。alias 只在当前 snapshot 内解析，实际执行始终使用 binding 中的 canonical ToolId 与原始 native name，不反向解析 alias。
+
+M3 暂不提供审批交互：Ask 与 Allow 对 Agent 都表示可直接调用；Off、Paused、registration 删除及调用前撤权仍在 application 边界阻止发送。已知 server/tool error 作为可恢复 tool result 回到模型；`outcome_unknown` 可能已经产生副作用，因此不回填模型、不自动 retry，并终止当前 run（已有 commit 时沿用现有 partial-success 收尾）。
+
+MCP `AgentToolResult` 序列化后超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 已先以 create-only 语义保存在 `tool-results/`；模型收到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、路径、字符数与 `workspace_read_file` / `workspace_search_files` 的分段读取指引。该值必须为正整数，并随 resolved Profile 固定到 invocation。`tool-results/` 是所有 invocation 可见但永远不可写的 run root。当前仍不存在 shell 或 extension bridge 工具。
 
 模型可修正的工具错误会作为 `is_error = true` tool result 回填下一轮。宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍然让 run failed。
 

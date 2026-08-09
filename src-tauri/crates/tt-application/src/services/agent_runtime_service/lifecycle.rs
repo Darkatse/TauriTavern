@@ -84,12 +84,12 @@ impl AgentRuntimeService {
                 .tools
                 .allow
                 .iter()
-                .any(|name| name == "workspace.commit")
+                .any(|id| id.is_builtin() && id.native_name() == "workspace.commit")
                 || resolved_profile
                     .tools
                     .deny
                     .iter()
-                    .any(|name| name == "workspace.commit"))
+                    .any(|id| id.is_builtin() && id.native_name() == "workspace.commit"))
         {
             return Err(ApplicationError::ValidationError(
                 "agent.foreground_commit_unavailable: foreground runs require workspace.commit"

@@ -1,8 +1,8 @@
 # `window.__TAURITAVERN__.api.mcp` — MCP Manager API
 
-本文档描述已经落地的 MCP M2.1 Host ABI。MCP 是独立平台能力；当前提供 registration、persistent tool catalog、显式 refresh 与第一方 Manager test call，尚未接入 Agent 或 Legacy 生成。
+本文档描述已经落地的 MCP Manager Host ABI 与 M3 Agent 消费契约。MCP 是独立平台能力；当前提供 registration、persistent tool catalog、显式 refresh、第一方 Manager test call，并由 Rust Agent Runtime 消费选中的 cached tools。Legacy 生成尚未接入。
 
-状态：M2.1 已实现，Project Contract（实验性）。
+状态：M3 Agent vertical slice 已实现，Project Contract（实验性）。
 
 第一方管理 UI 位于 Extensions 抽屉的 MCP 内置扩展中。该扩展只是 `api.mcp` 的 React/strict TSX presentation；TauriTavern Settings 不再提供平行入口。
 
@@ -144,15 +144,23 @@ type McpTestCallOutcome =
 
 该入口沿用当前 WebView trust model：同一 WebView 内的第一方/vendor extension script 被视为用户授权代码，backend 不声称能证明一次 command 源自物理点击或隔离 hostile extension。若 trust model 改变，应增加真实 command capability boundary，而不是在 DTO 中伪造 click flag。
 
-## 7. 明确未支持
+## 7. Agent 消费契约
 
-M2 没有以下 API 或行为：
+Agent 没有新增公共 raw-call API。Profile v3 以 `mcp/<registration-uuid>:<native-name>` 选择工具；每个 root、return-mode child 与 handoff invocation 都通过 `McpService` 读取 memory→disk persistent snapshot，绝不因启动 Agent 隐式 cold discovery。无 snapshot 或工具不在缓存时，工具从该 invocation 省略并留下 diagnostic；用户在 Manager 中 discovery/refresh 后，下一个 invocation 才观察新目录。
 
-- Agent/Legacy 发起的 MCP tool call、Ask 审批或公共 raw-call API；
-- Agent ToolSet 或 Legacy ToolManager/generation overlay；
+只有 Active 且 permission 为 Ask/Allow、input schema root 明确为 `type: "object"` 的工具可以进入 Agent binding。当前按用户要求不实现 Ask 审批 UI：Ask 与 Allow 都自动执行；Off 与 Paused 在广告前过滤，并在实际发送前重新读取 registration 复核。参数必须是 256 KiB 内 JSON object，Host 不按 schema 改写。alias 由 Agent snapshot 生成，不属于 Manager DTO 或 MCP identity。
+
+已知结果投影为现有 `AgentToolResult`。序列化结果超过 Agent Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 保存在 run 的只读可见 `tool-results/`，模型得到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、路径与分段读取指引。该值只属于 Agent invocation 投影，不进入共享 `McpService` 调用契约。`outcome_unknown` 不自动 retry，也不伪造 tool result；当前没有审批/未知结果交互状态机，因此终止当前 Agent run。
+
+## 8. 明确未支持
+
+当前没有以下 API 或行为：
+
+- Ask 审批、公共 raw-call API；
+- Legacy ToolManager/generation overlay；
 - OAuth、credential、stdio、2024 HTTP+SSE；
 - Resources、Prompts、Tasks、Apps、subscriptions/list-changed；
 - background discovery、discovery/list 通用 retry、catalog TTL/revision history；
-- endpoint migration、scope hierarchy、model alias。
+- endpoint migration、scope hierarchy、Manager-defined/global model alias。
 
-model alias 属于未来 invocation `ToolBinding`，不属于 registration/discovery/test call。M2 不把 MCP tool 注册进全局 SillyTavern `ToolManager`。
+model alias 属于 Agent invocation `ToolBinding`，不属于 registration/discovery/test call。M3 不把 MCP tool 注册进全局 SillyTavern `ToolManager`。

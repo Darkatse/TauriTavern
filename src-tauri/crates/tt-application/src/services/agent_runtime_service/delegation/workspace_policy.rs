@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use crate::services::agent_workspace_scope::AGENT_TOOL_RESULTS_ROOT;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -41,6 +42,11 @@ impl WorkspaceRepository for InvocationWorkspaceRepository<'_> {
     async fn read_manifest(&self, run_id: &str) -> Result<WorkspaceManifest, DomainError> {
         let mut manifest = self.inner.read_manifest(run_id).await?;
         for root in &mut manifest.roots {
+            if root.path == AGENT_TOOL_RESULTS_ROOT {
+                root.visible = true;
+                root.writable = false;
+                continue;
+            }
             root.visible = self
                 .profile
                 .workspace

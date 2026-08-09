@@ -8,10 +8,11 @@ use tt_domain::models::agent::profile::{
     AgentModelBinding, AgentModelBindingMode, AgentOutputArtifact, AgentOutputArtifactTarget,
     AgentOutputPolicy, AgentPresetBinding, AgentPresetBindingMode, AgentProfileDefinition,
     AgentProfileId, AgentProfileInstructions, AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy,
-    AgentWorkspacePolicy, DEFAULT_AGENT_PROFILE_ID, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
-    DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
-    DEFAULT_AGENT_TOOL_MAX_ROUNDS,
+    AgentWorkspacePolicy, DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT, DEFAULT_AGENT_PROFILE_ID,
+    DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN,
+    DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_ROUNDS,
 };
+use tt_domain::models::tool::ToolId;
 
 use super::constants::{
     AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_LIST_TOOL, WORKSPACE_ROOT_UNIVERSE,
@@ -49,28 +50,36 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
             ..Default::default()
         },
         tools: AgentToolPolicy {
-            allow: vec![
-                AGENT_LIST_TOOL.to_string(),
-                AGENT_DELEGATE_TOOL.to_string(),
-                AGENT_AWAIT_TOOL.to_string(),
-                "chat.search".to_string(),
-                "chat.read_messages".to_string(),
-                "worldinfo.read_activated".to_string(),
-                "skill.list".to_string(),
-                "skill.search".to_string(),
-                "skill.read".to_string(),
-                "workspace.list_files".to_string(),
-                "workspace.search_files".to_string(),
-                "workspace.read_file".to_string(),
-                "workspace.write_file".to_string(),
-                "workspace.apply_patch".to_string(),
-                "workspace.commit".to_string(),
-                "workspace.finish".to_string(),
-            ],
+            allow: [
+                AGENT_LIST_TOOL,
+                AGENT_DELEGATE_TOOL,
+                AGENT_AWAIT_TOOL,
+                "chat.search",
+                "chat.read_messages",
+                "worldinfo.read_activated",
+                "skill.list",
+                "skill.search",
+                "skill.read",
+                "workspace.list_files",
+                "workspace.search_files",
+                "workspace.read_file",
+                "workspace.write_file",
+                "workspace.apply_patch",
+                "workspace.commit",
+                "workspace.finish",
+            ]
+            .into_iter()
+            .map(|name| {
+                ToolId::builtin(name)
+                    .expect("default Agent tools form valid ToolIds")
+                    .to_string()
+            })
+            .collect(),
             deny: Vec::new(),
             tool_descriptions: BTreeMap::new(),
             max_rounds: DEFAULT_AGENT_TOOL_MAX_ROUNDS,
             max_calls_per_run: DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
+            mcp_result_inline_char_limit: DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT,
             max_calls_per_tool: BTreeMap::new(),
         },
         skills: AgentSkillPolicy {

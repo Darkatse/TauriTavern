@@ -471,7 +471,7 @@ mod tests {
         };
 
         serde_json::from_value(json!({
-            "schemaVersion": 1,
+            "schemaVersion": 3,
             "kind": "tauritavern.agentProfile",
             "id": "test",
             "displayName": "Test",
@@ -487,7 +487,11 @@ mod tests {
             },
             "instructions": instructions,
             "tools": {
-                "allow": ["workspace.write_file", "workspace.commit", "workspace.finish"],
+                "allow": [
+                    "builtin:workspace.write_file",
+                    "builtin:workspace.commit",
+                    "builtin:workspace.finish"
+                ],
                 "deny": [],
                 "toolDescriptions": {},
                 "maxRounds": 1,

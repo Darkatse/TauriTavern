@@ -1,4 +1,6 @@
-use crate::services::agent_workspace_scope::format_model_workspace_roots;
+use crate::services::agent_workspace_scope::{
+    format_model_visible_workspace_roots, format_model_workspace_roots,
+};
 use tt_domain::models::agent::AgentModelTool;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 
@@ -180,7 +182,7 @@ pub fn materialize_agent_system_prompt(
         );
         lines.push(format!(
             "- Visible workspace roots for this task: {}.",
-            format_model_workspace_roots(&profile.workspace.visible_roots)
+            format_model_visible_workspace_roots(&profile.workspace.visible_roots)
         ));
         lines.push(format!(
             "- Writable workspace roots for this task: {}.",
@@ -197,7 +199,7 @@ pub fn materialize_agent_system_prompt(
     } else {
         lines.push(format!(
             "- Visible workspace roots: {}.",
-            format_model_workspace_roots(&profile.workspace.visible_roots)
+            format_model_visible_workspace_roots(&profile.workspace.visible_roots)
         ));
         lines.push(format!(
             "- Writable workspace roots: {}.",

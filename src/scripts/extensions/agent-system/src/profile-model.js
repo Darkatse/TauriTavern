@@ -15,6 +15,8 @@ import {
     normalizeAgentContextPolicy,
 } from '../../../tauritavern/agent/agent-context-policy.js';
 
+const DEFAULT_MCP_RESULT_INLINE_CHAR_LIMIT = 50_000;
+
 export function normalizeProfileId(value) {
     return String(value || '')
         .trim()
@@ -203,8 +205,8 @@ export function normalizeDelegationToolAllowList(
             allow.add(tool);
         }
     } else {
-        allow.delete('agent.delegate');
-        allow.delete('agent.await');
+        allow.delete('builtin:agent.delegate');
+        allow.delete('builtin:agent.await');
     }
 
     if (delegation.canHandoff) {
@@ -212,11 +214,11 @@ export function normalizeDelegationToolAllowList(
             allow.add(tool);
         }
     } else {
-        allow.delete('agent.handoff');
+        allow.delete('builtin:agent.handoff');
     }
 
     if (!delegation.canDelegate && !delegation.canHandoff) {
-        allow.delete('agent.list');
+        allow.delete('builtin:agent.list');
     }
 
     const ordered = Array.isArray(preferredOrder) ? preferredOrder : [];
@@ -241,7 +243,7 @@ function applyDelegationToolPolicy(profile) {
 export function defaultProfile(id = DEFAULT_PROFILE_ID) {
     const profileId = normalizeProfileId(id) || DEFAULT_PROFILE_ID;
     const profile = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: 'tauritavern.agentProfile',
         id: profileId,
         displayName: profileId === DEFAULT_PROFILE_ID ? tr('defaultWriter') : tr('newAgentProfile'),
@@ -274,6 +276,7 @@ export function defaultProfile(id = DEFAULT_PROFILE_ID) {
             toolDescriptions: {},
             maxRounds: 80,
             maxCallsPerRun: 80,
+            mcpResultInlineCharLimit: DEFAULT_MCP_RESULT_INLINE_CHAR_LIMIT,
             maxCallsPerTool: {},
         },
         skills: {
@@ -309,6 +312,7 @@ export function defaultProfile(id = DEFAULT_PROFILE_ID) {
 
 export function normalizeProfileForSave(profile) {
     const normalized = clone(profile);
+    migrateToolPolicyToV3(normalized);
     const visibleCsv = Object.prototype.hasOwnProperty.call(normalized.skills, 'visibleCsv')
         ? normalized.skills.visibleCsv
         : joinCsv(normalized.skills.visible);
@@ -319,7 +323,7 @@ export function normalizeProfileForSave(profile) {
     normalized.id = normalizeProfileId(normalized.id);
     normalized.displayName = String(normalized.displayName || '').trim();
     normalized.description = String(normalized.description || '').trim();
-    normalized.schemaVersion = 2;
+    normalized.schemaVersion = 3;
     normalized.preset = normalizePresetBinding(normalized.preset);
     normalized.model = normalizeModelBinding(normalized.model);
     normalized.run = normalizeRunPolicy(normalized.run);
@@ -350,7 +354,7 @@ export function normalizeProfileForSave(profile) {
 
 export function profileForEdit(profile) {
     const draft = clone(profile);
-    draft.schemaVersion = Number(draft.schemaVersion || 1) < 2 ? 2 : Number(draft.schemaVersion);
+    migrateToolPolicyToV3(draft);
     draft.preset = normalizePresetBinding(draft.preset);
     draft.model = normalizeModelBinding(draft.model);
     draft.run = normalizeRunPolicy(draft.run);
@@ -361,4 +365,27 @@ export function profileForEdit(profile) {
     draft.skills.visibleCsv = joinCsv(draft.skills.visible);
     draft.skills.denyCsv = joinCsv(draft.skills.deny);
     return draft;
+}
+
+function migrateToolPolicyToV3(profile) {
+    const version = Number(profile.schemaVersion || 1);
+    profile.tools.mcpResultInlineCharLimit = Number(
+        profile.tools.mcpResultInlineCharLimit ?? DEFAULT_MCP_RESULT_INLINE_CHAR_LIMIT,
+    );
+    if (version === 3) {
+        return;
+    }
+    if (version !== 1 && version !== 2) {
+        throw new Error(`profile.schemaVersion is unsupported: ${version}`);
+    }
+    const canonical = (name) => `builtin:${String(name)}`;
+    profile.tools.allow = (profile.tools.allow || []).map(canonical);
+    profile.tools.deny = (profile.tools.deny || []).map(canonical);
+    profile.tools.toolDescriptions = Object.fromEntries(
+        Object.entries(profile.tools.toolDescriptions || {}).map(([name, value]) => [canonical(name), value]),
+    );
+    profile.tools.maxCallsPerTool = Object.fromEntries(
+        Object.entries(profile.tools.maxCallsPerTool || {}).map(([name, value]) => [canonical(name), value]),
+    );
+    profile.schemaVersion = 3;
 }

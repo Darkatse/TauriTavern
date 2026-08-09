@@ -68,6 +68,7 @@ pub async fn prepare_agent_prompt_assembly(
         .services
         .agent_runtime_service
         .visible_model_tools(&profile)
+        .await
         .map_err(map_command_error(
             "Failed to resolve agent prompt assembly tool surface",
         ))?;
@@ -146,12 +147,12 @@ pub async fn list_agent_tools(
 ) -> Result<AgentListToolsResultDto, CommandError> {
     log_command("list_agent_tools");
 
-    let tools = app_state
+    app_state
         .services
         .agent_runtime_service
         .tool_catalog_items()
-        .map_err(map_command_error("Failed to list agent tools"))?;
-    Ok(AgentListToolsResultDto { tools })
+        .await
+        .map_err(map_command_error("Failed to list agent tools"))
 }
 
 #[tauri::command]

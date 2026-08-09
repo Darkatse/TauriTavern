@@ -2198,6 +2198,28 @@ test('Agent profile drafts keep Agent system prompt owned by the backend resolve
     assert.match(panelSource, /resolvedAgentSystemPrompt/);
 });
 
+test('Agent profile editor migrates v2 native tool names to canonical ToolIds', async () => {
+    const { defaultProfile, profileForEdit } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
+    const profile = defaultProfile('legacy-profile');
+    profile.schemaVersion = 2;
+    profile.tools.allow = ['workspace.read_file'];
+    profile.tools.deny = ['workspace.write_file'];
+    profile.tools.toolDescriptions = { 'workspace.read_file': { description: 'Read' } };
+    profile.tools.maxCallsPerTool = { 'workspace.read_file': 4 };
+    delete profile.tools.mcpResultInlineCharLimit;
+
+    const migrated = profileForEdit(profile);
+    assert.equal(migrated.schemaVersion, 3);
+    assert.deepEqual(migrated.tools.allow, ['builtin:workspace.read_file']);
+    assert.deepEqual(migrated.tools.deny, ['builtin:workspace.write_file']);
+    assert.deepEqual(Object.keys(migrated.tools.toolDescriptions), ['builtin:workspace.read_file']);
+    assert.deepEqual(Object.keys(migrated.tools.maxCallsPerTool), ['builtin:workspace.read_file']);
+    assert.equal(migrated.tools.mcpResultInlineCharLimit, 50_000);
+
+    profile.schemaVersion = 4;
+    assert.throws(() => profileForEdit(profile), /profile\.schemaVersion is unsupported: 4/);
+});
+
 test('Agent profile save normalization keeps delegation tools contract-shaped', async () => {
     const {
         defaultProfile,
@@ -2208,59 +2230,76 @@ test('Agent profile save normalization keeps delegation tools contract-shaped', 
     const draft = profileForEdit(defaultProfile('delegate-writer'));
     assert.equal(draft.delegation.resultBudgetTokens, 8000);
     assert.equal(draft.delegation.maxHandoffDepth, 8);
+    draft.tools.mcpResultInlineCharLimit = 12_000;
     draft.delegation.canDelegate = true;
     draft.delegation.canHandoff = true;
-    draft.tools.allow.push('task.return');
+    draft.tools.allow.push('builtin:task.return');
 
     const saved = normalizeProfileForSave(draft);
     assert.equal(saved.delegation.canDelegate, true);
     assert.equal(saved.delegation.canHandoff, true);
-    assert(saved.tools.allow.includes('agent.list'));
-    assert(saved.tools.allow.includes('agent.delegate'));
-    assert(saved.tools.allow.includes('agent.await'));
-    assert(saved.tools.allow.includes('agent.handoff'));
-    assert(!saved.tools.allow.includes('task.return'));
+    assert.equal(saved.tools.mcpResultInlineCharLimit, 12_000);
+    assert(saved.tools.allow.includes('builtin:agent.list'));
+    assert(saved.tools.allow.includes('builtin:agent.delegate'));
+    assert(saved.tools.allow.includes('builtin:agent.await'));
+    assert(saved.tools.allow.includes('builtin:agent.handoff'));
+    assert(!saved.tools.allow.includes('builtin:task.return'));
 
     saved.delegation.canDelegate = false;
     const handoffOnly = normalizeProfileForSave(profileForEdit(saved));
-    assert(handoffOnly.tools.allow.includes('agent.list'));
-    assert(handoffOnly.tools.allow.includes('agent.handoff'));
-    assert(!handoffOnly.tools.allow.includes('agent.delegate'));
-    assert(!handoffOnly.tools.allow.includes('agent.await'));
+    assert(handoffOnly.tools.allow.includes('builtin:agent.list'));
+    assert(handoffOnly.tools.allow.includes('builtin:agent.handoff'));
+    assert(!handoffOnly.tools.allow.includes('builtin:agent.delegate'));
+    assert(!handoffOnly.tools.allow.includes('builtin:agent.await'));
 
     handoffOnly.delegation.canHandoff = false;
     const disabled = normalizeProfileForSave(profileForEdit(handoffOnly));
-    assert(!disabled.tools.allow.includes('agent.list'));
-    assert(!disabled.tools.allow.includes('agent.delegate'));
-    assert(!disabled.tools.allow.includes('agent.await'));
-    assert(!disabled.tools.allow.includes('agent.handoff'));
+    assert(!disabled.tools.allow.includes('builtin:agent.list'));
+    assert(!disabled.tools.allow.includes('builtin:agent.delegate'));
+    assert(!disabled.tools.allow.includes('builtin:agent.await'));
+    assert(!disabled.tools.allow.includes('builtin:agent.handoff'));
+});
+
+test('Agent Profile exposes the MCP inline result limit control', async () => {
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js',
+    ), 'utf8');
+
+    assert.match(panelSource, /v-model\.number="draft\.tools\.mcpResultInlineCharLimit"/);
 });
 
 test('Agent profile delegation tool allow-list normalizer handles subagent and handoff modes', async () => {
     const {
         normalizeDelegationToolAllowList,
     } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
-    const toolOrder = ['agent.list', 'agent.delegate', 'agent.await', 'agent.handoff', 'workspace.write_file'];
+    const toolOrder = [
+        'builtin:agent.list',
+        'builtin:agent.delegate',
+        'builtin:agent.await',
+        'builtin:agent.handoff',
+        'builtin:workspace.write_file',
+    ];
 
     assert.deepEqual(
-        normalizeDelegationToolAllowList(['workspace.write_file'], { canDelegate: true, canHandoff: false }, toolOrder),
-        ['agent.list', 'agent.delegate', 'agent.await', 'workspace.write_file'],
+        normalizeDelegationToolAllowList(['builtin:workspace.write_file'], { canDelegate: true, canHandoff: false }, toolOrder),
+        ['builtin:agent.list', 'builtin:agent.delegate', 'builtin:agent.await', 'builtin:workspace.write_file'],
     );
     assert.deepEqual(
-        normalizeDelegationToolAllowList(['workspace.write_file'], { canDelegate: false, canHandoff: true }, toolOrder),
-        ['agent.list', 'agent.handoff', 'workspace.write_file'],
+        normalizeDelegationToolAllowList(['builtin:workspace.write_file'], { canDelegate: false, canHandoff: true }, toolOrder),
+        ['builtin:agent.list', 'builtin:agent.handoff', 'builtin:workspace.write_file'],
     );
     assert.deepEqual(
-        normalizeDelegationToolAllowList(['workspace.write_file'], { canDelegate: true, canHandoff: true }, toolOrder),
-        ['agent.list', 'agent.delegate', 'agent.await', 'agent.handoff', 'workspace.write_file'],
+        normalizeDelegationToolAllowList(['builtin:workspace.write_file'], { canDelegate: true, canHandoff: true }, toolOrder),
+        ['builtin:agent.list', 'builtin:agent.delegate', 'builtin:agent.await', 'builtin:agent.handoff', 'builtin:workspace.write_file'],
     );
     assert.deepEqual(
         normalizeDelegationToolAllowList(
-            ['agent.list', 'agent.delegate', 'agent.await', 'agent.handoff', 'task.return', 'workspace.write_file'],
+            ['builtin:agent.list', 'builtin:agent.delegate', 'builtin:agent.await', 'builtin:agent.handoff', 'builtin:task.return', 'builtin:workspace.write_file'],
             { canDelegate: false, canHandoff: false },
             toolOrder,
         ),
-        ['workspace.write_file'],
+        ['builtin:workspace.write_file'],
     );
 });
 
@@ -2499,6 +2538,52 @@ test('Agent profile selection stays editable when system prompt preview fails', 
     assert.match(vm.profilePreviewError, /agent\.profile_preset_missing/);
     assert.deepEqual(vm.availablePresetOptions, ['Missing Writer Preset']);
     assert.ok(vm.profileConfigurationWarnings.some((warning) => warning.includes('Missing Writer Preset')));
+});
+
+test('Agent tool catalog diagnostics are visible in profile configuration warnings', async () => {
+    installWindow({
+        agent: {
+            profiles: {},
+            tools: {
+                async list() {
+                    return {
+                        tools: [],
+                        diagnostics: [{
+                            code: 'mcp.catalog_not_cached',
+                            message: 'MCP server `issues` has no cached tool catalog; refresh it in MCP Manager',
+                        }],
+                    };
+                },
+            },
+        },
+    });
+    const vm = await createAgentPanelHarness();
+
+    await vm.refreshToolCatalog();
+
+    assert.deepEqual(vm.toolCatalogDiagnostics.map((diagnostic) => diagnostic.code), [
+        'mcp.catalog_not_cached',
+    ]);
+    assert.ok(vm.profileConfigurationWarnings.some((warning) => warning.includes('MCP Manager')));
+});
+
+test('Agent profile tool labels show readable MCP identity', async () => {
+    installWindow({});
+    const vm = await createAgentPanelHarness();
+    const mcpToolId = 'mcp/11ca20d2-df8e-4085-b82d-6bbdfdd775cb:WEB_FETCH_EXA';
+    vm.toolItems = [{
+        id: mcpToolId,
+        source: 'mcp',
+        serverDisplayName: 'Exa Search',
+        nativeName: 'WEB_FETCH_EXA',
+    }];
+
+    assert.equal(vm.toolReferenceLabel(mcpToolId), 'Exa Search · WEB_FETCH_EXA');
+    assert.equal(vm.toolReferenceLabel('builtin:workspace.read_file'), 'builtin:workspace.read_file');
+    assert.equal(
+        vm.toolReferenceLabel('mcp/00000000-0000-0000-0000-000000000000:missing'),
+        'mcp/00000000-0000-0000-0000-000000000000:missing',
+    );
 });
 
 test('Agent profile model binding persistence uses current saved Model Target state', async () => {
@@ -3495,6 +3580,28 @@ test('Agent run event presenter keeps timeline projection focused', async () => 
     assert.equal(item.titleKey, 'timelineEventToolRequested');
     assert.deepEqual(item.titleParams, { tool: 'writing a file' });
     assert.equal(item.summary, 'call-1');
+
+    const quietContextEvent = {
+        type: 'context_assembled',
+        payload: { invocationId: 'inv_root', toolDiagnostics: [] },
+    };
+    const warningContextEvent = {
+        type: 'context_assembled',
+        level: 'info',
+        payload: {
+            invocationId: 'inv_root',
+            toolDiagnostics: [{
+                code: 'mcp.catalog_not_cached',
+                message: 'Refresh issues in MCP Manager',
+            }],
+        },
+    };
+    assert.equal(presenter.isDisplayableRunEvent(quietContextEvent), false);
+    assert.equal(presenter.isDisplayableRunEvent(warningContextEvent), true);
+    const warningItem = presenter.presentRunEvent(warningContextEvent);
+    assert.equal(warningItem.titleKey, 'timelineEventToolConfigurationWarning');
+    assert.deepEqual(warningItem.titleParams, { count: 1 });
+    assert.equal(warningItem.summary, 'Refresh issues in MCP Manager');
 
     const recoveryEvent = {
         seq: 5,

@@ -264,11 +264,17 @@ impl AgentRuntimeService {
             )
             .await?;
 
-        let (tool_snapshot, tool_turn, visible_tools) = self.compile_invocation_tools(
-            &resolved_profile,
-            AgentInvocationExitPolicy::RunFinishAllowed,
-            root_invocation.id.as_str(),
-        )?;
+        let prepared_tools = self
+            .prepare_invocation_tools(
+                &resolved_profile,
+                AgentInvocationExitPolicy::RunFinishAllowed,
+                root_invocation.id.as_str(),
+            )
+            .await?;
+        let tool_snapshot = prepared_tools.snapshot;
+        let tool_turn = prepared_tools.turn;
+        let visible_tools = prepared_tools.model_tools;
+        let tool_diagnostics = prepared_tools.diagnostics;
         let tool_snapshot_path = self.persist_tool_snapshot(run_id, &tool_snapshot).await?;
         let mut request = request;
         self.resolve_model_binding(run_id, &resolved_profile, &mut request)
@@ -293,6 +299,7 @@ impl AgentRuntimeService {
                 "toolSnapshot": tool_snapshot_summary(&tool_snapshot),
                 "toolSnapshotPath": tool_snapshot_path.as_str(),
                 "toolTurn": &tool_turn,
+                "toolDiagnostics": &tool_diagnostics,
                 "maxRounds": resolved_profile.tools.max_rounds,
                 "contextPolicy": &resolved_profile.context,
                 "modelRetry": {

@@ -158,6 +158,7 @@ fn resolved_profile(preset: AgentPresetBinding) -> ResolvedAgentProfile {
             tool_descriptions: Default::default(),
             max_rounds: 1,
             max_calls_per_run: 1,
+            mcp_result_inline_char_limit: 50_000,
             max_calls_per_tool: Default::default(),
         },
         skills: AgentSkillPolicy {

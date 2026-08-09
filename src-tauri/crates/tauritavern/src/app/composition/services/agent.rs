@@ -11,6 +11,7 @@ use tt_application::services::agent_workspace_lifecycle_service::{
 };
 use tt_application::services::chat_completion_service::ChatCompletionService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
+use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
 
@@ -31,6 +32,7 @@ pub(super) fn build(
     skill_service: Arc<SkillService>,
     chat_completion_service: Arc<ChatCompletionService>,
     llm_connection_service: Arc<LlmConnectionService>,
+    mcp_service: Arc<McpService>,
 ) -> AgentServices {
     let agent_profile_service = Arc::new(AgentProfileService::new(
         repositories.agent_profile_repository.clone(),
@@ -61,6 +63,7 @@ pub(super) fn build(
         agent_profile_service.clone(),
         llm_connection_service,
         prompt_assembly_service.clone(),
+        mcp_service,
     ));
     let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
         repositories.agent_run_repository.clone(),

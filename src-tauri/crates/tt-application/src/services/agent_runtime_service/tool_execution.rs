@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 
 use super::commit_ledger::RunCommitLedger;
 use super::delegation::workspace_policy::InvocationWorkspaceRepository;
@@ -18,10 +19,13 @@ use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
     AgentToolResult, WorkspacePath,
 };
-use tt_domain::models::tool::ToolInvocation;
+use tt_domain::models::tool::{InvocationToolSnapshot, ToolId, ToolInvocation};
+use tt_domain::text_metrics::TextMetrics;
+use tt_ports::mcp::{McpCallOutcome, McpKnownResponse};
 use tt_ports::repositories::workspace_repository::WorkspaceWriteGuard;
 
 const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
+const MCP_RESULT_PREVIEW_CHARS: usize = 3_000;
 
 impl AgentRuntimeService {
     #[expect(
@@ -85,14 +89,9 @@ impl AgentRuntimeService {
                     &message,
                     started.elapsed().as_millis(),
                 );
-                self.record_tool_outcome(
-                    run_id,
-                    invocation_id,
-                    round,
-                    snapshot_id,
-                    &outcome,
-                )
-                .await?;
+                let _ = self
+                    .record_tool_outcome(run_id, invocation_id, round, snapshot_id, &outcome)
+                    .await?;
                 return Ok(outcome);
             }
 
@@ -170,6 +169,40 @@ impl AgentRuntimeService {
                 is_last_call,
             )
             .await
+        } else if !call.tool_id.is_builtin() {
+            match self.call_mcp_tool(call, cancel).await? {
+                McpCallOutcome::KnownResponse(response) => Ok(AgentToolDispatchOutcome {
+                    result: mcp_known_response_result(call, response),
+                    effect: AgentToolEffect::None,
+                    elapsed_ms: started.elapsed().as_millis(),
+                }),
+                McpCallOutcome::NotSent(issue) => Ok(recoverable_tool_error(
+                    call,
+                    issue.code.as_str(),
+                    issue.message.as_str(),
+                    started.elapsed().as_millis(),
+                )),
+                McpCallOutcome::OutcomeUnknown(issue) => {
+                    let message = format!(
+                        "mcp.call_outcome_unknown: {} The MCP tool may have executed; this call will not be retried.",
+                        issue.message
+                    );
+                    let outcome = recoverable_tool_error(
+                        call,
+                        "mcp.call_outcome_unknown",
+                        &message,
+                        started.elapsed().as_millis(),
+                    );
+                    let _ = self
+                        .record_tool_outcome(run_id, invocation_id, round, snapshot_id, &outcome)
+                        .await?;
+                    return Err(if *cancel.borrow() {
+                        ApplicationError::Cancelled(message)
+                    } else {
+                        ApplicationError::ValidationError(message)
+                    });
+                }
+            }
         } else if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
             let workspace_repository =
                 InvocationWorkspaceRepository::new(self.workspace_repository.as_ref(), profile);
@@ -191,7 +224,7 @@ impl AgentRuntimeService {
         match dispatch_result {
             Ok(outcome) => {
                 ensure_tool_result_identity(tool_invocation, &outcome.result)?;
-                let outcome = match outcome.effect.clone() {
+                let mut outcome = match outcome.effect.clone() {
                     AgentToolEffect::Finish => {
                         if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
                             recoverable_tool_error(
@@ -238,14 +271,17 @@ impl AgentRuntimeService {
                     }
                     _ => outcome,
                 };
-                self.record_tool_outcome(
-                    run_id,
-                    invocation_id,
-                    round,
-                    snapshot_id,
-                    &outcome,
-                )
-                .await?;
+                let result_path = self
+                    .record_tool_outcome(run_id, invocation_id, round, snapshot_id, &outcome)
+                    .await?;
+                if !outcome.result.tool_id.is_builtin() {
+                    project_mcp_result_for_model(
+                        &mut outcome.result,
+                        &result_path,
+                        &prepared.tool_snapshot,
+                        profile.tools.mcp_result_inline_char_limit,
+                    )?;
+                }
                 Ok(outcome)
             }
             Err(error) => {
@@ -269,6 +305,37 @@ impl AgentRuntimeService {
         }
     }
 
+    async fn call_mcp_tool(
+        &self,
+        call: &ToolInvocation,
+        cancel: &mut super::AgentCancelReceiver,
+    ) -> Result<McpCallOutcome, ApplicationError> {
+        let cancellation = CancellationToken::new();
+        if *cancel.borrow() {
+            cancellation.cancel();
+        }
+        let watcher = if cancellation.is_cancelled() {
+            None
+        } else {
+            let cancellation = cancellation.clone();
+            let mut receiver = cancel.clone();
+            Some(tokio::spawn(async move {
+                if receiver.changed().await.is_ok() && *receiver.borrow() {
+                    cancellation.cancel();
+                }
+            }))
+        };
+        let outcome = self
+            .mcp_service
+            .call_permitted_tool(&call.tool_id, call.arguments.clone(), cancellation)
+            .await;
+        if let Some(watcher) = watcher {
+            watcher.abort();
+        }
+
+        outcome
+    }
+
     async fn record_tool_outcome(
         &self,
         run_id: &str,
@@ -276,9 +343,17 @@ impl AgentRuntimeService {
         round: usize,
         snapshot_id: &str,
         outcome: &AgentToolDispatchOutcome,
-    ) -> Result<(), ApplicationError> {
-        self.store_tool_result(run_id, round, &outcome.result)
+    ) -> Result<WorkspacePath, ApplicationError> {
+        let path = self
+            .store_tool_result(run_id, round, &outcome.result)
             .await?;
+        let error_message = outcome.result.is_error.then(|| {
+            if outcome.result.tool_id.is_builtin() {
+                outcome.result.content.clone()
+            } else {
+                format!("MCP tool returned an error; full result: {}", path.as_str())
+            }
+        });
         self.event(
             run_id,
             if outcome.result.is_error {
@@ -300,13 +375,13 @@ impl AgentRuntimeService {
                 "name": outcome.result.tool_id.native_name(),
                 "isError": outcome.result.is_error,
                 "errorCode": outcome.result.error_code.as_deref(),
-                "message": outcome.result.is_error.then_some(outcome.result.content.as_str()),
+                "message": error_message,
                 "elapsedMs": outcome.elapsed_ms,
                 "resourceRefs": &outcome.result.resource_refs,
             }),
         )
         .await?;
-        Ok(())
+        Ok(path)
     }
 
     async fn store_tool_result(
@@ -314,7 +389,7 @@ impl AgentRuntimeService {
         run_id: &str,
         round: usize,
         result: &AgentToolResult,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<WorkspacePath, ApplicationError> {
         let path = WorkspacePath::parse(format!(
             "tool-results/{}.json",
             tool_call_audit_file_stem(&result.call_id)
@@ -339,7 +414,7 @@ impl AgentRuntimeService {
             }),
         )
         .await?;
-        Ok(())
+        Ok(path)
     }
 
     async fn store_tool_arguments(
@@ -360,6 +435,160 @@ impl AgentRuntimeService {
             .write_text_guarded(run_id, &path, &text, WorkspaceWriteGuard::MustNotExist)
             .await?;
         Ok(path)
+    }
+}
+
+fn project_mcp_result_for_model(
+    result: &mut AgentToolResult,
+    path: &WorkspacePath,
+    snapshot: &InvocationToolSnapshot,
+    inline_char_limit: usize,
+) -> Result<(), ApplicationError> {
+    let wire = serde_json::to_string(result).map_err(|error| {
+        ApplicationError::ValidationError(format!("agent.tool_result_serialize_failed: {error}"))
+    })?;
+    let char_count = TextMetrics::from_text(&wire).chars;
+    if char_count > inline_char_limit {
+        externalize_mcp_result(result, path, snapshot, char_count, inline_char_limit)?;
+    }
+    Ok(())
+}
+
+fn externalize_mcp_result(
+    result: &mut AgentToolResult,
+    path: &WorkspacePath,
+    snapshot: &InvocationToolSnapshot,
+    char_count: usize,
+    inline_char_limit: usize,
+) -> Result<(), ApplicationError> {
+    let preview = result
+        .content
+        .chars()
+        .take(MCP_RESULT_PREVIEW_CHARS)
+        .collect::<String>();
+    let read_tool = ToolId::builtin("workspace.read_file")?;
+    let read_alias = snapshot
+        .binding(&read_tool)
+        .map(|binding| binding.model_alias());
+    let search_tool = ToolId::builtin("workspace.search_files")?;
+    let search_alias = snapshot
+        .binding(&search_tool)
+        .map(|binding| binding.model_alias());
+    let mut instructions = format!(
+        "The MCP result is too large to place in context ({char_count} chars; limit {inline_char_limit}). The complete result is saved at `{}`.",
+        path.as_str()
+    );
+    if let Some(alias) = read_alias {
+        instructions.push_str(&format!(
+            " Use {alias} with path `{}`, start_char, and max_chars (up to 80000) to read it in chunks. For a comprehensive review, continue from the next start_char until the file is fully read.",
+            path.as_str()
+        ));
+    } else {
+        instructions.push_str(
+            " The current Agent profile does not expose workspace.read_file, so continue using the path as a user-visible result reference.",
+        );
+    }
+    if let Some(alias) = search_alias {
+        instructions.push_str(&format!(
+            " Use {alias} with path `{}` to locate specific text before reading exact ranges.",
+            path.as_str()
+        ));
+    }
+    if !preview.is_empty() {
+        instructions.push_str(&format!(
+            "\n\nPrefix preview of the MCP result content (at most {MCP_RESULT_PREVIEW_CHARS} Unicode characters; not the complete result):\n<mcp-result-preview>\n{preview}\n</mcp-result-preview>"
+        ));
+    }
+    result.content = instructions;
+    result.structured = json!({
+        "externalized": true,
+        "path": path.as_str(),
+        "charCount": char_count,
+        "charLimit": inline_char_limit,
+    });
+    if !result
+        .resource_refs
+        .iter()
+        .any(|reference| reference == path.as_str())
+    {
+        result.resource_refs.push(path.as_str().to_string());
+    }
+    Ok(())
+}
+
+fn mcp_known_response_result(call: &ToolInvocation, response: McpKnownResponse) -> AgentToolResult {
+    match response {
+        McpKnownResponse::ToolResult(result) => {
+            let content = if result.text.is_empty() {
+                result
+                    .structured_content
+                    .as_ref()
+                    .map(|value| {
+                        serde_json::to_string_pretty(value)
+                            .expect("serde_json::Value is always serializable")
+                    })
+                    .unwrap_or_else(|| "MCP tool completed without text content.".to_string())
+            } else {
+                result
+                    .text
+                    .iter()
+                    .map(|block| block.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            };
+            let diagnostics = result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| {
+                    json!({
+                        "code": diagnostic.code,
+                        "message": diagnostic.message,
+                        "contentIndex": diagnostic.content_index,
+                    })
+                })
+                .collect::<Vec<_>>();
+            AgentToolResult {
+                call_id: call.call_id.clone(),
+                tool_id: call.tool_id.clone(),
+                content,
+                structured: json!({
+                    "structuredContent": result.structured_content,
+                    "diagnostics": diagnostics,
+                }),
+                is_error: result.is_error,
+                error_code: result.is_error.then(|| "mcp.tool_error".to_string()),
+                resource_refs: Vec::new(),
+            }
+        }
+        McpKnownResponse::ServerError(error) => AgentToolResult {
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
+            content: error.message.clone(),
+            structured: json!({
+                "serverError": {
+                    "code": error.code,
+                    "message": error.message,
+                    "data": error.data,
+                }
+            }),
+            is_error: true,
+            error_code: Some("mcp.server_error".to_string()),
+            resource_refs: Vec::new(),
+        },
+        McpKnownResponse::Unsupported(response) => AgentToolResult {
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
+            content: response.message.clone(),
+            structured: json!({
+                "unsupportedResponse": {
+                    "type": response.response_type,
+                    "message": response.message,
+                }
+            }),
+            is_error: true,
+            error_code: Some("mcp.unsupported_response".to_string()),
+            resource_refs: Vec::new(),
+        },
     }
 }
 
@@ -412,11 +641,17 @@ fn ensure_tool_result_identity(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use tt_domain::models::agent::AgentToolResult;
-    use tt_domain::models::tool::{ToolId, ToolInvocation};
+    use tt_domain::models::agent::WorkspacePath;
+    use tt_domain::models::tool::{
+        InvocationToolSnapshot, ToolBinding, ToolDescriptor, ToolId, ToolInvocation,
+        ToolProviderId, ToolSnapshotId,
+    };
 
-    use super::ensure_tool_result_identity;
+    use super::{
+        MCP_RESULT_PREVIEW_CHARS, ensure_tool_result_identity, project_mcp_result_for_model,
+    };
 
     #[test]
     fn tool_result_identity_must_match_its_invocation() {
@@ -438,5 +673,68 @@ mod tests {
 
         let error = ensure_tool_result_identity(&invocation, &result).unwrap_err();
         assert!(error.to_string().contains("tool.result_identity_mismatch"));
+    }
+
+    #[test]
+    fn externalized_mcp_result_points_to_readable_full_artifact() {
+        let read_id = ToolId::builtin("workspace.read_file").unwrap();
+        let snapshot = InvocationToolSnapshot::try_new(
+            ToolSnapshotId::parse("snapshot").unwrap(),
+            vec![
+                ToolBinding::new(
+                    ToolDescriptor {
+                        id: read_id,
+                        title: None,
+                        description: None,
+                        input_schema: json!({ "type": "object" }),
+                        output_schema: None,
+                        annotations: json!({}),
+                    },
+                    "workspace_read_file",
+                    None,
+                )
+                .unwrap(),
+            ],
+            2,
+        )
+        .unwrap();
+        let mut result = AgentToolResult {
+            call_id: "call_mcp".to_string(),
+            tool_id: ToolId::new(
+                &ToolProviderId::parse("mcp/550e8400-e29b-41d4-a716-446655440000").unwrap(),
+                "search",
+            )
+            .unwrap(),
+            content: "full content".to_string(),
+            structured: json!({ "full": true }),
+            is_error: false,
+            error_code: None,
+            resource_refs: Vec::new(),
+        };
+        let path = WorkspacePath::parse("tool-results/call_deadbeef.json").unwrap();
+        let inline_char_limit = 50_000;
+
+        project_mcp_result_for_model(&mut result, &path, &snapshot, inline_char_limit).unwrap();
+        assert_eq!(result.content, "full content");
+
+        result.content = format!(
+            "{}outside-preview{}",
+            "界".repeat(MCP_RESULT_PREVIEW_CHARS),
+            "x".repeat(inline_char_limit)
+        );
+        project_mcp_result_for_model(&mut result, &path, &snapshot, inline_char_limit).unwrap();
+
+        assert!(result.content.contains("workspace_read_file"));
+        assert!(result.content.contains(path.as_str()));
+        assert!(result.content.contains("<mcp-result-preview>"));
+        assert_eq!(
+            result.content.matches('界').count(),
+            MCP_RESULT_PREVIEW_CHARS
+        );
+        assert!(!result.content.contains("outside-preview"));
+        assert_eq!(result.structured["externalized"], true);
+        assert!(result.structured["charCount"].as_u64().unwrap() > 50_000);
+        assert_eq!(result.structured["charLimit"], inline_char_limit);
+        assert_eq!(result.resource_refs, vec![path.as_str().to_string()]);
     }
 }

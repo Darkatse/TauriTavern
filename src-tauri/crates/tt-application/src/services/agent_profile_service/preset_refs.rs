@@ -32,9 +32,12 @@ impl AgentProfileService {
             else {
                 continue;
             };
-            migrate_profile_schema(&mut profile)?;
+            let migrated = migrate_profile_schema(&mut profile)?;
             validate_profile_header(&profile)?;
             if profile.preset.mode != AgentPresetBindingMode::Ref {
+                if migrated {
+                    self.profile_repository.save_profile(&profile).await?;
+                }
                 continue;
             }
             let matches_from = profile
@@ -43,6 +46,9 @@ impl AgentProfileService {
                 .as_ref()
                 .is_some_and(|ref_| ref_.api_id == from.api_id && ref_.name == from.name);
             if !matches_from {
+                if migrated {
+                    self.profile_repository.save_profile(&profile).await?;
+                }
                 continue;
             }
 

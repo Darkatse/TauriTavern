@@ -75,6 +75,17 @@ Preset / PromptManager 中的 `agentSystemPrompt` 不是内容源，而是 Agent
 
 `delegation.descriptionForAgents` 是给其它 Agent 选择调用对象时看的能力说明，不是给人类管理界面的营销文案。它应该用一两句话说明“什么时候找我、给我哪些 workspace path、我会返回什么形态”，例如“审阅 `output/scene.md` 的连续性并在 `summaries/notes.md` 返回问题列表；如要求修订，可直接编辑指定 `output/` 文件”。不要写 runtime id、物理路径、CAS/overwrite policy 或内部实现细节。
 
+### 1.5 Profile v3 ToolId
+
+Profile v3 的 `tools.allow`、`tools.deny`、`tools.toolDescriptions` keys 与 `tools.maxCallsPerTool` keys 统一使用 canonical ToolId；`tools.mcpResultInlineCharLimit` 控制单个 MCP 结果进入模型上下文前的字符上限，默认 `50000`：
+
+```text
+builtin:<native-name>
+mcp/<registration-uuid>:<native-name>
+```
+
+v1/v2 只作为迁移输入；载入后将旧 builtin native names 一次性转换并写回 v3。新 Profile 不接受 shorthand，也没有平行 `mcpTools` 字段。MCP ToolId 可以在 server 离线或目录暂时缺失时保存；invocation preparation 会从 Manager 持久 catalog 解析，缺失项以 diagnostic 省略而不猜测替代工具。
+
 ## 2. Preset Agent Schema
 
 第一版可以使用 JSON-compatible schema，不必立刻引入 YAML。
@@ -87,6 +98,7 @@ Preset / PromptManager 中的 `agentSystemPrompt` 不是内容源，而是 Agent
     "enabled": true,
     "profiles": [
       {
+        "schemaVersion": 3,
         "id": "writer",
         "displayName": "Writer",
         "model": { "source": "openai", "model": "..." },
@@ -106,13 +118,13 @@ Preset / PromptManager 中的 `agentSystemPrompt` 不是内容源，而是 Agent
         },
         "tools": {
           "allow": [
-            "workspace.read_file",
-            "workspace.apply_patch",
-            "chat.search",
-            "skill.read"
+            "builtin:workspace.read_file",
+            "builtin:workspace.apply_patch",
+            "builtin:chat.search",
+            "builtin:skill.read",
+            "mcp/550e8400-e29b-41d4-a716-446655440000:issue.create"
           ],
-          "deny": ["shell.*"],
-          "requireApproval": ["mcp.*", "workspace.commit"]
+          "deny": []
         },
         "output": {
           "artifacts": [
@@ -241,6 +253,7 @@ Tool policy 应能表达：
   "deny": ["shell.*"],
   "requireApproval": ["mcp.*"],
   "maxCallsPerRun": 20,
+  "mcpResultInlineCharLimit": 50000,
   "maxCallsPerTool": {
     "chat.search": 5
   }
@@ -403,12 +416,14 @@ profile_switch_denied
 
 ## 12. MVP Profile
 
-当前状态（2026-05-04）：Profile 基线已实现 profile resolution，但尚未实现 profile routing、Plan Mode runtime、provider/model switch 或 ContextFrame 预算。`profileId` 会驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds、model retry 与 model-facing prompt/tool descriptions。`preset.ref` 目前只做校验/记录，不隐式切换 model。
+当前状态（2026-08-09）：Profile v3 已实现 canonical ToolId，并可选择 builtin 与 cached MCP tools；尚未实现 profile routing、Plan Mode runtime 或 ContextFrame 总预算。`profileId` 会驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds、model retry 与 model-facing prompt/tool descriptions。`preset.ref` / `model.connectionRef` 已进入真实 prompt/model resolution。
 
 当前最小 built-in profile 是 `default-writer`，缺省 `profileId` 时使用它：
 
 ```json
 {
+  "schemaVersion": 3,
+  "kind": "tauritavern.agentProfile",
   "id": "default-writer",
   "preset": {
     "mode": "currentPromptSnapshot",
@@ -430,23 +445,28 @@ profile_switch_denied
   },
   "tools": {
     "allow": [
-      "workspace.list_files",
-      "workspace.search_files",
-      "workspace.read_file",
-      "workspace.write_file",
-      "workspace.apply_patch",
-      "workspace.finish",
-      "chat.search",
-      "chat.read_messages",
-      "worldinfo.read_activated",
-      "skill.list",
-      "skill.search",
-      "skill.read"
+      "builtin:agent.list",
+      "builtin:agent.delegate",
+      "builtin:agent.await",
+      "builtin:chat.search",
+      "builtin:chat.read_messages",
+      "builtin:worldinfo.read_activated",
+      "builtin:skill.list",
+      "builtin:skill.search",
+      "builtin:skill.read",
+      "builtin:workspace.list_files",
+      "builtin:workspace.search_files",
+      "builtin:workspace.read_file",
+      "builtin:workspace.write_file",
+      "builtin:workspace.apply_patch",
+      "builtin:workspace.commit",
+      "builtin:workspace.finish"
     ],
     "deny": [],
     "toolDescriptions": {},
     "maxRounds": 80,
-    "maxCallsPerRun": 80
+    "maxCallsPerRun": 80,
+    "mcpResultInlineCharLimit": 50000
   },
   "skills": {
     "visible": ["*"],

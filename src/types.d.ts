@@ -314,13 +314,17 @@ type TauriTavernAgentProfileSummary = {
 };
 
 type TauriTavernAgentToolCatalogItem = {
-    name: string;
+    id: string;
+    nativeName: string;
     title: string;
     description: string;
     inputSchema: any;
     outputSchema?: any;
     annotations?: any;
-    source: string;
+    source: 'builtin' | 'mcp';
+    registrationId?: string;
+    serverDisplayName?: string;
+    permission?: 'off' | 'ask' | 'allow';
 };
 
 type TauriTavernAgentProfileDefinition = {
@@ -362,6 +366,7 @@ type TauriTavernAgentProfileDefinition = {
         }>;
         maxRounds: number;
         maxCallsPerRun: number;
+        mcpResultInlineCharLimit: number;
         maxCallsPerTool?: Record<string, number>;
     };
     skills: {
@@ -451,7 +456,10 @@ type TauriTavernAgentProfilesApi = {
 };
 
 type TauriTavernAgentToolsApi = {
-    list: () => Promise<{ tools: TauriTavernAgentToolCatalogItem[] }>;
+    list: () => Promise<{
+        tools: TauriTavernAgentToolCatalogItem[];
+        diagnostics: Array<{ toolId?: string; code: string; message: string }>;
+    }>;
 };
 
 type TauriTavernAgentPromptAssemblyApi = {

@@ -9,9 +9,10 @@ use tt_domain::models::agent::profile::{
     AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentDelegationPolicy,
     AgentModelBinding, AgentModelBindingMode, AgentProfileDefinition, AgentProfileId,
     AgentProfileInstructions, AgentRunPolicy, AgentSkillPolicy, AgentToolDescriptionOverride,
-    AgentToolPolicy, AgentWorkspacePolicy,
+    AgentToolPolicy, AgentWorkspacePolicy, ResolvedAgentToolPolicy,
 };
-use tt_domain::models::tool::{ToolCatalog, ToolDescriptor};
+use tt_domain::models::mcp::{McpRegistrationId, validate_native_tool_name};
+use tt_domain::models::tool::{ToolCatalog, ToolDescriptor, ToolId};
 
 use super::constants::{
     AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, AGENT_LIST_TOOL, TASK_RETURN_TOOL,
@@ -42,17 +43,35 @@ pub(super) fn validate_profile_header(
 
 pub(super) fn migrate_profile_schema(
     profile: &mut AgentProfileDefinition,
-) -> Result<(), ApplicationError> {
+) -> Result<bool, ApplicationError> {
     match profile.schema_version {
-        1 => {
+        1 | 2 => {
+            migrate_tool_policy_to_canonical_ids(&mut profile.tools)?;
             profile.schema_version = AGENT_PROFILE_SCHEMA_VERSION;
-            Ok(())
+            Ok(true)
         }
-        AGENT_PROFILE_SCHEMA_VERSION => Ok(()),
+        AGENT_PROFILE_SCHEMA_VERSION => Ok(false),
         version => Err(ApplicationError::ValidationError(format!(
             "agent.profile_schema_unsupported: schemaVersion {version} is unsupported"
         ))),
     }
+}
+
+fn migrate_tool_policy_to_canonical_ids(
+    policy: &mut AgentToolPolicy,
+) -> Result<(), ApplicationError> {
+    for id in policy.allow.iter_mut().chain(policy.deny.iter_mut()) {
+        *id = ToolId::builtin(id.as_str())?.to_string();
+    }
+    policy.tool_descriptions = std::mem::take(&mut policy.tool_descriptions)
+        .into_iter()
+        .map(|(id, override_)| Ok((ToolId::builtin(id)?.to_string(), override_)))
+        .collect::<Result<_, ApplicationError>>()?;
+    policy.max_calls_per_tool = std::mem::take(&mut policy.max_calls_per_tool)
+        .into_iter()
+        .map(|(id, max)| Ok((ToolId::builtin(id)?.to_string(), max)))
+        .collect::<Result<_, ApplicationError>>()?;
+    Ok(())
 }
 
 pub(super) fn validate_model_binding(binding: &AgentModelBinding) -> Result<(), ApplicationError> {
@@ -164,7 +183,7 @@ pub(super) fn validate_plan_policy(plan: &AgentPlanPolicy) -> Result<(), Applica
 pub(super) fn validate_tool_policy(
     policy: &AgentToolPolicy,
     tool_catalog: &ToolCatalog,
-) -> Result<(), ApplicationError> {
+) -> Result<ResolvedAgentToolPolicy, ApplicationError> {
     if policy.max_rounds == 0 {
         return Err(ApplicationError::ValidationError(
             "agent.profile_max_rounds_invalid: tools.maxRounds must be > 0".to_string(),
@@ -175,86 +194,118 @@ pub(super) fn validate_tool_policy(
             "agent.profile_max_calls_invalid: tools.maxCallsPerRun must be > 0".to_string(),
         ));
     }
+    if policy.mcp_result_inline_char_limit == 0 {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_mcp_result_inline_char_limit_invalid: tools.mcpResultInlineCharLimit must be > 0"
+                .to_string(),
+        ));
+    }
 
-    let known = tool_catalog
-        .iter()
-        .map(|tool| tool.id.native_name())
-        .collect::<BTreeSet<_>>();
-    let allow = policy
-        .allow
-        .iter()
-        .map(|name| name.as_str())
-        .collect::<BTreeSet<_>>();
-    let deny = policy
-        .deny
-        .iter()
-        .map(|name| name.as_str())
-        .collect::<BTreeSet<_>>();
+    let allow = parse_tool_ids(&policy.allow)?;
+    let deny = parse_tool_ids(&policy.deny)?;
+    let allow_set = allow.iter().collect::<BTreeSet<_>>();
+    let deny_set = deny.iter().collect::<BTreeSet<_>>();
 
-    if allow.len() != policy.allow.len() {
+    if allow_set.len() != policy.allow.len() {
         return Err(ApplicationError::ValidationError(
             "agent.profile_tools_allow_duplicate: tools.allow cannot contain duplicate tool names"
                 .to_string(),
         ));
     }
-    if deny.len() != policy.deny.len() {
+    if deny_set.len() != policy.deny.len() {
         return Err(ApplicationError::ValidationError(
             "agent.profile_tools_deny_duplicate: tools.deny cannot contain duplicate tool names"
                 .to_string(),
         ));
     }
 
-    if allow.is_empty() {
+    if allow_set.is_empty() {
         return Err(ApplicationError::ValidationError(
             "agent.profile_tools_empty: tools.allow cannot be empty".to_string(),
         ));
     }
-    for name in allow.iter().chain(deny.iter()) {
-        if !known.contains(name) {
-            return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_unknown_tool: unknown tool `{name}`"
-            )));
-        }
+    for id in allow_set.iter().chain(deny_set.iter()) {
+        validate_profile_tool_id(id, tool_catalog)?;
     }
-    let visible = allow.difference(&deny).copied().collect::<BTreeSet<_>>();
-    if !visible.contains("workspace.write_file") {
+    let visible = allow_set
+        .difference(&deny_set)
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let output_writer = ToolId::builtin("workspace.write_file")?;
+    if !visible.contains(&output_writer) {
         return Err(ApplicationError::ValidationError(
             "agent.profile_output_writer_required: workspace.write_file must be visible so the Agent can create the required message body artifact"
                 .to_string(),
         ));
     }
-    for (name, override_) in &policy.tool_descriptions {
-        if !visible.contains(name.as_str()) {
+    let mut tool_descriptions = std::collections::BTreeMap::new();
+    for (raw_id, override_) in &policy.tool_descriptions {
+        let id = ToolId::parse(raw_id.clone())?;
+        validate_profile_tool_id(&id, tool_catalog)?;
+        if !visible.contains(&id) {
             return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_tool_description_invisible: `{name}` is not visible"
+                "agent.profile_tool_description_invisible: `{id}` is not visible"
             )));
         }
-        let descriptor = tool_catalog
-            .iter()
-            .find(|tool| tool.id.native_name() == name)
-            .expect("known tool already checked");
-        validate_tool_description_override(descriptor, override_)?;
+        validate_tool_description_override(&id, tool_catalog.get(&id), override_)?;
+        tool_descriptions.insert(id, override_.clone());
     }
 
-    for (name, max) in &policy.max_calls_per_tool {
-        if !visible.contains(name.as_str()) {
+    let mut max_calls_per_tool = std::collections::BTreeMap::new();
+    for (raw_id, max) in &policy.max_calls_per_tool {
+        let id = ToolId::parse(raw_id.clone())?;
+        validate_profile_tool_id(&id, tool_catalog)?;
+        if !visible.contains(&id) {
             return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_tool_budget_invisible: `{name}` is not visible"
+                "agent.profile_tool_budget_invisible: `{id}` is not visible"
             )));
         }
         if *max == 0 {
             return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_tool_budget_invalid: maxCallsPerTool.{name} must be > 0"
+                "agent.profile_tool_budget_invalid: maxCallsPerTool.{id} must be > 0"
             )));
         }
+        max_calls_per_tool.insert(id, *max);
     }
 
-    Ok(())
+    Ok(ResolvedAgentToolPolicy {
+        allow,
+        deny,
+        tool_descriptions,
+        max_rounds: policy.max_rounds,
+        max_calls_per_run: policy.max_calls_per_run,
+        mcp_result_inline_char_limit: policy.mcp_result_inline_char_limit,
+        max_calls_per_tool,
+    })
+}
+
+fn parse_tool_ids(raw_ids: &[String]) -> Result<Vec<ToolId>, ApplicationError> {
+    raw_ids
+        .iter()
+        .map(|raw| ToolId::parse(raw.clone()).map_err(Into::into))
+        .collect()
+}
+
+fn validate_profile_tool_id(
+    id: &ToolId,
+    tool_catalog: &ToolCatalog,
+) -> Result<(), ApplicationError> {
+    if id.is_builtin() {
+        if tool_catalog.get(id).is_some() {
+            return Ok(());
+        }
+    } else if McpRegistrationId::from_provider_id(id.provider_id()).is_ok() {
+        validate_native_tool_name(id.native_name())?;
+        return Ok(());
+    }
+    Err(ApplicationError::ValidationError(format!(
+        "agent.profile_unknown_tool: unknown tool `{id}`"
+    )))
 }
 
 pub(super) fn validate_delegation_policy(
     policy: &AgentDelegationPolicy,
-    tools: &AgentToolPolicy,
+    tools: &ResolvedAgentToolPolicy,
 ) -> Result<(), ApplicationError> {
     if policy.max_concurrent_invocations == 0 {
         return Err(ApplicationError::ValidationError(
@@ -316,14 +367,10 @@ pub(super) fn validate_delegation_policy(
         ));
     }
 
-    let agent_list_visible = tools.allow.iter().any(|name| name == AGENT_LIST_TOOL)
-        && !tools.deny.iter().any(|name| name == AGENT_LIST_TOOL);
-    let agent_delegate_visible = tools.allow.iter().any(|name| name == AGENT_DELEGATE_TOOL)
-        && !tools.deny.iter().any(|name| name == AGENT_DELEGATE_TOOL);
-    let agent_await_visible = tools.allow.iter().any(|name| name == AGENT_AWAIT_TOOL)
-        && !tools.deny.iter().any(|name| name == AGENT_AWAIT_TOOL);
-    let agent_handoff_visible = tools.allow.iter().any(|name| name == AGENT_HANDOFF_TOOL)
-        && !tools.deny.iter().any(|name| name == AGENT_HANDOFF_TOOL);
+    let agent_list_visible = tool_is_visible(tools, AGENT_LIST_TOOL);
+    let agent_delegate_visible = tool_is_visible(tools, AGENT_DELEGATE_TOOL);
+    let agent_await_visible = tool_is_visible(tools, AGENT_AWAIT_TOOL);
+    let agent_handoff_visible = tool_is_visible(tools, AGENT_HANDOFF_TOOL);
     if agent_list_visible && !policy.can_delegate && !policy.can_handoff {
         return Err(ApplicationError::ValidationError(
             "agent.profile_agent_list_requires_delegation: agent.list requires delegation.canDelegate or delegation.canHandoff"
@@ -342,7 +389,7 @@ pub(super) fn validate_delegation_policy(
                 .to_string(),
         ));
     }
-    if tools.allow.iter().any(|name| name == TASK_RETURN_TOOL) {
+    if tool_is_allowed(tools, TASK_RETURN_TOOL) {
         return Err(ApplicationError::ValidationError(
             "agent.profile_task_return_runtime_only: task.return is added by the runtime for child invocations and must not be listed in profile tools.allow"
                 .to_string(),
@@ -355,7 +402,7 @@ pub(super) fn validate_delegation_policy(
 pub(super) fn validate_run_policy(
     run: &AgentRunPolicy,
     delegation: &AgentDelegationPolicy,
-    tools: &AgentToolPolicy,
+    tools: &ResolvedAgentToolPolicy,
 ) -> Result<(), ApplicationError> {
     if run.model_retry.max_retries > 0 && run.model_retry.interval_ms == 0 {
         return Err(ApplicationError::ValidationError(
@@ -472,43 +519,54 @@ pub(super) fn validate_workspace_policy(
     Ok(())
 }
 
-fn tool_is_visible(tools: &AgentToolPolicy, name: &str) -> bool {
-    tools.allow.iter().any(|tool| tool == name) && !tools.deny.iter().any(|tool| tool == name)
+fn tool_is_allowed(tools: &ResolvedAgentToolPolicy, name: &str) -> bool {
+    let id = ToolId::builtin(name).expect("builtin tool names form valid ToolIds");
+    tools.allow.iter().any(|tool| tool == &id)
+}
+
+fn tool_is_visible(tools: &ResolvedAgentToolPolicy, name: &str) -> bool {
+    let id = ToolId::builtin(name).expect("builtin tool names form valid ToolIds");
+    tools.allow.iter().any(|tool| tool == &id) && !tools.deny.iter().any(|tool| tool == &id)
 }
 
 fn validate_tool_description_override(
-    descriptor: &ToolDescriptor,
+    id: &ToolId,
+    descriptor: Option<&ToolDescriptor>,
     override_: &AgentToolDescriptionOverride,
 ) -> Result<(), ApplicationError> {
-    let name = descriptor.id.native_name();
     if let Some(description) = override_.description.as_ref()
         && description.trim().is_empty()
     {
         return Err(ApplicationError::ValidationError(format!(
-            "agent.profile_tool_description_empty: description for `{name}` cannot be empty"
+            "agent.profile_tool_description_empty: description for `{id}` cannot be empty"
         )));
     }
     if override_.properties.is_empty() {
         return Ok(());
     }
+    for (property, description) in &override_.properties {
+        if description.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(format!(
+                "agent.profile_tool_property_description_empty: `{id}` property `{property}` cannot be empty"
+            )));
+        }
+    }
+    let Some(descriptor) = descriptor else {
+        return Ok(());
+    };
     let properties = descriptor
         .input_schema
         .get("properties")
         .and_then(Value::as_object)
         .ok_or_else(|| {
             ApplicationError::ValidationError(format!(
-                "agent.profile_tool_properties_invalid: `{name}` has no object properties"
+                "agent.profile_tool_properties_invalid: `{id}` has no object properties"
             ))
         })?;
-    for (property, description) in &override_.properties {
+    for property in override_.properties.keys() {
         if !properties.contains_key(property) {
             return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_unknown_tool_property: `{name}` has no property `{property}`"
-            )));
-        }
-        if description.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_tool_property_description_empty: `{name}` property `{property}` cannot be empty"
+                "agent.profile_unknown_tool_property: `{id}` has no property `{property}`"
             )));
         }
     }

@@ -16,7 +16,9 @@ use super::workspace::{
 };
 use super::world_info::worldinfo_read_activated_descriptor;
 use crate::errors::ApplicationError;
-use crate::services::agent_workspace_scope::format_model_workspace_roots;
+use crate::services::agent_workspace_scope::{
+    format_model_visible_workspace_roots, format_model_workspace_roots,
+};
 use tt_domain::models::agent::profile::{AgentToolDescriptionOverride, ResolvedAgentProfile};
 use tt_domain::models::tool::{ToolCatalog, ToolDescriptor, ToolId};
 
@@ -70,7 +72,7 @@ impl BuiltinAgentToolRegistry {
             ))
         })?;
         apply_profile_context(&mut descriptor, profile)?;
-        if let Some(override_) = profile.tools.tool_descriptions.get(tool_id.native_name()) {
+        if let Some(override_) = profile.tools.tool_descriptions.get(tool_id) {
             apply_description_override(&mut descriptor, override_)?;
         }
         Ok(descriptor)
@@ -89,7 +91,7 @@ fn apply_return_mode_context(
     descriptor: &mut ToolDescriptor,
     profile: &ResolvedAgentProfile,
 ) -> Result<(), ApplicationError> {
-    let visible_roots = format_model_workspace_roots(&profile.workspace.visible_roots);
+    let visible_roots = format_model_visible_workspace_roots(&profile.workspace.visible_roots);
     let writable_roots = format_model_workspace_roots(&profile.workspace.writable_roots);
     match descriptor.id.native_name() {
         WORKSPACE_LIST_FILES => {
@@ -158,7 +160,7 @@ fn apply_profile_context(
     descriptor: &mut ToolDescriptor,
     profile: &ResolvedAgentProfile,
 ) -> Result<(), ApplicationError> {
-    let visible_roots = format_model_workspace_roots(&profile.workspace.visible_roots);
+    let visible_roots = format_model_visible_workspace_roots(&profile.workspace.visible_roots);
     let writable_roots = format_model_workspace_roots(&profile.workspace.writable_roots);
     let final_path = profile.output.message_body_path.as_str();
 
@@ -257,11 +259,12 @@ fn apply_profile_context(
 }
 
 fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
-    profile.tools.allow.iter().any(|allowed| allowed == name)
-        && !profile.tools.deny.iter().any(|denied| denied == name)
+    let id = ToolId::builtin(name).expect("builtin Agent tool names form valid ToolIds");
+    profile.tools.allow.iter().any(|allowed| allowed == &id)
+        && !profile.tools.deny.iter().any(|denied| denied == &id)
 }
 
-fn apply_description_override(
+pub(crate) fn apply_description_override(
     descriptor: &mut ToolDescriptor,
     override_: &AgentToolDescriptionOverride,
 ) -> Result<(), ApplicationError> {
@@ -363,14 +366,15 @@ mod tests {
         profile.tools.allow = registry
             .catalog()
             .iter()
-            .map(|descriptor| descriptor.id.native_name().to_string())
-            .filter(|name| name != TASK_RETURN)
+            .map(|descriptor| descriptor.id.clone())
+            .filter(|id| id.native_name() != TASK_RETURN)
             .collect();
         let snapshot = compile_invocation_tool_snapshot(
             &registry,
             &profile,
             AgentInvocationExitPolicy::RunFinishAllowed,
             ToolSnapshotId::parse("aliases").unwrap(),
+            &[],
         )
         .unwrap();
 
@@ -442,6 +446,7 @@ mod tests {
             &profile,
             AgentInvocationExitPolicy::RunFinishAllowed,
             ToolSnapshotId::parse("test").unwrap(),
+            &[],
         )
         .expect("snapshot");
         let turn = ToolTurnContract::all(&snapshot, ToolChoice::Auto).expect("turn");
@@ -482,22 +487,23 @@ mod tests {
         let registry = BuiltinAgentToolRegistry::all();
         let mut profile = profile_with_skill_budget(100_000, 100_000);
         profile.tools.allow = vec![
-            WORKSPACE_READ_FILE.to_string(),
-            SKILL_READ.to_string(),
-            WORKSPACE_FINISH.to_string(),
-            AGENT_LIST.to_string(),
+            ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
+            ToolId::builtin(SKILL_READ).unwrap(),
+            ToolId::builtin(WORKSPACE_FINISH).unwrap(),
+            ToolId::builtin(AGENT_LIST).unwrap(),
         ];
-        profile.tools.deny = vec![SKILL_READ.to_string()];
+        profile.tools.deny = vec![ToolId::builtin(SKILL_READ).unwrap()];
         profile
             .tools
             .max_calls_per_tool
-            .insert(WORKSPACE_READ_FILE.to_string(), 2);
+            .insert(ToolId::builtin(WORKSPACE_READ_FILE).unwrap(), 2);
 
         let root = compile_invocation_tool_snapshot(
             &registry,
             &profile,
             AgentInvocationExitPolicy::RunFinishAllowed,
             ToolSnapshotId::parse("root").unwrap(),
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -514,6 +520,7 @@ mod tests {
             &profile,
             AgentInvocationExitPolicy::TaskReturnRequired,
             ToolSnapshotId::parse("child").unwrap(),
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -534,10 +541,10 @@ mod tests {
         assert_eq!(
             profile.tools.allow,
             vec![
-                WORKSPACE_READ_FILE.to_string(),
-                SKILL_READ.to_string(),
-                WORKSPACE_FINISH.to_string(),
-                AGENT_LIST.to_string(),
+                ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
+                ToolId::builtin(SKILL_READ).unwrap(),
+                ToolId::builtin(WORKSPACE_FINISH).unwrap(),
+                ToolId::builtin(AGENT_LIST).unwrap(),
             ]
         );
     }
@@ -602,11 +609,12 @@ mod tests {
             delegation: AgentDelegationPolicy::default(),
             instructions: AgentProfileInstructions::default(),
             tools: AgentToolPolicy {
-                allow: vec![SKILL_READ.to_string()],
+                allow: vec![ToolId::builtin(SKILL_READ).unwrap()],
                 deny: Vec::new(),
                 tool_descriptions: BTreeMap::new(),
                 max_rounds: 1,
                 max_calls_per_run: 1,
+                mcp_result_inline_char_limit: 50_000,
                 max_calls_per_tool: BTreeMap::new(),
             },
             skills: AgentSkillPolicy {

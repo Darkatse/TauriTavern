@@ -83,7 +83,7 @@ decode alias through this turn only into canonical ToolInvocation
   ↓
 ToolRequestGate checks snapshot/turn/choice and reserves frozen budget
   ↓
-adapt to Agent runtime control or builtin dispatcher
+adapt to Agent runtime control, builtin dispatcher, or McpService
   ↓
 write result
   ↓
@@ -96,13 +96,11 @@ Journal：
 
 ```text
 tool_call_requested
-tool_call_awaiting_approval
-tool_call_approved / tool_call_denied
 tool_call_started
 tool_call_completed / tool_call_failed
 ```
 
-现有 Agent 工具已收敛到 invocation-local `ToolRequestGate`：所有模型调用先以 canonical `ToolId` 检查 snapshot、turn membership、typed choice 与预算，再进入 Agent runtime control handler 或现有 builtin dispatcher。approval 没有真实 consumer，第二 executor 也尚不存在，因此当前不建立空 approval port、router 或 facade。执行过程中不得重新读取 Profile 或 global registry 来重算工具可见性。
+现有 Agent 工具已收敛到 invocation-local `ToolRequestGate`：所有模型调用先以 canonical `ToolId` 检查 snapshot、turn membership、typed choice 与预算，再进入 Agent runtime control handler、builtin dispatcher 或 `McpService`。MCP 是第二个 executor，但只需要在唯一执行入口按 provider 分支；没有引入通用 executor trait/router。当前 Ask 与 Allow 同样自动执行，不建立 approval port、pending-call 状态或 UI。执行过程中不得重新读取 Profile 或 global registry 来重算工具可见性；MCP 仅在发送前重新读取 registration 的 Active/permission 事实。
 
 ## 6. Policy Resolution
 
@@ -115,9 +113,9 @@ tool_call_completed / tool_call_failed
 - platform policy
 - runtime budget
 
-当前 Agent snapshot compiler 的输入是 resolved Profile、`AgentInvocationExitPolicy` 与只读 builtin catalog，输出有序 bindings：冻结后的 descriptor、snapshot 内唯一 model alias、per-tool 调用上限，以及 invocation 总调用上限。规则是 Profile `deny` 优先于 `allow`；return-mode child 再按宿主拥有的 exit policy 移除 commit、finish 与 delegation control tools，并注入唯一的 `task.return`。Profile allow 顺序就是 provider advertisement 顺序。
+当前 Agent snapshot compiler 的输入是 resolved Profile、`AgentInvocationExitPolicy`、只读 builtin catalog 与从 `McpService` cached catalog 解析出的 MCP descriptors，输出有序 bindings：冻结后的 descriptor、snapshot 内唯一 model alias、per-tool 调用上限，以及 invocation 总调用上限。规则是 Profile `deny` 优先于 `allow`；return-mode child 再按宿主拥有的 exit policy 移除 commit、finish 与 delegation control tools，并注入唯一的 `task.return`。Profile allow 顺序就是 provider advertisement 顺序。
 
-后续接入 plan、MCP 与 approval 时，policy resolver 的完整输出为：
+后续接入 plan 与统一 approval 时，policy resolver 的完整输出为：
 
 ```text
 visible: bool
@@ -142,7 +140,7 @@ budget
 
 ### 7.0 当前实现
 
-截至 2026-08-04，当前 registry 开放 agent / chat / world info / dice / skill / workspace 六类内建工具。每个 builtin 直接声明 canonical `ToolDescriptor`，Registry 只从这些声明构造 `ToolCatalog`；canonical ID 统一为 `builtin:<native-name>`。Catalog 只保存中性描述，不承载 model alias、Profile permission、executor 或 policy facts；重复 ID fail-fast。`tools.list()` 使用专用 UI DTO 投影，Profile 校验直接消费 Catalog，两者都不持有 model alias。
+截至 2026-08-09，当前 registry 开放 agent / chat / world info / dice / skill / workspace 六类内建工具；MCP descriptors 由 `McpService` 在 invocation preparation 时按 Profile 选择提供。每个 builtin 直接声明 canonical `ToolDescriptor`，Registry 只从这些声明构造 `ToolCatalog`；canonical ID 统一为 `builtin:<native-name>`。Catalog 只保存中性描述，不承载 model alias、Profile permission、executor 或 policy facts；重复 ID fail-fast。`tools.list()` 使用专用 UI DTO 合并 builtin 与 cached MCP 投影，model alias 仍只存在于 invocation binding。
 
 每个 root、return-mode child 与 handoff invocation 启动时只编译一次 `InvocationToolSnapshot`。Compiler 按 Profile allow 顺序从 Catalog 复制 descriptor，应用 Profile workspace/description facts、deny 与调用上限，再冻结 alias；当前 `ToolTurnContract` 只通过 `all(...)` 使用 snapshot 全集，生产 compiler 固定选择 `ToolChoice::Auto` 并生成 request-scoped `AgentModelTool`。child/handoff 提示词、provider request、continuation hint、alias decode 与 gate 均消费这份 snapshot/turn，不再各自过滤 Profile。root PromptManager 仍在后端 invocation 创建前通过兼容桥组装，其 Agent prompt preview 使用同一个 compiler；真正 provider advertisement 与执行权限以随后持久化的 root snapshot 为准。return-mode child 由 exit policy 移除 chat commit / run finish / delegation tools，并注入 runtime-only `task.return`；handoff invocation 使用目标 Profile 编译新的 snapshot。child 与请求它的 Agent 使用同一套逻辑 workspace path；runtime 只按 target Profile workspace policy 调整当前 invocation 的 visible/writable roots，不做 child 专用路径映射。
 
@@ -170,6 +168,10 @@ Agent-facing 文案必须从调用或执行 Agent 的角度描述可操作路径
 | `workspace.commit` | `workspace_commit` | 将 workspace 文件提交到当前 chat message | 已落地 |
 | `workspace.finish` | `workspace_finish` | 结束工具循环，进入 run 收尾 | 已落地 |
 
+MCP binding 使用 `mcp/<registration-uuid>:<native-name>` canonical ID。模型 alias 面向 Agent 可读性生成：`mcp__<normalized server displayName>__<normalized nativeName>`，例如 `issue.create` 在 `my server` 下成为 `mcp__my_server__issue_create`；碰撞以 `__2`、`__3` 确定性消歧，64-byte 截断优先保留工具动作部分。decoder 只查当前 snapshot 的 alias→ToolId map，不从 alias 反推 registration/native name。
+
+Agent 未选择 MCP ToolId 时不访问 MCP 存储；否则只读取 application memory→disk catalog，不会隐式联网 discovery。MCP tool 无缓存、registration 存储损坏、Paused、Off、目录消失或 root input schema 不是显式 object 时，只省略该工具，并在 Profile 配置警告与 invocation 时间线显示 diagnostic。Ask/Allow 当前都直接调用；发送前 `McpService` 重新检查 registration、Active、permission、object arguments、256 KiB 上限与 cancellation。
+
 默认模型可见/可写 workspace 前缀为：
 
 ```text
@@ -180,9 +182,13 @@ summaries/
 persist/
 ```
 
+runtime 额外提供 `tool-results/`：对所有 invocation 可见、永远不可写且从不 commit。它不进入 Profile 可配置 root universe。
+
 这些前缀由 resolved Profile 写入 run manifest，Profile 只能收窄 root universe。`persist/` 是 chat workspace 级持久 root 的 run projection：模型在 run 中通过普通 workspace 工具写入，`workspace.finish` 收尾成功后才 promote 回稳定 chat workspace；失败或取消的 run 不会写回。
 
 工具参数会以 create-only 语义写入 `tool-args/call_<sha256_8byte_hex(call-id)>.json`，工具结果会以相同语义写入 `tool-results/call_<sha256_8byte_hex(call-id)>.json`；重复 `call_id` 或 digest 路径冲突在覆盖既有审计事实前 fail-fast。本地文件名只使用 SHA-256 前 8 字节 hex。provider 返回的原始 `call_id` 只作为不透明业务 ID 保存在 JSON 内容、journal payload 与下一轮 `AgentModelContentPart::ToolResult` 中，不作为本地文件名。`AgentToolResult` 同时保存 canonical `ToolId`；dispatcher outcome 在解释 `AgentToolEffect` 前必须匹配原始 `ToolInvocation`，最终结果落盘前再次验证。Gateway 只通过当前 request 的 `ToolId -> model alias` 投影编码历史结果。工具结果不会写入 SillyTavern chat 楼层。
+
+MCP 结果总是先完整落盘，再决定模型投影。序列化后的 `AgentToolResult` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，模型收到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、完整文件路径、字符数、resource ref，以及当前 snapshot 中 `workspace.read_file` / `workspace.search_files` 的真实 alias 和分段读取指引；audit 文件保持原样。该正整数随 resolved Profile 固定到 invocation，root、SubAgent 与 handoff 各自使用其 Profile 值。字符统计复用 domain `TextMetrics`，不依赖具体模型 tokenizer。若 Profile 没有读工具，路径仍作为用户可见 result reference 返回，不静默截断，也不为此临时扩大工具权限。
 
 Timeline 的隐藏、side-effect 关联与 builtin 类型判定只使用 journal 中的 canonical `toolId`；native `name` 仅用于用户可读标题。Model Turn UI 投影保留 `toolId`，同 native name 的外部工具以 canonical identity 区分。
 
@@ -201,7 +207,7 @@ Profile 的 `maxCallsPerRun` 是历史字段名，实际语义一直是 invocati
 
 违反此契约的其它形态（`agent.tool_after_finish` / `agent.max_tool_rounds_exceeded`）目前不走软纠正，直接进入同一终态分类：没有成功 chat commit 时 fail-fast；已有成功 chat commit 时 `run_partial_success`。细节见 `RunEventJournal.md`。
 
-当前没有 MCP、shell、extension bridge、profile routing、Plan Mode runtime、模型可见 task cancel 或审批工具。
+当前没有 shell、extension bridge、profile routing、Plan Mode runtime、模型可见 task cancel 或审批工具；Legacy MCP 仍未接入。
 
 ### 7.1 Agent Delegation Tools
 
@@ -268,7 +274,7 @@ workspace.create_checkpoint
 - 输入为 `query`，可选 `path`、`limit`、`context_lines`。
 - 返回 path、score、line range、snippet、sha256 与 `workspace:<path>#Lx-Ly` ref。
 - 0 命中是成功结果；非法 path、不可见 path、缺失 path 是 recoverable tool error。
-- 不搜索 `input/`、`tool-results/`、`model-responses/`、`checkpoints/`、`events.jsonl` 等隐藏 runtime 存储。
+- 不搜索 `input/`、`model-responses/`、`checkpoints/`、`events.jsonl` 等隐藏 runtime 存储；`tool-results/` 是唯一显式可见的 runtime result root。
 
 `workspace.read_file`
 

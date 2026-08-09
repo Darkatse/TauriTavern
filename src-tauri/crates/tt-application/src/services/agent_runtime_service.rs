@@ -3,17 +3,21 @@ use std::sync::Arc;
 
 use tokio::sync::{RwLock, oneshot, watch};
 
-use crate::dto::agent_dto::{AgentPromptAssemblyBrokerRequestDto, AgentToolCatalogItemDto};
+use crate::dto::agent_dto::{
+    AgentListToolsResultDto, AgentPromptAssemblyBrokerRequestDto, AgentToolCatalogDiagnosticDto,
+    AgentToolCatalogItemDto,
+};
 use crate::errors::ApplicationError;
 use crate::services::agent_model_gateway::AgentModelGateway;
 use crate::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService, materialize_agent_system_prompt,
 };
 use crate::services::agent_tools::{
-    AgentToolDispatcher, BuiltinAgentToolRegistry, compile_invocation_tool_snapshot,
-    project_agent_model_tools,
+    AgentToolDispatcher, BuiltinAgentToolRegistry, apply_description_override,
+    compile_invocation_tool_snapshot, project_agent_model_tools,
 };
 use crate::services::llm_connection_service::LlmConnectionService;
+use crate::services::mcp_service::{AgentMcpToolDiagnostic, McpService};
 use crate::services::prompt_assembly_service::PromptAssemblyService;
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
@@ -99,6 +103,13 @@ struct PreparedInvocation {
     effective_skills: Vec<SkillIndexEntry>,
 }
 
+struct PreparedInvocationTools {
+    snapshot: InvocationToolSnapshot,
+    turn: ToolTurnContract,
+    model_tools: Vec<AgentModelTool>,
+    diagnostics: Vec<AgentMcpToolDiagnostic>,
+}
+
 pub struct AgentRuntimeService {
     run_repository: Arc<dyn AgentRunRepository>,
     invocation_repository: Arc<dyn AgentInvocationRepository>,
@@ -111,6 +122,7 @@ pub struct AgentRuntimeService {
     llm_connection_service: Arc<LlmConnectionService>,
     prompt_assembly_service: Arc<PromptAssemblyService>,
     skill_service: Arc<SkillService>,
+    mcp_service: Arc<McpService>,
     tool_registry: BuiltinAgentToolRegistry,
     tool_dispatcher: AgentToolDispatcher,
     active_runs: RwLock<HashMap<String, Arc<ActiveRunHandle>>>,
@@ -137,6 +149,7 @@ impl AgentRuntimeService {
         profile_service: Arc<AgentProfileService>,
         llm_connection_service: Arc<LlmConnectionService>,
         prompt_assembly_service: Arc<PromptAssemblyService>,
+        mcp_service: Arc<McpService>,
     ) -> Self {
         let tool_registry = BuiltinAgentToolRegistry::all();
         let tool_dispatcher = AgentToolDispatcher::new(
@@ -158,6 +171,7 @@ impl AgentRuntimeService {
             llm_connection_service,
             prompt_assembly_service,
             skill_service,
+            mcp_service,
             tool_registry,
             tool_dispatcher,
             active_runs: RwLock::new(HashMap::new()),
@@ -171,8 +185,9 @@ impl AgentRuntimeService {
         self.tool_registry.catalog()
     }
 
-    pub fn tool_catalog_items(&self) -> Result<Vec<AgentToolCatalogItemDto>, ApplicationError> {
-        self.tool_registry
+    pub async fn tool_catalog_items(&self) -> Result<AgentListToolsResultDto, ApplicationError> {
+        let mut tools = self
+            .tool_registry
             .catalog()
             .iter()
             .map(|descriptor| {
@@ -189,52 +204,118 @@ impl AgentRuntimeService {
                     ))
                 })?;
                 Ok(AgentToolCatalogItemDto {
-                    name: descriptor.id.native_name().to_string(),
+                    id: descriptor.id.clone(),
+                    native_name: descriptor.id.native_name().to_string(),
                     title,
                     description,
                     input_schema: descriptor.input_schema.clone(),
                     output_schema: descriptor.output_schema.clone(),
                     annotations: descriptor.annotations.clone(),
-                    source: descriptor.id.provider_id().to_string(),
+                    source: "builtin".to_string(),
+                    registration_id: None,
+                    server_display_name: None,
+                    permission: None,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, ApplicationError>>()?;
+        let mcp = self.mcp_service.list_agent_tools_cached().await?;
+        tools.extend(mcp.tools.into_iter().map(|tool| {
+            AgentToolCatalogItemDto {
+                id: tool.descriptor.id.clone(),
+                native_name: tool.descriptor.id.native_name().to_string(),
+                title: tool
+                    .descriptor
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| tool.descriptor.id.native_name().to_string()),
+                description: tool.descriptor.description.clone().unwrap_or_default(),
+                input_schema: tool.descriptor.input_schema.clone(),
+                output_schema: tool.descriptor.output_schema.clone(),
+                annotations: tool.descriptor.annotations.clone(),
+                source: "mcp".to_string(),
+                registration_id: Some(tool.registration_id.to_string()),
+                server_display_name: Some(tool.server_display_name),
+                permission: Some(tool.permission),
+            }
+        }));
+        Ok(AgentListToolsResultDto {
+            tools,
+            diagnostics: mcp
+                .diagnostics
+                .into_iter()
+                .map(|diagnostic| AgentToolCatalogDiagnosticDto {
+                    tool_id: diagnostic.tool_id,
+                    code: diagnostic.code,
+                    message: diagnostic.message,
+                })
+                .collect(),
+        })
     }
 
-    pub fn visible_model_tools(
+    pub async fn visible_model_tools(
         &self,
         profile: &ResolvedAgentProfile,
     ) -> Result<Vec<AgentModelTool>, ApplicationError> {
-        let (_, _, tools) = self.compile_invocation_tools(
-            profile,
-            AgentInvocationExitPolicy::RunFinishAllowed,
-            "profile_preview",
-        )?;
-        Ok(tools)
+        Ok(self
+            .prepare_invocation_tools(
+                profile,
+                AgentInvocationExitPolicy::RunFinishAllowed,
+                "profile_preview",
+            )
+            .await?
+            .model_tools)
     }
 
-    pub(super) fn compile_invocation_tools(
+    async fn prepare_invocation_tools(
         &self,
         profile: &ResolvedAgentProfile,
         exit_policy: AgentInvocationExitPolicy,
         snapshot_id: &str,
-    ) -> Result<
-        (
-            InvocationToolSnapshot,
-            ToolTurnContract,
-            Vec<AgentModelTool>,
-        ),
-        ApplicationError,
-    > {
+    ) -> Result<PreparedInvocationTools, ApplicationError> {
+        let selected = profile
+            .tools
+            .allow
+            .iter()
+            .filter(|id| !id.is_builtin() && !profile.tools.deny.iter().any(|denied| denied == *id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut mcp = self
+            .mcp_service
+            .resolve_agent_tools_cached(&selected)
+            .await?;
+        let mut override_diagnostics = Vec::new();
+        mcp.tools.retain_mut(|tool| {
+            let Some(override_) = profile.tools.tool_descriptions.get(&tool.descriptor.id) else {
+                return true;
+            };
+            match apply_description_override(&mut tool.descriptor, override_) {
+                Ok(()) => true,
+                Err(error) => {
+                    override_diagnostics.push(AgentMcpToolDiagnostic {
+                        tool_id: Some(tool.descriptor.id.clone()),
+                        code: "mcp.agent_tool_override_invalid".to_string(),
+                        message: error.to_string(),
+                    });
+                    false
+                }
+            }
+        });
+        mcp.diagnostics.extend(override_diagnostics);
         let snapshot = compile_invocation_tool_snapshot(
             &self.tool_registry,
             profile,
             exit_policy,
             ToolSnapshotId::parse(snapshot_id.to_string())?,
+            &mcp.tools,
         )?;
         let turn = ToolTurnContract::all(&snapshot, ToolChoice::Auto)?;
-        let tools = project_agent_model_tools(&snapshot, &turn)?;
-        Ok((snapshot, turn, tools))
+        let model_tools = project_agent_model_tools(&snapshot, &turn)?;
+        Ok(PreparedInvocationTools {
+            snapshot,
+            turn,
+            model_tools,
+            diagnostics: mcp.diagnostics,
+        })
     }
 
     pub async fn resolve_agent_system_prompt(
@@ -248,7 +329,7 @@ impl AgentRuntimeService {
                 tool_catalog: self.tool_registry.catalog(),
             })
             .await?;
-        let visible_tools = self.visible_model_tools(&profile)?;
+        let visible_tools = self.visible_model_tools(&profile).await?;
 
         Ok(materialize_agent_system_prompt(&visible_tools, &profile))
     }

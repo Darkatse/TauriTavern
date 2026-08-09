@@ -10,6 +10,7 @@ use tt_domain::models::agent::{
     AgentInvocationStatus, AgentRunEvent, AgentRunPresentation, AgentRunSkillScopeRefs,
     AgentRunStatus, AgentTaskStatus,
 };
+use tt_domain::models::mcp::McpToolPermission;
 use tt_domain::models::tool::ToolId;
 use tt_ports::repositories::agent_profile_storage_health_repository::{
     AgentProfileStorageIssue, AgentProfileStorageRepairAction,
@@ -234,12 +235,15 @@ pub struct AgentRepairProfileFileDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentListToolsResultDto {
     pub tools: Vec<AgentToolCatalogItemDto>,
+    #[serde(default)]
+    pub diagnostics: Vec<AgentToolCatalogDiagnosticDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentToolCatalogItemDto {
-    pub name: String,
+    pub id: ToolId,
+    pub native_name: String,
     pub title: String,
     pub description: String,
     pub input_schema: Value,
@@ -247,6 +251,21 @@ pub struct AgentToolCatalogItemDto {
     pub output_schema: Option<Value>,
     pub annotations: Value,
     pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<McpToolPermission>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentToolCatalogDiagnosticDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<ToolId>,
+    pub code: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -218,8 +218,13 @@ impl AgentRuntimeService {
                 "agent.invalid_prompt_snapshot: input/prompt_snapshot.json is invalid JSON: {error}"
             ))
         })?;
-        let (tool_snapshot, tool_turn, visible_tools) =
-            self.compile_invocation_tools(&profile, invocation.exit_policy, invocation_id)?;
+        let prepared_tools = self
+            .prepare_invocation_tools(&profile, invocation.exit_policy, invocation_id)
+            .await?;
+        let tool_snapshot = prepared_tools.snapshot;
+        let tool_turn = prepared_tools.turn;
+        let visible_tools = prepared_tools.model_tools;
+        let tool_diagnostics = prepared_tools.diagnostics;
         let tool_snapshot_path = self.persist_tool_snapshot(run_id, &tool_snapshot).await?;
         let run = self.run_repository.load_run(run_id).await?;
         let invocation_prompt_snapshot = if profile.preset.mode == AgentPresetBindingMode::Ref {
@@ -283,6 +288,7 @@ impl AgentRuntimeService {
                 "toolSnapshot": tool_snapshot_summary(&tool_snapshot),
                 "toolSnapshotPath": tool_snapshot_path.as_str(),
                 "toolTurn": &tool_turn,
+                "toolDiagnostics": &tool_diagnostics,
                 "maxRounds": profile.tools.max_rounds,
                 "contextPolicy": &profile.context,
             }),

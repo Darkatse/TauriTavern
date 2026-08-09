@@ -82,6 +82,7 @@ impl McpServerRepository for FileMcpServerRepository {
                 .unwrap_or_else(|| path.display().to_string());
             let Some(file_id) = path.file_stem().and_then(|value| value.to_str()) else {
                 scan.issues.push(McpRegistrationStorageIssue {
+                    registration_id: None,
                     file_name,
                     message: "mcp.registration_filename_utf8: filename is not valid UTF-8"
                         .to_string(),
@@ -92,6 +93,7 @@ impl McpServerRepository for FileMcpServerRepository {
                 Ok(id) => id,
                 Err(error) => {
                     scan.issues.push(McpRegistrationStorageIssue {
+                        registration_id: None,
                         file_name,
                         message: error.to_string(),
                     });
@@ -101,8 +103,11 @@ impl McpServerRepository for FileMcpServerRepository {
             match self.load_file(&path, &id).await {
                 Ok(registration) => scan.registrations.push(registration),
                 Err(DomainError::InvalidData(message) | DomainError::NotFound(message)) => {
-                    scan.issues
-                        .push(McpRegistrationStorageIssue { file_name, message });
+                    scan.issues.push(McpRegistrationStorageIssue {
+                        registration_id: Some(id),
+                        file_name,
+                        message,
+                    });
                 }
                 Err(error) => return Err(error),
             }

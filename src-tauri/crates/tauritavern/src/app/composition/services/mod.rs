@@ -126,6 +126,7 @@ pub(super) async fn build(
         skill_service.clone(),
         chat_completion_service.clone(),
         llm_connection_service.clone(),
+        mcp_service.clone(),
     );
     let tokenization_service = Arc::new(TokenizationService::new(
         repositories.tokenizer_repository.clone(),

@@ -401,7 +401,7 @@ fn validate_profile_file_identity(
 }
 
 fn is_supported_profile_schema_version(version: u32) -> bool {
-    matches!(version, 1 | AGENT_PROFILE_SCHEMA_VERSION)
+    matches!(version, 1 | 2 | AGENT_PROFILE_SCHEMA_VERSION)
 }
 
 #[cfg(test)]
@@ -643,6 +643,7 @@ mod tests {
                 tool_descriptions: BTreeMap::new(),
                 max_rounds: 1,
                 max_calls_per_run: 1,
+                mcp_result_inline_char_limit: 50_000,
                 max_calls_per_tool: BTreeMap::new(),
             },
             skills: AgentSkillPolicy {

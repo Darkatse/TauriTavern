@@ -1,6 +1,8 @@
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::WorkspacePath;
 
+pub(crate) const AGENT_TOOL_RESULTS_ROOT: &str = "tool-results";
+
 pub(crate) fn task_result_summary_path(workspace_key: &str) -> Result<WorkspacePath, DomainError> {
     WorkspacePath::parse(format!("summaries/{workspace_key}-result.md"))
 }
@@ -17,6 +19,14 @@ pub(crate) fn format_model_workspace_roots(roots: &[String]) -> String {
         .map(|root| format!("{root}/"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+pub(crate) fn format_model_visible_workspace_roots(roots: &[String]) -> String {
+    let mut roots = roots.to_vec();
+    if !roots.iter().any(|root| root == AGENT_TOOL_RESULTS_ROOT) {
+        roots.push(AGENT_TOOL_RESULTS_ROOT.to_string());
+    }
+    format_model_workspace_roots(&roots)
 }
 
 fn path_matches_root_or_child(path: &str, root: &str) -> bool {

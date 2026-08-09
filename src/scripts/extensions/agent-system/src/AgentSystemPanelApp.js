@@ -86,37 +86,37 @@ const TOOL_GROUPS = Object.freeze([
         id: 'context',
         labelKey: 'contextTools',
         icon: 'fa-comments',
-        tools: ['chat.search', 'chat.read_messages', 'worldinfo.read_activated'],
+        tools: ['builtin:chat.search', 'builtin:chat.read_messages', 'builtin:worldinfo.read_activated'],
     },
     {
         id: 'skills',
         labelKey: 'skillTools',
         icon: 'fa-book-open',
-        tools: ['skill.list', 'skill.search', 'skill.read'],
+        tools: ['builtin:skill.list', 'builtin:skill.search', 'builtin:skill.read'],
     },
     {
         id: 'workspace-read',
         labelKey: 'workspaceReadTools',
         icon: 'fa-folder-tree',
-        tools: ['workspace.list_files', 'workspace.search_files', 'workspace.read_file'],
+        tools: ['builtin:workspace.list_files', 'builtin:workspace.search_files', 'builtin:workspace.read_file'],
     },
     {
         id: 'workspace-write',
         labelKey: 'workspaceWriteTools',
         icon: 'fa-pen-to-square',
-        tools: ['workspace.write_file', 'workspace.apply_patch'],
+        tools: ['builtin:workspace.write_file', 'builtin:workspace.apply_patch'],
     },
     {
         id: 'control',
         labelKey: 'controlTools',
         icon: 'fa-flag-checkered',
-        tools: ['workspace.commit', 'workspace.finish'],
+        tools: ['builtin:workspace.commit', 'builtin:workspace.finish'],
     },
     {
         id: 'other',
         labelKey: 'otherTools',
         icon: 'fa-dice',
-        tools: ['dice.roll'],
+        tools: ['builtin:dice.roll'],
     },
 ]);
 
@@ -193,8 +193,9 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     { id: 'runs', labelKey: 'runs', icon: 'fa-clock-rotate-left' },
                 ],
                 toolItems: [],
-                toolNames: [...KNOWN_TOOLS],
-                selectedToolName: KNOWN_TOOLS[0],
+                toolCatalogDiagnostics: [],
+                toolIds: [...KNOWN_TOOLS],
+                selectedToolId: KNOWN_TOOLS[0],
                 workspaceRoots: WORKSPACE_ROOTS,
                 presetOptions: [],
                 modelTargets: [],
@@ -253,7 +254,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             },
             profileStats() {
                 const allowedTools = new Set(Array.isArray(this.draft?.tools?.allow) ? this.draft.tools.allow : []);
-                const enabledToolCount = this.toolNames.filter((tool) => allowedTools.has(tool)).length;
+                const enabledToolCount = this.toolIds.filter((tool) => allowedTools.has(tool)).length;
                 const visibleRootCount = Array.isArray(this.draft?.workspace?.visibleRoots)
                     ? this.draft.workspace.visibleRoots.length
                     : 0;
@@ -289,7 +290,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     {
                         icon: 'fa-screwdriver-wrench',
                         label: tr('tools'),
-                        value: `${enabledToolCount}/${this.toolNames.length}`,
+                        value: `${enabledToolCount}/${this.toolIds.length}`,
                     },
                     {
                         icon: 'fa-folder-tree',
@@ -375,7 +376,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 return Array.isArray(this.profileHealth.diagnostics) ? this.profileHealth.diagnostics : [];
             },
             profileConfigurationWarnings() {
-                const warnings = [];
+                const warnings = this.toolCatalogDiagnostics
+                    .map((diagnostic) => diagnostic?.message || diagnostic?.code || tr('unknownError'));
                 const diagnostics = this.profileDiagnostics;
                 if (diagnostics.length > 0) {
                     warnings.push(...diagnostics.map(profileDiagnosticMessage));
@@ -402,12 +404,12 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 const groupedTools = new Set();
                 const groups = TOOL_GROUPS
                     .map((group) => {
-                        const tools = group.tools.filter((tool) => this.toolNames.includes(tool));
+                        const tools = group.tools.filter((tool) => this.toolIds.includes(tool));
                         tools.forEach((tool) => groupedTools.add(tool));
                         return { ...group, tools };
                     })
                     .filter((group) => group.tools.length > 0);
-                const extraTools = this.toolNames.filter((tool) => !groupedTools.has(tool));
+                const extraTools = this.toolIds.filter((tool) => !groupedTools.has(tool));
                 if (extraTools.length > 0) {
                     groups.push({
                         id: 'extra',
@@ -418,14 +420,14 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 }
                 return groups;
             },
-            toolItemsByName() {
-                return Object.fromEntries(this.toolItems.map((spec) => [spec.name, spec]));
+            toolItemsById() {
+                return Object.fromEntries(this.toolItems.map((spec) => [spec.id, spec]));
             },
             selectedToolItem() {
-                return this.toolItemsByName[this.selectedToolName] || null;
+                return this.toolItemsById[this.selectedToolId] || null;
             },
             selectedToolEnabled() {
-                return Array.isArray(this.draft?.tools?.allow) && this.draft.tools.allow.includes(this.selectedToolName);
+                return Array.isArray(this.draft?.tools?.allow) && this.draft.tools.allow.includes(this.selectedToolId);
             },
             selectedToolProperties() {
                 const properties = this.selectedToolItem?.inputSchema?.properties || {};
@@ -720,11 +722,10 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 }
                 const result = await api.list();
                 this.toolItems = result.tools;
-                this.toolNames = this.toolItems
-                    .map((tool) => tool.name)
-                    .filter((tool) => !PROFILE_TOOL_MATRIX_HIDDEN.has(tool));
-                if (!this.toolNames.includes(this.selectedToolName)) {
-                    this.selectedToolName = this.toolNames[0];
+                this.toolCatalogDiagnostics = Array.isArray(result.diagnostics) ? result.diagnostics : [];
+                this.syncToolIdsWithDraft();
+                if (!this.toolIds.includes(this.selectedToolId)) {
+                    this.selectedToolId = this.toolIds[0];
                 }
             },
             async refreshPresetOptions() {
@@ -762,6 +763,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.lastLoadedProfileJson = prettyJson(normalizeProfileForSave(result.profile));
                 this.externalProfileChangePending = false;
                 this.draft = profileForEdit(result.profile);
+                this.syncToolIdsWithDraft();
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
                 this.refreshDraftJson();
@@ -828,6 +830,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             applyDraftJson() {
                 const parsed = JSON.parse(this.draftJson);
                 this.draft = profileForEdit(parsed);
+                this.syncToolIdsWithDraft();
                 this.editingProfileId = parsed.id;
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
@@ -1029,7 +1032,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.draft.tools.allow = normalizeDelegationToolAllowList(
                     this.draft?.tools?.allow,
                     this.draft?.delegation,
-                    this.toolItems.map((tool) => tool.name),
+                    this.toolItems.map((tool) => tool.id),
                 );
             },
             async persistProfileModelBinding(profile) {
@@ -1066,17 +1069,24 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 const allow = new Set(Array.isArray(this.draft.tools.allow) ? this.draft.tools.allow : []);
                 return tools.filter((tool) => allow.has(tool)).length;
             },
-            selectTool(toolName) {
-                this.selectedToolName = toolName;
+            selectTool(toolId) {
+                this.selectedToolId = toolId;
             },
-            toolItem(toolName) {
-                return this.toolItemsByName[toolName];
+            toolItem(toolId) {
+                return this.toolItemsById[toolId];
             },
-            toolTitle(toolName) {
-                return this.toolItem(toolName)?.title || toolName;
+            toolTitle(toolId) {
+                return this.toolItem(toolId)?.title || toolId;
             },
-            toolSource(toolName) {
-                return this.toolItem(toolName)?.source || '';
+            toolReferenceLabel(toolId) {
+                const tool = this.toolItem(toolId);
+                return tool?.source === 'mcp'
+                    ? `${tool.serverDisplayName} · ${tool.nativeName}`
+                    : toolId;
+            },
+            toolSource(toolId) {
+                const tool = this.toolItem(toolId);
+                return tool?.serverDisplayName || tool?.source || tr('unavailableTool');
             },
             schemaType(schema) {
                 const type = schema?.type;
@@ -1085,8 +1095,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 }
                 return String(type || tr('value'));
             },
-            toolBadges(toolName) {
-                const spec = this.toolItem(toolName);
+            toolBadges(toolId) {
+                const spec = this.toolItem(toolId);
                 const annotations = spec?.annotations || {};
                 const badges = [];
                 if (annotations.readOnly) {
@@ -1098,23 +1108,26 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 if (annotations.control) {
                     badges.push({ key: 'control', label: tr('controlTool') });
                 }
-                if (this.toolHasDescriptionOverride(toolName)) {
+                if (spec?.permission === 'ask') {
+                    badges.push({ key: 'ask', label: tr('askAutoTool') });
+                }
+                if (this.toolHasDescriptionOverride(toolId)) {
                     badges.push({ key: 'custom', label: tr('customizedTool') });
                 }
                 return badges;
             },
-            toolHasDescriptionOverride(toolName) {
-                const override = this.draft?.tools?.toolDescriptions?.[toolName];
+            toolHasDescriptionOverride(toolId) {
+                const override = this.draft?.tools?.toolDescriptions?.[toolId];
                 return Boolean(override?.description || Object.keys(override?.properties || {}).length > 0);
             },
-            getToolDescriptionOverride(toolName) {
-                return this.draft.tools.toolDescriptions?.[toolName]?.description || '';
+            getToolDescriptionOverride(toolId) {
+                return this.draft.tools.toolDescriptions?.[toolId]?.description || '';
             },
-            getToolPropertyDescriptionOverride(toolName, property) {
-                return this.draft.tools.toolDescriptions?.[toolName]?.properties?.[property] || '';
+            getToolPropertyDescriptionOverride(toolId, property) {
+                return this.draft.tools.toolDescriptions?.[toolId]?.properties?.[property] || '';
             },
-            setToolDescriptionOverride(toolName, value) {
-                this.updateToolDescriptionOverride(toolName, (override) => {
+            setToolDescriptionOverride(toolId, value) {
+                this.updateToolDescriptionOverride(toolId, (override) => {
                     const description = String(value || '');
                     if (description.trim()) {
                         override.description = description;
@@ -1123,8 +1136,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     }
                 });
             },
-            setToolPropertyDescriptionOverride(toolName, property, value) {
-                this.updateToolDescriptionOverride(toolName, (override) => {
+            setToolPropertyDescriptionOverride(toolId, property, value) {
+                this.updateToolDescriptionOverride(toolId, (override) => {
                     const description = String(value || '');
                     const properties = { ...(override.properties || {}) };
                     if (description.trim()) {
@@ -1139,24 +1152,24 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     }
                 });
             },
-            updateToolDescriptionOverride(toolName, mutate) {
+            updateToolDescriptionOverride(toolId, mutate) {
                 const toolDescriptions = { ...(this.draft.tools.toolDescriptions || {}) };
-                const override = { ...(toolDescriptions[toolName] || {}) };
+                const override = { ...(toolDescriptions[toolId] || {}) };
                 mutate(override);
                 if (!override.description && !override.properties) {
-                    delete toolDescriptions[toolName];
+                    delete toolDescriptions[toolId];
                 } else {
-                    toolDescriptions[toolName] = override;
+                    toolDescriptions[toolId] = override;
                 }
                 this.draft.tools.toolDescriptions = toolDescriptions;
             },
-            resetToolDescriptionOverride(toolName) {
+            resetToolDescriptionOverride(toolId) {
                 const toolDescriptions = { ...(this.draft.tools.toolDescriptions || {}) };
-                delete toolDescriptions[toolName];
+                delete toolDescriptions[toolId];
                 this.draft.tools.toolDescriptions = toolDescriptions;
             },
-            resetToolPropertyDescriptionOverride(toolName, property) {
-                this.updateToolDescriptionOverride(toolName, (override) => {
+            resetToolPropertyDescriptionOverride(toolId, property) {
+                this.updateToolDescriptionOverride(toolId, (override) => {
                     const properties = { ...(override.properties || {}) };
                     delete properties[property];
                     if (Object.keys(properties).length > 0) {
@@ -1166,27 +1179,40 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     }
                 });
             },
-            async toggleToolAllowed(toolName, event) {
+            async toggleToolAllowed(toolId, event) {
                 const enabled = event.target.checked;
                 const allow = new Set(this.draft.tools.allow);
                 if (enabled) {
-                    allow.add(toolName);
+                    allow.add(toolId);
                 } else {
-                    if (this.toolHasDescriptionOverride(toolName)) {
-                        if (!await confirmAction(tr('removeToolDescriptionOnDisableConfirm', { tool: toolName }))) {
+                    if (this.toolHasDescriptionOverride(toolId)) {
+                        if (!await confirmAction(tr('removeToolDescriptionOnDisableConfirm', { tool: toolId }))) {
                             event.target.checked = true;
                             return;
                         }
-                        this.resetToolDescriptionOverride(toolName);
+                        this.resetToolDescriptionOverride(toolId);
                     }
-                    allow.delete(toolName);
+                    allow.delete(toolId);
                 }
                 const hiddenAllowed = this.draft.tools.allow
                     .filter((tool) => PROFILE_TOOL_MATRIX_HIDDEN.has(tool) && !RUNTIME_ONLY_TOOLS.includes(tool));
+                const unavailableAllowed = this.draft.tools.allow
+                    .filter((tool) => allow.has(tool) && !this.toolItemsById[tool] && !PROFILE_TOOL_MATRIX_HIDDEN.has(tool));
                 this.draft.tools.allow = [
                     ...hiddenAllowed,
-                    ...this.toolNames.filter((tool) => allow.has(tool)),
+                    ...unavailableAllowed,
+                    ...this.toolIds.filter((tool) => allow.has(tool)),
                 ];
+            },
+            syncToolIdsWithDraft() {
+                const available = this.toolItems
+                    .map((tool) => tool.id)
+                    .filter((tool) => !PROFILE_TOOL_MATRIX_HIDDEN.has(tool));
+                const selected = Array.isArray(this.draft?.tools?.allow) ? this.draft.tools.allow : [];
+                this.toolIds = [...new Set([
+                    ...available,
+                    ...selected.filter((tool) => !PROFILE_TOOL_MATRIX_HIDDEN.has(tool)),
+                ])];
             },
             workspaceRootIcon(root) {
                 return WORKSPACE_ROOT_ICONS[root] || 'fa-folder';
@@ -1509,7 +1535,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                         <div v-if="profileConfigurationWarnings.length > 0" class="ttas-binding-summary ttas-binding-warning ttas-span-2">
                                             <i class="fa-solid fa-triangle-exclamation"></i>
                                             <div>
-                                                <strong>{{ tr('agentProfileNeedsRepair') }}</strong>
+                                                <strong>{{ tr('agentProfileConfigurationWarnings') }}</strong>
                                                 <span v-for="warning in profileConfigurationWarnings" :key="warning">{{ warning }}</span>
                                             </div>
                                         </div>
@@ -1642,6 +1668,14 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                             <input class="text_pole" type="number" min="1" v-model.number="draft.tools.maxCallsPerRun" :disabled="isBuiltinProfile" />
                                         </label>
                                         <label class="ttas-field">
+                                            <span>{{ tr('mcpResultInlineCharLimit') }}</span>
+                                            <input class="text_pole" type="number" min="1" step="1000" v-model.number="draft.tools.mcpResultInlineCharLimit" :disabled="isBuiltinProfile" />
+                                            <small class="ttas-field-hint">
+                                                <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                                                <span>{{ tr('mcpResultInlineCharLimitHint') }}</span>
+                                            </small>
+                                        </label>
+                                        <label class="ttas-field">
                                             <span>{{ tr('modelRetries') }}</span>
                                             <input class="text_pole" type="number" min="0" v-model.number="draft.run.modelRetry.maxRetries" :disabled="isBuiltinProfile" />
                                         </label>
@@ -1702,7 +1736,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                                         v-for="tool in group.tools"
                                                         :key="tool"
                                                         class="ttas-tool-row"
-                                                        :class="{ active: selectedToolName === tool, enabled: draft.tools.allow.includes(tool), customized: toolHasDescriptionOverride(tool) }"
+                                                        :class="{ active: selectedToolId === tool, enabled: draft.tools.allow.includes(tool), customized: toolHasDescriptionOverride(tool) }"
                                                     >
                                                         <input
                                                             type="checkbox"
@@ -1712,7 +1746,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                                         />
                                                         <button type="button" class="ttas-tool-select" @click="selectTool(tool)">
                                                             <strong>{{ toolTitle(tool) }}</strong>
-                                                            <span>{{ tool }}</span>
+                                                            <span>{{ toolReferenceLabel(tool) }}</span>
                                                         </button>
                                                         <i v-if="toolHasDescriptionOverride(tool)" class="fa-solid fa-pen-nib ttas-tool-custom-marker" :title="tr('customizedTool')"></i>
                                                     </div>
@@ -1723,14 +1757,14 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                         <aside v-if="selectedToolItem" class="ttas-tool-editor-panel">
                                             <header class="ttas-tool-editor-header">
                                                 <div>
-                                                    <div class="ttas-eyebrow">{{ selectedToolName }}</div>
+                                                    <div class="ttas-eyebrow">{{ toolReferenceLabel(selectedToolId) }}</div>
                                                     <h5>{{ selectedToolItem.title }}</h5>
                                                 </div>
                                                 <button
                                                     type="button"
                                                     class="menu_button menu_button_icon"
-                                                    :disabled="isBuiltinProfile || !toolHasDescriptionOverride(selectedToolName)"
-                                                    @click="resetToolDescriptionOverride(selectedToolName)"
+                                                    :disabled="isBuiltinProfile || !toolHasDescriptionOverride(selectedToolId)"
+                                                    @click="resetToolDescriptionOverride(selectedToolId)"
                                                 >
                                                     <i class="fa-solid fa-rotate-left"></i>
                                                     <span>{{ tr('reset') }}</span>
@@ -1738,8 +1772,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                             </header>
 
                                             <div class="ttas-tool-badge-row">
-                                                <span v-if="toolSource(selectedToolName)">{{ toolSource(selectedToolName) }}</span>
-                                                <span v-for="badge in toolBadges(selectedToolName)" :key="badge.key" :class="'ttas-tool-badge-' + badge.key">{{ badge.label }}</span>
+                                                <span v-if="toolSource(selectedToolId)">{{ toolSource(selectedToolId) }}</span>
+                                                <span v-for="badge in toolBadges(selectedToolId)" :key="badge.key" :class="'ttas-tool-badge-' + badge.key">{{ badge.label }}</span>
                                                 <span v-if="!selectedToolEnabled" class="ttas-tool-badge-disabled">{{ tr('disabledTool') }}</span>
                                             </div>
 
@@ -1753,10 +1787,10 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                                 <textarea
                                                     class="text_pole textarea_compact ttas-tool-description-textarea"
                                                     rows="5"
-                                                    :value="getToolDescriptionOverride(selectedToolName)"
+                                                    :value="getToolDescriptionOverride(selectedToolId)"
                                                     :placeholder="selectedToolItem.description"
                                                     :disabled="isBuiltinProfile || !selectedToolEnabled"
-                                                    @input="setToolDescriptionOverride(selectedToolName, $event.target.value)"
+                                                    @input="setToolDescriptionOverride(selectedToolId, $event.target.value)"
                                                 ></textarea>
                                             </label>
 
@@ -1777,16 +1811,16 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                                         <textarea
                                                             class="text_pole textarea_compact"
                                                             rows="3"
-                                                            :value="getToolPropertyDescriptionOverride(selectedToolName, property.name)"
+                                                            :value="getToolPropertyDescriptionOverride(selectedToolId, property.name)"
                                                             :placeholder="property.description"
                                                             :disabled="isBuiltinProfile || !selectedToolEnabled"
-                                                            @input="setToolPropertyDescriptionOverride(selectedToolName, property.name, $event.target.value)"
+                                                            @input="setToolPropertyDescriptionOverride(selectedToolId, property.name, $event.target.value)"
                                                         ></textarea>
                                                         <button
                                                             type="button"
                                                             class="menu_button menu_button_icon"
-                                                            :disabled="isBuiltinProfile || !getToolPropertyDescriptionOverride(selectedToolName, property.name)"
-                                                            @click="resetToolPropertyDescriptionOverride(selectedToolName, property.name)"
+                                                            :disabled="isBuiltinProfile || !getToolPropertyDescriptionOverride(selectedToolId, property.name)"
+                                                            @click="resetToolPropertyDescriptionOverride(selectedToolId, property.name)"
                                                         >
                                                             <i class="fa-solid fa-rotate-left"></i>
                                                             <span>{{ tr('reset') }}</span>
