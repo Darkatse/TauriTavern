@@ -197,15 +197,16 @@ pub(super) async fn build(
     let user_directory_service = Arc::new(UserDirectoryService::new(
         repositories.user_directory_repository.clone(),
     ));
-    let data_change_reconciler = adapters::data_change_reconciler(
-        character_service.clone(),
-        chat_service.clone(),
-        group_chat_service.clone(),
-        group_service.clone(),
-        secret_service.clone(),
-        settings_service.clone(),
-        chat_history_coordinator.clone(),
-    );
+    let data_change_reconciler = Arc::new(adapters::ServiceCacheReconciler {
+        character_service: character_service.clone(),
+        chat_service: chat_service.clone(),
+        group_chat_service: group_chat_service.clone(),
+        group_service: group_service.clone(),
+        secret_service: secret_service.clone(),
+        settings_service: settings_service.clone(),
+        mcp_service: mcp_service.clone(),
+        chat_history_coordinator: chat_history_coordinator.clone(),
+    });
     let data_archive_service = archive::build(app_handle, data_change_reconciler.clone());
     let sync_services = sync::build(
         app_handle,

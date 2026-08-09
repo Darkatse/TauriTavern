@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeSet, HashMap, hash_map::Entry},
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 use tokio::sync::Mutex;
@@ -22,16 +22,25 @@ use tt_domain::models::{
     tool::{ToolCatalog, ToolDescriptor, ToolId},
 };
 use tt_ports::{
-    mcp::{McpCallOutcome, McpGateway, McpKnownResponse},
+    mcp::{McpCallOutcome, McpDiscoveryResult, McpGateway, McpKnownResponse, McpToolDiagnostic},
     repositories::mcp_server_repository::McpServerRepository,
 };
 
 const MAX_ARGUMENTS_JSON_BYTES: usize = 256 * 1024;
 
+struct CatalogSnapshot {
+    protocol_version: String,
+    server_name: Option<String>,
+    server_version: Option<String>,
+    catalog: ToolCatalog,
+    diagnostics: Vec<McpToolDiagnostic>,
+}
+
 pub struct McpService {
     repository: Arc<dyn McpServerRepository>,
     gateway: Arc<dyn McpGateway>,
     mutation_lock: Mutex<()>,
+    catalog_snapshots: RwLock<HashMap<McpRegistrationId, Arc<CatalogSnapshot>>>,
     test_calls: TestCallRegistry,
 }
 
@@ -41,6 +50,7 @@ impl McpService {
             repository,
             gateway,
             mutation_lock: Mutex::new(()),
+            catalog_snapshots: RwLock::new(HashMap::new()),
             test_calls: TestCallRegistry::default(),
         }
     }
@@ -116,13 +126,101 @@ impl McpService {
         let id = McpRegistrationId::parse(registration_id)?;
         let _guard = self.mutation_lock.lock().await;
         self.require_registration(&id).await?;
-        self.repository.remove(&id).await.map_err(Into::into)
+        self.repository.remove(&id).await?;
+        self.catalog_snapshots
+            .write()
+            .expect("MCP catalog snapshot lock poisoned")
+            .remove(&id);
+        Ok(())
+    }
+
+    pub fn clear_catalog_memory(&self) {
+        self.catalog_snapshots
+            .write()
+            .expect("MCP catalog snapshot lock poisoned")
+            .clear();
     }
 
     pub async fn discover_tools(
         &self,
         registration_id: &str,
     ) -> Result<McpDiscoveryResultDto, ApplicationError> {
+        let (id, registration) = self.require_active_registration(registration_id).await?;
+        let snapshot = self
+            .catalog_snapshots
+            .read()
+            .expect("MCP catalog snapshot lock poisoned")
+            .get(&id)
+            .cloned();
+        let snapshot = match snapshot {
+            Some(snapshot) => snapshot,
+            None => {
+                match self
+                    .repository
+                    .load_catalog_snapshot(&id, registration.endpoint())
+                    .await?
+                {
+                    Some(discovery) => {
+                        let snapshot = catalog_snapshot(&id, &discovery)?;
+                        self.publish_catalog(&id, snapshot)
+                    }
+                    None => self.discover_catalog(&id, &registration).await?,
+                }
+            }
+        };
+        Ok(discovery_dto(&registration, &snapshot))
+    }
+
+    pub async fn refresh_tools(
+        &self,
+        registration_id: &str,
+    ) -> Result<McpDiscoveryResultDto, ApplicationError> {
+        let (id, registration) = self.require_active_registration(registration_id).await?;
+        let snapshot = self.discover_catalog(&id, &registration).await?;
+        Ok(discovery_dto(&registration, &snapshot))
+    }
+
+    async fn discover_catalog(
+        &self,
+        id: &McpRegistrationId,
+        registration: &McpServerRegistration,
+    ) -> Result<Arc<CatalogSnapshot>, ApplicationError> {
+        let discovery = self.gateway.discover_tools(registration.endpoint()).await?;
+        let mut snapshot = catalog_snapshot(id, &discovery)?;
+        if let Err(error) = self
+            .repository
+            .save_catalog_snapshot(id, registration.endpoint(), &discovery)
+            .await
+        {
+            tracing::warn!(registration_id = %id, %error, "MCP catalog remains memory-only");
+            snapshot.diagnostics.push(McpToolDiagnostic {
+                code: "mcp.catalog_persistence_failed".to_string(),
+                native_name: None,
+                message: format!(
+                    "Tools are available for this session, but the catalog snapshot could not be saved: {error}"
+                ),
+            });
+        }
+        Ok(self.publish_catalog(id, snapshot))
+    }
+
+    fn publish_catalog(
+        &self,
+        id: &McpRegistrationId,
+        snapshot: CatalogSnapshot,
+    ) -> Arc<CatalogSnapshot> {
+        let snapshot = Arc::new(snapshot);
+        self.catalog_snapshots
+            .write()
+            .expect("MCP catalog snapshot lock poisoned")
+            .insert(id.clone(), snapshot.clone());
+        snapshot
+    }
+
+    async fn require_active_registration(
+        &self,
+        registration_id: &str,
+    ) -> Result<(McpRegistrationId, McpServerRegistration), ApplicationError> {
         let id = McpRegistrationId::parse(registration_id)?;
         let registration = self.require_registration(&id).await?;
         if registration.state() != McpServerState::Active {
@@ -130,65 +228,7 @@ impl McpService {
                 "mcp.server_paused: registration `{id}` must be Active before discovery"
             )));
         }
-
-        let discovery = self.gateway.discover_tools(registration.endpoint()).await?;
-        let mut descriptors = Vec::with_capacity(discovery.tools.len());
-        for tool in discovery.tools {
-            validate_native_tool_name(&tool.native_name)?;
-            descriptors.push(ToolDescriptor {
-                id: ToolId::new(&id.provider_id(), &tool.native_name)?,
-                title: tool.title,
-                description: tool.description,
-                input_schema: tool.input_schema,
-                output_schema: tool.output_schema,
-                annotations: tool.annotations,
-            });
-        }
-        let catalog = ToolCatalog::try_from_descriptors(descriptors)?;
-        let discovered_names = catalog
-            .iter()
-            .map(|descriptor| descriptor.id.native_name().to_string())
-            .collect::<BTreeSet<_>>();
-        let tools = catalog
-            .iter()
-            .map(|descriptor| McpToolDto {
-                id: descriptor.id.clone(),
-                native_name: descriptor.id.native_name().to_string(),
-                title: descriptor.title.clone(),
-                description: descriptor.description.clone(),
-                input_schema: descriptor.input_schema.clone(),
-                output_schema: descriptor.output_schema.clone(),
-                annotations: descriptor.annotations.clone(),
-                permission: registration.permission_for(descriptor.id.native_name()),
-            })
-            .collect();
-        let stale_tools = registration
-            .tool_permissions()
-            .iter()
-            .filter(|(native_name, _)| !discovered_names.contains(*native_name))
-            .map(|(native_name, permission)| McpStaleToolDto {
-                native_name: native_name.clone(),
-                permission: *permission,
-            })
-            .collect();
-
-        Ok(McpDiscoveryResultDto {
-            registration_id: id.to_string(),
-            protocol_version: discovery.protocol_version,
-            server_name: discovery.server_name,
-            server_version: discovery.server_version,
-            tools,
-            diagnostics: discovery
-                .diagnostics
-                .into_iter()
-                .map(|diagnostic| McpToolDiagnosticDto {
-                    code: diagnostic.code,
-                    native_name: diagnostic.native_name,
-                    message: diagnostic.message,
-                })
-                .collect(),
-            stale_tools,
-        })
+        Ok((id, registration))
     }
 
     pub async fn test_call(
@@ -290,6 +330,83 @@ impl McpService {
             .load(id)
             .await?
             .ok_or_else(|| ApplicationError::NotFound(format!("MCP registration not found: {id}")))
+    }
+}
+
+fn catalog_snapshot(
+    id: &McpRegistrationId,
+    discovery: &McpDiscoveryResult,
+) -> Result<CatalogSnapshot, ApplicationError> {
+    let mut descriptors = Vec::with_capacity(discovery.tools.len());
+    for tool in &discovery.tools {
+        validate_native_tool_name(&tool.native_name)?;
+        descriptors.push(ToolDescriptor {
+            id: ToolId::new(&id.provider_id(), &tool.native_name)?,
+            title: tool.title.clone(),
+            description: tool.description.clone(),
+            input_schema: tool.input_schema.clone(),
+            output_schema: tool.output_schema.clone(),
+            annotations: tool.annotations.clone(),
+        });
+    }
+    Ok(CatalogSnapshot {
+        protocol_version: discovery.protocol_version.clone(),
+        server_name: discovery.server_name.clone(),
+        server_version: discovery.server_version.clone(),
+        catalog: ToolCatalog::try_from_descriptors(descriptors)?,
+        diagnostics: discovery.diagnostics.clone(),
+    })
+}
+
+fn discovery_dto(
+    registration: &McpServerRegistration,
+    snapshot: &CatalogSnapshot,
+) -> McpDiscoveryResultDto {
+    let discovered_names = snapshot
+        .catalog
+        .iter()
+        .map(|descriptor| descriptor.id.native_name().to_string())
+        .collect::<BTreeSet<_>>();
+    let tools = snapshot
+        .catalog
+        .iter()
+        .map(|descriptor| McpToolDto {
+            id: descriptor.id.clone(),
+            native_name: descriptor.id.native_name().to_string(),
+            title: descriptor.title.clone(),
+            description: descriptor.description.clone(),
+            input_schema: descriptor.input_schema.clone(),
+            output_schema: descriptor.output_schema.clone(),
+            annotations: descriptor.annotations.clone(),
+            permission: registration.permission_for(descriptor.id.native_name()),
+        })
+        .collect();
+    let stale_tools = registration
+        .tool_permissions()
+        .iter()
+        .filter(|(native_name, _)| !discovered_names.contains(*native_name))
+        .map(|(native_name, permission)| McpStaleToolDto {
+            native_name: native_name.clone(),
+            permission: *permission,
+        })
+        .collect();
+
+    McpDiscoveryResultDto {
+        registration_id: registration.id().to_string(),
+        protocol_version: snapshot.protocol_version.clone(),
+        server_name: snapshot.server_name.clone(),
+        server_version: snapshot.server_version.clone(),
+        tools,
+        diagnostics: snapshot
+            .diagnostics
+            .iter()
+            .map(|diagnostic| McpToolDiagnosticDto {
+                code: diagnostic.code.clone(),
+                native_name: diagnostic.native_name.clone(),
+                message: diagnostic.message.clone(),
+            })
+            .collect(),
+        stale_tools,
     }
 }
 
@@ -398,7 +515,13 @@ fn server_dto(registration: &McpServerRegistration) -> McpServerDto {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, sync::Mutex as StdMutex};
+    use std::{
+        collections::BTreeMap,
+        sync::{
+            Mutex as StdMutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+    };
 
     use async_trait::async_trait;
     use serde_json::json;
@@ -416,6 +539,8 @@ mod tests {
     #[derive(Default)]
     struct MemoryRepository {
         registrations: StdMutex<BTreeMap<McpRegistrationId, McpServerRegistration>>,
+        catalogs: StdMutex<BTreeMap<McpRegistrationId, (String, McpDiscoveryResult)>>,
+        fail_catalog_save: AtomicBool,
     }
 
     #[async_trait]
@@ -448,7 +573,44 @@ mod tests {
             Ok(())
         }
 
+        async fn load_catalog_snapshot(
+            &self,
+            id: &McpRegistrationId,
+            endpoint: &McpEndpoint,
+        ) -> Result<Option<McpDiscoveryResult>, DomainError> {
+            let catalogs = self.catalogs.lock().unwrap();
+            match catalogs.get(id) {
+                Some((stored_endpoint, snapshot)) if stored_endpoint == endpoint.as_str() => {
+                    Ok(Some(snapshot.clone()))
+                }
+                Some((stored_endpoint, _)) => Err(DomainError::InvalidData(format!(
+                    "catalog endpoint `{stored_endpoint}` does not match `{}`",
+                    endpoint.as_str()
+                ))),
+                None => Ok(None),
+            }
+        }
+
+        async fn save_catalog_snapshot(
+            &self,
+            id: &McpRegistrationId,
+            endpoint: &McpEndpoint,
+            snapshot: &McpDiscoveryResult,
+        ) -> Result<(), DomainError> {
+            if self.fail_catalog_save.load(Ordering::Relaxed) {
+                return Err(DomainError::InternalError(
+                    "fixture catalog save failed".to_string(),
+                ));
+            }
+            self.catalogs.lock().unwrap().insert(
+                id.clone(),
+                (endpoint.as_str().to_string(), snapshot.clone()),
+            );
+            Ok(())
+        }
+
         async fn remove(&self, id: &McpRegistrationId) -> Result<(), DomainError> {
+            self.catalogs.lock().unwrap().remove(id);
             self.registrations.lock().unwrap().remove(id);
             Ok(())
         }
@@ -457,6 +619,9 @@ mod tests {
     #[derive(Default)]
     struct FixedGateway {
         calls: StdMutex<Vec<(String, serde_json::Map<String, serde_json::Value>)>>,
+        discovery_calls: AtomicUsize,
+        discovery_revision: AtomicUsize,
+        fail_discovery: AtomicBool,
     }
 
     #[async_trait]
@@ -465,10 +630,17 @@ mod tests {
             &self,
             _endpoint: &McpEndpoint,
         ) -> Result<McpDiscoveryResult, DomainError> {
+            self.discovery_calls.fetch_add(1, Ordering::Relaxed);
+            if self.fail_discovery.load(Ordering::Relaxed) {
+                return Err(DomainError::Transient(
+                    "fixture discovery failed".to_string(),
+                ));
+            }
+            let revision = self.discovery_revision.load(Ordering::Relaxed);
             Ok(McpDiscoveryResult {
                 protocol_version: "2026-07-28".to_string(),
                 server_name: Some("fixture".to_string()),
-                server_version: Some("1.0".to_string()),
+                server_version: Some(format!("1.{revision}")),
                 tools: vec![McpDiscoveredTool {
                     native_name: "search".to_string(),
                     title: Some("Search".to_string()),
@@ -544,6 +716,129 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn catalog_persists_across_services_and_reprojects_current_permission() {
+        let repository = Arc::new(MemoryRepository::default());
+        let first_gateway = Arc::new(FixedGateway::default());
+        let first_service = McpService::new(repository.clone(), first_gateway.clone());
+        let created = first_service
+            .create_server(
+                "Fixture".to_string(),
+                "http://127.0.0.1:3333/mcp".to_string(),
+            )
+            .await
+            .unwrap();
+        first_service
+            .set_server_state(&created.id, McpServerState::Active)
+            .await
+            .unwrap();
+
+        first_service.discover_tools(&created.id).await.unwrap();
+        first_service
+            .set_tool_permission(&created.id, "search".to_string(), McpToolPermission::Allow)
+            .await
+            .unwrap();
+        assert_eq!(first_gateway.discovery_calls.load(Ordering::Relaxed), 1);
+
+        let second_gateway = Arc::new(FixedGateway::default());
+        second_gateway.fail_discovery.store(true, Ordering::Relaxed);
+        let second_service = McpService::new(repository, second_gateway.clone());
+        let restored = second_service.discover_tools(&created.id).await.unwrap();
+
+        assert_eq!(restored.server_version.as_deref(), Some("1.0"));
+        assert_eq!(restored.tools[0].permission, McpToolPermission::Allow);
+        assert_eq!(second_gateway.discovery_calls.load(Ordering::Relaxed), 0);
+
+        second_service.clear_catalog_memory();
+        second_service.discover_tools(&created.id).await.unwrap();
+        assert_eq!(second_gateway.discovery_calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn refresh_keeps_live_catalog_usable_when_persistence_fails() {
+        let repository = Arc::new(MemoryRepository::default());
+        let gateway = Arc::new(FixedGateway::default());
+        let service = McpService::new(repository.clone(), gateway.clone());
+        let created = service
+            .create_server(
+                "Fixture".to_string(),
+                "http://127.0.0.1:3333/mcp".to_string(),
+            )
+            .await
+            .unwrap();
+        service
+            .set_server_state(&created.id, McpServerState::Active)
+            .await
+            .unwrap();
+        service.discover_tools(&created.id).await.unwrap();
+
+        gateway.discovery_revision.store(2, Ordering::Relaxed);
+        let refreshed = service.refresh_tools(&created.id).await.unwrap();
+        assert_eq!(refreshed.server_version.as_deref(), Some("1.2"));
+        assert_eq!(gateway.discovery_calls.load(Ordering::Relaxed), 2);
+
+        gateway.fail_discovery.store(true, Ordering::Relaxed);
+        assert!(service.refresh_tools(&created.id).await.is_err());
+        assert_eq!(gateway.discovery_calls.load(Ordering::Relaxed), 3);
+
+        service.clear_catalog_memory();
+        let restored = service.discover_tools(&created.id).await.unwrap();
+        assert_eq!(restored.server_version.as_deref(), Some("1.2"));
+        assert_eq!(gateway.discovery_calls.load(Ordering::Relaxed), 3);
+
+        gateway.fail_discovery.store(false, Ordering::Relaxed);
+        gateway.discovery_revision.store(3, Ordering::Relaxed);
+        repository.fail_catalog_save.store(true, Ordering::Relaxed);
+        let memory_only = service.refresh_tools(&created.id).await.unwrap();
+        assert_eq!(memory_only.server_version.as_deref(), Some("1.3"));
+        assert_eq!(memory_only.diagnostics.len(), 1);
+        assert_eq!(
+            memory_only.diagnostics[0].code,
+            "mcp.catalog_persistence_failed"
+        );
+        assert_eq!(gateway.discovery_calls.load(Ordering::Relaxed), 4);
+
+        let restored = service.discover_tools(&created.id).await.unwrap();
+        assert_eq!(restored.server_version.as_deref(), Some("1.3"));
+        assert_eq!(restored.diagnostics.len(), 1);
+
+        service.clear_catalog_memory();
+        let restored = service.discover_tools(&created.id).await.unwrap();
+        assert_eq!(restored.server_version.as_deref(), Some("1.2"));
+        assert_eq!(gateway.discovery_calls.load(Ordering::Relaxed), 4);
+    }
+
+    #[tokio::test]
+    async fn paused_gate_precedes_cache_and_remove_clears_both_copies() {
+        let repository = Arc::new(MemoryRepository::default());
+        let gateway = Arc::new(FixedGateway::default());
+        let service = McpService::new(repository.clone(), gateway.clone());
+        let created = service
+            .create_server(
+                "Fixture".to_string(),
+                "http://127.0.0.1:3333/mcp".to_string(),
+            )
+            .await
+            .unwrap();
+        service
+            .set_server_state(&created.id, McpServerState::Active)
+            .await
+            .unwrap();
+        service.discover_tools(&created.id).await.unwrap();
+        service
+            .set_server_state(&created.id, McpServerState::Paused)
+            .await
+            .unwrap();
+
+        assert!(service.discover_tools(&created.id).await.is_err());
+        assert_eq!(gateway.discovery_calls.load(Ordering::Relaxed), 1);
+
+        service.remove_server(&created.id).await.unwrap();
+        let id = McpRegistrationId::parse(&created.id).unwrap();
+        assert!(repository.catalogs.lock().unwrap().get(&id).is_none());
+        assert!(service.catalog_snapshots.read().unwrap().get(&id).is_none());
+    }
+
+    #[tokio::test]
     async fn explicit_test_call_preserves_json_and_ignores_saved_permission() {
         let repository = Arc::new(MemoryRepository::default());
         let gateway = Arc::new(FixedGateway::default());
@@ -587,10 +882,7 @@ mod tests {
         let wire = serde_json::to_value(&outcome).unwrap();
         assert_eq!(wire["outcome"], "known_response");
         assert_eq!(wire["response"]["kind"], "tool_result");
-        assert_eq!(
-            wire["response"]["structuredJson"],
-            "{\n  \"ok\": true\n}"
-        );
+        assert_eq!(wire["response"]["structuredJson"], "{\n  \"ok\": true\n}");
         {
             let calls = gateway.calls.lock().unwrap();
             assert_eq!(calls.len(), 1);

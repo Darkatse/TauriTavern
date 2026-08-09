@@ -56,10 +56,12 @@ async function mountMcpManager(): Promise<void> {
         setState: api.servers.setState,
         remove: api.servers.remove,
         discover: api.servers.discover,
+        refresh: api.servers.refresh,
         setPermission: api.tools.setPermission,
         openTestCall: servers => openTestCallDialog({
             servers,
             discover: api.servers.discover,
+            refresh: api.servers.refresh,
             testCall: api.tools.testCall,
         }),
         confirmActivate,

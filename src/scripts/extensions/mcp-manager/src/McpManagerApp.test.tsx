@@ -52,6 +52,7 @@ function actions(overrides: Partial<McpManagerActions> = {}): McpManagerActions 
         setState: () => unexpected('setState'),
         remove: () => unexpected('remove'),
         discover: () => unexpected('discover'),
+        refresh: () => unexpected('refresh'),
         setPermission: () => unexpected('setPermission'),
         openTestCall: () => unexpected('openTestCall'),
         confirmActivate: () => Promise.resolve(true),
@@ -93,6 +94,7 @@ test('discovers tools on expand and persists an explicit permission choice', asy
         permission: TauriTavernMcpToolPermission;
     }> = [];
     let discoverCalls = 0;
+    let refreshCalls = 0;
     const activeServer = server('active');
     const user = userEvent.setup();
     render(
@@ -102,6 +104,10 @@ test('discovers tools on expand and persists an explicit permission choice', asy
             actions={actions({
                 discover: () => {
                     discoverCalls += 1;
+                    return Promise.resolve(discovery());
+                },
+                refresh: () => {
+                    refreshCalls += 1;
                     return Promise.resolve(discovery());
                 },
                 setPermission: input => {
@@ -117,6 +123,10 @@ test('discovers tools on expand and persists an explicit permission choice', asy
 
     await user.click(screen.getByRole('button', { name: 'Show or hide tools' }));
     expect(await screen.findByText('Search files')).toBeTruthy();
+    expect(discoverCalls).toBe(1);
+
+    await user.click(screen.getByRole('button', { name: 'Refresh tools' }));
+    await waitFor(() => expect(refreshCalls).toBe(1));
     expect(discoverCalls).toBe(1);
 
     await user.click(screen.getByRole('radio', { name: 'Allow' }));
@@ -180,6 +190,31 @@ test('keeps a discovery error while an unrelated action is cancelled', async () 
         await renameResult;
     });
     expect(screen.getByRole('alert').textContent).toBe('discovery failed');
+});
+
+test('uses explicit refresh when retrying a failed catalog load', async () => {
+    let refreshes = 0;
+    const user = userEvent.setup();
+    render(
+        <McpManagerApp
+            initial={initial([server('active')])}
+            tr={tr}
+            actions={actions({
+                discover: () => Promise.reject(new Error('stored catalog is invalid')),
+                refresh: () => {
+                    refreshes += 1;
+                    return Promise.resolve(discovery());
+                },
+            })}
+        />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Show or hide tools' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('stored catalog is invalid');
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Search files')).toBeTruthy();
+    expect(refreshes).toBe(1);
 });
 
 test('opens the unified test console from the toolbar with the current servers', async () => {

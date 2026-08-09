@@ -1,8 +1,8 @@
 # `window.__TAURITAVERN__.api.mcp` — MCP Manager API
 
-本文档描述已经落地的 MCP M2 Host ABI。MCP 是独立平台能力；当前提供 registration、只读 tool discovery 与第一方 Manager 的显式 test call，尚未接入 Agent 或 Legacy 生成。
+本文档描述已经落地的 MCP M2.1 Host ABI。MCP 是独立平台能力；当前提供 registration、persistent tool catalog、显式 refresh 与第一方 Manager test call，尚未接入 Agent 或 Legacy 生成。
 
-状态：M2 已实现，Project Contract（实验性）。
+状态：M2.1 已实现，Project Contract（实验性）。
 
 第一方管理 UI 位于 Extensions 抽屉的 MCP 内置扩展中。该扩展只是 `api.mcp` 的 React/strict TSX presentation；TauriTavern Settings 不再提供平行入口。
 
@@ -24,6 +24,7 @@ type TauriTavernMcpApi = {
     setState(input: { registrationId: string; state: 'active' | 'paused' }): Promise<McpServer>;
     remove(input: string | { registrationId: string }): Promise<void>;
     discover(input: string | { registrationId: string }): Promise<McpDiscoveryResult>;
+    refresh(input: string | { registrationId: string }): Promise<McpDiscoveryResult>;
   };
   tools: {
     setPermission(input: {
@@ -40,7 +41,7 @@ type TauriTavernMcpApi = {
 };
 ```
 
-没有 `connect`、`disconnect` 或 `connected`。每次 discovery/test call 都建立短生命周期 RMCP client 并在完成后关闭；`active` 只表示允许向该 registration 的 endpoint 发起显式 discovery 或用户 test call。
+没有 `connect`、`disconnect` 或 `connected`。只有 cold discovery、显式 refresh 和 test call 才建立短生命周期 RMCP client；memory/disk catalog hit 不连接 server。`active` 表示允许读取该 registration 的 snapshot，并在需要时向其 endpoint 发起 discovery 或用户 test call。
 
 ## 3. DTO
 
@@ -106,7 +107,7 @@ type McpTestCallOutcome =
 - display name 可以修改，不影响 UUID 或 ToolId。
 - `off` 是缺省值，不写入 `toolPermissions`；`setPermission(..., 'off')` 删除对应持久设置。
 - discovery 消失的 Ask/Allow 设置作为 `staleTools` 返回，但不会成为可用工具。
-- registration 保存为 `_tauritavern/mcp/registrations/<uuid>.json` 的严格 v1 单文件记录；没有旧 schema reader、revision 或持久 catalog cache。
+- registration 保存为 `_tauritavern/mcp/registrations/<uuid>.json` 的严格 v1 单文件记录；persistent catalog 保存为 `_tauritavern/mcp/catalogs/<uuid>.json` 的独立严格 v1 记录。两者都没有旧 schema reader 或 revision graph。
 
 ## 5. Discovery 契约
 
@@ -117,7 +118,10 @@ type McpTestCallOutcome =
 - duplicate native name 隔离整个同名组；无效 input schema、单工具超限或名称无效只隔离该工具并返回 diagnostic。无效的可选 output schema 只移除该字段并返回 diagnostic，不阻止工具使用。
 - input/output schema 按 JSON Schema 2020-12 编译验证；不会读取远端 `$ref`。
 - annotations 只原样展示，不授予权限。
-- 每次 refresh 使用新的 RMCP Peer。SDK 自带 cache 保持默认语义，但其生命周期止于本次 refresh；应用层不维护 last-complete/stale catalog，也不会在失败时静默返回旧结果。
+- `servers.discover()` 按 application memory、persistent file、真实 discovery 的顺序读取。磁盘 snapshot 绑定 registration UUID 与规范化 endpoint，载入后重新执行 application canonical validation。
+- `servers.refresh()` 始终使用新的 RMCP Peer，绕过 memory/disk snapshot。cold discovery/refresh 在完整分页和全部 validation 成功后发布；写盘失败返回可用的 memory-only catalog 与 `mcp.catalog_persistence_failed` diagnostic，并保留旧磁盘 snapshot。网络或 validation 失败仍 reject，旧 snapshot 保留但不作为该请求的返回值。
+- permission 与 `staleTools` 每次按当前 registration 投影，不写入 catalog snapshot。Paused gate 先于 snapshot lookup；registration 删除不受派生 catalog 清理失败影响，清理失败只记录 warning。
+- catalog 跨应用重启保留，由用户手动 refresh 决定何时更新；没有 TTL、后台 refresh、list-changed subscription、自动 retry、source/age 字段或 migration reader。损坏/未知 schema/UUID/endpoint mismatch 显式报错，refresh 可绕过并修复。
 
 ## 6. User test call 契约
 
@@ -148,7 +152,7 @@ M2 没有以下 API 或行为：
 - Agent ToolSet 或 Legacy ToolManager/generation overlay；
 - OAuth、credential、stdio、2024 HTTP+SSE；
 - Resources、Prompts、Tasks、Apps、subscriptions/list-changed；
-- background discovery、discovery/list 通用 retry、persistent catalog cache；
+- background discovery、discovery/list 通用 retry、catalog TTL/revision history；
 - endpoint migration、scope hierarchy、model alias。
 
 model alias 属于未来 invocation `ToolBinding`，不属于 registration/discovery/test call。M2 不把 MCP tool 注册进全局 SillyTavern `ToolManager`。

@@ -13,6 +13,7 @@ export type McpManagerActions = {
     setState: TauriTavernMcpApi['servers']['setState'];
     remove: TauriTavernMcpApi['servers']['remove'];
     discover: TauriTavernMcpApi['servers']['discover'];
+    refresh: TauriTavernMcpApi['servers']['refresh'];
     setPermission: TauriTavernMcpApi['tools']['setPermission'];
     /** Opens the unified test-call console with the current server list. */
     openTestCall: (servers: TauriTavernMcpServer[]) => Promise<void>;
@@ -125,9 +126,12 @@ export function McpManagerApp({ initial, actions, tr }: McpManagerAppProps) {
         });
     }
 
-    async function discover(server: TauriTavernMcpServer): Promise<void> {
+    async function loadTools(
+        server: TauriTavernMcpServer,
+        load: McpManagerActions['discover'],
+    ): Promise<void> {
         await runServerAction(server.id, 'discover', async () => {
-            const discovery = await actions.discover(server.id);
+            const discovery = await load(server.id);
             setDiscoveries(current => ({ ...current, [server.id]: discovery }));
             return true;
         });
@@ -140,7 +144,7 @@ export function McpManagerApp({ initial, actions, tr }: McpManagerAppProps) {
         // A previous failure stays visible instead of refiring on every toggle.
         const status = statuses[server.id];
         if (next && server.state === 'active' && !discoveries[server.id] && !status?.error && !status?.activity) {
-            void discover(server);
+            void loadTools(server, actions.discover);
         }
     }
 
@@ -297,7 +301,8 @@ export function McpManagerApp({ initial, actions, tr }: McpManagerAppProps) {
                                             onToggleState={() => void toggleServer(server)}
                                             onRename={() => void renameServer(server)}
                                             onRemove={() => void removeServer(server)}
-                                            onDiscover={() => void discover(server)}
+                                            onDiscover={() => void loadTools(server, actions.discover)}
+                                            onRefresh={() => void loadTools(server, actions.refresh)}
                                             onSetPermission={(tool, permission) => void setPermission(server, tool, permission)}
                                             onClearStale={nativeName => void clearStalePermission(server, nativeName)}
                                         />

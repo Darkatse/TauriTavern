@@ -30,6 +30,7 @@ test('api.mcp exposes registration, discovery, permission, and one test-call int
     await mcp.servers.rename({ registrationId: 'id', displayName: 'Renamed' });
     await mcp.servers.setState({ registrationId: 'id', state: 'active' });
     await mcp.servers.discover('id');
+    await mcp.servers.refresh({ registrationId: 'id' });
     await mcp.tools.setPermission({ registrationId: 'id', nativeName: ' search ', permission: 'ask' });
     await mcp.tools.testCall({
         registrationId: 'id',
@@ -38,19 +39,20 @@ test('api.mcp exposes registration, discovery, permission, and one test-call int
     });
     await mcp.servers.remove({ registrationId: 'id' });
 
-    assert.deepEqual(calls.slice(0, 6), [
+    assert.deepEqual(calls.slice(0, 7), [
         { command: 'list_mcp_servers', args: undefined },
         { command: 'create_mcp_server', args: { dto: { displayName: 'Local', endpoint: 'http://127.0.0.1:3000/mcp' } } },
         { command: 'rename_mcp_server', args: { dto: { registrationId: 'id', displayName: 'Renamed' } } },
         { command: 'set_mcp_server_state', args: { dto: { registrationId: 'id', state: 'active' } } },
         { command: 'discover_mcp_tools', args: { dto: { registrationId: 'id' } } },
+        { command: 'refresh_mcp_tools', args: { dto: { registrationId: 'id' } } },
         { command: 'set_mcp_tool_permission', args: { dto: { registrationId: 'id', nativeName: ' search ', permission: 'ask' } } },
     ]);
-    assert.equal(calls[6].command, 'start_mcp_test_call');
-    assert.equal(typeof calls[6].args.dto.callId, 'string');
-    assert.equal(calls[7].command, 'test_mcp_tool_call');
+    assert.equal(calls[7].command, 'start_mcp_test_call');
+    assert.equal(typeof calls[7].args.dto.callId, 'string');
+    assert.equal(calls[8].command, 'test_mcp_tool_call');
     assert.deepEqual(
-        { ...calls[7].args.dto, callId: '<generated>' },
+        { ...calls[8].args.dto, callId: '<generated>' },
         {
             callId: '<generated>',
             registrationId: 'id',
@@ -58,8 +60,8 @@ test('api.mcp exposes registration, discovery, permission, and one test-call int
             argumentsJson: '{"value":9007199254740993}',
         },
     );
-    assert.equal(calls[6].args.dto.callId, calls[7].args.dto.callId);
-    assert.deepEqual(calls[8], {
+    assert.equal(calls[7].args.dto.callId, calls[8].args.dto.callId);
+    assert.deepEqual(calls[9], {
         command: 'remove_mcp_server',
         args: { dto: { registrationId: 'id' } },
     });

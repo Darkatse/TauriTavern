@@ -94,6 +94,9 @@ function createMcpApi({ safeInvoke }) {
             discover: async (input) => safeInvoke('discover_mcp_tools', {
                 dto: { registrationId: registrationId(input) },
             }),
+            refresh: async (input) => safeInvoke('refresh_mcp_tools', {
+                dto: { registrationId: registrationId(input) },
+            }),
         },
         tools: {
             setPermission: async (input) => {

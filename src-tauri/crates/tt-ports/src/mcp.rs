@@ -1,10 +1,12 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use tt_domain::{errors::DomainError, models::mcp::McpEndpoint};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpDiscoveredTool {
     pub native_name: String,
     pub title: Option<String>,
@@ -14,14 +16,16 @@ pub struct McpDiscoveredTool {
     pub annotations: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpToolDiagnostic {
     pub code: String,
     pub native_name: Option<String>,
     pub message: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpDiscoveryResult {
     pub protocol_version: String,
     pub server_name: Option<String>,

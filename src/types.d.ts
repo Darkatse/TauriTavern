@@ -711,6 +711,7 @@ type TauriTavernMcpApi = {
         setState: (input: { registrationId: string; state: TauriTavernMcpServerState }) => Promise<TauriTavernMcpServer>;
         remove: (input: string | { registrationId: string }) => Promise<void>;
         discover: (input: string | { registrationId: string }) => Promise<TauriTavernMcpDiscoveryResult>;
+        refresh: (input: string | { registrationId: string }) => Promise<TauriTavernMcpDiscoveryResult>;
     };
     tools: {
         setPermission: (input: {

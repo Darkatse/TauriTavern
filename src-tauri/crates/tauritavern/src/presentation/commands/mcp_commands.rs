@@ -99,6 +99,20 @@ pub async fn discover_mcp_tools(
 }
 
 #[tauri::command]
+pub async fn refresh_mcp_tools(
+    dto: McpRegistrationIdDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<McpDiscoveryResultDto, CommandError> {
+    log_command("refresh_mcp_tools");
+    app_state
+        .services
+        .mcp_service
+        .refresh_tools(&dto.registration_id)
+        .await
+        .map_err(map_command_error("Failed to refresh MCP tools"))
+}
+
+#[tauri::command]
 pub async fn set_mcp_tool_permission(
     dto: SetMcpToolPermissionDto,
     app_state: State<'_, Arc<AppState>>,

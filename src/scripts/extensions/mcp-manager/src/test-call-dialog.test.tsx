@@ -60,12 +60,16 @@ function emptyTool(): TauriTavernMcpTool {
     };
 }
 
-function discoveryFor(registrationId: string, tools: TauriTavernMcpTool[]): TauriTavernMcpDiscoveryResult {
+function discoveryFor(
+    registrationId: string,
+    tools: TauriTavernMcpTool[],
+    diagnostics: TauriTavernMcpDiscoveryResult['diagnostics'] = [],
+): TauriTavernMcpDiscoveryResult {
     return {
         registrationId,
         protocolVersion: '2026-07-28',
         tools,
-        diagnostics: [],
+        diagnostics,
         staleTools: [],
     };
 }
@@ -74,6 +78,7 @@ function deps(overrides: Partial<TestCallDialogDeps> = {}): TestCallDialogDeps {
     return {
         servers: [server(SERVER_A, 'active')],
         discover: () => Promise.resolve(discoveryFor(SERVER_A, [richTool()])),
+        refresh: () => Promise.resolve(discoveryFor(SERVER_A, [richTool()])),
         testCall: () => Promise.reject(new Error('unexpected testCall')),
         ...overrides,
     };
@@ -95,17 +100,39 @@ test('guides the user when no server is active', () => {
     expect(screen.queryByRole('button', { name: 'Run test' })).toBeNull();
 });
 
-test('auto-discovers tools when exactly one server is active', async () => {
+test('auto-discovers tools and shows discovery diagnostics', async () => {
     const discovered: string[] = [];
     renderDialog({
         discover: input => {
             discovered.push(typeof input === 'string' ? input : input.registrationId);
-            return Promise.resolve(discoveryFor(SERVER_A, [richTool()]));
+            return Promise.resolve(discoveryFor(SERVER_A, [richTool()], [{
+                code: 'mcp.catalog_persistence_failed',
+                message: 'Catalog remains memory-only',
+            }]));
         },
     });
 
     expect(await screen.findByRole('option', { name: 'Search files' })).toBeTruthy();
+    expect(screen.getByText('Catalog remains memory-only')).toBeTruthy();
     expect(discovered).toEqual([SERVER_A]);
+});
+
+test('uses explicit refresh when the user retries a failed catalog load', async () => {
+    let refreshes = 0;
+    const user = userEvent.setup();
+    renderDialog({
+        discover: () => Promise.reject(new Error('stored catalog is invalid')),
+        refresh: () => {
+            refreshes += 1;
+            return Promise.resolve(discoveryFor(SERVER_A, [richTool()]));
+        },
+    });
+
+    expect((await screen.findByRole('alert')).textContent).toBe('stored catalog is invalid');
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('option', { name: 'Search files' })).toBeTruthy();
+    expect(refreshes).toBe(1);
 });
 
 test('builds arguments from friendly fields and preserves raw number precision', async () => {

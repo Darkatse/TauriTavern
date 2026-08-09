@@ -20,6 +20,7 @@ import {
 export type TestCallDialogDeps = {
     servers: TauriTavernMcpServer[];
     discover: TauriTavernMcpApi['servers']['discover'];
+    refresh: TauriTavernMcpApi['servers']['refresh'];
     testCall: TauriTavernMcpApi['tools']['testCall'];
 };
 
@@ -261,10 +262,11 @@ function OutcomeView({ outcome, tr }: { outcome: TauriTavernMcpTestCallOutcome; 
     );
 }
 
-export function TestCallDialog({ servers, discover, testCall, tr, ref }: TestCallDialogProps) {
+export function TestCallDialog({ servers, discover, refresh, testCall, tr, ref }: TestCallDialogProps) {
     const activeServers = servers.filter(server => server.state === 'active');
     const [serverId, setServerId] = useState(activeServers.length === 1 ? (activeServers[0]?.id ?? '') : '');
     const [tools, setTools] = useState<TauriTavernMcpTool[] | null>(null);
+    const [diagnostics, setDiagnostics] = useState<TauriTavernMcpDiscoveryResult['diagnostics']>([]);
     const [toolsBusy, setToolsBusy] = useState(serverId !== '');
     const [toolsError, setToolsError] = useState('');
     const [toolName, setToolName] = useState('');
@@ -274,7 +276,7 @@ export function TestCallDialog({ servers, discover, testCall, tr, ref }: TestCal
     const [phase, setPhase] = useState<CallPhase>('idle');
     const [outcome, setOutcome] = useState<TauriTavernMcpTestCallOutcome | null>(null);
     const [callError, setCallError] = useState('');
-    const [discoverNonce, setDiscoverNonce] = useState(0);
+    const [refreshNonce, setRefreshNonce] = useState(0);
     const abortRef = useRef<AbortController | null>(null);
     const discoverSeq = useRef(0);
 
@@ -294,10 +296,12 @@ export function TestCallDialog({ servers, discover, testCall, tr, ref }: TestCal
         if (!serverId) {
             return;
         }
-        discover(serverId)
+        const load = refreshNonce === 0 ? discover : refresh;
+        load(serverId)
             .then(result => {
                 if (discoverSeq.current === seq) {
                     setTools(result.tools);
+                    setDiagnostics(result.diagnostics);
                     setToolsError('');
                 }
             })
@@ -311,7 +315,7 @@ export function TestCallDialog({ servers, discover, testCall, tr, ref }: TestCal
                     setToolsBusy(false);
                 }
             });
-    }, [serverId, discoverNonce, discover, tr]);
+    }, [serverId, refreshNonce, discover, refresh, tr]);
 
     function selectServer(id: string): void {
         if (id === serverId) {
@@ -319,7 +323,9 @@ export function TestCallDialog({ servers, discover, testCall, tr, ref }: TestCal
         }
         setServerId(id);
         setTools(null);
+        setDiagnostics([]);
         setToolsError('');
+        setRefreshNonce(0);
         setToolName('');
         setFields([]);
         setOutcome(null);
@@ -420,13 +426,27 @@ export function TestCallDialog({ servers, discover, testCall, tr, ref }: TestCal
                                 onClick={() => {
                                     setToolsError('');
                                     setToolsBusy(true);
-                                    setDiscoverNonce(nonce => nonce + 1);
+                                    setRefreshNonce(nonce => nonce + 1);
                                 }}
                             >
                                 <i className="fa-solid fa-arrows-rotate" aria-hidden="true" />
                                 <span>{tr('retry')}</span>
                             </button>
                         </div>
+                    )}
+
+                    {diagnostics.length > 0 && (
+                        <details className="tt-mcp-details">
+                            <summary>{tr('diagnostics')} · {diagnostics.length}</summary>
+                            <ul>
+                                {diagnostics.map(diagnostic => (
+                                    <li key={`${diagnostic.code}:${diagnostic.nativeName ?? ''}:${diagnostic.message}`}>
+                                        <b>{diagnostic.nativeName ?? diagnostic.code}</b>
+                                        <span>{diagnostic.message}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </details>
                     )}
 
                     <div className="tt-mcp-field">

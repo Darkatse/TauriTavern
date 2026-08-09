@@ -13,12 +13,15 @@ use tt_domain::{
         McpEndpoint, McpRegistrationId, McpServerRegistration, McpServerState, McpToolPermission,
     },
 };
+use tt_ports::mcp::McpDiscoveryResult;
 use tt_ports::repositories::mcp_server_repository::{
     McpRegistrationScan, McpRegistrationStorageIssue, McpServerRepository,
 };
 
 const MCP_REGISTRATION_SCHEMA_VERSION: u32 = 1;
 const MCP_REGISTRATION_KIND: &str = "tauritavern.mcpServerRegistration";
+const MCP_CATALOG_SCHEMA_VERSION: u32 = 1;
+const MCP_CATALOG_KIND: &str = "tauritavern.mcpCatalogSnapshot";
 
 pub struct FileMcpServerRepository {
     root: PathBuf,
@@ -37,6 +40,14 @@ impl FileMcpServerRepository {
         self.registrations_dir().join(format!("{id}.json"))
     }
 
+    fn catalogs_dir(&self) -> PathBuf {
+        self.root.join("catalogs")
+    }
+
+    fn catalog_path(&self, id: &McpRegistrationId) -> PathBuf {
+        self.catalogs_dir().join(format!("{id}.json"))
+    }
+
     async fn load_file(
         &self,
         path: &Path,
@@ -44,6 +55,16 @@ impl FileMcpServerRepository {
     ) -> Result<McpServerRegistration, DomainError> {
         let stored: StoredMcpRegistrationV1 = read_json_file(path).await?;
         stored.into_domain(expected_id, path)
+    }
+
+    async fn load_catalog_file(
+        &self,
+        path: &Path,
+        expected_id: &McpRegistrationId,
+        expected_endpoint: &McpEndpoint,
+    ) -> Result<McpDiscoveryResult, DomainError> {
+        let stored: StoredMcpCatalogSnapshotV1 = read_json_file(path).await?;
+        stored.into_port(expected_id, expected_endpoint, path)
     }
 }
 
@@ -109,8 +130,37 @@ impl McpServerRepository for FileMcpServerRepository {
         .await
     }
 
+    async fn load_catalog_snapshot(
+        &self,
+        id: &McpRegistrationId,
+        endpoint: &McpEndpoint,
+    ) -> Result<Option<McpDiscoveryResult>, DomainError> {
+        let path = self.catalog_path(id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        self.load_catalog_file(&path, id, endpoint).await.map(Some)
+    }
+
+    async fn save_catalog_snapshot(
+        &self,
+        id: &McpRegistrationId,
+        endpoint: &McpEndpoint,
+        snapshot: &McpDiscoveryResult,
+    ) -> Result<(), DomainError> {
+        write_json_file(
+            &self.catalog_path(id),
+            &StoredMcpCatalogSnapshotV1::from_port(id, endpoint, snapshot),
+        )
+        .await
+    }
+
     async fn remove(&self, id: &McpRegistrationId) -> Result<(), DomainError> {
-        delete_file(&self.registration_path(id)).await
+        delete_file(&self.registration_path(id)).await?;
+        if let Err(error) = delete_file(&self.catalog_path(id)).await {
+            tracing::warn!(registration_id = %id, %error, "Failed to clean up removed MCP catalog snapshot");
+        }
+        Ok(())
     }
 }
 
@@ -176,6 +226,71 @@ impl StoredMcpRegistrationV1 {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredMcpCatalogSnapshotV1 {
+    schema_version: u32,
+    kind: String,
+    registration_id: String,
+    endpoint: String,
+    catalog: McpDiscoveryResult,
+}
+
+impl StoredMcpCatalogSnapshotV1 {
+    fn from_port(
+        id: &McpRegistrationId,
+        endpoint: &McpEndpoint,
+        snapshot: &McpDiscoveryResult,
+    ) -> Self {
+        Self {
+            schema_version: MCP_CATALOG_SCHEMA_VERSION,
+            kind: MCP_CATALOG_KIND.to_string(),
+            registration_id: id.to_string(),
+            endpoint: endpoint.as_str().to_string(),
+            catalog: snapshot.clone(),
+        }
+    }
+
+    fn into_port(
+        self,
+        expected_id: &McpRegistrationId,
+        expected_endpoint: &McpEndpoint,
+        path: &Path,
+    ) -> Result<McpDiscoveryResult, DomainError> {
+        if self.schema_version != MCP_CATALOG_SCHEMA_VERSION {
+            return Err(DomainError::InvalidData(format!(
+                "mcp.catalog_schema_unsupported: schemaVersion {} in {}",
+                self.schema_version,
+                path.display()
+            )));
+        }
+        if self.kind != MCP_CATALOG_KIND {
+            return Err(DomainError::InvalidData(format!(
+                "mcp.catalog_kind_invalid: kind `{}` in {}",
+                self.kind,
+                path.display()
+            )));
+        }
+        let id = McpRegistrationId::parse(&self.registration_id)?;
+        if id != *expected_id {
+            return Err(DomainError::InvalidData(format!(
+                "mcp.catalog_registration_mismatch: id `{id}` does not match registration `{expected_id}` in {}",
+                path.display()
+            )));
+        }
+        if self.endpoint != expected_endpoint.as_str() {
+            return Err(DomainError::InvalidData(format!(
+                "mcp.catalog_endpoint_mismatch: endpoint `{}` does not match registration endpoint `{}` in {}",
+                self.endpoint,
+                expected_endpoint.as_str(),
+                path.display()
+            )));
+        }
+
+        Ok(self.catalog)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -184,7 +299,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use serde_json::json;
+    use serde_json::{Value, json};
+    use tt_ports::mcp::{McpDiscoveredTool, McpToolDiagnostic};
 
     use super::*;
 
@@ -227,6 +343,27 @@ mod tests {
         .unwrap()
     }
 
+    fn catalog() -> McpDiscoveryResult {
+        McpDiscoveryResult {
+            protocol_version: "2026-07-28".to_string(),
+            server_name: Some("Fixture".to_string()),
+            server_version: Some("1.0".to_string()),
+            tools: vec![McpDiscoveredTool {
+                native_name: "search".to_string(),
+                title: Some("Search".to_string()),
+                description: Some("Search fixture data".to_string()),
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                annotations: json!({ "readOnlyHint": true }),
+            }],
+            diagnostics: vec![McpToolDiagnostic {
+                code: "fixture.warning".to_string(),
+                native_name: Some("search".to_string()),
+                message: "Fixture diagnostic".to_string(),
+            }],
+        }
+    }
+
     #[tokio::test]
     async fn round_trip_uses_one_strict_file_per_registration() {
         let dir = TestDir::new();
@@ -241,6 +378,88 @@ mod tests {
             dir.path()
                 .join("registrations/550e8400-e29b-41d4-a716-446655440000.json")
                 .is_file()
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_snapshot_is_strict_endpoint_bound_and_removed_with_registration() {
+        let dir = TestDir::new();
+        let repository = FileMcpServerRepository::new(dir.path().to_path_buf());
+        let registration = registration("550e8400-e29b-41d4-a716-446655440000");
+        let expected = catalog();
+        repository.save(&registration).await.unwrap();
+        repository
+            .save_catalog_snapshot(registration.id(), registration.endpoint(), &expected)
+            .await
+            .unwrap();
+
+        let reopened = FileMcpServerRepository::new(dir.path().to_path_buf());
+        assert_eq!(
+            reopened
+                .load_catalog_snapshot(registration.id(), registration.endpoint())
+                .await
+                .unwrap(),
+            Some(expected.clone())
+        );
+        let other_endpoint = McpEndpoint::parse("https://example.com/mcp").unwrap();
+        assert!(
+            reopened
+                .load_catalog_snapshot(registration.id(), &other_endpoint)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("mcp.catalog_endpoint_mismatch")
+        );
+
+        let catalog_path = dir
+            .path()
+            .join("catalogs/550e8400-e29b-41d4-a716-446655440000.json");
+        let mut stored: Value =
+            serde_json::from_slice(&tokio::fs::read(&catalog_path).await.unwrap()).unwrap();
+        stored["unknown"] = Value::Bool(true);
+        tokio::fs::write(&catalog_path, serde_json::to_vec(&stored).unwrap())
+            .await
+            .unwrap();
+        assert!(
+            reopened
+                .load_catalog_snapshot(registration.id(), registration.endpoint())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field")
+        );
+
+        reopened
+            .save_catalog_snapshot(registration.id(), registration.endpoint(), &expected)
+            .await
+            .unwrap();
+        reopened.remove(registration.id()).await.unwrap();
+        assert!(!catalog_path.exists());
+        assert!(
+            !dir.path()
+                .join("registrations/550e8400-e29b-41d4-a716-446655440000.json")
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_cleanup_failure_does_not_block_registration_removal() {
+        let dir = TestDir::new();
+        let repository = FileMcpServerRepository::new(dir.path().to_path_buf());
+        let registration = registration("550e8400-e29b-41d4-a716-446655440000");
+        repository.save(&registration).await.unwrap();
+        let catalog_path = dir
+            .path()
+            .join("catalogs/550e8400-e29b-41d4-a716-446655440000.json");
+        tokio::fs::create_dir_all(&catalog_path).await.unwrap();
+
+        repository.remove(registration.id()).await.unwrap();
+
+        assert!(catalog_path.is_dir());
+        assert!(
+            !dir.path()
+                .join("registrations/550e8400-e29b-41d4-a716-446655440000.json")
+                .exists()
         );
     }
 

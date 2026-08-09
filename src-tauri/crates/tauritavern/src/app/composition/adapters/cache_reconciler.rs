@@ -7,39 +7,21 @@ use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::group_chat_service::GroupChatService;
 use tt_application::services::group_service::GroupService;
+use tt_application::services::mcp_service::McpService;
 use tt_application::services::secret_service::SecretService;
 use tt_application::services::settings_service::SettingsService;
 use tt_domain::errors::DomainError;
 use tt_ports::sync::DataChangeReconciler;
 
-pub(in crate::app::composition) fn data_change_reconciler(
-    character_service: Arc<CharacterService>,
-    chat_service: Arc<ChatService>,
-    group_chat_service: Arc<GroupChatService>,
-    group_service: Arc<GroupService>,
-    secret_service: Arc<SecretService>,
-    settings_service: Arc<SettingsService>,
-    chat_history_coordinator: Arc<ChatHistoryCoordinator>,
-) -> Arc<dyn DataChangeReconciler> {
-    Arc::new(ServiceCacheReconciler {
-        character_service,
-        chat_service,
-        group_chat_service,
-        group_service,
-        secret_service,
-        settings_service,
-        chat_history_coordinator,
-    })
-}
-
-struct ServiceCacheReconciler {
-    character_service: Arc<CharacterService>,
-    chat_service: Arc<ChatService>,
-    group_chat_service: Arc<GroupChatService>,
-    group_service: Arc<GroupService>,
-    secret_service: Arc<SecretService>,
-    settings_service: Arc<SettingsService>,
-    chat_history_coordinator: Arc<ChatHistoryCoordinator>,
+pub(in crate::app::composition) struct ServiceCacheReconciler {
+    pub(in crate::app::composition) character_service: Arc<CharacterService>,
+    pub(in crate::app::composition) chat_service: Arc<ChatService>,
+    pub(in crate::app::composition) group_chat_service: Arc<GroupChatService>,
+    pub(in crate::app::composition) group_service: Arc<GroupService>,
+    pub(in crate::app::composition) secret_service: Arc<SecretService>,
+    pub(in crate::app::composition) settings_service: Arc<SettingsService>,
+    pub(in crate::app::composition) mcp_service: Arc<McpService>,
+    pub(in crate::app::composition) chat_history_coordinator: Arc<ChatHistoryCoordinator>,
 }
 
 #[async_trait]
@@ -51,6 +33,7 @@ impl DataChangeReconciler for ServiceCacheReconciler {
         );
 
         self.chat_history_coordinator.invalidate_all_pending().await;
+        self.mcp_service.clear_catalog_memory();
 
         self.character_service.clear_cache().await?;
         self.chat_service.clear_cache().await?;

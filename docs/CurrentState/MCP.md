@@ -1,8 +1,8 @@
-# MCP M2 当前状态
+# MCP M2.1 当前状态
 
 ## 当前解决的问题
 
-M2 在 M1 的稳定 registration、严格持久化、显式启停、只读 discovery 与默认关闭权限之上，增加第一方 Manager 的用户 test call。用户在统一测试控制台中选择服务器与工具、按 input schema 生成的友好表单填写参数（复杂字段回退原始 JSON），真实执行一次工具并区分已知响应、可证明未发送与结果未知；系统仍不向模型公布 MCP 工具。
+M2 在 M1 的稳定 registration、严格持久化、显式启停、只读 discovery 与默认关闭权限之上，增加第一方 Manager 的用户 test call。M2.1 将完整成功的 catalog 作为 application-owned persistent snapshot，由 Manager、测试控制台及未来 Agent/Legacy 共享。用户在统一测试控制台中选择服务器与工具、按 input schema 生成的友好表单填写参数（复杂字段回退原始 JSON），真实执行一次工具并区分已知响应、可证明未发送与结果未知；系统仍不向模型公布 MCP 工具。
 
 ## 端到端链路
 
@@ -20,8 +20,8 @@ crate 责任：
 
 - `tt-domain::models::mcp`：registration UUID、endpoint、Active/Paused、Off/Ask/Allow 与领域约束。
 - `tt-ports::mcp` / `repositories::mcp_server_repository`：Tauri-free、RMCP-free 的 outbound ports 与 MCP call outcome。
-- `tt-application::McpService`：intent CRUD、permission、discovery、test-call Active/JSON gate、取消注册与 Host DTO 投影。
-- `tt-adapter-storage-core`：`_tauritavern/mcp/registrations/<uuid>.json` 严格 v1 单文件存储与坏文件隔离。
+- `tt-application::McpService`：intent CRUD、permission、persistent catalog policy、discovery、test-call Active/JSON gate、取消注册与 Host DTO 投影。
+- `tt-adapter-storage-core`：registration 与 endpoint-bound catalog snapshot 的严格 v1 单文件存储。
 - `tt-adapter-mcp`：RMCP 2026-first Auto lifecycle、一次受限的 2025 legacy lifecycle 尝试、bounded/cancellable Streamable HTTP、手动全分页、discovery validation 与单次 `tools/call` 结果投影。
 - `tt-adapter-http`：无 redirect、无 retry 的 MCP client profile；MCP adapter 每次 discovery/call 从共享 pool 取得当前 proxy/TLS/UA 配置。
 - `tauritavern`：composition、commands 与 Manager Host ABI。
@@ -34,7 +34,7 @@ crate 责任：
 2. endpoint 不进入 ToolId，但当前不可修改；换 endpoint 即新 registration、新权限。
 3. discovery 只产生候选描述，不产生执行 authority；新工具永远 Off。
 4. annotations 是不可信提示，不能改变 permission。
-5. 完整分页成功后才发布 catalog；不发布 partial、不用旧 catalog 掩盖失败。
+5. 完整分页与 application canonical validation 成功后才发布新 catalog；写盘失败时以可见 diagnostic 明确标记 memory-only，不发布协议 partial，其他 refresh 失败不把旧 snapshot 冒充本次结果。
 6. 坏 registration 隔离到单文件，坏 tool/duplicate 隔离到最小工具组，系统 IO 与分页不完整显式失败。
 7. user test call 的一次点击就是本次 authority；Off/Ask/Allow 不阻止调用，也不被调用修改。
 8. request handle 建立前的失败才可标记 NotSent；建立后 cancel/timeout/disconnect 无法证明远端状态时必须标记 OutcomeUnknown。
@@ -42,13 +42,15 @@ crate 责任：
 10. RMCP/reqwest 类型不得进入 domain、ports、application 或 presentation DTO。
 11. MCP 不进入全局 Legacy ToolManager，M2 不修改 Agent/Legacy 生成语义。
 
-## Peer 与 cache 语义
+## Persistent catalog 与 Peer 语义
 
-M2 不维护 application-owned catalog cache。一次 discovery 创建一个 RMCP Peer，SDK cache 仅在该 Peer 内按协议提示工作，完成后随 Peer 销毁。因此失败会显式返回，Manager 只在当前页面内保留最近一次成功的展示数据；reload 后消失。
+`McpService` 按 registration 持有内存热副本，`tt-adapter-storage-core` 在 `_tauritavern/mcp/catalogs/<uuid>.json` 保存严格 v1 persistent snapshot。文件同时绑定 canonical UUID 与 registration 的规范化 endpoint；permissions 与 staleTools 不写入 catalog，而是在每次读取时根据当前 registration 投影。
+
+普通 `servers.discover` 按内存、磁盘、真实 network discovery 的顺序读取。内存和磁盘均不存在时才创建 RMCP Peer；显式 `servers.refresh` 始终绕过两级 snapshot。cold discovery/refresh 在完整分页与 adapter/application validation 成功后发布；原子写盘失败不会阻止使用已验证 catalog，而是保留旧磁盘 snapshot、发布 memory-only snapshot，并返回 `mcp.catalog_persistence_failed` diagnostic。网络或 validation 失败仍直接返回错误，上一份 snapshot 保持不变但不会作为该请求的成功结果。损坏、未知 schema、UUID 或 endpoint 不匹配的文件显式失败，用户 refresh 可以直接联网并替换。
+
+snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 migration reader。registration 删除成功不受派生 catalog 清理失败影响；清理失败只写 warning。Data Archive/TT-Sync 的既有 external-data reconciliation 清空内存热副本，使后续读取重新观察当前 data root。rename、Active/Paused 与 permission 改动不清 catalog；Paused gate 始终先于 cache lookup。
 
 每次 test call 也使用新的短生命周期 Peer。协商到 `2026-07-28` 时，RMCP 3.1.2 构造 SEP-2243 `Mcp-Param-*` 需要同一 transport worker 的 tool schema cache，因此 call 前在同一 Peer 分页 `tools/list`，找到目标工具后立即停止；目标始终未出现时才遍历完整目录。该步骤只 hydration transport metadata：不做 arguments schema validation/coercion，也不持久化 catalog；目标未出现在 SDK 可见列表时，明确 NotSent。2025 协议不做这次额外 list。
-
-只有实际测量证明跨 refresh/重启 discovery 成为瓶颈，或 invocation 需要明确定义的离线 stale 语义时，才重新评估 semantic catalog cache。
 
 ## 当前固定边界
 
@@ -68,6 +70,6 @@ M2 不维护 application-owned catalog cache。一次 discovery 创建一个 RMC
 - Agent/Legacy tool call 与 Ask 审批；
 - Agent/Legacy exposure 与 model alias；
 - OAuth/credential、stdio、Resources/Prompts/Tasks/Apps；
-- background refresh、list-changed、persistent cache、endpoint migration、sync dataset。
+- background refresh、list-changed、catalog TTL/revision history、endpoint migration、MCP 专属 sync dataset。
 
-全量 Data Archive 会随 data root 备份 registration；TT-Sync 不自动传播 MCP trust/permission。
+全量 Data Archive 会随 data root 备份 registration 与 persistent catalog。TT-Sync 是否包含这些文件仍由用户选择的通用 DatasetPolicy 决定；MCP 不增加专属同步协议。

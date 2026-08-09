@@ -21,6 +21,7 @@ type ServerRowProps = {
     onRename: () => void;
     onRemove: () => void;
     onDiscover: () => void;
+    onRefresh: () => void;
     onSetPermission: (tool: TauriTavernMcpTool, permission: TauriTavernMcpToolPermission) => void;
     onClearStale: (nativeName: string) => void;
 };
@@ -38,6 +39,7 @@ export function ServerRow({
     onRename,
     onRemove,
     onDiscover,
+    onRefresh,
     onSetPermission,
     onClearStale,
 }: ServerRowProps) {
@@ -115,7 +117,12 @@ export function ServerRow({
                     )}
 
                     {!discovery && active && !discovering && (
-                        <button type="button" className="menu_button menu_button_icon" disabled={busy} onClick={onDiscover}>
+                        <button
+                            type="button"
+                            className="menu_button menu_button_icon"
+                            disabled={busy}
+                            onClick={error ? onRefresh : onDiscover}
+                        >
                             <i className="fa-solid fa-arrows-rotate" aria-hidden="true" />
                             <span>{error ? tr('retry') : tr('discoverTools')}</span>
                         </button>
@@ -132,7 +139,7 @@ export function ServerRow({
                                     title={tr('refreshTools')}
                                     aria-label={tr('refreshTools')}
                                     disabled={!active || busy}
-                                    onClick={onDiscover}
+                                    onClick={onRefresh}
                                 >
                                     <i className={`fa-solid ${discovering ? 'fa-circle-notch fa-spin' : 'fa-arrows-rotate'}`} aria-hidden="true" />
                                 </button>

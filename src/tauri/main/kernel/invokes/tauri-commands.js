@@ -145,6 +145,7 @@ export {};
  *   | 'read_agent_workspace_file'
  *   | 'read_agent_model_turn'
  *   | 'read_skill_file'
+ *   | 'refresh_mcp_tools'
  *   | 'replace_character'
  *   | 'request_notification_permission'
  *   | 'check_character_lorebook_conflict'

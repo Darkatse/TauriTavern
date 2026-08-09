@@ -2,8 +2,10 @@ use async_trait::async_trait;
 
 use tt_domain::{
     errors::DomainError,
-    models::mcp::{McpRegistrationId, McpServerRegistration},
+    models::mcp::{McpEndpoint, McpRegistrationId, McpServerRegistration},
 };
+
+use crate::mcp::McpDiscoveryResult;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpRegistrationStorageIssue {
@@ -27,6 +29,19 @@ pub trait McpServerRepository: Send + Sync {
     ) -> Result<Option<McpServerRegistration>, DomainError>;
 
     async fn save(&self, registration: &McpServerRegistration) -> Result<(), DomainError>;
+
+    async fn load_catalog_snapshot(
+        &self,
+        id: &McpRegistrationId,
+        endpoint: &McpEndpoint,
+    ) -> Result<Option<McpDiscoveryResult>, DomainError>;
+
+    async fn save_catalog_snapshot(
+        &self,
+        id: &McpRegistrationId,
+        endpoint: &McpEndpoint,
+        snapshot: &McpDiscoveryResult,
+    ) -> Result<(), DomainError>;
 
     async fn remove(&self, id: &McpRegistrationId) -> Result<(), DomainError>;
 }
