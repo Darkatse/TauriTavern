@@ -200,9 +200,11 @@
   - Preset / Character embedded skill 导入必须经过用户确认；同名不同 hash 必须显式 skip 或 replace，不自动改名。
   - Skill import/export 不触发上游 SillyTavern `GENERATION_*`、`TOOL_CALLS_*` 或 regex 事件。
 
-- `api.mcp`：MCP registration 与只读 tool discovery 的独立平台 API。Agent Mode 未来可以消费 MCP，但 MCP 不依附 Agent Mode。
+- `api.mcp`：MCP registration、只读 tool discovery 与第一方 Manager user test call 的独立平台 API。Agent Mode 未来可以消费 MCP，但 MCP 不依附 Agent Mode。
   - 当前为实验性的 Project Contract；详细签名见 `docs/API/MCP.md`。
-  - 当前只暴露 `servers.list/create/rename/setState/remove/discover` 与 `tools.setPermission`，不暴露 raw RPC、tool call、RMCP session 或 endpoint mutation。
+  - 当前暴露 `servers.list/create/rename/setState/remove/discover`、`tools.setPermission` 与 `tools.testCall({ registrationId, nativeName, argumentsJson }, { signal? })`；不暴露 endpoint/header、raw RPC、RMCP session 或 endpoint mutation。
+  - `testCall` 是第一方 Manager 的 Project Contract：Active registration 上的显式用户调用不受 Off/Ask/Allow 阻止且不修改 permission；typed outcome 区分 `known_response`、`not_sent` 与 `outcome_unknown`，AbortSignal 只停止本地等待，不承诺远端回滚。
+  - 同一 WebView 内的 vendor/extension scripts 仍按当前平台 trust model 视为用户授权代码；本 ABI 不声称验证物理点击或隔离 hostile extension。
   - server 新建后总是 Paused；工具缺省 Off。discovery annotations 不构成 authority。
   - 当前没有 Agent/Legacy model exposure，也不会修改全局 SillyTavern ToolManager。
   - 第一方 MCP 管理 UI 是独立内置扩展；它只消费本 API，不把 React 状态升格为平台事实，也不在 TauriTavern Settings 中维护第二入口。

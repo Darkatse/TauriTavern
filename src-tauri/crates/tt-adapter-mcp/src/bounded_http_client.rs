@@ -17,6 +17,7 @@ use rmcp::{
 };
 use sse_stream::{Error as SseError, Sse, SseStream};
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 pub(crate) const MAX_HTTP_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
@@ -24,105 +25,23 @@ pub(crate) const MAX_HTTP_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) struct BoundedReqwestClient {
     inner: reqwest::Client,
     max_json_body_size: usize,
+    cancel: CancellationToken,
 }
 
 impl BoundedReqwestClient {
-    pub(crate) fn new(inner: reqwest::Client, max_json_body_size: usize) -> Self {
+    pub(crate) fn new(
+        inner: reqwest::Client,
+        max_json_body_size: usize,
+        cancel: CancellationToken,
+    ) -> Self {
         Self {
             inner,
             max_json_body_size,
+            cancel,
         }
     }
-}
 
-#[derive(Debug, Error)]
-enum BoundedSseBodyError {
-    #[error(transparent)]
-    Source(reqwest::Error),
-    #[error("MCP SSE response exceeded {max_size} bytes")]
-    TooLarge { max_size: usize },
-}
-
-impl StreamableHttpClient for BoundedReqwestClient {
-    type Error = reqwest::Error;
-
-    async fn get_stream(
-        &self,
-        uri: Arc<str>,
-        session_id: Option<Arc<str>>,
-        last_event_id: Option<String>,
-        auth_header: Option<String>,
-        custom_headers: HashMap<HeaderName, HeaderValue>,
-    ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
-        <reqwest::Client as StreamableHttpClient>::get_stream(
-            &self.inner,
-            uri,
-            session_id,
-            last_event_id,
-            auth_header,
-            custom_headers,
-        )
-        .await
-    }
-
-    async fn get_stream_with_max_sse_event_size(
-        &self,
-        uri: Arc<str>,
-        session_id: Option<Arc<str>>,
-        last_event_id: Option<String>,
-        auth_header: Option<String>,
-        custom_headers: HashMap<HeaderName, HeaderValue>,
-        max_sse_event_size: usize,
-    ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
-        <reqwest::Client as StreamableHttpClient>::get_stream_with_max_sse_event_size(
-            &self.inner,
-            uri,
-            session_id,
-            last_event_id,
-            auth_header,
-            custom_headers,
-            max_sse_event_size,
-        )
-        .await
-    }
-
-    async fn delete_session(
-        &self,
-        uri: Arc<str>,
-        session_id: Arc<str>,
-        auth_header: Option<String>,
-        custom_headers: HashMap<HeaderName, HeaderValue>,
-    ) -> Result<(), StreamableHttpError<Self::Error>> {
-        <reqwest::Client as StreamableHttpClient>::delete_session(
-            &self.inner,
-            uri,
-            session_id,
-            auth_header,
-            custom_headers,
-        )
-        .await
-    }
-
-    async fn post_message(
-        &self,
-        uri: Arc<str>,
-        message: ClientJsonRpcMessage,
-        session_id: Option<Arc<str>>,
-        auth_header: Option<String>,
-        custom_headers: HashMap<HeaderName, HeaderValue>,
-    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
-        self.post_message_with_max_sse_event_size(
-            uri,
-            message,
-            session_id,
-            auth_header,
-            custom_headers,
-            MAX_HTTP_RESPONSE_BYTES,
-        )
-        .await
-    }
-
-    async fn post_message_with_max_sse_event_size(
+    async fn post_message_uncancelled(
         &self,
         uri: Arc<str>,
         message: ClientJsonRpcMessage,
@@ -130,7 +49,7 @@ impl StreamableHttpClient for BoundedReqwestClient {
         auth_header: Option<String>,
         custom_headers: HashMap<HeaderName, HeaderValue>,
         max_sse_event_size: usize,
-    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<reqwest::Error>> {
         let mut request = self
             .inner
             .post(uri.as_ref())
@@ -242,6 +161,119 @@ impl StreamableHttpClient for BoundedReqwestClient {
         }
 
         Err(StreamableHttpError::UnexpectedContentType(content_type))
+    }
+}
+
+#[derive(Debug, Error)]
+enum BoundedSseBodyError {
+    #[error(transparent)]
+    Source(reqwest::Error),
+    #[error("MCP SSE response exceeded {max_size} bytes")]
+    TooLarge { max_size: usize },
+}
+
+impl StreamableHttpClient for BoundedReqwestClient {
+    type Error = reqwest::Error;
+
+    async fn get_stream(
+        &self,
+        uri: Arc<str>,
+        session_id: Option<Arc<str>>,
+        last_event_id: Option<String>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
+        <reqwest::Client as StreamableHttpClient>::get_stream(
+            &self.inner,
+            uri,
+            session_id,
+            last_event_id,
+            auth_header,
+            custom_headers,
+        )
+        .await
+    }
+
+    async fn get_stream_with_max_sse_event_size(
+        &self,
+        uri: Arc<str>,
+        session_id: Option<Arc<str>>,
+        last_event_id: Option<String>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+        max_sse_event_size: usize,
+    ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
+        <reqwest::Client as StreamableHttpClient>::get_stream_with_max_sse_event_size(
+            &self.inner,
+            uri,
+            session_id,
+            last_event_id,
+            auth_header,
+            custom_headers,
+            max_sse_event_size,
+        )
+        .await
+    }
+
+    async fn delete_session(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<(), StreamableHttpError<Self::Error>> {
+        <reqwest::Client as StreamableHttpClient>::delete_session(
+            &self.inner,
+            uri,
+            session_id,
+            auth_header,
+            custom_headers,
+        )
+        .await
+    }
+
+    async fn post_message(
+        &self,
+        uri: Arc<str>,
+        message: ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        self.post_message_with_max_sse_event_size(
+            uri,
+            message,
+            session_id,
+            auth_header,
+            custom_headers,
+            MAX_HTTP_RESPONSE_BYTES,
+        )
+        .await
+    }
+
+    async fn post_message_with_max_sse_event_size(
+        &self,
+        uri: Arc<str>,
+        message: ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+        max_sse_event_size: usize,
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        tokio::select! {
+            biased;
+            response = self.post_message_uncancelled(
+                uri,
+                message,
+                session_id,
+                auth_header,
+                custom_headers,
+                max_sse_event_size,
+            ) => response,
+            _ = self.cancel.cancelled() => Err(StreamableHttpError::UnexpectedServerResponse(
+                "MCP request cancelled".into(),
+            )),
+        }
     }
 }
 
@@ -359,7 +391,7 @@ mod tests {
         }))
         .unwrap();
 
-        let error = BoundedReqwestClient::new(reqwest::Client::new(), 64)
+        let error = BoundedReqwestClient::new(reqwest::Client::new(), 64, CancellationToken::new())
             .post_message(Arc::from(endpoint), message, None, None, HashMap::new())
             .await
             .unwrap_err();

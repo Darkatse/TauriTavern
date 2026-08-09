@@ -43,6 +43,21 @@ pub struct SetMcpToolPermissionDto {
     pub permission: McpToolPermission,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TestMcpToolCallDto {
+    pub call_id: String,
+    pub registration_id: String,
+    pub native_name: String,
+    pub arguments_json: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpTestCallIdDto {
+    pub call_id: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerDto {
@@ -111,4 +126,58 @@ pub struct McpDiscoveryResultDto {
     pub tools: Vec<McpToolDto>,
     pub diagnostics: Vec<McpToolDiagnosticDto>,
     pub stale_tools: Vec<McpStaleToolDto>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCallDiagnosticDto {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpTextContentDto {
+    pub index: usize,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum McpKnownResponseDto {
+    ToolResult {
+        is_error: bool,
+        text_blocks: Vec<McpTextContentDto>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        structured_json: Option<String>,
+        diagnostics: Vec<McpCallDiagnosticDto>,
+    },
+    ServerError {
+        code: i32,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data_json: Option<String>,
+    },
+    UnsupportedResponse {
+        response_type: String,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(
+    tag = "outcome",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum McpTestCallOutcomeDto {
+    KnownResponse { response: McpKnownResponseDto },
+    NotSent { code: String, message: String },
+    OutcomeUnknown { code: String, message: String },
 }

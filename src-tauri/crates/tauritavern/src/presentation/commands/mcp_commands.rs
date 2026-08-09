@@ -11,7 +11,8 @@ use crate::{
 };
 use tt_application::dto::mcp_dto::{
     CreateMcpServerDto, ListMcpServersResultDto, McpDiscoveryResultDto, McpRegistrationIdDto,
-    McpServerDto, RenameMcpServerDto, SetMcpServerStateDto, SetMcpToolPermissionDto,
+    McpServerDto, McpTestCallIdDto, McpTestCallOutcomeDto, RenameMcpServerDto,
+    SetMcpServerStateDto, SetMcpToolPermissionDto, TestMcpToolCallDto,
 };
 
 #[tauri::command]
@@ -109,4 +110,51 @@ pub async fn set_mcp_tool_permission(
         .set_tool_permission(&dto.registration_id, dto.native_name, dto.permission)
         .await
         .map_err(map_command_error("Failed to update MCP tool permission"))
+}
+
+#[tauri::command]
+pub async fn start_mcp_test_call(
+    dto: McpTestCallIdDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("start_mcp_test_call");
+    app_state
+        .services
+        .mcp_service
+        .start_test_call(&dto.call_id)
+        .await
+        .map_err(map_command_error("Failed to prepare MCP test call"))
+}
+
+#[tauri::command]
+pub async fn test_mcp_tool_call(
+    dto: TestMcpToolCallDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<McpTestCallOutcomeDto, CommandError> {
+    log_command("test_mcp_tool_call");
+    app_state
+        .services
+        .mcp_service
+        .test_call(
+            &dto.call_id,
+            &dto.registration_id,
+            dto.native_name,
+            dto.arguments_json,
+        )
+        .await
+        .map_err(map_command_error("Failed to test MCP tool call"))
+}
+
+#[tauri::command]
+pub async fn cancel_mcp_test_call(
+    dto: McpTestCallIdDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("cancel_mcp_test_call");
+    app_state
+        .services
+        .mcp_service
+        .cancel_test_call(&dto.call_id)
+        .await
+        .map_err(map_command_error("Failed to cancel MCP test call"))
 }

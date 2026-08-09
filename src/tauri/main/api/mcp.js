@@ -28,6 +28,22 @@ function requireNativeName(value) {
     return value;
 }
 
+/** @param {unknown} value */
+function requireArgumentsJson(value) {
+    if (typeof value !== 'string') {
+        throw new Error('argumentsJson must be a string');
+    }
+    return value;
+}
+
+function cancelledBeforeSend() {
+    return {
+        outcome: 'not_sent',
+        code: 'mcp.call_cancelled_before_send',
+        message: 'The tool request was cancelled before it started',
+    };
+}
+
 /** @param {unknown} input */
 function registrationId(input) {
     if (typeof input === 'string') {
@@ -93,6 +109,50 @@ function createMcpApi({ safeInvoke }) {
                         permission,
                     },
                 });
+            },
+            testCall: async (input, options = {}) => {
+                const value = requireObject(input, 'input');
+                const signal = options?.signal;
+                if (signal?.aborted) {
+                    return cancelledBeforeSend();
+                }
+
+                const callId = globalThis.crypto.randomUUID();
+                const dto = {
+                    callId,
+                    registrationId: requireString(value.registrationId, 'registrationId'),
+                    nativeName: requireNativeName(value.nativeName),
+                    argumentsJson: requireArgumentsJson(value.argumentsJson),
+                };
+                const cancel = () => {
+                    void safeInvoke('cancel_mcp_test_call', { dto: { callId } })
+                        .catch(error => console.debug('Failed to stop MCP test call:', error));
+                };
+
+                // The acknowledgement closes the cancel-before-register race without
+                // retaining cancellation tombstones in the backend.
+                await safeInvoke('start_mcp_test_call', { dto: { callId } });
+                if (signal?.aborted) {
+                    cancel();
+                    return cancelledBeforeSend();
+                }
+
+                let abortHandler = null;
+                if (signal) {
+                    abortHandler = cancel;
+                    signal.addEventListener('abort', abortHandler, { once: true });
+                }
+
+                try {
+                    return await safeInvoke('test_mcp_tool_call', { dto });
+                } catch (error) {
+                    cancel();
+                    throw error;
+                } finally {
+                    if (signal && abortHandler) {
+                        signal.removeEventListener('abort', abortHandler);
+                    }
+                }
             },
         },
     };

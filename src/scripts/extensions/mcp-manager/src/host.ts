@@ -3,13 +3,14 @@ const PREFIX = 'mcp_manager.';
 const DEFAULT_MESSAGES = Object.freeze({
     active: 'Active',
     activate: 'Activate',
-    activateHttpNote: 'This endpoint uses unencrypted HTTP. Other devices on the network may observe or modify MCP traffic. Activation does not grant tool permission.',
-    activateNote: 'Activation allows manual discovery requests to this exact endpoint. It does not grant tool permission.',
+    activateHttpNote: 'This endpoint uses unencrypted HTTP. Other devices on the network may observe or modify MCP traffic. Activation allows manual discovery and test calls, but does not grant tool permission.',
+    activateNote: 'Activation allows manual discovery and test calls to this exact endpoint. It does not grant tool permission.',
     activateTitle: 'Activate this MCP server?',
     addServer: 'Add server',
     addServerTitle: 'Add MCP server',
     adding: 'Adding…',
     cancel: 'Cancel',
+    close: 'Close',
     configuredToolsMissing: 'Not offered by this discovery',
     diagnostics: 'Discovery notes',
     discoverTools: 'Discover tools',
@@ -22,12 +23,25 @@ const DEFAULT_MESSAGES = Object.freeze({
     endpoint: 'Endpoint',
     endpointHint: 'Streamable HTTP. This endpoint is the registration identity and cannot be changed later.',
     endpointInvalid: 'Enter a valid http:// or https:// URL.',
+    fieldRequired: 'Required',
     hostApiUnavailable: 'TauriTavern MCP Host API is unavailable',
+    invalidInteger: 'Enter a whole number.',
+    invalidJson: 'Enter valid JSON.',
+    invalidNumber: 'Enter a valid number.',
+    loadingTools: 'Loading tools…',
     mcp: 'MCP',
     nameRequired: 'Enter a name.',
     newServerNote: 'New servers start paused, and every discovered tool starts Off.',
+    noActiveServers: 'No active servers. Activate a server in the list first.',
+    noArguments: 'This tool takes no arguments.',
+    noDisplayableContent: 'The server responded, but there is no displayable content.',
+    notSent: 'Not sent',
+    notSet: 'Not set',
+    onePerLine: 'One value per line.',
+    outcomeUnknown: 'Outcome unknown',
+    outcomeUnknownHint: 'The call may have executed. TauriTavern will not retry it automatically.',
     paused: 'Paused',
-    pausedHint: 'Paused — activate to discover this server\'s tools.',
+    pausedHint: 'Paused — activate to discover and test this server\'s tools.',
     permissionAllow: 'Allow',
     permissionAsk: 'Ask',
     permissionFor: 'Permission for {name}',
@@ -40,13 +54,31 @@ const DEFAULT_MESSAGES = Object.freeze({
     rename: 'Rename',
     renameTitle: 'Rename server',
     retry: 'Retry',
+    runTest: 'Run test',
     schemaDetails: 'Schema & hints',
+    selectServer: 'Server',
+    selectServerPlaceholder: 'Select a server…',
+    selectTool: 'Tool',
+    selectToolPlaceholder: 'Select a tool…',
+    serverError: 'Server error',
+    serverResponded: 'Server responded',
     serverCount: 'Servers · {count}',
     setOff: 'Set Off',
     storageIssues: 'Registration files needing attention',
+    stopWaiting: 'Stop waiting',
+    stopping: 'Stopping local wait…',
+    structuredResult: 'Structured result',
+    testCall: 'Test call',
+    testCallPermission: 'Current permission: {permission}. This explicit test call does not change it.',
+    testCallTitle: 'Test MCP tool',
+    testCallWarning: 'This is a real call and may have side effects. TauriTavern never retries it automatically.',
+    toolError: 'Tool returned an error',
     toolCount: '{count} tools',
     toggleTools: 'Show or hide tools',
     unknownError: 'Unknown error',
+    unsupportedResponse: 'Unsupported server response',
+    waitingForServer: 'Waiting for server…',
+    waitingForServerHint: 'Stopping only ends the local wait; it cannot undo a call the server already received.',
 });
 
 export type McpMessageKey = keyof typeof DEFAULT_MESSAGES;
@@ -62,8 +94,10 @@ type PopupOptions = {
     okButton?: string;
     cancelButton?: string;
     allowVerticalScrolling?: boolean;
+    wide?: boolean;
+    leftAlign?: boolean;
     onOpen?: () => void;
-    onClosing?: (popup: PopupInstance) => Promise<boolean>;
+    onClosing?: (popup: PopupInstance) => boolean | Promise<boolean>;
 };
 
 type PopupConstructor = new (
@@ -76,7 +110,7 @@ type PopupConstructor = new (
 type SillyTavernContext = {
     translate?: (fallback: string, key?: string) => string;
     Popup?: PopupConstructor;
-    POPUP_TYPE?: { CONFIRM: number; INPUT: number };
+    POPUP_TYPE?: { TEXT: number; CONFIRM: number; INPUT: number };
     POPUP_RESULT?: { AFFIRMATIVE: unknown };
 };
 
@@ -351,4 +385,13 @@ export async function openAddServerDialog(
     });
     await popup.show();
     return created;
+}
+
+export function createTextPopup(content: Element, options: PopupOptions): PopupInstance {
+    const { Popup } = requirePopupRuntime();
+    const textType = context()?.POPUP_TYPE?.TEXT;
+    if (textType === undefined) {
+        throw new Error(tr('popupUnavailable'));
+    }
+    return new Popup(content, textType, '', options);
 }

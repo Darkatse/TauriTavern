@@ -11,6 +11,7 @@ import {
     waitForHostReady,
 } from './host';
 import { McpManagerApp, type McpManagerActions } from './McpManagerApp';
+import { openTestCallDialog } from './test-call-dialog';
 
 const CONTAINER_ID = 'mcp_manager_container';
 
@@ -56,6 +57,11 @@ async function mountMcpManager(): Promise<void> {
         remove: api.servers.remove,
         discover: api.servers.discover,
         setPermission: api.tools.setPermission,
+        openTestCall: servers => openTestCallDialog({
+            servers,
+            discover: api.servers.discover,
+            testCall: api.tools.testCall,
+        }),
         confirmActivate,
         confirmRemove,
     };

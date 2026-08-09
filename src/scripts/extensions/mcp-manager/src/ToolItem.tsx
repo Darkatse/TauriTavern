@@ -55,7 +55,7 @@ type PermissionGroupProps = {
 
 function PermissionGroup({ tool, busy, tr, onSetPermission }: PermissionGroupProps) {
     return (
-        <div className="tt-mcp-perm" role="radiogroup" aria-label={tr('permissionFor', { name: tool.nativeName })}>
+        <div className="tt-mcp-seg" role="radiogroup" aria-label={tr('permissionFor', { name: tool.nativeName })}>
             {PERMISSIONS.map(permission => (
                 <label key={permission} className={tool.permission === permission ? 'is-selected' : ''}>
                     <input

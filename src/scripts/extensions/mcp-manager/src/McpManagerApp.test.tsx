@@ -8,6 +8,7 @@ import {
     type McpManagerInitial,
 } from './McpManagerApp';
 import { openAddServerDialog, tr } from './host';
+import { installPopupHost, TestPopup, uninstallPopupHost } from './popup-stub';
 
 const SERVER_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -52,6 +53,7 @@ function actions(overrides: Partial<McpManagerActions> = {}): McpManagerActions 
         remove: () => unexpected('remove'),
         discover: () => unexpected('discover'),
         setPermission: () => unexpected('setPermission'),
+        openTestCall: () => unexpected('openTestCall'),
         confirmActivate: () => Promise.resolve(true),
         confirmRemove: () => Promise.resolve(true),
         ...overrides,
@@ -62,67 +64,10 @@ function initial(servers: TauriTavernMcpServer[] = []): McpManagerInitial {
     return { servers, storageIssues: [] };
 }
 
-type TestPopupOptions = {
-    onOpen?: () => void;
-    onClosing?: (popup: TestPopup) => Promise<boolean>;
-};
-
-class TestPopup {
-    static current: TestPopup | undefined;
-
-    result: unknown;
-    private resolve: ((value: unknown) => void) | undefined;
-
-    constructor(
-        readonly content: Element,
-        type: number,
-        inputValue: string,
-        private readonly options: TestPopupOptions,
-    ) {
-        void type;
-        void inputValue;
-        TestPopup.current = this;
-    }
-
-    show(): Promise<unknown> {
-        document.body.append(this.content);
-        this.options.onOpen?.();
-        return new Promise(resolve => {
-            this.resolve = resolve;
-        });
-    }
-
-    async close(result: unknown): Promise<boolean> {
-        this.result = result;
-        if (this.options.onClosing && !await this.options.onClosing(this)) {
-            return false;
-        }
-        this.content.remove();
-        this.resolve?.(result);
-        return true;
-    }
-}
-
-function installPopupHost(): void {
-    Object.defineProperty(window, 'SillyTavern', {
-        configurable: true,
-        value: {
-            getContext: () => ({
-                Popup: TestPopup,
-                POPUP_TYPE: { CONFIRM: 1, INPUT: 2 },
-                POPUP_RESULT: { AFFIRMATIVE: 1 },
-            }),
-        },
-    });
-}
-
 afterEach(() => {
     cleanup();
-    TestPopup.current?.content.remove();
-    TestPopup.current = undefined;
-    Reflect.deleteProperty(window, 'SillyTavern');
+    uninstallPopupHost();
 });
-
 test('adds a server through the dialog action and lists it paused', async () => {
     const created = server('paused');
     const user = userEvent.setup();
@@ -237,6 +182,28 @@ test('keeps a discovery error while an unrelated action is cancelled', async () 
     expect(screen.getByRole('alert').textContent).toBe('discovery failed');
 });
 
+test('opens the unified test console from the toolbar with the current servers', async () => {
+    const openedWith: TauriTavernMcpServer[][] = [];
+    const activeServer = server('active');
+    const user = userEvent.setup();
+    render(
+        <McpManagerApp
+            initial={initial([activeServer])}
+            tr={tr}
+            actions={actions({
+                openTestCall: servers => {
+                    openedWith.push(servers);
+                    return Promise.resolve();
+                },
+            })}
+        />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Test call' }));
+
+    expect(openedWith).toEqual([[activeServer]]);
+});
+
 test('add-server popup validates in place, preserves failures, and returns the created server', async () => {
     installPopupHost();
     const drafts: Array<{ displayName: string; endpoint: string }> = [];
@@ -254,7 +221,7 @@ test('add-server popup validates in place, preserves failures, and returns the c
 
     const name = screen.getByLabelText<HTMLInputElement>('Name');
     const endpoint = screen.getByLabelText<HTMLInputElement>('Endpoint');
-    expect(document.activeElement).toBe(name);
+    await waitFor(() => expect(document.activeElement).toBe(name));
 
     expect(await popup.close(1)).toBe(false);
     expect(screen.getByRole('alert').textContent).toBe('Enter a name.');

@@ -15,10 +15,11 @@ serde_json = { workspace = true }
 sse-stream = "0.2.5"
 thiserror = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["time"] }
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 tracing = "0.1"
 tt-adapter-http = { path = "../tt-adapter-http" }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 
 [dev-dependencies]
-tokio = { version = "1", default-features = false, features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
+tokio = { version = "1", default-features = false, features = ["io-util", "macros", "net", "rt-multi-thread", "test-util", "time"] }

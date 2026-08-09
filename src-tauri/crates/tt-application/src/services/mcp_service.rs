@@ -1,11 +1,16 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap, hash_map::Entry},
+    sync::Arc,
+};
 
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     dto::mcp_dto::{
-        ListMcpServersResultDto, McpDiscoveryResultDto, McpServerDto, McpStaleToolDto,
-        McpStorageIssueDto, McpToolDiagnosticDto, McpToolDto,
+        ListMcpServersResultDto, McpCallDiagnosticDto, McpDiscoveryResultDto, McpKnownResponseDto,
+        McpServerDto, McpStaleToolDto, McpStorageIssueDto, McpTestCallOutcomeDto,
+        McpTextContentDto, McpToolDiagnosticDto, McpToolDto,
     },
     errors::ApplicationError,
 };
@@ -16,12 +21,18 @@ use tt_domain::models::{
     },
     tool::{ToolCatalog, ToolDescriptor, ToolId},
 };
-use tt_ports::{mcp::McpGateway, repositories::mcp_server_repository::McpServerRepository};
+use tt_ports::{
+    mcp::{McpCallOutcome, McpGateway, McpKnownResponse},
+    repositories::mcp_server_repository::McpServerRepository,
+};
+
+const MAX_ARGUMENTS_JSON_BYTES: usize = 256 * 1024;
 
 pub struct McpService {
     repository: Arc<dyn McpServerRepository>,
     gateway: Arc<dyn McpGateway>,
     mutation_lock: Mutex<()>,
+    test_calls: TestCallRegistry,
 }
 
 impl McpService {
@@ -30,6 +41,7 @@ impl McpService {
             repository,
             gateway,
             mutation_lock: Mutex::new(()),
+            test_calls: TestCallRegistry::default(),
         }
     }
 
@@ -179,6 +191,97 @@ impl McpService {
         })
     }
 
+    pub async fn test_call(
+        &self,
+        call_id: &str,
+        registration_id: &str,
+        native_name: String,
+        arguments_json: String,
+    ) -> Result<McpTestCallOutcomeDto, ApplicationError> {
+        let Some(cancel) = self.test_calls.get(call_id).await else {
+            return Ok(not_sent(
+                "mcp.call_not_started",
+                "The test call was not prepared or was cancelled before it started",
+            ));
+        };
+        let result = self
+            .test_call_inner(registration_id, native_name, arguments_json, cancel)
+            .await;
+        self.test_calls.complete(call_id).await;
+        result
+    }
+
+    pub async fn start_test_call(&self, call_id: &str) -> Result<(), ApplicationError> {
+        self.test_calls.start(call_id).await
+    }
+
+    pub async fn cancel_test_call(&self, call_id: &str) -> Result<(), ApplicationError> {
+        self.test_calls.cancel(call_id).await;
+        Ok(())
+    }
+
+    async fn test_call_inner(
+        &self,
+        registration_id: &str,
+        native_name: String,
+        arguments_json: String,
+        cancel: CancellationToken,
+    ) -> Result<McpTestCallOutcomeDto, ApplicationError> {
+        if cancel.is_cancelled() {
+            return Ok(not_sent(
+                "mcp.call_cancelled_before_send",
+                "The tool request was cancelled before it started",
+            ));
+        }
+
+        let id = match McpRegistrationId::parse(registration_id) {
+            Ok(id) => id,
+            Err(error) => return Ok(not_sent("mcp.call_registration_invalid", error.to_string())),
+        };
+        if let Err(error) = validate_native_tool_name(&native_name) {
+            return Ok(not_sent("mcp.call_tool_name_invalid", error.to_string()));
+        }
+        if arguments_json.len() > MAX_ARGUMENTS_JSON_BYTES {
+            return Ok(not_sent(
+                "mcp.call_arguments_size_limit",
+                format!("Arguments JSON exceeds {MAX_ARGUMENTS_JSON_BYTES} bytes"),
+            ));
+        }
+        let arguments = match serde_json::from_str::<serde_json::Value>(&arguments_json) {
+            Ok(serde_json::Value::Object(arguments)) => arguments,
+            Ok(_) => {
+                return Ok(not_sent(
+                    "mcp.call_arguments_not_object",
+                    "Arguments must be a JSON object",
+                ));
+            }
+            Err(error) => {
+                return Ok(not_sent(
+                    "mcp.call_arguments_invalid_json",
+                    format!("Arguments are not valid JSON: {error}"),
+                ));
+            }
+        };
+
+        let Some(registration) = self.repository.load(&id).await? else {
+            return Ok(not_sent(
+                "mcp.call_registration_not_found",
+                format!("MCP registration not found: {id}"),
+            ));
+        };
+        if registration.state() != McpServerState::Active {
+            return Ok(not_sent(
+                "mcp.call_server_paused",
+                format!("MCP registration `{id}` must be Active before a test call"),
+            ));
+        }
+        let outcome = self
+            .gateway
+            .call_tool(registration.endpoint(), &native_name, arguments, cancel)
+            .await?;
+        Ok(map_call_outcome(outcome))
+    }
+
     async fn require_registration(
         &self,
         id: &McpRegistrationId,
@@ -187,6 +290,99 @@ impl McpService {
             .load(id)
             .await?
             .ok_or_else(|| ApplicationError::NotFound(format!("MCP registration not found: {id}")))
+    }
+}
+
+fn not_sent(code: impl Into<String>, message: impl Into<String>) -> McpTestCallOutcomeDto {
+    McpTestCallOutcomeDto::NotSent {
+        code: code.into(),
+        message: message.into(),
+    }
+}
+
+fn map_call_outcome(outcome: McpCallOutcome) -> McpTestCallOutcomeDto {
+    match outcome {
+        McpCallOutcome::KnownResponse(response) => McpTestCallOutcomeDto::KnownResponse {
+            response: match response {
+                McpKnownResponse::ToolResult(result) => McpKnownResponseDto::ToolResult {
+                    is_error: result.is_error,
+                    text_blocks: result
+                        .text
+                        .into_iter()
+                        .map(|content| McpTextContentDto {
+                            index: content.index,
+                            text: content.text,
+                        })
+                        .collect(),
+                    structured_json: result.structured_content.map(|value| {
+                        serde_json::to_string_pretty(&value)
+                            .expect("serde_json::Value is always serializable")
+                    }),
+                    diagnostics: result
+                        .diagnostics
+                        .into_iter()
+                        .map(|diagnostic| McpCallDiagnosticDto {
+                            code: diagnostic.code,
+                            message: diagnostic.message,
+                            content_index: diagnostic.content_index,
+                        })
+                        .collect(),
+                },
+                McpKnownResponse::ServerError(error) => McpKnownResponseDto::ServerError {
+                    code: error.code,
+                    message: error.message,
+                    data_json: error.data.map(|value| value.to_string()),
+                },
+                McpKnownResponse::Unsupported(response) => {
+                    McpKnownResponseDto::UnsupportedResponse {
+                        response_type: response.response_type,
+                        message: response.message,
+                    }
+                }
+            },
+        },
+        McpCallOutcome::NotSent(issue) => McpTestCallOutcomeDto::NotSent {
+            code: issue.code,
+            message: issue.message,
+        },
+        McpCallOutcome::OutcomeUnknown(issue) => McpTestCallOutcomeDto::OutcomeUnknown {
+            code: issue.code,
+            message: issue.message,
+        },
+    }
+}
+
+#[derive(Default)]
+struct TestCallRegistry {
+    calls: Mutex<HashMap<String, CancellationToken>>,
+}
+
+impl TestCallRegistry {
+    async fn start(&self, call_id: &str) -> Result<(), ApplicationError> {
+        let mut calls = self.calls.lock().await;
+        match calls.entry(call_id.to_string()) {
+            Entry::Vacant(entry) => {
+                entry.insert(CancellationToken::new());
+                Ok(())
+            }
+            Entry::Occupied(_) => Err(ApplicationError::Conflict(format!(
+                "mcp.call_id_in_use: call `{call_id}` is already active"
+            ))),
+        }
+    }
+
+    async fn get(&self, call_id: &str) -> Option<CancellationToken> {
+        self.calls.lock().await.get(call_id).cloned()
+    }
+
+    async fn cancel(&self, call_id: &str) {
+        if let Some(cancel) = self.calls.lock().await.remove(call_id) {
+            cancel.cancel();
+        }
+    }
+
+    async fn complete(&self, call_id: &str) {
+        self.calls.lock().await.remove(call_id);
     }
 }
 
@@ -208,7 +404,10 @@ mod tests {
     use serde_json::json;
     use tt_domain::errors::DomainError;
     use tt_ports::{
-        mcp::{McpDiscoveredTool, McpDiscoveryResult, McpToolDiagnostic},
+        mcp::{
+            McpDiscoveredTool, McpDiscoveryResult, McpTextContent, McpToolCallResult,
+            McpToolDiagnostic,
+        },
         repositories::mcp_server_repository::{McpRegistrationScan, McpRegistrationStorageIssue},
     };
 
@@ -255,7 +454,10 @@ mod tests {
         }
     }
 
-    struct FixedGateway;
+    #[derive(Default)]
+    struct FixedGateway {
+        calls: StdMutex<Vec<(String, serde_json::Map<String, serde_json::Value>)>>,
+    }
 
     #[async_trait]
     impl McpGateway for FixedGateway {
@@ -278,13 +480,37 @@ mod tests {
                 diagnostics: Vec::<McpToolDiagnostic>::new(),
             })
         }
+
+        async fn call_tool(
+            &self,
+            _endpoint: &McpEndpoint,
+            native_name: &str,
+            arguments: serde_json::Map<String, serde_json::Value>,
+            _cancel: CancellationToken,
+        ) -> Result<McpCallOutcome, DomainError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((native_name.to_string(), arguments));
+            Ok(McpCallOutcome::KnownResponse(McpKnownResponse::ToolResult(
+                McpToolCallResult {
+                    is_error: false,
+                    text: vec![McpTextContent {
+                        index: 0,
+                        text: "done".to_string(),
+                    }],
+                    structured_content: Some(json!({ "ok": true })),
+                    diagnostics: Vec::new(),
+                },
+            )))
+        }
     }
 
     #[tokio::test]
     async fn registration_discovery_keeps_authority_off_by_default_and_reports_stale_settings() {
         let service = McpService::new(
             Arc::new(MemoryRepository::default()),
-            Arc::new(FixedGateway),
+            Arc::new(FixedGateway::default()),
         );
         let created = service
             .create_server(
@@ -315,5 +541,133 @@ mod tests {
         );
         assert_eq!(discovery.stale_tools.len(), 1);
         assert_eq!(discovery.stale_tools[0].native_name, "missing");
+    }
+
+    #[tokio::test]
+    async fn explicit_test_call_preserves_json_and_ignores_saved_permission() {
+        let repository = Arc::new(MemoryRepository::default());
+        let gateway = Arc::new(FixedGateway::default());
+        let service = McpService::new(repository, gateway.clone());
+        let created = service
+            .create_server(
+                "Fixture".to_string(),
+                "http://127.0.0.1:3333/mcp".to_string(),
+            )
+            .await
+            .unwrap();
+        service
+            .set_tool_permission(&created.id, "search".to_string(), McpToolPermission::Ask)
+            .await
+            .unwrap();
+        service
+            .set_server_state(&created.id, McpServerState::Active)
+            .await
+            .unwrap();
+
+        service.start_test_call("call-1").await.unwrap();
+        let outcome = service
+            .test_call(
+                "call-1",
+                &created.id,
+                "search".to_string(),
+                r#"{"value":9007199254740993}"#.to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &outcome,
+            McpTestCallOutcomeDto::KnownResponse {
+                response: McpKnownResponseDto::ToolResult {
+                    is_error: false,
+                    ..
+                }
+            }
+        ));
+        let wire = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(wire["outcome"], "known_response");
+        assert_eq!(wire["response"]["kind"], "tool_result");
+        assert_eq!(
+            wire["response"]["structuredJson"],
+            "{\n  \"ok\": true\n}"
+        );
+        {
+            let calls = gateway.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].0, "search");
+            assert_eq!(calls[0].1["value"].to_string(), "9007199254740993");
+        }
+
+        let listed = service.list_servers().await.unwrap();
+        assert_eq!(
+            listed.servers[0].tool_permissions.get("search"),
+            Some(&McpToolPermission::Ask)
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_prepared_call_is_not_sent_or_retained() {
+        let repository = Arc::new(MemoryRepository::default());
+        let gateway = Arc::new(FixedGateway::default());
+        let service = McpService::new(repository, gateway.clone());
+        let created = service
+            .create_server(
+                "Fixture".to_string(),
+                "http://127.0.0.1:3333/mcp".to_string(),
+            )
+            .await
+            .unwrap();
+        service
+            .set_server_state(&created.id, McpServerState::Active)
+            .await
+            .unwrap();
+
+        service.start_test_call("call-early").await.unwrap();
+        service.cancel_test_call("call-early").await.unwrap();
+        let outcome = service
+            .test_call(
+                "call-early",
+                &created.id,
+                "search".to_string(),
+                "{}".to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, McpTestCallOutcomeDto::NotSent { .. }));
+        assert!(gateway.calls.lock().unwrap().is_empty());
+        assert!(service.test_calls.calls.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn paused_registration_is_rejected_before_the_gateway() {
+        let repository = Arc::new(MemoryRepository::default());
+        let gateway = Arc::new(FixedGateway::default());
+        let service = McpService::new(repository, gateway.clone());
+        let created = service
+            .create_server(
+                "Fixture".to_string(),
+                "http://127.0.0.1:3333/mcp".to_string(),
+            )
+            .await
+            .unwrap();
+        service.start_test_call("call-paused").await.unwrap();
+
+        let outcome = service
+            .test_call(
+                "call-paused",
+                &created.id,
+                "search".to_string(),
+                "{}".to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            McpTestCallOutcomeDto::NotSent { ref code, .. }
+                if code == "mcp.call_server_paused"
+        ));
+        assert!(gateway.calls.lock().unwrap().is_empty());
     }
 }

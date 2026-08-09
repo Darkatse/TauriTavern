@@ -1,6 +1,7 @@
 .tt-mcp-root,
 .tt-mcp-add-form,
-.tt-mcp-confirm {
+.tt-mcp-confirm,
+.tt-mcp-test {
     --tt-mcp-accent: var(--SmartThemeQuoteColor);
     --tt-mcp-line: color-mix(in srgb, var(--SmartThemeBorderColor) 80%, transparent);
     --tt-mcp-dim: var(--SmartThemeEmColor);
@@ -9,9 +10,11 @@
 }
 
 .tt-mcp-root {
+    min-width: 0;
     color: var(--SmartThemeBodyColor);
     font-family: var(--mainFontFamily);
     font-size: var(--mainFontSize);
+    overflow-wrap: anywhere;
     text-align: left;
 }
 
@@ -36,12 +39,16 @@
 
 .tt-mcp-root code,
 .tt-mcp-root pre,
-.tt-mcp-confirm code {
+.tt-mcp-confirm code,
+.tt-mcp-test code,
+.tt-mcp-test pre,
+.tt-mcp-test textarea {
     font-family: var(--monoFontFamily);
 }
 
 /* Neutralize the host's global dark `code` chip; chips re-declare their own skin below. */
-.tt-mcp-root :where(code) {
+.tt-mcp-root :where(code),
+.tt-mcp-test :where(code) {
     padding: 0;
     border: none;
     background-color: transparent;
@@ -54,6 +61,16 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+}
+
+.tt-mcp-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tt-mcp-toolbar-actions .menu_button {
+    margin: 0;
 }
 
 .tt-mcp-count {
@@ -297,7 +314,8 @@
 
 .tt-mcp-state:focus-visible,
 .tt-mcp-icon-btn:focus-visible,
-.tt-mcp-root summary:focus-visible {
+.tt-mcp-root summary:focus-visible,
+.tt-mcp-test summary:focus-visible {
     outline: 2px solid var(--interactable-outline-color);
     outline-offset: 1px;
 }
@@ -306,6 +324,7 @@
 
 .tt-mcp-console {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px;
     margin: 7px 0 1px 4px;
     padding-left: 11px;
@@ -347,7 +366,8 @@
     font-size: 0.8em;
 }
 
-.tt-mcp-root summary {
+.tt-mcp-root summary,
+.tt-mcp-test summary {
     color: var(--tt-mcp-dim);
     cursor: pointer;
     width: fit-content;
@@ -457,9 +477,9 @@
     border-color: color-mix(in srgb, var(--tt-mcp-accent) 60%, var(--tt-mcp-line));
 }
 
-/* ── Permission segmented control ────────────────────────── */
+/* ── Segmented control (shared) ─────────────────────────── */
 
-.tt-mcp-perm {
+.tt-mcp-seg {
     display: flex;
     padding: 1px;
     border: 1px solid var(--tt-mcp-line);
@@ -467,13 +487,13 @@
     background-color: var(--tt-mcp-sink);
 }
 
-.tt-mcp-perm label {
+.tt-mcp-seg label {
     position: relative;
     display: flex;
     cursor: pointer;
 }
 
-.tt-mcp-perm input {
+.tt-mcp-seg input {
     position: absolute;
     inset: 0;
     margin: 0;
@@ -481,7 +501,7 @@
     cursor: pointer;
 }
 
-.tt-mcp-perm span {
+.tt-mcp-seg span {
     display: block;
     padding: 2px 8px;
     color: var(--tt-mcp-dim);
@@ -491,22 +511,22 @@
     white-space: nowrap;
 }
 
-.tt-mcp-perm label.is-selected span {
+.tt-mcp-seg label.is-selected span {
     color: var(--SmartThemeBodyColor);
     background-color: color-mix(in srgb, var(--tt-mcp-accent) 30%, transparent);
 }
 
-.tt-mcp-perm input:focus-visible + span {
+.tt-mcp-seg input:focus-visible + span {
     outline: 2px solid var(--interactable-outline-color);
     outline-offset: 1px;
 }
 
-.tt-mcp-perm input:disabled,
-.tt-mcp-perm input:disabled + span {
+.tt-mcp-seg input:disabled,
+.tt-mcp-seg input:disabled + span {
     cursor: default;
 }
 
-.tt-mcp-perm input:disabled + span {
+.tt-mcp-seg input:disabled + span {
     opacity: 0.6;
 }
 
@@ -608,6 +628,186 @@
     border-radius: 5px;
     background-color: var(--tt-mcp-sink);
     overflow-wrap: anywhere;
+}
+
+/* ── Test-call console dialog ────────────────────────────── */
+
+.tt-mcp-test {
+    display: grid;
+    gap: 9px;
+    color: var(--SmartThemeBodyColor);
+    text-align: left;
+}
+
+.tt-mcp-test :where(h3, h4, p) {
+    margin: 0;
+}
+
+.tt-mcp-field {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+}
+
+.tt-mcp-field > label {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    color: var(--tt-mcp-dim);
+    font-size: 0.82em;
+}
+
+.tt-mcp-field > label code {
+    color: var(--SmartThemeBodyColor);
+    overflow-wrap: anywhere;
+}
+
+.tt-mcp-req {
+    color: var(--tt-mcp-accent);
+    font-weight: 700;
+}
+
+.tt-mcp-field > small {
+    color: var(--tt-mcp-dim);
+    font-size: 0.76em;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+
+.tt-mcp-field .text_pole {
+    width: 100%;
+    margin: 0;
+}
+
+.tt-mcp-field .tt-mcp-seg {
+    justify-self: start;
+}
+
+.tt-mcp-json {
+    resize: vertical;
+}
+
+.tt-mcp-test-endpoint {
+    color: var(--tt-mcp-dim);
+    font-size: 0.76em;
+    overflow-wrap: anywhere;
+}
+
+.tt-mcp-test-tools-error {
+    display: grid;
+    justify-items: start;
+    gap: 6px;
+}
+
+.tt-mcp-test-tools-error .menu_button {
+    margin: 0;
+}
+
+.tt-mcp-test-args {
+    display: grid;
+    gap: 9px;
+    padding-top: 8px;
+    border-top: 1px solid var(--tt-mcp-line);
+}
+
+.tt-mcp-test-tool-head {
+    display: grid;
+    gap: 3px;
+}
+
+.tt-mcp-test-tool-head > code {
+    font-size: 0.85em;
+    overflow-wrap: anywhere;
+}
+
+.tt-mcp-test-tool-head > p {
+    color: color-mix(in srgb, var(--SmartThemeBodyColor) 82%, var(--tt-mcp-dim));
+    font-size: 0.82em;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+
+.tt-mcp-test-actions {
+    display: flex;
+    gap: 7px;
+}
+
+.tt-mcp-test-actions > .menu_button {
+    margin: 0;
+}
+
+.tt-mcp-test-result {
+    display: grid;
+    gap: 7px;
+}
+
+.tt-mcp-test-result:has(> *) {
+    padding-top: 9px;
+    border-top: 1px solid var(--tt-mcp-line);
+}
+
+.tt-mcp-test-result h4 {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.92em;
+}
+
+.tt-mcp-test-result h4 > i {
+    color: var(--tt-mcp-dim);
+}
+
+.tt-mcp-test-result h4.is-ok > i {
+    color: var(--tt-mcp-accent);
+}
+
+.tt-mcp-test-result h4.is-danger > i {
+    color: var(--tt-mcp-danger);
+}
+
+.tt-mcp-test-result > p {
+    font-size: 0.85em;
+    white-space: pre-wrap;
+}
+
+.tt-mcp-test-result > b {
+    font-size: 0.8em;
+}
+
+.tt-mcp-test-result > pre {
+    max-height: 260px;
+    overflow: auto;
+    margin: 0;
+    padding: 8px;
+    border: 1px solid var(--tt-mcp-line);
+    border-radius: 5px;
+    background-color: var(--tt-mcp-sink);
+    font-size: 0.8em;
+    white-space: pre-wrap;
+}
+
+.tt-mcp-test-result > pre.tt-mcp-json-output {
+    min-width: 0;
+    white-space: pre;
+}
+
+.tt-mcp-outcome-code {
+    color: var(--tt-mcp-dim);
+    font-size: 0.75em;
+    overflow-wrap: anywhere;
+}
+
+.tt-mcp-test-result ul {
+    display: grid;
+    gap: 4px;
+    margin: 6px 0 0;
+    padding-left: 20px;
+}
+
+.tt-mcp-test-result li span {
+    display: block;
+    color: var(--tt-mcp-dim);
+    white-space: pre-wrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

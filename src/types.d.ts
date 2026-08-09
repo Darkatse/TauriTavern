@@ -668,6 +668,38 @@ type TauriTavernMcpDiscoveryResult = {
     staleTools: Array<{ nativeName: string; permission: Exclude<TauriTavernMcpToolPermission, 'off'> }>;
 };
 
+type TauriTavernMcpCallDiagnostic = {
+    code: string;
+    message: string;
+    contentIndex?: number;
+};
+
+type TauriTavernMcpTestCallOutcome =
+    | {
+        outcome: 'known_response';
+        response:
+            | {
+                kind: 'tool_result';
+                isError: boolean;
+                textBlocks: Array<{ index: number; text: string }>;
+                structuredJson?: string;
+                diagnostics: TauriTavernMcpCallDiagnostic[];
+            }
+            | {
+                kind: 'server_error';
+                code: number;
+                message: string;
+                dataJson?: string;
+            }
+            | {
+                kind: 'unsupported_response';
+                responseType: string;
+                message: string;
+            };
+    }
+    | { outcome: 'not_sent'; code: string; message: string }
+    | { outcome: 'outcome_unknown'; code: string; message: string };
+
 type TauriTavernMcpApi = {
     servers: {
         list: () => Promise<{
@@ -686,6 +718,11 @@ type TauriTavernMcpApi = {
             nativeName: string;
             permission: TauriTavernMcpToolPermission;
         }) => Promise<TauriTavernMcpServer>;
+        testCall: (input: {
+            registrationId: string;
+            nativeName: string;
+            argumentsJson: string;
+        }, options?: { signal?: AbortSignal }) => Promise<TauriTavernMcpTestCallOutcome>;
     };
 };
 

@@ -14,6 +14,8 @@ export type McpManagerActions = {
     remove: TauriTavernMcpApi['servers']['remove'];
     discover: TauriTavernMcpApi['servers']['discover'];
     setPermission: TauriTavernMcpApi['tools']['setPermission'];
+    /** Opens the unified test-call console with the current server list. */
+    openTestCall: (servers: TauriTavernMcpServer[]) => Promise<void>;
     confirmActivate: (server: TauriTavernMcpServer) => Promise<boolean>;
     confirmRemove: (server: TauriTavernMcpServer) => Promise<boolean>;
 };
@@ -35,6 +37,7 @@ export function McpManagerApp({ initial, actions, tr }: McpManagerAppProps) {
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
     const [statuses, setStatuses] = useState<Record<string, ServerStatus>>({});
     const [adding, setAdding] = useState(false);
+    const [testing, setTesting] = useState(false);
     const [panelError, setPanelError] = useState('');
 
     const sortedServers = [...servers].sort((left, right) => (
@@ -195,6 +198,18 @@ export function McpManagerApp({ initial, actions, tr }: McpManagerAppProps) {
         });
     }
 
+    async function openTestConsole(): Promise<void> {
+        setPanelError('');
+        setTesting(true);
+        try {
+            await actions.openTestCall(servers);
+        } catch (error) {
+            setPanelError(errorText(error, tr('unknownError')));
+        } finally {
+            setTesting(false);
+        }
+    }
+
     return (
         <section id="mcp_manager_settings" className="tt-mcp-root">
             <div className="inline-drawer">
@@ -245,15 +260,25 @@ export function McpManagerApp({ initial, actions, tr }: McpManagerAppProps) {
                         <>
                             <div className="tt-mcp-toolbar">
                                 <span className="tt-mcp-count">{tr('serverCount', { count: servers.length })}</span>
-                                <button
-                                    type="button"
-                                    className="menu_button menu_button_icon"
-                                    disabled={adding}
-                                    onClick={() => void addServer()}
-                                >
-                                    <i className={`fa-solid ${adding ? 'fa-circle-notch fa-spin' : 'fa-plus'}`} aria-hidden="true" />
-                                    <span>{tr('addServer')}</span>
-                                </button>
+                                <div className="tt-mcp-toolbar-actions">
+                                    <button
+                                        type="button"
+                                        className="menu_button"
+                                        disabled={testing}
+                                        onClick={() => void openTestConsole()}
+                                    >
+                                        {tr('testCall')}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="menu_button menu_button_icon"
+                                        disabled={adding}
+                                        onClick={() => void addServer()}
+                                    >
+                                        <i className={`fa-solid ${adding ? 'fa-circle-notch fa-spin' : 'fa-plus'}`} aria-hidden="true" />
+                                        <span>{tr('addServer')}</span>
+                                    </button>
+                                </div>
                             </div>
                             <div className="tt-mcp-servers">
                                 {sortedServers.map(server => {
