@@ -7,6 +7,7 @@ import { IGNORE_SYMBOL } from '../constants.js';
  * throws immediately and must not be sent to a provider.
  *
  * @param {ChatMessage[]} chat
+ * @param {boolean} stripOldToolCalls
  * @returns {Array<
  *     | { type: 'message', sourceIndex: number, message: ChatMessage }
  *     | {
@@ -18,7 +19,7 @@ import { IGNORE_SYMBOL } from '../constants.js';
  *       }
  *   >}
  */
-export function projectToolTurns(chat) {
+export function projectToolTurns(chat, stripOldToolCalls = false) {
     if (!Array.isArray(chat)) {
         throw new TypeError('Chat history must be an array');
     }
@@ -173,7 +174,13 @@ export function projectToolTurns(chat) {
         });
     }
 
-    return entries;
+    if (!stripOldToolCalls) {
+        return entries;
+    }
+
+    const latestUserIndex = chat.findLastIndex(message => message?.is_user === true);
+    return entries.filter(entry => entry.type !== 'tool-turn'
+        || entry.sourceIndices.some(sourceIndex => sourceIndex >= latestUserIndex));
 }
 
 /**

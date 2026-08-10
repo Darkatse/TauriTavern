@@ -2025,6 +2025,11 @@
                                                     <input type="number" min="1" max="50" step="1" data-for="tool_call_recurse_limit" id="tool_call_recurse_limit_counter">
                                                 </div>
                                             </div>
+                                            <label for="strip_old_tool_calls" class="checkbox_label flexWrap widthFreeExpand marginTop10">
+                                                <input id="strip_old_tool_calls" type="checkbox" />
+                                                <span data-i18n="Strip old function call results">Strip old function call results</span>
+                                                <div class="fa-solid fa-circle-info opacity50p margin5" data-i18n="[title]When assembling future prompts, omit tool-calling Assistant messages and their results from before the latest user message. The current recursive chain is kept." title="When assembling future prompts, omit tool-calling Assistant messages and their results from before the latest user message. The current recursive chain is kept."></div>
+                                            </label>
                                         </div>
                                     </div>
                                     <div class="range-block" data-source="openrouter,custom">

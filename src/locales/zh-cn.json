@@ -937,6 +937,8 @@
     "Disabled": "已禁用",
     "Tool Call Recurse Limit": "工具调用递归限制",
     "Maximum number of tool call recursion steps per generation.": "每次生成允许的最大工具调用递归步数。",
+    "Strip old function call results": "剥离旧函数调用结果",
+    "When assembling future prompts, omit tool-calling Assistant messages and their results from before the latest user message. The current recursive chain is kept.": "组装后续提示词时，省略最后一条用户消息之前包含函数调用的 Assistant 消息及其结果；当前递归链会保留。",
     "Interleaved Thinking": "交错思维",
     "Since Last User Message": "自上一条用户消息起",
     "Active Tool Chain": "活动工具链",

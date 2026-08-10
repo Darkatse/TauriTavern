@@ -92,6 +92,26 @@ test('recursive first-class tool rounds retain model-turn order', () => {
     assert.deepEqual(projection.slice(0, 2).map(entry => entry.invocations[0].id), ['call-1', 'call-2']);
 });
 
+test('old tool turns can be stripped while pure Assistant history and the active chain remain', () => {
+    const oldOwner = assistant([call('old-call')], { mes: 'Tool-bearing text is omitted' });
+    const pureAssistant = assistant(undefined, { mes: 'Pure roleplay remains' });
+    const user = { is_user: true, is_system: false, mes: 'Continue' };
+    const currentOwner = assistant([call('current-call')]);
+    const projection = projectToolTurns([
+        oldOwner,
+        tool('old-call'),
+        pureAssistant,
+        user,
+        currentOwner,
+        tool('current-call'),
+    ], true);
+
+    assert.deepEqual(projection.map(entry => entry.type), ['message', 'message', 'tool-turn']);
+    assert.equal(projection[0].message, pureAssistant);
+    assert.equal(projection[1].message, user);
+    assert.equal(projection[2].assistantMessage, currentOwner);
+});
+
 test('adjacent legacy system floor is read-only projected into the preceding Assistant', () => {
     const owner = assistant(undefined, { mes: 'I will check.' });
     const invocation = { ...call(), result: 'sunny', error: false };

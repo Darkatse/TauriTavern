@@ -5730,7 +5730,10 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     let oaiMessageExamples = [];
 
     if (main_api === 'openai') {
-        oaiMessages = setOpenAIMessages(coreChat);
+        oaiMessages = setOpenAIMessages(
+            coreChat,
+            !agentMode && oai_settings.function_calling && oai_settings.strip_old_tool_calls,
+        );
         oaiMessageExamples = setOpenAIMessageExamples(mesExamplesArray);
     }
 

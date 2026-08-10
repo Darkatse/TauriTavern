@@ -1800,7 +1800,7 @@ test('Agent history window is applied at PromptManager assembly boundary', async
     ]);
 
     assert.doesNotMatch(scriptSource, /promptCoreChat/);
-    assert.match(scriptSource, /oaiMessages\s*=\s*setOpenAIMessages\(coreChat\)/);
+    assert.match(scriptSource, /oaiMessages\s*=\s*setOpenAIMessages\(\s*coreChat,\s*!agentMode && oai_settings\.function_calling && oai_settings\.strip_old_tool_calls,\s*\)/);
     assert.match(openaiSource, /materializeInitialChatHistoryMessages\(messages,\s*agentContextPolicy\)/);
     assert.match(brokerSource, /agentContextPolicy:\s*request\.agentContextPolicy/);
 });

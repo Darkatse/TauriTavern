@@ -531,6 +531,7 @@ export const settingsToUpdate = {
     continue_postfix: ['#continue_postfix', 'continue_postfix', false, false],
     function_calling: ['#openai_function_calling', 'function_calling', true, false],
     tool_call_recurse_limit: ['#tool_call_recurse_limit', 'tool_call_recurse_limit', false, false],
+    strip_old_tool_calls: ['#strip_old_tool_calls', 'strip_old_tool_calls', true, false],
     show_thoughts: ['#openai_show_thoughts', 'show_thoughts', true, false],
     reasoning_effort: ['#openai_reasoning_effort', 'reasoning_effort', false, false],
     verbosity: ['#openai_verbosity', 'verbosity', false, false],
@@ -655,6 +656,7 @@ const default_settings = {
     continue_prefill: false,
     function_calling: false,
     tool_call_recurse_limit: 5,
+    strip_old_tool_calls: false,
     names_behavior: character_names_behavior.DEFAULT,
     continue_postfix: continue_postfix_types.SPACE,
     custom_prompt_post_processing: custom_prompt_post_processing_types.NONE,
@@ -943,13 +945,14 @@ async function validateReverseProxy() {
 /**
  * Formats chat messages into chat completion messages.
  * @param {ChatMessage[]} chat - Array containing all messages.
+ * @param {boolean} stripOldToolCalls - Whether to omit completed tool turns before the latest user message.
  * @returns {object[]} - Array containing all messages formatted for chat completion.
  */
-function setOpenAIMessages(chat) {
+function setOpenAIMessages(chat, stripOldToolCalls = false) {
     let j = 0;
     // clean openai msgs
     const messages = [];
-    const projectedChat = projectToolTurns(chat);
+    const projectedChat = projectToolTurns(chat, stripOldToolCalls);
     // Get current API and model for thought signature validation
     const currentApi = oai_settings.chat_completion_source;
     const currentModel = getChatCompletionModel();
@@ -5821,6 +5824,10 @@ export class ChatCompletion {
  */
 function migrateChatCompletionSettings(settings) {
     let changed = false;
+    if (settings.strip_old_tool_calls === undefined) {
+        settings.strip_old_tool_calls = false;
+        changed = true;
+    }
     const migrateMap = [
         { oldKey: 'names_in_completion', oldValue: true, newKey: 'names_behavior', newValue: character_names_behavior.COMPLETION },
         { oldKey: 'chat_completion_source', oldValue: 'palm', newKey: 'chat_completion_source', newValue: chat_completion_sources.MAKERSUITE },
@@ -8952,6 +8959,11 @@ export function initOpenAI() {
         oai_settings.tool_call_recurse_limit = Number($(this).val());
         $('#tool_call_recurse_limit_counter').val(oai_settings.tool_call_recurse_limit);
         ToolManager.RECURSE_LIMIT = oai_settings.tool_call_recurse_limit;
+        saveSettingsDebounced();
+    });
+
+    $('#strip_old_tool_calls').on('input', function () {
+        oai_settings.strip_old_tool_calls = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
 

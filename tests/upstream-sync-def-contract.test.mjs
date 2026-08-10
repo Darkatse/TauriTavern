@@ -17,9 +17,11 @@ test('OpenAI tool reasoning sync preserves Tauri native reasoning lanes', async 
     assert.match(source, /const interleaved_reasoning_providers = \[\s*chat_completion_sources\.OPENROUTER,\s*chat_completion_sources\.CUSTOM,\s*\]/);
     assert.match(source, /tool_reasoning_mode:\s*\['#tool_reasoning_mode', 'tool_reasoning_mode', false, false\]/);
     assert.match(source, /tool_call_recurse_limit:\s*\['#tool_call_recurse_limit', 'tool_call_recurse_limit', false, false\]/);
+    assert.match(source, /strip_old_tool_calls:\s*\['#strip_old_tool_calls', 'strip_old_tool_calls', true, false\]/);
     assert.match(source, /tool_reasoning_mode:\s*tool_reasoning_modes\.DISABLED/);
     assert.match(source, /tool_call_recurse_limit:\s*5/);
-    assert.match(source, /const projectedChat = projectToolTurns\(chat\)/);
+    assert.match(source, /strip_old_tool_calls:\s*false/);
+    assert.match(source, /const projectedChat = projectToolTurns\(chat, stripOldToolCalls\)/);
     assert.doesNotMatch(source, /projection\.issues/);
     assert.match(source, /const canReplayProviderTurnMetadata = isSameModel && !isOtherGroupMember/);
     assert.match(source, /const reasoning = canReplayProviderTurnMetadata \? String\(contentMessage\?\.extra\?\.reasoning \?\? ''\) : ''/);

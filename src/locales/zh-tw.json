@@ -687,6 +687,8 @@
     "Disabled": "停用",
     "Tool Call Recurse Limit": "工具呼叫遞迴限制",
     "Maximum number of tool call recursion steps per generation.": "每次生成允許的最大工具呼叫遞迴步數。",
+    "Strip old function call results": "剝離舊函式呼叫結果",
+    "When assembling future prompts, omit tool-calling Assistant messages and their results from before the latest user message. The current recursive chain is kept.": "組裝後續提示詞時，省略最後一則使用者訊息之前包含函式呼叫的 Assistant 訊息及其結果；目前遞迴鏈會保留。",
     "Interleaved Thinking": "交錯思維",
     "Since Last User Message": "自上一則使用者訊息起",
     "Active Tool Chain": "使用中的工具鏈",
