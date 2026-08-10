@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import {
     confirmActivate,
     confirmRemove,
+    errorText,
     openAddServerDialog,
     promptServerName,
     requireMcpApi,
@@ -11,6 +12,7 @@ import {
     waitForHostReady,
 } from './host';
 import { McpManagerApp, type McpManagerActions } from './McpManagerApp';
+import { ensureExaRecommendation } from './recommendation';
 import { openTestCallDialog } from './test-call-dialog';
 
 const CONTAINER_ID = 'mcp_manager_container';
@@ -43,7 +45,11 @@ function ensureContainer(): HTMLElement {
 async function mountMcpManager(): Promise<void> {
     await waitForHostReady();
     const api = requireMcpApi();
-    const initial = await api.servers.list();
+    const listed = await api.servers.list();
+    const store = window.__TAURITAVERN__?.api?.extension?.store;
+    const recommendation = store
+        ? await ensureExaRecommendation(listed, api.servers.create, store)
+        : { initial: listed, error: new Error('TauriTavern extension store is unavailable') };
     const actions: McpManagerActions = {
         addServer: () => openAddServerDialog(api.servers.create),
         renameServer: async (server) => {
@@ -70,7 +76,12 @@ async function mountMcpManager(): Promise<void> {
 
     createRoot(ensureContainer()).render(
         <StrictMode>
-            <McpManagerApp initial={initial} actions={actions} tr={tr} />
+            <McpManagerApp
+                initial={recommendation.initial}
+                initialError={recommendation.error ? errorText(recommendation.error, tr('unknownError')) : ''}
+                actions={actions}
+                tr={tr}
+            />
         </StrictMode>,
     );
 }

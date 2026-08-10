@@ -103,6 +103,7 @@ type McpTestCallOutcome =
 ## 4. Registration 契约
 
 - `create()` 总是创建 `paused` registration；Manager 在切换为 Active 前展示并确认 exact endpoint。
+- Manager 首次加载时会通过现有 `create()` 契约添加一次 Paused 的 Exa Search 推荐项；处理标记保存在扩展 store 中。删除该普通 registration 不会清除标记，因此同一 data root 中不会自动恢复。
 - endpoint 是 registration 的信任身份事实，当前不提供修改方法。更换 endpoint 必须新建 UUID，工具权限重新从 Off 开始。
 - display name 可以修改，不影响 UUID 或 ToolId。
 - `off` 是缺省值，不写入 `toolPermissions`；`setPermission(..., 'off')` 删除对应持久设置。

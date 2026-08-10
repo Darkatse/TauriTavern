@@ -23,6 +23,7 @@ export type McpManagerActions = {
 
 type McpManagerAppProps = {
     initial: McpManagerInitial;
+    initialError?: string;
     actions: McpManagerActions;
     tr: McpTranslator;
 };
@@ -32,14 +33,14 @@ type ServerStatus = {
     error: string;
 };
 
-export function McpManagerApp({ initial, actions, tr }: McpManagerAppProps) {
+export function McpManagerApp({ initial, initialError = '', actions, tr }: McpManagerAppProps) {
     const [servers, setServers] = useState(initial.servers);
     const [discoveries, setDiscoveries] = useState<Record<string, TauriTavernMcpDiscoveryResult>>({});
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
     const [statuses, setStatuses] = useState<Record<string, ServerStatus>>({});
     const [adding, setAdding] = useState(false);
     const [testing, setTesting] = useState(false);
-    const [panelError, setPanelError] = useState('');
+    const [panelError, setPanelError] = useState(initialError);
 
     const sortedServers = [...servers].sort((left, right) => (
         left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id)

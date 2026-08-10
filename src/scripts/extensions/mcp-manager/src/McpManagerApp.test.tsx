@@ -9,6 +9,7 @@ import {
 } from './McpManagerApp';
 import { openAddServerDialog, tr } from './host';
 import { installPopupHost, TestPopup, uninstallPopupHost } from './popup-stub';
+import { ensureExaRecommendation } from './recommendation';
 
 const SERVER_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -85,6 +86,35 @@ test('adds a server through the dialog action and lists it paused', async () => 
     expect(await screen.findByText('Local tools')).toBeTruthy();
     expect(screen.getByText('http://127.0.0.1:3000/mcp')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Paused' })).toBeTruthy();
+});
+
+test('creates the Exa recommendation once and does not restore it after deletion', async () => {
+    let handled = false;
+    const creates: Array<{ displayName: string; endpoint: string }> = [];
+    const store = {
+        tryGetJson: () => Promise.resolve({ found: handled }),
+        setJson: () => {
+            handled = true;
+            return Promise.resolve();
+        },
+    };
+    const create = (input: { displayName: string; endpoint: string }) => {
+        creates.push(input);
+        return Promise.resolve({ ...server(), ...input });
+    };
+
+    const first = await ensureExaRecommendation(initial(), create, store);
+    expect(first.error).toBeUndefined();
+    expect(first.initial.servers).toEqual([{ ...server(), ...creates[0] }]);
+    expect(creates).toEqual([{
+        displayName: 'Exa Search',
+        endpoint: 'https://mcp.exa.ai/mcp',
+    }]);
+
+    const afterDeletion = await ensureExaRecommendation(initial(), create, store);
+    expect(afterDeletion.error).toBeUndefined();
+    expect(afterDeletion.initial.servers).toEqual([]);
+    expect(creates).toHaveLength(1);
 });
 
 test('discovers tools on expand and persists an explicit permission choice', async () => {
