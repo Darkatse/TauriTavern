@@ -2005,13 +2005,14 @@ export function getPromptRole(role) {
  * @param {string|null} [options.agentSystemPrompt] Resolved Agent system prompt content.
  * @param {string|null} [options.agentTaskPrompt] Invocation task prompt content.
  * @param {boolean} [options.allowToolCalls] Whether this request can register legacy frontend tools.
- * @returns {Promise<number>} Number of raw chat records included in the prompt.
+ * @returns {Promise<[number, object|null]>} Raw chat record count and evaluated legacy tool data.
  */
 async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentContextPolicy = null, agentSystemPrompt = null, agentTaskPrompt = null, allowToolCalls = true }, runtime = null) {
     const assemblyRuntime = getPromptAssemblyRuntime(runtime);
     const activePromptManager = assemblyRuntime.promptManager;
     const settings = assemblyRuntime.settings;
     const assemblyTokenHandler = assemblyRuntime.tokenHandler;
+    let toolData = null;
 
     if (!agentMode) {
         removeAgentOnlyPrompts(prompts);
@@ -2145,7 +2146,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
 
     // Pre-allocation of tokens for tool data
     if (!agentMode && allowToolCalls && ToolManager.canPerformToolCalls(type, settings)) {
-        const toolData = {};
+        toolData = {};
         await ToolManager.registerFunctionToolsOpenAI(toolData);
         const toolMessage = [{ role: 'user', content: JSON.stringify(toolData) }];
         const toolTokens = await assemblyTokenHandler.countAsync(toolMessage);
@@ -2189,7 +2190,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
 
     chatCompletion.freeBudget(controlPrompts);
     if (controlPrompts.collection.length) chatCompletion.add(controlPrompts);
-    return chatSourceCount;
+    return [chatSourceCount, toolData];
 }
 
 /**
@@ -2389,7 +2390,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
  * @param {string|null} [content.agentSystemPrompt] Resolved Agent system prompt content.
  * @param {string|null} [content.agentTaskPrompt] Invocation task prompt content.
  * @param dryRun - Whether this is a live call or not.
- * @returns {Promise<(any[]|boolean)[]>} An array where the first element is the prepared chat and the second element is a boolean flag.
+ * @returns {Promise<[ChatCompletionMessage[]|null, object|boolean, object|null|undefined]>} Prepared chat, token counts, and evaluated legacy tool data.
  */
 export async function prepareOpenAIMessages({
     name2,
@@ -2435,6 +2436,7 @@ export async function prepareOpenAIMessages({
     const userSettings = activePromptManager.serviceSettings;
     chatCompletion.setTokenBudget(userSettings.openai_max_context, userSettings.openai_max_tokens);
     let chatSourceCount = 0;
+    let toolData = null;
 
     try {
         // Merge markers and ordered user prompts with system prompts
@@ -2461,7 +2463,7 @@ export async function prepareOpenAIMessages({
         };
 
         // Fill the chat completion with as much context as the budget allows
-        chatSourceCount = await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentContextPolicy, agentSystemPrompt, agentTaskPrompt, allowToolCalls }, assemblyRuntime);
+        [chatSourceCount, toolData] = await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentContextPolicy, agentSystemPrompt, agentTaskPrompt, allowToolCalls }, assemblyRuntime);
     } catch (error) {
         if (error instanceof TokenBudgetExceededError) {
             assemblyRuntime.showToasts && toastr.error(t`Mandatory prompts exceed the context size.`);
@@ -2506,7 +2508,7 @@ export async function prepareOpenAIMessages({
         openai_messages_count = chatSourceCount;
     }
 
-    return [chat, activePromptManager.tokenHandler.counts];
+    return [chat, activePromptManager.tokenHandler.counts, toolData];
 }
 
 export async function assembleOpenAIChatCompletionPrompt({
@@ -2552,7 +2554,7 @@ export async function assembleOpenAIChatCompletionPrompt({
         showToasts: false,
     });
 
-    const [messages, tokenCounts] = await prepareOpenAIMessages({
+    const [messages, tokenCounts, toolData] = await prepareOpenAIMessages({
         ...promptInputs,
         type: normalizedGenerationType,
         agentMode,
@@ -2575,6 +2577,7 @@ export async function assembleOpenAIChatCompletionPrompt({
             agentMode,
             macroContext,
             extensionPrompts,
+            toolData,
         },
     );
 
@@ -4184,7 +4187,7 @@ function getVerbosity(settings = null) {
  * @param {import('../script.js').AdditionalRequestOptions & { agentMode?: boolean; macroContext?: object|null; extensionPrompts?: object|null }} options Additional request options
  * @returns {Promise<object>} Final generation parameters object appropriate for the chat completion source
  */
-export async function createGenerationParameters(settings, model, type, messages, { jsonSchema = null, agentMode = false, allowToolCalls = true, macroContext = null, extensionPrompts = null } = {}) {
+export async function createGenerationParameters(settings, model, type, messages, { jsonSchema = null, agentMode = false, allowToolCalls = true, macroContext = null, extensionPrompts = null, toolData = undefined } = {}) {
     // HACK: Filter out null and non-object messages
     if (!Array.isArray(messages)) {
         throw new Error('messages must be an array');
@@ -4325,7 +4328,11 @@ export async function createGenerationParameters(settings, model, type, messages
     }
 
     if (!agentMode && allowToolCalls && !canMultiSwipe && ToolManager.canPerformToolCalls(type, settings, model)) {
-        await ToolManager.registerFunctionToolsOpenAI(generate_data);
+        if (toolData === undefined) {
+            await ToolManager.registerFunctionToolsOpenAI(generate_data);
+        } else if (toolData) {
+            Object.assign(generate_data, toolData);
+        }
     }
 
     // Empty array will produce a validation error
@@ -4611,14 +4618,14 @@ export async function createGenerationParameters(settings, model, type, messages
  * @returns {Promise<unknown>}
  * @throws {Error}
  */
-async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, allowToolCalls = true } = {}) {
+async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, allowToolCalls = true, toolData = undefined } = {}) {
     // Provide default abort signal
     if (!signal) {
         signal = new AbortController().signal;
     }
 
     const model = getChatCompletionModel(oai_settings);
-    const { generate_data, stream, canMultiSwipe } = await createGenerationParameters(oai_settings, model, type, messages, { jsonSchema, allowToolCalls });
+    const { generate_data, stream, canMultiSwipe } = await createGenerationParameters(oai_settings, model, type, messages, { jsonSchema, allowToolCalls, toolData });
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
 
     const generate_url = '/api/backends/chat-completions/generate';

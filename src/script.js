@@ -6096,6 +6096,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     let thisPromptBits = [];
 
     let generate_data;
+    let toolData;
     switch (main_api) {
         case 'koboldhorde':
         case 'kobold':
@@ -6152,13 +6153,14 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 messages: oaiMessages,
                 messageExamples: oaiMessageExamples,
             };
-            let [prompt, counts] = await prepareOpenAIMessages({
+            const [prompt, counts, evaluatedToolData] = await prepareOpenAIMessages({
                 ...promptInputs,
                 allowToolCalls: canPerformToolCalls,
                 agentMode,
                 agentContextPolicy: resolvedAgentContextPolicy,
                 agentSystemPrompt: resolvedAgentSystemPrompt,
             }, dryRun);
+            toolData = evaluatedToolData;
             generate_data = { prompt: prompt };
             if (agentMode) {
                 const currentModelConnection = await buildCurrentModelConnectionSnapshot({
@@ -6269,7 +6271,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 streamingProcessor.firstMessageText = '';
             }
 
-            streamingProcessor.generator = await sendStreamingRequest(type, generate_data, { jsonSchema, allowToolCalls: canPerformToolCalls });
+            streamingProcessor.generator = await sendStreamingRequest(type, generate_data, { jsonSchema, allowToolCalls: canPerformToolCalls, toolData });
 
             hideSwipeButtons();
             let getMessage = await streamingProcessor.generate();
@@ -6331,7 +6333,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 });
             }
         } else {
-            return await sendGenerationRequest(type, generate_data, { jsonSchema, allowToolCalls: canPerformToolCalls });
+            return await sendGenerationRequest(type, generate_data, { jsonSchema, allowToolCalls: canPerformToolCalls, toolData });
         }
     }
 
@@ -7211,6 +7213,7 @@ function syncLastInContextMessageMarker() {
  * @typedef {object} AdditionalRequestOptions
  * @property {JsonSchema} [jsonSchema]
  * @property {boolean} [allowToolCalls]
+ * @property {object|null} [toolData] Evaluated legacy tool data for this generation round.
  */
 
 /**

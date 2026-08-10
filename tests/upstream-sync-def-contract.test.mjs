@@ -100,6 +100,11 @@ test('ToolManager stores plaintext reasoning and failed tool invocations without
     assert.doesNotMatch(scriptSource, /getLastNonToolMessageId|toolCallProjection(?:Owner|Source|Tail)|getOwnedToolResultMessageIds/);
     assert.match(openaiSource, /allowToolCalls && !canMultiSwipe && ToolManager\.canPerformToolCalls/);
     assert.match(openaiSource, /!agentMode && allowToolCalls && ToolManager\.canPerformToolCalls\(type, settings\)/);
+    assert.match(openaiSource, /return \[chatSourceCount, toolData\]/);
+    assert.match(openaiSource, /return \[chat, activePromptManager\.tokenHandler\.counts, toolData\]/);
+    assert.match(openaiSource, /chatCompletion\.setTokenBudget\([^;]+;\s*let chatSourceCount = 0;\s*let toolData = null;/);
+    assert.match(openaiSource, /if \(toolData === undefined\) \{\s*await ToolManager\.registerFunctionToolsOpenAI\(generate_data\);\s*\} else if \(toolData\) \{\s*Object\.assign\(generate_data, toolData\);/);
+    assert.equal(scriptSource.match(/allowToolCalls: canPerformToolCalls, toolData/g)?.length, 2);
     assert.match(openaiSource, /clone\.reasoning = String\(chatPrompt\.reasoning \|\| previousAssistantReasoning \|\| ''\)/);
 });
 
