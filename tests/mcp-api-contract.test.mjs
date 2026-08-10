@@ -26,8 +26,19 @@ test('api.mcp exposes registration, discovery, permission, and one test-call int
     const { calls, mcp } = await installHarness();
 
     await mcp.servers.list();
-    await mcp.servers.create({ displayName: 'Local', endpoint: 'http://127.0.0.1:3000/mcp' });
-    await mcp.servers.rename({ registrationId: 'id', displayName: 'Renamed' });
+    await mcp.servers.create({
+        displayName: 'Local',
+        endpoint: 'http://127.0.0.1:3000/mcp',
+        headers: { 'x-api-key': 'secret' },
+        protocolVersion: '2025-11-25',
+    });
+    await mcp.servers.update({
+        registrationId: 'id',
+        displayName: 'Renamed',
+        endpoint: 'https://user:pass@example.com/mcp?tenant=updated',
+        headers: { authorization: 'Bearer updated' },
+        protocolVersion: '2025-06-18',
+    });
     await mcp.servers.setState({ registrationId: 'id', state: 'active' });
     await mcp.servers.discover('id');
     await mcp.servers.refresh({ registrationId: 'id' });
@@ -41,8 +52,29 @@ test('api.mcp exposes registration, discovery, permission, and one test-call int
 
     assert.deepEqual(calls.slice(0, 7), [
         { command: 'list_mcp_servers', args: undefined },
-        { command: 'create_mcp_server', args: { dto: { displayName: 'Local', endpoint: 'http://127.0.0.1:3000/mcp' } } },
-        { command: 'rename_mcp_server', args: { dto: { registrationId: 'id', displayName: 'Renamed' } } },
+        {
+            command: 'create_mcp_server',
+            args: {
+                dto: {
+                    displayName: 'Local',
+                    endpoint: 'http://127.0.0.1:3000/mcp',
+                    headers: { 'x-api-key': 'secret' },
+                    protocolVersion: '2025-11-25',
+                },
+            },
+        },
+        {
+            command: 'update_mcp_server',
+            args: {
+                dto: {
+                    registrationId: 'id',
+                    displayName: 'Renamed',
+                    endpoint: 'https://user:pass@example.com/mcp?tenant=updated',
+                    headers: { authorization: 'Bearer updated' },
+                    protocolVersion: '2025-06-18',
+                },
+            },
+        },
         { command: 'set_mcp_server_state', args: { dto: { registrationId: 'id', state: 'active' } } },
         { command: 'discover_mcp_tools', args: { dto: { registrationId: 'id' } } },
         { command: 'refresh_mcp_tools', args: { dto: { registrationId: 'id' } } },
@@ -83,6 +115,31 @@ test('api.mcp fails fast on invalid states and permissions', async () => {
     await assert.rejects(
         () => mcp.tools.setPermission({ registrationId: 'id', nativeName: '', permission: 'ask' }),
         /nativeName is required/,
+    );
+    await assert.rejects(
+        () => mcp.servers.create({
+            displayName: 'Invalid',
+            endpoint: 'https://example.com/mcp',
+            headers: { 'x-api-key': 42 },
+        }),
+        /headers\.x-api-key must be a string/,
+    );
+    await assert.rejects(
+        () => mcp.servers.create({
+            displayName: 'Invalid',
+            endpoint: 'https://example.com/mcp',
+            protocolVersion: 'tomorrow',
+        }),
+        /protocolVersion is not supported/,
+    );
+    await assert.rejects(
+        () => mcp.servers.update({
+            registrationId: 'id',
+            displayName: 'Keep secrets',
+            endpoint: 'https://example.com/mcp',
+            protocolVersion: 'auto',
+        }),
+        /headers must be an object/,
     );
 });
 

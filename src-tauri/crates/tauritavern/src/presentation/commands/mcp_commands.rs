@@ -12,8 +12,8 @@ use crate::{
 use tt_application::dto::mcp_dto::{
     CallLegacyMcpToolDto, CreateMcpServerDto, ListLegacyMcpToolsResultDto, ListMcpServersResultDto,
     McpCallOutcomeDto, McpDiscoveryResultDto, McpExecutionCallIdDto, McpRegistrationIdDto,
-    McpServerDto, McpTestCallIdDto, RenameMcpServerDto, SetMcpServerStateDto,
-    SetMcpToolPermissionDto, TestMcpToolCallDto,
+    McpServerDto, McpTestCallIdDto, SetMcpServerStateDto, SetMcpToolPermissionDto,
+    TestMcpToolCallDto, UpdateMcpServerDto,
 };
 
 #[tauri::command]
@@ -38,23 +38,34 @@ pub async fn create_mcp_server(
     app_state
         .services
         .mcp_service
-        .create_server(dto.display_name, dto.endpoint)
+        .create_server(
+            dto.display_name,
+            dto.endpoint,
+            dto.headers,
+            dto.protocol_version,
+        )
         .await
         .map_err(map_command_error("Failed to create MCP server"))
 }
 
 #[tauri::command]
-pub async fn rename_mcp_server(
-    dto: RenameMcpServerDto,
+pub async fn update_mcp_server(
+    dto: UpdateMcpServerDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<McpServerDto, CommandError> {
-    log_command("rename_mcp_server");
+    log_command("update_mcp_server");
     app_state
         .services
         .mcp_service
-        .rename_server(&dto.registration_id, dto.display_name)
+        .update_server(
+            &dto.registration_id,
+            dto.display_name,
+            dto.endpoint,
+            dto.headers,
+            dto.protocol_version,
+        )
         .await
-        .map_err(map_command_error("Failed to rename MCP server"))
+        .map_err(map_command_error("Failed to update MCP server"))
 }
 
 #[tauri::command]

@@ -1,13 +1,12 @@
 use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Serialize};
-use url::{Host, Url};
+use url::Url;
 use uuid::Uuid;
 
 use crate::{errors::DomainError, models::tool::ToolProviderId};
 
 const MCP_PROVIDER_PREFIX: &str = "mcp/";
-const MAX_DISPLAY_NAME_CHARS: usize = 128;
 const MAX_NATIVE_TOOL_NAME_BYTES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -75,27 +74,14 @@ impl McpEndpoint {
                     .to_string(),
             ));
         }
-        if !url.username().is_empty() || url.password().is_some() {
+        if url.fragment().is_some() {
             return Err(DomainError::InvalidData(
-                "mcp.endpoint_userinfo_forbidden: endpoint cannot contain credentials".to_string(),
-            ));
-        }
-        if url.query().is_some() || url.fragment().is_some() {
-            return Err(DomainError::InvalidData(
-                "mcp.endpoint_suffix_forbidden: endpoint cannot contain a query or fragment"
-                    .to_string(),
+                "mcp.endpoint_fragment_forbidden: endpoint cannot contain a fragment".to_string(),
             ));
         }
 
         match url.scheme() {
-            "https" => {}
-            "http" if url.host().is_some_and(is_local_network_host) => {}
-            "http" => {
-                return Err(DomainError::InvalidData(
-                    "mcp.endpoint_insecure_http: HTTP is only allowed for local or private network endpoints"
-                        .to_string(),
-                ));
-            }
+            "http" | "https" => {}
             _ => {
                 return Err(DomainError::InvalidData(
                     "mcp.endpoint_scheme_invalid: endpoint must use HTTP or HTTPS".to_string(),
@@ -111,27 +97,33 @@ impl McpEndpoint {
     }
 }
 
-fn is_local_network_host(host: Host<&str>) -> bool {
-    match host {
-        Host::Domain(host) => {
-            let host = host.trim_end_matches('.').to_ascii_lowercase();
-            !host.contains('.')
-                || host == "localhost"
-                || host.ends_with(".localhost")
-                || host.ends_with(".local")
-                || host == "home.arpa"
-                || host.ends_with(".home.arpa")
-        }
-        Host::Ipv4(address) => {
-            let octets = address.octets();
-            address.is_loopback()
-                || address.is_private()
-                || address.is_link_local()
-                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
-        }
-        Host::Ipv6(address) => {
-            address.is_loopback() || address.is_unique_local() || address.is_unicast_link_local()
-        }
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct McpRequestHeaders(BTreeMap<String, String>);
+
+impl McpRequestHeaders {
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+    }
+
+    pub fn as_map(&self) -> &BTreeMap<String, String> {
+        &self.0
+    }
+}
+
+impl From<BTreeMap<String, String>> for McpRequestHeaders {
+    fn from(headers: BTreeMap<String, String>) -> Self {
+        Self(headers)
+    }
+}
+
+impl fmt::Debug for McpRequestHeaders {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_map()
+            .entries(self.0.keys().map(|name| (name, "[redacted]")))
+            .finish()
     }
 }
 
@@ -140,6 +132,21 @@ fn is_local_network_host(host: Host<&str>) -> bool {
 pub enum McpServerState {
     Active,
     Paused,
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum McpProtocolVersionPreference {
+    #[default]
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "2026-07-28")]
+    V2026_07_28,
+    #[serde(rename = "2025-11-25")]
+    V2025_11_25,
+    #[serde(rename = "2025-06-18")]
+    V2025_06_18,
+    #[serde(rename = "2025-03-26")]
+    V2025_03_26,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -155,6 +162,8 @@ pub struct McpServerRegistration {
     id: McpRegistrationId,
     display_name: String,
     endpoint: McpEndpoint,
+    request_headers: McpRequestHeaders,
+    protocol_version: McpProtocolVersionPreference,
     state: McpServerState,
     tool_permissions: BTreeMap<String, McpToolPermission>,
 }
@@ -164,10 +173,13 @@ impl McpServerRegistration {
         id: McpRegistrationId,
         display_name: impl Into<String>,
         endpoint: McpEndpoint,
+        request_headers: BTreeMap<String, String>,
+        protocol_version: McpProtocolVersionPreference,
         state: McpServerState,
         tool_permissions: BTreeMap<String, McpToolPermission>,
     ) -> Result<Self, DomainError> {
         let display_name = validate_display_name(display_name.into())?;
+        let request_headers = McpRequestHeaders::from(request_headers);
         for (native_name, permission) in &tool_permissions {
             validate_native_tool_name(native_name)?;
             if *permission == McpToolPermission::Off {
@@ -180,6 +192,8 @@ impl McpServerRegistration {
             id,
             display_name,
             endpoint,
+            request_headers,
+            protocol_version,
             state,
             tool_permissions,
         })
@@ -188,11 +202,15 @@ impl McpServerRegistration {
     pub fn new_paused(
         display_name: impl Into<String>,
         endpoint: McpEndpoint,
+        request_headers: BTreeMap<String, String>,
+        protocol_version: McpProtocolVersionPreference,
     ) -> Result<Self, DomainError> {
         Self::try_new(
             McpRegistrationId::generate(),
             display_name,
             endpoint,
+            request_headers,
+            protocol_version,
             McpServerState::Paused,
             BTreeMap::new(),
         )
@@ -210,6 +228,14 @@ impl McpServerRegistration {
         &self.endpoint
     }
 
+    pub fn request_headers(&self) -> &McpRequestHeaders {
+        &self.request_headers
+    }
+
+    pub fn protocol_version(&self) -> McpProtocolVersionPreference {
+        self.protocol_version
+    }
+
     pub fn state(&self) -> McpServerState {
         self.state
     }
@@ -218,9 +244,23 @@ impl McpServerRegistration {
         &self.tool_permissions
     }
 
-    pub fn rename(&mut self, display_name: impl Into<String>) -> Result<(), DomainError> {
-        self.display_name = validate_display_name(display_name.into())?;
-        Ok(())
+    pub fn update(
+        &mut self,
+        display_name: impl Into<String>,
+        endpoint: McpEndpoint,
+        request_headers: BTreeMap<String, String>,
+        protocol_version: McpProtocolVersionPreference,
+    ) -> Result<bool, DomainError> {
+        let display_name = validate_display_name(display_name.into())?;
+        let request_headers = McpRequestHeaders::from(request_headers);
+        let connection_changed = self.endpoint != endpoint
+            || self.request_headers != request_headers
+            || self.protocol_version != protocol_version;
+        self.display_name = display_name;
+        self.endpoint = endpoint;
+        self.request_headers = request_headers;
+        self.protocol_version = protocol_version;
+        Ok(connection_changed)
     }
 
     pub fn set_state(&mut self, state: McpServerState) {
@@ -259,11 +299,6 @@ fn validate_display_name(raw: String) -> Result<String, DomainError> {
         return Err(DomainError::InvalidData(
             "mcp.display_name_empty: display name cannot be empty".to_string(),
         ));
-    }
-    if value.chars().count() > MAX_DISPLAY_NAME_CHARS {
-        return Err(DomainError::InvalidData(format!(
-            "mcp.display_name_too_long: display name must be at most {MAX_DISPLAY_NAME_CHARS} characters"
-        )));
     }
     Ok(value.to_string())
 }
@@ -304,40 +339,23 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_accepts_https_and_local_network_http_only() {
+    fn endpoint_preserves_user_selected_http_configuration() {
         assert_eq!(
-            McpEndpoint::parse("https://example.com/mcp")
+            McpEndpoint::parse("https://user:pass@example.com/mcp?tenant=one")
                 .unwrap()
                 .as_str(),
-            "https://example.com/mcp"
+            "https://user:pass@example.com/mcp?tenant=one"
         );
         for endpoint in [
             "http://127.0.0.1:3000/mcp",
-            "http://192.168.1.20:3000/mcp",
-            "http://10.0.0.20:3000/mcp",
-            "http://172.16.0.20:3000/mcp",
-            "http://169.254.1.20:3000/mcp",
-            "http://100.64.0.20:3000/mcp",
-            "http://[::1]:3000/mcp",
-            "http://[fd00::20]:3000/mcp",
-            "http://nas.local:3000/mcp",
-            "http://mcp.home.arpa:3000/mcp",
-            "http://mcp-server:3000/mcp",
+            "http://example.com/mcp",
+            "http://8.8.8.8/mcp?token=x",
+            "https://example.com/mcp",
         ] {
             assert!(McpEndpoint::parse(endpoint).is_ok(), "{endpoint}");
         }
-        for endpoint in [
-            "http://example.com/mcp",
-            "http://8.8.8.8/mcp",
-            "http://172.15.255.255/mcp",
-            "http://172.32.0.1/mcp",
-            "http://100.128.0.1/mcp",
-            "http://[2001:4860:4860::8888]/mcp",
-        ] {
-            assert!(McpEndpoint::parse(endpoint).is_err(), "{endpoint}");
-        }
-        assert!(McpEndpoint::parse("https://user@example.com/mcp").is_err());
-        assert!(McpEndpoint::parse("https://example.com/mcp?token=x").is_err());
+        assert!(McpEndpoint::parse("file:///tmp/mcp").is_err());
+        assert!(McpEndpoint::parse("https://example.com/mcp#fragment").is_err());
     }
 
     #[test]
@@ -345,6 +363,8 @@ mod tests {
         let mut registration = McpServerRegistration::new_paused(
             " Local tools ",
             McpEndpoint::parse("http://localhost:3000/mcp").unwrap(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .unwrap();
 
@@ -361,5 +381,37 @@ mod tests {
             .set_tool_permission("search", McpToolPermission::Off)
             .unwrap();
         assert!(registration.tool_permissions().is_empty());
+    }
+
+    #[test]
+    fn request_headers_preserve_user_input_and_redact_debug() {
+        let headers = McpRequestHeaders::from(BTreeMap::from([
+            (" X-API-Key ".to_string(), "secret".to_string()),
+            ("Authorization".to_string(), "Bearer token".to_string()),
+            ("Mcp-Session-Id".to_string(), "line\nbreak".to_string()),
+        ]));
+
+        assert_eq!(
+            headers.iter().collect::<Vec<_>>(),
+            [
+                (" X-API-Key ", "secret"),
+                ("Authorization", "Bearer token"),
+                ("Mcp-Session-Id", "line\nbreak"),
+            ]
+        );
+        let debug = format!("{headers:?}");
+        assert!(!debug.contains("secret"));
+        assert!(!debug.contains("Bearer token"));
+        let many = (0..64)
+            .map(|index| (format!("x-custom-{index}"), index.to_string()))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(McpRequestHeaders::from(many).as_map().len(), 64);
+        assert_eq!(
+            validate_display_name("n".repeat(512))
+                .unwrap()
+                .chars()
+                .count(),
+            512
+        );
     }
 }

@@ -22,6 +22,8 @@ function server(
         id,
         displayName,
         endpoint: `http://127.0.0.1:3000/mcp/${id.slice(0, 4)}`,
+        headers: {},
+        protocolVersion: 'auto',
         state,
         toolPermissions: {},
     };

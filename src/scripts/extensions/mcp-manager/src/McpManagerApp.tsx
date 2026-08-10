@@ -8,8 +8,8 @@ export type McpManagerInitial = Awaited<ReturnType<TauriTavernMcpApi['servers'][
 export type McpManagerActions = {
     /** Opens the Add-server dialog; resolves the created server, or null when cancelled. */
     addServer: () => Promise<TauriTavernMcpServer | null>;
-    /** Prompts for a new name and renames; resolves the updated server, or null when unchanged. */
-    renameServer: (server: TauriTavernMcpServer) => Promise<TauriTavernMcpServer | null>;
+    /** Opens the connection editor; resolves the updated server, or null when cancelled. */
+    editServer: (server: TauriTavernMcpServer) => Promise<TauriTavernMcpServer | null>;
     setState: TauriTavernMcpApi['servers']['setState'];
     remove: TauriTavernMcpApi['servers']['remove'];
     discover: TauriTavernMcpApi['servers']['discover'];
@@ -89,13 +89,22 @@ export function McpManagerApp({ initial, initialError = '', actions, tr }: McpMa
         }
     }
 
-    async function renameServer(server: TauriTavernMcpServer): Promise<void> {
+    async function editServer(server: TauriTavernMcpServer): Promise<void> {
         await runServerAction(server.id, 'mutate', async () => {
-            const updated = await actions.renameServer(server);
+            const updated = await actions.editServer(server);
             if (!updated) {
                 return false;
             }
             replaceServer(updated);
+            if (server.endpoint !== updated.endpoint
+                || server.protocolVersion !== updated.protocolVersion
+                || JSON.stringify(server.headers) !== JSON.stringify(updated.headers)) {
+                setDiscoveries(current => {
+                    const next = { ...current };
+                    delete next[server.id];
+                    return next;
+                });
+            }
             return true;
         });
     }
@@ -300,7 +309,7 @@ export function McpManagerApp({ initial, initialError = '', actions, tr }: McpMa
                                             tr={tr}
                                             onToggleExpand={() => toggleExpand(server)}
                                             onToggleState={() => void toggleServer(server)}
-                                            onRename={() => void renameServer(server)}
+                                            onEdit={() => void editServer(server)}
                                             onRemove={() => void removeServer(server)}
                                             onDiscover={() => void loadTools(server, actions.discover)}
                                             onRefresh={() => void loadTools(server, actions.refresh)}

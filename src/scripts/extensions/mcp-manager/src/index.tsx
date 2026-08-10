@@ -6,7 +6,7 @@ import {
     confirmRemove,
     errorText,
     openAddServerDialog,
-    promptServerName,
+    openEditServerDialog,
     requireMcpApi,
     tr,
     waitForHostReady,
@@ -52,13 +52,7 @@ async function mountMcpManager(): Promise<void> {
         : { initial: listed, error: new Error('TauriTavern extension store is unavailable') };
     const actions: McpManagerActions = {
         addServer: () => openAddServerDialog(api.servers.create),
-        renameServer: async (server) => {
-            const displayName = await promptServerName(server);
-            if (!displayName) {
-                return null;
-            }
-            return api.servers.rename({ registrationId: server.id, displayName });
-        },
+        editServer: server => openEditServerDialog(server, api.servers.update),
         setState: api.servers.setState,
         remove: api.servers.remove,
         discover: api.servers.discover,

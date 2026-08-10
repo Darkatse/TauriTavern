@@ -61,6 +61,8 @@ impl McpService {
             .gateway
             .call_tool(
                 registration.endpoint(),
+                registration.request_headers(),
+                registration.protocol_version(),
                 tool_id.native_name(),
                 arguments,
                 cancel,

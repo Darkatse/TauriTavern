@@ -4,15 +4,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use tt_domain::models::{
-    mcp::{McpServerState, McpToolPermission},
+    mcp::{McpProtocolVersionPreference, McpServerState, McpToolPermission},
     tool::ToolId,
 };
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateMcpServerDto {
     pub display_name: String,
     pub endpoint: String,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub protocol_version: McpProtocolVersionPreference,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -21,11 +25,14 @@ pub struct McpRegistrationIdDto {
     pub registration_id: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RenameMcpServerDto {
+pub struct UpdateMcpServerDto {
     pub registration_id: String,
     pub display_name: String,
+    pub endpoint: String,
+    pub headers: BTreeMap<String, String>,
+    pub protocol_version: McpProtocolVersionPreference,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -72,12 +79,14 @@ pub struct CallLegacyMcpToolDto {
     pub arguments_json: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerDto {
     pub id: String,
     pub display_name: String,
     pub endpoint: String,
+    pub headers: BTreeMap<String, String>,
+    pub protocol_version: McpProtocolVersionPreference,
     pub state: McpServerState,
     pub tool_permissions: BTreeMap<String, McpToolPermission>,
 }
@@ -89,7 +98,7 @@ pub struct McpStorageIssueDto {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListMcpServersResultDto {
     pub servers: Vec<McpServerDto>,

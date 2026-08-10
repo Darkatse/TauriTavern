@@ -7,7 +7,7 @@ import {
     type McpManagerActions,
     type McpManagerInitial,
 } from './McpManagerApp';
-import { openAddServerDialog, tr } from './host';
+import { openAddServerDialog, openEditServerDialog, tr } from './host';
 import { installPopupHost, TestPopup, uninstallPopupHost } from './popup-stub';
 import { ensureExaRecommendation } from './recommendation';
 
@@ -18,6 +18,8 @@ function server(state: TauriTavernMcpServerState = 'paused'): TauriTavernMcpServ
         id: SERVER_ID,
         displayName: 'Local tools',
         endpoint: 'http://127.0.0.1:3000/mcp',
+        headers: {},
+        protocolVersion: 'auto',
         state,
         toolPermissions: {},
     };
@@ -49,7 +51,7 @@ function unexpected(name: string): Promise<never> {
 function actions(overrides: Partial<McpManagerActions> = {}): McpManagerActions {
     return {
         addServer: () => unexpected('addServer'),
-        renameServer: () => unexpected('renameServer'),
+        editServer: () => unexpected('editServer'),
         setState: () => unexpected('setState'),
         remove: () => unexpected('remove'),
         discover: () => unexpected('discover'),
@@ -192,9 +194,9 @@ test('does not discover while paused and explains the state instead', async () =
 });
 
 test('keeps a discovery error while an unrelated action is cancelled', async () => {
-    let resolveRename!: (value: TauriTavernMcpServer | null) => void;
-    const renameResult = new Promise<TauriTavernMcpServer | null>(resolve => {
-        resolveRename = resolve;
+    let resolveEdit!: (value: TauriTavernMcpServer | null) => void;
+    const editResult = new Promise<TauriTavernMcpServer | null>(resolve => {
+        resolveEdit = resolve;
     });
     const user = userEvent.setup();
     render(
@@ -203,7 +205,7 @@ test('keeps a discovery error while an unrelated action is cancelled', async () 
             tr={tr}
             actions={actions({
                 discover: () => Promise.reject(new Error('discovery failed')),
-                renameServer: () => renameResult,
+                editServer: () => editResult,
             })}
         />,
     );
@@ -211,13 +213,13 @@ test('keeps a discovery error while an unrelated action is cancelled', async () 
     await user.click(screen.getByRole('button', { name: 'Show or hide tools' }));
     expect((await screen.findByRole('alert')).textContent).toBe('discovery failed');
 
-    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
     expect(screen.queryByText('Discovering tools…')).toBeNull();
     expect(screen.getByRole('alert').textContent).toBe('discovery failed');
 
     await act(async () => {
-        resolveRename(null);
-        await renameResult;
+        resolveEdit(null);
+        await editResult;
     });
     expect(screen.getByRole('alert').textContent).toBe('discovery failed');
 });
@@ -271,7 +273,7 @@ test('opens the unified test console from the toolbar with the current servers',
 
 test('add-server popup validates in place, preserves failures, and returns the created server', async () => {
     installPopupHost();
-    const drafts: Array<{ displayName: string; endpoint: string }> = [];
+    const drafts: Parameters<TauriTavernMcpApi['servers']['create']>[0][] = [];
     const opened = openAddServerDialog(draft => {
         drafts.push(draft);
         if (drafts.length === 1) {
@@ -294,6 +296,9 @@ test('add-server popup validates in place, preserves failures, and returns the c
 
     const user = userEvent.setup();
     await user.type(name, '  Local tools  ');
+    await user.click(screen.getByRole('button', { name: 'Add header' }));
+    await user.type(screen.getByLabelText('Header name'), 'x-api-key');
+    await user.type(screen.getByLabelText('Header value'), 'secret');
     await user.type(endpoint, 'file:///etc/passwd');
     expect(await popup.close(1)).toBe(false);
     expect(screen.getByRole('alert').textContent).toBe('Enter a valid http:// or https:// URL.');
@@ -309,7 +314,99 @@ test('add-server popup validates in place, preserves failures, and returns the c
     expect(await popup.close(1)).toBe(true);
     expect(await opened).toEqual(server());
     expect(drafts).toEqual([
-        { displayName: 'Local tools', endpoint: 'http://127.0.0.1:3000/mcp' },
-        { displayName: 'Local tools', endpoint: 'http://127.0.0.1:3000/mcp' },
+        {
+            displayName: 'Local tools',
+            endpoint: 'http://127.0.0.1:3000/mcp',
+            headers: { 'x-api-key': 'secret' },
+            protocolVersion: 'auto',
+        },
+        {
+            displayName: 'Local tools',
+            endpoint: 'http://127.0.0.1:3000/mcp',
+            headers: { 'x-api-key': 'secret' },
+            protocolVersion: 'auto',
+        },
     ]);
+});
+
+test('imports one server from the direct MCP JSON form', async () => {
+    installPopupHost();
+    const drafts: Parameters<TauriTavernMcpApi['servers']['create']>[0][] = [];
+    const opened = openAddServerDialog(draft => {
+        drafts.push(draft);
+        return Promise.resolve({
+            ...server(),
+            displayName: draft.displayName,
+            endpoint: draft.endpoint,
+        });
+    });
+    const popup = TestPopup.current;
+    if (!popup) {
+        throw new Error('Add-server popup was not created');
+    }
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('radio', { name: 'JSON' }));
+    screen.getByLabelText<HTMLTextAreaElement>('MCP JSON').value = JSON.stringify({
+        exa: {
+            url: 'https://mcp.exa.ai/mcp',
+            headers: { 'x-api-key': 'YOUR_EXA_API_KEY' },
+        },
+    });
+
+    expect(await popup.close(1)).toBe(true);
+    expect((await opened)?.displayName).toBe('exa');
+    expect(drafts).toEqual([{
+        displayName: 'exa',
+        endpoint: 'https://mcp.exa.ai/mcp',
+        headers: { 'x-api-key': 'YOUR_EXA_API_KEY' },
+        protocolVersion: 'auto',
+    }]);
+});
+
+test('edits a saved endpoint, headers, and protocol version', async () => {
+    installPopupHost();
+    const existing = {
+        ...server(),
+        headers: { ' X-API-Key ': 'old-secret', 'x-api-key': 'second-secret' },
+        protocolVersion: '2025-11-25' as const,
+    };
+    const updates: Parameters<TauriTavernMcpApi['servers']['update']>[0][] = [];
+    const opened = openEditServerDialog(existing, input => {
+        updates.push(input);
+        return Promise.resolve({
+            ...existing,
+            displayName: input.displayName,
+            endpoint: input.endpoint,
+            headers: input.headers,
+            protocolVersion: input.protocolVersion,
+        });
+    });
+    const popup = TestPopup.current;
+    if (!popup) {
+        throw new Error('Edit-server popup was not created');
+    }
+
+    const user = userEvent.setup();
+    const endpoint = screen.getByLabelText<HTMLInputElement>('Endpoint');
+    await user.clear(endpoint);
+    await user.type(endpoint, 'https://user:pass@example.com/mcp?tenant=updated');
+    const headerValue = screen.getAllByLabelText<HTMLInputElement>('Header value')[0];
+    if (!headerValue) {
+        throw new Error('Header value input was not created');
+    }
+    await user.clear(headerValue);
+    await user.type(headerValue, 'new-secret');
+    await user.selectOptions(screen.getByLabelText('Protocol version'), '2025-06-18');
+
+    expect(await popup.close(1)).toBe(true);
+    expect((await opened)?.protocolVersion).toBe('2025-06-18');
+    expect((await opened)?.endpoint).toBe('https://user:pass@example.com/mcp?tenant=updated');
+    expect(updates).toEqual([{
+        registrationId: SERVER_ID,
+        displayName: 'Local tools',
+        endpoint: 'https://user:pass@example.com/mcp?tenant=updated',
+        headers: { ' X-API-Key ': 'new-secret', 'x-api-key': 'second-secret' },
+        protocolVersion: '2025-06-18',
+    }]);
 });

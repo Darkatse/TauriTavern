@@ -61,7 +61,9 @@ use tt_domain::models::agent::{
     AgentRunPresentation, AgentRunStatus, WorkspacePath,
 };
 use tt_domain::models::chat::Chat;
-use tt_domain::models::mcp::{McpEndpoint, McpToolPermission};
+use tt_domain::models::mcp::{
+    McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders, McpToolPermission,
+};
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
 use tt_ports::mcp::{
     McpCallIssue, McpCallOutcome, McpDiscoveredTool, McpDiscoveryResult, McpGateway,
@@ -768,6 +770,8 @@ impl McpGateway for ContractMcpGateway {
     async fn discover_tools(
         &self,
         _endpoint: &McpEndpoint,
+        _request_headers: &McpRequestHeaders,
+        _protocol_version: McpProtocolVersionPreference,
     ) -> Result<McpDiscoveryResult, DomainError> {
         Ok(McpDiscoveryResult {
             protocol_version: "2026-07-28".to_string(),
@@ -792,6 +796,8 @@ impl McpGateway for ContractMcpGateway {
     async fn call_tool(
         &self,
         _endpoint: &McpEndpoint,
+        _request_headers: &McpRequestHeaders,
+        _protocol_version: McpProtocolVersionPreference,
         native_name: &str,
         arguments: serde_json::Map<String, Value>,
         _cancel: CancellationToken,

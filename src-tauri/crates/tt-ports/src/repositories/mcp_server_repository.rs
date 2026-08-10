@@ -44,5 +44,7 @@ pub trait McpServerRepository: Send + Sync {
         snapshot: &McpDiscoveryResult,
     ) -> Result<(), DomainError>;
 
+    async fn remove_catalog_snapshot(&self, id: &McpRegistrationId) -> Result<(), DomainError>;
+
     async fn remove(&self, id: &McpRegistrationId) -> Result<(), DomainError>;
 }

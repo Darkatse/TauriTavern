@@ -2,6 +2,7 @@
 
 const SERVER_STATES = new Set(['active', 'paused']);
 const TOOL_PERMISSIONS = new Set(['off', 'ask', 'allow']);
+const PROTOCOL_VERSIONS = new Set(['auto', '2026-07-28', '2025-11-25', '2025-06-18', '2025-03-26']);
 
 /** @param {unknown} value @param {string} label */
 function requireObject(value, label) {
@@ -36,6 +37,26 @@ function requireArgumentsJson(value) {
     return value;
 }
 
+/** @param {unknown} value */
+function headers(value) {
+    const headers = requireObject(value, 'headers');
+    return Object.fromEntries(Object.entries(headers).map(([name, headerValue]) => {
+        if (typeof headerValue !== 'string') {
+            throw new Error(`headers.${name} must be a string`);
+        }
+        return [name, headerValue];
+    }));
+}
+
+/** @param {unknown} value */
+function protocolVersion(value) {
+    const version = requireString(value, 'protocolVersion');
+    if (!PROTOCOL_VERSIONS.has(version)) {
+        throw new Error('protocolVersion is not supported');
+    }
+    return version;
+}
+
 function cancelledBeforeSend() {
     return {
         outcome: 'not_sent',
@@ -63,15 +84,20 @@ function createMcpApi({ safeInvoke }) {
                     dto: {
                         displayName: requireString(value.displayName, 'displayName'),
                         endpoint: requireString(value.endpoint, 'endpoint'),
+                        headers: headers(value.headers ?? {}),
+                        protocolVersion: protocolVersion(value.protocolVersion ?? 'auto'),
                     },
                 });
             },
-            rename: async (input) => {
+            update: async (input) => {
                 const value = requireObject(input, 'input');
-                return safeInvoke('rename_mcp_server', {
+                return safeInvoke('update_mcp_server', {
                     dto: {
                         registrationId: requireString(value.registrationId, 'registrationId'),
                         displayName: requireString(value.displayName, 'displayName'),
+                        endpoint: requireString(value.endpoint, 'endpoint'),
+                        headers: headers(value.headers),
+                        protocolVersion: protocolVersion(value.protocolVersion),
                     },
                 });
             },

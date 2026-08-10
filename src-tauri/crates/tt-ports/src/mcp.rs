@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
-use tt_domain::{errors::DomainError, models::mcp::McpEndpoint};
+use tt_domain::{
+    errors::DomainError,
+    models::mcp::{McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -93,11 +96,15 @@ pub trait McpGateway: Send + Sync {
     async fn discover_tools(
         &self,
         endpoint: &McpEndpoint,
+        request_headers: &McpRequestHeaders,
+        protocol_version: McpProtocolVersionPreference,
     ) -> Result<McpDiscoveryResult, DomainError>;
 
     async fn call_tool(
         &self,
         endpoint: &McpEndpoint,
+        request_headers: &McpRequestHeaders,
+        protocol_version: McpProtocolVersionPreference,
         native_name: &str,
         arguments: Map<String, Value>,
         cancel: CancellationToken,

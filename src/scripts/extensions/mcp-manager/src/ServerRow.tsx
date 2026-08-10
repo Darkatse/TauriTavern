@@ -18,7 +18,7 @@ type ServerRowProps = {
     tr: McpTranslator;
     onToggleExpand: () => void;
     onToggleState: () => void;
-    onRename: () => void;
+    onEdit: () => void;
     onRemove: () => void;
     onDiscover: () => void;
     onRefresh: () => void;
@@ -36,7 +36,7 @@ export function ServerRow({
     tr,
     onToggleExpand,
     onToggleState,
-    onRename,
+    onEdit,
     onRemove,
     onDiscover,
     onRefresh,
@@ -67,10 +67,10 @@ export function ServerRow({
                     <button
                         type="button"
                         className="tt-mcp-icon-btn"
-                        title={tr('rename')}
-                        aria-label={tr('rename')}
+                        title={tr('edit')}
+                        aria-label={tr('edit')}
                         disabled={busy}
-                        onClick={onRename}
+                        onClick={onEdit}
                     >
                         <i className="fa-solid fa-pen" aria-hidden="true" />
                     </button>

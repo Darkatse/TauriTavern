@@ -202,7 +202,7 @@
 
 - `api.mcp`：MCP registration、只读 tool discovery 与第一方 Manager user test call 的独立平台 API。Agent 与 Legacy generation 已通过内部 application seam 消费 MCP，但 MCP 不依附 Agent Mode，公开 API 仍不提供 raw model-call executor。
   - 当前为实验性的 Project Contract；详细签名见 `docs/API/MCP.md`。
-  - 当前暴露 `servers.list/create/rename/setState/remove/discover/refresh`、`tools.setPermission` 与 `tools.testCall({ registrationId, nativeName, argumentsJson }, { signal? })`；`discover` 读取 application persistent catalog，`refresh` 是唯一强制联网入口；不暴露 endpoint/header、raw RPC、RMCP session 或 endpoint mutation。
+  - 当前暴露 `servers.list/create/update/setState/remove/discover/refresh`、`tools.setPermission` 与 `tools.testCall({ registrationId, nativeName, argumentsJson }, { signal? })`；`update` 可修改名称、endpoint、custom headers 与协议版本；`discover` 读取 application persistent catalog，`refresh` 是唯一强制联网入口；不暴露 raw RPC 或 RMCP session。
   - `testCall` 是第一方 Manager 的 Project Contract：Active registration 上的显式用户调用不受 Off/Ask/Allow 阻止且不修改 permission；typed outcome 区分 `known_response`、`not_sent` 与 `outcome_unknown`，AbortSignal 只停止本地等待，不承诺远端回滚。
   - 同一 WebView 内的 vendor/extension scripts 仍按当前平台 trust model 视为用户授权代码；本 ABI 不声称验证物理点击或隔离 hostile extension。
   - server 新建后总是 Paused；工具缺省 Off。discovery annotations 不构成 authority。

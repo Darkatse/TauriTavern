@@ -33,20 +33,20 @@ Legacy Generate root
 
 crate 责任：
 
-- `tt-domain::models::mcp`：registration UUID、endpoint、Active/Paused、Off/Ask/Allow 与领域约束。
+- `tt-domain::models::mcp`：registration UUID、endpoint、协议版本偏好、Active/Paused、Off/Ask/Allow 与领域约束。
 - `tt-ports::mcp` / `repositories::mcp_server_repository`：Tauri-free、RMCP-free 的 outbound ports 与 MCP call outcome。
 - `tt-application::McpService`：intent CRUD、permission、persistent catalog policy、discovery、test-call Active/JSON gate，以及 Agent/Legacy 共用的 cached model-tool resolution 与发送前 permission/arguments gate。
 - `tt-adapter-storage-core`：registration 与 endpoint-bound catalog snapshot 的严格 v1 单文件存储。
-- `tt-adapter-mcp`：RMCP 2026-first Auto lifecycle、一次受限的 2025 legacy lifecycle 尝试、bounded/cancellable Streamable HTTP、手动全分页、discovery validation 与单次 `tools/call` 结果投影。
+- `tt-adapter-mcp`：RMCP Auto/固定版本 lifecycle、一次受限的同版本 legacy lifecycle 尝试、bounded/cancellable Streamable HTTP、手动全分页、discovery validation 与单次 `tools/call` 结果投影。
 - `tt-adapter-http`：无 redirect、无 retry 的 MCP client profile；MCP adapter 每次 discovery/call 从共享 pool 取得当前 proxy/TLS/UA 配置。
 - `tauritavern`：composition、commands 与 Manager Host ABI。
 
-管理 UI 位于 `src/scripts/extensions/mcp-manager/`，由 SillyTavern 内置扩展加载器激活，并在 Extensions 抽屉中与 Skill 同级展示。React 组件只消费 typed state 与 actions；Host ABI 等待、MCP API 解析以及全部 SillyTavern Popup 交互留在扩展 host adapter。测试调用收敛为工具栏单一入口的测试控制台弹窗：选择 active 服务器后自动 discovery、选择工具、按 schema 表单填写并查看当次结果；没有历史/回放/自动重试。TauriTavern Settings 不再拥有平行入口。
+管理 UI 位于 `src/scripts/extensions/mcp-manager/`，由 SillyTavern 内置扩展加载器激活，并在 Extensions 抽屉中与 Skill 同级展示。React 组件只消费 typed state 与 actions；Host ABI 等待、MCP API 解析以及全部 SillyTavern Popup 交互留在扩展 host adapter。Add 弹窗支持手动 header rows、协议版本选择，以及单服务器的直接对象/`mcpServers` JSON 输入；两者都只调用同一个 create 用例。已保存 server 的 Edit 弹窗复用手动连接表单，可修改名称、endpoint、headers 与协议版本。测试调用收敛为工具栏单一入口的测试控制台弹窗：选择 active 服务器后自动 discovery、选择工具、按 schema 表单填写并查看当次结果；没有历史/回放/自动重试。TauriTavern Settings 不再拥有平行入口。
 
 ## 长期不变量
 
 1. canonical ID 沿用当前工具契约：provider 为 `mcp/<registration-uuid>`，ToolId 为 `mcp/<registration-uuid>:<native-name>`。
-2. endpoint 不进入 ToolId，但当前不可修改；换 endpoint 即新 registration、新权限。
+2. endpoint 不进入 ToolId；用户可以编辑 endpoint，registration UUID、ToolId 与权限保持不变，connection catalog 会失效。
 3. discovery 只产生候选描述，不产生执行 authority；新工具永远 Off。
 4. annotations 是不可信提示，不能改变 permission。
 5. 完整分页与 application canonical validation 成功后才发布新 catalog；写盘失败时以可见 diagnostic 明确标记 memory-only，不发布协议 partial，其他 refresh 失败不把旧 snapshot 冒充本次结果。
@@ -57,6 +57,7 @@ crate 责任：
 10. RMCP/reqwest 类型不得进入 domain、ports、application 或 presentation DTO。
 11. MCP 不进入全局 Legacy ToolManager、slash commands 或 extension enumeration；Legacy 只通过 request-scoped resolver 分派，local registry 保持 live lookup。
 12. `custom_include_body` / `custom_exclude_body` 是用户最终 upstream body 意图；Legacy MCP 不保护、拒绝、重注入或改写 `tools` / `tool_choice`。
+13. endpoint、custom headers 与协议版本作为同一份连接配置原子更新。所有 discovery/call 消费路径从 registration 读取该配置，list DTO 为同一 WebView 的编辑器回传 endpoint 与明文 headers。
 
 ## Persistent catalog 与 Peer 语义
 
@@ -64,7 +65,7 @@ crate 责任：
 
 普通 `servers.discover` 按内存、磁盘、真实 network discovery 的顺序读取。内存和磁盘均不存在时才创建 RMCP Peer；显式 `servers.refresh` 始终绕过两级 snapshot。cold discovery/refresh 在完整分页与 adapter/application validation 成功后发布；原子写盘失败不会阻止使用已验证 catalog，而是保留旧磁盘 snapshot、发布 memory-only snapshot，并返回 `mcp.catalog_persistence_failed` diagnostic。网络或 validation 失败仍直接返回错误，上一份 snapshot 保持不变但不会作为该请求的成功结果。损坏、未知 schema、UUID 或 endpoint 不匹配的文件显式失败，用户 refresh 可以直接联网并替换。
 
-snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 migration reader。registration 删除成功不受派生 catalog 清理失败影响；清理失败只写 warning。Data Archive/TT-Sync 的既有 external-data reconciliation 清空内存热副本，使后续读取重新观察当前 data root。rename、Active/Paused 与 permission 改动不清 catalog；Paused gate 始终先于 cache lookup。
+snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 migration reader。registration 删除成功不受派生 catalog 清理失败影响；清理失败只写 warning。Data Archive/TT-Sync 的既有 external-data reconciliation 清空内存热副本，使后续读取重新观察当前 data root。仅改名称、Active/Paused 与 permission 不清 catalog；endpoint、headers 或协议版本变化先删除磁盘/内存 snapshot，再保存新连接配置。Paused gate 始终先于 cache lookup。
 
 模型工具准备是严格 cached-only：共享 resolver 只处理 Active 且至少保存一个 Ask/Allow 的 registration，按 memory→disk 读取 snapshot，不调用 gateway、不做 cold discovery；没有 permission 的 registration 不触碰 catalog。单 registration cache miss、损坏 snapshot 或非 object-root function schema 只形成 diagnostic，健康 server 继续。Agent 再按 Profile 选择收窄；Legacy 每个实际 root generation 读取一次全量 permitted descriptors，并在工具递归中复用。用户在 Manager 显式 refresh 后，下一次 Agent invocation 或 Legacy root 才看到变化。
 
@@ -77,14 +78,15 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
 - Agent MCP arguments 同样最多 256 KiB 且必须为 object；可广告 schema 的 root 必须显式为 `type: "object"`。
 - Legacy MCP arguments 同样最多 256 KiB 且必须为 object；结果以现有 bounded MCP outcome JSON 内联到 Tool message，不复用 Agent workspace externalization。
 - Agent MCP `AgentToolResult` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 保存在 run 的只读可见 `tool-results/`；模型上下文接收原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、路径与分段读取指引。该值只影响 Agent invocation 投影，不改变共享 MCP call outcome；统计复用 domain `TextMetrics`，不引入 tokenizer 依赖。
-- transport 支持 HTTPS；HTTP 仅允许本机、明确的内网地址及本地命名空间，公网 HTTP 被拒绝。Manager 激活 HTTP registration 时会明确提示流量未加密。
+- transport 接受任意带 host 的 HTTP(S) endpoint，包括公网 HTTP、userinfo 与 query。Manager 激活 HTTP registration 时会明确提示流量未加密。
+- custom headers 不设 reserved-name、数量或总量限制；名称和值原样保存，无法被 HTTP/MCP transport 接受时返回正常调用错误。endpoint credentials 与认证 headers 明文保存在 registration 中。
 - 单 tool wire representation：256 KiB；完整 catalog：8 MiB。
 - 每个 server：最多 32 页、512 tools。
-- HTTP connect/request timeout：30s / 60s；lifecycle 与分页各有 120s 总 timeout。
+- HTTP connect timeout 为 30s；lifecycle 与分页各有 120s operation timeout，已发送 tool call 的响应等待为 60s。共享 client 不再叠加第二个 request timeout。
 - redirect、SSE reconnect、expired-session reinitialize 与 application retry 均关闭。
-- 仅当 2026-first Auto 启动返回 implementation-defined `-32000`，或 discovery 响应通道在 SDK 完成错误分类前关闭时，才在同一 lifecycle timeout 内用新 Peer 尝试一次 2025 initialize；其他 transport、auth、timeout 与 list 错误不触发该路径。
+- Auto 优先尝试 `2026-07-28`、`2025-11-25`、`2025-06-18`、`2025-03-26`；固定版本只允许所选版本。仅当启动返回 implementation-defined `-32000`，或 discovery 响应通道在 SDK 完成错误分类前关闭时，才在同一 lifecycle timeout 内用新 Peer 尝试一次相同配置的 initialize；其他 transport、auth、timeout 与 list 错误不触发该路径。
 
-这些是代码常量，不是 per-server 设置。超限不会静默截断：单 tool 超限产生 discovery diagnostic，无法确认完整分页或 catalog 总量超限则本次 server discovery 失败；test call 在找到目标前的 metadata 分页超限为 NotSent，server 已响应后无法显示的内容保留 KnownResponse 并产生 diagnostic。无效的可选 output schema 只移除该字段并产生 diagnostic，不隔离仍可调用的工具。
+协议版本候选集合由代码限定；其余边界不是 per-server 设置。超限不会静默截断：单 tool 超限产生 discovery diagnostic，无法确认完整分页或 catalog 总量超限则本次 server discovery 失败；test call 在找到目标前的 metadata 分页超限为 NotSent，server 已响应后无法显示的内容保留 KnownResponse 并产生 diagnostic。无效的可选 output schema 只移除该字段并产生 diagnostic，不隔离仍可调用的工具。
 
 ## Agent 调用语义
 
@@ -109,6 +111,6 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
 - Ask 审批及跨工具统一审批交互；
 - Legacy unknown-outcome pause/resume/retry workflow；
 - OAuth/credential、stdio、Resources/Prompts/Tasks/Apps；
-- background refresh、list-changed、catalog TTL/revision history、endpoint migration、MCP 专属 sync dataset。
+- background refresh、list-changed、catalog TTL/revision history、MCP 专属 sync dataset。
 
-全量 Data Archive 会随 data root 备份 registration 与 persistent catalog。TT-Sync 是否包含这些文件仍由用户选择的通用 DatasetPolicy 决定；MCP 不增加专属同步协议。
+全量 Data Archive 会随 data root 备份 registration、其中的明文 custom header values 与 persistent catalog。TT-Sync 是否包含这些文件仍由用户选择的通用 DatasetPolicy 决定；MCP 不增加专属同步协议。

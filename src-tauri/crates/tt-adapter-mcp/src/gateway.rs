@@ -6,7 +6,10 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 
-use tt_domain::{errors::DomainError, models::mcp::McpEndpoint};
+use tt_domain::{
+    errors::DomainError,
+    models::mcp::{McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders},
+};
 use tt_ports::mcp::{McpCallOutcome, McpDiscoveryResult, McpGateway};
 
 mod client;
@@ -16,7 +19,7 @@ mod tool_call;
 #[cfg(test)]
 mod tests;
 
-use client::start_client;
+use client::{compile_request_headers, start_client};
 use discovery::{list_tools, validate_tools};
 use tool_call::{call_tool_with_client, not_sent};
 
@@ -38,12 +41,21 @@ impl McpGateway for RmcpMcpGateway {
     async fn discover_tools(
         &self,
         endpoint: &McpEndpoint,
+        request_headers: &McpRequestHeaders,
+        protocol_version: McpProtocolVersionPreference,
     ) -> Result<McpDiscoveryResult, DomainError> {
         let http_client = self.http_clients.client(HttpClientProfile::Mcp)?;
+        let request_headers = compile_request_headers(request_headers)?;
         let cancel = CancellationToken::new();
         let mut client = timeout(
             DISCOVERY_TIMEOUT,
-            start_client(endpoint, http_client, &cancel),
+            start_client(
+                endpoint,
+                &request_headers,
+                protocol_version,
+                http_client,
+                &cancel,
+            ),
         )
         .await
         .map_err(|_| DomainError::transient("mcp.discovery_initialize_timeout"))?
@@ -96,6 +108,8 @@ impl McpGateway for RmcpMcpGateway {
     async fn call_tool(
         &self,
         endpoint: &McpEndpoint,
+        request_headers: &McpRequestHeaders,
+        protocol_version: McpProtocolVersionPreference,
         native_name: &str,
         arguments: Map<String, Value>,
         cancel: CancellationToken,
@@ -108,9 +122,16 @@ impl McpGateway for RmcpMcpGateway {
         }
 
         let http_client = self.http_clients.client(HttpClientProfile::Mcp)?;
+        let request_headers = compile_request_headers(request_headers)?;
         let mut client = match timeout(
             DISCOVERY_TIMEOUT,
-            start_client(endpoint, http_client, &cancel),
+            start_client(
+                endpoint,
+                &request_headers,
+                protocol_version,
+                http_client,
+                &cancel,
+            ),
         )
         .await
         {

@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{
         Arc, Mutex as StdMutex,
         atomic::{AtomicUsize, Ordering},
@@ -21,7 +21,7 @@ use tokio::{
 
 use tokio_util::sync::CancellationToken;
 use tt_adapter_http::HttpClientPool;
-use tt_domain::models::mcp::McpEndpoint;
+use tt_domain::models::mcp::{McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders};
 use tt_ports::mcp::{McpCallOutcome, McpGateway, McpKnownResponse};
 
 use super::{
@@ -155,7 +155,11 @@ async fn streamable_http_fixture_covers_modern_lifecycle_and_full_pagination() {
     let (endpoint, requests, _, server) = spawn_fixture(FixtureMode::Modern).await;
 
     let result = gateway()
-        .discover_tools(&McpEndpoint::parse(endpoint).unwrap())
+        .discover_tools(
+            &McpEndpoint::parse(endpoint).unwrap(),
+            &McpRequestHeaders::default(),
+            McpProtocolVersionPreference::Auto,
+        )
         .await
         .unwrap();
     server.abort();
@@ -178,7 +182,11 @@ async fn discovery_does_not_list_tools_without_the_server_capability() {
     let (endpoint, requests, _, server) = spawn_fixture(FixtureMode::NoTools).await;
 
     let result = gateway()
-        .discover_tools(&McpEndpoint::parse(endpoint).unwrap())
+        .discover_tools(
+            &McpEndpoint::parse(endpoint).unwrap(),
+            &McpRequestHeaders::default(),
+            McpProtocolVersionPreference::Auto,
+        )
         .await
         .unwrap();
     server.abort();
@@ -192,7 +200,11 @@ async fn discovery_retries_legacy_after_finite_sse_method_not_found() {
     let (endpoint, requests, _, server) = spawn_fixture(FixtureMode::Legacy).await;
 
     let result = gateway()
-        .discover_tools(&McpEndpoint::parse(endpoint).unwrap())
+        .discover_tools(
+            &McpEndpoint::parse(endpoint).unwrap(),
+            &McpRequestHeaders::default(),
+            McpProtocolVersionPreference::Auto,
+        )
         .await
         .unwrap();
     server.abort();
@@ -208,7 +220,11 @@ async fn discovery_tries_legacy_lifecycle_after_generic_version_rejection() {
     let (endpoint, requests, _, server) = spawn_fixture(FixtureMode::LegacyVersionRejection).await;
 
     let result = gateway()
-        .discover_tools(&McpEndpoint::parse(endpoint).unwrap())
+        .discover_tools(
+            &McpEndpoint::parse(endpoint).unwrap(),
+            &McpRequestHeaders::default(),
+            McpProtocolVersionPreference::Auto,
+        )
         .await
         .unwrap();
     server.abort();
@@ -220,14 +236,20 @@ async fn discovery_tries_legacy_lifecycle_after_generic_version_rejection() {
 }
 
 #[tokio::test]
-async fn modern_call_hydrates_standard_headers_and_preserves_arguments() {
+async fn modern_call_sends_custom_and_standard_headers_and_preserves_arguments() {
     let (endpoint, _, captured, server) = spawn_fixture(FixtureMode::Modern).await;
+    let request_headers = McpRequestHeaders::from(BTreeMap::from([(
+        "x-api-key".to_string(),
+        "fixture-secret".to_string(),
+    )]));
     let arguments =
         serde_json::from_str(r#"{"region":"us-east-1","exact":9007199254740993}"#).unwrap();
 
     let outcome = gateway()
         .call_tool(
             &McpEndpoint::parse(endpoint).unwrap(),
+            &request_headers,
+            McpProtocolVersionPreference::Auto,
             "first",
             arguments,
             CancellationToken::new(),
@@ -243,6 +265,9 @@ async fn modern_call_hydrates_standard_headers_and_preserves_arguments() {
     assert_eq!(result.text[0].text, "fixture tool error");
 
     let requests = captured.lock().unwrap();
+    assert!(requests.iter().all(|request| {
+        request.headers.get("x-api-key").map(String::as_str) == Some("fixture-secret")
+    }));
     let call = requests
         .iter()
         .find(|request| request.body["method"] == "tools/call")
@@ -280,6 +305,8 @@ async fn json_rpc_tool_error_is_a_known_response() {
     let outcome = gateway()
         .call_tool(
             &McpEndpoint::parse(endpoint).unwrap(),
+            &McpRequestHeaders::default(),
+            McpProtocolVersionPreference::Auto,
             "first",
             Map::from_iter([("region".to_string(), json!("us-east-1"))]),
             CancellationToken::new(),
@@ -303,6 +330,8 @@ async fn invalid_standard_header_annotation_makes_the_target_not_sent() {
     let outcome = gateway()
         .call_tool(
             &McpEndpoint::parse(endpoint).unwrap(),
+            &McpRequestHeaders::default(),
+            McpProtocolVersionPreference::Auto,
             "first",
             Map::from_iter([("region".to_string(), json!("us-east-1"))]),
             CancellationToken::new(),
@@ -330,6 +359,8 @@ async fn cancelling_after_tools_call_returns_unknown_and_aborts_local_io() {
         gateway()
             .call_tool(
                 &McpEndpoint::parse(endpoint).unwrap(),
+                &McpRequestHeaders::default(),
+                McpProtocolVersionPreference::Auto,
                 "first",
                 Map::from_iter([("region".to_string(), json!("us-east-1"))]),
                 task_cancel,
@@ -373,6 +404,8 @@ async fn disconnect_and_malformed_response_after_commit_are_unknown() {
         let outcome = gateway()
             .call_tool(
                 &McpEndpoint::parse(endpoint).unwrap(),
+                &McpRequestHeaders::default(),
+                McpProtocolVersionPreference::Auto,
                 "first",
                 Map::from_iter([("region".to_string(), json!("us-east-1"))]),
                 CancellationToken::new(),

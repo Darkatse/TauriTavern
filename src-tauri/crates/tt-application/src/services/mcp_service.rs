@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
 };
 
@@ -10,7 +10,8 @@ use crate::{
     errors::ApplicationError,
 };
 use tt_domain::models::mcp::{
-    McpEndpoint, McpRegistrationId, McpServerRegistration, McpServerState, McpToolPermission,
+    McpEndpoint, McpProtocolVersionPreference, McpRegistrationId, McpServerRegistration,
+    McpServerState, McpToolPermission,
 };
 use tt_ports::{mcp::McpGateway, repositories::mcp_server_repository::McpServerRepository};
 
@@ -68,23 +69,36 @@ impl McpService {
         &self,
         display_name: String,
         endpoint: String,
+        headers: BTreeMap<String, String>,
+        protocol_version: McpProtocolVersionPreference,
     ) -> Result<McpServerDto, ApplicationError> {
         let endpoint = McpEndpoint::parse(endpoint)?;
-        let registration = McpServerRegistration::new_paused(display_name, endpoint)?;
+        let registration =
+            McpServerRegistration::new_paused(display_name, endpoint, headers, protocol_version)?;
         let _guard = self.mutation_lock.lock().await;
         self.repository.save(&registration).await?;
         Ok(server_dto(&registration))
     }
 
-    pub async fn rename_server(
+    pub async fn update_server(
         &self,
         registration_id: &str,
         display_name: String,
+        endpoint: String,
+        headers: BTreeMap<String, String>,
+        protocol_version: McpProtocolVersionPreference,
     ) -> Result<McpServerDto, ApplicationError> {
         let id = McpRegistrationId::parse(registration_id)?;
+        let endpoint = McpEndpoint::parse(endpoint)?;
         let _guard = self.mutation_lock.lock().await;
         let mut registration = self.require_registration(&id).await?;
-        registration.rename(display_name)?;
+        if registration.update(display_name, endpoint, headers, protocol_version)? {
+            self.repository.remove_catalog_snapshot(&id).await?;
+            self.catalog_snapshots
+                .write()
+                .expect("MCP catalog snapshot lock poisoned")
+                .remove(&id);
+        }
         self.repository.save(&registration).await?;
         Ok(server_dto(&registration))
     }
@@ -144,6 +158,8 @@ fn server_dto(registration: &McpServerRegistration) -> McpServerDto {
         id: registration.id().to_string(),
         display_name: registration.display_name().to_string(),
         endpoint: registration.endpoint().as_str().to_string(),
+        headers: registration.request_headers().as_map().clone(),
+        protocol_version: registration.protocol_version(),
         state: registration.state(),
         tool_permissions: registration.tool_permissions().clone(),
     }

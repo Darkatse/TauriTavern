@@ -97,7 +97,14 @@ impl McpService {
         id: &McpRegistrationId,
         registration: &McpServerRegistration,
     ) -> Result<Arc<CatalogSnapshot>, ApplicationError> {
-        let discovery = self.gateway.discover_tools(registration.endpoint()).await?;
+        let discovery = self
+            .gateway
+            .discover_tools(
+                registration.endpoint(),
+                registration.request_headers(),
+                registration.protocol_version(),
+            )
+            .await?;
         let mut snapshot = catalog_snapshot(id, &discovery)?;
         if let Err(error) = self
             .repository

@@ -10,7 +10,8 @@ use crate::file_system::{delete_file, list_files_with_extension, read_json_file,
 use tt_domain::{
     errors::DomainError,
     models::mcp::{
-        McpEndpoint, McpRegistrationId, McpServerRegistration, McpServerState, McpToolPermission,
+        McpEndpoint, McpProtocolVersionPreference, McpRegistrationId, McpServerRegistration,
+        McpServerState, McpToolPermission,
     },
 };
 use tt_ports::mcp::McpDiscoveryResult;
@@ -160,6 +161,10 @@ impl McpServerRepository for FileMcpServerRepository {
         .await
     }
 
+    async fn remove_catalog_snapshot(&self, id: &McpRegistrationId) -> Result<(), DomainError> {
+        delete_file(&self.catalog_path(id)).await
+    }
+
     async fn remove(&self, id: &McpRegistrationId) -> Result<(), DomainError> {
         delete_file(&self.registration_path(id)).await?;
         if let Err(error) = delete_file(&self.catalog_path(id)).await {
@@ -169,7 +174,7 @@ impl McpServerRepository for FileMcpServerRepository {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StoredMcpRegistrationV1 {
     schema_version: u32,
@@ -177,6 +182,10 @@ struct StoredMcpRegistrationV1 {
     id: String,
     display_name: String,
     endpoint: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    headers: BTreeMap<String, String>,
+    #[serde(default)]
+    protocol_version: McpProtocolVersionPreference,
     state: McpServerState,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     tool_permissions: BTreeMap<String, McpToolPermission>,
@@ -190,6 +199,8 @@ impl StoredMcpRegistrationV1 {
             id: registration.id().to_string(),
             display_name: registration.display_name().to_string(),
             endpoint: registration.endpoint().as_str().to_string(),
+            headers: registration.request_headers().as_map().clone(),
+            protocol_version: registration.protocol_version(),
             state: registration.state(),
             tool_permissions: registration.tool_permissions().clone(),
         }
@@ -225,6 +236,8 @@ impl StoredMcpRegistrationV1 {
             id,
             self.display_name,
             McpEndpoint::parse(self.endpoint)?,
+            self.headers,
+            self.protocol_version,
             self.state,
             self.tool_permissions,
         )
@@ -342,6 +355,8 @@ mod tests {
             McpRegistrationId::parse(id).unwrap(),
             "Local MCP",
             McpEndpoint::parse("http://127.0.0.1:3333/mcp").unwrap(),
+            BTreeMap::from([("x-api-key".to_string(), "fixture-secret".to_string())]),
+            McpProtocolVersionPreference::Auto,
             McpServerState::Paused,
             BTreeMap::new(),
         )
@@ -434,6 +449,16 @@ mod tests {
                 .contains("unknown field")
         );
 
+        reopened
+            .save_catalog_snapshot(registration.id(), registration.endpoint(), &expected)
+            .await
+            .unwrap();
+        reopened
+            .remove_catalog_snapshot(registration.id())
+            .await
+            .unwrap();
+        assert!(!catalog_path.exists());
+        assert!(reopened.load(registration.id()).await.unwrap().is_some());
         reopened
             .save_catalog_snapshot(registration.id(), registration.endpoint(), &expected)
             .await

@@ -19,8 +19,19 @@ const mcp = window.__TAURITAVERN__.api.mcp;
 type TauriTavernMcpApi = {
   servers: {
     list(): Promise<{ servers: McpServer[]; storageIssues: McpStorageIssue[] }>;
-    create(input: { displayName: string; endpoint: string }): Promise<McpServer>;
-    rename(input: { registrationId: string; displayName: string }): Promise<McpServer>;
+    create(input: {
+      displayName: string;
+      endpoint: string;
+      headers?: Record<string, string>;
+      protocolVersion?: McpProtocolVersion;
+    }): Promise<McpServer>;
+    update(input: {
+      registrationId: string;
+      displayName: string;
+      endpoint: string;
+      headers: Record<string, string>;
+      protocolVersion: McpProtocolVersion;
+    }): Promise<McpServer>;
     setState(input: { registrationId: string; state: 'active' | 'paused' }): Promise<McpServer>;
     remove(input: string | { registrationId: string }): Promise<void>;
     discover(input: string | { registrationId: string }): Promise<McpDiscoveryResult>;
@@ -49,10 +60,19 @@ type TauriTavernMcpApi = {
 type McpServer = {
   id: string;                    // canonical lowercase UUID
   displayName: string;
-  endpoint: string;              // normalized, immutable
+  endpoint: string;              // normalized HTTP(S) URL
+  headers: Record<string, string>;
+  protocolVersion: McpProtocolVersion;
   state: 'active' | 'paused';
   toolPermissions: Record<string, 'ask' | 'allow'>;
 };
+
+type McpProtocolVersion =
+  | 'auto'
+  | '2026-07-28'
+  | '2025-11-25'
+  | '2025-06-18'
+  | '2025-03-26';
 
 type McpDiscoveryResult = {
   registrationId: string;
@@ -104,17 +124,20 @@ type McpTestCallOutcome =
 
 - `create()` 总是创建 `paused` registration；Manager 在切换为 Active 前展示并确认 exact endpoint。
 - Manager 首次加载时会通过现有 `create()` 契约添加一次 Paused 的 Exa Search 推荐项；处理标记保存在扩展 store 中。删除该普通 registration 不会清除标记，因此同一 data root 中不会自动恢复。
-- endpoint 是 registration 的信任身份事实，当前不提供修改方法。更换 endpoint 必须新建 UUID，工具权限重新从 Off 开始。
-- display name 可以修改，不影响 UUID 或 ToolId。
+- display name、endpoint、custom request headers 与 protocol version 由 `update()` 原子修改，不影响 UUID、ToolId、Active/Paused 或已保存权限。endpoint/headers/protocol 实际变化会删除该 registration 的 memory/disk catalog；仅改名称不清 catalog，也不会联网。
+- headers 的名称和值原样保存；registration 不维护 reserved-header 列表或数量/总量上限，transport/server 无法接受的配置通过正常调用错误返回。endpoint credentials 与 header values 明文保存在 registration 文件中、由 `servers.list()` 回传给同一 WebView 的编辑器，并随包含该 data root 的备份流转。
+- protocol version 缺省为 `auto`。固定版本只允许该版本参与 lifecycle 协商；当前选项与 Streamable HTTP transport 实际支持集一致。
 - `off` 是缺省值，不写入 `toolPermissions`；`setPermission(..., 'off')` 删除对应持久设置。
 - discovery 消失的 Ask/Allow 设置作为 `staleTools` 返回，但不会成为可用工具。
 - registration 保存为 `_tauritavern/mcp/registrations/<uuid>.json` 的严格 v1 单文件记录；persistent catalog 保存为 `_tauritavern/mcp/catalogs/<uuid>.json` 的独立严格 v1 记录。两者都没有旧 schema reader 或 revision graph。
+- Manager 的 Add 弹窗提供手动与 JSON 两种输入；JSON 每次只接受一个 Streamable HTTP server，支持 `{ "name": { "url": "...", "headers": {...}, "protocolVersion": "auto" } }` 和标准 `mcpServers` 包装。已保存 server 的 Edit 弹窗复用同一手动表单编辑名称、endpoint、headers 与 protocol version。无效 JSON、多个 server、非字符串 header、未知协议版本或不支持的 transport 会整体拒绝，不做 partial import。
 
 ## 5. Discovery 契约
 
-- transport 仅支持 unauthenticated Streamable HTTP。
-- endpoint 支持 HTTPS。HTTP 只允许明确的本机/内网目标：localhost、单标签主机名、`.local` / `.home.arpa`，IPv4 loopback/private/link-local/shared address space，以及 IPv6 loopback/ULA/link-local；公网 HTTP 域名和地址仍被拒绝。userinfo、query、fragment 与 redirect 均被拒绝。
-- 使用 RMCP 3.1.2 `ClientLifecycleMode::Auto` 优先协商 `2026-07-28`；标准 `-32022` 协商与 SDK 可见的 `-32601` legacy fallback 由 RMCP 处理。若 Auto 启动返回 implementation-defined `-32000`，或有限 SSE error 响应在 SDK 中退化为 `ConnectionClosed`，则用新 Peer 单次尝试 `2025-11-25` initialize；该额外路径不匹配其他错误。
+- transport 仅支持 Streamable HTTP；不实现 OAuth 流程，认证可由 registration custom headers 提供。
+- registration headers 会应用到 initialize、discovery、session 与 tool call 的全部 HTTP 请求；系统不在不同消费路径复制或重建认证状态。
+- endpoint 接受任意带 host 的 HTTP(S) URL，包括公网 HTTP、userinfo 与 query；未加密 HTTP 的风险由 Manager 在激活前提示。fragment 不会进入 HTTP 请求，因此仍作为无效 endpoint 显式报错；redirect 仍由 transport 禁止。
+- `protocolVersion: 'auto'` 使用 RMCP 3.1.2 `ClientLifecycleMode::Auto` 优先协商 `2026-07-28`；固定值使用同一 lifecycle，但将 discover candidates 与 legacy initialize version 同时收窄到该版本。标准 `-32022` 协商与 SDK 可见的 `-32601` legacy fallback 由 RMCP 处理。若启动返回 implementation-defined `-32000`，或有限 SSE error 响应在 SDK 中退化为 `ConnectionClosed`，则用新 Peer 单次尝试相同配置的 legacy initialize；该额外路径不匹配其他错误。
 - `tools/list` 必须完整分页；cursor 循环、页数/工具数/catalog 总量超限或分页失败会使该 server 的本次 discovery 失败，不返回 partial catalog。
 - duplicate native name 隔离整个同名组；无效 input schema、单工具超限或名称无效只隔离该工具并返回 diagnostic。无效的可选 output schema 只移除该字段并返回 diagnostic，不阻止工具使用。
 - input/output schema 按 JSON Schema 2020-12 编译验证；不会读取远端 `$ref`。
@@ -173,6 +196,6 @@ Legacy 集成没有扩展上面的公共 `api.mcp`。Legacy 使用第一方内�
 - OAuth、credential、stdio、2024 HTTP+SSE；
 - Resources、Prompts、Tasks、Apps、subscriptions/list-changed；
 - background discovery、discovery/list 通用 retry、catalog TTL/revision history；
-- endpoint migration、scope hierarchy、Manager-defined/global model alias。
+- scope hierarchy、Manager-defined/global model alias。
 
 model alias 属于短命 Agent/Legacy invocation binding，不属于 registration/discovery/test call。Legacy 集成不把 MCP tool 注册进全局 SillyTavern `ToolManager`。

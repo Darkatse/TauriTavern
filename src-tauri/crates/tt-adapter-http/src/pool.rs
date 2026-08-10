@@ -227,8 +227,7 @@ fn build_profile_client(
         HttpClientProfile::Mcp => builder
             .redirect(Policy::none())
             .pool_max_idle_per_host(0)
-            .connect_timeout(MCP_CONNECT_TIMEOUT)
-            .timeout(MCP_REQUEST_TIMEOUT),
+            .connect_timeout(MCP_CONNECT_TIMEOUT),
     };
 
     if let Some(proxy) = proxy {

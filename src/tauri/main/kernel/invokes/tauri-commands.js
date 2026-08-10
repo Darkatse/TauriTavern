@@ -157,7 +157,7 @@ export {};
  *   | 'rename_chat'
  *   | 'rename_group_chat'
  *   | 'rename_secret'
- *   | 'rename_mcp_server'
+ *   | 'update_mcp_server'
  *   | 'remove_mcp_server'
  *   | 'retarget_agent_profile_preset_refs'
  *   | 'retarget_skill_scope'

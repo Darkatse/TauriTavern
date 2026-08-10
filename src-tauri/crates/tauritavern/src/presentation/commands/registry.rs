@@ -169,7 +169,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // MCP commands
         super::mcp_commands::list_mcp_servers,
         super::mcp_commands::create_mcp_server,
-        super::mcp_commands::rename_mcp_server,
+        super::mcp_commands::update_mcp_server,
         super::mcp_commands::set_mcp_server_state,
         super::mcp_commands::remove_mcp_server,
         super::mcp_commands::discover_mcp_tools,

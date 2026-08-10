@@ -646,11 +646,14 @@ type TauriTavernLlmConnectionsApi = {
 
 type TauriTavernMcpServerState = 'active' | 'paused';
 type TauriTavernMcpToolPermission = 'off' | 'ask' | 'allow';
+type TauriTavernMcpProtocolVersion = 'auto' | '2026-07-28' | '2025-11-25' | '2025-06-18' | '2025-03-26';
 
 type TauriTavernMcpServer = {
     id: string;
     displayName: string;
     endpoint: string;
+    headers: Record<string, string>;
+    protocolVersion: TauriTavernMcpProtocolVersion;
     state: TauriTavernMcpServerState;
     toolPermissions: Record<string, Exclude<TauriTavernMcpToolPermission, 'off'>>;
 };
@@ -714,8 +717,19 @@ type TauriTavernMcpApi = {
             servers: TauriTavernMcpServer[];
             storageIssues: Array<{ fileName: string; message: string }>;
         }>;
-        create: (input: { displayName: string; endpoint: string }) => Promise<TauriTavernMcpServer>;
-        rename: (input: { registrationId: string; displayName: string }) => Promise<TauriTavernMcpServer>;
+        create: (input: {
+            displayName: string;
+            endpoint: string;
+            headers?: Record<string, string>;
+            protocolVersion?: TauriTavernMcpProtocolVersion;
+        }) => Promise<TauriTavernMcpServer>;
+        update: (input: {
+            registrationId: string;
+            displayName: string;
+            endpoint: string;
+            headers: Record<string, string>;
+            protocolVersion: TauriTavernMcpProtocolVersion;
+        }) => Promise<TauriTavernMcpServer>;
         setState: (input: { registrationId: string; state: TauriTavernMcpServerState }) => Promise<TauriTavernMcpServer>;
         remove: (input: string | { registrationId: string }) => Promise<void>;
         discover: (input: string | { registrationId: string }) => Promise<TauriTavernMcpDiscoveryResult>;

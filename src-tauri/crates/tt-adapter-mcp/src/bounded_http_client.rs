@@ -6,9 +6,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE, WWW_AUTHENTICATE};
 use rmcp::{
     model::{ClientJsonRpcMessage, JsonRpcMessage, ServerJsonRpcMessage},
     transport::{
-        common::http_header::{
-            EVENT_STREAM_MIME_TYPE, HEADER_LAST_EVENT_ID, HEADER_SESSION_ID, JSON_MIME_TYPE,
-        },
+        common::http_header::{EVENT_STREAM_MIME_TYPE, HEADER_SESSION_ID, JSON_MIME_TYPE},
         streamable_http_client::{
             AuthRequiredError, InsufficientScopeError, StreamableHttpClient, StreamableHttpError,
             StreamableHttpPostResponse,
@@ -57,12 +55,11 @@ impl BoundedReqwestClient {
         if let Some(auth_header) = auth_header {
             request = request.bearer_auth(auth_header);
         }
-        request = apply_custom_headers(request, custom_headers)?;
-
         let session_was_attached = session_id.is_some();
         if let Some(session_id) = session_id {
             request = request.header(HEADER_SESSION_ID, session_id.as_ref());
         }
+        request = apply_headers(request, custom_headers);
         let response = request
             .json(&message)
             .send()
@@ -277,22 +274,14 @@ impl StreamableHttpClient for BoundedReqwestClient {
     }
 }
 
-fn apply_custom_headers(
+fn apply_headers(
     mut request: reqwest::RequestBuilder,
-    custom_headers: HashMap<HeaderName, HeaderValue>,
-) -> Result<reqwest::RequestBuilder, StreamableHttpError<reqwest::Error>> {
-    for (name, value) in custom_headers {
-        let reserved = name.as_str().eq_ignore_ascii_case(ACCEPT.as_str())
-            || name.as_str().eq_ignore_ascii_case(HEADER_SESSION_ID)
-            || name.as_str().eq_ignore_ascii_case(HEADER_LAST_EVENT_ID);
-        if reserved {
-            return Err(StreamableHttpError::ReservedHeaderConflict(
-                name.to_string(),
-            ));
-        }
+    headers: HashMap<HeaderName, HeaderValue>,
+) -> reqwest::RequestBuilder {
+    for (name, value) in headers {
         request = request.header(name, value);
     }
-    Ok(request)
+    request
 }
 
 fn accepts_empty_response(message: &ClientJsonRpcMessage) -> bool {

@@ -20,7 +20,8 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tt_domain::models::{
     mcp::{
-        McpEndpoint, McpRegistrationId, McpServerRegistration, McpServerState, McpToolPermission,
+        McpEndpoint, McpProtocolVersionPreference, McpRegistrationId, McpRequestHeaders,
+        McpServerRegistration, McpServerState, McpToolPermission,
     },
     tool::{ToolDescriptor, ToolId},
 };
@@ -136,6 +137,11 @@ impl McpServerRepository for MemoryRepository {
         Ok(())
     }
 
+    async fn remove_catalog_snapshot(&self, id: &McpRegistrationId) -> Result<(), DomainError> {
+        self.catalogs.lock().unwrap().remove(id);
+        Ok(())
+    }
+
     async fn remove(&self, id: &McpRegistrationId) -> Result<(), DomainError> {
         self.catalogs.lock().unwrap().remove(id);
         self.registrations.lock().unwrap().remove(id);
@@ -146,6 +152,8 @@ impl McpServerRepository for MemoryRepository {
 #[derive(Default)]
 struct FixedGateway {
     calls: StdMutex<Vec<(String, serde_json::Map<String, serde_json::Value>)>>,
+    request_headers: StdMutex<Vec<BTreeMap<String, String>>>,
+    protocol_versions: StdMutex<Vec<McpProtocolVersionPreference>>,
     discovery_calls: AtomicUsize,
     discovery_revision: AtomicUsize,
     fail_discovery: AtomicBool,
@@ -156,7 +164,17 @@ impl McpGateway for FixedGateway {
     async fn discover_tools(
         &self,
         _endpoint: &McpEndpoint,
+        request_headers: &McpRequestHeaders,
+        protocol_version: McpProtocolVersionPreference,
     ) -> Result<McpDiscoveryResult, DomainError> {
+        self.request_headers
+            .lock()
+            .unwrap()
+            .push(request_headers.as_map().clone());
+        self.protocol_versions
+            .lock()
+            .unwrap()
+            .push(protocol_version);
         self.discovery_calls.fetch_add(1, Ordering::Relaxed);
         if self.fail_discovery.load(Ordering::Relaxed) {
             return Err(DomainError::Transient(
@@ -183,10 +201,20 @@ impl McpGateway for FixedGateway {
     async fn call_tool(
         &self,
         _endpoint: &McpEndpoint,
+        request_headers: &McpRequestHeaders,
+        protocol_version: McpProtocolVersionPreference,
         native_name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
         _cancel: CancellationToken,
     ) -> Result<McpCallOutcome, DomainError> {
+        self.request_headers
+            .lock()
+            .unwrap()
+            .push(request_headers.as_map().clone());
+        self.protocol_versions
+            .lock()
+            .unwrap()
+            .push(protocol_version);
         self.calls
             .lock()
             .unwrap()
@@ -215,6 +243,8 @@ async fn registration_discovery_keeps_authority_off_by_default_and_reports_stale
         .create_server(
             "Fixture".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -251,6 +281,8 @@ async fn catalog_persists_across_services_and_reprojects_current_permission() {
         .create_server(
             "Fixture".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -281,6 +313,63 @@ async fn catalog_persists_across_services_and_reprojects_current_permission() {
 }
 
 #[tokio::test]
+async fn connection_update_invalidates_catalog_and_uses_new_headers_and_protocol() {
+    let repository = Arc::new(MemoryRepository::default());
+    let gateway = Arc::new(FixedGateway::default());
+    let service = McpService::new(repository.clone(), gateway.clone());
+    let created = service
+        .create_server(
+            "Fixture".to_string(),
+            "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::from([("x-api-key".to_string(), "old".to_string())]),
+            McpProtocolVersionPreference::Auto,
+        )
+        .await
+        .unwrap();
+    service
+        .set_server_state(&created.id, McpServerState::Active)
+        .await
+        .unwrap();
+    service.discover_tools(&created.id).await.unwrap();
+
+    let updated = service
+        .update_server(
+            &created.id,
+            "Updated".to_string(),
+            "https://user:pass@example.com/mcp?tenant=updated".to_string(),
+            BTreeMap::from([("authorization".to_string(), "Bearer new".to_string())]),
+            McpProtocolVersionPreference::V2025_06_18,
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.display_name, "Updated");
+    assert_eq!(
+        updated.endpoint,
+        "https://user:pass@example.com/mcp?tenant=updated"
+    );
+    assert_eq!(
+        updated.protocol_version,
+        McpProtocolVersionPreference::V2025_06_18
+    );
+    assert!(repository.catalogs.lock().unwrap().is_empty());
+    assert!(service.catalog_snapshots.read().unwrap().is_empty());
+
+    service.discover_tools(&created.id).await.unwrap();
+    assert_eq!(gateway.discovery_calls.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        gateway.request_headers.lock().unwrap().last(),
+        Some(&BTreeMap::from([(
+            "authorization".to_string(),
+            "Bearer new".to_string(),
+        )]))
+    );
+    assert_eq!(
+        gateway.protocol_versions.lock().unwrap().last(),
+        Some(&McpProtocolVersionPreference::V2025_06_18)
+    );
+}
+
+#[tokio::test]
 async fn refresh_keeps_live_catalog_usable_when_persistence_fails() {
     let repository = Arc::new(MemoryRepository::default());
     let gateway = Arc::new(FixedGateway::default());
@@ -289,6 +378,8 @@ async fn refresh_keeps_live_catalog_usable_when_persistence_fails() {
         .create_server(
             "Fixture".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -343,6 +434,8 @@ async fn paused_gate_precedes_cache_and_remove_clears_both_copies() {
         .create_server(
             "Fixture".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -374,6 +467,8 @@ async fn explicit_test_call_preserves_json_and_ignores_saved_permission() {
         .create_server(
             "Fixture".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::from([("x-api-key".to_string(), "fixture-secret".to_string())]),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -416,6 +511,13 @@ async fn explicit_test_call_preserves_json_and_ignores_saved_permission() {
         assert_eq!(calls[0].0, "search");
         assert_eq!(calls[0].1["value"].to_string(), "9007199254740993");
     }
+    assert_eq!(
+        gateway.request_headers.lock().unwrap().as_slice(),
+        [BTreeMap::from([(
+            "x-api-key".to_string(),
+            "fixture-secret".to_string(),
+        )])]
+    );
 
     let listed = service.list_servers().await.unwrap();
     assert_eq!(
@@ -433,6 +535,8 @@ async fn cancelled_prepared_call_is_not_sent_or_retained() {
         .create_server(
             "Fixture".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -467,6 +571,8 @@ async fn paused_registration_is_rejected_before_the_gateway() {
         .create_server(
             "Fixture".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -499,6 +605,8 @@ async fn model_catalog_is_cached_only_and_ask_executes_like_allow() {
         .create_server(
             "My Server".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -558,6 +666,8 @@ async fn model_catalog_skips_cache_when_no_tool_is_permitted() {
         .create_server(
             "No permissions".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -584,6 +694,8 @@ async fn model_catalog_is_cached_only_and_localizes_registration_failures() {
         .create_server(
             "Healthy".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -631,6 +743,8 @@ async fn model_catalog_is_cached_only_and_localizes_registration_failures() {
         .create_server(
             "Corrupt".to_string(),
             "http://127.0.0.1:3334/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -651,6 +765,8 @@ async fn model_catalog_is_cached_only_and_localizes_registration_failures() {
         .create_server(
             "Missing".to_string(),
             "http://127.0.0.1:3335/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -728,6 +844,8 @@ async fn legacy_call_uses_shared_permission_gate_and_preserves_raw_json() {
         .create_server(
             "Fixture".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
@@ -788,6 +906,8 @@ async fn legacy_call_rejects_invalid_arguments_before_the_gateway() {
         .create_server(
             "Fixture".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();

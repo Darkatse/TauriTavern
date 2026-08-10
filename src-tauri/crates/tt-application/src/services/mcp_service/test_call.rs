@@ -95,7 +95,14 @@ impl McpService {
         }
         let outcome = self
             .gateway
-            .call_tool(registration.endpoint(), &native_name, arguments, cancel)
+            .call_tool(
+                registration.endpoint(),
+                registration.request_headers(),
+                registration.protocol_version(),
+                &native_name,
+                arguments,
+                cancel,
+            )
             .await?;
         Ok(map_call_outcome(outcome))
     }

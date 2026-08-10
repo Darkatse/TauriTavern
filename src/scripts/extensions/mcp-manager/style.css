@@ -315,6 +315,7 @@
 .tt-mcp-state:focus-visible,
 .tt-mcp-icon-btn:focus-visible,
 .tt-mcp-root summary:focus-visible,
+.tt-mcp-add-form summary:focus-visible,
 .tt-mcp-test summary:focus-visible {
     outline: 2px solid var(--interactable-outline-color);
     outline-offset: 1px;
@@ -367,6 +368,7 @@
 }
 
 .tt-mcp-root summary,
+.tt-mcp-add-form summary,
 .tt-mcp-test summary {
     color: var(--tt-mcp-dim);
     cursor: pointer;
@@ -591,7 +593,7 @@
     margin: 0 0 4px;
 }
 
-.tt-mcp-add-form > label {
+.tt-mcp-add-pane > label {
     margin-top: 4px;
     color: var(--tt-mcp-dim);
     font-size: 0.8em;
@@ -606,6 +608,91 @@
     color: var(--tt-mcp-dim);
     font-size: 0.76em;
     line-height: 1.4;
+}
+
+.tt-mcp-add-tabs {
+    width: 100%;
+    margin-bottom: 4px;
+}
+
+.tt-mcp-add-tabs label {
+    flex: 1;
+}
+
+.tt-mcp-add-tabs span {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 4px 8px;
+    font-size: 0.85em;
+}
+
+.tt-mcp-add-pane {
+    display: grid;
+    gap: 6px;
+}
+
+.tt-mcp-add-pane[hidden] {
+    display: none;
+}
+
+.tt-mcp-header-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 4px;
+    color: var(--tt-mcp-dim);
+    font-size: 0.8em;
+}
+
+.tt-mcp-header-head .menu_button {
+    margin: 0;
+    font-size: 0.9em;
+}
+
+.tt-mcp-header-list {
+    display: grid;
+    gap: 5px;
+}
+
+.tt-mcp-header-row {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto;
+    align-items: center;
+    gap: 5px;
+}
+
+.tt-mcp-json-input {
+    min-height: 180px;
+    resize: vertical;
+    font-family: var(--monoFontFamily);
+}
+
+/* ── Advanced options (protocol version + custom headers) ── */
+
+.tt-mcp-advanced[open] {
+    display: grid;
+    gap: 6px;
+}
+
+.tt-mcp-advanced[open] > summary {
+    margin-bottom: 2px;
+}
+
+.tt-mcp-advanced > summary {
+    font-size: 0.8em;
+}
+
+.tt-mcp-advanced > label {
+    color: var(--tt-mcp-dim);
+    font-size: 0.8em;
+}
+
+.tt-mcp-advanced .tt-mcp-header-head {
+    margin-top: 0;
 }
 
 /* ── Activate / remove confirmation content ──────────────── */

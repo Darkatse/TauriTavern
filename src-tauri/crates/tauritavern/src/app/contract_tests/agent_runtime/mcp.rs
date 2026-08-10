@@ -169,6 +169,8 @@ async fn configure_mcp_profile(
         .create_server(
             "my server".to_string(),
             "http://127.0.0.1:3333/mcp".to_string(),
+            std::collections::BTreeMap::new(),
+            tt_domain::models::mcp::McpProtocolVersionPreference::Auto,
         )
         .await
         .unwrap();
