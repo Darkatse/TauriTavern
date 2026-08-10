@@ -13,18 +13,17 @@ pub struct GrokOutputFormat {
 #[derive(Debug, Clone)]
 pub struct MinimaxGenerateRequest {
     pub api_key: String,
-    pub group_id: String,
     pub text: String,
     pub voice_id: String,
     pub api_host: String,
     pub model: String,
     pub speed: f64,
     pub volume: f64,
-    pub pitch: f64,
+    pub pitch: i64,
     pub audio_sample_rate: u32,
     pub bitrate: u32,
     pub format: String,
-    pub language: Option<String>,
+    pub language_boost: Option<String>,
 }
 
 #[derive(Debug, Clone)]

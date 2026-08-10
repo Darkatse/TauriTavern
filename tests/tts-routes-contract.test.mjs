@@ -287,10 +287,16 @@ test('grok provider voice list contract avoids silent fallback', async () => {
     assert.match(source, /Grok voice list response did not include any voices/);
 });
 
-test('minimax tts frontend can fall back from json errors to text errors', async () => {
+test('minimax tts frontend follows the current public API contract', async () => {
     const source = await readFile(new URL('../src/scripts/extensions/tts/minimax.js', import.meta.url), 'utf8');
 
     assert.match(source, /response\.clone\(\)\.json\(\)/);
+    assert.doesNotMatch(source, /MINIMAX_GROUP_ID|minimax_group_id/);
+    assert.doesNotMatch(source, /<option value="https:\/\/api\.minimax(?:i)?\.chat"/);
+    assert.match(source, /https:\/\/api\.minimaxi\.com/);
+    assert.match(source, /speech-2\.8-hd/);
+    assert.doesNotMatch(source, /<option value="speech-01(?:-240228)?"/);
+    assert.match(source, /'zh-CN':\s*'Chinese'/);
 });
 
 test('tts host route stays a backend-command adapter', async () => {

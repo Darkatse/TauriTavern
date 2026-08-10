@@ -231,7 +231,6 @@ async fn minimax_generate(
 ) -> Result<TtsRouteResponse, DomainError> {
     let MinimaxGenerateRequest {
         api_key,
-        group_id,
         text,
         voice_id,
         api_host,
@@ -242,7 +241,7 @@ async fn minimax_generate(
         audio_sample_rate,
         bitrate,
         format,
-        language,
+        language_boost,
     } = request;
     let audio_content_type = minimax_content_type(&format);
     let mut payload = json!({
@@ -263,15 +262,14 @@ async fn minimax_generate(
         },
     });
 
-    if let Some(language) = language {
-        payload["lang"] = Value::String(language);
+    if let Some(language_boost) = language_boost {
+        payload["language_boost"] = Value::String(language_boost);
     }
 
     let url = format!("{}/v1/t2a_v2", api_host.trim().trim_end_matches('/'));
     let response = send_with_retry("MiniMax TTS request", || {
         client
             .post(&url)
-            .query(&[("GroupId", group_id.as_str())])
             .bearer_auth(&api_key)
             .header(ACCEPT, "application/json")
             .header(CONTENT_TYPE, "application/json")
@@ -667,7 +665,7 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.content_type, "audio/mpeg");
         assert_eq!(response.body, vec![0, 1, 255]);
-        assert!(request.starts_with("POST /v1/t2a_v2?GroupId=group-id HTTP/1.1"));
+        assert!(request.starts_with("POST /v1/t2a_v2 HTTP/1.1"));
         assert!(
             request
                 .to_ascii_lowercase()
@@ -684,12 +682,13 @@ mod tests {
         assert_eq!(request_body["voice_setting"]["voice_id"], "voice-id");
         assert_eq!(request_body["voice_setting"]["speed"], 1.2);
         assert_eq!(request_body["voice_setting"]["vol"], 0.8);
-        assert_eq!(request_body["voice_setting"]["pitch"], -2.0);
+        assert_eq!(request_body["voice_setting"]["pitch"].as_i64(), Some(-2));
         assert_eq!(request_body["audio_setting"]["sample_rate"], 32_000);
         assert_eq!(request_body["audio_setting"]["bitrate"], 128_000);
         assert_eq!(request_body["audio_setting"]["format"], "mp3");
         assert_eq!(request_body["audio_setting"]["channel"], 1);
-        assert_eq!(request_body["lang"], "English");
+        assert_eq!(request_body["language_boost"], "English");
+        assert!(request_body.get("lang").is_none());
     }
 
     #[tokio::test]
@@ -711,7 +710,7 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.content_type, "audio/mpeg");
         assert_eq!(response.body, vec![10, 11, 12]);
-        assert!(api_request.starts_with("POST /v1/t2a_v2?GroupId=group-id HTTP/1.1"));
+        assert!(api_request.starts_with("POST /v1/t2a_v2 HTTP/1.1"));
         assert!(audio_request.starts_with("GET /audio.mp3 HTTP/1.1"));
     }
 
@@ -736,21 +735,20 @@ mod tests {
         );
     }
 
-    fn minimax_request(api_host: String, language: Option<String>) -> MinimaxGenerateRequest {
+    fn minimax_request(api_host: String, language_boost: Option<String>) -> MinimaxGenerateRequest {
         MinimaxGenerateRequest {
             api_key: "api-key".to_string(),
-            group_id: "group-id".to_string(),
             text: "Hello MiniMax".to_string(),
             voice_id: "voice-id".to_string(),
             api_host,
             model: "speech-02-hd".to_string(),
             speed: 1.2,
             volume: 0.8,
-            pitch: -2.0,
+            pitch: -2,
             audio_sample_rate: 32_000,
             bitrate: 128_000,
             format: "mp3".to_string(),
-            language,
+            language_boost,
         }
     }
 
