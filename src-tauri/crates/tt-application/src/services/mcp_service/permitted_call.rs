@@ -17,7 +17,7 @@ impl McpService {
         cancel: CancellationToken,
     ) -> Result<McpCallOutcome, ApplicationError> {
         if cancel.is_cancelled() {
-            return Ok(agent_not_sent(
+            return Ok(not_sent(
                 "mcp.call_cancelled_before_send",
                 "The tool request was cancelled before it started",
             ));
@@ -28,31 +28,31 @@ impl McpService {
             ApplicationError::ValidationError(format!("mcp.call_arguments_invalid_json: {error}"))
         })?;
         if arguments_bytes.len() > MAX_ARGUMENTS_JSON_BYTES {
-            return Ok(agent_not_sent(
+            return Ok(not_sent(
                 "mcp.call_arguments_size_limit",
                 format!("Arguments JSON exceeds {MAX_ARGUMENTS_JSON_BYTES} bytes"),
             ));
         }
         let serde_json::Value::Object(arguments) = arguments else {
-            return Ok(agent_not_sent(
+            return Ok(not_sent(
                 "mcp.call_arguments_not_object",
                 "Arguments must be a JSON object",
             ));
         };
         let Some(registration) = self.repository.load(&registration_id).await? else {
-            return Ok(agent_not_sent(
+            return Ok(not_sent(
                 "mcp.call_registration_not_found",
                 format!("MCP registration not found: {registration_id}"),
             ));
         };
         if registration.state() != McpServerState::Active {
-            return Ok(agent_not_sent(
+            return Ok(not_sent(
                 "mcp.call_server_paused",
                 format!("MCP server `{}` is paused", registration.display_name()),
             ));
         }
         if registration.permission_for(tool_id.native_name()) == McpToolPermission::Off {
-            return Ok(agent_not_sent(
+            return Ok(not_sent(
                 "mcp.call_permission_off",
                 format!("MCP tool `{tool_id}` is Off"),
             ));
@@ -69,7 +69,7 @@ impl McpService {
     }
 }
 
-fn agent_not_sent(code: impl Into<String>, message: impl Into<String>) -> McpCallOutcome {
+fn not_sent(code: impl Into<String>, message: impl Into<String>) -> McpCallOutcome {
     McpCallOutcome::NotSent(McpCallIssue {
         code: code.into(),
         message: message.into(),

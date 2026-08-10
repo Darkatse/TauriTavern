@@ -58,6 +58,20 @@ pub struct McpTestCallIdDto {
     pub call_id: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpExecutionCallIdDto {
+    pub execution_call_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CallLegacyMcpToolDto {
+    pub execution_call_id: String,
+    pub tool_id: ToolId,
+    pub arguments_json: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerDto {
@@ -128,6 +142,35 @@ pub struct McpDiscoveryResultDto {
     pub stale_tools: Vec<McpStaleToolDto>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyMcpToolDto {
+    pub tool_id: ToolId,
+    pub native_name: String,
+    pub server_display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub input_schema: Value,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpModelToolDiagnosticDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<ToolId>,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListLegacyMcpToolsResultDto {
+    pub tools: Vec<LegacyMcpToolDto>,
+    pub diagnostics: Vec<McpModelToolDiagnosticDto>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct McpCallDiagnosticDto {
@@ -176,7 +219,7 @@ pub enum McpKnownResponseDto {
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
-pub enum McpTestCallOutcomeDto {
+pub enum McpCallOutcomeDto {
     KnownResponse { response: McpKnownResponseDto },
     NotSent { code: String, message: String },
     OutcomeUnknown { code: String, message: String },

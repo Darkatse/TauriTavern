@@ -36,6 +36,11 @@ import {
 } from './scripts/chat-input-focus.js';
 import { getActiveIosPolicyCapabilities } from './scripts/tauritavern/ios-policy.js';
 import { applyIosPolicyUiProjection } from './scripts/tauritavern/ios-policy-ui.js';
+import {
+    createEmptyLegacyMcpGenerationContext,
+    createLegacyMcpGenerationContext,
+    LegacyMcpOutcomeUnknownError,
+} from './scripts/tauritavern/legacy-mcp-tools.js';
 import { getAgentGenerationOptions } from './scripts/tauritavern/agent/agent-generation-router.js';
 import {
     cancelActiveAgentRun,
@@ -3142,7 +3147,11 @@ function refreshToolCallUI(ownerMessage) {
     const ownerId = chat.indexOf(ownerMessage);
     const element = ownerId >= 0 ? chatSurface.getMessageElement(ownerId) : null;
     if (element instanceof HTMLElement) {
-        updateToolCallUI($(element), ownerId);
+        try {
+            updateToolCallUI($(element), ownerId);
+        } catch (error) {
+            console.error('Failed to refresh pending tool calls:', error);
+        }
     }
 }
 
@@ -3154,8 +3163,11 @@ function showPendingToolCalls(ownerMessage, calls) {
 
 /** @param {ChatMessage} ownerMessage @param {import('./scripts/tool-calling.js').ToolInvocation} invocation */
 function completePendingToolCall(ownerMessage, invocation) {
-    const calls = pendingToolInvocations.get(ownerMessage);
-    const call = calls.find(call => call.id === invocation.id);
+    const call = pendingToolInvocations.get(ownerMessage)?.find(call => call.id === invocation.id);
+    if (!call) {
+        console.error(`Pending tool call "${invocation.id}" is missing`);
+        return;
+    }
     Object.assign(call, { result: invocation.result, error: invocation.error === true });
     refreshToolCallUI(ownerMessage);
 }
@@ -3164,6 +3176,17 @@ function completePendingToolCall(ownerMessage, invocation) {
 function clearPendingToolCalls(ownerMessage) {
     if (pendingToolInvocations.delete(ownerMessage)) {
         refreshToolCallUI(ownerMessage);
+    }
+}
+
+function handleToolInvocationError(ownerMessage, error) {
+    clearPendingToolCalls(ownerMessage);
+    if (error instanceof LegacyMcpOutcomeUnknownError) {
+        toastr.warning(
+            `One or more tools in this batch may have executed, but an MCP result is unknown. TauriTavern did not retry or save a partial tool turn. Check the MCP server and affected systems before trying again.\n\n${error.message}`,
+            'MCP tool result unknown',
+            { timeOut: 0, extendedTimeOut: 0, closeButton: true },
+        );
     }
 }
 
@@ -5027,6 +5050,7 @@ function hideMessageBeforeRemoval(messageId) {
  */
 
 const generationIdleGate = createGenerationIdleGate();
+const LEGACY_MCP_GENERATION_CONTEXT = Symbol('legacyMcpGenerationContext');
 let generationInFlightCount = 0;
 let generationHistoryLocator = null;
 
@@ -5116,7 +5140,27 @@ function cleanupGenerationAfterUnhandledError(type, dryRun) {
     unblockGeneration(type);
 }
 
-async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false, agentProfileId = null, agentContextPolicy = null, agentSystemPrompt = null } = {}, dryRun = false) {
+async function prepareLegacyMcpGenerationContext() {
+    try {
+        const context = await createLegacyMcpGenerationContext();
+        if (context.diagnostics.length > 0) {
+            toastr.warning(
+                'Some MCP tools are unavailable for this generation. Check MCP Manager and the console for details.',
+                'MCP tools unavailable',
+            );
+        }
+        return context;
+    } catch (error) {
+        console.error('Failed to prepare Legacy MCP tools:', error);
+        toastr.warning(
+            'MCP tools are unavailable for this generation. Local tools and normal generation are unaffected.',
+            'MCP tools unavailable',
+        );
+        return createEmptyLegacyMcpGenerationContext();
+    }
+}
+
+async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false, agentProfileId = null, agentContextPolicy = null, agentSystemPrompt = null, [LEGACY_MCP_GENERATION_CONTEXT]: inheritedLegacyMcpContext = null } = {}, dryRun = false) {
     console.log('Generate entered');
     setGenerationProgress(0);
     generation_started = new Date();
@@ -5325,6 +5369,12 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
     // Collect messages with usable content
     const canPerformToolCalls = !dryRun && ToolManager.canPerformToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
+    const canAdvertiseToolCalls = !dryRun && ToolManager.canAdvertiseToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
+    const useLegacyMcpTools = main_api === 'openai' && !agentMode && canAdvertiseToolCalls;
+    const legacyMcpContext = useLegacyMcpTools
+        ? inheritedLegacyMcpContext ?? await prepareLegacyMcpGenerationContext()
+        : inheritedLegacyMcpContext;
+    const legacyMcpToolRound = useLegacyMcpTools ? legacyMcpContext.createRound() : null;
     let coreChat = chat.filter(x => !x.is_system
         || (main_api === 'openai' && (x.role === 'tool' || Object.hasOwn(x.extra ?? {}, 'tool_invocations'))));
     if (type === 'swipe') {
@@ -6155,10 +6205,11 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             };
             const [prompt, counts, evaluatedToolData] = await prepareOpenAIMessages({
                 ...promptInputs,
-                allowToolCalls: canPerformToolCalls,
+                allowToolCalls: canAdvertiseToolCalls,
                 agentMode,
                 agentContextPolicy: resolvedAgentContextPolicy,
                 agentSystemPrompt: resolvedAgentSystemPrompt,
+                legacyMcpToolRound,
             }, dryRun);
             toolData = evaluatedToolData;
             generate_data = { prompt: prompt };
@@ -6271,7 +6322,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 streamingProcessor.firstMessageText = '';
             }
 
-            streamingProcessor.generator = await sendStreamingRequest(type, generate_data, { jsonSchema, allowToolCalls: canPerformToolCalls, toolData });
+            streamingProcessor.generator = await sendStreamingRequest(type, generate_data, { jsonSchema, allowToolCalls: canAdvertiseToolCalls, toolData, legacyMcpToolRound });
 
             hideSwipeButtons();
             let getMessage = await streamingProcessor.generate();
@@ -6295,11 +6346,19 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 if (hasToolCalls) {
                     await streamingProcessor.finalizeIntermediaryMessage(streamingProcessor.messageId, getMessage, { unlockUI: false });
                 }
-                const invocationResult = await ToolManager.invokeFunctionTools(streamingProcessor.toolCalls, {
-                    reasoningText: reasoningContent,
-                    onCallsReady: calls => showPendingToolCalls(toolTurnOwner, calls),
-                    onInvocationComplete: invocation => completePendingToolCall(toolTurnOwner, invocation),
-                });
+                let invocationResult;
+                try {
+                    invocationResult = await ToolManager.invokeFunctionTools(streamingProcessor.toolCalls, {
+                        reasoningText: reasoningContent,
+                        onCallsReady: calls => showPendingToolCalls(toolTurnOwner, calls),
+                        onInvocationComplete: invocation => completePendingToolCall(toolTurnOwner, invocation),
+                        toolResolver: legacyMcpToolRound ? name => legacyMcpToolRound.resolveTool(name) : null,
+                        signal: abortController.signal,
+                    });
+                } catch (error) {
+                    handleToolInvocationError(toolTurnOwner, error);
+                    throw error;
+                }
                 const shouldStopGeneration = !invocationResult.invocations.length || invocationResult.stealthCalls.length;
                 if (hasToolCalls) {
                     if (shouldStopGeneration) {
@@ -6319,7 +6378,11 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                     } finally {
                         clearPendingToolCalls(toolTurnOwner);
                     }
-                    return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
+                    if (abortController.signal.aborted) {
+                        unblockGeneration(type);
+                        return;
+                    }
+                    return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth, [LEGACY_MCP_GENERATION_CONTEXT]: legacyMcpContext }, dryRun);
                 }
             }
 
@@ -6333,7 +6396,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 });
             }
         } else {
-            return await sendGenerationRequest(type, generate_data, { jsonSchema, allowToolCalls: canPerformToolCalls, toolData });
+            return await sendGenerationRequest(type, generate_data, { jsonSchema, allowToolCalls: canAdvertiseToolCalls, toolData, legacyMcpToolRound });
         }
     }
 
@@ -6448,11 +6511,19 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
         if (canPerformToolCalls) {
             const hasToolCalls = ToolManager.hasToolCalls(data);
-            const invocationResult = await ToolManager.invokeFunctionTools(data, {
-                reasoningText: reasoning,
-                onCallsReady: calls => showPendingToolCalls(toolTurnOwner, calls),
-                onInvocationComplete: invocation => completePendingToolCall(toolTurnOwner, invocation),
-            });
+            let invocationResult;
+            try {
+                invocationResult = await ToolManager.invokeFunctionTools(data, {
+                    reasoningText: reasoning,
+                    onCallsReady: calls => showPendingToolCalls(toolTurnOwner, calls),
+                    onInvocationComplete: invocation => completePendingToolCall(toolTurnOwner, invocation),
+                    toolResolver: legacyMcpToolRound ? name => legacyMcpToolRound.resolveTool(name) : null,
+                    signal: abortController.signal,
+                });
+            } catch (error) {
+                handleToolInvocationError(toolTurnOwner, error);
+                throw error;
+            }
             const shouldStopGeneration = !invocationResult.invocations.length || invocationResult.stealthCalls.length;
             if (hasToolCalls) {
                 if (shouldStopGeneration) {
@@ -6470,7 +6541,11 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 } finally {
                     clearPendingToolCalls(toolTurnOwner);
                 }
-                return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
+                if (abortController.signal.aborted) {
+                    unblockGeneration(type);
+                    return;
+                }
+                return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth, [LEGACY_MCP_GENERATION_CONTEXT]: legacyMcpContext }, dryRun);
             }
         }
 
@@ -7214,6 +7289,7 @@ function syncLastInContextMessageMarker() {
  * @property {JsonSchema} [jsonSchema]
  * @property {boolean} [allowToolCalls]
  * @property {object|null} [toolData] Evaluated legacy tool data for this generation round.
+ * @property {object|null} [legacyMcpToolRound] Private MCP tools for this Legacy generation round.
  */
 
 /**

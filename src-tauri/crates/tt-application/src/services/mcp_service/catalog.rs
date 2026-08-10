@@ -17,7 +17,7 @@ pub(super) struct CatalogSnapshot {
     server_name: Option<String>,
     server_version: Option<String>,
     pub(super) catalog: ToolCatalog,
-    diagnostics: Vec<McpToolDiagnostic>,
+    pub(super) diagnostics: Vec<McpToolDiagnostic>,
 }
 
 impl McpService {

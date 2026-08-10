@@ -10,9 +10,10 @@ use crate::{
     },
 };
 use tt_application::dto::mcp_dto::{
-    CreateMcpServerDto, ListMcpServersResultDto, McpDiscoveryResultDto, McpRegistrationIdDto,
-    McpServerDto, McpTestCallIdDto, McpTestCallOutcomeDto, RenameMcpServerDto,
-    SetMcpServerStateDto, SetMcpToolPermissionDto, TestMcpToolCallDto,
+    CallLegacyMcpToolDto, CreateMcpServerDto, ListLegacyMcpToolsResultDto, ListMcpServersResultDto,
+    McpCallOutcomeDto, McpDiscoveryResultDto, McpExecutionCallIdDto, McpRegistrationIdDto,
+    McpServerDto, McpTestCallIdDto, RenameMcpServerDto, SetMcpServerStateDto,
+    SetMcpToolPermissionDto, TestMcpToolCallDto,
 };
 
 #[tauri::command]
@@ -135,7 +136,7 @@ pub async fn start_mcp_test_call(
     app_state
         .services
         .mcp_service
-        .start_test_call(&dto.call_id)
+        .start_call(&dto.call_id)
         .await
         .map_err(map_command_error("Failed to prepare MCP test call"))
 }
@@ -144,7 +145,7 @@ pub async fn start_mcp_test_call(
 pub async fn test_mcp_tool_call(
     dto: TestMcpToolCallDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<McpTestCallOutcomeDto, CommandError> {
+) -> Result<McpCallOutcomeDto, CommandError> {
     log_command("test_mcp_tool_call");
     app_state
         .services
@@ -168,7 +169,62 @@ pub async fn cancel_mcp_test_call(
     app_state
         .services
         .mcp_service
-        .cancel_test_call(&dto.call_id)
+        .cancel_call(&dto.call_id)
         .await
         .map_err(map_command_error("Failed to cancel MCP test call"))
+}
+
+#[tauri::command]
+pub async fn list_legacy_mcp_tools(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ListLegacyMcpToolsResultDto, CommandError> {
+    log_command("list_legacy_mcp_tools");
+    app_state
+        .services
+        .mcp_service
+        .list_legacy_tools_cached()
+        .await
+        .map_err(map_command_error("Failed to list Legacy MCP tools"))
+}
+
+#[tauri::command]
+pub async fn start_legacy_mcp_tool_call(
+    dto: McpExecutionCallIdDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("start_legacy_mcp_tool_call");
+    app_state
+        .services
+        .mcp_service
+        .start_call(&dto.execution_call_id)
+        .await
+        .map_err(map_command_error("Failed to prepare Legacy MCP tool call"))
+}
+
+#[tauri::command]
+pub async fn call_legacy_mcp_tool(
+    dto: CallLegacyMcpToolDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<McpCallOutcomeDto, CommandError> {
+    log_command("call_legacy_mcp_tool");
+    app_state
+        .services
+        .mcp_service
+        .call_legacy_tool(&dto.execution_call_id, &dto.tool_id, dto.arguments_json)
+        .await
+        .map_err(map_command_error("Failed to call Legacy MCP tool"))
+}
+
+#[tauri::command]
+pub async fn cancel_legacy_mcp_tool_call(
+    dto: McpExecutionCallIdDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("cancel_legacy_mcp_tool_call");
+    app_state
+        .services
+        .mcp_service
+        .cancel_call(&dto.execution_call_id)
+        .await
+        .map_err(map_command_error("Failed to cancel Legacy MCP tool call"))
 }

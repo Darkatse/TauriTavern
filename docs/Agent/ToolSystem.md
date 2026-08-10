@@ -207,7 +207,7 @@ Profile 的 `maxCallsPerRun` 是历史字段名，实际语义一直是 invocati
 
 违反此契约的其它形态（`agent.tool_after_finish` / `agent.max_tool_rounds_exceeded`）目前不走软纠正，直接进入同一终态分类：没有成功 chat commit 时 fail-fast；已有成功 chat commit 时 `run_partial_success`。细节见 `RunEventJournal.md`。
 
-当前没有 shell、extension bridge、profile routing、Plan Mode runtime、模型可见 task cancel 或审批工具；Legacy MCP 仍未接入。
+当前没有 shell、extension bridge、profile routing、Plan Mode runtime、模型可见 task cancel 或审批工具；Legacy MCP 已通过独立的 JS generation seam 接入，不复用 Agent executor。
 
 ### 7.1 Agent Delegation Tools
 
@@ -423,9 +423,11 @@ provider adapter
 
 结果正文可以按真实上下文预算裁剪或转为 resource ref，但 canonical `call_id + tool_id` 不能丢失。未来需要摘要、可见性或顺序策略时，应在 context/request assembly 边界实现，不修改基础 descriptor。
 
-## 10. Approval
+## 10. Approval（后续统一设计）
 
-需要审批的工具：
+当前没有工具审批状态机。MCP Ask 与 Allow 在 Agent/Legacy 中都自动执行；Manager 必须明确提示这一点。审批只能在覆盖全部工具类别的统一交互、journal 与恢复语义设计完成后上线，不能先建立 MCP-only 弹窗。
+
+未来需要纳入审批设计的工具包括：
 
 - MCP tools。
 - destructive tools。
@@ -528,5 +530,6 @@ AgentToolResult returns to backend journal
 - workspace write/patch 成功结果只回填摘要、结构化元数据与 resource refs；需要完整内容时由模型显式调用 workspace_read_file。
 - workspace mutation checkpoint。
 - journal events。
+- MCP cached descriptor resolution、permission-aware call 与 known/unknown outcome 投影。
 
-下一步新增 MCP 或 extension bridge 工具时，应复用这一套 Catalog/Snapshot/Gate/result/error 语义，只在第二 executor 出现时增加最小 router。Skill policy 已留在现有 `skill.list` / `skill.search` / `skill.read` dispatcher 与 profile resolver 之间；后续不要新建第二套 Skill 读取入口。
+新增 extension bridge 工具时，应复用这一套 Catalog/Snapshot/Gate/result/error 语义，只在出现真实第二 executor 需求时增加最小 router。Skill policy 已留在现有 `skill.list` / `skill.search` / `skill.read` dispatcher 与 profile resolver 之间；后续不要新建第二套 Skill 读取入口。

@@ -17,7 +17,7 @@ use crate::services::agent_tools::{
     compile_invocation_tool_snapshot, project_agent_model_tools,
 };
 use crate::services::llm_connection_service::LlmConnectionService;
-use crate::services::mcp_service::{AgentMcpToolDiagnostic, McpService};
+use crate::services::mcp_service::{McpModelToolDiagnostic, McpService};
 use crate::services::prompt_assembly_service::PromptAssemblyService;
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
@@ -107,7 +107,7 @@ struct PreparedInvocationTools {
     snapshot: InvocationToolSnapshot,
     turn: ToolTurnContract,
     model_tools: Vec<AgentModelTool>,
-    diagnostics: Vec<AgentMcpToolDiagnostic>,
+    diagnostics: Vec<McpModelToolDiagnostic>,
 }
 
 pub struct AgentRuntimeService {
@@ -218,7 +218,7 @@ impl AgentRuntimeService {
                 })
             })
             .collect::<Result<Vec<_>, ApplicationError>>()?;
-        let mcp = self.mcp_service.list_agent_tools_cached().await?;
+        let mcp = self.mcp_service.list_permitted_model_tools_cached().await?;
         tools.extend(mcp.tools.into_iter().map(|tool| {
             AgentToolCatalogItemDto {
                 id: tool.descriptor.id.clone(),
@@ -281,7 +281,7 @@ impl AgentRuntimeService {
             .collect::<Vec<_>>();
         let mut mcp = self
             .mcp_service
-            .resolve_agent_tools_cached(&selected)
+            .resolve_permitted_model_tools_cached(&selected)
             .await?;
         let mut override_diagnostics = Vec::new();
         mcp.tools.retain_mut(|tool| {
@@ -291,7 +291,7 @@ impl AgentRuntimeService {
             match apply_description_override(&mut tool.descriptor, override_) {
                 Ok(()) => true,
                 Err(error) => {
-                    override_diagnostics.push(AgentMcpToolDiagnostic {
+                    override_diagnostics.push(McpModelToolDiagnostic {
                         tool_id: Some(tool.descriptor.id.clone()),
                         code: "mcp.agent_tool_override_invalid".to_string(),
                         message: error.to_string(),

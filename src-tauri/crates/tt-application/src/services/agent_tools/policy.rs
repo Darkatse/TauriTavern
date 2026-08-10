@@ -5,7 +5,7 @@ use super::{
     AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, BuiltinAgentToolRegistry, TASK_RETURN,
 };
 use crate::errors::ApplicationError;
-use crate::services::mcp_service::AgentMcpTool;
+use crate::services::mcp_service::McpModelTool;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
 use tt_domain::models::tool::{
@@ -26,7 +26,7 @@ pub(crate) fn compile_invocation_tool_snapshot(
     profile: &ResolvedAgentProfile,
     exit_policy: AgentInvocationExitPolicy,
     snapshot_id: ToolSnapshotId,
-    mcp_tools: &[AgentMcpTool],
+    mcp_tools: &[McpModelTool],
 ) -> Result<InvocationToolSnapshot, ApplicationError> {
     let mut bindings = Vec::with_capacity(profile.tools.allow.len() + 1);
     let mut aliases = HashSet::with_capacity(profile.tools.allow.len() + 1);

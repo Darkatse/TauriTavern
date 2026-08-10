@@ -294,6 +294,7 @@ Profile / Plan 相关变更不合并，除非：
 
 MCP 相关变更不合并，除非：
 
-- MCP stdio command allowlist 测试通过。
-- dangerous tool approval 测试通过。
-- Agent 不能编辑 MCP config。
+- cached preparation 不触发 discovery，单 registration diagnostic 局部化。
+- Off/Paused 在发送前阻止，Ask/Allow 当前自动执行。
+- Known error 可回填模型，OutcomeUnknown 不伪造结果或自动 retry。
+- Manager/Agent/Legacy 都不能从模型调用路径编辑 MCP registration 或 endpoint。

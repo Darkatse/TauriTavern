@@ -96,5 +96,5 @@
    - 包含 Package ID、幂等更新、一次性 seed manifest 与凭据维护边界
 
 21. `docs/CurrentState/MCP.md`
-   - MCP M2.1 registration/persistent catalog/user test call 当前实现快照
-   - 包含 crate/Host ABI、identity、outcome、cache、故障域与明确未支持边界
+   - MCP registration、persistent catalog、user test call 与模型工具调用的当前实现快照
+   - 包含 crate/Host ABI、identity、outcome、cache、Agent/Legacy 消费、故障域与明确未支持边界

@@ -304,7 +304,7 @@ Gateway 代码已拆成 `agent_model_gateway/` 模块目录：`mod.rs` 保留 tr
 - 派发 tool call。
 - 把 tool result 写入 journal 与 context store，不写入 chat message。
 
-当前 builtin Agent vertical slice 已通过 domain types、application pure compiler 与 invocation-local Request Gate 落地，没有为了单一 registry/dispatcher 新增 service trait、factory 或 router。Approval 与多 executor router 等到出现真实 consumer 时再落地。
+当前 builtin Agent 工具链已通过 domain types、application pure compiler 与 invocation-local Request Gate 落地，没有为了单一 registry/dispatcher 新增 service trait、factory 或 router。Approval 与多 executor router 等到出现真实 consumer 时再落地。
 
 详见 `docs/Agent/ToolSystem.md`。
 

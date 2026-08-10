@@ -2005,9 +2005,10 @@ export function getPromptRole(role) {
  * @param {string|null} [options.agentSystemPrompt] Resolved Agent system prompt content.
  * @param {string|null} [options.agentTaskPrompt] Invocation task prompt content.
  * @param {boolean} [options.allowToolCalls] Whether this request can register legacy frontend tools.
+ * @param {object|null} [options.legacyMcpToolRound] Private MCP tools for this Legacy generation round.
  * @returns {Promise<[number, object|null]>} Raw chat record count and evaluated legacy tool data.
  */
-async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentContextPolicy = null, agentSystemPrompt = null, agentTaskPrompt = null, allowToolCalls = true }, runtime = null) {
+async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentContextPolicy = null, agentSystemPrompt = null, agentTaskPrompt = null, allowToolCalls = true, legacyMcpToolRound = null }, runtime = null) {
     const assemblyRuntime = getPromptAssemblyRuntime(runtime);
     const activePromptManager = assemblyRuntime.promptManager;
     const settings = assemblyRuntime.settings;
@@ -2145,9 +2146,10 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     }
 
     // Pre-allocation of tokens for tool data
-    if (!agentMode && allowToolCalls && ToolManager.canPerformToolCalls(type, settings)) {
+    if (!agentMode && allowToolCalls && ToolManager.canAdvertiseToolCalls(type, settings)) {
         toolData = {};
         await ToolManager.registerFunctionToolsOpenAI(toolData);
+        legacyMcpToolRound?.mergeIntoToolData(toolData);
         const toolMessage = [{ role: 'user', content: JSON.stringify(toolData) }];
         const toolTokens = await assemblyTokenHandler.countAsync(toolMessage);
         chatCompletion.reserveBudget(toolTokens);
@@ -2389,6 +2391,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
  * @param {object|null} [content.agentContextPolicy] Agent initial prompt context policy.
  * @param {string|null} [content.agentSystemPrompt] Resolved Agent system prompt content.
  * @param {string|null} [content.agentTaskPrompt] Invocation task prompt content.
+ * @param {object|null} [content.legacyMcpToolRound] Private MCP tools for this Legacy generation round.
  * @param dryRun - Whether this is a live call or not.
  * @returns {Promise<[ChatCompletionMessage[]|null, object|boolean, object|null|undefined]>} Prepared chat, token counts, and evaluated legacy tool data.
  */
@@ -2414,6 +2417,7 @@ export async function prepareOpenAIMessages({
     agentSystemPrompt = null,
     agentTaskPrompt = null,
     allowToolCalls = true,
+    legacyMcpToolRound = null,
 }, dryRun, runtime = null) {
     const assemblyRuntime = runtime
         ? getPromptAssemblyRuntime({
@@ -2463,7 +2467,7 @@ export async function prepareOpenAIMessages({
         };
 
         // Fill the chat completion with as much context as the budget allows
-        [chatSourceCount, toolData] = await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentContextPolicy, agentSystemPrompt, agentTaskPrompt, allowToolCalls }, assemblyRuntime);
+        [chatSourceCount, toolData] = await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentContextPolicy, agentSystemPrompt, agentTaskPrompt, allowToolCalls, legacyMcpToolRound }, assemblyRuntime);
     } catch (error) {
         if (error instanceof TokenBudgetExceededError) {
             assemblyRuntime.showToasts && toastr.error(t`Mandatory prompts exceed the context size.`);
@@ -4254,22 +4258,11 @@ export async function createGenerationParameters(settings, model, type, messages
         chat_completion_sources.CUSTOM,
     ];
 
-    // Sources that support "n" parameter for multi-swipe
-    const multiswipeSources = [
-        chat_completion_sources.OPENAI,
-        chat_completion_sources.AZURE_OPENAI,
-        chat_completion_sources.CUSTOM,
-        chat_completion_sources.XAI,
-        chat_completion_sources.AIMLAPI,
-        chat_completion_sources.MOONSHOT,
-    ];
-
     const isO1 = gptSources.includes(settings.chat_completion_source) && ['o1-2024-12-17', 'o1'].includes(model);
     const isWorkersAIJsonMode = settings.chat_completion_source === chat_completion_sources.WORKERS_AI && jsonSchema;
     const stream = !agentMode && settings.stream_openai && type !== 'quiet' && !isO1 && !isWorkersAIJsonMode;
 
-    const noMultiSwipeTypes = ['quiet', 'impersonate', 'continue'];
-    const canMultiSwipe = !agentMode && settings.n > 1 && !noMultiSwipeTypes.includes(type) && multiswipeSources.includes(settings.chat_completion_source);
+    const canMultiSwipe = !agentMode && ToolManager.canPerformMultiSwipe(type, settings);
     const macroNames = macroContext?.names && typeof macroContext.names === 'object' ? macroContext.names : null;
     const isVertexAiClaude = settings.chat_completion_source === chat_completion_sources.VERTEXAI && isVertexAiClaudeModelId(model);
 
@@ -4327,7 +4320,7 @@ export async function createGenerationParameters(settings, model, type, messages
         }
     }
 
-    if (!agentMode && allowToolCalls && !canMultiSwipe && ToolManager.canPerformToolCalls(type, settings, model)) {
+    if (!agentMode && allowToolCalls && ToolManager.canAdvertiseToolCalls(type, settings, model)) {
         if (toolData === undefined) {
             await ToolManager.registerFunctionToolsOpenAI(generate_data);
         } else if (toolData) {
@@ -4574,8 +4567,6 @@ export async function createGenerationParameters(settings, model, type, messages
                 }
             });
             delete generate_data.n;
-            delete generate_data.tools;
-            delete generate_data.tool_choice;
         }
     }
 
@@ -4584,21 +4575,20 @@ export async function createGenerationParameters(settings, model, type, messages
         delete generate_data.max_tokens;
         delete generate_data.logprobs;
         delete generate_data.top_logprobs;
-        if (/gpt-5-chat-latest/.test(model)) {
-            delete generate_data.tools;
-            delete generate_data.tool_choice;
-        } else if (/gpt-5\.(1|2|3|4)/.test(model) && !/chat-latest/.test(model) && !generate_data.reasoning_effort) {
-            delete generate_data.frequency_penalty;
-            delete generate_data.presence_penalty;
-            delete generate_data.logit_bias;
-            delete generate_data.stop;
-        } else {
-            delete generate_data.temperature;
-            delete generate_data.top_p;
-            delete generate_data.frequency_penalty;
-            delete generate_data.presence_penalty;
-            delete generate_data.logit_bias;
-            delete generate_data.stop;
+        if (!/gpt-5-chat-latest/.test(model)) {
+            if (/gpt-5\.(1|2|3|4)/.test(model) && !/chat-latest/.test(model) && !generate_data.reasoning_effort) {
+                delete generate_data.frequency_penalty;
+                delete generate_data.presence_penalty;
+                delete generate_data.logit_bias;
+                delete generate_data.stop;
+            } else {
+                delete generate_data.temperature;
+                delete generate_data.top_p;
+                delete generate_data.frequency_penalty;
+                delete generate_data.presence_penalty;
+                delete generate_data.logit_bias;
+                delete generate_data.stop;
+            }
         }
     }
 
@@ -4618,7 +4608,7 @@ export async function createGenerationParameters(settings, model, type, messages
  * @returns {Promise<unknown>}
  * @throws {Error}
  */
-async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, allowToolCalls = true, toolData = undefined } = {}) {
+async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, allowToolCalls = true, toolData = undefined, legacyMcpToolRound = null } = {}) {
     // Provide default abort signal
     if (!signal) {
         signal = new AbortController().signal;
@@ -4627,6 +4617,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
     const model = getChatCompletionModel(oai_settings);
     const { generate_data, stream, canMultiSwipe } = await createGenerationParameters(oai_settings, model, type, messages, { jsonSchema, allowToolCalls, toolData });
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
+    legacyMcpToolRound?.finalizeAdvertisedTools(generate_data);
 
     const generate_url = '/api/backends/chat-completions/generate';
     const response = await fetch(generate_url, {

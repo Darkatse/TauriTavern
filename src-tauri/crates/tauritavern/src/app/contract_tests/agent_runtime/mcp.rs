@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
-    let root = temp_root("agent-mcp-vertical-slice");
+    let root = temp_root("agent-mcp-integration");
     let fixture = agent_runtime_fixture_with_responses(
         &root,
         vec![
@@ -36,7 +36,7 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
         &fixture,
         &profile,
         AgentRunPresentation::Background,
-        "mcp-vertical-slice",
+        "mcp-tool-call",
     )
     .await;
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;

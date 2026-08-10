@@ -1,8 +1,8 @@
 # `window.__TAURITAVERN__.api.mcp` — MCP Manager API
 
-本文档描述已经落地的 MCP Manager Host ABI 与 M3 Agent 消费契约。MCP 是独立平台能力；当前提供 registration、persistent tool catalog、显式 refresh、第一方 Manager test call，并由 Rust Agent Runtime 消费选中的 cached tools。Legacy 生成尚未接入。
+本文档描述已经落地的 MCP Manager Host ABI，以及 Agent 与 Legacy generation 的消费契约。MCP 是独立平台能力；当前提供 registration、persistent tool catalog、显式 refresh、第一方 Manager test call，并由 Agent 与 Legacy generation 消费 cached tools。
 
-状态：M3 Agent vertical slice 已实现，Project Contract（实验性）。
+状态：Manager、Agent 与 Legacy generation 集成已实现，Project Contract（实验性）。
 
 第一方管理 UI 位于 Extensions 抽屉的 MCP 内置扩展中。该扩展只是 `api.mcp` 的 React/strict TSX presentation；TauriTavern Settings 不再提供平行入口。
 
@@ -152,15 +152,26 @@ Agent 没有新增公共 raw-call API。Profile v3 以 `mcp/<registration-uuid>:
 
 已知结果投影为现有 `AgentToolResult`。序列化结果超过 Agent Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 保存在 run 的只读可见 `tool-results/`，模型得到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、路径与分段读取指引。该值只属于 Agent invocation 投影，不进入共享 `McpService` 调用契约。`outcome_unknown` 不自动 retry，也不伪造 tool result；当前没有审批/未知结果交互状态机，因此终止当前 Agent run。
 
-## 8. 明确未支持
+## 8. Legacy 消费契约
+
+Legacy 集成没有扩展上面的公共 `api.mcp`。Legacy 使用第一方内部 commands 从 `McpService` 获取 Active + Ask/Allow 的 cached descriptors，并通过 permission-aware call 用例执行；第三方仍没有公共 raw MCP executor。
+
+- catalog preparation 只读 memory/disk snapshot，cache miss 不联网；单 server diagnostic 不阻塞健康 MCP/local tools 或普通生成。
+- 每个实际 Legacy root generation 冻结 descriptors；工具递归复用 descriptor snapshot，但每轮根据当前 local view 重新分配 alias 并重建 provider schema。执行只解析当前 round binding；MCP 不进入全局 ToolManager、slash commands 或 extension enumeration。
+- local alias 优先；settings hook 后只接受仍唯一存在的初始 MCP alias。删除、改名、重复或失去 binding 的 alias 不按名称/schema猜 canonical ToolId。
+- `custom_include_body` / `custom_exclude_body` 继续作为用户最终 upstream body 意图；Legacy MCP 不保护、拒绝或重注入 `tools` / `tool_choice`。
+- 调用只提交 canonical ToolId、ToolManager 序列化的 `argumentsJson` 与独立 UUID `executionCallId`；不做 input-schema coercion。provider `tool_call_id` 只用于聊天消息关联。发送前重新检查 registration Active、Off 与 cancellation；Ask/Allow 当前都自动执行。
+- Known error 和普通 NotSent 进入现有 error Tool message，让模型下一轮修正。`outcome_unknown` 不重试、不伪造结果、不部分提交 Tool turn，并终止当前 root/group generation。
+- 保存、事件与递归继续使用 SillyTavern Legacy first-class tool-turn contract；旧 `extra.tool_invocations` 只读，不恢复新写。
+
+## 9. 明确未支持
 
 当前没有以下 API 或行为：
 
-- Ask 审批、公共 raw-call API；
-- Legacy ToolManager/generation overlay；
+- Ask 审批、公共 raw-call API及 Legacy unknown-outcome 恢复交互；
 - OAuth、credential、stdio、2024 HTTP+SSE；
 - Resources、Prompts、Tasks、Apps、subscriptions/list-changed；
 - background discovery、discovery/list 通用 retry、catalog TTL/revision history；
 - endpoint migration、scope hierarchy、Manager-defined/global model alias。
 
-model alias 属于 Agent invocation `ToolBinding`，不属于 registration/discovery/test call。M3 不把 MCP tool 注册进全局 SillyTavern `ToolManager`。
+model alias 属于短命 Agent/Legacy invocation binding，不属于 registration/discovery/test call。Legacy 集成不把 MCP tool 注册进全局 SillyTavern `ToolManager`。

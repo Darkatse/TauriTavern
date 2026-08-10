@@ -14,17 +14,19 @@ use tt_domain::models::mcp::{
 };
 use tt_ports::{mcp::McpGateway, repositories::mcp_server_repository::McpServerRepository};
 
-mod agent;
+mod call;
 mod catalog;
+mod legacy;
+mod model_tools;
 mod permitted_call;
 mod test_call;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) use agent::{AgentMcpTool, AgentMcpToolDiagnostic};
+use call::CallRegistry;
 use catalog::CatalogSnapshot;
-use test_call::TestCallRegistry;
+pub(crate) use model_tools::{McpModelTool, McpModelToolDiagnostic};
 
 pub(super) const MAX_ARGUMENTS_JSON_BYTES: usize = 256 * 1024;
 
@@ -33,7 +35,7 @@ pub struct McpService {
     gateway: Arc<dyn McpGateway>,
     mutation_lock: Mutex<()>,
     catalog_snapshots: RwLock<HashMap<McpRegistrationId, Arc<CatalogSnapshot>>>,
-    test_calls: TestCallRegistry,
+    calls: CallRegistry,
 }
 
 impl McpService {
@@ -43,7 +45,7 @@ impl McpService {
             gateway,
             mutation_lock: Mutex::new(()),
             catalog_snapshots: RwLock::new(HashMap::new()),
-            test_calls: TestCallRegistry::default(),
+            calls: CallRegistry::default(),
         }
     }
 

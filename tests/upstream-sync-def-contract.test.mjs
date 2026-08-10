@@ -59,7 +59,7 @@ test('ToolManager stores plaintext reasoning and failed tool invocations without
     assert.match(source, /@property \{string\?\} reasoning - The plaintext reasoning associated with this tool call turn\./);
     assert.match(source, /@property \{boolean\} \[error\] - Whether the tool invocation failed\./);
     assert.match(source, /return error;/);
-    assert.match(source, /static async invokeFunctionTools\(data, \{ reasoningText = null, onCallsReady = null, onInvocationComplete = null \} = \{\}\)/);
+    assert.match(source, /static async invokeFunctionTools\(data, \{ reasoningText = null, onCallsReady = null, onInvocationComplete = null, toolResolver = null, signal = null \} = \{\}\)/);
     assert.match(source, /error:\s*true,\s*signature:\s*toolCall\.signature \|\| null,\s*reasoning:\s*reasoningText \|\| null/s);
     assert.match(source, /error:\s*false,\s*signature:\s*toolCall\.signature \|\| null,\s*reasoning:\s*reasoningText \|\| null/s);
     assert.match(source, /static async saveFunctionToolTurn\(invocations, ownerMessage, reasoningContent = null\)/);
@@ -78,7 +78,7 @@ test('ToolManager stores plaintext reasoning and failed tool invocations without
     assert.match(source, /ownerMessage\.extra\.tool_reasoning_content = reasoningContent/);
     assert.doesNotMatch(source, /tool_call_standalone|chat\.splice\(insertionIndex|tool_invocations:\s*invocations/);
     assert.equal(scriptSource.match(/const shouldStopGeneration = !invocationResult\.invocations\.length \|\| invocationResult\.stealthCalls\.length/g)?.length, 2);
-    assert.equal(scriptSource.match(/allowToolCalls: canPerformToolCalls/g)?.length, 3);
+    assert.equal(scriptSource.match(/allowToolCalls: canAdvertiseToolCalls/g)?.length, 3);
     assert.equal(scriptSource.match(/ToolManager\.saveFunctionToolTurn\(invocationResult\.invocations, toolTurnOwner,/g)?.length, 2);
     assert.match(scriptSource, /const pendingToolInvocations = new WeakMap\(\)/);
     assert.match(scriptSource, /function getToolMessageHTML\(message, messageId\) \{[\s\S]*for \(let index = messageId - 1; index >= 0; index--\)[\s\S]*Array\.isArray\(calls\) && calls\.find\(call => call\.id === message\.tool_call_id\)[\s\S]*ToolManager\.formatToolInvocationMessage\(\[\{[\s\S]*result: message\.extra\?\.display_text \?\? message\.mes/);
@@ -88,6 +88,8 @@ test('ToolManager stores plaintext reasoning and failed tool invocations without
     assert.match(styleSource, /\.mes\.smallSysMes\[data-message-role="tool"\]:not\(:has\(\.edit_textarea\)\) \.mes_buttons > :not\(\.mes_edit\) \{\s*display: none;/);
     assert.match(styleSource, /\.mes\.smallSysMes\[data-message-role="tool"\] \.mes_text > details > summary \{\s*padding-inline-end: 2em;/);
     assert.match(scriptSource, /const invocations = pendingToolInvocations\.get\(chat\[messageId\]\) \?\? \[\]/);
+    assert.match(scriptSource, /updateToolCallUI\(\$\(element\), ownerId\);[\s\S]*catch \(error\) \{[\s\S]*Failed to refresh pending tool calls/);
+    assert.match(scriptSource, /pendingToolInvocations\.get\(ownerMessage\)\?\.find\([\s\S]*if \(!call\) \{\s*console\.error\([\s\S]*return;/);
     assert.match(scriptSource, /updateReasoningUI\(messageElement\);\s*updateToolCallUI\(messageElement, messageId\);/);
     assert.doesNotMatch(scriptSource, /syncMountedToolProjection|projectToolTurns/);
     assert.equal(scriptSource.match(/onCallsReady: calls => showPendingToolCalls\(toolTurnOwner, calls\)/g)?.length, 2);
@@ -98,13 +100,17 @@ test('ToolManager stores plaintext reasoning and failed tool invocations without
     assert.match(scriptSource, /lastMessage\?\.role === 'tool' && \['append', 'continue', 'appendFinal', 'swipe'\]\.includes\(type\)\) \{\s*type = 'normal';\s*\}/);
     assert.match(scriptSource, /message\?\.role === 'tool' \|\| Array\.isArray\(message\?\.tool_calls\)/);
     assert.doesNotMatch(scriptSource, /getLastNonToolMessageId|toolCallProjection(?:Owner|Source|Tail)|getOwnedToolResultMessageIds/);
-    assert.match(openaiSource, /allowToolCalls && !canMultiSwipe && ToolManager\.canPerformToolCalls/);
-    assert.match(openaiSource, /!agentMode && allowToolCalls && ToolManager\.canPerformToolCalls\(type, settings\)/);
+    assert.match(source, /static canPerformMultiSwipe\(type, settings = null\)/);
+    assert.match(source, /static canAdvertiseToolCalls\(type, settings = null, model = null\)/);
+    assert.match(source, /#modelDisablesToolCalls\(settings, model\)[\s\S]*gpt-5-chat-latest/);
+    assert.match(openaiSource, /const canMultiSwipe = !agentMode && ToolManager\.canPerformMultiSwipe\(type, settings\)/);
+    assert.equal(openaiSource.match(/!agentMode && allowToolCalls && ToolManager\.canAdvertiseToolCalls\(type, settings(?:, model)?\)/g)?.length, 2);
+    assert.doesNotMatch(openaiSource, /delete generate_data\.(?:tools|tool_choice)/);
     assert.match(openaiSource, /return \[chatSourceCount, toolData\]/);
     assert.match(openaiSource, /return \[chat, activePromptManager\.tokenHandler\.counts, toolData\]/);
     assert.match(openaiSource, /chatCompletion\.setTokenBudget\([^;]+;\s*let chatSourceCount = 0;\s*let toolData = null;/);
     assert.match(openaiSource, /if \(toolData === undefined\) \{\s*await ToolManager\.registerFunctionToolsOpenAI\(generate_data\);\s*\} else if \(toolData\) \{\s*Object\.assign\(generate_data, toolData\);/);
-    assert.equal(scriptSource.match(/allowToolCalls: canPerformToolCalls, toolData/g)?.length, 2);
+    assert.equal(scriptSource.match(/allowToolCalls: canAdvertiseToolCalls, toolData/g)?.length, 2);
     assert.match(openaiSource, /clone\.reasoning = String\(chatPrompt\.reasoning \|\| previousAssistantReasoning \|\| ''\)/);
 });
 
