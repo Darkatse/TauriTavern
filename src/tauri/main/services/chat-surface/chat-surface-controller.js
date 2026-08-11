@@ -86,9 +86,36 @@ export function createChatSurfaceController({
         assertHealthy,
         root: domAdapter.root,
     });
+
+    /** @param {any[]} candidates */
+    function orderRuntimeCandidates(candidates) {
+        const viewport = domAdapter.root.getBoundingClientRect();
+        const viewportCenter = (viewport.top + viewport.bottom) / 2;
+        return candidates.map((entry, index) => {
+            // Active renderers may hide their claimed source; the parent remains
+            // the stable runtime or placeholder box used for viewport ordering.
+            const host = entry.candidate.source.parentElement;
+            if (!(host instanceof Element)) {
+                throw new Error(`ChatSurface runtime host is missing: ${entry.candidate.participantId}`);
+            }
+            const rect = host.getBoundingClientRect();
+            return {
+                entry,
+                index,
+                distance: Math.max(viewport.top - rect.bottom, rect.top - viewport.bottom, 0),
+                centerDistance: Math.abs(((rect.top + rect.bottom) / 2) - viewportCenter),
+            };
+        }).sort((left, right) => (
+            left.distance - right.distance
+            || left.centerDistance - right.centerDistance
+            || left.index - right.index
+        )).map(item => item.entry);
+    }
+
     const runtimeAdmission = createRuntimeAdmission({
         activate: participants.activateCandidate,
         assertCandidate: participants.assertCandidate,
+        orderCandidates: orderRuntimeCandidates,
         runScheduled: operation => mutate('runtime-admission', operation),
         onFault: setFault,
     });

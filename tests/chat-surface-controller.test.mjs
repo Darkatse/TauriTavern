@@ -455,7 +455,7 @@ test('runtime claims close with the detached phase and activation requires a syn
     }
 });
 
-test('managed runtime demand revokes and re-grants candidates with fresh signals', () => {
+test('managed runtime demand swaps candidates on the next frame with fresh signals', () => {
     const dom = installFakeDom();
     try {
         const messages = [
@@ -486,9 +486,11 @@ test('managed runtime demand revokes and re-grants candidates with fresh signals
         const firstSignal = activations[0].signal;
 
         fixture.controller.setRuntimeDemand({ messageIds: [1] });
+        assert.equal(firstSignal.aborted, false);
+        assert.deepEqual(cleanups, []);
+        dom.flushRaf();
         assert.equal(firstSignal.aborted, true);
         assert.deepEqual(cleanups, [0]);
-        dom.flushRaf();
         fixture.controller.setRuntimeDemand({ messageIds: [0] });
         dom.flushRaf();
         assert.deepEqual(activations.map(entry => entry.mesid), [0, 1, 0]);

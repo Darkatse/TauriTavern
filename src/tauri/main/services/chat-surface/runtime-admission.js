@@ -11,12 +11,13 @@ function toError(value) {
 
 /**
  * Owns runtime grants independently from message content lifetimes. Candidate
- * registration is synchronous; managed activation is serialized one grant per
- * animation frame so expensive browsing contexts cannot burst into existence.
+ * registration is synchronous; managed runtime transitions are serialized one
+ * revoke/grant pair per animation frame so browsing contexts cannot burst.
  *
  * @param {{
  *   activate: (record: any, candidate: any, runtimeLease: ReturnType<typeof createResourceLease>) => void;
  *   assertCandidate: (record: any, candidate: any) => void;
+ *   orderCandidates?: (candidates: any[]) => any[];
  *   runScheduled: (operation: () => void) => void;
  *   onFault: (error: unknown) => unknown;
  *   schedule?: (callback: FrameRequestCallback) => number;
@@ -26,6 +27,7 @@ function toError(value) {
 export function createRuntimeAdmission({
     activate,
     assertCandidate,
+    orderCandidates = candidates => candidates,
     runScheduled,
     onFault,
     schedule = callback => requestAnimationFrame(callback),
@@ -34,12 +36,13 @@ export function createRuntimeAdmission({
     if (
         typeof activate !== 'function'
         || typeof assertCandidate !== 'function'
+        || typeof orderCandidates !== 'function'
         || typeof runScheduled !== 'function'
         || typeof onFault !== 'function'
         || typeof schedule !== 'function'
         || typeof cancel !== 'function'
     ) {
-        throw new TypeError('RuntimeAdmission requires activation, validation, mutation, fault and scheduler functions');
+        throw new TypeError('RuntimeAdmission requires activation, validation, ordering, mutation, fault and scheduler functions');
     }
 
     /** @type {'eager' | 'managed'} */
@@ -129,23 +132,36 @@ export function createRuntimeAdmission({
         const desired = [];
         for (const mountKey of demand) {
             for (const entryId of entryIdsByMountKey.get(mountKey) ?? []) {
-                desired.push(entryId);
-                if (desired.length === maxActive) {
-                    return desired;
+                const entry = entries.get(entryId);
+                if (!entry) {
+                    throw new Error(`RuntimeAdmission cannot resolve candidate ${entryId}`);
                 }
+                desired.push(entry);
             }
         }
-        return desired;
+        const ordered = desired.length > maxActive ? orderCandidates(desired) : desired;
+        return ordered.slice(0, maxActive).map(entry => entry.id);
     }
 
-    function scheduleNext() {
+    /** @param {string[]} desired */
+    function transitionEntries(desired) {
+        const desiredIds = new Set(desired);
+        const stale = [...entries.values()].find(
+            entry => entry.status === 'active' && !desiredIds.has(entry.id),
+        );
+        const pending = desired
+            .map(entryId => entries.get(entryId))
+            .find(entry => entry?.status === 'pending');
+        return { stale, pending };
+    }
+
+    /** @param {string[]} desired */
+    function scheduleNext(desired) {
         if (scheduled !== null || suspended || disposed || fault) {
             return;
         }
-        const next = desiredEntryIds()
-            .map(entryId => entries.get(entryId))
-            .find(entry => entry?.status === 'pending');
-        if (!next) {
+        const transition = transitionEntries(desired);
+        if (!transition.stale && !transition.pending) {
             return;
         }
         scheduled = schedule(() => {
@@ -153,12 +169,18 @@ export function createRuntimeAdmission({
             try {
                 runScheduled(() => {
                     assertHealthy();
-                    const desiredIds = new Set(desiredEntryIds());
-                    const current = entries.get(next.id);
-                    if (current?.status === 'pending' && desiredIds.has(current.id) && !suspended) {
-                        grant(current);
+                    if (suspended) {
+                        return;
                     }
-                    reconcileManaged();
+                    const currentDesired = desiredEntryIds();
+                    const current = transitionEntries(currentDesired);
+                    if (current.stale) {
+                        revoke(current.stale, 'runtime-demand-revoked');
+                    }
+                    if (current.pending) {
+                        grant(current.pending);
+                    }
+                    scheduleNext(currentDesired);
                 });
             } catch (error) {
                 fail(error);
@@ -170,17 +192,12 @@ export function createRuntimeAdmission({
         if (mode !== 'managed') {
             return;
         }
-        const desiredIds = new Set(desiredEntryIds());
-        for (const entry of entries.values()) {
-            if (entry.status === 'active' && !desiredIds.has(entry.id)) {
-                revoke(entry, 'runtime-demand-revoked');
-            }
-        }
         if (suspended) {
             cancelScheduled();
             return;
         }
-        scheduleNext();
+        const desired = desiredEntryIds();
+        scheduleNext(desired);
     }
 
     /** @param {'eager' | 'managed'} nextMode @param {{ maxActive?: number }} [options] */
