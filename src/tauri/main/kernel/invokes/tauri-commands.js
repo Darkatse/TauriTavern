@@ -146,6 +146,8 @@ export {};
  *   | 'read_secret_state'
  *   | 'read_secret_settings'
  *   | 'read_agent_run_events'
+ *   | 'read_chat_completion_stream'
+ *   | 'release_chat_completion_stream'
  *   | 'read_agent_workspace_file'
  *   | 'read_agent_model_turn'
  *   | 'read_skill_file'

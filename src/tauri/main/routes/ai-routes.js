@@ -4,6 +4,7 @@ import { confirmAiNotificationPermissionRationale } from '../adapters/st/ai-noti
 import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
 import { createGenerationLifecycleService } from '../services/ai/generation-lifecycle-service.js';
 import { createGenerationStatusBridge } from '../services/ai/generation-status-bridge.js';
+import { consumeChatCompletionStream } from '../services/ai/chat-completion-stream-consumer.js';
 import { createSystemNotificationService } from '../services/notifications/system-notification-service.js';
 import { registerOpenAiTokenizerRoutes } from './openai-tokenizer-routes.js';
 import {
@@ -13,7 +14,6 @@ import {
     getUserFacingErrorMessage,
     translateApiErrorLabel,
 } from './ai-error-presenter.js';
-import { createChannel } from '../../../tauri-bridge.js';
 import { stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
 import { createAbortError, isAbortError } from '../kernel/abort-error.js';
 
@@ -405,7 +405,6 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
 
     let isClosed = false;
     let sawDone = false;
-    let channel = null;
     let flushTimer = null;
     let abortHandler = null;
     let controllerRef = null;
@@ -418,6 +417,14 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             await context.safeInvoke('cancel_chat_completion_stream', { streamId });
         } catch (error) {
             console.debug('Failed to cancel chat completion stream:', error);
+        }
+    };
+
+    const releaseSession = async () => {
+        try {
+            await context.safeInvoke('release_chat_completion_stream', { streamId });
+        } catch (error) {
+            console.debug('Failed to release chat completion stream:', error);
         }
     };
 
@@ -483,17 +490,14 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             abortHandler = null;
         }
 
-        if (channel) {
-            channel.onmessage = () => {};
-            channel = null;
-        }
-
         if (cancelUpstream) {
             if (!streamStartSettled) {
                 cancelAfterStart = true;
             }
 
             await requestUpstreamCancel();
+        } else if (streamStartSettled) {
+            await releaseSession();
         }
 
         const isSuccessfulCompletion = sawDone && !cancelUpstream && !errorPayload;
@@ -556,21 +560,36 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
         }
     };
 
+    const pumpStream = async () => {
+        try {
+            const status = await consumeChatCompletionStream({
+                safeInvoke: context.safeInvoke,
+                streamId,
+                onEvent: onStreamEvent,
+                isClosed: () => isClosed,
+            });
+            if (status === 'done') {
+                await closeStream({ appendDone: true });
+            } else if (status === 'cancelled') {
+                await closeStream({ cancelUpstream: true });
+            }
+        } catch (error) {
+            if (isClosed) {
+                return;
+            }
+
+            const message = getUserFacingErrorMessage(error);
+            await closeStream({
+                appendDone: true,
+                errorPayload: buildErrorStreamChunk(message, payload),
+                failureMessage: message,
+            });
+        }
+    };
+
     const readable = new ReadableStream({
         async start(controller) {
             controllerRef = controller;
-
-            try {
-                channel = createChannel(onStreamEvent);
-            } catch (error) {
-                const message = getUserFacingErrorMessage(error);
-                await closeStream({
-                    appendDone: true,
-                    errorPayload: buildErrorStreamChunk(message, payload),
-                    failureMessage: message,
-                });
-                return;
-            }
 
             if (signal) {
                 abortHandler = () => {
@@ -589,7 +608,6 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                 await context.safeInvoke('start_chat_completion_stream', {
                     streamId,
                     dto: payload,
-                    onEvent: channel,
                 });
 
                 // If abort happened while stream registration was in-flight, run cancellation again
@@ -607,6 +625,10 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                 });
             } finally {
                 streamStartSettled = true;
+            }
+
+            if (!isClosed) {
+                void pumpStream();
             }
         },
         async cancel() {

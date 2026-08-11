@@ -7,6 +7,7 @@ use tokio::sync::{RwLock, watch};
 
 use crate::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
+    ChatCompletionStreamReadResultDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::hashing::hex_lower;
@@ -32,11 +33,13 @@ mod model_capabilities;
 mod payload;
 mod prompt_caching;
 mod prompt_caching_plan;
+mod stream_session;
 
 use self::additional_parameters::AdditionalParameters;
 use self::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
 };
+use self::stream_session::StreamSessionRegistry;
 
 const OPENAI_SOURCE: &str = ChatCompletionSource::OpenAi.key();
 const VERTEXAI_PROMPT_CACHE_SESSION_HEADER: &str = "X-Vertex-Ai-Session-Id";
@@ -62,7 +65,7 @@ pub struct ChatCompletionService {
     settings_repository: Arc<dyn SettingsRepository>,
     prompt_cache_repository: Arc<dyn PromptCacheRepository>,
     ios_policy: IosPolicyActivationReport,
-    active_streams: CancellationRegistry,
+    stream_sessions: StreamSessionRegistry,
     active_generations: CancellationRegistry,
 }
 
@@ -80,7 +83,7 @@ impl ChatCompletionService {
             settings_repository,
             prompt_cache_repository,
             ios_policy,
-            active_streams: CancellationRegistry::default(),
+            stream_sessions: StreamSessionRegistry::default(),
             active_generations: CancellationRegistry::default(),
         }
     }
@@ -509,16 +512,29 @@ impl ChatCompletionService {
             .map_err(ApplicationError::from)
     }
 
-    pub async fn register_stream(&self, stream_id: &str) -> watch::Receiver<bool> {
-        self.active_streams.register(stream_id).await
+    pub async fn start_stream(
+        self: &Arc<Self>,
+        stream_id: String,
+        dto: ChatCompletionGenerateRequestDto,
+    ) -> Result<(), ApplicationError> {
+        let cancel = self.stream_sessions.register(&stream_id).await?;
+        let service = self.clone();
+        tokio::spawn(async move {
+            service.run_stream(stream_id, dto, cancel).await;
+        });
+        Ok(())
     }
 
-    pub async fn cancel_stream(&self, stream_id: &str) -> bool {
-        self.active_streams.cancel(stream_id).await
+    pub async fn read_stream(
+        &self,
+        stream_id: &str,
+        after_seq: u64,
+    ) -> Result<ChatCompletionStreamReadResultDto, ApplicationError> {
+        self.stream_sessions.read(stream_id, after_seq).await
     }
 
-    pub async fn complete_stream(&self, stream_id: &str) {
-        self.active_streams.complete(stream_id).await;
+    pub async fn remove_stream(&self, stream_id: &str) -> bool {
+        self.stream_sessions.remove(stream_id).await
     }
 
     pub async fn register_generation(&self, request_id: &str) -> watch::Receiver<bool> {
@@ -531,6 +547,50 @@ impl ChatCompletionService {
 
     pub async fn complete_generation(&self, request_id: &str) {
         self.active_generations.complete(request_id).await;
+    }
+
+    async fn run_stream(
+        self: Arc<Self>,
+        stream_id: String,
+        dto: ChatCompletionGenerateRequestDto,
+        cancel: watch::Receiver<bool>,
+    ) {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let generation_task = tokio::spawn({
+            let service = self.clone();
+            async move { service.generate_stream(dto, sender, cancel).await }
+        });
+
+        while let Some(chunk) = receiver.recv().await {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            match self.stream_sessions.append(&stream_id, chunk).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    generation_task.abort();
+                    return;
+                }
+                Err(error) => {
+                    generation_task.abort();
+                    self.stream_sessions.fail(&stream_id, error).await;
+                    return;
+                }
+            }
+        }
+
+        let result = match generation_task.await {
+            Ok(result) => result,
+            Err(error) => Err(ApplicationError::InternalError(format!(
+                "Streaming task join failed: {error}"
+            ))),
+        };
+
+        match result {
+            Ok(()) => self.stream_sessions.finish(&stream_id).await,
+            Err(error) => self.stream_sessions.fail(&stream_id, error).await,
+        }
     }
 
     pub async fn close_provider_session(&self, session_id: &str) {

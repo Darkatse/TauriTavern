@@ -76,15 +76,6 @@ impl From<tauri::Error> for CommandError {
     }
 }
 
-impl CommandError {
-    pub fn upstream_failure(&self) -> Option<&UpstreamFailure> {
-        match self {
-            CommandError::UpstreamFailure(failure) => Some(failure),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use tt_domain::errors::GENERATION_CANCELLED_BY_USER_MESSAGE;
