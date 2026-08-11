@@ -127,6 +127,7 @@ class BackupsBrowser {
         const response = await fetch('/api/backups/chat/get', {
             method: 'POST',
             headers: getRequestHeaders(),
+            body: JSON.stringify({ detail: 'catalog' }),
             signal,
         });
 
@@ -135,10 +136,12 @@ class BackupsBrowser {
             return;
         }
 
-        /** @type {import('../../src/endpoints/chats.js').ChatInfo[]} */
         const backupsList = await response.json();
 
-        for (const backup of backupsList.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)))) {
+        for (const backup of backupsList.sort((a, b) => sortMoments(
+            timestampToMoment(a.backup_date ?? a.last_mes),
+            timestampToMoment(b.backup_date ?? b.last_mes),
+        ))) {
             const listItem = document.createElement('div');
             listItem.classList.add('chatBackupsListItem');
 
@@ -148,7 +151,14 @@ class BackupsBrowser {
 
             const backupInfo = document.createElement('div');
             backupInfo.classList.add('chatBackupsListItemInfo');
-            backupInfo.textContent = `${timestampToMoment(backup.last_mes).format('lll')} (${backup.file_size}, ${backup.chat_items} 💬)`;
+            const backupDate = backup.backup_date ?? backup.last_mes;
+            const rawMessageCount = backup.message_count ?? backup.chat_items;
+            const messageCount = rawMessageCount == null ? null : Number(rawMessageCount);
+            const details = [backup.file_size];
+            if (Number.isFinite(messageCount)) {
+                details.push(`${messageCount} 💬`);
+            }
+            backupInfo.textContent = `${timestampToMoment(backupDate).format('lll')} (${details.join(', ')})`;
 
             const actionsList = document.createElement('div');
             actionsList.classList.add('chatBackupsListItemActions');

@@ -11,7 +11,7 @@ use tt_ports::settings::{ChatBackupRuntime, ChatBackupStorageStats};
 
 use super::FileChatRepository;
 use super::backup_codec::{
-    BackupFormat, compress_backup, copy_decoded_backup_reader, decompress_backup,
+    BackupFormat, compress_backup, copy_backup, copy_decoded_backup_reader, decompress_backup,
     is_materialization_path, materialization_file_name, open_decoded_backup,
     read_zstd_frame_content_size, set_backup_modified,
 };
@@ -19,6 +19,7 @@ use super::backup_inventory::{
     BackupCandidate, BackupEntry, BackupHistoryState, BackupInventory, BackupInventoryState,
     parsed_backup_prefix, plan_evictions,
 };
+#[cfg(test)]
 use super::summary::ChatFileDescriptor;
 
 enum BackupPublishOutcome {
@@ -232,23 +233,22 @@ impl FileChatRepository {
         let file_name = format.physical_file_name(&logical_file_name);
         let final_path = self.backups_dir.join(&file_name);
         let temp_path = self.backup_temp_path();
-        let stored_bytes = match format {
-            BackupFormat::RawJsonl => fs::copy(chat_path, &temp_path).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to copy chat backup to staging: {error}"
-                ))
-            }),
+        let write_stats = match format {
+            BackupFormat::RawJsonl => {
+                copy_backup(chat_path, &temp_path, source_metadata.len()).await
+            }
             BackupFormat::Zstd => {
                 compress_backup(chat_path, &temp_path, source_metadata.len()).await
             }
         };
-        let stored_bytes = match stored_bytes {
-            Ok(stored_bytes) => stored_bytes,
+        let write_stats = match write_stats {
+            Ok(write_stats) => write_stats,
             Err(error) => {
                 let _ = fs::remove_file(&temp_path).await;
                 return Err(error);
             }
         };
+        let stored_bytes = write_stats.stored_bytes;
         if format == BackupFormat::RawJsonl && stored_bytes != source_metadata.len() {
             let _ = fs::remove_file(&temp_path).await;
             return Err(DomainError::InternalError(format!(
@@ -311,7 +311,7 @@ impl FileChatRepository {
             )));
         }
 
-        inventory.insert(BackupEntry {
+        let backup_entry = BackupEntry {
             logical_file_name,
             parsed_prefix: parsed_backup_prefix(&file_name),
             file_name,
@@ -319,7 +319,10 @@ impl FileChatRepository {
             modified,
             byte_len: stored_bytes,
             content_signature,
-        })?;
+        };
+        inventory.insert(backup_entry.clone())?;
+        self.record_backup_jsonl_count(&backup_entry, write_stats.jsonl_record_count)
+            .await;
         self.delete_inventory_entries(inventory, &evictions).await?;
         let stored_ratio = if source_metadata.len() == 0 {
             1.0
@@ -336,6 +339,7 @@ impl FileChatRepository {
             digest_available = content_signature.is_some(),
             "Created chat backup"
         );
+        self.schedule_backup_summary_index_flush();
         Ok(BackupPublishOutcome::Created)
     }
 
@@ -419,15 +423,17 @@ impl FileChatRepository {
         let target_path = self.backups_dir.join(&target_file_name);
         let temp_path = self.backup_temp_path();
 
-        let stored_bytes = match (source_entry.format, target_format) {
+        let (stored_bytes, jsonl_record_count) = match (source_entry.format, target_format) {
             (BackupFormat::RawJsonl, BackupFormat::Zstd) => {
-                compress_backup(&source_path, &temp_path, source_entry.byte_len).await
+                let stats =
+                    compress_backup(&source_path, &temp_path, source_entry.byte_len).await?;
+                (stats.stored_bytes, Some(stats.jsonl_record_count))
             }
             (BackupFormat::Zstd, BackupFormat::RawJsonl) => {
-                decompress_backup(&source_path, &temp_path).await
+                (decompress_backup(&source_path, &temp_path).await?, None)
             }
             _ => return Ok(None),
-        }?;
+        };
 
         let result = async {
             let policy = self.backup_policy.read().await;
@@ -470,8 +476,21 @@ impl FileChatRepository {
             }
             drop(policy);
 
-            self.remove_summary_cache_for_path(&source_path).await;
-            self.remove_summary_cache_for_path(&target_path).await;
+            let target_entry = BackupEntry {
+                logical_file_name: source_entry.logical_file_name.clone(),
+                file_name: target_file_name,
+                format: target_format,
+                parsed_prefix: source_entry.parsed_prefix.clone(),
+                modified: source_entry.modified,
+                byte_len: stored_bytes,
+                content_signature: source_entry.content_signature,
+            };
+            if let Some(jsonl_record_count) = jsonl_record_count {
+                self.record_backup_jsonl_count(&target_entry, jsonl_record_count)
+                    .await;
+            } else {
+                self.update_backup_summary_signature(&target_entry).await;
+            }
             tracing::info!(
                 logical_name = %source_entry.logical_file_name,
                 from = ?source_entry.format,
@@ -481,15 +500,7 @@ impl FileChatRepository {
                 "Converted chat backup storage format"
             );
 
-            Ok(Some(BackupEntry {
-                logical_file_name: source_entry.logical_file_name.clone(),
-                file_name: target_file_name,
-                format: target_format,
-                parsed_prefix: source_entry.parsed_prefix.clone(),
-                modified: source_entry.modified,
-                byte_len: stored_bytes,
-                content_signature: source_entry.content_signature,
-            }))
+            Ok(Some(target_entry))
         }
         .await;
 
@@ -547,8 +558,9 @@ impl FileChatRepository {
                     )));
                 }
             }
-            inventory.remove(file_name);
-            self.remove_summary_cache_for_path(&path).await;
+            if let Some(entry) = inventory.remove(file_name) {
+                self.remove_backup_summary(&entry.logical_file_name).await;
+            }
         }
         Ok(())
     }
@@ -661,6 +673,8 @@ impl FileChatRepository {
 
         match result {
             Ok((inventory, maintenance_error)) => {
+                self.reconcile_backup_summary_index(&inventory).await;
+                self.schedule_backup_summary_index_flush();
                 state.inventory = BackupInventoryState::Ready(inventory);
                 maintenance_error.map_or(Ok(()), Err)
             }
@@ -671,21 +685,27 @@ impl FileChatRepository {
         }
     }
 
+    #[cfg(test)]
     pub(super) async fn list_chat_backup_files(
         &self,
     ) -> Result<Vec<ChatFileDescriptor>, DomainError> {
+        Ok(self
+            .list_chat_backup_entries()
+            .await?
+            .into_iter()
+            .map(|entry| ChatFileDescriptor {
+                character_name: String::new(),
+                file_name: entry.logical_file_name,
+                path: self.backups_dir.join(entry.file_name),
+            })
+            .collect())
+    }
+
+    pub(super) async fn list_chat_backup_entries(&self) -> Result<Vec<BackupEntry>, DomainError> {
         let mut state = self.backup_history.lock().await;
         self.ensure_backup_inventory_ready(&mut state).await?;
         let inventory = ready_inventory(&state.inventory)?;
-        Ok(inventory
-            .entries
-            .iter()
-            .map(|entry| ChatFileDescriptor {
-                character_name: String::new(),
-                file_name: entry.logical_file_name.clone(),
-                path: self.backups_dir.join(&entry.file_name),
-            })
-            .collect())
+        Ok(inventory.entries.clone())
     }
 
     pub(super) async fn delete_chat_backup_from_inventory(
@@ -718,8 +738,9 @@ impl FileChatRepository {
         inventory.remove(&file_name);
         drop(state);
 
-        self.remove_summary_cache_for_path(&path).await;
-        self.flush_summary_index_if_needed().await
+        self.remove_backup_summary(&logical_file_name).await;
+        self.schedule_backup_summary_index_flush();
+        Ok(())
     }
 }
 

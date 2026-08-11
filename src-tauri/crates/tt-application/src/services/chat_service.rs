@@ -22,7 +22,9 @@ use tt_ports::repositories::agent_workspace_lifecycle_repository::{
     AgentPersistentStatePrune, AgentPersistentStatePruneRequest,
 };
 use tt_ports::repositories::character_repository::CharacterRepository;
-use tt_ports::repositories::chat_repository::{ChatExportFormat, ChatImportFormat, ChatRepository};
+use tt_ports::repositories::chat_repository::{
+    ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatRepository,
+};
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
     ChatPayloadTail, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat,
@@ -369,6 +371,15 @@ impl ChatService {
 
         let results = self.chat_repository.list_chat_backups().await?;
         Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
+    }
+
+    /// List chat backup metadata without reading backup payloads.
+    pub async fn list_chat_backup_catalog(
+        &self,
+    ) -> Result<Vec<ChatBackupCatalogEntry>, ApplicationError> {
+        tracing::info!("Listing chat backup catalog");
+
+        Ok(self.chat_repository.list_chat_backup_catalog().await?)
     }
 
     /// Decode a chat backup into a temporary JSONL file for streaming consumers.

@@ -385,9 +385,8 @@ impl FileChatRepository {
 
         target_entry.modified = source_entry.modified;
         inventory.remove(&existing.file_name);
-        inventory.insert(target_entry)?;
-        self.remove_summary_cache_for_path(&source_path).await;
-        self.remove_summary_cache_for_path(&target_path).await;
+        inventory.insert(target_entry.clone())?;
+        self.update_backup_summary_signature(&target_entry).await;
         tracing::warn!(
             logical_name = %existing.logical_file_name,
             kept = ?target_format,

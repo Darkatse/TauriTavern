@@ -10,6 +10,7 @@ mod backup;
 mod backup_codec;
 mod backup_inventory;
 mod backup_restore;
+mod backup_summary;
 mod cache;
 mod chat_dir_resolver;
 mod chat_payload_commit;
@@ -33,6 +34,7 @@ mod windowed_payload_io;
 mod tests;
 
 use self::backup_inventory::BackupHistoryState;
+use self::backup_summary::BackupSummaryCache;
 use self::cache::MemoryCache;
 use self::summary::SummaryCache;
 use crate::chat_directory_identity::{
@@ -83,6 +85,7 @@ pub struct FileChatRepository {
     current_content_signatures: Mutex<ContentSignatureState>,
     memory_cache: Arc<Mutex<MemoryCache>>,
     summary_cache: Arc<Mutex<SummaryCache>>,
+    backup_summary_cache: Arc<Mutex<BackupSummaryCache>>,
     chat_aliases: SharedChatAliasStore,
     backup_policy: Arc<RwLock<tt_domain::models::settings::ChatBackupSettings>>,
     backup_history: Arc<Mutex<BackupHistoryState>>,
@@ -162,7 +165,22 @@ impl FileChatRepository {
                     .join("chat_summary_index_v1.json")
             })
             .unwrap_or_else(|| backups_dir.join("chat_summary_index_v1.json"));
-        let summary_cache = Arc::new(Mutex::new(SummaryCache::new(summary_index_path)));
+        let summary_cache = Arc::new(Mutex::new(SummaryCache::new(
+            summary_index_path,
+            backups_dir.clone(),
+        )));
+        let backup_summary_index_path = backups_dir
+            .parent()
+            .map(|default_user_dir| {
+                default_user_dir
+                    .join("user")
+                    .join("cache")
+                    .join("chat_backup_summary_index_v1.json")
+            })
+            .unwrap_or_else(|| backups_dir.join("chat_backup_summary_index_v1.json"));
+        let backup_summary_cache = Arc::new(Mutex::new(BackupSummaryCache::new(
+            backup_summary_index_path,
+        )));
 
         let path_write_locks = Arc::new(Mutex::new(HashMap::new()));
 
@@ -177,6 +195,7 @@ impl FileChatRepository {
             current_content_signatures: Mutex::new(ContentSignatureState::default()),
             memory_cache,
             summary_cache,
+            backup_summary_cache,
             chat_aliases,
             backup_policy: Arc::new(RwLock::new(backup_settings)),
             backup_history: Arc::new(Mutex::new(BackupHistoryState::new())),

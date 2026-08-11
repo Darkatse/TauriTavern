@@ -55,6 +55,16 @@ pub struct ChatSearchResult {
     pub chat_metadata: Option<Value>,
 }
 
+/// Metadata-only entry for the chat backup catalog.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChatBackupCatalogEntry {
+    pub file_name: String,
+    pub stored_size: u64,
+    pub backup_date: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_count: Option<usize>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatBackupStorageStats {
     pub original_bytes: u64,

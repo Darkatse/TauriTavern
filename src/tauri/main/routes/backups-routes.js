@@ -67,8 +67,26 @@ async function createChatBackupStream(context, path) {
 }
 
 export function registerBackupsRoutes(router, context, { jsonResponse, textResponse }) {
-    router.post('/api/backups/chat/get', async () => {
+    router.post('/api/backups/chat/get', async ({ body }) => {
         try {
+            if (body?.detail === 'catalog') {
+                const entries = await context.safeInvoke('list_chat_backup_catalog');
+                const catalog = Array.isArray(entries)
+                    ? entries.map((entry) => {
+                        const mapped = {
+                            file_name: context.ensureJsonl(entry.file_name || ''),
+                            file_size: context.formatFileSize(entry.stored_size),
+                            backup_date: Number(entry.backup_date || 0),
+                        };
+                        if (Number.isInteger(entry.message_count)) {
+                            mapped.message_count = entry.message_count;
+                        }
+                        return mapped;
+                    })
+                    : [];
+                return jsonResponse(catalog);
+            }
+
             const backups = await context.safeInvoke('list_chat_backups');
             const mapped = Array.isArray(backups)
                 ? backups.map((entry) => ({

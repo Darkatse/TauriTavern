@@ -5,10 +5,10 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage};
 
 pub use super::chat_types::{
-    ChatExportFormat, ChatImportFormat, ChatMessageReadItem, ChatMessageRole,
-    ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult,
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery,
-    LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
+    ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatMessageReadItem,
+    ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery,
+    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatSearchResult,
+    FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
 };
 
 /// Repository interface for chat management
@@ -105,6 +105,9 @@ pub trait ChatRepository: Send + Sync {
 
     /// List all chat backup files.
     async fn list_chat_backups(&self) -> Result<Vec<ChatSearchResult>, DomainError>;
+
+    /// List chat backup metadata without opening backup payloads.
+    async fn list_chat_backup_catalog(&self) -> Result<Vec<ChatBackupCatalogEntry>, DomainError>;
 
     /// Decode a chat backup into a temporary JSONL file for streaming consumers.
     async fn materialize_chat_backup(&self, backup_file_name: &str)

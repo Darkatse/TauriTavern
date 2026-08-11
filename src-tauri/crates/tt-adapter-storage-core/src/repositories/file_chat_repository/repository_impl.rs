@@ -16,9 +16,10 @@ use crate::jsonl_utils::{
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
 use tt_ports::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatMessageSearchHit, ChatMessageSearchQuery,
-    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatRepository,
-    ChatSearchResult, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat,
+    ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatMessageSearchHit,
+    ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor,
+    ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
+    PinnedCharacterChat,
 };
 
 use super::FileChatRepository;
@@ -508,16 +509,16 @@ impl ChatRepository for FileChatRepository {
     }
 
     async fn list_chat_backups(&self) -> Result<Vec<ChatSearchResult>, DomainError> {
-        let descriptors = self.list_chat_backup_files().await?;
-        let mut results = Vec::with_capacity(descriptors.len());
+        let entries = self.list_chat_backup_entries().await?;
+        let mut results = Vec::with_capacity(entries.len());
 
-        for descriptor in descriptors {
-            match self.get_chat_summary(&descriptor, false).await {
+        for entry in entries {
+            match self.get_chat_backup_summary(&entry).await {
                 Ok(summary) => results.push(summary),
                 Err(error) => {
                     tracing::warn!(
                         "Failed to read chat backup summary {:?}: {}",
-                        descriptor.path,
+                        self.backups_dir.join(entry.file_name),
                         error
                     );
                 }
@@ -525,8 +526,12 @@ impl ChatRepository for FileChatRepository {
         }
 
         results.sort_by_key(|result| Reverse(result.date));
-        self.flush_summary_index_if_needed().await?;
+        self.schedule_backup_summary_index_flush();
         Ok(results)
+    }
+
+    async fn list_chat_backup_catalog(&self) -> Result<Vec<ChatBackupCatalogEntry>, DomainError> {
+        self.list_chat_backup_catalog_entries().await
     }
 
     async fn materialize_chat_backup(

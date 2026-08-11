@@ -13,6 +13,73 @@ function createBackupsRouter(context) {
     return router;
 }
 
+test('/api/backups/chat/get uses the metadata-only catalog only when requested', async () => {
+    const calls = [];
+    const router = createBackupsRouter({
+        safeInvoke: async (command) => {
+            calls.push(command);
+            if (command === 'list_chat_backup_catalog') {
+                return [
+                    {
+                        file_name: 'chat_alice_20260722-120000.jsonl',
+                        stored_size: 1536,
+                        backup_date: 1234,
+                        message_count: 7,
+                    },
+                    {
+                        file_name: 'chat_legacy_20260721-120000.jsonl',
+                        stored_size: 512,
+                        backup_date: 1000,
+                    },
+                ];
+            }
+            return [{
+                file_name: 'chat_legacy_20260722-120000.jsonl',
+                file_size: 2048,
+                message_count: 3,
+                preview: 'legacy preview',
+                date: 4321,
+            }];
+        },
+        ensureJsonl: (name) => name,
+        formatFileSize: (size) => `${size} bytes`,
+    });
+
+    const catalogResponse = await router.handle({
+        method: 'POST',
+        path: '/api/backups/chat/get',
+        body: { detail: 'catalog' },
+    });
+    assert.deepEqual(await catalogResponse.json(), [
+        {
+            file_name: 'chat_alice_20260722-120000.jsonl',
+            file_size: '1536 bytes',
+            backup_date: 1234,
+            message_count: 7,
+        },
+        {
+            file_name: 'chat_legacy_20260721-120000.jsonl',
+            file_size: '512 bytes',
+            backup_date: 1000,
+        },
+    ]);
+
+    const legacyResponse = await router.handle({
+        method: 'POST',
+        path: '/api/backups/chat/get',
+        body: {},
+    });
+    assert.deepEqual(await legacyResponse.json(), [{
+        file_name: 'chat_legacy_20260722-120000.jsonl',
+        file_size: '2048 bytes',
+        chat_items: 3,
+        message_count: 3,
+        preview_message: 'legacy preview',
+        last_mes: 4321,
+    }]);
+    assert.deepEqual(calls, ['list_chat_backup_catalog', 'list_chat_backups']);
+});
+
 test('/api/backups/chat/download streams and discards the decoded materialization at EOF', async () => {
     const calls = [];
     const router = createBackupsRouter({
@@ -268,6 +335,7 @@ test('chat backup browser views through a stream and restores by logical backup 
 
     assert.match(source, /visitJsonlStream\(response\.body,/);
     assert.match(source, /formData\.set\('backup_name', name\)/);
+    assert.match(source, /JSON\.stringify\(\{ detail: 'catalog' \}\)/);
     assert.doesNotMatch(source, /response\.blob\(\)|new File\(\[blob\]/);
     assert.doesNotMatch(routeSource, /get_chat_backup_raw|normalizeBinaryPayload/);
     assert.doesNotMatch(commandSource, /get_chat_backup_raw/);

@@ -787,6 +787,8 @@ async fn zstd_setting_converts_all_backups_in_both_directions() {
         .expect("create raw backup");
     let raw_name = backup_file_names(&root).await.pop().expect("raw backup");
     let logical_name = raw_name.clone();
+    // Exercise count backfill from conversion rather than signature-only preservation.
+    repository.remove_backup_summary(&logical_name).await;
     let original_modified = fs::metadata(root.join("backups").join(&raw_name))
         .await
         .expect("read raw metadata")
@@ -809,6 +811,14 @@ async fn zstd_setting_converts_all_backups_in_both_directions() {
             .modified()
             .expect("read compressed mtime"),
         original_modified
+    );
+    assert_eq!(
+        repository
+            .list_chat_backup_catalog()
+            .await
+            .expect("list compressed backup catalog")[0]
+            .message_count,
+        Some(1)
     );
     let materialized = repository
         .materialize_chat_backup(&logical_name)
@@ -841,6 +851,14 @@ async fn zstd_setting_converts_all_backups_in_both_directions() {
             .modified()
             .expect("read restored mtime"),
         original_modified
+    );
+    assert_eq!(
+        repository
+            .list_chat_backup_catalog()
+            .await
+            .expect("list raw backup catalog")[0]
+            .message_count,
+        Some(1)
     );
 
     let logical_names: Vec<_> = repository
@@ -1961,6 +1979,43 @@ async fn backup_list_uses_inventory_until_an_explicit_reconcile() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn backup_catalog_reuses_its_own_persisted_count_without_opening_payloads() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let source = root.join("source.jsonl");
+    fs::write(
+        &source,
+        payload_to_jsonl(&payload_with_integrity("catalog")),
+    )
+    .await
+    .expect("write source");
+    repository
+        .backup_chat_file_explicit(&source, "Alice")
+        .await
+        .expect("create backup");
+    repository
+        .flush_backup_summary_index_if_needed()
+        .await
+        .expect("persist backup summary index");
+
+    let reopened = repository_for_root(&root);
+    apply_and_reconcile_backups(&reopened, backup_policy(-1, -1, -1)).await;
+    let physical_name = backup_file_names(&root).await.pop().expect("backup file");
+    fs::remove_file(root.join("backups").join(physical_name))
+        .await
+        .expect("remove payload behind inventory");
+
+    let catalog = reopened
+        .list_chat_backup_catalog()
+        .await
+        .expect("catalog stays metadata-only");
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].message_count, Some(1));
+
+    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
@@ -4037,7 +4092,7 @@ async fn search_cache_is_invalidated_after_import_chat_payload() {
 }
 
 #[tokio::test]
-async fn summary_index_is_persisted_and_reloaded() {
+async fn summary_index_is_persisted_reloaded_and_prunes_legacy_backup_entries() {
     let (repository, root) = setup_repository().await;
 
     let payload = vec![
@@ -4075,7 +4130,7 @@ async fn summary_index_is_persisted_and_reloaded() {
     let persisted_text = fs::read_to_string(&index_path)
         .await
         .expect("read persisted index");
-    let persisted_json: Value =
+    let mut persisted_json: Value =
         serde_json::from_str(&persisted_text).expect("parse persisted index as json");
     assert_eq!(
         persisted_json
@@ -4084,6 +4139,22 @@ async fn summary_index_is_persisted_and_reloaded() {
             .map(|entries| entries.len()),
         Some(1)
     );
+    let mut legacy_backup_entry = persisted_json["entries"][0].clone();
+    legacy_backup_entry["key"] = Value::String(
+        root.join("backups/chat_alice_legacy.jsonl")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    persisted_json["entries"]
+        .as_array_mut()
+        .expect("summary index entries")
+        .push(legacy_backup_entry);
+    fs::write(
+        &index_path,
+        serde_json::to_vec(&persisted_json).expect("serialize legacy summary index"),
+    )
+    .await
+    .expect("write legacy summary index");
 
     let reloaded_repository = repository_for_root(&root);
     reloaded_repository
@@ -4097,6 +4168,13 @@ async fn summary_index_is_persisted_and_reloaded() {
         .expect("list summaries after reload");
     assert_eq!(reloaded.len(), 1);
     assert_eq!(reloaded[0].preview, "persist me");
+    let migrated: Value = serde_json::from_slice(
+        &fs::read(&index_path)
+            .await
+            .expect("read migrated summary index"),
+    )
+    .expect("parse migrated summary index");
+    assert_eq!(migrated["entries"].as_array().map(Vec::len), Some(1));
 
     let _ = fs::remove_dir_all(&root).await;
 }

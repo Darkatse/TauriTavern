@@ -128,6 +128,7 @@ export {};
  *   | 'list_mcp_servers'
  *   | 'list_group_chat_store_keys'
  *   | 'list_chat_backups'
+ *   | 'list_chat_backup_catalog'
  *   | 'list_recent_chat_summaries'
  *   | 'list_recent_group_chat_summaries'
  *   | 'list_skill_files'

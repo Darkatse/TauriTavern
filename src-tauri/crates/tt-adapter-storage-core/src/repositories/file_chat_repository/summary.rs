@@ -167,6 +167,7 @@ pub(super) struct SummaryCache {
     search_cache: HashMap<String, SearchCacheEntry>,
     version: u64,
     index_path: PathBuf,
+    backups_dir: PathBuf,
     loaded: bool,
     dirty: bool,
 }
@@ -197,13 +198,14 @@ struct SummaryStatsSnapshotEntry {
 }
 
 impl SummaryCache {
-    pub(super) fn new(index_path: PathBuf) -> Self {
+    pub(super) fn new(index_path: PathBuf, backups_dir: PathBuf) -> Self {
         Self {
             entries: HashMap::new(),
             stats_entries: HashMap::new(),
             search_cache: HashMap::new(),
             version: 0,
             index_path,
+            backups_dir,
             loaded: false,
             dirty: false,
         }
@@ -248,7 +250,7 @@ impl SummaryCache {
             }
         };
 
-        let snapshot: SummaryIndexSnapshot = match serde_json::from_slice(&bytes) {
+        let mut snapshot: SummaryIndexSnapshot = match serde_json::from_slice(&bytes) {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 tracing::warn!(
@@ -268,6 +270,15 @@ impl SummaryCache {
             );
             return Ok(());
         }
+
+        let previous_len = snapshot.entries.len() + snapshot.stats_entries.len();
+        snapshot
+            .entries
+            .retain(|entry| !Path::new(&entry.key).starts_with(&self.backups_dir));
+        snapshot
+            .stats_entries
+            .retain(|entry| !Path::new(&entry.key).starts_with(&self.backups_dir));
+        self.dirty = snapshot.entries.len() + snapshot.stats_entries.len() != previous_len;
 
         self.version = snapshot.version;
         for entry in snapshot.entries {
@@ -1096,7 +1107,7 @@ impl FileChatRepository {
         }
     }
 
-    async fn scan_chat_summary_file(
+    pub(super) async fn scan_chat_summary_file(
         &self,
         path: &Path,
         fallback_character_name: &str,

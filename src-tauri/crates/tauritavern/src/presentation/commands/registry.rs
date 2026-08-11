@@ -37,6 +37,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_commands::import_chat,
         super::chat_commands::export_chat,
         super::chat_commands::backup_chat,
+        super::chat_commands::list_chat_backup_catalog,
         super::chat_commands::list_chat_backups,
         super::chat_commands::materialize_chat_backup,
         super::chat_commands::discard_chat_backup_materialization,

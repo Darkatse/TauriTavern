@@ -12,6 +12,7 @@ use tt_application::dto::chat_dto::{
 };
 use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_application::errors::ApplicationError;
+use tt_contracts::chat::ChatBackupCatalogEntry;
 use tt_ports::repositories::chat_repository::{
     ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
 };
@@ -290,6 +291,20 @@ pub async fn list_chat_backups(
         .list_chat_backups()
         .await
         .map_err(map_command_error("Failed to list chat backups"))
+}
+
+#[tauri::command]
+pub async fn list_chat_backup_catalog(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ChatBackupCatalogEntry>, CommandError> {
+    log_command("list_chat_backup_catalog");
+
+    app_state
+        .services
+        .chat_service
+        .list_chat_backup_catalog()
+        .await
+        .map_err(map_command_error("Failed to list chat backup catalog"))
 }
 
 #[tauri::command]
