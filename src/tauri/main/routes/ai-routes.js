@@ -412,19 +412,11 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
     let cancelAfterStart = false;
     const pendingFrames = [];
 
-    const requestUpstreamCancel = async () => {
+    const closeSession = async () => {
         try {
-            await context.safeInvoke('cancel_chat_completion_stream', { streamId });
+            await context.safeInvoke('close_chat_completion_stream', { streamId });
         } catch (error) {
-            console.debug('Failed to cancel chat completion stream:', error);
-        }
-    };
-
-    const releaseSession = async () => {
-        try {
-            await context.safeInvoke('release_chat_completion_stream', { streamId });
-        } catch (error) {
-            console.debug('Failed to release chat completion stream:', error);
+            console.debug('Failed to close chat completion stream:', error);
         }
     };
 
@@ -494,10 +486,9 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             if (!streamStartSettled) {
                 cancelAfterStart = true;
             }
-
-            await requestUpstreamCancel();
-        } else if (streamStartSettled) {
-            await releaseSession();
+        }
+        if (cancelUpstream || streamStartSettled) {
+            await closeSession();
         }
 
         const isSuccessfulCompletion = sawDone && !cancelUpstream && !errorPayload;
@@ -528,7 +519,6 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             if (data === '[DONE]') {
                 sawDone = true;
                 flushFrames();
-                void closeStream();
                 return;
             }
 
@@ -614,7 +604,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                 // after start settles to avoid a missed pre-registration cancel race.
                 if (cancelAfterStart) {
                     cancelAfterStart = false;
-                    await requestUpstreamCancel();
+                    await closeSession();
                 }
             } catch (error) {
                 const message = getUserFacingErrorMessage(error);
@@ -653,7 +643,6 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
         shouldNotifyCompletion,
         getNotificationTexts: getGenerationNotificationTexts,
         normalizeFailureNotificationBody,
-        extractFailureStatusCode: extractHttpStatusCode,
         estimateTokenCount,
         progressThrottleMs: ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS,
         progressMinCharsDelta: ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA,

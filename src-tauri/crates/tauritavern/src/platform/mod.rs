@@ -1,3 +1,4 @@
+pub mod generation_background;
 #[cfg(target_os = "ios")]
 pub mod ios_document_picker;
 #[cfg(target_os = "ios")]

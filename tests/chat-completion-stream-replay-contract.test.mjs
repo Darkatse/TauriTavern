@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { jsonResponse } from '../src/tauri/main/http-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
+import { consumeChatCompletionStream } from '../src/tauri/main/services/ai/chat-completion-stream-consumer.js';
 
 function installBrowserShims() {
     globalThis.window ??= {};
@@ -19,14 +20,48 @@ function installBrowserShims() {
     };
 }
 
-test('chat completion stream advances afterSeq and releases the Rust session', async () => {
+test('chat completion stream retries one failed cursor read', async () => {
+    const cursors = [];
+    const status = await consumeChatCompletionStream({
+        streamId: 'stream-1',
+        isClosed: () => false,
+        onEvent: () => {},
+        safeInvoke: async (_command, { afterSeq }) => {
+            cursors.push(afterSeq);
+            if (cursors.length === 1) {
+                throw new Error('temporary invoke failure');
+            }
+            return { events: [], status: 'done' };
+        },
+    });
+
+    assert.equal(status, 'done');
+    assert.deepEqual(cursors, [0, 0]);
+
+    let failedReads = 0;
+    await assert.rejects(
+        consumeChatCompletionStream({
+            streamId: 'stream-2',
+            isClosed: () => false,
+            onEvent: () => {},
+            safeInvoke: async () => {
+                failedReads += 1;
+                throw new Error('persistent invoke failure');
+            },
+        }),
+        /persistent invoke failure/,
+    );
+    assert.equal(failedReads, 2);
+});
+
+test('chat completion stream advances afterSeq and closes the Rust session', async () => {
     installBrowserShims();
     const { registerAiRoutes } = await import('../src/tauri/main/routes/ai-routes.js');
     const router = createRouteRegistry();
     const calls = [];
-    let releaseSession;
-    const released = new Promise((resolve) => {
-        releaseSession = resolve;
+    let closeSession;
+    const closed = new Promise((resolve) => {
+        closeSession = resolve;
     });
 
     registerAiRoutes(router, {
@@ -49,8 +84,8 @@ test('chat completion stream advances afterSeq and releases the Rust session', a
                     status: 'done',
                 };
             }
-            if (command === 'release_chat_completion_stream') {
-                releaseSession();
+            if (command === 'close_chat_completion_stream') {
+                closeSession();
                 return null;
             }
             throw new Error(`Unexpected invoke: ${command}`);
@@ -66,14 +101,14 @@ test('chat completion stream advances afterSeq and releases the Rust session', a
 
     assert.equal(response.status, 200);
     assert.equal(await response.text(), 'data: {"choices":[]}\n\ndata: [DONE]\n\n');
-    await released;
+    await closed;
 
     const streamCalls = calls.filter(({ command }) => command.includes('chat_completion_stream'));
     assert.deepEqual(streamCalls.map(({ command }) => command), [
         'start_chat_completion_stream',
         'read_chat_completion_stream',
         'read_chat_completion_stream',
-        'release_chat_completion_stream',
+        'close_chat_completion_stream',
     ]);
     assert.equal(streamCalls[0].args.streamId, streamCalls[3].args.streamId);
 });

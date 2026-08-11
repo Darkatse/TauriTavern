@@ -104,11 +104,9 @@ function createStreamProgressReporter({
  *     show: (params: { title: string; body: string }) => Promise<void>;
  *   };
  *   statusBridge: {
- *     start: () => void;
  *     supportsProgressUpdates: () => boolean;
  *     reportProgress: (outputTokens: number) => boolean;
- *     finish: (params: { success: boolean; statusCode: number; showCompletionNotification: boolean }) => boolean;
- *     stop: () => void;
+ *     handlesCompletion: () => boolean;
  *   };
  *   shouldNotifyCompletion: () => boolean;
  *   getNotificationTexts: () => {
@@ -118,7 +116,6 @@ function createStreamProgressReporter({
  *     failureBody: string;
  *   };
  *   normalizeFailureNotificationBody: (errorMessage: string) => string;
- *   extractFailureStatusCode: (errorMessage: string) => number;
  *   estimateTokenCount: (text: string) => number;
  *   progressThrottleMs: number;
  *   progressMinCharsDelta: number;
@@ -130,7 +127,6 @@ export function createGenerationLifecycleService({
     shouldNotifyCompletion,
     getNotificationTexts,
     normalizeFailureNotificationBody,
-    extractFailureStatusCode,
     estimateTokenCount,
     progressThrottleMs,
     progressMinCharsDelta,
@@ -205,10 +201,6 @@ export function createGenerationLifecycleService({
                                 preparedPermissionState = 'prompt';
                             });
                     }
-
-                    if (activeCount === 1) {
-                        statusBridge.start();
-                    }
                 },
 
                 /**
@@ -218,7 +210,7 @@ export function createGenerationLifecycleService({
                  *   notifyFailure?: boolean;
                  * }} [params]
                  */
-                async finish({ success = false, errorMessage = '', notifyFailure = true } = {}) {
+                finish({ success = false, errorMessage = '', notifyFailure = true } = {}) {
                     if (!active) {
                         return;
                     }
@@ -231,32 +223,26 @@ export function createGenerationLifecycleService({
                     }
 
                     const shouldNotify = !quiet && shouldNotifyCompletion();
-                    const handledByNative = statusBridge.finish({
-                        success: Boolean(success),
-                        statusCode: notifyFailure ? extractFailureStatusCode(errorMessage) : 0,
-                        showCompletionNotification: Boolean(shouldNotify && (success || notifyFailure)),
-                    });
+                    const handledByNative = statusBridge.handlesCompletion();
 
                     if (!handledByNative && shouldNotify) {
-                        try {
-                            const permissionState = preparedPermissionState
-                                ?? await notificationService.getPermissionState();
-                            preparedPermissionState = permissionState;
+                        void (async () => {
+                            try {
+                                const permissionState = preparedPermissionState
+                                    ?? await notificationService.getPermissionState();
+                                preparedPermissionState = permissionState;
 
-                            if (permissionState === 'granted') {
-                                await showCompletionNotification({
-                                    success: Boolean(success),
-                                    errorMessage,
-                                    notifyFailure: Boolean(notifyFailure),
-                                });
+                                if (permissionState === 'granted') {
+                                    await showCompletionNotification({
+                                        success: Boolean(success),
+                                        errorMessage,
+                                        notifyFailure: Boolean(notifyFailure),
+                                    });
+                                }
+                            } catch (error) {
+                                console.error('Failed to show generation completion notification:', error);
                             }
-                        } catch (error) {
-                            console.error('Failed to show generation completion notification:', error);
-                        }
-                    }
-
-                    if (!handledByNative) {
-                        statusBridge.stop();
+                        })();
                     }
                 },
 

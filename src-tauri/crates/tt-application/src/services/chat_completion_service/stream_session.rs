@@ -11,6 +11,14 @@ use crate::errors::ApplicationError;
 
 const READ_BATCH_SIZE: usize = 64;
 const MAX_REPLAY_BYTES: usize = 16 * 1024 * 1024;
+const PROVIDER_DONE_SENTINEL: &str = "[DONE]";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StreamAppendOutcome {
+    Appended,
+    ProviderDone,
+    SessionClosed,
+}
 
 #[derive(Default)]
 pub(super) struct StreamSessionRegistry {
@@ -56,9 +64,9 @@ impl StreamSessionRegistry {
         &self,
         stream_id: &str,
         data: String,
-    ) -> Result<bool, ApplicationError> {
+    ) -> Result<StreamAppendOutcome, ApplicationError> {
         let Some(session) = self.active.read().await.get(stream_id).cloned() else {
-            return Ok(false);
+            return Ok(StreamAppendOutcome::SessionClosed);
         };
 
         session.append(data).await
@@ -81,13 +89,13 @@ impl StreamSessionRegistry {
         session.fail(error.to_string(), details).await;
     }
 
-    pub(super) async fn remove(&self, stream_id: &str) -> bool {
+    pub(super) async fn close(&self, stream_id: &str) -> bool {
         let session = self.active.write().await.remove(stream_id);
         let Some(session) = session else {
             return false;
         };
 
-        session.cancel().await;
+        session.close().await;
         true
     }
 }
@@ -116,10 +124,10 @@ impl StreamSession {
         self.changed.notify_one();
     }
 
-    async fn append(&self, data: String) -> Result<bool, ApplicationError> {
+    async fn append(&self, data: String) -> Result<StreamAppendOutcome, ApplicationError> {
         let mut state = self.state.lock().await;
         if state.status != ChatCompletionStreamStatusDto::Running {
-            return Ok(false);
+            return Ok(StreamAppendOutcome::SessionClosed);
         }
         if state.buffered_bytes.saturating_add(data.len()) > MAX_REPLAY_BYTES {
             return Err(ApplicationError::InternalError(format!(
@@ -128,15 +136,30 @@ impl StreamSession {
             )));
         }
 
+        let provider_done = data == PROVIDER_DONE_SENTINEL;
         let seq = state.next_seq;
         state.next_seq += 1;
         state.buffered_bytes += data.len();
         state
             .events
             .push_back(ChatCompletionStreamEventDto::Chunk { seq, data });
+
+        if provider_done {
+            let seq = state.next_seq;
+            state.next_seq += 1;
+            state
+                .events
+                .push_back(ChatCompletionStreamEventDto::Done { seq });
+            state.status = ChatCompletionStreamStatusDto::Done;
+        }
+
         drop(state);
         self.wake_reader();
-        Ok(true)
+        Ok(if provider_done {
+            StreamAppendOutcome::ProviderDone
+        } else {
+            StreamAppendOutcome::Appended
+        })
     }
 
     async fn finish(&self) {
@@ -173,14 +196,18 @@ impl StreamSession {
         self.wake_reader();
     }
 
-    async fn cancel(&self) {
+    async fn close(&self) {
         let mut state = self.state.lock().await;
-        if state.status == ChatCompletionStreamStatusDto::Running {
+        let was_running = state.status == ChatCompletionStreamStatusDto::Running;
+        if was_running {
             state.status = ChatCompletionStreamStatusDto::Cancelled;
         }
         drop(state);
-        let _ = self.cancel.send(true);
-        self.wake_reader();
+
+        if was_running {
+            let _ = self.cancel.send(true);
+            self.wake_reader();
+        }
     }
 
     async fn read(
@@ -301,5 +328,39 @@ mod tests {
         let acknowledged = session.read(3).await.unwrap();
         assert!(acknowledged.events.is_empty());
         assert_eq!(acknowledged.status, ChatCompletionStreamStatusDto::Done);
+    }
+
+    #[tokio::test]
+    async fn provider_done_is_terminal_before_the_session_can_close() {
+        let (session, cancel) = StreamSession::new();
+
+        assert_eq!(
+            session
+                .append(PROVIDER_DONE_SENTINEL.to_string())
+                .await
+                .unwrap(),
+            StreamAppendOutcome::ProviderDone
+        );
+        session.close().await;
+
+        assert!(!*cancel.borrow());
+        let terminal = session.read(0).await.unwrap();
+        assert!(matches!(
+            terminal.events.as_slice(),
+            [
+                ChatCompletionStreamEventDto::Chunk { seq: 1, data },
+                ChatCompletionStreamEventDto::Done { seq: 2 },
+            ] if data == PROVIDER_DONE_SENTINEL
+        ));
+        assert_eq!(terminal.status, ChatCompletionStreamStatusDto::Done);
+    }
+
+    #[tokio::test]
+    async fn closing_a_running_session_signals_cancellation() {
+        let (session, cancel) = StreamSession::new();
+
+        session.close().await;
+
+        assert!(*cancel.borrow());
     }
 }

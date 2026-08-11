@@ -4,9 +4,17 @@
 <dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).ai-generation.*</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>TauriTavern uses the camera only to scan LAN Sync pairing QR codes between your devices.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>TauriTavern uses Local Network access only for LAN Sync between your devices on the same Wi‑Fi.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+	</array>
 </dict>
 </plist>

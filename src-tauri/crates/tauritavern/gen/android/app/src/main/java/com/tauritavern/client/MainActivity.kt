@@ -112,8 +112,6 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
     super.onCreate(savedInstanceState)
     installWebViewNavigationHooks()
     backNavigationController.register(onBackPressedDispatcher, this)
-    // Keep a foreground service for the whole app session to reduce OEM background kills.
-    aiGenerationNotifier.ensureKeepAliveService()
     aiGenerationNotifier.acknowledgeCompletionNotification()
     insetsBridge.onCreate()
     captureShareIntent(intent)

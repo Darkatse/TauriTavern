@@ -6,16 +6,18 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.core.content.ContextCompat
 
 class AndroidAiGenerationNotifier(
   private val context: Context,
 ) {
-  fun ensureKeepAliveService() {
+  fun onGenerationStart(taskId: String) {
     ContextCompat.startForegroundService(
       context,
       Intent(context, AiGenerationForegroundService::class.java).apply {
-        action = AiGenerationForegroundService.ACTION_ENSURE_KEEPALIVE
+        action = AiGenerationForegroundService.ACTION_GENERATION_START
+        putExtra(AiGenerationForegroundService.EXTRA_TASK_ID, taskId)
       },
     )
   }
@@ -26,54 +28,41 @@ class AndroidAiGenerationNotifier(
     notificationManager.cancel(AiGenerationForegroundService.COMPLETION_NOTIFICATION_ID)
   }
 
-  fun onGenerationStart() {
-    ContextCompat.startForegroundService(
-      context,
-      Intent(context, AiGenerationForegroundService::class.java).apply {
-        action = AiGenerationForegroundService.ACTION_GENERATION_START
-      },
-    )
-  }
-
   fun onGenerationProgress(outputTokens: Long) {
-    ContextCompat.startForegroundService(
-      context,
-      Intent(context, AiGenerationForegroundService::class.java).apply {
-        action = AiGenerationForegroundService.ACTION_GENERATION_PROGRESS
-        putExtra(AiGenerationForegroundService.EXTRA_OUTPUT_TOKENS, outputTokens)
-      },
-    )
+    try {
+      context.startService(
+        Intent(context, AiGenerationForegroundService::class.java).apply {
+          action = AiGenerationForegroundService.ACTION_GENERATION_PROGRESS
+          putExtra(AiGenerationForegroundService.EXTRA_OUTPUT_TOKENS, outputTokens)
+        },
+      )
+    } catch (error: IllegalStateException) {
+      Log.d(LOG_TAG, "Ignoring a background progress update after the service stopped", error)
+    }
   }
 
   fun onGenerationFinish(
-    success: Boolean,
+    taskId: String,
+    outcome: String,
     statusCode: Int,
-    showCompletionNotification: Boolean,
+    notifyCompletion: Boolean,
   ) {
-    ContextCompat.startForegroundService(
-      context,
+    context.startService(
       Intent(context, AiGenerationForegroundService::class.java).apply {
         action = AiGenerationForegroundService.ACTION_GENERATION_FINISH
-        putExtra(AiGenerationForegroundService.EXTRA_SUCCESS, success)
+        putExtra(AiGenerationForegroundService.EXTRA_TASK_ID, taskId)
+        putExtra(AiGenerationForegroundService.EXTRA_OUTCOME, outcome)
         putExtra(AiGenerationForegroundService.EXTRA_STATUS_CODE, statusCode)
         putExtra(
           AiGenerationForegroundService.EXTRA_SHOW_COMPLETION_NOTIFICATION,
-          showCompletionNotification,
+          notifyCompletion,
         )
       },
     )
   }
 
-  fun onGenerationStop() {
-    ContextCompat.startForegroundService(
-      context,
-      Intent(context, AiGenerationForegroundService::class.java).apply {
-        action = AiGenerationForegroundService.ACTION_GENERATION_STOP
-      },
-    )
-  }
-
   companion object {
+    private const val LOG_TAG = "TauriTavernAI"
     internal const val KEEPALIVE_CHANNEL_ID = "tauritavern_ai_generation_keepalive"
     internal const val LIVE_UPDATE_CHANNEL_ID = "tauritavern_ai_generation_live_updates"
 

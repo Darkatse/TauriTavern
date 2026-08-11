@@ -36,12 +36,12 @@ pub async fn generate_chat_completion(
     validate_stream_id(&request_id)?;
     log_command(format!("generate_chat_completion {}", request_id));
 
-    let service = app_state.services.chat_completion_service.clone();
-    let cancel = service.register_generation(&request_id).await;
-    let result = service.generate_with_cancel(dto, cancel).await;
-    service.complete_generation(&request_id).await;
-
-    result.map_err(map_command_error("Failed to generate chat completion"))
+    app_state
+        .services
+        .chat_completion_service
+        .generate_request(&request_id, dto)
+        .await
+        .map_err(map_command_error("Failed to generate chat completion"))
 }
 
 #[tauri::command]
@@ -81,35 +81,18 @@ pub async fn read_chat_completion_stream(
 }
 
 #[tauri::command]
-pub async fn cancel_chat_completion_stream(
+pub async fn close_chat_completion_stream(
     stream_id: String,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     let stream_id = stream_id.trim().to_string();
     validate_stream_id(&stream_id)?;
-    log_command(format!("cancel_chat_completion_stream {}", stream_id));
+    log_command(format!("close_chat_completion_stream {}", stream_id));
 
     app_state
         .services
         .chat_completion_service
-        .remove_stream(&stream_id)
-        .await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn release_chat_completion_stream(
-    stream_id: String,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    let stream_id = stream_id.trim().to_string();
-    validate_stream_id(&stream_id)?;
-    log_command(format!("release_chat_completion_stream {}", stream_id));
-
-    app_state
-        .services
-        .chat_completion_service
-        .remove_stream(&stream_id)
+        .close_stream(&stream_id)
         .await;
     Ok(())
 }

@@ -109,11 +109,13 @@ pub(super) async fn build(
         repositories.mcp_server_repository.clone(),
         mcp_gateway,
     ));
+    let generation_background_runtime = crate::platform::generation_background::runtime(app_handle);
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository.clone(),
         repositories.secret_repository.clone(),
         repositories.settings_repository.clone(),
         repositories.prompt_cache_repository.clone(),
+        generation_background_runtime,
         ios_policy.clone(),
     ));
     let provider_metadata_service = Arc::new(ProviderMetadataService::new(

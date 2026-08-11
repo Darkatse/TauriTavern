@@ -15,7 +15,15 @@ export async function consumeChatCompletionStream({ safeInvoke, streamId, onEven
     let afterSeq = 0;
 
     while (!isClosed()) {
-        const result = await safeInvoke('read_chat_completion_stream', { streamId, afterSeq });
+        let result;
+        try {
+            result = await safeInvoke('read_chat_completion_stream', { streamId, afterSeq });
+        } catch {
+            if (isClosed()) {
+                return 'closed';
+            }
+            result = await safeInvoke('read_chat_completion_stream', { streamId, afterSeq });
+        }
         const events = Array.isArray(result?.events) ? result.events : [];
 
         for (const event of events) {

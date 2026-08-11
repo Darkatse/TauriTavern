@@ -236,3 +236,22 @@ xcrun assetutil --info /tmp/tt-appicon/Assets.car
 ```
 
 输出应包含 `UIAppearanceDark` 与 `ISAppearanceTintable`。若未来重新运行 `tauri icon`，必须重新生成并保留这三个 appearance 变体。
+
+## 7. AI 生成后台执行
+
+iOS Chat Completion 的后台租约由 Rust `ChatCompletionService` 持有，不依赖 WKWebView 的 Promise、Channel 或定时器继续运行：
+
+- iOS 26+ 的用户可见生成使用 `BGContinuedProcessingTask`，任务由用户操作立即提交，并在系统 Live Activity 中展示；
+- 流式生成以累计收到的 provider 响应字节作为单调递增的真实进度。因为 LLM 输出总量事先未知，`NSProgress` 保持 indeterminate，成功结束时再收敛到 100%；
+- iOS 16–25，以及不会展示系统 UI 的 quiet 内部生成，继续使用 `beginBackgroundTask`。`BGContinuedProcessingTask` 不适合无明确用户意图却会显示 Live Activity 的后台工作。
+
+生命周期契约：
+
+- 普通与流式 Chat Completion 在网络请求前取得后台租约；
+- 成功、失败或用户取消都会由 Rust 立即完成对应的系统任务；
+- 若系统先触发 expiration handler，原生适配器只结束后台保护并记录警告，不把“后台保护结束”伪装成“生成失败”；
+- 系统随后可以挂起应用；若进程仍存活，生成在恢复执行后继续等待真实 provider 结果、网络错误或用户取消；
+- 已产生的流事件仍由 Rust 进程内会话保留，WebView 恢复后通过 `after_seq` 继续读取；
+- 无法取得后台租约只记录明确警告，不阻塞仍在前台可正常完成的生成。
+
+当前不使用 `BGAppRefreshTask` / `BGProcessingTask`，因为它们由系统择机调度，不能表达用户点击后立即开始的聊天生成。`BGContinuedProcessingTask` 只拥有系统后台执行权和展示状态；真正的网络请求、取消和流会话生命周期仍由既有 Rust 服务负责，不引入第二套生成调度状态机。

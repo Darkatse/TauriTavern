@@ -87,9 +87,11 @@ tauri-plugin-barcode-scanner = "2.4.4"
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6.4"
 block2 = "0.6.2"
+dispatch2 = "0.3.1"
+objc2-background-tasks = "0.3.2"
 objc2-uniform-type-identifiers = { version = "0.3.2", default-features = false, features = ["std", "UTType"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSError", "NSFileManager", "NSString", "NSURL"] }
-objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "UIActivity", "UIActivityViewController", "UIAlertController", "UIControl", "UIDocumentPickerViewController", "UIPopoverPresentationController", "UIPresentationController", "UIResponder", "UIScrollView", "UITextField", "UIView", "UIViewController", "UIWindow", "UIGeometry"] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "UIActivity", "UIActivityViewController", "UIAlertController", "UIApplication", "UIControl", "UIDocumentPickerViewController", "UIPopoverPresentationController", "UIPresentationController", "UIResponder", "UIScrollView", "UITextField", "UIView", "UIViewController", "UIWindow", "UIGeometry"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"

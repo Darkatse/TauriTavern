@@ -1,6 +1,7 @@
 pub mod bundled_template;
 pub mod data_archive;
 pub mod external_import;
+pub mod generation_background;
 pub mod host_resource;
 pub mod lan_sync;
 pub mod mcp;

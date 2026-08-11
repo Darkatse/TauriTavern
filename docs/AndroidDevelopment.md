@@ -215,9 +215,19 @@ https://v2.tauri.app/develop/resources/#android
 
 ---
 
-## 6. AI 生成通知生命周期
+## 6. AI 生成后台执行与通知生命周期
 
-Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyTavern 语义上的“生成开始/进度/结束”事件。
+Android AI 生成使用任务级 `dataSync` Foreground Service。Rust `ChatCompletionService` 持有生成任务与后台执行租约；WebView 只负责消费流事件，并在 Android 16+ 可用时补充非关键的 token 进度。
+
+执行契约：
+
+- 第一个 Chat Completion 任务开始时，由 Rust 通过原生 Tauri plugin 启动 `AiGenerationForegroundService`；
+- 并发任务通过稳定 task id 计数，共享一个 FGS；
+- 最后一个任务成功、失败或取消后立即 `stopForeground()` + `stopSelfResult()`；
+- Service 使用 `START_NOT_STICKY`，不会在没有真实生成任务时被系统复活；
+- Android 15+ `dataSync` 超时时通过 `onTimeout()` 立即释放 FGS，但不把平台保护到期升级为生成失败；
+- 应用启动本身不再启动保活服务，避免无任务时消耗 Android 的后台 FGS 配额。
+- 原生插件不可用或 FGS 启停失败只记录警告；Chat Completion 仍按真实 provider 结果继续，不阻塞应用启动或生成。
 
 当前通知槽位：
 
@@ -228,7 +238,7 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 
 - 应用前台可交互态定义为 `Activity resumed && window focused`；
 - 应用进入前台可交互态、冷启动、或收到新的 launch intent 时，只清除 `42001`；
-- 生成结束时，如果应用已经前台可交互，则不再发布完成通知；
+- Rust 任务结束时，如果应用已经前台可交互、请求为 quiet 或任务被取消，则不发布完成通知；
 - 发布新的完成通知前先清除旧的 `42001`，避免 fixed notification id 上的静默复用；
 - 完成通知不使用 `onlyAlertOnce`；保活/进度通知仍可使用，避免 token 进度频繁打扰。
 
@@ -236,6 +246,7 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 
 - 不要用 `cancelAll()` 清通知，避免误伤系统或未来扩展通知；
 - 不要把 native completion 能力绑定到 Android 16+ `ProgressStyle`，旧版 Android 也需要完成通知生命周期；
+- 不要把 FGS 的结束重新绑定到 WebView 回调；WebView 被系统挂起时，Rust 任务仍必须能够独立释放原生租约；
 - 不要让前端承担 Android 通知栏清理职责，前端应继续保持上游 SillyTavern 的事件语义。
 
 ---

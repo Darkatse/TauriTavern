@@ -4443,6 +4443,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-background-tasks"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ddeb0eb84c1714d4f50e5dc29cca57628c12cc40445a099c0cf05f4ee538473"
+dependencies = [
+ "bitflags 2.11.0",
+ "block2",
+ "dispatch2",
+ "objc2",
+ "objc2-foundation",
+]
+
+[[package]]
 name = "objc2-cloud-kit"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7122,6 +7135,7 @@ dependencies = [
  "block2",
  "bytes",
  "chrono",
+ "dispatch2",
  "dunce",
  "ed25519-dalek",
  "filetime",
@@ -7129,6 +7143,7 @@ dependencies = [
  "image 0.24.9",
  "mime_guess",
  "objc2",
+ "objc2-background-tasks",
  "objc2-foundation",
  "objc2-ui-kit",
  "objc2-uniform-type-identifiers",
