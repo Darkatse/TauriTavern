@@ -10,6 +10,14 @@ function readProjectFile(relativePath) {
     return readFile(path.join(REPO_ROOT, relativePath), 'utf8');
 }
 
+function sliceSource(source, start, end) {
+    const startIndex = source.indexOf(start);
+    assert.notEqual(startIndex, -1, `Missing source marker: ${start}`);
+    const endIndex = source.indexOf(end, startIndex);
+    assert.notEqual(endIndex, -1, `Missing source marker: ${end}`);
+    return source.slice(startIndex, endIndex);
+}
+
 async function firstPartyJavaScriptFiles(directory) {
     const entries = await readdir(directory, { withFileTypes: true });
     const files = [];
@@ -188,19 +196,48 @@ test('same-origin custom preview fails fast when the Host Resource omits ETag', 
     assert.equal(harness.records.size, 0);
 });
 
-test('persona paths are stable, exactly-once encoded, and re-demanded through the DOM', async () => {
+test('persona overwrites reload stable Host URLs through their final image consumers', async () => {
     const [personaSource, scriptSource] = await Promise.all([
         readProjectFile('src/scripts/personas.js'),
         readProjectFile('src/script.js'),
     ]);
+    const refreshSource = sliceSource(
+        personaSource,
+        'async function refreshPersonaAvatarImages(avatarId)',
+        '/**\n * Sort the given personas',
+    );
+    const uploadSource = sliceSource(
+        personaSource,
+        'async function changeUserAvatar(e)',
+        '/**\n * Prompts the user to create a persona',
+    );
+    const slashUploadSource = sliceSource(
+        personaSource,
+        'async function uploadPersonaAvatar(avatarId',
+        '/**\n * @param {string} [personaArg]',
+    );
+    const restoreSource = sliceSource(
+        personaSource,
+        'async function onPersonasRestoreInput(e)',
+        '/**\n * Synchronizes user-sent messages',
+    );
 
     assert.match(
         personaSource,
         /export function getUserAvatar\(avatarImg\) \{\s*return `\$\{USER_AVATAR_PATH\}\$\{encodeURIComponent\(String\(avatarImg \?\? ''\)\)\}`;\s*\}/,
     );
-    assert.doesNotMatch(personaSource, /forFetch|__TAURITAVERN_PERSONA_PATH__|cache\s*:\s*['"]reload['"]/);
+    assert.doesNotMatch(personaSource, /forFetch|__TAURITAVERN_PERSONA_PATH__|reloadFrontendAfterPersonaMutation|window\.location\.reload\(\)/);
     assert.doesNotMatch(personaSource, /getThumbnailUrl\('persona', avatarId,/);
-    assert.match(personaSource, /avatarImages\.attr\('src', ''\)[\s\S]+requestAnimationFrame[\s\S]+getThumbnailUrl\('persona', user_avatar\)/);
+    assert.equal(personaSource.match(/cache\s*:\s*['"]reload['"]/g)?.length, 1);
+    assert.match(refreshSource, /getUserAvatar\(avatarId\)/);
+    assert.match(refreshSource, /getThumbnailUrl\('persona', avatarId\)/);
+    assert.match(refreshSource, /fetch\(url, \{ cache: 'reload' \}\)/);
+    assert.match(refreshSource, /image\.removeAttribute\('src'\)/);
+    assert.match(refreshSource, /requestAnimationFrame/);
+    assert.match(refreshSource, /image\.src = src/);
+    assert.match(uploadSource, /if \(overwriteName && dataPath\)[\s\S]+await refreshPersonaAvatarImages\(String\(dataPath\)\)/);
+    assert.match(slashUploadSource, /await refreshPersonaAvatarImages\(avatarId\)/);
+    assert.doesNotMatch(restoreSource, /refreshPersonaAvatarImages|location\.reload/);
     assert.match(scriptSource, /new URL\(thumbURL, window\.location\.href\)\.searchParams\.get\('file'\)/);
     assert.match(scriptSource, /charsPath \+ encodeURIComponent\(targetAvatarImg\)/);
     assert.doesNotMatch(scriptSource, /decodeURIComponent\(targetAvatarImg\)/);

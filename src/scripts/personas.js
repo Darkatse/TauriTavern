@@ -18,8 +18,6 @@ import {
     reloadCurrentChat,
     saveChatConditional,
     saveMetadata,
-    saveSettings,
-    cancelPendingSettingsSave,
     saveSettingsDebounced,
     setUserName,
     this_chid,
@@ -87,27 +85,6 @@ let personaLastLoadedChatId = null;
 
 /** @type {function(string): void} */
 let navigateToAvatar = () => { };
-
-async function reloadFrontendAfterPersonaMutation() {
-    const hostAbi = window.__TAURITAVERN__;
-    if (!hostAbi || typeof hostAbi !== 'object') {
-        return;
-    }
-
-    const flushAll = hostAbi?.invoke?.flushAll;
-    if (typeof flushAll !== 'function') {
-        throw new Error('TauriTavern Host ABI is unavailable (invoke.flushAll)');
-    }
-
-    cancelPendingSettingsSave();
-    const saved = await saveSettings();
-    if (!saved) {
-        throw new Error('Settings could not be saved before reload');
-    }
-
-    await flushAll();
-    window.location.reload();
-}
 
 function createPersonaDescriptor({
     description = '',
@@ -196,18 +173,42 @@ export async function setUserAvatar(imgfile, { toastPersonaNameChange = true, na
     await eventSource.emit(event_types.PERSONA_CHANGED, user_avatar);
 }
 
-async function reloadUserAvatar(force = false) {
-    const avatarImages = $('.mes')
+function reloadUserAvatar() {
+    $('.mes')
         .filter(function () {
             return $(this).attr('is_user') == 'true' && $(this).attr('force_avatar') == 'false';
         })
-        .find('.avatar img');
+        .find('.avatar img')
+        .attr('src', getThumbnailUrl('persona', user_avatar));
+}
 
-    if (force && avatarImages.length) {
-        avatarImages.attr('src', '');
-        await new Promise(resolve => requestAnimationFrame(resolve));
+/**
+ * Reloads a mutated persona avatar and re-demands its visible representations.
+ * @param {string} avatarId Persona avatar filename
+ */
+async function refreshPersonaAvatarImages(avatarId) {
+    const urls = new Set([
+        getUserAvatar(avatarId),
+        getThumbnailUrl('persona', avatarId),
+    ].map(url => new URL(url, window.location.href).href));
+    const images = Array.from(document.images)
+        .filter(image => urls.has(image.src))
+        .map(image => ({ image, src: image.src }));
+
+    await Promise.all([...urls].map(async (url) => {
+        const response = await fetch(url, { cache: 'reload' });
+        if (!response.ok) {
+            throw new Error(`Failed to reload persona avatar: HTTP ${response.status}`);
+        }
+    }));
+
+    if (images.length === 0) {
+        return;
     }
-    avatarImages.attr('src', getThumbnailUrl('persona', user_avatar));
+
+    images.forEach(({ image }) => image.removeAttribute('src'));
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    images.forEach(({ image, src }) => { image.src = src; });
 }
 
 /**
@@ -488,6 +489,15 @@ async function changeUserAvatar(e) {
         const overwriteName = formData.get('overwrite_name');
         const dataPath = data?.path;
 
+        if (overwriteName && dataPath) {
+            try {
+                await refreshPersonaAvatarImages(String(dataPath));
+            } catch (error) {
+                console.warn('Persona avatar was updated but visible images could not be refreshed:', error);
+                toastr.warning(t`Avatar updated, but visible images could not be refreshed.`, t`Persona Management`);
+            }
+        }
+
         if (!overwriteName && dataPath) {
             await getUserAvatars();
             await delay(1);
@@ -495,12 +505,6 @@ async function changeUserAvatar(e) {
         }
 
         await getUserAvatars(true, dataPath || overwriteName);
-        try {
-            await reloadFrontendAfterPersonaMutation();
-        } catch (error) {
-            console.error('Failed to reload after persona mutation:', error);
-            toastr.error(t`Failed to reload the app after updating personas. See console for details.`, t`Persona Management`);
-        }
     }
 
     // Will allow to select the same file twice in a row
@@ -1218,16 +1222,6 @@ async function deletePersona(avatarId, { silent = false } = {}) {
     saveSettingsDebounced();
     await eventSource.emit(event_types.PERSONA_DELETED, { avatarId, name });
 
-    if (avatarId === user_avatar && window.__TAURITAVERN__ && typeof window.__TAURITAVERN__ === 'object') {
-        try {
-            await reloadFrontendAfterPersonaMutation();
-        } catch (error) {
-            console.error('Failed to reload after persona deletion:', error);
-            toastr.error(t`Failed to reload the app after deleting the persona. See console for details.`, t`Persona Management`);
-        }
-        return true;
-    }
-
     // Use the existing mechanism to re-render the persona list and choose the next persona here.
     personaLastLoadedChatId = uuidv4();
     await loadPersonaForCurrentChat({ doRender: true });
@@ -1834,14 +1828,6 @@ async function onPersonasRestoreInput(e) {
     setPersonaDescription();
     saveSettingsDebounced();
     $('#personas_restore_input').val('');
-    if (window.__TAURITAVERN__ && typeof window.__TAURITAVERN__ === 'object') {
-        try {
-            await reloadFrontendAfterPersonaMutation();
-        } catch (error) {
-            console.error('Failed to reload after persona import:', error);
-            toastr.error(t`Failed to reload the app after importing personas. See console for details.`, t`Persona Management`);
-        }
-    }
 }
 
 /**
@@ -2076,9 +2062,10 @@ async function uploadPersonaAvatar(avatarId, base64Data, { resizePrompt = false 
     }
 
     try {
-        await reloadUserAvatar(true);
+        await refreshPersonaAvatarImages(avatarId);
     } catch (error) {
         console.error('Persona avatar was uploaded but visible avatars could not be refreshed:', error);
+        toastr.warning(t`Avatar updated, but visible images could not be refreshed.`, t`Persona Management`);
     }
     return true;
 }
