@@ -9,13 +9,16 @@ use crate::errors::ApplicationError;
 use tt_domain::models::secret::SecretKeys;
 use tt_ports::repositories::secret_repository::SecretRepository;
 use tt_ports::repositories::tts_repository::{
-    GrokOutputFormat, MinimaxGenerateRequest, TtsRepository, TtsRequest, TtsRouteResponse,
+    AzureTtsRequest, ElectronHubTtsRequest, ElevenLabsTtsRequest, ElevenLabsVoiceFile,
+    GoogleGeminiTtsRequest, GoogleTranslateTtsRequest, GrokOutputFormat, MinimaxGenerateRequest,
+    OpenAiTtsRequest, PollinationsTtsRequest, TtsRepository, TtsRequest, TtsRouteResponse,
+    VolcengineTtsRequest,
 };
+use url::Url;
 
-const MIMO_MODELS: &[&str] = &["mimo-v2-tts", "mimo-v2.5-tts"];
-const MIMO_FORMATS: &[&str] = &["wav", "mp3"];
 const MINIMAX_TTS_DEFAULT_API_HOST: &str = "https://api.minimax.io";
-const MINIMAX_TTS_CN_API_HOST: &str = "https://api.minimaxi.com";
+const GOOGLE_AI_STUDIO_API: &str = "https://generativelanguage.googleapis.com";
+const VOLCENGINE_TTS_ENDPOINT: &str = "https://openspeech.bytedance.com/api/v3/tts/unidirectional";
 
 pub struct TtsService {
     tts_repository: Arc<dyn TtsRepository>,
@@ -39,6 +42,287 @@ impl TtsService {
         body: Value,
     ) -> Result<TtsRouteResponseDto, ApplicationError> {
         let request = match normalize_path(&path).as_str() {
+            "azure/list" => {
+                let Some(api_key) = self.read_secret(SecretKeys::AZURE_TTS).await? else {
+                    return Ok(text_response(403, "Azure TTS API key is required").into());
+                };
+                let Some(region) = optional_string(&body, "region") else {
+                    return Ok(text_response(400, "Azure TTS region is required").into());
+                };
+                TtsRequest::Azure(AzureTtsRequest::List { api_key, region })
+            }
+            "azure/generate" => {
+                let Some(api_key) = self.read_secret(SecretKeys::AZURE_TTS).await? else {
+                    return Ok(text_response(403, "Azure TTS API key is required").into());
+                };
+                let Some(region) = optional_string(&body, "region") else {
+                    return Ok(text_response(400, "Azure TTS region is required").into());
+                };
+                let Some(text) = optional_content(&body, "text") else {
+                    return Ok(text_response(400, "No text provided").into());
+                };
+                let Some(voice) = optional_string(&body, "voice") else {
+                    return Ok(text_response(400, "No Azure TTS voice provided").into());
+                };
+                TtsRequest::Azure(AzureTtsRequest::Generate {
+                    api_key,
+                    region,
+                    text,
+                    voice,
+                })
+            }
+            "google/list-voices" => {
+                TtsRequest::GoogleTranslate(GoogleTranslateTtsRequest::ListVoices)
+            }
+            "google/generate-voice" => {
+                let Some(text) = string_list(&body, "text") else {
+                    return Ok(text_response(400, "No text provided").into());
+                };
+                TtsRequest::GoogleTranslate(GoogleTranslateTtsRequest::Generate {
+                    text,
+                    voice: string_or_default(&body, "voice", "en"),
+                })
+            }
+            "google/list-native-voices" => {
+                TtsRequest::GoogleGemini(GoogleGeminiTtsRequest::ListVoices)
+            }
+            "google/generate-native-tts" => {
+                let Some(text) = optional_content(&body, "text") else {
+                    return Ok(json_error_response(400, "No text provided").into());
+                };
+                let Some(voice) = optional_string(&body, "voice") else {
+                    return Ok(json_error_response(400, "No Google TTS voice provided").into());
+                };
+                let Some(model) = optional_string(&body, "model") else {
+                    return Ok(json_error_response(400, "No Google TTS model provided").into());
+                };
+
+                let (base_url, api_key) =
+                    if let Some(base_url) = optional_string(&body, "reverse_proxy") {
+                        (
+                            base_url,
+                            optional_content(&body, "proxy_password").unwrap_or_default(),
+                        )
+                    } else {
+                        let Some(api_key) = self.read_secret(SecretKeys::MAKERSUITE).await? else {
+                            return Ok(json_error_response(
+                                400,
+                                "Google AI Studio API key is required",
+                            )
+                            .into());
+                        };
+                        (GOOGLE_AI_STUDIO_API.to_string(), api_key)
+                    };
+
+                TtsRequest::GoogleGemini(GoogleGeminiTtsRequest::Generate {
+                    text,
+                    voice,
+                    model,
+                    base_url,
+                    api_key,
+                })
+            }
+            "novelai/generate-voice" => {
+                let Some(api_key) = self.read_secret(SecretKeys::NOVEL).await? else {
+                    return Ok(text_response(400, "NovelAI access token is required").into());
+                };
+                let Some(text) = optional_content(&body, "text") else {
+                    return Ok(text_response(400, "No text provided").into());
+                };
+                let Some(voice) = optional_string(&body, "voice") else {
+                    return Ok(text_response(400, "No NovelAI voice provided").into());
+                };
+                TtsRequest::NovelAiGenerate {
+                    api_key,
+                    text,
+                    voice,
+                }
+            }
+            "openai/generate-voice" => {
+                let Some(api_key) = self.read_secret(SecretKeys::OPENAI).await? else {
+                    return Ok(text_response(400, "OpenAI API key is required").into());
+                };
+                TtsRequest::OpenAi(OpenAiTtsRequest::Generate {
+                    api_key,
+                    text: optional_content(&body, "text").unwrap_or_default(),
+                    voice: string_or_default(&body, "voice", "alloy"),
+                    model: string_or_default(&body, "model", "tts-1"),
+                    speed: finite_f64_or_default(&body, "speed", 1.0).unwrap_or(1.0),
+                    instructions: optional_content(&body, "instructions"),
+                })
+            }
+            "openai/custom/generate-voice" => {
+                let Some(endpoint) = optional_string(&body, "provider_endpoint") else {
+                    return Ok(text_response(400, "Provider endpoint is required").into());
+                };
+                let endpoint = match Url::parse(&endpoint) {
+                    Ok(endpoint) => endpoint,
+                    Err(error) => {
+                        return Ok(text_response(
+                            400,
+                            format!("Invalid provider endpoint: {error}"),
+                        )
+                        .into());
+                    }
+                };
+                TtsRequest::OpenAi(OpenAiTtsRequest::CompatibleGenerate {
+                    api_key: self.read_secret(SecretKeys::CUSTOM_OPENAI_TTS).await?,
+                    endpoint,
+                    input: optional_content(&body, "input").unwrap_or_default(),
+                    voice: string_or_default(&body, "voice", "alloy"),
+                    model: string_or_default(&body, "model", "tts-1"),
+                    response_format: string_or_default(&body, "response_format", "mp3"),
+                    speed: finite_f64_or_default(&body, "speed", 1.0).unwrap_or(1.0),
+                })
+            }
+            "openai/electronhub/models" => {
+                let Some(api_key) = self.read_secret(SecretKeys::ELECTRONHUB).await? else {
+                    return Ok(text_response(400, "ElectronHub API key is required").into());
+                };
+                TtsRequest::ElectronHub(ElectronHubTtsRequest::Models { api_key })
+            }
+            "openai/electronhub/generate-voice" => {
+                let Some(api_key) = self.read_secret(SecretKeys::ELECTRONHUB).await? else {
+                    return Ok(text_response(400, "ElectronHub API key is required").into());
+                };
+                if !body.is_object() {
+                    return Ok(
+                        text_response(400, "ElectronHub request body must be an object").into(),
+                    );
+                }
+                TtsRequest::ElectronHub(ElectronHubTtsRequest::Generate {
+                    api_key,
+                    payload: body,
+                })
+            }
+            "openai/chutes/generate-voice" => {
+                let Some(api_key) = self.read_secret(SecretKeys::CHUTES).await? else {
+                    return Ok(text_response(400, "Chutes API key is required").into());
+                };
+                TtsRequest::ChutesGenerate {
+                    api_key,
+                    input: optional_content(&body, "input").unwrap_or_default(),
+                    voice: string_or_default(&body, "voice", "af_heart"),
+                    speed: finite_f64_or_default(&body, "speed", 1.0).unwrap_or(1.0),
+                }
+            }
+            "speech/elevenlabs/voices" => {
+                let Some(api_key) = self.read_secret(SecretKeys::ELEVENLABS).await? else {
+                    return Ok(text_response(400, "ElevenLabs API key is required").into());
+                };
+                TtsRequest::ElevenLabs(ElevenLabsTtsRequest::Voices { api_key })
+            }
+            "speech/elevenlabs/voice-settings" => {
+                let Some(api_key) = self.read_secret(SecretKeys::ELEVENLABS).await? else {
+                    return Ok(text_response(400, "ElevenLabs API key is required").into());
+                };
+                TtsRequest::ElevenLabs(ElevenLabsTtsRequest::VoiceSettings { api_key })
+            }
+            "speech/elevenlabs/synthesize" => {
+                let Some(api_key) = self.read_secret(SecretKeys::ELEVENLABS).await? else {
+                    return Ok(text_response(400, "ElevenLabs API key is required").into());
+                };
+                let Some(voice_id) = optional_string(&body, "voiceId") else {
+                    return Ok(text_response(400, "ElevenLabs voice ID is required").into());
+                };
+                let Some(request) = body
+                    .get("request")
+                    .filter(|value| !value.is_null())
+                    .cloned()
+                else {
+                    return Ok(text_response(400, "ElevenLabs request body is required").into());
+                };
+                TtsRequest::ElevenLabs(ElevenLabsTtsRequest::Synthesize {
+                    api_key,
+                    voice_id,
+                    request,
+                })
+            }
+            "speech/elevenlabs/history" => {
+                let Some(api_key) = self.read_secret(SecretKeys::ELEVENLABS).await? else {
+                    return Ok(text_response(400, "ElevenLabs API key is required").into());
+                };
+                TtsRequest::ElevenLabs(ElevenLabsTtsRequest::History { api_key })
+            }
+            "speech/elevenlabs/history-audio" => {
+                let Some(api_key) = self.read_secret(SecretKeys::ELEVENLABS).await? else {
+                    return Ok(text_response(400, "ElevenLabs API key is required").into());
+                };
+                let Some(history_item_id) = optional_string(&body, "historyItemId") else {
+                    return Ok(text_response(400, "ElevenLabs history item ID is required").into());
+                };
+                TtsRequest::ElevenLabs(ElevenLabsTtsRequest::HistoryAudio {
+                    api_key,
+                    history_item_id,
+                })
+            }
+            "speech/elevenlabs/voices/add" => {
+                let Some(api_key) = self.read_secret(SecretKeys::ELEVENLABS).await? else {
+                    return Ok(text_response(400, "ElevenLabs API key is required").into());
+                };
+                let files = match elevenlabs_voice_files(&body) {
+                    Ok(files) => files,
+                    Err(response) => return Ok(response.into()),
+                };
+                TtsRequest::ElevenLabs(ElevenLabsTtsRequest::AddVoice {
+                    api_key,
+                    name: string_or_default(&body, "name", "Custom Voice"),
+                    description: string_or_default(
+                        &body,
+                        "description",
+                        "Uploaded via SillyTavern",
+                    ),
+                    labels: optional_content(&body, "labels").unwrap_or_default(),
+                    files,
+                })
+            }
+            "speech/pollinations/voices" => {
+                TtsRequest::Pollinations(PollinationsTtsRequest::Voices {
+                    model: string_or_default(&body, "model", "openai-audio"),
+                })
+            }
+            "speech/pollinations/generate" => {
+                let Some(api_key) = self.read_secret(SecretKeys::POLLINATIONS).await? else {
+                    return Ok(text_response(400, "Pollinations API key is required").into());
+                };
+                TtsRequest::Pollinations(PollinationsTtsRequest::Generate {
+                    api_key,
+                    text: optional_content(&body, "text").unwrap_or_default(),
+                    model: string_or_default(&body, "model", "openai-audio"),
+                    voice: string_or_default(&body, "voice", "alloy"),
+                })
+            }
+            "volcengine/generate-voice" => {
+                let Some(app_id) = self.read_secret(SecretKeys::VOLCENGINE_APP_ID).await? else {
+                    return Ok(text_response(403, "Volcengine App ID is required").into());
+                };
+                let Some(access_key) = self.read_secret(SecretKeys::VOLCENGINE_ACCESS_KEY).await?
+                else {
+                    return Ok(text_response(403, "Volcengine access key is required").into());
+                };
+                let Some(resource_id) = optional_string(&body, "resource_id") else {
+                    return Ok(text_response(400, "Volcengine resource ID is required").into());
+                };
+                let Some(text) = optional_content(&body, "text") else {
+                    return Ok(text_response(400, "No text provided").into());
+                };
+                let Some(voice_speaker) = optional_string(&body, "voice_speaker") else {
+                    return Ok(text_response(400, "Volcengine voice speaker is required").into());
+                };
+                TtsRequest::Volcengine(VolcengineTtsRequest {
+                    app_id,
+                    access_key,
+                    provider_endpoint: string_or_default(
+                        &body,
+                        "provider_endpoint",
+                        VOLCENGINE_TTS_ENDPOINT,
+                    ),
+                    resource_id,
+                    text,
+                    voice_speaker,
+                    speed: integer_or_default(&body, "speed", 0),
+                })
+            }
             "grok/voices" => {
                 let Some(api_key) = self.read_secret(SecretKeys::XAI).await? else {
                     return Ok(text_response(400, "xAI API key is required").into());
@@ -92,20 +376,7 @@ impl TtsService {
 
                 let voice_id = string_or_default(&body, "voiceId", "mimo_default");
                 let model = string_or_default(&body, "model", "mimo-v2-tts");
-                if !MIMO_MODELS.contains(&model.as_str()) {
-                    return Ok(
-                        text_response(400, format!("Unsupported MiMo model: {model}")).into(),
-                    );
-                }
-
                 let format = string_or_default(&body, "format", "wav").to_lowercase();
-                if !MIMO_FORMATS.contains(&format.as_str()) {
-                    return Ok(text_response(
-                        400,
-                        format!("Unsupported MiMo audio format: {format}"),
-                    )
-                    .into());
-                }
 
                 TtsRequest::MimoGenerate {
                     api_key,
@@ -118,47 +389,31 @@ impl TtsService {
             }
             "minimax/generate-voice" => {
                 let Some(api_key) = self.read_secret(SecretKeys::MINIMAX).await? else {
-                    return Ok(minimax_error_response(400, "MiniMax API key is required").into());
+                    return Ok(json_error_response(400, "MiniMax API key is required").into());
                 };
 
                 let text = optional_string(&body, "text").unwrap_or_default();
                 if text.is_empty() {
-                    return Ok(minimax_error_response(400, "No text provided").into());
+                    return Ok(json_error_response(400, "No text provided").into());
                 }
 
                 let voice_id = string_or_default(&body, "voiceId", "");
                 if voice_id.is_empty() {
-                    return Ok(minimax_error_response(400, "No MiniMax voice provided").into());
+                    return Ok(json_error_response(400, "No MiniMax voice provided").into());
                 }
 
-                let api_host = match minimax_api_host(&body) {
-                    Ok(api_host) => api_host,
-                    Err(response) => return Ok(response.into()),
+                let api_host = string_or_default(&body, "apiHost", MINIMAX_TTS_DEFAULT_API_HOST)
+                    .trim()
+                    .trim_end_matches('/')
+                    .to_string();
+                let Some(speed) = finite_f64_or_default(&body, "speed", 1.0) else {
+                    return Ok(json_error_response(400, "MiniMax speed must be a number").into());
                 };
-                let Some(speed) = finite_f64_or_default(&body, "speed", 1.0)
-                    .filter(|speed| (0.5..=2.0).contains(speed))
-                else {
-                    return Ok(minimax_error_response(
-                        400,
-                        "MiniMax speed must be a number between 0.5 and 2",
-                    )
-                    .into());
-                };
-                let Some(volume) = finite_f64_or_default(&body, "volume", 1.0)
-                    .filter(|volume| *volume > 0.0 && *volume <= 10.0)
-                else {
-                    return Ok(minimax_error_response(
-                        400,
-                        "MiniMax volume must be greater than 0 and at most 10",
-                    )
-                    .into());
+                let Some(volume) = finite_f64_or_default(&body, "volume", 1.0) else {
+                    return Ok(json_error_response(400, "MiniMax volume must be a number").into());
                 };
                 let Some(pitch) = minimax_pitch(&body) else {
-                    return Ok(minimax_error_response(
-                        400,
-                        "MiniMax pitch must be an integer between -12 and 12",
-                    )
-                    .into());
+                    return Ok(json_error_response(400, "MiniMax pitch must be an integer").into());
                 };
 
                 TtsRequest::MinimaxGenerate {
@@ -213,7 +468,7 @@ fn text_response(status: u16, message: impl Into<String>) -> TtsRouteResponse {
     TtsRouteResponse::text(status, message)
 }
 
-fn minimax_error_response(status: u16, message: impl Into<String>) -> TtsRouteResponse {
+fn json_error_response(status: u16, message: impl Into<String>) -> TtsRouteResponse {
     TtsRouteResponse::json_error(status, message)
 }
 
@@ -229,20 +484,16 @@ fn optional_string(body: &Value, key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn string_or_default(body: &Value, key: &str, default: &str) -> String {
-    optional_string(body, key).unwrap_or_else(|| default.to_string())
+fn optional_content(body: &Value, key: &str) -> Option<String> {
+    body.as_object()
+        .and_then(|object| object.get(key))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
-fn minimax_api_host(body: &Value) -> Result<String, TtsRouteResponse> {
-    let api_host = string_or_default(body, "apiHost", MINIMAX_TTS_DEFAULT_API_HOST);
-    let normalized = api_host.trim().trim_end_matches('/').to_ascii_lowercase();
-    match normalized.as_str() {
-        MINIMAX_TTS_DEFAULT_API_HOST | MINIMAX_TTS_CN_API_HOST => Ok(normalized),
-        _ => Err(minimax_error_response(
-            400,
-            format!("Unsupported MiniMax API host: {api_host}"),
-        )),
-    }
+fn string_or_default(body: &Value, key: &str, default: &str) -> String {
+    optional_string(body, key).unwrap_or_else(|| default.to_string())
 }
 
 fn number_or_default(body: &Value, key: &str, default: u32) -> u32 {
@@ -258,6 +509,84 @@ fn number_or_default(body: &Value, key: &str, default: u32) -> u32 {
         .as_str()
         .and_then(|raw| raw.trim().parse::<u32>().ok())
         .unwrap_or(default)
+}
+
+fn integer_or_default(body: &Value, key: &str, default: i64) -> i64 {
+    let Some(value) = body.as_object().and_then(|object| object.get(key)) else {
+        return default;
+    };
+
+    value
+        .as_i64()
+        .or_else(|| value.as_f64().map(|number| number.trunc() as i64))
+        .or_else(|| {
+            value
+                .as_str()
+                .and_then(|raw| raw.trim().parse::<f64>().ok())
+                .map(|number| number.trunc() as i64)
+        })
+        .unwrap_or(default)
+}
+
+fn string_list(body: &Value, key: &str) -> Option<Vec<String>> {
+    let value = body.as_object()?.get(key)?;
+    let values = match value {
+        Value::String(value) if !value.is_empty() => vec![value.clone()],
+        Value::Array(values) => values
+            .iter()
+            .map(Value::as_str)
+            .collect::<Option<Vec<_>>>()?
+            .into_iter()
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => return None,
+    };
+
+    (!values.is_empty()).then_some(values)
+}
+
+fn elevenlabs_voice_files(body: &Value) -> Result<Vec<ElevenLabsVoiceFile>, TtsRouteResponse> {
+    let Some(values) = body.get("files") else {
+        return Ok(Vec::new());
+    };
+    let Some(values) = values.as_array() else {
+        return Err(text_response(
+            400,
+            "ElevenLabs voice files must be an array",
+        ));
+    };
+
+    values
+        .iter()
+        .map(|value| {
+            let Some(value) = value.as_str() else {
+                return Err(text_response(
+                    400,
+                    "ElevenLabs voice file must be a base64 data URL",
+                ));
+            };
+            let Some((mime_type, encoded)) = value
+                .strip_prefix("data:")
+                .and_then(|value| value.split_once(";base64,"))
+            else {
+                return Err(text_response(
+                    400,
+                    "ElevenLabs voice file must be a base64 data URL",
+                ));
+            };
+            let bytes = BASE64_STANDARD.decode(encoded).map_err(|error| {
+                text_response(
+                    400,
+                    format!("ElevenLabs voice file is not valid base64: {error}"),
+                )
+            })?;
+            Ok(ElevenLabsVoiceFile {
+                mime_type: mime_type.to_string(),
+                bytes,
+            })
+        })
+        .collect()
 }
 
 fn finite_f64_or_default(body: &Value, key: &str, default: f64) -> Option<f64> {
@@ -276,59 +605,180 @@ fn finite_f64_or_default(body: &Value, key: &str, default: f64) -> Option<f64> {
 
 fn minimax_pitch(body: &Value) -> Option<i64> {
     let pitch = finite_f64_or_default(body, "pitch", 0.0)?;
-    (pitch.fract() == 0.0 && (-12.0..=12.0).contains(&pitch)).then_some(pitch as i64)
+    (pitch.fract() == 0.0).then_some(pitch as i64)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use async_trait::async_trait;
     use serde_json::json;
 
-    use super::{
-        MINIMAX_TTS_CN_API_HOST, MINIMAX_TTS_DEFAULT_API_HOST, minimax_api_host, minimax_pitch,
-    };
+    use super::{TtsService, minimax_pitch};
+    use tt_domain::errors::DomainError;
+    use tt_domain::models::secret::Secrets;
+    use tt_ports::repositories::secret_repository::SecretRepository;
+    use tt_ports::repositories::tts_repository::{TtsRepository, TtsRequest, TtsRouteResponse};
 
-    #[test]
-    fn minimax_api_host_accepts_known_hosts_and_normalizes_trailing_slash() {
-        for (api_host, expected) in [
-            ("https://api.minimax.io/", MINIMAX_TTS_DEFAULT_API_HOST),
-            ("https://api.minimaxi.com/", MINIMAX_TTS_CN_API_HOST),
-        ] {
-            assert_eq!(
-                minimax_api_host(&json!({ "apiHost": api_host })).unwrap(),
-                expected
-            );
+    struct TestSecretRepository;
+
+    #[async_trait]
+    impl SecretRepository for TestSecretRepository {
+        async fn save(&self, _secrets: &Secrets) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn load(&self) -> Result<Secrets, DomainError> {
+            Ok(Secrets::default())
+        }
+
+        async fn clear_cache(&self) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn write_secret(
+            &self,
+            _key: &str,
+            _value: &str,
+            _label: &str,
+        ) -> Result<String, DomainError> {
+            Ok("id".to_string())
+        }
+
+        async fn read_secret(
+            &self,
+            _key: &str,
+            _id: Option<&str>,
+        ) -> Result<Option<String>, DomainError> {
+            Ok(Some("secret".to_string()))
+        }
+
+        async fn delete_secret(&self, _key: &str, _id: Option<&str>) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn rotate_secret(&self, _key: &str, _id: &str) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn rename_secret(
+            &self,
+            _key: &str,
+            _id: &str,
+            _label: &str,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    struct RecordingTtsRepository(AtomicUsize);
+
+    #[async_trait]
+    impl TtsRepository for RecordingTtsRepository {
+        async fn handle(&self, _request: TtsRequest) -> Result<TtsRouteResponse, DomainError> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Ok(TtsRouteResponse::bytes(
+                200,
+                "application/octet-stream",
+                Vec::new(),
+            ))
         }
     }
 
     #[test]
-    fn minimax_api_host_defaults_to_official_host() {
-        assert_eq!(
-            minimax_api_host(&json!({})).unwrap(),
-            MINIMAX_TTS_DEFAULT_API_HOST
-        );
-    }
-
-    #[test]
-    fn minimax_api_host_rejects_untrusted_hosts() {
-        let response = minimax_api_host(&json!({
-            "apiHost": "https://example.test"
-        }))
-        .expect_err("untrusted host should be rejected");
-
-        assert_eq!(response.status, 400);
-        assert_eq!(response.content_type, "application/json; charset=utf-8");
-        assert_eq!(response.status_text, None);
-        assert_eq!(
-            String::from_utf8(response.body).unwrap(),
-            r#"{"error":"Unsupported MiniMax API host: https://example.test"}"#
-        );
-    }
-
-    #[test]
-    fn minimax_pitch_accepts_only_contract_integer_range() {
+    fn minimax_pitch_accepts_integers_without_policy_range() {
         assert_eq!(minimax_pitch(&json!({ "pitch": 0.0 })), Some(0));
         assert_eq!(minimax_pitch(&json!({ "pitch": "-12" })), Some(-12));
+        assert_eq!(minimax_pitch(&json!({ "pitch": 13 })), Some(13));
         assert_eq!(minimax_pitch(&json!({ "pitch": 0.5 })), None);
-        assert_eq!(minimax_pitch(&json!({ "pitch": 13 })), None);
+    }
+
+    #[tokio::test]
+    async fn resolves_every_network_provider_route() {
+        let repository = Arc::new(RecordingTtsRepository(AtomicUsize::new(0)));
+        let service = TtsService::new(repository.clone(), Arc::new(TestSecretRepository));
+        let routes = [
+            ("azure/list", json!({ "region": "eastus" })),
+            (
+                "azure/generate",
+                json!({ "region": "eastus", "text": "hello", "voice": "en-US-Ava" }),
+            ),
+            ("google/list-voices", json!({})),
+            (
+                "google/generate-voice",
+                json!({ "text": ["hello"], "voice": "en" }),
+            ),
+            ("google/list-native-voices", json!({})),
+            (
+                "google/generate-native-tts",
+                json!({ "text": "hello", "voice": "Puck", "model": "gemini-2.5-flash-preview-tts" }),
+            ),
+            (
+                "novelai/generate-voice",
+                json!({ "text": "hello", "voice": "seed" }),
+            ),
+            ("openai/generate-voice", json!({ "text": "hello" })),
+            (
+                "openai/custom/generate-voice",
+                json!({ "provider_endpoint": "http://localhost/audio", "input": "hello" }),
+            ),
+            ("openai/electronhub/models", json!({})),
+            (
+                "openai/electronhub/generate-voice",
+                json!({ "input": "hello", "voice": "alloy" }),
+            ),
+            (
+                "openai/chutes/generate-voice",
+                json!({ "input": "hello", "voice": "af_heart" }),
+            ),
+            ("speech/elevenlabs/voices", json!({})),
+            ("speech/elevenlabs/voice-settings", json!({})),
+            (
+                "speech/elevenlabs/synthesize",
+                json!({ "voiceId": "voice", "request": { "text": "hello" } }),
+            ),
+            ("speech/elevenlabs/history", json!({})),
+            (
+                "speech/elevenlabs/history-audio",
+                json!({ "historyItemId": "history" }),
+            ),
+            (
+                "speech/elevenlabs/voices/add",
+                json!({ "name": "voice", "files": [] }),
+            ),
+            (
+                "speech/pollinations/voices",
+                json!({ "model": "openai-audio" }),
+            ),
+            (
+                "speech/pollinations/generate",
+                json!({ "text": "hello", "voice": "alloy" }),
+            ),
+            (
+                "volcengine/generate-voice",
+                json!({ "resource_id": "resource", "text": "hello", "voice_speaker": "speaker" }),
+            ),
+            (
+                "mimo/generate",
+                json!({ "text": "hello", "model": "future-model", "format": "flac" }),
+            ),
+        ];
+        let route_count = routes.len();
+
+        for (path, body) in routes {
+            assert_eq!(
+                service
+                    .handle_request(path.to_string(), body)
+                    .await
+                    .unwrap()
+                    .status,
+                200,
+                "{path} should resolve to the repository",
+            );
+        }
+
+        assert_eq!(repository.0.load(Ordering::Relaxed), route_count);
     }
 }

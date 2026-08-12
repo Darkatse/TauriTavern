@@ -13,6 +13,54 @@ function encodeText(text) {
     return Buffer.from(String(text), 'utf8').toString('base64');
 }
 
+test('tts route table covers every network-backed provider operation', async () => {
+    const providerFiles = [
+        'azure.js',
+        'google-native.js',
+        'google-translate.js',
+        'openai.js',
+        'openai-compatible.js',
+        'electronhub.js',
+        'chutes.js',
+        'novel.js',
+        'elevenlabs.js',
+        'pollinations.js',
+        'volcengine.js',
+    ];
+    const frontendRoutes = new Set();
+    for (const file of providerFiles) {
+        const source = await readFile(new URL(`../src/scripts/extensions/tts/${file}`, import.meta.url), 'utf8');
+        for (const match of source.matchAll(/\bfetch\s*\(\s*['"](\/api\/[^'"]+)['"]/g)) {
+            frontendRoutes.add(match[1]);
+        }
+    }
+    const routes = [...frontendRoutes].sort();
+
+    const router = createRouteRegistry();
+    const calls = [];
+    const body = { marker: 'body' };
+    const context = {
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            return {
+                status: 200,
+                contentType: 'application/octet-stream',
+                bodyBase64: '',
+            };
+        },
+    };
+    registerTtsRoutes(router, context);
+
+    for (const route of routes) {
+        const response = await router.handle({ method: 'POST', path: route, body });
+        assert.ok(response, `${route} should be registered`);
+    }
+    assert.deepEqual(calls, routes.map(route => ({
+        command: 'tts_handle',
+        args: { path: route.slice('/api/'.length), body },
+    })));
+});
+
 test('grok tts route delegates generation to backend command', async () => {
     const router = createRouteRegistry();
     const safeInvokeCalls = [];
@@ -223,7 +271,7 @@ test('minimax tts route delegates generation to backend command', async () => {
 
 test('tts route preserves backend validation response bodies', async () => {
     const router = createRouteRegistry();
-    const message = 'Unsupported MiMo model: mimo-v3-tts';
+    const message = 'No text provided';
     const context = {
         safeInvoke: async () => ({
             status: 400,
@@ -237,11 +285,8 @@ test('tts route preserves backend validation response bodies', async () => {
 
     const response = await router.handle({
         method: 'POST',
-        path: '/api/tts/mimo/generate',
-        body: {
-            text: 'hello',
-            model: 'mimo-v3-tts',
-        },
+        path: '/api/azure/generate',
+        body: {},
     });
 
     assert.ok(response);
@@ -307,4 +352,19 @@ test('tts host route stays a backend-command adapter', async () => {
     assert.doesNotMatch(source, /find_secret/);
     assert.doesNotMatch(source, /\bfetch\s*\(/);
     assert.match(source, /tts_handle/);
+});
+
+test('tts queues release recoverable processing and playback failures', async () => {
+    const source = await readFile(new URL('../src/scripts/extensions/tts/index.js', import.meta.url), 'utf8');
+    const queue = source.slice(
+        source.indexOf('async function processTtsQueue()'),
+        source.indexOf('function joinQuotedBlocks'),
+    );
+
+    assert.match(source, /await Promise\.all\(\[processTtsQueue\(\), processAudioJobQueue\(\)\]\)/);
+    assert.match(source, /await playAudioData\(audioJob\)/);
+    assert.match(source, /audioElement\.onerror\s*=/);
+    assert.match(source, /audioElement\.play\(\)\.catch\(finish\)/);
+    assert.ok(queue.indexOf('try {') < queue.indexOf('ttsProvider.processText'));
+    assert.ok(queue.indexOf('ttsProvider.processText') < queue.lastIndexOf('} catch (error)'));
 });

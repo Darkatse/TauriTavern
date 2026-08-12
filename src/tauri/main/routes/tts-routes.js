@@ -58,19 +58,36 @@ async function handleTtsRoute(context, path, body) {
 }
 
 export function registerTtsRoutes(router, context) {
-    router.post('/api/tts/grok/voices', async ({ body }) => {
-        return handleTtsRoute(context, 'grok/voices', body);
-    });
+    const routes = [
+        '/api/azure/list',
+        '/api/azure/generate',
+        '/api/google/list-voices',
+        '/api/google/generate-voice',
+        '/api/google/list-native-voices',
+        '/api/google/generate-native-tts',
+        '/api/novelai/generate-voice',
+        '/api/openai/generate-voice',
+        '/api/openai/custom/generate-voice',
+        '/api/openai/electronhub/models',
+        '/api/openai/electronhub/generate-voice',
+        '/api/openai/chutes/generate-voice',
+        '/api/speech/elevenlabs/voices',
+        '/api/speech/elevenlabs/voice-settings',
+        '/api/speech/elevenlabs/synthesize',
+        '/api/speech/elevenlabs/history',
+        '/api/speech/elevenlabs/history-audio',
+        '/api/speech/elevenlabs/voices/add',
+        '/api/speech/pollinations/voices',
+        '/api/speech/pollinations/generate',
+        '/api/volcengine/generate-voice',
+        '/api/tts/grok/voices',
+        '/api/tts/grok/generate',
+        '/api/tts/mimo/generate',
+        '/api/minimax/generate-voice',
+    ];
 
-    router.post('/api/tts/grok/generate', async ({ body }) => {
-        return handleTtsRoute(context, 'grok/generate', body);
-    });
-
-    router.post('/api/tts/mimo/generate', async ({ body }) => {
-        return handleTtsRoute(context, 'mimo/generate', body);
-    });
-
-    router.post('/api/minimax/generate-voice', async ({ body }) => {
-        return handleTtsRoute(context, 'minimax/generate-voice', body);
-    });
+    for (const route of routes) {
+        const path = route.replace(/^\/api\/(?:tts\/)?/, '');
+        router.post(route, async ({ body }) => handleTtsRoute(context, path, body));
+    }
 }

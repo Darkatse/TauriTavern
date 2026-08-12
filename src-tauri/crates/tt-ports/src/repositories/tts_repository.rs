@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json::{Value, json};
+use url::Url;
 
 use tt_domain::errors::DomainError;
 
@@ -27,7 +28,144 @@ pub struct MinimaxGenerateRequest {
 }
 
 #[derive(Debug, Clone)]
+pub enum AzureTtsRequest {
+    List {
+        api_key: String,
+        region: String,
+    },
+    Generate {
+        api_key: String,
+        region: String,
+        text: String,
+        voice: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum GoogleTranslateTtsRequest {
+    ListVoices,
+    Generate { text: Vec<String>, voice: String },
+}
+
+#[derive(Debug, Clone)]
+pub enum GoogleGeminiTtsRequest {
+    ListVoices,
+    Generate {
+        text: String,
+        voice: String,
+        model: String,
+        base_url: String,
+        api_key: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum OpenAiTtsRequest {
+    Generate {
+        api_key: String,
+        text: String,
+        voice: String,
+        model: String,
+        speed: f64,
+        instructions: Option<String>,
+    },
+    CompatibleGenerate {
+        api_key: Option<String>,
+        endpoint: Url,
+        input: String,
+        voice: String,
+        model: String,
+        response_format: String,
+        speed: f64,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum ElectronHubTtsRequest {
+    Models { api_key: String },
+    Generate { api_key: String, payload: Value },
+}
+
+#[derive(Debug, Clone)]
+pub struct ElevenLabsVoiceFile {
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ElevenLabsTtsRequest {
+    Voices {
+        api_key: String,
+    },
+    VoiceSettings {
+        api_key: String,
+    },
+    Synthesize {
+        api_key: String,
+        voice_id: String,
+        request: Value,
+    },
+    History {
+        api_key: String,
+    },
+    HistoryAudio {
+        api_key: String,
+        history_item_id: String,
+    },
+    AddVoice {
+        api_key: String,
+        name: String,
+        description: String,
+        labels: String,
+        files: Vec<ElevenLabsVoiceFile>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum PollinationsTtsRequest {
+    Voices {
+        model: String,
+    },
+    Generate {
+        api_key: String,
+        text: String,
+        model: String,
+        voice: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct VolcengineTtsRequest {
+    pub app_id: String,
+    pub access_key: String,
+    pub provider_endpoint: String,
+    pub resource_id: String,
+    pub text: String,
+    pub voice_speaker: String,
+    pub speed: i64,
+}
+
+#[derive(Debug, Clone)]
 pub enum TtsRequest {
+    Azure(AzureTtsRequest),
+    GoogleTranslate(GoogleTranslateTtsRequest),
+    GoogleGemini(GoogleGeminiTtsRequest),
+    NovelAiGenerate {
+        api_key: String,
+        text: String,
+        voice: String,
+    },
+    OpenAi(OpenAiTtsRequest),
+    ElectronHub(ElectronHubTtsRequest),
+    ChutesGenerate {
+        api_key: String,
+        input: String,
+        voice: String,
+        speed: f64,
+    },
+    ElevenLabs(ElevenLabsTtsRequest),
+    Pollinations(PollinationsTtsRequest),
+    Volcengine(VolcengineTtsRequest),
     GrokVoices {
         api_key: String,
     },

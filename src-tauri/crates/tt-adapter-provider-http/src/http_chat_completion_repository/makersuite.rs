@@ -10,6 +10,7 @@ use tt_ports::repositories::chat_completion_repository::{
 use super::HttpChatCompletionRepository;
 use super::normalizers;
 use super::response_body::read_upstream_json_body;
+use crate::endpoint_url::append_google_api_path;
 
 const GEMINI_API_VERSION: &str = "v1beta";
 
@@ -242,14 +243,7 @@ fn apply_gemini_stream_auth(
 }
 
 fn build_gemini_url(base_url: &str, suffix: &str) -> String {
-    let trimmed = base_url.trim_end_matches('/');
-    let suffix = suffix.trim_start_matches('/');
-
-    if trimmed.ends_with("/v1") || trimmed.ends_with("/v1beta") {
-        format!("{trimmed}/{suffix}")
-    } else {
-        format!("{trimmed}/{GEMINI_API_VERSION}/{suffix}")
-    }
+    append_google_api_path(base_url, GEMINI_API_VERSION, suffix)
 }
 
 fn resolve_generation_method(endpoint_path: &str, stream: bool) -> &'static str {

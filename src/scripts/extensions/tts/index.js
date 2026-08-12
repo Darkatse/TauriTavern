@@ -216,8 +216,7 @@ async function moduleWorker() {
         return;
     }
 
-    processTtsQueue();
-    processAudioJobQueue();
+    await Promise.all([processTtsQueue(), processAudioJobQueue()]);
     updateUiAudioPlayState();
 }
 
@@ -335,30 +334,46 @@ let audioQueueProcessorReady = true;
  */
 async function playAudioData(audioJob) {
     const { audioBlob, char } = audioJob;
-    // Since current audio job can be cancelled, don't playback if it is null
-    if (currentAudioJob == null) {
-        console.log('Cancelled TTS playback because currentAudioJob was null');
+    // The job may have been cancelled while waiting for audio preparation.
+    if (currentAudioJob !== audioJob) {
+        console.log('Cancelled stale TTS playback');
+        return;
     }
+    let src;
     if (audioBlob instanceof Blob) {
-        const srcUrl = await getBase64Async(audioBlob);
+        src = await getBase64Async(audioBlob);
 
         // VRM lip sync
         if (extension_settings.vrm?.enabled && typeof globalThis.vrmLipSync === 'function') {
             await globalThis.vrmLipSync(audioBlob, char);
         }
-
-        audioElement.src = srcUrl;
     } else if (typeof audioBlob === 'string') {
-        audioElement.src = audioBlob;
+        src = audioBlob;
     } else {
         throw `TTS received invalid audio data type ${typeof audioBlob}`;
     }
-    audioElement.addEventListener('ended', completeCurrentAudioJob);
-    audioElement.addEventListener('canplay', () => {
+    if (currentAudioJob !== audioJob) {
+        return;
+    }
+
+    const finish = (error) => {
+        if (currentAudioJob !== audioJob) {
+            return;
+        }
+        if (error) {
+            handleTtsProviderError(error);
+        }
+        completeCurrentAudioJob(audioJob);
+    };
+    audioElement.onended = () => finish();
+    audioElement.onerror = () => finish(new Error('TTS audio playback failed'));
+    audioElement.oncanplay = () => {
+        audioElement.oncanplay = null;
         console.debug('Starting TTS playback');
         audioElement.playbackRate = extension_settings.tts.playback_rate;
-        audioElement.play();
-    });
+        audioElement.play().catch(finish);
+    };
+    audioElement.src = src;
 }
 
 globalThis.tts_preview = function (id) {
@@ -442,7 +457,10 @@ function addAudioControl() {
     updateUiAudioPlayState();
 }
 
-function completeCurrentAudioJob() {
+function completeCurrentAudioJob(audioJob) {
+    if (currentAudioJob !== audioJob) {
+        return;
+    }
     audioQueueProcessorReady = true;
     currentAudioJob = null;
     // updateUiPlayState();
@@ -477,14 +495,15 @@ async function processAudioJobQueue() {
     if (audioJobQueue.length == 0 || !audioQueueProcessorReady || audioPaused) {
         return;
     }
+    let audioJob;
     try {
         audioQueueProcessorReady = false;
-        currentAudioJob = audioJobQueue.shift();
-        playAudioData(currentAudioJob);
+        audioJob = audioJobQueue.shift();
+        currentAudioJob = audioJob;
+        await playAudioData(audioJob);
     } catch (error) {
-        toastr.error(error.toString());
-        console.error(error);
-        audioQueueProcessorReady = true;
+        handleTtsProviderError(error);
+        completeCurrentAudioJob(audioJob);
     }
 }
 
@@ -608,15 +627,15 @@ async function processTtsQueue() {
     console.debug('New message found, running TTS');
     currentTtsJob = ttsJobQueue.shift();
 
-    // Handle segmented jobs that already have processed text
-    if (currentTtsJob.segmentType && currentTtsJob.segmentText) {
-        const char = currentTtsJob.name;
-        const segmentText = currentTtsJob.segmentText;
-        const segmentType = currentTtsJob.segmentType;
+    try {
+        // Handle segmented jobs that already have processed text
+        if (currentTtsJob.segmentType && currentTtsJob.segmentText) {
+            const char = currentTtsJob.name;
+            const segmentText = currentTtsJob.segmentText;
+            const segmentType = currentTtsJob.segmentType;
 
-        console.log(`TTS (${segmentType}): ${segmentText}`);
+            console.log(`TTS (${segmentType}): ${segmentText}`);
 
-        try {
             let voiceMapKey = char;
 
             // If multi-voice is enabled, modify the voice map key based on segment type
@@ -661,71 +680,65 @@ async function processTtsQueue() {
 
             // Pass the full voiceMapKey (e.g., "User ("Quotes")") as well with character name
             await tts(segmentText, voiceId, char, voiceMapKey);
-
-        } catch (error) {
-            handleTtsProviderError(error);
-            currentTtsJob = null;
+            return;
         }
-        return;
-    }
 
-    // Process unsegmented job (first time processing)
-    let text = extension_settings.tts.narrate_translated_only ? (currentTtsJob?.extra?.display_text || currentTtsJob.mes) : currentTtsJob.mes;
+        // Process unsegmented job (first time processing)
+        let text = extension_settings.tts.narrate_translated_only ? (currentTtsJob?.extra?.display_text || currentTtsJob.mes) : currentTtsJob.mes;
 
-    // Substitute macros
-    text = substituteParams(text);
+        // Substitute macros
+        text = substituteParams(text);
 
-    if (extension_settings.tts.skip_codeblocks) {
-        text = text.replace(/^\s{4}.*$/gm, '').trim();
-        text = text.replace(/```.*?```/gs, '').trim();
-        text = text.replace(/~~~.*?~~~/gs, '').trim();
-    }
-
-    if (extension_settings.tts.skip_tags) {
-        text = text.replace(/<.*?>[\s\S]*?<\/.*?>/g, '').trim();
-    }
-
-    if (!extension_settings.tts.pass_asterisks) {
-        text = extension_settings.tts.narrate_dialogues_only
-            ? text.replace(/\*[^*]*?(\*|$)/g, '').trim() // remove asterisks content
-            : text.replaceAll('*', '').trim(); // remove just the asterisks
-    }
-
-    if (extension_settings.tts.apply_regex && extension_settings.tts.regex_pattern) {
-        const regex = regexFromString(extension_settings.tts.regex_pattern);
-        if (regex) {
-            // Clean up extra spaces that might be left after removal
-            text = text.replace(regex, '').replace(/\s+/g, ' ').trim();
-        } else {
-            console.warn('Invalid regex pattern:', extension_settings.tts.regex_pattern);
+        if (extension_settings.tts.skip_codeblocks) {
+            text = text.replace(/^\s{4}.*$/gm, '').trim();
+            text = text.replace(/```.*?```/gs, '').trim();
+            text = text.replace(/~~~.*?~~~/gs, '').trim();
         }
-    }
 
-    if (extension_settings.tts.narrate_quoted_only) {
-        const partJoiner = (ttsProvider?.separator || ' ... ');
-        text = joinQuotedBlocks(text, { separator: partJoiner, includeQuotes: true });
-    }
+        if (extension_settings.tts.skip_tags) {
+            text = text.replace(/<.*?>[\s\S]*?<\/.*?>/g, '').trim();
+        }
 
-    // Remove embedded images
-    text = text.replace(/!\[.*?]\([^)]*\)/g, '');
+        if (!extension_settings.tts.pass_asterisks) {
+            text = extension_settings.tts.narrate_dialogues_only
+                ? text.replace(/\*[^*]*?(\*|$)/g, '').trim() // remove asterisks content
+                : text.replaceAll('*', '').trim(); // remove just the asterisks
+        }
 
-    if (typeof ttsProvider?.processText === 'function') {
-        text = await ttsProvider.processText(text);
-    }
+        if (extension_settings.tts.apply_regex && extension_settings.tts.regex_pattern) {
+            const regex = regexFromString(extension_settings.tts.regex_pattern);
+            if (regex) {
+                // Clean up extra spaces that might be left after removal
+                text = text.replace(regex, '').replace(/\s+/g, ' ').trim();
+            } else {
+                console.warn('Invalid regex pattern:', extension_settings.tts.regex_pattern);
+            }
+        }
 
-    // Collapse newlines and spaces into single space
-    text = text.replace(/\s+/g, ' ').trim();
+        if (extension_settings.tts.narrate_quoted_only) {
+            const partJoiner = (ttsProvider?.separator || ' ... ');
+            text = joinQuotedBlocks(text, { separator: partJoiner, includeQuotes: true });
+        }
 
-    console.log(`TTS: ${text}`);
-    const char = currentTtsJob.name;
+        // Remove embedded images
+        text = text.replace(/!\[.*?]\([^)]*\)/g, '');
 
-    // Remove character name from start of the line if power user setting is disabled
-    if (char && !power_user.allow_name2_display) {
-        const escapedChar = escapeRegex(char);
-        text = text.replace(new RegExp(`^${escapedChar}:`, 'gm'), '');
-    }
+        if (typeof ttsProvider?.processText === 'function') {
+            text = await ttsProvider.processText(text);
+        }
 
-    try {
+        // Collapse newlines and spaces into single space
+        text = text.replace(/\s+/g, ' ').trim();
+
+        console.log(`TTS: ${text}`);
+        const char = currentTtsJob.name;
+
+        // Remove character name from start of the line if power user setting is disabled
+        if (char && !power_user.allow_name2_display) {
+            const escapedChar = escapeRegex(char);
+            text = text.replace(new RegExp(`^${escapedChar}:`, 'gm'), '');
+        }
+
         if (!text) {
             console.warn('Got empty text in TTS queue job.');
             completeTtsJob();
