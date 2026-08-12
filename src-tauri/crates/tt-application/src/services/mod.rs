@@ -47,6 +47,7 @@ pub mod secret_service;
 mod settings_repair;
 pub mod settings_service;
 pub mod skill_service;
+pub mod sprite_service;
 pub mod stable_diffusion_service;
 pub mod sync_automation_service;
 pub mod sync_job_coordinator;

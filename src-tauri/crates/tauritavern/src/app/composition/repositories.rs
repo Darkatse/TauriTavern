@@ -27,8 +27,8 @@ use tt_adapter_storage_core::{
 use tt_adapter_storage_userdata::FileAgentProfileRepository;
 use tt_adapter_storage_userdata::FileAgentRepository;
 use tt_adapter_storage_userdata::FileCharacterRepository;
-use tt_adapter_storage_userdata::FileSkillRepository;
 use tt_adapter_storage_userdata::FileWorldInfoRepository;
+use tt_adapter_storage_userdata::{FileSkillRepository, FileSpriteRepository};
 use tt_adapter_tokenization::MiktikTokenizerRepository;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
@@ -60,6 +60,7 @@ use tt_ports::repositories::quick_reply_repository::QuickReplyRepository;
 use tt_ports::repositories::secret_repository::SecretRepository;
 use tt_ports::repositories::settings_repository::SettingsRepository;
 use tt_ports::repositories::skill_repository::SkillRepository;
+use tt_ports::repositories::sprite_repository::SpriteRepository;
 use tt_ports::repositories::stable_diffusion_repository::StableDiffusionRepository;
 use tt_ports::repositories::theme_repository::ThemeRepository;
 use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
@@ -85,6 +86,7 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) user_directory_repository: Arc<dyn UserDirectoryRepository>,
     pub(in crate::app::composition) secret_repository: Arc<dyn SecretRepository>,
     pub(in crate::app::composition) skill_repository: Arc<dyn SkillRepository>,
+    pub(in crate::app::composition) sprite_repository: Arc<dyn SpriteRepository>,
     pub(in crate::app::composition) content_repository: Arc<dyn ContentRepository>,
     pub(in crate::app::composition) asset_repository: Arc<dyn AssetRepository>,
     pub(in crate::app::composition) extension_repository: Arc<dyn ExtensionRepository>,
@@ -176,6 +178,9 @@ pub(super) async fn build(
     ));
     let skill_repository: Arc<dyn SkillRepository> = Arc::new(FileSkillRepository::new(
         data_root.join("_tauritavern").join("skills"),
+    ));
+    let sprite_repository: Arc<dyn SpriteRepository> = Arc::new(FileSpriteRepository::new(
+        data_directory.characters().to_path_buf(),
     ));
 
     let content_repository: Arc<dyn ContentRepository> = Arc::new(FileContentRepository::new(
@@ -303,6 +308,7 @@ pub(super) async fn build(
         user_directory_repository,
         secret_repository,
         skill_repository,
+        sprite_repository,
         content_repository,
         asset_repository,
         extension_repository,

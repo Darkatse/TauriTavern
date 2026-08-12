@@ -39,6 +39,7 @@ pub mod runtime_paths_commands;
 pub mod secret_commands;
 pub mod settings_commands;
 pub mod skill_commands;
+pub mod sprite_commands;
 pub mod stable_diffusion_commands;
 pub mod sync_automation_commands;
 pub mod sync_commands;

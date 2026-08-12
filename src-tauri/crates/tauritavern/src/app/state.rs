@@ -35,6 +35,7 @@ use tt_application::services::quick_reply_service::QuickReplyService;
 use tt_application::services::secret_service::SecretService;
 use tt_application::services::settings_service::SettingsService;
 use tt_application::services::skill_service::SkillService;
+use tt_application::services::sprite_service::SpriteService;
 use tt_application::services::stable_diffusion_service::StableDiffusionService;
 use tt_application::services::sync_automation_service::SyncAutomationService;
 use tt_application::services::theme_service::ThemeService;
@@ -84,6 +85,7 @@ pub(crate) struct AppServices {
     pub(crate) user_directory_service: Arc<UserDirectoryService>,
     pub(crate) secret_service: Arc<SecretService>,
     pub(crate) skill_service: Arc<SkillService>,
+    pub(crate) sprite_service: Arc<SpriteService>,
     pub(crate) content_service: Arc<ContentService>,
     pub(crate) asset_service: Arc<AssetService>,
     pub(crate) extension_service: Arc<ExtensionService>,

@@ -18,6 +18,7 @@ import { registerSdRoutes } from './sd-routes.js';
 import { registerTranslateRoutes } from './translate-routes.js';
 import { registerTtsRoutes } from './tts-routes.js';
 import { registerVectorRoutes } from './vector-routes.js';
+import { registerSpriteRoutes } from './sprite-routes.js';
 
 export function registerRoutes(router, context, responses) {
     registerSystemRoutes(router, context, responses);
@@ -35,6 +36,7 @@ export function registerRoutes(router, context, responses) {
     registerWorldInfoRoutes(router, context, responses);
     registerAiRoutes(router, context, responses);
     registerVectorRoutes(router, context, responses);
+    registerSpriteRoutes(router, context, responses);
     registerProviderRoutes(router, context, responses);
     registerSdRoutes(router, context, responses);
     registerTranslateRoutes(router, context, responses);

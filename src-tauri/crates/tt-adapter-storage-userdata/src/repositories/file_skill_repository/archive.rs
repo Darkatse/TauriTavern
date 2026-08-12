@@ -1,9 +1,8 @@
 use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Write};
 use std::path::Path;
 
 use zip::ZipWriter;
-use zip::read::ZipFile;
 
 use super::package::collect_skill_files;
 use super::paths::normalize_skill_path;
@@ -37,7 +36,7 @@ pub(super) fn extract_archive(archive_path: &Path, destination: &Path) -> Result
         let mut entry = archive.by_index(index).map_err(|error| {
             DomainError::InvalidData(format!("Failed to read Skill archive entry: {error}"))
         })?;
-        if zip_entry_is_symlink(&entry) {
+        if zipkit::zip_entry_is_symlink(&entry) {
             return Err(DomainError::InvalidData(format!(
                 "Skill archive entry cannot be a symlink: {}",
                 entry.name()
@@ -144,12 +143,6 @@ pub(super) fn export_skill_dir(root: &Path) -> Result<Vec<u8>, DomainError> {
         DomainError::InternalError(format!("Failed to finish Skill export archive: {error}"))
     })?;
     Ok(cursor.into_inner())
-}
-
-fn zip_entry_is_symlink<R: Read + ?Sized>(entry: &ZipFile<'_, R>) -> bool {
-    entry
-        .unix_mode()
-        .is_some_and(|mode| mode & 0o170000 == 0o120000)
 }
 
 fn is_ignored_archive_path(path: &str) -> bool {

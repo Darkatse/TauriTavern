@@ -36,6 +36,7 @@ use tt_application::services::quick_reply_service::QuickReplyService;
 use tt_application::services::secret_service::SecretService;
 use tt_application::services::settings_service::{RequestProxyRuntime, SettingsService};
 use tt_application::services::skill_service::SkillService;
+use tt_application::services::sprite_service::SpriteService;
 use tt_application::services::stable_diffusion_service::StableDiffusionService;
 use tt_application::services::theme_service::ThemeService;
 use tt_application::services::tokenization_service::TokenizationService;
@@ -101,6 +102,7 @@ pub(super) async fn build(
         repositories.skill_repository.clone(),
         external_import_downloader,
     ));
+    let sprite_service = Arc::new(SpriteService::new(repositories.sprite_repository.clone()));
     let llm_connection_service = Arc::new(LlmConnectionService::new(
         repositories.llm_connection_repository.clone(),
     ));
@@ -230,6 +232,7 @@ pub(super) async fn build(
         user_directory_service,
         secret_service,
         skill_service,
+        sprite_service,
         content_service,
         asset_service,
         extension_service,

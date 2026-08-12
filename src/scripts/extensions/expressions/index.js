@@ -1186,7 +1186,7 @@ async function validateImages(spriteFolderName, forceRedrawCached = false) {
  * @returns {ExpressionImage}
  */
 function getExpressionImageData(sprite) {
-    const fileName = sprite.path.split('/').pop().split('?')[0];
+    const fileName = decodeURIComponent(new URL(sprite.path, window.location.href).pathname.split('/').pop());
     const fileNameWithoutExtension = fileName.replace(/\.[^/.]+$/, '');
     return {
         expression: sprite.label,
@@ -1776,6 +1776,7 @@ async function onExpressionFallbackChanged() {
  * @returns {Promise<any>} - The response data from the server
  */
 async function handleFileUpload(url, formData) {
+    let data;
     try {
         const result = await fetch(url, {
             method: 'POST',
@@ -1788,20 +1789,24 @@ async function handleFileUpload(url, formData) {
             throw new Error(`Upload failed with status ${result.status}`);
         }
 
-        const data = await result.json();
-
-        // Refresh sprites list
-        const name = formData.get('name').toString();
-        delete spriteCache[name];
-        await fetchImagesNoCache();
-        await validateImages(name);
-
-        return data ?? {};
+        data = await result.json();
     } catch (error) {
         console.error('Error uploading image:', error);
         toastr.error('Failed to upload image');
         return {};
     }
+
+    try {
+        const name = formData.get('name').toString();
+        delete spriteCache[name];
+        await fetchImagesNoCache();
+        await validateImages(name);
+    } catch (error) {
+        console.warn('Sprite uploaded, but the list could not be refreshed:', error);
+        toastr.warning('Sprite uploaded, but the list could not be refreshed');
+    }
+
+    return data ?? {};
 }
 
 /**

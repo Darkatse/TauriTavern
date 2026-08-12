@@ -28,6 +28,7 @@ pub mod quick_reply_repository;
 pub mod secret_repository;
 pub mod settings_repository;
 pub mod skill_repository;
+pub mod sprite_repository;
 pub mod stable_diffusion_repository;
 pub mod theme_repository;
 pub mod tokenizer_repository;

@@ -192,6 +192,11 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::asset_commands::download_asset,
         super::asset_commands::delete_asset,
         super::asset_commands::get_character_assets,
+        // Character expression sprite commands
+        super::sprite_commands::list_sprites,
+        super::sprite_commands::upload_sprite,
+        super::sprite_commands::upload_sprite_pack,
+        super::sprite_commands::delete_sprite,
         // Data archive commands
         super::data_archive_commands::start_import_data_archive,
         super::data_archive_commands::start_export_data_archive,
