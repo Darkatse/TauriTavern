@@ -102,6 +102,7 @@ const hits = await handle.searchMessages({
 **技术特点**：
 - 基于片段命中评分 + TopK 召回（非向量检索，轻量高效）
 - CJK / 无空格文本自动 bigram 分词，大幅提升中日韩文匹配率
+- 纯标点或符号 query 中的连续片段按原始字符序列做字面量子串匹配；混合 query 继续使用既有分词评分语义
 - `scanLimit` 控制性能上限，移动端友好
 
 ---

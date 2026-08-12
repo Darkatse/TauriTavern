@@ -171,6 +171,7 @@ readWorkspaceFile returns UTF-8 text, chars, words, sha256
 readModelTurn returns assistant text, visible reasoning, tool calls, provider summary
 workspace_list_files accepts omitted/empty/dot path as workspace root
 workspace_search_files searches only visible roots and returns snippets
+chat/workspace/skill search preserves punctuation- and symbol-only queries as literal text
 workspace_read_file full read records read-state
 workspace_read_file character range does not unlock patch state unless it covers the full file
 workspace_write_file append creates missing files and appends existing files without a rewrite read

@@ -261,6 +261,8 @@ workspace.create_checkpoint
 
 ### 7.3 Workspace Tools
 
+`chat.search`、`workspace.search_files` 与 `skill.search` 共享纯查询规范化规则：包含字母、数字或 `_` 的 query 继续使用既有分词评分；非空 query 若分词后没有任何词项，则保留 trim 后 query，并由既有空白分词生成字面量 token。因此纯标点和符号片段可搜索，混合 query 的既有召回与排序语义不变。
+
 `workspace.list_files`
 
 - Read-only。

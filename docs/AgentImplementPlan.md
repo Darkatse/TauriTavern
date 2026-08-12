@@ -258,6 +258,7 @@ workspace.finish 收尾并提交 persist projection
 已完成：
 
 - `chat.search` / `chat.read_messages` 只读取当前 run 绑定的聊天。
+- `chat.search`、`workspace.search_files` 与 `skill.search` 共享纯 query 规范化；纯标点或符号 query 使用字面量词项，混合 query 保持既有分词评分。
 - `worldinfo.read_activated` 只读取本次 run 捕获的最终激活世界书条目。
 - 只读工具结果以 resource ref / snippet / tool result 回填模型，不写入 chat 楼层。
 

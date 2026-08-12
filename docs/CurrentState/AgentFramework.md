@@ -140,6 +140,8 @@ MCP alias 是 `mcp__<normalized server displayName>__<normalized nativeName>`；
 
 Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swipe` 排除当前最后一条 assistant 目标楼层，`regenerate` 排除最后一条非 user 楼层。`chat.search`、`chat.read_messages` 与 persistent state base 解析都只消费这个前缀；这是 runtime 内部语义，不进入 model-facing tool description。
 
+`chat.search`、`workspace.search_files` 与 `skill.search` 共享 `tt-domain` 的纯 query 规范化：现有字母数字分词与评分保持不变；非空 query 若没有任何分词词项，则保留 trim 后 query，并由既有空白分词生成字面量 token，使纯标点和符号片段可搜索而不改变混合 query 语义。
+
 | Canonical name | Model alias | 类型 | 当前语义 |
 | --- | --- | --- | --- |
 | `agent.list` | `agent_list` | read-only | 列出当前 Profile policy 允许调用的 Agent 目录；用于软渐进式披露可委派 Agent。 |

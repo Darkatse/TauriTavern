@@ -98,10 +98,10 @@ fn split_lines(text: &str) -> Vec<&str> {
     }
 }
 
-fn normalize_query(value: &str) -> String {
-    value
-        .trim()
-        .to_lowercase()
+/// Normalizes a scored text-search query without discarding non-empty literal input.
+pub fn normalize_search_query(value: &str) -> String {
+    let literal = value.trim().to_lowercase();
+    let normalized = literal
         .chars()
         .map(|ch| {
             if ch.is_alphanumeric() || ch == '_' {
@@ -113,11 +113,17 @@ fn normalize_query(value: &str) -> String {
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+
+    if normalized.is_empty() {
+        literal
+    } else {
+        normalized
+    }
 }
 
 fn build_query_tokens(query: &str) -> Vec<String> {
-    let normalized = normalize_query(query);
+    let normalized = normalize_search_query(query);
     if normalized.is_empty() {
         return Vec::new();
     }
@@ -204,5 +210,15 @@ mod tests {
         let hits = search.search("the blue lantern");
 
         assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn searches_punctuation_and_symbol_only_queries_literally() {
+        for (query, text) in [("——", "pause——continue"), ("❤️", "status: ❤️")] {
+            let hits = PreparedTextSearch::new(query, 5, 0).search(text);
+
+            assert_eq!(hits.len(), 1, "query {query:?}");
+            assert_eq!(hits[0].score, 1.0, "query {query:?}");
+        }
     }
 }

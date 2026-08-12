@@ -109,6 +109,7 @@ materialize input into .staging
 - 只读。
 - 参数：`name`、`query`、可选 `path`、`limit`、`context_lines`。
 - 只搜索当前 Profile 可见且未 deny 的单个 Skill。
+- 纯标点或符号 query 中的连续片段按原始字符序列做字面量子串匹配；混合 query 继续使用既有分词评分语义。
 - 返回 snippet 与 `skills/<name>/<path>#Lx-Ly` ref，不返回完整文件。
 - snippet 字符数计入同一个 Skill run read budget。
 
