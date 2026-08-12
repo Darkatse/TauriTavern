@@ -145,11 +145,10 @@ pub(in crate::services::agent_tools) async fn read(
     session.remember_skill_read_chars(read.chars);
 
     let mut content = format!(
-        "{} chars / {} words from {}, sha256 {}, lines {}-{} of {}{}",
+        "{} chars / {} words from {}, lines {}-{} of {}{}",
         read.chars,
         read.words,
         read.resource_ref.as_str(),
-        read.sha256.as_str(),
         read.start_line,
         read.end_line,
         read.total_lines,

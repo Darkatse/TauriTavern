@@ -320,7 +320,6 @@ fn tool_result_message_content(result: &AgentToolResult) -> Result<String, Appli
     serde_json::to_string(&json!({
         "ok": !result.is_error,
         "content": result.content.as_str(),
-        "structured": &result.structured,
         "errorCode": result.error_code.as_deref(),
         "resourceRefs": &result.resource_refs,
     }))

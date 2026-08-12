@@ -472,21 +472,13 @@ fn project_mcp_result_for_model(
     snapshot: &InvocationToolSnapshot,
     inline_char_limit: usize,
 ) -> Result<Option<String>, ApplicationError> {
-    let wire = serde_json::to_string(result).map_err(|error| {
-        ApplicationError::ValidationError(format!("agent.tool_result_serialize_failed: {error}"))
-    })?;
-    let char_count = TextMetrics::from_text(&wire).chars;
+    result.content = mcp_model_content(result);
+    let char_count = TextMetrics::from_text(&result.content).chars;
     if char_count <= inline_char_limit {
         return Ok(None);
     }
 
-    let structured = serde_json::to_string_pretty(&result.structured).map_err(|error| {
-        ApplicationError::ValidationError(format!("agent.tool_result_serialize_failed: {error}"))
-    })?;
-    let readable = line_addressable_content(&format!(
-        "MCP text content:\n{}\n\nMCP structured content:\n{structured}",
-        result.content
-    ));
+    let readable = line_addressable_content(&result.content);
     externalize_mcp_result(
         result,
         audit_path,
@@ -496,6 +488,47 @@ fn project_mcp_result_for_model(
         inline_char_limit,
     )?;
     Ok(Some(readable))
+}
+
+fn mcp_model_content(result: &AgentToolResult) -> String {
+    let mut content = result.content.clone();
+    if let Some(value) = result
+        .structured
+        .get("structuredContent")
+        .filter(|value| !value.is_null())
+    {
+        append_json_section(&mut content, "Structured content", value);
+    }
+    if let Some(value) = result
+        .structured
+        .get("diagnostics")
+        .filter(|value| value.as_array().is_some_and(|items| !items.is_empty()))
+    {
+        append_json_section(&mut content, "Diagnostics", value);
+    }
+    if let Some(server_error) = result.structured.get("serverError") {
+        if let Some(code) = server_error.get("code") {
+            content.push_str(&format!("\n\nMCP server code: {code}"));
+        }
+        if let Some(data) = server_error.get("data").filter(|value| !value.is_null()) {
+            append_json_section(&mut content, "MCP server error data", data);
+        }
+    }
+    if let Some(response_type) = result
+        .structured
+        .pointer("/unsupportedResponse/type")
+        .and_then(|value| value.as_str())
+    {
+        content.push_str(&format!("\n\nMCP response type: {response_type}"));
+    }
+    content
+}
+
+fn append_json_section(content: &mut String, label: &str, value: &serde_json::Value) {
+    content.push_str(&format!(
+        "\n\n{label}:\n{}",
+        serde_json::to_string_pretty(value).expect("serde_json::Value is always serializable")
+    ));
 }
 
 fn externalize_mcp_result(
@@ -718,7 +751,8 @@ mod tests {
     };
 
     use super::{
-        MCP_RESULT_CONTENT_CHUNK_CHARS, ensure_tool_result_identity, project_mcp_result_for_model,
+        MCP_RESULT_CONTENT_CHUNK_CHARS, ensure_tool_result_identity, mcp_model_content,
+        project_mcp_result_for_model,
     };
 
     #[test]
@@ -741,6 +775,35 @@ mod tests {
 
         let error = ensure_tool_result_identity(&invocation, &result).unwrap_err();
         assert!(error.to_string().contains("tool.result_identity_mismatch"));
+    }
+
+    #[test]
+    fn mcp_model_content_keeps_actionable_structured_data() {
+        let result = AgentToolResult {
+            call_id: "call_mcp".to_string(),
+            tool_id: ToolId::new(
+                &ToolProviderId::parse("mcp/550e8400-e29b-41d4-a716-446655440000").unwrap(),
+                "search",
+            )
+            .unwrap(),
+            content: "Created issue.".to_string(),
+            structured: json!({
+                "structuredContent": { "issueId": 42 },
+                "diagnostics": [{
+                    "code": "mcp.call_content_unsupported",
+                    "message": "Image content is not supported",
+                    "contentIndex": 1,
+                }],
+            }),
+            is_error: false,
+            error_code: None,
+            resource_refs: Vec::new(),
+        };
+
+        let content = mcp_model_content(&result);
+        assert!(content.contains("Created issue."));
+        assert!(content.contains("\"issueId\": 42"));
+        assert!(content.contains("mcp.call_content_unsupported"));
     }
 
     #[test]

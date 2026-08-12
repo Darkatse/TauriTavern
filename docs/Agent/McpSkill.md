@@ -78,7 +78,7 @@ MCP tool result 在 Agent 边界应映射为携带 canonical `ToolId` 的 `Agent
 
 ```text
 Text content        -> bounded content string
-Structured content  -> structured JSON
+Structured content  -> labeled JSON section in model content + internal audit JSON
 Image/audio/file    -> resource_refs
 Resource link       -> resource_refs
 Error               -> is_error + error_code

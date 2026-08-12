@@ -246,7 +246,7 @@ fn rejects_tool_choice_outside_the_advertised_set() {
 }
 
 #[test]
-fn encodes_tool_result_alias_from_canonical_identity() {
+fn encodes_tool_result_alias_and_model_projection() {
     let builtin_id = ToolId::builtin("search").unwrap();
     let mcp_id = ToolId::new(
         &ToolProviderId::parse("mcp/registration-1").unwrap(),
@@ -275,10 +275,10 @@ fn encodes_tool_result_alias_from_canonical_identity() {
                 call_id: "call_mcp".to_string(),
                 tool_id: mcp_id,
                 content: "done".to_string(),
-                structured: Value::Null,
+                structured: json!({ "auditOnly": true }),
                 is_error: false,
                 error_code: None,
-                resource_refs: Vec::new(),
+                resource_refs: vec!["tool-results/call_mcp.json".to_string()],
             },
         }],
         provider_metadata: Value::Null,
@@ -286,6 +286,17 @@ fn encodes_tool_result_alias_from_canonical_identity() {
 
     let dto = encode_chat_completion_request(&request).unwrap();
     assert_eq!(dto.payload["messages"][0]["name"], "mcp_search");
+    let content: Value =
+        serde_json::from_str(dto.payload["messages"][0]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        content,
+        json!({
+            "ok": true,
+            "content": "done",
+            "errorCode": null,
+            "resourceRefs": ["tool-results/call_mcp.json"],
+        })
+    );
 }
 
 #[test]

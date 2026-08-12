@@ -125,7 +125,7 @@ pub(in crate::services::agent_tools) async fn read_file(
     session.remember_file_read(&file, full_read, &selection.content);
 
     let mut content = format!(
-        "{} lines {}-{} of {}, chars {} of {}, words {} of {}, sha256 {}{}",
+        "{} lines {}-{} of {}, chars {} of {}, words {} of {}{}",
         file.path.as_str(),
         selection.start_line,
         selection.end_line,
@@ -134,7 +134,6 @@ pub(in crate::services::agent_tools) async fn read_file(
         total_metrics.chars,
         selected_metrics.words,
         total_metrics.words,
-        file.sha256,
         if selection.truncated() {
             " (preview)"
         } else {

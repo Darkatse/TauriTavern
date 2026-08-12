@@ -3,8 +3,8 @@ use serde_json::Value;
 
 use tt_domain::text_metrics::TextMetrics;
 
-// AgentToolResult keeps `structured` as a provider-facing JSON boundary; tool
-// modules build typed payloads and cross that boundary only here.
+// AgentToolResult keeps `structured` for runtime state, audit, and timeline UI;
+// tool modules build typed payloads and cross that internal boundary only here.
 pub(in crate::services::agent_tools) fn structured_value<T: Serialize>(payload: T) -> Value {
     serde_json::to_value(payload).expect("agent.tool_structured_payload_serialization_failed")
 }

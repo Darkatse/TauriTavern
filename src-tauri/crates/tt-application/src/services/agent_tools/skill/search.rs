@@ -254,28 +254,62 @@ fn structured_hit(hit: &SkillSearchHit) -> SkillSearchHitStructured<'_> {
 }
 
 fn render_content(search: &tt_domain::models::skill::SkillSearchResult) -> String {
-    if search.hits.is_empty() {
-        return format!(
+    let mut content = if search.hits.is_empty() {
+        format!(
             "No files in Skill `{}` matched `{}`.",
             search.name, search.query
+        )
+    } else {
+        let mut content = format!(
+            "Search `{}` matched {} location{} in Skill `{}`. Use skill_read with path and start_line/line_count to read exact text.",
+            search.query,
+            search.hits.len(),
+            if search.hits.len() == 1 { "" } else { "s" },
+            search.name
         );
-    }
-
-    let mut content = format!(
-        "Search `{}` matched {} location{} in Skill `{}`. Use skill_read with path and start_line/line_count to read exact text.",
-        search.query,
-        search.hits.len(),
-        if search.hits.len() == 1 { "" } else { "s" },
-        search.name
-    );
-    for hit in &search.hits {
+        for hit in &search.hits {
+            content.push_str(&format!(
+                "\n\n{} score {:.3} ref {}\n{}",
+                hit.path, hit.score, hit.resource_ref, hit.snippet
+            ));
+        }
+        content
+    };
+    if search.skipped_files > 0 {
         content.push_str(&format!(
-            "\n\n{} score {:.3} ref {}\n{}",
-            hit.path, hit.score, hit.resource_ref, hit.snippet
+            "\n\nSearch skipped {} non-text file{}.",
+            search.skipped_files,
+            if search.skipped_files == 1 { "" } else { "s" }
         ));
     }
     if search.truncated {
         content.push_str("\n\nResults were truncated.");
     }
     content
+}
+
+#[cfg(test)]
+mod tests {
+    use tt_domain::models::skill::{SkillScope, SkillSearchResult};
+
+    use super::render_content;
+
+    #[test]
+    fn search_content_reports_skipped_non_text_files() {
+        let content = render_content(&SkillSearchResult {
+            scope: SkillScope::Global,
+            name: "docs".to_string(),
+            query: "needle".to_string(),
+            hits: Vec::new(),
+            searched_files: 1,
+            skipped_files: 2,
+            truncated: false,
+            returned_chars: 0,
+        });
+
+        assert_eq!(
+            content,
+            "No files in Skill `docs` matched `needle`.\n\nSearch skipped 2 non-text files."
+        );
+    }
 }

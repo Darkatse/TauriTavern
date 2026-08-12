@@ -169,7 +169,7 @@ Builtin 工具直接声明中性 `ToolDescriptor` 并构造 `ToolCatalog`；invo
 
 当前工具结果不做自动内容补入：
 
-- `workspace.write_file` / `workspace.apply_patch` 成功结果只以 tool result 摘要、结构化元数据与 resource refs 回填模型。
+- `workspace.write_file` / `workspace.apply_patch` 成功结果只以 tool result 摘要与 resource refs 回填模型；内部结构化元数据不进入模型上下文。
 - runtime 不再自动读取完整 workspace 文件内容并拼入下一轮 model request。
 - 后续 rewrite / patch 依赖 workspace 工具维护的 read-state；模型需要完整文件内容时必须显式调用 `workspace.read_file`。
 

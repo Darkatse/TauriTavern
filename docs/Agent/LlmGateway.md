@@ -208,13 +208,12 @@ Tool result 当前会编码为 JSON 字符串，包含：
 {
   "ok": true,
   "content": "...",
-  "structured": {},
   "errorCode": null,
   "resourceRefs": []
 }
 ```
 
-`workspace.write_file` / `workspace.apply_patch` 成功结果不会被 runtime 自动补入完整文件内容。下一轮模型只看到 canonical tool result 摘要、结构化元数据与 resource refs；需要完整文件内容时必须通过 `workspace.read_file` 显式读取。
+`AgentToolResult.structured` 只供 runtime、audit 与 Timeline UI 使用，不发送给模型。`workspace.write_file` / `workspace.apply_patch` 成功结果不会被 runtime 自动补入完整文件内容；下一轮模型只看到 canonical tool result 摘要与 resource refs，需要完整文件内容时必须通过 `workspace.read_file` 显式读取。
 
 ## 8. Policy
 

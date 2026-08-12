@@ -61,6 +61,8 @@ AgentToolResult {
 
 `call_id + tool_id` 必须与原始 `ToolInvocation` 完全一致。结果进入 effect 解释、审计存储或 provider transcript 前都要验证该身份。
 
+`structured` 是 runtime、完整 JSON audit 与 Timeline UI 的内部数据，不进入模型上下文。所有 provider 对模型统一编码为一个稳定 JSON 字符串：`{ ok, content, errorCode, resourceRefs }`。模型需要采取行动的信息必须出现在简洁的 `content` 中；内部版本哈希、统计字段与重复正文不得占用模型注意力。
+
 原则：
 
 - 大结果写 resource ref，不内联到 journal。
@@ -89,7 +91,7 @@ write result
   ↓
 append journal
   ↓
-next AgentModelRequest includes AgentToolResult
+next AgentModelRequest includes the model-safe result projection
 ```
 
 Journal：
@@ -188,7 +190,7 @@ runtime 额外提供 `tool-results/`：对所有 invocation 可见、永远不�
 
 工具参数会以 create-only 语义写入 `tool-args/call_<sha256_8byte_hex(call-id)>.json`，工具结果会以相同语义写入 `tool-results/call_<sha256_8byte_hex(call-id)>.json`；重复 `call_id` 或 digest 路径冲突在覆盖既有审计事实前 fail-fast。本地文件名只使用 SHA-256 前 8 字节 hex。provider 返回的原始 `call_id` 只作为不透明业务 ID 保存在 JSON 内容、journal payload 与下一轮 `AgentModelContentPart::ToolResult` 中，不作为本地文件名。`AgentToolResult` 同时保存 canonical `ToolId`；dispatcher outcome 在解释 `AgentToolEffect` 前必须匹配原始 `ToolInvocation`，最终结果落盘前再次验证。Gateway 只通过当前 request 的 `ToolId -> model alias` 投影编码历史结果。工具结果不会写入 SillyTavern chat 楼层。
 
-MCP 结果总是先完整写入 JSON audit，再决定模型投影。序列化后的 `AgentToolResult` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，runtime 额外写入包含 text 与 structured content 的 `.txt` 可读视图；超长物理行只在该视图中换行，精确原文仍由 JSON audit 保存。模型收到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、可读视图与 audit 路径、字符数、resource refs，以及当前 snapshot 中 `workspace.read_file` / `workspace.search_files` 的真实 alias 和分段读取指引。该正整数随 resolved Profile 固定到 invocation，root、SubAgent 与 handoff 各自使用其 Profile 值。字符统计复用 domain `TextMetrics`，不依赖具体模型 tokenizer。若 Profile 没有读工具，路径仍作为用户可见 result reference 返回，不静默截断，也不为此临时扩大工具权限。
+MCP 结果总是先完整写入 JSON audit，再决定模型投影。MCP 的 structured content、diagnostics 与可操作错误详情会在该投影中转为带标签的 `content` 段落；内部 `structured` 仍只供审计。模型可见 `content` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，runtime 额外写入同一完整 `content` 的 `.txt` 可读视图；超长物理行只在该视图中换行，精确原始结果仍由 JSON audit 保存。模型收到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、可读视图与 audit 路径、字符数、resource refs，以及当前 snapshot 中 `workspace.read_file` / `workspace.search_files` 的真实 alias 和分段读取指引。该正整数随 resolved Profile 固定到 invocation，root、SubAgent 与 handoff 各自使用其 Profile 值。字符统计复用 domain `TextMetrics`，不依赖具体模型 tokenizer。若 Profile 没有读工具，路径仍作为用户可见 result reference 返回，不静默截断，也不为此临时扩大工具权限。
 
 Timeline 的隐藏、side-effect 关联与 builtin 类型判定只使用 journal 中的 canonical `toolId`；native `name` 仅用于用户可读标题。Model Turn UI 投影保留 `toolId`，同 native name 的外部工具以 canonical identity 区分。
 
@@ -423,10 +425,10 @@ AgentModelContentPart::ToolResult
   ↓
 下一轮 AgentModelRequest
   ↓
-provider adapter
+provider adapter projects { ok, content, errorCode, resourceRefs }
 ```
 
-结果正文可以按真实上下文预算裁剪或转为 resource ref，但 canonical `call_id + tool_id` 不能丢失。未来需要摘要、可见性或顺序策略时，应在 context/request assembly 边界实现，不修改基础 descriptor。
+结果正文可以按真实上下文预算裁剪或转为 resource ref，但 canonical `call_id + tool_id` 不能丢失。`structured` 不属于模型语言界面；未来若出现真正需要 schema-validated structured output 的 provider 契约，应显式增加该契约，不能重新透传内部审计对象。未来需要摘要、可见性或顺序策略时，应在 context/request assembly 边界实现，不修改基础 descriptor。
 
 ## 10. Approval（后续统一设计）
 
@@ -532,7 +534,7 @@ AgentToolResult returns to backend journal
 - agent list/delegate/await 与 runtime-only task.return 的 return-mode SubAgent MVP。
 - tool arguments / tool results resource refs。
 - recoverable tool error 回填模型。
-- workspace write/patch 成功结果只回填摘要、结构化元数据与 resource refs；需要完整内容时由模型显式调用 workspace_read_file。
+- workspace write/patch 成功结果只向模型回填摘要与 resource refs；内部结构化元数据保留给 runtime、audit 与 Timeline UI。需要完整内容时由模型显式调用 workspace_read_file。
 - workspace mutation checkpoint。
 - journal events。
 - MCP cached descriptor resolution、permission-aware call 与 known/unknown outcome 投影。
