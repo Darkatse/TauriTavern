@@ -2,6 +2,7 @@ mod apply;
 mod archive;
 mod extract;
 mod layout;
+mod persona_registry;
 
 use std::fs;
 use std::path::Path;
@@ -74,6 +75,7 @@ pub(crate) fn run_import_data_archive(
     report_progress("normalizing", 90.0, "Normalizing archive layout");
     extract::normalize_staged_archive(&staged_archive, &layout, &normalized_root, is_cancelled)?;
     drop(staged_archive);
+    persona_registry::merge_retained_personas(&normalized_root, data_root)?;
 
     report_progress("applying", 92.0, "Merging data directory");
     ensure_not_cancelled(is_cancelled)?;
@@ -637,6 +639,107 @@ mod tests {
             "new file should be imported"
         );
 
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn import_preserves_personas_for_retained_avatar_files() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-personas-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let user_root = data_root.join("default-user");
+        let avatars_root = user_root.join("User Avatars");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.zip");
+
+        fs::create_dir_all(&avatars_root).expect("create target Persona avatars");
+        fs::write(avatars_root.join("retained.png"), b"retained").expect("write retained avatar");
+        fs::write(avatars_root.join("shared.png"), b"old shared").expect("write shared avatar");
+        fs::write(
+            user_root.join("settings.json"),
+            br#"{
+                "theme": "target",
+                "target_only": true,
+                "power_user": {
+                    "personas": {
+                        "retained.png": "Retained",
+                        "shared.png": "Target Shared",
+                        "stale.png": "Stale"
+                    },
+                    "persona_descriptions": {
+                        "retained.png": { "description": "retained description" },
+                        "shared.png": { "description": "target description" },
+                        "stale.png": { "description": "stale description" }
+                    }
+                }
+            }"#,
+        )
+        .expect("write target settings");
+
+        fs::create_dir_all(&workspace_root).expect("create workspace");
+        write_zip(
+            &archive_path,
+            &[
+                (
+                    "default-user/settings.json",
+                    br#"{
+                        "theme": "source",
+                        "power_user": {
+                            "personas": {
+                                "shared.png": "Source Shared",
+                                "source.png": "Source"
+                            },
+                            "persona_descriptions": {
+                                "shared.png": { "description": "source description" },
+                                "source.png": { "description": "source-only description" }
+                            }
+                        }
+                    }"#,
+                ),
+                ("default-user/User Avatars/shared.png", b"new shared"),
+                ("default-user/User Avatars/source.png", b"source"),
+            ],
+        );
+
+        let run_import = || {
+            let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+            run_import_data_archive(
+                &data_root,
+                &archive_path,
+                &workspace_root,
+                &mut report_progress,
+                &|| false,
+            )
+            .expect("import archive");
+            serde_json::from_slice::<serde_json::Value>(
+                &fs::read(user_root.join("settings.json")).expect("read imported settings"),
+            )
+            .expect("parse imported settings")
+        };
+
+        let imported = run_import();
+        assert_eq!(imported["theme"], "source");
+        assert!(imported.get("target_only").is_none());
+        assert_eq!(
+            imported["power_user"]["personas"],
+            serde_json::json!({
+                "retained.png": "Retained",
+                "shared.png": "Source Shared",
+                "source.png": "Source"
+            })
+        );
+        assert_eq!(
+            imported["power_user"]["persona_descriptions"],
+            serde_json::json!({
+                "retained.png": { "description": "retained description" },
+                "shared.png": { "description": "source description" },
+                "source.png": { "description": "source-only description" }
+            })
+        );
+
+        assert_eq!(run_import(), imported, "repeated import must be idempotent");
         cleanup_directory_sync(&root);
     }
 

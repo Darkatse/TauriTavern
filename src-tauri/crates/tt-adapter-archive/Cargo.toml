@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 flate2 = "1.1.9"
+serde_json = { workspace = true }
 tar = { version = "0.4", default-features = false }
 tracing = "0.1"
 typed-path = "0.12"

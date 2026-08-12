@@ -770,6 +770,10 @@ function flushPendingSettingsSave(force = false) {
         return settingsSavePromise;
     }
 
+    if (TempResponseLength.isCustomized()) {
+        return TempResponseLength.waitForRestore().then(() => flushPendingSettingsSave(force));
+    }
+
     const loopCounter = pendingSettingsLoopCounter;
     cancelPendingSettingsSave();
     return saveSettings(loopCounter);
@@ -4920,9 +4924,17 @@ export async function generateRaw({ prompt = '', api = null, instructOverride = 
 class TempResponseLength {
     static #originalResponseLength = -1;
     static #lastApi = null;
+    /** @type {Promise<void>} */
+    static #restorePromise = Promise.resolve();
+    /** @type {(() => void) | null} */
+    static #resolveRestore = null;
 
     static isCustomized() {
         return this.#originalResponseLength > -1;
+    }
+
+    static waitForRestore() {
+        return this.#restorePromise;
     }
 
     /**
@@ -4931,6 +4943,9 @@ class TempResponseLength {
      * @param {number} responseLength New response length
      */
     static save(api, responseLength) {
+        this.#restorePromise = new Promise(resolve => {
+            this.#resolveRestore = resolve;
+        });
         if (api === 'openai') {
             this.#originalResponseLength = oai_settings.openai_max_tokens;
             oai_settings.openai_max_tokens = responseLength;
@@ -4964,6 +4979,8 @@ class TempResponseLength {
         console.log('[TempResponseLength] Restored original response length:', this.#originalResponseLength);
         this.#originalResponseLength = -1;
         this.#lastApi = null;
+        this.#resolveRestore?.();
+        this.#resolveRestore = null;
     }
 
     /**

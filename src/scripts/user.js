@@ -3,6 +3,7 @@ import { POPUP_RESULT, POPUP_TYPE, callGenericPopup } from './popup.js';
 import { canViewSecrets } from './secrets.js';
 import { renderTemplateAsync } from './templates.js';
 import { ensureImageFormatSupported, getBase64Async, humanFileSize } from './utils.js';
+import { flushLifecycleState } from '../tauri/main/services/lifecycle/lifecycle-flush-service.js';
 
 /**
  * @type {import('../../src/users.js').UserViewModel} Logged in user
@@ -299,6 +300,7 @@ function showBackupSecretsWarning() {
 
 async function backupUserData(handle, callback) {
     try {
+        await flushLifecycleState('user-backup');
         toastr.info(isTauriRuntime() ? 'Please wait while the backup is prepared.' : 'Please wait for the download to start.', 'Backup Requested');
         const response = await fetch('/api/users/backup', {
             method: 'POST',
@@ -318,7 +320,6 @@ async function backupUserData(handle, callback) {
                 showBackupSecretsWarning();
             }
             showNativeBackupResult(payload);
-            callback();
             return;
         }
 
@@ -337,9 +338,10 @@ async function backupUserData(handle, callback) {
         a.download = filename;
         a.click();
         URL.revokeObjectURL(url);
-        callback();
     } catch (error) {
         console.error('Error backing up user data:', error);
+    } finally {
+        callback();
     }
 }
 

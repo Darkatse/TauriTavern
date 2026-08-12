@@ -4,6 +4,7 @@ import { Popup } from '../../popup.js';
 import { isAndroidRuntime, isIosRuntime } from '../../util/mobile-runtime.js';
 import { getActiveIosPolicyActivationReport } from '../../tauritavern/ios-policy.js';
 import { openDialog } from '../../../tauri-bridge.js';
+import { flushLifecycleState } from '../../../tauri/main/services/lifecycle/lifecycle-flush-service.js';
 
 const MODULE_NAME = 'data-migration';
 const JOB_POLL_INTERVAL_MS = 1200;
@@ -431,6 +432,7 @@ async function runMigrationJob(kind, startJob) {
 
     try {
         markJobStarting();
+        await flushLifecycleState(`data-archive:${kind}`);
         if (kind === 'import') {
             setStatusText(t`Preparing import...`);
         }

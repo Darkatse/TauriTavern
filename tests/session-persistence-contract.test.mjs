@@ -15,6 +15,7 @@ test('session persistence uses the host lifecycle registry and flushes pending w
     assert.match(scriptSource, /flushPendingWorldInfoSettings\(\)/);
     assert.match(scriptSource, /flushPendingSettingsSave\(worldInfoSettingsPending\)/);
     assert.match(scriptSource, /flushDebouncedChatSave\(\)/);
+    assert.match(scriptSource, /TempResponseLength\.waitForRestore\(\)\.then\(\(\) => flushPendingSettingsSave\(force\)\)/);
     assert.doesNotMatch(scriptSource, /window\.addEventListener\('pagehide', flushSessionState\)/);
 
     const sessionFlush = scriptSource.match(/function flushSessionState\(\) \{[\s\S]*?registerLifecycleFlushHandler\('session-state', flushSessionState, \{ priority: -100 \}\);/);
@@ -38,6 +39,32 @@ test('world info selection participates in the pending settings flush', async ()
     assert.doesNotMatch(lifecycleHooks[0], /window\.addEventListener\('pagehide'/);
     assert.doesNotMatch(lifecycleHooks[0], /window\.addEventListener\('beforeunload'/);
     assert.doesNotMatch(lifecycleHooks[0], /document\.addEventListener\('visibilitychange'/);
+});
+
+test('data archives flush pending session state before reading or replacing settings', async () => {
+    const [lifecycleSource, migrationSource, userSource] = await Promise.all([
+        readFile(path.join(REPO_ROOT, 'src/tauri/main/services/lifecycle/lifecycle-flush-service.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/scripts/extensions/data-migration/index.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/scripts/user.js'), 'utf8'),
+    ]);
+    const migrationJob = migrationSource.match(/async function runMigrationJob\(kind, startJob\) \{[\s\S]*?\n\}/);
+    const userBackup = userSource.match(/async function backupUserData\(handle, callback\) \{[\s\S]*?\n\}/);
+
+    assert.ok(migrationJob, 'data archive job flow not found');
+    assert.ok(userBackup, 'user backup flow not found');
+    assert.match(lifecycleSource, /export function flushLifecycleState\(reason\)/);
+    assert.match(
+        migrationJob[0],
+        /await flushLifecycleState\(`data-archive:\$\{kind\}`\);[\s\S]*?const jobId = await startJob\(\)/,
+        'data archive must flush before starting filesystem work',
+    );
+    assert.match(
+        userBackup[0],
+        /await flushLifecycleState\('user-backup'\);[\s\S]*?fetch\('\/api\/users\/backup'/,
+        'user backup must flush before reading files',
+    );
+    assert.match(userBackup[0], /finally\s*\{\s*callback\(\);\s*\}/, 'backup controls must recover after failure');
+    assert.equal(userBackup[0].match(/callback\(\);/g)?.length, 1, 'backup completion callback must run exactly once');
 });
 
 test('all character chat navigation shares one debounced persistence request', async () => {
