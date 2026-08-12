@@ -38,7 +38,7 @@ test('replacement completes standard import work before resolving its lorebook c
     assert.doesNotMatch(importCharacter, /if \(preserveFileName\) \{\s*await flushWorldInfoSaves/);
 });
 
-test('replacement lorebook choice is token-checked and keeps copy unbound', async () => {
+test('replacement lorebook choice is token-checked, refreshes its binding, and keeps copy unbound', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
     const popup = sliceSource(
         source,
@@ -61,6 +61,13 @@ test('replacement lorebook choice is token-checked and keeps copy unbound', asyn
     assert.match(apply, /conflict_token: conflictToken/);
     assert.match(apply, /resolved\?\.affected_world/);
     assert.doesNotMatch(apply, /fallbackWorld|imported_world/);
+    assert.match(apply, /await getOneCharacter\(avatarFileName\)/);
+    assert.match(apply, /characters\[characterIndex\]\.data\.extensions\.world = String\(resolved\.world \|\| ''\)/);
+    assert.match(apply, /select_selected_character\(this_chid, \{ switchMenu: false \}\)/);
+    const bindingIndex = apply.indexOf("characters[characterIndex].data.extensions.world = String(resolved.world || '')");
+    const reloadIndex = apply.indexOf('await getOneCharacter(avatarFileName)');
+    const editorIndex = apply.indexOf('select_selected_character(this_chid, { switchMenu: false })');
+    assert.ok(bindingIndex >= 0 && bindingIndex < reloadIndex && reloadIndex < editorIndex);
     assert.match(source, /async function syncResolvedWorldInfo[\s\S]*if \(resolved\.world_written\)/);
 });
 

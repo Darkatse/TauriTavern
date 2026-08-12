@@ -1007,9 +1007,8 @@ impl CharacterService {
         &self,
         name: &str,
     ) -> Result<ResolveCharacterLorebookConflictResultDto, ApplicationError> {
-        let character = self.repository.find_by_name(name).await?;
-        let world_name = character.data.extensions.world.clone();
-        if world_name.is_empty() {
+        let mut character = self.repository.find_by_name(name).await?;
+        if character.data.extensions.world.is_empty() {
             return Err(ApplicationError::ValidationError(
                 "Character has no linked world info".to_string(),
             ));
@@ -1021,9 +1020,21 @@ impl CharacterService {
         };
 
         let world_info = character_book_to_world_info(embedded_book)?;
+        let world_name =
+            sanitize_world_info_name(&Self::embedded_world_name(&character, embedded_book));
+        if world_name.is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Embedded world info name is invalid".to_string(),
+            ));
+        }
+
         self.world_info_repository
             .save_world_info(&world_name, &world_info)
             .await?;
+        if character.data.extensions.world != world_name {
+            character.data.extensions.world = world_name.clone();
+            self.repository.update(&character).await?;
+        }
 
         Ok(ResolveCharacterLorebookConflictResultDto {
             affected_world: Some(world_name.clone()),
@@ -1045,7 +1056,7 @@ impl CharacterService {
         };
 
         let world_info = character_book_to_world_info(embedded_book)?;
-        let preferred_name = Self::resolve_embedded_world_name(&character, embedded_book);
+        let preferred_name = Self::bound_or_embedded_world_name(&character, embedded_book);
         let (copied_world, should_save) = self
             .resolve_available_world_copy_name(&preferred_name, &world_info)
             .await?;
@@ -1208,7 +1219,7 @@ impl CharacterService {
             ))
         })?;
 
-        let preferred_name = Self::resolve_embedded_world_name(character, &character_book);
+        let preferred_name = Self::bound_or_embedded_world_name(character, &character_book);
         let (world_name, should_save) = self
             .resolve_available_world_name(&preferred_name, &converted_world)
             .await?;
@@ -1227,11 +1238,15 @@ impl CharacterService {
         Ok(())
     }
 
-    fn resolve_embedded_world_name(character: &Character, character_book: &Value) -> String {
+    fn bound_or_embedded_world_name(character: &Character, character_book: &Value) -> String {
         if !character.data.extensions.world.is_empty() {
             return character.data.extensions.world.clone();
         }
 
+        Self::embedded_world_name(character, character_book)
+    }
+
+    fn embedded_world_name(character: &Character, character_book: &Value) -> String {
         if let Some(book_name) = character_book.get("name").and_then(Value::as_str)
             && !book_name.is_empty()
         {

@@ -530,6 +530,73 @@ async fn character_service_lorebook_conflict_resolution_uses_current_or_embedded
 }
 
 #[tokio::test]
+async fn character_service_embedded_resolution_links_the_embedded_world() {
+    let root = temp_root("character-embedded-lorebook-link");
+    let (service, world_repository) = character_service_with_world_repository(&root).await;
+    world_repository
+        .save_world_info("CurrentLore", &world_info("current lore"))
+        .await
+        .expect("save current world info");
+    let mut card = character_card("Alice", json!({ "world": "CurrentLore" }));
+    card["data"]["character_book"] = character_book("UpdatedLore", "updated lore");
+    fs::write(
+        root.join("default-user/characters/Alice.png"),
+        character_png(&card),
+    )
+    .await
+    .expect("write conflicting character");
+
+    let conflict = service
+        .check_lorebook_conflict(CheckCharacterLorebookConflictDto {
+            name: "Alice".to_string(),
+        })
+        .await
+        .expect("check lorebook conflict");
+    let resolved = service
+        .resolve_lorebook_conflict(ResolveCharacterLorebookConflictDto {
+            name: "Alice".to_string(),
+            resolution: CharacterLorebookConflictResolution::Embedded,
+            conflict_token: conflict.conflict_token,
+        })
+        .await
+        .expect("resolve with embedded world");
+
+    assert_eq!(resolved.world, "UpdatedLore");
+    assert_eq!(resolved.affected_world.as_deref(), Some("UpdatedLore"));
+    assert!(resolved.world_written);
+    assert_eq!(
+        read_stored_card(&root, "Alice")
+            .await
+            .pointer("/data/extensions/world"),
+        Some(&json!("UpdatedLore"))
+    );
+    assert_eq!(
+        world_repository
+            .get_world_info("CurrentLore", false)
+            .await
+            .expect("read current world")
+            .expect("current world exists")
+            .pointer("/entries/1/content"),
+        Some(&json!("current lore"))
+    );
+    let embedded_world = world_repository
+        .get_world_info("UpdatedLore", false)
+        .await
+        .expect("read embedded world")
+        .expect("embedded world exists");
+    assert!(
+        embedded_world
+            .get("entries")
+            .and_then(Value::as_object)
+            .expect("embedded world entries")
+            .values()
+            .any(|entry| entry.get("content") == Some(&json!("updated lore")))
+    );
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn character_service_copy_resolution_preserves_current_and_reuses_identical_copy() {
     let root = temp_root("character-lorebook-copy-resolution");
     let (service, world_repository) = character_service_with_world_repository(&root).await;

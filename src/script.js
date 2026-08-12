@@ -8791,7 +8791,7 @@ export function getThumbnailUrl(type, file, t = false) {
 }
 
 /**
- * Re-demands visible character avatar representations through their real image consumers.
+ * Reloads and re-demands visible character avatar representations through their real consumers.
  * @param {string} avatarKey Character avatar filename
  */
 export async function refreshCharacterAvatarImages(avatarKey) {
@@ -8806,6 +8806,13 @@ export async function refreshCharacterAvatarImages(avatarKey) {
     if (images.length === 0) {
         return;
     }
+
+    await Promise.all([...new Set(images.map(({ src }) => src))].map(async (src) => {
+        const response = await fetch(src, { cache: 'reload' });
+        if (!response.ok) {
+            throw new Error(`Failed to reload character avatar: HTTP ${response.status}`);
+        }
+    }));
 
     images.forEach(({ image }) => image.removeAttribute('src'));
     await new Promise(resolve => requestAnimationFrame(resolve));
@@ -12170,10 +12177,6 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
             const replaced = Boolean(data.replaced);
             replacementCommitted = replacement;
 
-            if (replaced && this_chid !== undefined) {
-                await refreshCharacterAvatarImages(avatarFileName);
-            }
-
             $('#character_search_bar').val('').trigger('input');
 
             const linkedWorld = String(
@@ -12320,6 +12323,15 @@ async function applyCharacterLorebookConflictResolution(avatarFileName, resoluti
         }
     } else if (resolution !== 'current') {
         throw new Error(t`The resolved World/Lorebook name is missing.`);
+    }
+
+    const characterIndex = characters.findIndex(character => character.avatar === avatarFileName);
+    if (characterIndex !== -1) {
+        characters[characterIndex].data.extensions.world = String(resolved.world || '');
+        await getOneCharacter(avatarFileName);
+        if (String(characterIndex) === String(this_chid)) {
+            select_selected_character(this_chid, { switchMenu: false });
+        }
     }
 
     if (resolution === 'copy') {
@@ -14385,6 +14397,7 @@ jQuery(async function () {
                     await importAction();
                     try {
                         await openCharacterChat(currentChatFile);
+                        await refreshCharacterAvatarImages(replacementAvatar);
                     } catch (error) {
                         throw new CharacterReplacementPostImportError(
                             error?.message || t`Failed to resolve the World/Lorebook conflict.`,
