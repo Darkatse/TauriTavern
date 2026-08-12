@@ -59,7 +59,7 @@ pub(in crate::services::agent_tools) fn skill_read_descriptor() -> ToolDescripto
     ToolDescriptor {
         id: ToolId::builtin(SKILL_READ).expect("builtin tool name must be valid"),
         title: Some("Skill Read".to_string()),
-        description: Some("Read a UTF-8 file or range from an installed Agent Skill. Start with SKILL.md, use skill_search for large files, then read exact referenced ranges as needed.".to_string()),
+        description: Some("Read a UTF-8 file from an installed Agent Skill. Start with SKILL.md. Omit start_line and line_count to read the full file; oversized files return a bounded preview with the next line to read. Use skill_search to locate relevant text in large supporting files.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -72,21 +72,15 @@ pub(in crate::services::agent_tools) fn skill_read_descriptor() -> ToolDescripto
                     "type": "string",
                     "description": "Skill package relative file path. Defaults to SKILL.md."
                 },
-                "max_chars": {
-                    "type": "integer",
-                    "description": "Maximum characters to return in this call. Current policy controls the exact per-call and per-run Skill read budgets."
-                },
                 "start_line": {
                     "type": "integer",
-                    "description": "Optional 1-based starting line. Do not combine with start_char."
+                    "minimum": 1,
+                    "description": "Optional 1-based starting line. Omit to start at line 1."
                 },
                 "line_count": {
                     "type": "integer",
-                    "description": "Optional number of lines to read. Do not combine with start_char."
-                },
-                "start_char": {
-                    "type": "integer",
-                    "description": "Optional 0-based character offset for character-range reads. Do not combine with start_line or line_count."
+                    "minimum": 1,
+                    "description": "Optional number of lines to read. Omit to read through the end; oversized results return a shorter preview."
                 }
             },
             "required": ["name"]

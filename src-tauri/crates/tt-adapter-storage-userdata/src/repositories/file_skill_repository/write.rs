@@ -102,8 +102,7 @@ async fn write_skill_file_inner(
             path,
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: Some(DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS),
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         },
     )
     .await

@@ -36,8 +36,6 @@ type TauriTavernSkillApi = {
     path: string;
     startLine?: number;
     lineCount?: number;
-    startChar?: number;
-    maxChars?: number;
   }): Promise<TauriTavernSkillReadResult>;
   writeFile(options: {
     scope?: TauriTavernSkillScope;
@@ -133,8 +131,8 @@ type action = 'installed' | 'replaced' | 'already_installed' | 'skipped';
 
 - 只能读取已安装 Skill 内的 UTF-8 文本文件。
 - `path` 必须是 Skill 相对路径。
-- 支持 `startLine` / `lineCount` 行范围，或 `startChar` / `maxChars` 字符范围；两种范围不能混用。
-- `maxChars` 省略时默认 80000；`api.skill.readFile` 最大 80000。Agent run 内的 `skill.read` 不使用此 Host API 上限，而是由 Agent Profile 的 `maxReadCharsPerCall` / `maxReadCharsPerRun` 控制。
+- 只支持 1-based `startLine` / `lineCount` 行范围。省略时默认读取全文；超过 Host 的 80000 字符输出边界时返回前段行预览，并通过 `nextStartLine` 指示续读位置。
+- Agent run 内的 `skill.read` 使用相同的行接口；预览大小由 Agent Profile 的 `maxReadCharsPerCall` / `maxReadCharsPerRun` 内部预算控制。
 - 二进制文件、非法路径、symlink escape、缺失文件都会 reject。
 
 `writeFile()`：

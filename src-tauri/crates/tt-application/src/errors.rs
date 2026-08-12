@@ -51,6 +51,9 @@ impl From<DomainError> for ApplicationError {
             DomainError::WorkspacePathIsDirectory { path } => {
                 ApplicationError::ValidationError(format!("Workspace path is a directory: {path}"))
             }
+            DomainError::WorkspaceFileNotText { path } => ApplicationError::ValidationError(
+                format!("Workspace file is not UTF-8 text: {path}"),
+            ),
             DomainError::WorkspaceWriteConflict { kind, .. } => {
                 ApplicationError::ValidationError(format!("Workspace write conflict: {kind}"))
             }

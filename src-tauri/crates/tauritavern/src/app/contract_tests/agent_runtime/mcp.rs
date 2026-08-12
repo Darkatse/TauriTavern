@@ -15,9 +15,9 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
                 "call_read",
                 "workspace_read_file",
                 json!({
-                    "path": "tool-results/call_fe79da5f09df9787.json",
-                    "start_char": 0,
-                    "max_chars": 2_000
+                    "path": "tool-results/call_fe79da5f09df9787.txt",
+                    "start_line": 1,
+                    "line_count": 100
                 }),
             )]),
             model_tool_response(vec![
@@ -68,16 +68,41 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
             _ => None,
         })
         .expect("MCP result returned to model");
-    assert!(mcp_result.content.contains("too large to place in context"));
+    assert!(
+        mcp_result
+            .content
+            .contains("too large to include in the current context")
+    );
     assert!(mcp_result.content.contains("workspace_read_file"));
     assert!(mcp_result.content.contains("<mcp-result-preview>"));
     assert_eq!(mcp_result.structured["externalized"], true);
     assert_eq!(mcp_result.structured["charLimit"], 10_000);
-    let result_path = mcp_result.resource_refs[0].as_str();
-    assert_eq!(result_path, "tool-results/call_fe79da5f09df9787.json");
-    let stored = read_workspace_json(&fixture.agent_repository, &handle.run_id, result_path).await;
+    let readable_path = mcp_result.structured["path"].as_str().unwrap();
+    let audit_path = mcp_result.structured["auditPath"].as_str().unwrap();
+    assert_eq!(readable_path, "tool-results/call_fe79da5f09df9787.txt");
+    assert_eq!(audit_path, "tool-results/call_fe79da5f09df9787.json");
+    assert_eq!(
+        mcp_result.resource_refs,
+        vec![readable_path.to_string(), audit_path.to_string()]
+    );
+    let stored = read_workspace_json(&fixture.agent_repository, &handle.run_id, audit_path).await;
     assert_eq!(stored["content"].as_str().unwrap().len(), 60_000);
     assert_eq!(stored["structured"]["structuredContent"]["issueId"], 42);
+    let readable = fixture
+        .agent_repository
+        .read_text(
+            &handle.run_id,
+            &WorkspacePath::parse(readable_path).unwrap(),
+        )
+        .await
+        .expect("read line-addressable MCP result");
+    assert!(
+        readable
+            .text
+            .lines()
+            .all(|line| line.chars().count() <= 3_000)
+    );
+    assert!(readable.text.contains(&"x".repeat(3_000)));
     let read_result = requests[2]
         .messages
         .iter()
@@ -91,7 +116,8 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
             _ => None,
         })
         .expect("Agent can read the externalized MCP result through workspace VFS");
-    assert!(read_result.content.contains("call_mcp"));
+    assert_eq!(read_result.structured["fullRead"], true);
+    assert!(read_result.content.contains(&"x".repeat(3_000)));
 
     let _ = fs::remove_dir_all(root).await;
 }

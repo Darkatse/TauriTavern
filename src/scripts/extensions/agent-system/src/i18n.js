@@ -386,7 +386,6 @@ const DEFAULT_MESSAGES = Object.freeze({
     timelineDetailFieldTask: 'Task',
     timelineDetailFieldTarget: 'Target',
     timelineDetailFieldWorkspace: 'Workspace',
-    timelineDetailRangeChars: 'chars {start}-{end}',
     timelineDetailRangeFull: 'full file',
     timelineDetailRangeLines: 'lines {start}-{end}',
     timelineDetailStatusError: 'Error',

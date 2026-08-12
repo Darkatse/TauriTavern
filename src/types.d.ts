@@ -860,11 +860,11 @@ type TauriTavernSkillReadResult = {
     words: number;
     totalChars: number;
     totalWords: number;
-    startChar: number;
-    endChar: number;
     totalLines: number;
     startLine: number;
     endLine: number;
+    nextStartLine?: number;
+    lineTruncated: boolean;
     bytes: number;
     sha256: string;
     truncated: boolean;
@@ -898,10 +898,8 @@ type TauriTavernSkillApi = {
         scope?: TauriTavernSkillScope;
         name: string;
         path: string;
-        maxChars?: number;
         startLine?: number;
         lineCount?: number;
-        startChar?: number;
     }) => Promise<TauriTavernSkillReadResult>;
     writeFile: (options: {
         scope?: TauriTavernSkillScope;

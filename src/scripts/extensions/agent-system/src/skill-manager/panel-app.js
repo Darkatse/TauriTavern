@@ -16,7 +16,6 @@ import {
 } from './embedded-skill-sync.js';
 import { buildSkillScopeSections, skillScopeKey, skillScopeLabel } from './scope.js';
 
-const SKILL_FILE_VIEW_MAX_CHARS = 80000;
 const SKILL_ARCHIVE_CONTENT_TYPE = 'application/zip';
 const HOST_SCOPE_EVENT_KEYS = Object.freeze([
     'CHAT_CHANGED',
@@ -923,7 +922,6 @@ export function createSkillManagerPanelRoot() {
                         scope: preview.scope,
                         name: preview.skill.name,
                         path: node.path,
-                        maxChars: SKILL_FILE_VIEW_MAX_CHARS,
                     });
                     if (!this.preview || this.preview.requestId !== preview.requestId || this.fileViewerRequestId !== viewerId) {
                         return;

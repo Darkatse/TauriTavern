@@ -1,3 +1,5 @@
+use crate::text_lines::format_line_slice_with_numbers;
+
 #[derive(Debug, Clone)]
 pub struct PreparedTextSearch {
     tokens: Vec<String>,
@@ -54,9 +56,10 @@ impl PreparedTextSearch {
                     start_line,
                     end_line,
                     matched_line: line_number,
-                    snippet: format_lines_with_numbers(
+                    snippet: format_line_slice_with_numbers(
                         &lines[start_line - 1..end_line],
                         start_line,
+                        end_line,
                     ),
                 })
             })
@@ -164,20 +167,6 @@ fn score_text(text: &str, tokens: &[String], needs_lowercase: bool) -> (f32, boo
         return (0.0, false);
     }
     (matched_weight as f32 / total_weight as f32, true)
-}
-
-fn format_lines_with_numbers(lines: &[&str], start_line: usize) -> String {
-    if lines.is_empty() {
-        return String::new();
-    }
-    let last_line = start_line + lines.len() - 1;
-    let width = last_line.to_string().len();
-    lines
-        .iter()
-        .enumerate()
-        .map(|(index, line)| format!("{:>width$} | {}", start_line + index, line, width = width))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn ranges_overlap(

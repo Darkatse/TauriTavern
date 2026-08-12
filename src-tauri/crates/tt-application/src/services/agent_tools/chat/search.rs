@@ -2,8 +2,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::{
-    DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, MAX_SEARCH_SCAN_LIMIT, parse_role, raw_total_messages,
-    role_as_str, visible_total_messages,
+    DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, MAX_SEARCH_SCAN_LIMIT, chat_unavailable_message,
+    parse_role, raw_total_messages, role_as_str, visible_total_messages,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::common::{
@@ -81,7 +81,16 @@ pub(in crate::services::agent_tools) async fn search(
     let run = run_repository.load_run(run_id).await?;
     if run.input_message_count.is_some() {
         let raw_total =
-            raw_total_messages(chat_repository, group_chat_repository, &run.chat_ref).await?;
+            match raw_total_messages(chat_repository, group_chat_repository, &run.chat_ref).await {
+                Ok(total) => total,
+                Err(DomainError::NotFound(message)) => {
+                    return Ok((
+                        tool_error(call, "chat.not_found", &chat_unavailable_message(&message)),
+                        AgentToolEffect::None,
+                    ));
+                }
+                Err(error) => return Err(error.into()),
+            };
         let visible_total = visible_total_messages(&run, raw_total)?;
         let Some(bounded_query) = constrain_search_query(search_query, raw_total, visible_total)
         else {
@@ -108,7 +117,7 @@ pub(in crate::services::agent_tools) async fn search(
         Ok(hits) => hits,
         Err(DomainError::NotFound(message)) => {
             return Ok((
-                tool_error(call, "chat.not_found", &message),
+                tool_error(call, "chat.not_found", &chat_unavailable_message(&message)),
                 AgentToolEffect::None,
             ));
         }

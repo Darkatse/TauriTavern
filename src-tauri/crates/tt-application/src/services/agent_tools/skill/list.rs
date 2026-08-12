@@ -86,7 +86,7 @@ fn render_content(skills: &[&SkillIndexEntry]) -> String {
             .collect::<Vec<_>>()
             .join("\n");
         content.push_str(
-            "\n\nUse skill_read with an exact skill name and path (default SKILL.md), plus start_line/line_count or start_char/max_chars when needed, to read exact text.",
+            "\n\nUse skill_read with an exact skill name and path (default SKILL.md). Omit start_line/line_count for a full read; continue from the next line when a large file returns a preview.",
         );
         content
     }

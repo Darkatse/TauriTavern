@@ -63,6 +63,9 @@ impl From<DomainError> for CommandError {
             DomainError::WorkspacePathIsDirectory { path } => {
                 CommandError::BadRequest(format!("Workspace path is a directory: {path}"))
             }
+            DomainError::WorkspaceFileNotText { path } => {
+                CommandError::BadRequest(format!("Workspace file is not UTF-8 text: {path}"))
+            }
             DomainError::WorkspaceWriteConflict { kind, .. } => {
                 CommandError::BadRequest(format!("Workspace write conflict: {kind}"))
             }

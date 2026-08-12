@@ -453,6 +453,7 @@ _tauritavern/agent-workspaces/
             <tool-call-id>.json
           tool-results/
             <tool-call-id>.json
+            <externalized-mcp-call-id>.txt
           model-responses/
             round-XXX.json
           output/

@@ -150,15 +150,15 @@ Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swi
 | `agent.await` | `agent_await` | read-only/control | 查询或等待当前 invocation 创建的 delegated task；不驱动 child task 执行。 |
 | `task.return` | `task_return` | control/mutating | runtime-only child invocation 工具，提交 delegated task 结果并结束 child work。 |
 | `chat.search` | `chat_search` | read-only | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。 |
-| `chat.read_messages` | `chat_read_messages` | read-only | 按 0-based message index 读取当前聊天消息；每项可选 `start_char`、`max_chars`。JSONL header 不计入 index。 |
-| `worldinfo.read_activated` | `worldinfo_read_activated` | read-only | 读取本次 Agent run 捕获的最终激活世界书条目，不读取全局 last activation。 |
+| `chat.read_messages` | `chat_read_messages` | read-only | 按 0-based message index 读取当前聊天消息；每项可选 1-based `start_line`、`line_count`。默认全文，超限返回可续读预览。JSONL header 不计入 index。 |
+| `worldinfo.read_activated` | `worldinfo_read_activated` | read-only | 读取本次 Agent run 捕获的最终激活世界书条目；无参数先列索引，正文项可选 1-based `start_line`、`line_count`，默认全文、超限预览。 |
 | `dice.roll` | `dice_roll` | read-only | 为明确的随机、跑团或 roleplay 检定投骰；支持 `d6`、`1d20`、`3d6+4` 与纯数字。默认 Profile 不启用。 |
 | `skill.list` | `skill_list` | read-only | 列出当前 Profile 可见的已安装 Skill 索引摘要。 |
 | `skill.search` | `skill_search` | read-only | 搜索当前 Profile 可见的单个 Skill 内 UTF-8 文本文件；返回 snippet/ref，snippet 字符数计入 Skill read budget。 |
-| `skill.read` | `skill_read` | read-only | 读取当前 Profile 可见 Skill 内的 UTF-8 文本文件或范围；默认 `SKILL.md`，支持 `path`、行范围、字符范围与 `max_chars`，受 Profile read budget 控制。 |
+| `skill.read` | `skill_read` | read-only | 读取当前 Profile 可见 Skill 内的 UTF-8 文本文件或 1-based 行范围；默认完整 `SKILL.md`，超限返回可续读预览，受 Profile read budget 控制。 |
 | `workspace.list_files` | `workspace_list_files` | read-only | 列出模型可见 workspace 文件。`path` 省略、空字符串、`.`、`./` 表示 workspace root。 |
 | `workspace.search_files` | `workspace_search_files` | read-only | 搜索模型可见 workspace UTF-8 文本文件；可限定 `path`，返回 snippet/ref，不搜索隐藏 runtime 存储。 |
-| `workspace.read_file` | `workspace_read_file` | read-only | 读取 UTF-8 文本文件并返回行号；支持行范围和字符范围；完整读取会记录 read-state。 |
+| `workspace.read_file` | `workspace_read_file` | read-only | 读取 UTF-8 文本文件并返回行号；只支持 1-based 行范围，默认全文、超限预览；完整读取会记录 read-state。 |
 | `workspace.write_file` | `workspace_write_file` | mutating | 写 UTF-8 文件；`mode` 默认为完整替换，`append` 会原样追加并在缺失时创建文件；成功后按内容可知性更新 read-state 并创建 checkpoint。 |
 | `workspace.apply_patch` | `workspace_apply_patch` | mutating | 单文件 `old_string` / `new_string` 精确替换；`old_string` 必须来自本 run 已读文本或本 run 创建/完整替换的文件；失败后同文件再次 patch 必须先全文读取。 |
 | `workspace.commit` | `workspace_commit` | control/mutating | 将可见 workspace 文件提交到当前聊天；无参数等价于 `replace output/main.md`，`append` 首次创建消息、后续追加同一消息。 |
@@ -239,7 +239,7 @@ AgentModelContentPart {
 - journal / workspace 保存的是真实 tool result、tool args、resource refs；MCP 结果总是先完整写入 create-only `tool-results/`。
 - 下一轮模型上下文使用携带 canonical `ToolId` 的 `AgentModelContentPart::ToolResult`。
 
-MCP `AgentToolResult` 序列化后超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，下一轮不再复制完整内容，而是收到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、完整文件路径、字符数、resource ref 与当前 snapshot 中读取/搜索工具的真实 alias。该正整数随 resolved Profile 固定到 invocation；root、SubAgent 与 handoff 分别使用自己的 Profile 值。统计复用 domain `TextMetrics`，不依赖模型 tokenizer。模型可用 `workspace.read_file` 的 `start_char` / `max_chars`（单次最多 80000 字符）顺序读取；audit 文件不截断。`tool-results/` 对所有 invocation 可见但永远不可写，Profile 没有读取工具时不会为此临时扩大能力。
+MCP `AgentToolResult` 序列化后超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，下一轮不再复制完整内容，而是收到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、行可读 `.txt` 视图与精确 JSON audit 路径、字符数、resource refs 及当前 snapshot 中读取/搜索工具的真实 alias。可读视图包含 text 与 structured content，并换行超长物理行；JSON audit 不改写。该正整数随 resolved Profile 固定到 invocation；root、SubAgent 与 handoff 分别使用自己的 Profile 值。统计复用 domain `TextMetrics`，不依赖模型 tokenizer。模型用 `workspace.read_file` 默认尝试全文；若返回预览，则按结果中的 `nextStartLine` 继续使用 `start_line` 顺序读取。`tool-results/` 对所有 invocation 可见但永远不可写，Profile 没有读取工具时不会为此临时扩大能力。
 
 MCP KnownResponse（包括 `isError`、server error 与 unsupported response）投影为模型可恢复 tool result，且不能产生 `AgentToolEffect`。NotSent 同样回到模型修正。`OutcomeUnknown` 可能已经执行，runtime 保存审计记录后不回填一个虚构结果、不执行同一模型响应中的后续 calls、也不自动 retry；当前无审批/继续交互 UI，因此以非 retryable error 结束 run，已有成功 commit 时沿用 partial-success 规则。
 

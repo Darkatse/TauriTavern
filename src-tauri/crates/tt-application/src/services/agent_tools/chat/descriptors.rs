@@ -7,14 +7,14 @@ pub(in crate::services::agent_tools) fn chat_read_messages_descriptor() -> ToolD
     ToolDescriptor {
         id: ToolId::builtin(CHAT_READ_MESSAGES).expect("builtin tool name must be valid"),
         title: Some("Chat Read Messages".to_string()),
-        description: Some("Read selected messages from the current chat by 0-based message index. Use chat_search first when you do not know the message index. For long messages, set start_char and max_chars on that message.".to_string()),
+        description: Some("Read selected messages from the current chat by 0-based message index. Each message is read in full by default; oversized messages return a bounded preview with the next line to read. Use chat_search first when you do not know the message index.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
                 "messages": {
                     "type": "array",
-                    "description": "Messages to read. Each item needs an absolute 0-based message index; optional start_char and max_chars read a slice of that message.",
+                    "description": "Messages to read. Each item needs an absolute 0-based message index; optional start_line and line_count read a line range.",
                     "items": {
                         "type": "object",
                         "additionalProperties": false,
@@ -23,13 +23,15 @@ pub(in crate::services::agent_tools) fn chat_read_messages_descriptor() -> ToolD
                                 "type": "integer",
                                 "description": "0-based message index in the current chat."
                             },
-                            "start_char": {
+                            "start_line": {
                                 "type": "integer",
-                                "description": "Optional 0-based character offset inside the message text."
+                                "minimum": 1,
+                                "description": "Optional 1-based starting line inside the message text."
                             },
-                            "max_chars": {
+                            "line_count": {
                                 "type": "integer",
-                                "description": "Optional maximum characters to read from this message."
+                                "minimum": 1,
+                                "description": "Optional number of lines to read. Omit to read through the end; oversized results return a shorter preview."
                             }
                         },
                         "required": ["index"]

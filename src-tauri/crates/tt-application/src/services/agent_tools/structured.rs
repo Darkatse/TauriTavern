@@ -61,31 +61,41 @@ impl TextSelectionMetricsPayload {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(in crate::services::agent_tools) struct TextRangeMetricsPayload {
+pub(in crate::services::agent_tools) struct TextLineRangePayload {
     #[serde(flatten)]
     pub metrics: TextSelectionMetricsPayload,
-    pub start_char: usize,
-    pub end_char: usize,
+    pub total_lines: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_start_line: Option<usize>,
+    pub line_truncated: bool,
     /// True when the returned text does not cover the full source text.
     pub truncated: bool,
 }
 
-impl TextRangeMetricsPayload {
+impl TextLineRangePayload {
     pub(in crate::services::agent_tools) fn new(
         selected: TextMetrics,
         total: TextMetrics,
-        start_char: usize,
-        end_char: usize,
+        total_lines: usize,
+        start_line: usize,
+        end_line: usize,
+        line_truncated: bool,
     ) -> Self {
         assert!(
-            start_char <= end_char && end_char <= total.chars,
-            "agent.tool_text_range_offsets_invalid"
+            (total_lines == 0 && start_line == 0 && end_line == 0)
+                || (start_line >= 1 && start_line <= end_line && end_line <= total_lines),
+            "agent.tool_text_line_range_invalid"
         );
         Self {
             metrics: TextSelectionMetricsPayload::new(selected, total),
-            start_char,
-            end_char,
-            truncated: start_char > 0 || end_char < total.chars,
+            total_lines,
+            start_line,
+            end_line,
+            next_start_line: (end_line < total_lines).then_some(end_line + 1),
+            line_truncated,
+            truncated: line_truncated || start_line > 1 || end_line < total_lines,
         }
     }
 }

@@ -190,6 +190,100 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
 }
 
 #[tokio::test]
+async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
+    let root = temp_root("agent-missing-chat-recovery");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_search_missing_chat",
+                    "chat_search",
+                    json!({ "query": "context" }),
+                ),
+                model_tool_call(
+                    "call_read_missing_chat",
+                    "chat_read_messages",
+                    json!({ "messages": [{ "index": 0 }] }),
+                ),
+            ]),
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_write_after_missing_chat",
+                    "workspace_write_file",
+                    json!({ "path": "output/main.md", "content": "continued safely" }),
+                ),
+                model_tool_call(
+                    "call_finish_after_missing_chat",
+                    "workspace_finish",
+                    json!({}),
+                ),
+            ]),
+        ],
+    );
+    let mut profile = resolve_contract_profile(&fixture).await;
+    profile.tools.max_rounds = 2;
+    let mut run = contract_run(
+        "run_missing_chat_recovery",
+        AgentRunPresentation::Background,
+        &profile,
+    );
+    run.input_message_count = Some(1);
+    fixture
+        .agent_repository
+        .create_run(&run)
+        .await
+        .expect("create run");
+    let request = chat_request("continue without the missing chat");
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+
+    fixture
+        .service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("recoverable chat errors must not stop the run");
+
+    let requests = fixture.model_gateway.requests().await;
+    let results = requests[1]
+        .messages
+        .iter()
+        .flat_map(|message| message.parts.iter())
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|result| result.is_error));
+    assert!(
+        results
+            .iter()
+            .all(|result| result.error_code.as_deref() == Some("chat.not_found"))
+    );
+    assert!(
+        results
+            .iter()
+            .all(|result| result.content.contains("Continue with the context"))
+    );
+
+    let saved = fixture
+        .agent_repository
+        .load_run(&run.id)
+        .await
+        .expect("load completed run");
+    assert_eq!(saved.status, AgentRunStatus::Completed);
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn agent_runtime_duplicate_tool_call_id_preserves_first_audit_facts() {
     let root = temp_root("agent-duplicate-tool-call-id");
     let fixture = agent_runtime_fixture_with_responses(

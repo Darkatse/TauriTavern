@@ -54,6 +54,13 @@ pub(super) fn optional_bool_arg(
         .ok_or_else(|| format!("{key} must be a boolean"))
 }
 
+pub(super) fn ensure_only_args(args: &Map<String, Value>, allowed: &[&str]) -> Result<(), String> {
+    match args.keys().find(|key| !allowed.contains(&key.as_str())) {
+        Some(key) => Err(format!("{key} is not supported")),
+        None => Ok(()),
+    }
+}
+
 pub(crate) const WORKSPACE_PATH_IS_DIRECTORY_CODE: &str = "workspace.path_is_directory";
 
 /// Shared model-facing wording for the typed workspace-directory domain

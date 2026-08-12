@@ -918,6 +918,48 @@ async fn read_text_on_directory_returns_typed_workspace_error() {
 }
 
 #[tokio::test]
+async fn read_text_returns_typed_error_for_non_utf8_file() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_non_utf8_read");
+    let manifest = sample_manifest(&run);
+    let profile = sample_resolved_profile(&manifest);
+
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .initialize_run(
+            &run,
+            &manifest,
+            &serde_json::json!({"messages": []}),
+            &profile,
+        )
+        .await
+        .expect("initialize workspace");
+
+    let path = WorkspacePath::parse("output/image.bin").expect("workspace path");
+    fs::write(
+        repository
+            .run_dir(&run)
+            .expect("run directory")
+            .join(path.as_str()),
+        [0xff, 0xfe],
+    )
+    .await
+    .expect("write non-UTF-8 file");
+
+    let error = repository
+        .read_text(&run.id, &path)
+        .await
+        .expect_err("a non-UTF-8 file is not readable as text");
+    assert!(matches!(
+        error,
+        DomainError::WorkspaceFileNotText { path } if path == "output/image.bin"
+    ));
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn write_text_on_directory_returns_typed_workspace_error() {
     // Same guard for write_text so workspace_write_file cannot wipe out a
     // directory through the temp-file swap path.

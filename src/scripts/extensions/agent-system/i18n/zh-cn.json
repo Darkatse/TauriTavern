@@ -263,7 +263,6 @@
     "agent_system.timelineDetailFieldTarget": "目标",
     "agent_system.timelineDetailFieldWorkspace": "Workspace",
     "agent_system.timelineDetailFieldUserRetryable": "用户可重试",
-    "agent_system.timelineDetailRangeChars": "字符 {start}-{end}",
     "agent_system.timelineDetailRangeFull": "全文",
     "agent_system.timelineDetailRangeLines": "行 {start}-{end}",
     "agent_system.timelineDetailStatusError": "错误",

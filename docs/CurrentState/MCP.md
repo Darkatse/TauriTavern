@@ -77,7 +77,7 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
 - test-call arguments JSON：256 KiB，且必须为 object；完整 call response wire 上限：4 MiB。
 - Agent MCP arguments 同样最多 256 KiB 且必须为 object；可广告 schema 的 root 必须显式为 `type: "object"`。
 - Legacy MCP arguments 同样最多 256 KiB 且必须为 object；结果以现有 bounded MCP outcome JSON 内联到 Tool message，不复用 Agent workspace externalization。
-- Agent MCP `AgentToolResult` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 保存在 run 的只读可见 `tool-results/`；模型上下文接收原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、路径与分段读取指引。该值只影响 Agent invocation 投影，不改变共享 MCP call outcome；统计复用 domain `TextMetrics`，不引入 tokenizer 依赖。
+- Agent MCP `AgentToolResult` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON audit 与包含 text/structured content 的行可读 `.txt` 视图保存在 run 的只读可见 `tool-results/`；模型上下文接收原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、两条路径与分段读取指引。可读视图换行超长物理行，JSON 保留精确原文。该值只影响 Agent invocation 投影，不改变共享 MCP call outcome；统计复用 domain `TextMetrics`，不引入 tokenizer 依赖。
 - transport 接受任意带 host 的 HTTP(S) endpoint，包括公网 HTTP、userinfo 与 query。Manager 激活 HTTP registration 时会明确提示流量未加密。
 - custom headers 不设 reserved-name、数量或总量限制；名称和值原样保存，无法被 HTTP/MCP transport 接受时返回正常调用错误。endpoint credentials 与认证 headers 明文保存在 registration 中。
 - 单 tool wire representation：256 KiB；完整 catalog：8 MiB。

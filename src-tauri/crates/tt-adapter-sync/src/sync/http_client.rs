@@ -199,6 +199,9 @@ pub(crate) fn domain_error_to_sync(error: DomainError) -> SyncError {
         DomainError::WorkspacePathIsDirectory { path } => {
             SyncError::InvalidData(format!("Workspace path is a directory: {path}"))
         }
+        DomainError::WorkspaceFileNotText { path } => {
+            SyncError::InvalidData(format!("Workspace file is not UTF-8 text: {path}"))
+        }
         DomainError::WorkspaceWriteConflict { kind, .. } => {
             SyncError::InvalidData(format!("Workspace write conflict: {kind}"))
         }

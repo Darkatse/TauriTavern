@@ -452,15 +452,6 @@ function rangeSummary(structured) {
         return tr('timelineDetailRangeLines', { start: startLine, end: endLine });
     }
 
-    const startChar = Number(structured.startChar);
-    const endChar = Number(structured.endChar);
-    const totalChars = Number(structured.totalChars);
-    if (Number.isFinite(startChar) && Number.isFinite(endChar) && endChar > startChar) {
-        if (structured.fullRead === true || (startChar === 0 && Number.isFinite(totalChars) && endChar === totalChars)) {
-            return tr('timelineDetailRangeFull');
-        }
-        return tr('timelineDetailRangeChars', { start: startChar, end: endChar });
-    }
     return '';
 }
 

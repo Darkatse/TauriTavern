@@ -154,7 +154,7 @@ Agent-facing 文案必须从调用或执行 Agent 的角度描述可操作路径
 | `agent.await` | `agent_await` | 查询或等待当前 invocation 创建的 delegated task 结果 | 已落地 |
 | `task.return` | `task_return` | return-mode child invocation 提交任务结果并结束 child work；runtime-only，不允许写入 profile tools.allow | 已落地 |
 | `chat.search` | `chat_search` | 只读搜索当前聊天，返回 message index、snippet 与 ref | 已落地 |
-| `chat.read_messages` | `chat_read_messages` | 只读按 message index 读取当前聊天消息，可读取字符范围 | 已落地 |
+| `chat.read_messages` | `chat_read_messages` | 只读按 message index 读取当前聊天消息或行范围 | 已落地 |
 | `worldinfo.read_activated` | `worldinfo_read_activated` | 只读读取本轮 run 捕获的最终激活世界书条目 | 已落地 |
 | `dice.roll` | `dice_roll` | 只读随机投骰；支持 `d6`、`1d20`、`3d6+4` 等轻量 dice notation，默认 Profile 不启用 | 已落地 |
 | `skill.list` | `skill_list` | 只读列出已安装 Skill 索引摘要 | 已落地 |
@@ -188,7 +188,7 @@ runtime 额外提供 `tool-results/`：对所有 invocation 可见、永远不�
 
 工具参数会以 create-only 语义写入 `tool-args/call_<sha256_8byte_hex(call-id)>.json`，工具结果会以相同语义写入 `tool-results/call_<sha256_8byte_hex(call-id)>.json`；重复 `call_id` 或 digest 路径冲突在覆盖既有审计事实前 fail-fast。本地文件名只使用 SHA-256 前 8 字节 hex。provider 返回的原始 `call_id` 只作为不透明业务 ID 保存在 JSON 内容、journal payload 与下一轮 `AgentModelContentPart::ToolResult` 中，不作为本地文件名。`AgentToolResult` 同时保存 canonical `ToolId`；dispatcher outcome 在解释 `AgentToolEffect` 前必须匹配原始 `ToolInvocation`，最终结果落盘前再次验证。Gateway 只通过当前 request 的 `ToolId -> model alias` 投影编码历史结果。工具结果不会写入 SillyTavern chat 楼层。
 
-MCP 结果总是先完整落盘，再决定模型投影。序列化后的 `AgentToolResult` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，模型收到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、完整文件路径、字符数、resource ref，以及当前 snapshot 中 `workspace.read_file` / `workspace.search_files` 的真实 alias 和分段读取指引；audit 文件保持原样。该正整数随 resolved Profile 固定到 invocation，root、SubAgent 与 handoff 各自使用其 Profile 值。字符统计复用 domain `TextMetrics`，不依赖具体模型 tokenizer。若 Profile 没有读工具，路径仍作为用户可见 result reference 返回，不静默截断，也不为此临时扩大工具权限。
+MCP 结果总是先完整写入 JSON audit，再决定模型投影。序列化后的 `AgentToolResult` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，runtime 额外写入包含 text 与 structured content 的 `.txt` 可读视图；超长物理行只在该视图中换行，精确原文仍由 JSON audit 保存。模型收到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、可读视图与 audit 路径、字符数、resource refs，以及当前 snapshot 中 `workspace.read_file` / `workspace.search_files` 的真实 alias 和分段读取指引。该正整数随 resolved Profile 固定到 invocation，root、SubAgent 与 handoff 各自使用其 Profile 值。字符统计复用 domain `TextMetrics`，不依赖具体模型 tokenizer。若 Profile 没有读工具，路径仍作为用户可见 result reference 返回，不静默截断，也不为此临时扩大工具权限。
 
 Timeline 的隐藏、side-effect 关联与 builtin 类型判定只使用 journal 中的 canonical `toolId`；native `name` 仅用于用户可读标题。Model Turn UI 投影保留 `toolId`，同 native name 的外部工具以 canonical identity 区分。
 
@@ -263,6 +263,8 @@ workspace.create_checkpoint
 
 `chat.search`、`workspace.search_files` 与 `skill.search` 共享纯查询规范化规则：包含字母、数字或 `_` 的 query 继续使用既有分词评分；非空 query 若分词后没有任何词项，则保留 trim 后 query，并由既有空白分词生成字面量 token。因此纯标点和符号片段可搜索，混合 query 的既有召回与排序语义不变。
 
+所有模型可见文本读取统一使用 1-based `start_line` / `line_count`。省略两者表示从第一行开始尝试全文读取；内容超过工具或 Profile 的既有上下文预算时，调用仍成功并返回前段行预览、实际 `startLine` / `endLine` / `totalLines`、`nextStartLine` 与续读提示。字符数只用于内部预算和统计，不再是模型寻址接口。超长单行超过预算时会明确标记该行截断，不恢复第二套字符分页协议。
+
 `workspace.list_files`
 
 - Read-only。
@@ -282,9 +284,10 @@ workspace.create_checkpoint
 
 - Read-only。
 - 只能读 visible resource。
-- 支持 `start_line` / `line_count` 行范围，也支持 `start_char` / `max_chars` 字符范围；两种范围不能混用。
+- 只支持 1-based `start_line` / `line_count` 行范围；省略时默认全文，超限时自动返回可续读预览。
 - 完整读取会记录完整 read-state；部分读取会记录实际读到的文本片段，允许 `workspace.apply_patch` 替换该片段中出现的唯一 `old_string`。
 - 受内部 byte 上限、line 与 partial char 上限控制。
+- 非 UTF-8 文件返回 recoverable `workspace.file_not_text`，由模型选择其他文本资源；真实 IO、安全和一致性错误仍 fail-fast。
 
 `workspace.write_file`
 
@@ -339,11 +342,11 @@ workspace.create_checkpoint
 
 - Read-only。
 - 通过 0-based message index 精确读取当前聊天消息。
-- 输入使用 `messages: [{ index, start_char?, max_chars? }]`，降低 LLM 心智负担，避免 page/cursor 等不必要抽象。
+- 输入使用 `messages: [{ index, start_line?, line_count? }]`，与其他文本读取工具保持同一心智模型。
 - 一个工具调用最多读取 20 条消息。
-- 单条完整读取上限 8000 字符；长消息必须用 `start_char` / `max_chars` 分段读取。
+- 默认读取完整消息；单条或总结果超出既有上下文预算时返回按行截取的成功预览，并提示下一 `start_line`。
 - 总返回上限 20000 字符。
-- message index 不存在、范围非法、读取过大属于 recoverable tool error。
+- message index 不存在或范围非法属于 recoverable tool error；正文过大时返回成功的可续读预览。
 - chat JSONL header 不计入 message index；第一条聊天消息 index 为 0。
 
 ### 7.5 Skill Tools
@@ -367,11 +370,11 @@ workspace.create_checkpoint
 `skill.read`
 
 - Read-only。
-- 输入为 `name`、可选 `path`、`start_line`、`line_count`、`start_char`、`max_chars`。
+- 输入为 `name`、可选 `path`、`start_line`、`line_count`。
 - `path` 默认 `SKILL.md`，必须是 Skill 内相对路径。
-- 支持行范围与字符范围；两种范围不能混用。
+- 默认读取全文；超出 Profile 读取预算时返回按行预览和下一起始行。
 - 只能读取 Profile 可见的 UTF-8 文本；二进制、缺失文件、非法路径、symlink escape、不可见 Skill 或超预算读取都是 recoverable tool error，除非 repository 内部 IO / index 损坏等宿主级问题需要 fail-fast。
-- `max_chars` 受 Profile 的 `maxReadCharsPerCall` 与 `maxReadCharsPerRun` 控制。
+- Profile 的 `maxReadCharsPerCall` 与 `maxReadCharsPerRun` 继续作为宿主内部读取预算，不暴露为模型范围参数。
 - 结果进入 journal / tool result / 下一轮 model request。Skill 原始文件保持 read-only；模型需要摘录或改写时应写入 `scratch/`、`summaries/` 或 `output/`。
 
 ### 7.6 WorldInfo Tools
@@ -381,8 +384,8 @@ workspace.create_checkpoint
 - Read-only。
 - 读取本次 run materialized 的 `promptSnapshot.worldInfoActivation`。
 - `startRunFromLegacyGenerate()` 从本轮 dryRun 的最终 `WORLDINFO_SCAN_DONE` 捕获该快照。
-- 无参数调用只返回本轮激活条目的索引：`ref`、条目名、世界书名、位置与正文字符数，不返回正文。
-- 读取正文必须传入 `entries: [{ ref, start_char?, max_chars? }]`，其中 `ref` 来自无参数索引结果；长正文使用 `start_char` / `max_chars` 分段读取。
+- 无参数调用只返回本轮激活条目的索引：`ref`、条目名、世界书名、位置与正文行数/字符数，不返回正文。
+- 读取正文传入 `entries: [{ ref, start_line?, line_count? }]`，其中 `ref` 来自无参数索引结果；省略行范围时默认全文，长正文自动返回可续读行预览。
 - 模型可读 `content` 保持简洁：索引模式给条目列表，正文模式只给被明确请求的条目内容。
 - 结构化结果可以保留 `uid`、`position`、`ref`、`timestampMs` 等 audit 字段，但不要把这些作为模型阅读主内容。
 - 不暴露 world info 扫描中间循环状态为 Public Contract。

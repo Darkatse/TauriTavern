@@ -96,12 +96,12 @@ materialize input into .staging
 `skill.read`：
 
 - 只读。
-- 参数：`name`、可选 `path`、`start_line`、`line_count`、`start_char`、`max_chars`。
+- 参数：`name`、可选 `path`、`start_line`、`line_count`。
 - `path` 默认 `SKILL.md`。
 - 只能读取当前 Profile 可见且未 deny 的 Skill。
-- 支持行范围和字符范围；两种范围不能混用。
+- 只支持 1-based 行范围；省略范围时默认读取全文，超限时返回前段预览、下一起始行与续读提示。
 - 只能读取 UTF-8 文本文件；二进制文件返回可恢复 tool error。
-- `max_chars` 受当前 Agent Profile 的 `maxReadCharsPerCall` 与 `maxReadCharsPerRun` 控制；超预算返回可恢复 tool error。未拿到 Profile 专属预算的非 Agent Skill 管理读取使用默认 80000 字符边界。
+- `maxReadCharsPerCall` 与 `maxReadCharsPerRun` 继续作为当前 Agent Profile 的内部读取预算；它们控制自动预览大小，不作为模型输入参数。非 Agent Skill 管理读取使用默认 80000 字符输出边界。
 - 结果写入 Agent journal / tool result，并作为后续模型上下文的一部分回填。
 
 `skill.search`：

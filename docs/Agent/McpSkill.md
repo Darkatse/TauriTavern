@@ -144,10 +144,10 @@ description
 
 ```text
 skill.search(name, query, path?, limit?, context_lines?)
-skill.read(name, path?, start_line?, line_count?, start_char?, max_chars?)
+skill.read(name, path?, start_line?, line_count?)
 ```
 
-`skill.search` / `skill.read` 是 tool call，必须写 journal。当前 `skill.read` 默认读取 `SKILL.md`，只支持 UTF-8 文本文件，并支持行/字符范围；`skill.search` 搜索单个可见 Skill 内的 UTF-8 文本文件并返回 snippet/ref。
+`skill.search` / `skill.read` 是 tool call，必须写 journal。当前 `skill.read` 默认读取完整 `SKILL.md`，只支持 UTF-8 文本文件和 1-based 行范围；超限时返回可续读行预览。`skill.search` 搜索单个可见 Skill 内的 UTF-8 文本文件并返回 snippet/ref。
 
 ## 9. Skill 来源
 

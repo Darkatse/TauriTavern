@@ -241,7 +241,8 @@ test('api.skill reads and exports files in explicit scopes', async () => {
         scope: { kind: 'preset', apiId: 'openai', name: 'Creative' },
         name: 'test-skill',
         path: 'SKILL.md',
-        maxChars: 12000,
+        startLine: 12,
+        lineCount: 30,
     });
     await skill.export({
         scope: { kind: 'character', characterId: 'Aurelia' },
@@ -254,10 +255,8 @@ test('api.skill reads and exports files in explicit scopes', async () => {
             name: 'test-skill',
             path: 'SKILL.md',
             scope: { kind: 'preset', apiId: 'openai', name: 'Creative' },
-            maxChars: 12000,
-            startLine: undefined,
-            lineCount: undefined,
-            startChar: undefined,
+            startLine: 12,
+            lineCount: 30,
         },
     });
     assert.deepEqual(calls[1], {

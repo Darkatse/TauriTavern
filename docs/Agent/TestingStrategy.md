@@ -173,14 +173,18 @@ workspace_list_files accepts omitted/empty/dot path as workspace root
 workspace_search_files searches only visible roots and returns snippets
 chat/workspace/skill search preserves punctuation- and symbol-only queries as literal text
 workspace_read_file full read records read-state
-workspace_read_file character range does not unlock patch state unless it covers the full file
+workspace_read_file line range does not unlock patch state unless it covers the full file
+oversized reads return a successful line preview with nextStartLine
+workspace_read_file returns non-UTF-8 files as recoverable tool errors
+missing current-chat reads return recoverable errors and the next model turn still runs
+externalized MCP results expose a fully line-readable text view plus the exact JSON audit
 workspace_write_file append creates missing files and appends existing files without a rewrite read
 workspace_write_file append does not auto-insert newlines and does not unlock rewrite or patch state for unread existing content
 workspace_apply_patch requires full read-state and checkpoints on success
 chat deletion removes the corresponding Agent chat workspace and run index
 chat deletion fails clearly while the corresponding Agent workspace has an active run
 skill_search respects visible/deny policy and read budget
-skill_read supports line and character ranges
+all model-facing text read schemas expose start_line/line_count and no character range
 recoverable tool errors are returned to the model instead of failing the run
 listRuns returns paginated Agent run history summaries
 future APIs approveToolCall/readDiff/rollback throw explicitly

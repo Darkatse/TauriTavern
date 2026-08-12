@@ -173,8 +173,7 @@ async fn installs_inline_skill_and_reads_file() {
             path: "references/a.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect("read skill file");
@@ -211,8 +210,7 @@ async fn reads_skill_file_ranges() {
             path: "references/a.md".to_string(),
             start_line: Some(2),
             line_count: Some(1),
-            start_char: None,
-            max_chars: Some(80),
+            max_output_chars: 80,
         })
         .await
         .expect("read line range");
@@ -224,30 +222,11 @@ async fn reads_skill_file_ranges() {
     assert_eq!(line.end_line, 2);
     assert!(line.truncated);
 
-    let chars = repository
-        .read_skill_file(SkillReadRequest {
-            scope: global_scope(),
-            name: "test-skill".to_string(),
-            path: "references/a.md".to_string(),
-            start_line: None,
-            line_count: None,
-            start_char: Some(6),
-            max_chars: Some(4),
-        })
-        .await
-        .expect("read char range");
-    assert_eq!(chars.content, "blue");
-    assert_eq!(chars.chars, 4);
-    assert_eq!(chars.words, 1);
-    assert_eq!(chars.total_words, 4);
-    assert_eq!(chars.start_char, 6);
-    assert_eq!(chars.end_char, 10);
-
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
-async fn reads_default_budget_without_enforcing_it_as_a_hard_cap() {
+async fn large_skill_reads_return_a_line_preview() {
     let root = temp_root("read-budget");
     let repository = FileSkillRepository::new(root.clone());
     let long_content = "a".repeat(120_000);
@@ -267,13 +246,15 @@ async fn reads_default_budget_without_enforcing_it_as_a_hard_cap() {
             path: "references/long.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect("read default range");
     assert_eq!(default_read.chars, DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS);
     assert!(default_read.truncated);
+    assert!(default_read.line_truncated);
+    assert_eq!(default_read.start_line, 1);
+    assert_eq!(default_read.end_line, 1);
 
     let profile_sized_read = repository
         .read_skill_file(SkillReadRequest {
@@ -282,13 +263,13 @@ async fn reads_default_budget_without_enforcing_it_as_a_hard_cap() {
             path: "references/long.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: Some(100_000),
+            max_output_chars: 100_000,
         })
         .await
         .expect("read profile-sized range");
     assert_eq!(profile_sized_read.chars, 100_000);
     assert!(profile_sized_read.truncated);
+    assert!(profile_sized_read.line_truncated);
 
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -312,8 +293,7 @@ async fn writes_skill_file_and_updates_index_metadata() {
             path: "references/a.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect("read before write");
@@ -376,8 +356,7 @@ async fn write_skill_file_rejects_stale_expected_hash() {
             path: "references/a.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect("read after rejected write");
@@ -418,8 +397,7 @@ async fn write_skill_file_rejects_skill_rename() {
             path: "SKILL.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect("read after rejected rename");
@@ -527,8 +505,7 @@ async fn allows_same_skill_name_in_different_scopes() {
             path: "references/a.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect("read global skill");
@@ -539,8 +516,7 @@ async fn allows_same_skill_name_in_different_scopes() {
             path: "references/a.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect("read profile skill");
@@ -621,8 +597,7 @@ async fn moves_skill_between_scopes() {
             path: "references/a.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect("read moved skill");
@@ -824,8 +799,7 @@ async fn move_replace_rolls_back_target_when_index_save_fails() {
             path: "references/a.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect("read source");
@@ -836,8 +810,7 @@ async fn move_replace_rolls_back_target_when_index_save_fails() {
             path: "references/a.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect("read target");
@@ -923,8 +896,7 @@ async fn retargets_preset_scope_and_source_refs() {
             path: "references/a.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect("read retargeted skill");
@@ -2027,8 +1999,7 @@ async fn read_rejects_symlink_escape_inside_installed_skill() {
             path: "references/a.md".to_string(),
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .expect_err("symlink escape should fail");

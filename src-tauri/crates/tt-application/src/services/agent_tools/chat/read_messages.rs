@@ -4,21 +4,22 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::{
-    MAX_FULL_MESSAGE_CHARS, MAX_MESSAGE_RANGE_CHARS, MAX_MESSAGES_PER_READ, MAX_TOTAL_READ_CHARS,
-    raw_total_messages, role_as_str, visible_total_messages,
+    MAX_MESSAGE_READ_CHARS, MAX_MESSAGE_READ_LINES, MAX_MESSAGES_PER_READ, MAX_TOTAL_READ_CHARS,
+    chat_unavailable_message, role_as_str, visible_total_messages,
 };
 use crate::errors::ApplicationError;
-use crate::services::agent_tools::common::{object_args, tool_error};
+use crate::services::agent_tools::common::{ensure_only_args, object_args, tool_error};
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{AgentChatRef, AgentToolResult};
 use tt_domain::models::tool::ToolInvocation;
+use tt_domain::text_lines::TextLineSelection;
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::{ChatMessageReadItem, ChatRepository};
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 
-use super::super::structured::{TextRangeMetricsPayload, structured_value};
+use super::super::structured::{TextLineRangePayload, structured_value};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,7 +36,7 @@ struct ChatReadMessageStructured<'a> {
     name: Option<&'a str>,
     send_date: Option<&'a str>,
     #[serde(flatten)]
-    range: TextRangeMetricsPayload,
+    range: TextLineRangePayload,
     text: &'a str,
     #[serde(rename = "ref")]
     ref_id: &'a str,
@@ -44,8 +45,8 @@ struct ChatReadMessageStructured<'a> {
 #[derive(Debug, Clone)]
 struct MessageRequest {
     index: usize,
-    start_char: Option<usize>,
-    max_chars: Option<usize>,
+    start_line: Option<usize>,
+    line_count: Option<usize>,
 }
 
 struct RenderedMessage {
@@ -53,14 +54,9 @@ struct RenderedMessage {
     role: &'static str,
     name: Option<String>,
     send_date: Option<String>,
-    start_char: usize,
-    end_char: usize,
-    chars: usize,
-    total_chars: usize,
-    words: usize,
-    total_words: usize,
-    truncated: bool,
-    text: String,
+    selection: TextLineSelection,
+    metrics: TextMetrics,
+    total_metrics: TextMetrics,
     ref_id: String,
 }
 
@@ -81,6 +77,12 @@ pub(in crate::services::agent_tools) async fn read_messages(
             AgentToolEffect::None,
         ));
     };
+    if let Err(message) = ensure_only_args(args, &["messages"]) {
+        return Ok((
+            tool_error(call, "tool.invalid_arguments", &message),
+            AgentToolEffect::None,
+        ));
+    }
     let requests = match parse_message_requests(args) {
         Ok(requests) => requests,
         Err(message) => {
@@ -92,30 +94,6 @@ pub(in crate::services::agent_tools) async fn read_messages(
     };
 
     let run = run_repository.load_run(run_id).await?;
-    let run_visible_total = if run.input_message_count.is_some() {
-        let raw_total =
-            raw_total_messages(chat_repository, group_chat_repository, &run.chat_ref).await?;
-        Some(visible_total_messages(&run, raw_total)?)
-    } else {
-        None
-    };
-    if let Some(visible_total) = run_visible_total
-        && let Some(request) = requests
-            .iter()
-            .find(|request| request.index >= visible_total)
-    {
-        return Ok((
-            tool_error(
-                call,
-                "chat.message_not_found",
-                &format!(
-                    "message index {} does not exist in this chat; total messages: {}",
-                    request.index, visible_total
-                ),
-            ),
-            AgentToolEffect::None,
-        ));
-    }
     let indices = requests
         .iter()
         .map(|request| request.index)
@@ -139,19 +117,30 @@ pub(in crate::services::agent_tools) async fn read_messages(
         Ok(read) => read,
         Err(DomainError::NotFound(message)) => {
             return Ok((
-                tool_error(call, "chat.not_found", &message),
+                tool_error(call, "chat.not_found", &chat_unavailable_message(&message)),
                 AgentToolEffect::None,
             ));
         }
         Err(error) => return Err(error.into()),
     };
-    let visible_total = match run_visible_total {
-        Some(visible_total) => {
-            visible_total_messages(&run, read.total_messages)?;
-            visible_total
-        }
-        None => visible_total_messages(&run, read.total_messages)?,
-    };
+    let visible_total = visible_total_messages(&run, read.total_messages)?;
+
+    if let Some(request) = requests
+        .iter()
+        .find(|request| request.index >= visible_total)
+    {
+        return Ok((
+            tool_error(
+                call,
+                "chat.message_not_found",
+                &format!(
+                    "Message index {} is not available; the current chat has {} visible messages. Search the current chat again, then choose one of the returned indexes.",
+                    request.index, visible_total
+                ),
+            ),
+            AgentToolEffect::None,
+        ));
+    }
 
     let found_indices = read
         .messages
@@ -169,7 +158,7 @@ pub(in crate::services::agent_tools) async fn read_messages(
                 call,
                 "chat.message_not_found",
                 &format!(
-                    "message index {} does not exist in this chat; total messages: {}",
+                    "Message index {} is not available; the current chat has {} visible messages. Search the current chat again, then choose one of the returned indexes.",
                     missing[0], visible_total
                 ),
             ),
@@ -182,13 +171,13 @@ pub(in crate::services::agent_tools) async fn read_messages(
         .into_iter()
         .map(|message| (message.index, message))
         .collect::<HashMap<_, _>>();
+    let per_message_chars = MAX_MESSAGE_READ_CHARS.min(MAX_TOTAL_READ_CHARS / requests.len());
     let mut rendered = Vec::with_capacity(requests.len());
-    let mut total_returned_chars = 0_usize;
     for request in &requests {
         let message = by_index
             .get(&request.index)
             .expect("missing messages were checked above");
-        let item = match render_message(message, request) {
+        let item = match render_message(message, request, per_message_chars) {
             Ok(item) => item,
             Err(message) => {
                 return Ok((
@@ -197,19 +186,6 @@ pub(in crate::services::agent_tools) async fn read_messages(
                 ));
             }
         };
-        total_returned_chars += item.chars;
-        if total_returned_chars > MAX_TOTAL_READ_CHARS {
-            return Ok((
-                tool_error(
-                    call,
-                    "chat.read_too_large",
-                    &format!(
-                        "read result exceeds {MAX_TOTAL_READ_CHARS} characters; read fewer messages or smaller ranges"
-                    ),
-                ),
-                AgentToolEffect::None,
-            ));
-        }
         rendered.push(item);
     }
 
@@ -261,27 +237,22 @@ fn parse_message_request(position: usize, value: &Value) -> Result<MessageReques
     let object = value
         .as_object()
         .ok_or_else(|| format!("messages[{position}] must be an object"))?;
+    for key in object.keys() {
+        if key != "index" && key != "start_line" && key != "line_count" {
+            return Err(format!("messages[{position}].{key} is not supported"));
+        }
+    }
     let index = object
         .get("index")
         .and_then(Value::as_u64)
         .ok_or_else(|| format!("messages[{position}].index must be a non-negative integer"))?;
     let index =
         usize::try_from(index).map_err(|_| format!("messages[{position}].index is too large"))?;
-    let start_char = optional_request_usize(object, "start_char", position)?;
-    let max_chars = optional_request_usize(object, "max_chars", position)?;
-    if max_chars == Some(0) {
-        return Err(format!("messages[{position}].max_chars must be >= 1"));
-    }
-    if max_chars.is_some_and(|value| value > MAX_MESSAGE_RANGE_CHARS) {
-        return Err(format!(
-            "messages[{position}].max_chars must be <= {MAX_MESSAGE_RANGE_CHARS}"
-        ));
-    }
 
     Ok(MessageRequest {
         index,
-        start_char,
-        max_chars,
+        start_line: optional_request_usize(object, "start_line", position)?,
+        line_count: optional_request_usize(object, "line_count", position)?,
     })
 }
 
@@ -306,60 +277,33 @@ fn optional_request_usize(
 fn render_message(
     message: &ChatMessageReadItem,
     request: &MessageRequest,
+    max_chars: usize,
 ) -> Result<RenderedMessage, String> {
+    let selection = TextLineSelection::select(
+        &message.text,
+        request.start_line.unwrap_or(1),
+        request.line_count,
+        MAX_MESSAGE_READ_LINES,
+        max_chars,
+    )
+    .map_err(|error| format!("message {}: {error}", message.index))?;
+    let metrics = TextMetrics::from_text(&selection.content);
     let total_metrics = TextMetrics::from_text(&message.text);
-    let total_chars = total_metrics.chars;
-    let start_char = request.start_char.unwrap_or(0);
-    if total_chars > 0 && start_char >= total_chars {
-        return Err(format!(
-            "message {} has {total_chars} characters; start_char {start_char} is outside the message",
-            message.index
-        ));
-    }
-    if total_chars == 0 && start_char > 0 {
-        return Err(format!(
-            "message {} is empty; start_char must be 0",
-            message.index
-        ));
-    }
-
-    if request.max_chars.is_none() && total_chars > MAX_FULL_MESSAGE_CHARS {
-        return Err(format!(
-            "message {} has {total_chars} characters; set start_char and max_chars to read it in ranges",
-            message.index
-        ));
-    }
-
-    let requested = request
-        .max_chars
-        .unwrap_or_else(|| total_chars.saturating_sub(start_char));
-    let end_char = start_char.saturating_add(requested).min(total_chars);
-    let text = slice_chars(&message.text, start_char, end_char);
-    let selected_metrics = TextMetrics::from_text(&text);
-    let truncated = start_char > 0 || end_char < total_chars;
+    let ref_id = format!(
+        "chat:current#{}:L{}-L{}",
+        message.index, selection.start_line, selection.end_line
+    );
 
     Ok(RenderedMessage {
         index: message.index,
         role: role_as_str(message.role),
         name: message.name.clone(),
         send_date: message.send_date.clone(),
-        start_char,
-        end_char,
-        chars: selected_metrics.chars,
-        total_chars,
-        words: selected_metrics.words,
-        total_words: total_metrics.words,
-        truncated,
-        text,
-        ref_id: format!(
-            "chat:current#{}:chars={}..{}",
-            message.index, start_char, end_char
-        ),
+        selection,
+        metrics,
+        total_metrics,
+        ref_id,
     })
-}
-
-fn slice_chars(text: &str, start: usize, end: usize) -> String {
-    text.chars().skip(start).take(end - start).collect()
 }
 
 fn render_content(total_messages: usize, messages: &[RenderedMessage]) -> String {
@@ -371,7 +315,7 @@ fn render_content(total_messages: usize, messages: &[RenderedMessage]) -> String
     );
     for message in messages {
         content.push_str(&format!(
-            "\n\nmessage {} {}{} chars {}-{} of {}, words {} of {}, ref {}",
+            "\n\nmessage {} {}{} lines {}-{} of {}, chars {} of {}, words {} of {}, ref {}{}",
             message.index,
             message.role,
             message
@@ -379,21 +323,41 @@ fn render_content(total_messages: usize, messages: &[RenderedMessage]) -> String
                 .as_ref()
                 .map(|name| format!(" {name}"))
                 .unwrap_or_default(),
-            message.start_char,
-            message.end_char,
-            message.total_chars,
-            message.words,
-            message.total_words,
-            message.ref_id
+            message.selection.start_line,
+            message.selection.end_line,
+            message.selection.total_lines,
+            message.metrics.chars,
+            message.total_metrics.chars,
+            message.metrics.words,
+            message.total_metrics.words,
+            message.ref_id,
+            if message.selection.truncated() {
+                " (preview)"
+            } else {
+                ""
+            },
         ));
         if let Some(send_date) = &message.send_date {
             content.push_str(&format!(" send_date {send_date}"));
         }
-        if message.truncated {
-            content.push_str(" truncated");
+        let numbered = message.selection.numbered_content();
+        if !numbered.is_empty() {
+            content.push('\n');
+            content.push_str(&numbered);
         }
-        content.push('\n');
-        content.push_str(&message.text);
+        if let Some(next_start_line) = message.selection.next_start_line() {
+            content.push_str(&format!(
+                "\nContinue message {} with start_line={next_start_line} and line_count={}.",
+                message.index,
+                message.selection.returned_line_count()
+            ));
+        }
+        if message.selection.line_truncated {
+            content.push_str(&format!(
+                "\nLine {} exceeds the read preview budget and was truncated.",
+                message.selection.start_line
+            ));
+        }
     }
     content
 }
@@ -404,19 +368,55 @@ fn structured_message(message: &RenderedMessage) -> ChatReadMessageStructured<'_
         role: message.role,
         name: message.name.as_deref(),
         send_date: message.send_date.as_deref(),
-        range: TextRangeMetricsPayload::new(
-            TextMetrics {
-                chars: message.chars,
-                words: message.words,
-            },
-            TextMetrics {
-                chars: message.total_chars,
-                words: message.total_words,
-            },
-            message.start_char,
-            message.end_char,
+        range: TextLineRangePayload::new(
+            message.metrics,
+            message.total_metrics,
+            message.selection.total_lines,
+            message.selection.start_line,
+            message.selection.end_line,
+            message.selection.line_truncated,
         ),
-        text: message.text.as_str(),
+        text: message.selection.content.as_str(),
         ref_id: message.ref_id.as_str(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use tt_ports::repositories::chat_repository::{ChatMessageReadItem, ChatMessageRole};
+
+    use super::{MAX_MESSAGE_READ_CHARS, MessageRequest, parse_message_request, render_message};
+
+    #[test]
+    fn long_messages_default_to_a_line_preview() {
+        let message = ChatMessageReadItem {
+            index: 7,
+            role: ChatMessageRole::Assistant,
+            name: None,
+            send_date: None,
+            text: format!("{}\n{}", "a".repeat(5_000), "b".repeat(5_000)),
+        };
+        let rendered = render_message(
+            &message,
+            &MessageRequest {
+                index: 7,
+                start_line: None,
+                line_count: None,
+            },
+            MAX_MESSAGE_READ_CHARS,
+        )
+        .unwrap();
+
+        assert_eq!(rendered.selection.start_line, 1);
+        assert_eq!(rendered.selection.end_line, 1);
+        assert_eq!(rendered.selection.next_start_line(), Some(2));
+        assert!(rendered.selection.truncated());
+    }
+
+    #[test]
+    fn character_ranges_are_not_accepted() {
+        let error = parse_message_request(0, &json!({ "index": 7, "start_char": 0 })).unwrap_err();
+        assert!(error.contains("start_char is not supported"));
     }
 }

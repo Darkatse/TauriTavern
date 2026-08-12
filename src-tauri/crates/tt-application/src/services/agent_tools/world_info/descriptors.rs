@@ -8,7 +8,7 @@ pub(in crate::services::agent_tools) fn worldinfo_read_activated_descriptor() ->
         id: ToolId::builtin(WORLDINFO_READ_ACTIVATED)
             .expect("builtin tool name must be valid"),
         title: Some("World Info Read Activated".to_string()),
-        description: Some("Inspect World Info entries activated for this Agent run. Omit arguments to list active refs without content; pass entries with refs and optional character ranges to read selected lore text. Reads the run prompt snapshot, not global World Info.".to_string()),
+        description: Some("Inspect World Info entries activated for this Agent run. Omit arguments to list active refs without content; pass entries with refs and optional line ranges to read selected lore text. Entry content is read in full by default; oversized entries return a bounded preview with the next line to read. Reads the run prompt snapshot, not global World Info.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -24,13 +24,15 @@ pub(in crate::services::agent_tools) fn worldinfo_read_activated_descriptor() ->
                                 "type": "string",
                                 "description": "Active World Info ref returned by the no-argument index call."
                             },
-                            "start_char": {
+                            "start_line": {
                                 "type": "integer",
-                                "description": "Optional 0-based character offset inside the entry content."
+                                "minimum": 1,
+                                "description": "Optional 1-based starting line inside the entry content."
                             },
-                            "max_chars": {
+                            "line_count": {
                                 "type": "integer",
-                                "description": "Optional maximum characters to read from this entry. Maximum is 8000."
+                                "minimum": 1,
+                                "description": "Optional number of lines to read. Omit to read through the end; oversized results return a shorter preview."
                             }
                         },
                         "required": ["ref"]

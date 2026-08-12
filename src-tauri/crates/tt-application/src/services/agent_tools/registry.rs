@@ -4,9 +4,7 @@ use super::agent::{
 };
 use super::chat::{chat_read_messages_descriptor, chat_search_descriptor};
 use super::dice::dice_roll_descriptor;
-use super::skill::{
-    SKILL_READ, skill_list_descriptor, skill_read_descriptor, skill_search_descriptor,
-};
+use super::skill::{skill_list_descriptor, skill_read_descriptor, skill_search_descriptor};
 use super::workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
     WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_WRITE_FILE,
@@ -108,7 +106,7 @@ fn apply_return_mode_context(
         }
         WORKSPACE_READ_FILE => {
             descriptor.description = Some(format!(
-                "Read a visible UTF-8 task workspace file with line numbers. Visible roots are {visible_roots}. Use ordinary workspace paths exactly as they appear in the task brief or file list."
+                "Read a visible UTF-8 task workspace file with line numbers. Omit start_line and line_count to read the full file; oversized files return a bounded preview with the next line to read. Visible roots are {visible_roots}. Use ordinary workspace paths exactly as they appear in the task brief or file list."
             ));
             set_property_description(
                 descriptor,
@@ -184,7 +182,7 @@ fn apply_profile_context(
                 " Partial reads are only for inspection."
             };
             descriptor.description = Some(format!(
-                "Read a visible UTF-8 Agent workspace file with line numbers.{patch_hint}"
+                "Read a visible UTF-8 Agent workspace file with line numbers. Omit start_line and line_count to read the full file; oversized files return a bounded preview with the next line to read.{patch_hint}"
             ));
             set_property_description(
                 descriptor,
@@ -240,18 +238,6 @@ fn apply_profile_context(
                     .to_string(),
             );
         }
-        SKILL_READ => {
-            let per_call = profile.skills.max_read_chars_per_call;
-            let per_run = profile.skills.max_read_chars_per_run;
-            set_property_description(
-                descriptor,
-                "max_chars",
-                &format!(
-                    "Maximum characters to return in this skill_read call. Current policy allows up to {per_call} characters per call and {per_run} total Skill characters per run; the remaining run budget also applies. Omit to use the available per-call budget."
-                ),
-            )?;
-            set_integer_property_bounds(descriptor, "max_chars", 1, per_call)?;
-        }
         _ => {}
     }
 
@@ -279,18 +265,6 @@ pub(crate) fn apply_description_override(
     for (property, description) in &override_.properties {
         set_property_description(descriptor, property, description.trim())?;
     }
-    Ok(())
-}
-
-fn set_integer_property_bounds(
-    descriptor: &mut ToolDescriptor,
-    property: &str,
-    minimum: usize,
-    maximum: usize,
-) -> Result<(), ApplicationError> {
-    let object = property_schema_object_mut(descriptor, property)?;
-    object.insert("minimum".to_string(), serde_json::json!(minimum));
-    object.insert("maximum".to_string(), serde_json::json!(maximum));
     Ok(())
 }
 
@@ -343,7 +317,8 @@ mod tests {
     use super::super::agent::{
         AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, TASK_RETURN,
     };
-    use super::super::policy::{compile_invocation_tool_snapshot, project_agent_model_tools};
+    use super::super::policy::compile_invocation_tool_snapshot;
+    use super::super::skill::SKILL_READ;
     use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE};
     use super::*;
     use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
@@ -357,7 +332,7 @@ mod tests {
     use tt_domain::models::agent::{
         AgentInvocationExitPolicy, AgentRunPresentation, ArtifactSpec, ArtifactTarget,
     };
-    use tt_domain::models::tool::{ToolChoice, ToolId, ToolSnapshotId, ToolTurnContract};
+    use tt_domain::models::tool::{ToolId, ToolSnapshotId};
 
     #[test]
     fn snapshot_compiler_derives_builtin_model_aliases() {
@@ -438,48 +413,24 @@ mod tests {
     }
 
     #[test]
-    fn visible_model_tools_expose_profile_skill_read_budget() {
+    fn builtin_read_tools_expose_only_line_ranges() {
         let registry = BuiltinAgentToolRegistry::all();
-        let profile = profile_with_skill_budget(100_000, 100_000);
-        let snapshot = compile_invocation_tool_snapshot(
-            &registry,
-            &profile,
-            AgentInvocationExitPolicy::RunFinishAllowed,
-            ToolSnapshotId::parse("test").unwrap(),
-            &[],
-        )
-        .expect("snapshot");
-        let turn = ToolTurnContract::all(&snapshot, ToolChoice::Auto).expect("turn");
-        let tools = project_agent_model_tools(&snapshot, &turn).expect("visible model tools");
-        let skill_read = tools
-            .iter()
-            .find(|tool| tool.tool_id.native_name() == SKILL_READ)
-            .expect("skill.read model tool");
-        let max_chars = skill_read
-            .input_schema
-            .pointer("/properties/max_chars")
-            .expect("max_chars schema");
-
-        assert_eq!(max_chars["maximum"], serde_json::json!(100_000));
-        assert_eq!(max_chars["minimum"], serde_json::json!(1));
-        assert!(
-            max_chars["description"]
-                .as_str()
-                .expect("description")
-                .contains("100000")
-        );
-        assert!(
-            !max_chars["description"]
-                .as_str()
-                .expect("description")
-                .contains("80000")
-        );
-        assert!(
-            !max_chars["description"]
-                .as_str()
-                .expect("description")
-                .contains("profile")
-        );
+        for name in [
+            "chat.read_messages",
+            "worldinfo.read_activated",
+            SKILL_READ,
+            WORKSPACE_READ_FILE,
+        ] {
+            let descriptor = registry
+                .catalog()
+                .get(&ToolId::builtin(name).unwrap())
+                .expect("builtin read tool");
+            let schema = serde_json::to_string(&descriptor.input_schema).unwrap();
+            assert!(schema.contains("start_line"), "{name}");
+            assert!(schema.contains("line_count"), "{name}");
+            assert!(!schema.contains("start_char"), "{name}");
+            assert!(!schema.contains("max_chars"), "{name}");
+        }
     }
 
     #[test]
@@ -514,6 +465,13 @@ mod tests {
             vec![WORKSPACE_READ_FILE, WORKSPACE_FINISH, AGENT_LIST]
         );
         assert_eq!(root.bindings()[0].max_calls(), Some(2));
+        assert!(
+            root.bindings()[0]
+                .descriptor()
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("Omit start_line and line_count"))
+        );
 
         let child = compile_invocation_tool_snapshot(
             &registry,
@@ -536,7 +494,10 @@ mod tests {
                 .descriptor()
                 .description
                 .as_deref()
-                .is_some_and(|description| description.contains("task workspace file"))
+                .is_some_and(|description| {
+                    description.contains("task workspace file")
+                        && description.contains("Omit start_line and line_count")
+                })
         );
         assert_eq!(
             profile.tools.allow,

@@ -2,19 +2,18 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::{
-    MAX_WORLDINFO_ENTRIES_PER_READ, MAX_WORLDINFO_ENTRY_RANGE_CHARS,
-    MAX_WORLDINFO_FULL_ENTRY_CHARS, MAX_WORLDINFO_TOTAL_READ_CHARS,
+    MAX_WORLDINFO_ENTRIES_PER_READ, MAX_WORLDINFO_ENTRY_READ_CHARS, MAX_WORLDINFO_ENTRY_READ_LINES,
+    MAX_WORLDINFO_TOTAL_READ_CHARS,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::common::{object_args, tool_error};
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::tool::ToolInvocation;
+use tt_domain::text_lines::TextLineSelection;
 use tt_domain::text_metrics::TextMetrics;
 
-use super::super::structured::{
-    TextRangeMetricsPayload, TextTotalMetricsPayload, structured_value,
-};
+use super::super::structured::{TextLineRangePayload, TextTotalMetricsPayload, structured_value};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +35,7 @@ struct WorldInfoIndexEntryStructured<'a> {
     position: Option<&'a str>,
     #[serde(flatten)]
     metrics: TextTotalMetricsPayload,
+    total_lines: usize,
     #[serde(rename = "ref")]
     ref_id: &'a str,
 }
@@ -59,7 +59,7 @@ struct WorldInfoContentEntryStructured<'a> {
     constant: bool,
     position: Option<&'a str>,
     #[serde(flatten)]
-    range: TextRangeMetricsPayload,
+    range: TextLineRangePayload,
     content: &'a str,
     #[serde(rename = "ref")]
     ref_id: &'a str,
@@ -70,10 +70,11 @@ enum ReadActivatedRequest {
     Content(Vec<EntryContentRequest>),
 }
 
+#[derive(Debug)]
 struct EntryContentRequest {
     ref_id: String,
-    start_char: Option<usize>,
-    max_chars: Option<usize>,
+    start_line: Option<usize>,
+    line_count: Option<usize>,
 }
 
 struct ActivatedEntry {
@@ -84,6 +85,7 @@ struct ActivatedEntry {
     position: Option<String>,
     content: String,
     metrics: TextMetrics,
+    total_lines: usize,
     ref_id: String,
 }
 
@@ -93,14 +95,9 @@ struct RenderedEntry {
     display_name: Option<String>,
     constant: bool,
     position: Option<String>,
-    start_char: usize,
-    end_char: usize,
-    chars: usize,
-    total_chars: usize,
-    words: usize,
-    total_words: usize,
-    truncated: bool,
-    content: String,
+    selection: TextLineSelection,
+    metrics: TextMetrics,
+    total_metrics: TextMetrics,
     ref_id: String,
 }
 
@@ -199,7 +196,7 @@ fn parse_entry_request(position: usize, value: &Value) -> Result<EntryContentReq
         .as_object()
         .ok_or_else(|| format!("entries[{position}] must be an object"))?;
     for key in object.keys() {
-        if key != "ref" && key != "start_char" && key != "max_chars" {
+        if key != "ref" && key != "start_line" && key != "line_count" {
             return Err(format!("entries[{position}].{key} is not supported"));
         }
     }
@@ -211,21 +208,11 @@ fn parse_entry_request(position: usize, value: &Value) -> Result<EntryContentReq
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("entries[{position}].ref is required"))?
         .to_string();
-    let start_char = optional_entry_usize(object, "start_char", position)?;
-    let max_chars = optional_entry_usize(object, "max_chars", position)?;
-    if max_chars == Some(0) {
-        return Err(format!("entries[{position}].max_chars must be >= 1"));
-    }
-    if max_chars.is_some_and(|value| value > MAX_WORLDINFO_ENTRY_RANGE_CHARS) {
-        return Err(format!(
-            "entries[{position}].max_chars must be <= {MAX_WORLDINFO_ENTRY_RANGE_CHARS}"
-        ));
-    }
 
     Ok(EntryContentRequest {
         ref_id,
-        start_char,
-        max_chars,
+        start_line: optional_entry_usize(object, "start_line", position)?,
+        line_count: optional_entry_usize(object, "line_count", position)?,
     })
 }
 
@@ -274,6 +261,11 @@ fn normalize_entry(index: usize, entry: &Value) -> Result<ActivatedEntry, Applic
         })?
         .to_string();
     let metrics = TextMetrics::from_text(&content);
+    let total_lines = if content.is_empty() {
+        0
+    } else {
+        content.split('\n').count()
+    };
 
     Ok(ActivatedEntry {
         world,
@@ -292,6 +284,7 @@ fn normalize_entry(index: usize, entry: &Value) -> Result<ActivatedEntry, Applic
             .map(str::to_string),
         content,
         metrics,
+        total_lines,
         ref_id,
     })
 }
@@ -330,8 +323,9 @@ fn build_content_result(
     entries: &[ActivatedEntry],
     requests: &[EntryContentRequest],
 ) -> Result<AgentToolResult, (&'static str, String)> {
+    let per_entry_chars =
+        MAX_WORLDINFO_ENTRY_READ_CHARS.min(MAX_WORLDINFO_TOTAL_READ_CHARS / requests.len());
     let mut rendered = Vec::with_capacity(requests.len());
-    let mut total_returned_chars = 0_usize;
 
     for request in requests {
         let Some(entry) = entries.iter().find(|entry| entry.ref_id == request.ref_id) else {
@@ -343,17 +337,8 @@ fn build_content_result(
                 ),
             ));
         };
-        let item = render_entry(entry, request)
+        let item = render_entry(entry, request, per_entry_chars)
             .map_err(|message| ("worldinfo.invalid_entry_range", message))?;
-        total_returned_chars += item.chars;
-        if total_returned_chars > MAX_WORLDINFO_TOTAL_READ_CHARS {
-            return Err((
-                "worldinfo.read_too_large",
-                format!(
-                    "read result exceeds {MAX_WORLDINFO_TOTAL_READ_CHARS} characters; read fewer entries or smaller ranges"
-                ),
-            ));
-        }
         rendered.push(item);
     }
 
@@ -383,31 +368,17 @@ fn build_content_result(
 fn render_entry(
     entry: &ActivatedEntry,
     request: &EntryContentRequest,
+    max_chars: usize,
 ) -> Result<RenderedEntry, String> {
-    let total_chars = entry.metrics.chars;
-    let start_char = request.start_char.unwrap_or(0);
-    if total_chars > 0 && start_char >= total_chars {
-        return Err(format!(
-            "{} has {total_chars} characters; start_char {start_char} is outside the entry",
-            entry.ref_id
-        ));
-    }
-    if total_chars == 0 && start_char > 0 {
-        return Err(format!("{} is empty; start_char must be 0", entry.ref_id));
-    }
-    if request.max_chars.is_none() && total_chars > MAX_WORLDINFO_FULL_ENTRY_CHARS {
-        return Err(format!(
-            "{} has {total_chars} characters; set start_char and max_chars to read it in ranges",
-            entry.ref_id
-        ));
-    }
-
-    let requested = request
-        .max_chars
-        .unwrap_or_else(|| total_chars.saturating_sub(start_char));
-    let end_char = start_char.saturating_add(requested).min(total_chars);
-    let content = slice_chars(&entry.content, start_char, end_char);
-    let selected_metrics = TextMetrics::from_text(&content);
+    let selection = TextLineSelection::select(
+        &entry.content,
+        request.start_line.unwrap_or(1),
+        request.line_count,
+        MAX_WORLDINFO_ENTRY_READ_LINES,
+        max_chars,
+    )
+    .map_err(|error| format!("{}: {error}", entry.ref_id))?;
+    let metrics = TextMetrics::from_text(&selection.content);
 
     Ok(RenderedEntry {
         world: entry.world.clone(),
@@ -415,14 +386,9 @@ fn render_entry(
         display_name: entry.display_name.clone(),
         constant: entry.constant,
         position: entry.position.clone(),
-        start_char,
-        end_char,
-        chars: selected_metrics.chars,
-        total_chars,
-        words: selected_metrics.words,
-        total_words: entry.metrics.words,
-        truncated: start_char > 0 || end_char < total_chars,
-        content,
+        selection,
+        metrics,
+        total_metrics: entry.metrics,
         ref_id: entry.ref_id.clone(),
     })
 }
@@ -439,11 +405,12 @@ fn render_index_content(entries: &[ActivatedEntry]) -> String {
     );
     for (index, entry) in entries.iter().enumerate() {
         content.push_str(&format!(
-            "\n{}. {} | {} | world={} | chars={} | words={}",
+            "\n{}. {} | {} | world={} | lines={} | chars={} | words={}",
             index + 1,
             entry.ref_id,
             display_label(entry),
             entry.world,
+            entry.total_lines,
             entry.metrics.chars,
             entry.metrics.words
         ));
@@ -465,24 +432,44 @@ fn render_content_entries(entries: &[RenderedEntry]) -> String {
     );
     for entry in entries {
         content.push_str(&format!(
-            "\n\n{} | {} | world={} | chars {}-{} of {} | words {} of {}",
+            "\n\n{} | {} | world={} | lines {}-{} of {} | chars {} of {} | words {} of {}{}",
             entry.ref_id,
             display_label_rendered(entry),
             entry.world,
-            entry.start_char,
-            entry.end_char,
-            entry.total_chars,
-            entry.words,
-            entry.total_words
+            entry.selection.start_line,
+            entry.selection.end_line,
+            entry.selection.total_lines,
+            entry.metrics.chars,
+            entry.total_metrics.chars,
+            entry.metrics.words,
+            entry.total_metrics.words,
+            if entry.selection.truncated() {
+                " | preview"
+            } else {
+                ""
+            }
         ));
         if let Some(position) = &entry.position {
             content.push_str(&format!(" | position={position}"));
         }
-        if entry.truncated {
-            content.push_str(" | truncated");
+        let numbered = entry.selection.numbered_content();
+        if !numbered.is_empty() {
+            content.push('\n');
+            content.push_str(&numbered);
         }
-        content.push('\n');
-        content.push_str(&entry.content);
+        if let Some(next_start_line) = entry.selection.next_start_line() {
+            content.push_str(&format!(
+                "\nContinue {} with start_line={next_start_line} and line_count={}.",
+                entry.ref_id,
+                entry.selection.returned_line_count()
+            ));
+        }
+        if entry.selection.line_truncated {
+            content.push_str(&format!(
+                "\nLine {} exceeds the read preview budget and was truncated.",
+                entry.selection.start_line
+            ));
+        }
     }
     content
 }
@@ -495,6 +482,7 @@ fn index_entry(entry: &ActivatedEntry) -> WorldInfoIndexEntryStructured<'_> {
         constant: entry.constant,
         position: entry.position.as_deref(),
         metrics: entry.metrics.into(),
+        total_lines: entry.total_lines,
         ref_id: entry.ref_id.as_str(),
     }
 }
@@ -506,19 +494,15 @@ fn content_entry(entry: &RenderedEntry) -> WorldInfoContentEntryStructured<'_> {
         display_name: entry.display_name.as_deref(),
         constant: entry.constant,
         position: entry.position.as_deref(),
-        range: TextRangeMetricsPayload::new(
-            TextMetrics {
-                chars: entry.chars,
-                words: entry.words,
-            },
-            TextMetrics {
-                chars: entry.total_chars,
-                words: entry.total_words,
-            },
-            entry.start_char,
-            entry.end_char,
+        range: TextLineRangePayload::new(
+            entry.metrics,
+            entry.total_metrics,
+            entry.selection.total_lines,
+            entry.selection.start_line,
+            entry.selection.end_line,
+            entry.selection.line_truncated,
         ),
-        content: entry.content.as_str(),
+        content: entry.selection.content.as_str(),
         ref_id: entry.ref_id.as_str(),
     }
 }
@@ -539,13 +523,57 @@ fn display_label_rendered(entry: &RenderedEntry) -> &str {
         .unwrap_or(entry.uid.as_str())
 }
 
-fn slice_chars(text: &str, start: usize, end: usize) -> String {
-    text.chars().skip(start).take(end - start).collect()
-}
-
 fn invalid_activation_snapshot(message: impl Into<String>) -> ApplicationError {
     ApplicationError::ValidationError(format!(
         "agent.invalid_worldinfo_activation_snapshot: {}",
         message.into()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use tt_domain::text_metrics::TextMetrics;
+
+    use super::{
+        ActivatedEntry, EntryContentRequest, MAX_WORLDINFO_ENTRY_READ_CHARS, parse_entry_request,
+        render_entry,
+    };
+
+    #[test]
+    fn long_entries_default_to_a_line_preview() {
+        let content = format!("{}\n{}", "a".repeat(5_000), "b".repeat(5_000));
+        let entry = ActivatedEntry {
+            world: "world".to_string(),
+            uid: "1".to_string(),
+            display_name: None,
+            constant: false,
+            position: None,
+            metrics: TextMetrics::from_text(&content),
+            total_lines: 2,
+            content,
+            ref_id: "worldinfo:world#1".to_string(),
+        };
+        let rendered = render_entry(
+            &entry,
+            &EntryContentRequest {
+                ref_id: entry.ref_id.clone(),
+                start_line: None,
+                line_count: None,
+            },
+            MAX_WORLDINFO_ENTRY_READ_CHARS,
+        )
+        .unwrap();
+
+        assert_eq!(rendered.selection.end_line, 1);
+        assert_eq!(rendered.selection.next_start_line(), Some(2));
+        assert!(rendered.selection.truncated());
+    }
+
+    #[test]
+    fn character_ranges_are_not_accepted() {
+        let error = parse_entry_request(0, &json!({ "ref": "worldinfo:world#1", "max_chars": 10 }))
+            .unwrap_err();
+        assert!(error.contains("max_chars is not supported"));
+    }
 }

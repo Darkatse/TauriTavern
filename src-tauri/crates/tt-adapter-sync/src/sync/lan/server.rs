@@ -405,6 +405,10 @@ impl IntoResponse for ApiError {
                 StatusCode::CONFLICT,
                 format!("Workspace path is a directory: {path}"),
             ),
+            DomainError::WorkspaceFileNotText { path } => (
+                StatusCode::BAD_REQUEST,
+                format!("Workspace file is not UTF-8 text: {path}"),
+            ),
             DomainError::WorkspaceWriteConflict { kind, .. } => (
                 StatusCode::CONFLICT,
                 format!("Workspace write conflict: {kind}"),

@@ -16,27 +16,6 @@ pub(super) fn filter_visible_entries(
     }
 }
 
-pub(super) fn split_lines_for_display(text: &str) -> Vec<&str> {
-    if text.is_empty() {
-        return Vec::new();
-    }
-    text.split('\n').collect()
-}
-
-pub(super) fn format_lines_with_numbers(lines: &[&str], start_line: usize) -> String {
-    if lines.is_empty() {
-        return String::new();
-    }
-    let last_line = start_line + lines.len() - 1;
-    let width = last_line.to_string().len();
-    lines
-        .iter()
-        .enumerate()
-        .map(|(index, line)| format!("{:>width$} | {}", start_line + index, line, width = width))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 pub(super) fn render_file_list(list: &WorkspaceFileList) -> String {
     if list.entries.is_empty() {
         return "No visible workspace files found.".to_string();

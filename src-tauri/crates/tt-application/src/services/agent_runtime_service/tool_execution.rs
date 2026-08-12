@@ -25,7 +25,7 @@ use tt_ports::mcp::{McpCallOutcome, McpKnownResponse};
 use tt_ports::repositories::workspace_repository::WorkspaceWriteGuard;
 
 const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
-const MCP_RESULT_PREVIEW_CHARS: usize = 3_000;
+const MCP_RESULT_CONTENT_CHUNK_CHARS: usize = 3_000;
 
 impl AgentRuntimeService {
     #[expect(
@@ -275,12 +275,39 @@ impl AgentRuntimeService {
                     .record_tool_outcome(run_id, invocation_id, round, snapshot_id, &outcome)
                     .await?;
                 if !outcome.result.tool_id.is_builtin() {
-                    project_mcp_result_for_model(
+                    let readable_path = WorkspacePath::parse(format!(
+                        "tool-results/{}.txt",
+                        tool_call_audit_file_stem(&outcome.result.call_id)
+                    ))?;
+                    if let Some(readable) = project_mcp_result_for_model(
                         &mut outcome.result,
                         &result_path,
+                        &readable_path,
                         &prepared.tool_snapshot,
                         profile.tools.mcp_result_inline_char_limit,
-                    )?;
+                    )? {
+                        self.workspace_repository
+                            .write_text_guarded(
+                                run_id,
+                                &readable_path,
+                                &readable,
+                                WorkspaceWriteGuard::MustNotExist,
+                            )
+                            .await?;
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Debug,
+                            "tool_result_readable_view_stored",
+                            json!({
+                                "round": round,
+                                "callId": outcome.result.call_id.as_str(),
+                                "toolId": outcome.result.tool_id.as_str(),
+                                "path": readable_path.as_str(),
+                                "auditPath": result_path.as_str(),
+                            }),
+                        )
+                        .await?;
+                    }
                 }
                 Ok(outcome)
             }
@@ -440,23 +467,41 @@ impl AgentRuntimeService {
 
 fn project_mcp_result_for_model(
     result: &mut AgentToolResult,
-    path: &WorkspacePath,
+    audit_path: &WorkspacePath,
+    readable_path: &WorkspacePath,
     snapshot: &InvocationToolSnapshot,
     inline_char_limit: usize,
-) -> Result<(), ApplicationError> {
+) -> Result<Option<String>, ApplicationError> {
     let wire = serde_json::to_string(result).map_err(|error| {
         ApplicationError::ValidationError(format!("agent.tool_result_serialize_failed: {error}"))
     })?;
     let char_count = TextMetrics::from_text(&wire).chars;
-    if char_count > inline_char_limit {
-        externalize_mcp_result(result, path, snapshot, char_count, inline_char_limit)?;
+    if char_count <= inline_char_limit {
+        return Ok(None);
     }
-    Ok(())
+
+    let structured = serde_json::to_string_pretty(&result.structured).map_err(|error| {
+        ApplicationError::ValidationError(format!("agent.tool_result_serialize_failed: {error}"))
+    })?;
+    let readable = line_addressable_content(&format!(
+        "MCP text content:\n{}\n\nMCP structured content:\n{structured}",
+        result.content
+    ));
+    externalize_mcp_result(
+        result,
+        audit_path,
+        readable_path,
+        snapshot,
+        char_count,
+        inline_char_limit,
+    )?;
+    Ok(Some(readable))
 }
 
 fn externalize_mcp_result(
     result: &mut AgentToolResult,
-    path: &WorkspacePath,
+    audit_path: &WorkspacePath,
+    readable_path: &WorkspacePath,
     snapshot: &InvocationToolSnapshot,
     char_count: usize,
     inline_char_limit: usize,
@@ -464,7 +509,7 @@ fn externalize_mcp_result(
     let preview = result
         .content
         .chars()
-        .take(MCP_RESULT_PREVIEW_CHARS)
+        .take(MCP_RESULT_CONTENT_CHUNK_CHARS)
         .collect::<String>();
     let read_tool = ToolId::builtin("workspace.read_file")?;
     let read_alias = snapshot
@@ -475,45 +520,68 @@ fn externalize_mcp_result(
         .binding(&search_tool)
         .map(|binding| binding.model_alias());
     let mut instructions = format!(
-        "The MCP result is too large to place in context ({char_count} chars; limit {inline_char_limit}). The complete result is saved at `{}`.",
-        path.as_str()
+        "This MCP result is too large to include in the current context ({char_count} characters; limit {inline_char_limit}). A line-readable view is available at `{}`, and the exact audit result remains at `{}`.",
+        readable_path.as_str(),
+        audit_path.as_str(),
     );
     if let Some(alias) = read_alias {
         instructions.push_str(&format!(
-            " Use {alias} with path `{}`, start_char, and max_chars (up to 80000) to read it in chunks. For a comprehensive review, continue from the next start_char until the file is fully read.",
-            path.as_str()
+            " Use {alias} with path `{}` to read it. If you receive a preview, continue from its reported next start_line until nextStartLine is no longer present. Long source lines are wrapped in this readable view so every part remains reachable.",
+            readable_path.as_str()
         ));
     } else {
         instructions.push_str(
-            " The current Agent profile does not expose workspace.read_file, so continue using the path as a user-visible result reference.",
+            " Your current profile does not provide a text-reading tool. Use the prefix preview below and preserve the resource references for the user if more detail is needed.",
         );
     }
     if let Some(alias) = search_alias {
         instructions.push_str(&format!(
             " Use {alias} with path `{}` to locate specific text before reading exact ranges.",
-            path.as_str()
+            readable_path.as_str()
         ));
     }
     if !preview.is_empty() {
         instructions.push_str(&format!(
-            "\n\nPrefix preview of the MCP result content (at most {MCP_RESULT_PREVIEW_CHARS} Unicode characters; not the complete result):\n<mcp-result-preview>\n{preview}\n</mcp-result-preview>"
+            "\n\nPrefix preview of the MCP result content (at most {MCP_RESULT_CONTENT_CHUNK_CHARS} Unicode characters; not the complete result):\n<mcp-result-preview>\n{preview}\n</mcp-result-preview>"
         ));
     }
     result.content = instructions;
     result.structured = json!({
         "externalized": true,
-        "path": path.as_str(),
+        "path": readable_path.as_str(),
+        "auditPath": audit_path.as_str(),
         "charCount": char_count,
         "charLimit": inline_char_limit,
     });
-    if !result
-        .resource_refs
-        .iter()
-        .any(|reference| reference == path.as_str())
-    {
-        result.resource_refs.push(path.as_str().to_string());
+    for path in [readable_path, audit_path] {
+        if !result
+            .resource_refs
+            .iter()
+            .any(|reference| reference == path.as_str())
+        {
+            result.resource_refs.push(path.as_str().to_string());
+        }
     }
     Ok(())
+}
+
+fn line_addressable_content(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut line_chars = 0;
+    for character in text.chars() {
+        if character == '\n' {
+            output.push(character);
+            line_chars = 0;
+            continue;
+        }
+        if line_chars == MCP_RESULT_CONTENT_CHUNK_CHARS {
+            output.push('\n');
+            line_chars = 0;
+        }
+        output.push(character);
+        line_chars += 1;
+    }
+    output
 }
 
 fn mcp_known_response_result(call: &ToolInvocation, response: McpKnownResponse) -> AgentToolResult {
@@ -650,7 +718,7 @@ mod tests {
     };
 
     use super::{
-        MCP_RESULT_PREVIEW_CHARS, ensure_tool_result_identity, project_mcp_result_for_model,
+        MCP_RESULT_CONTENT_CHUNK_CHARS, ensure_tool_result_identity, project_mcp_result_for_model,
     };
 
     #[test]
@@ -711,30 +779,64 @@ mod tests {
             error_code: None,
             resource_refs: Vec::new(),
         };
-        let path = WorkspacePath::parse("tool-results/call_deadbeef.json").unwrap();
+        let audit_path = WorkspacePath::parse("tool-results/call_deadbeef.json").unwrap();
+        let readable_path = WorkspacePath::parse("tool-results/call_deadbeef.txt").unwrap();
         let inline_char_limit = 50_000;
 
-        project_mcp_result_for_model(&mut result, &path, &snapshot, inline_char_limit).unwrap();
+        assert!(
+            project_mcp_result_for_model(
+                &mut result,
+                &audit_path,
+                &readable_path,
+                &snapshot,
+                inline_char_limit,
+            )
+            .unwrap()
+            .is_none()
+        );
         assert_eq!(result.content, "full content");
 
         result.content = format!(
             "{}outside-preview{}",
-            "界".repeat(MCP_RESULT_PREVIEW_CHARS),
+            "界".repeat(MCP_RESULT_CONTENT_CHUNK_CHARS),
             "x".repeat(inline_char_limit)
         );
-        project_mcp_result_for_model(&mut result, &path, &snapshot, inline_char_limit).unwrap();
+        let readable = project_mcp_result_for_model(
+            &mut result,
+            &audit_path,
+            &readable_path,
+            &snapshot,
+            inline_char_limit,
+        )
+        .unwrap()
+        .expect("large MCP result should produce a readable view");
 
         assert!(result.content.contains("workspace_read_file"));
-        assert!(result.content.contains(path.as_str()));
+        assert!(result.content.contains(readable_path.as_str()));
+        assert!(result.content.contains(audit_path.as_str()));
         assert!(result.content.contains("<mcp-result-preview>"));
         assert_eq!(
             result.content.matches('界').count(),
-            MCP_RESULT_PREVIEW_CHARS
+            MCP_RESULT_CONTENT_CHUNK_CHARS
         );
         assert!(!result.content.contains("outside-preview"));
+        assert!(readable.contains("outside-preview"));
+        assert!(
+            readable
+                .lines()
+                .all(|line| { line.chars().count() <= MCP_RESULT_CONTENT_CHUNK_CHARS })
+        );
         assert_eq!(result.structured["externalized"], true);
+        assert_eq!(result.structured["path"], readable_path.as_str());
+        assert_eq!(result.structured["auditPath"], audit_path.as_str());
         assert!(result.structured["charCount"].as_u64().unwrap() > 50_000);
         assert_eq!(result.structured["charLimit"], inline_char_limit);
-        assert_eq!(result.resource_refs, vec![path.as_str().to_string()]);
+        assert_eq!(
+            result.resource_refs,
+            vec![
+                readable_path.as_str().to_string(),
+                audit_path.as_str().to_string()
+            ]
+        );
     }
 }

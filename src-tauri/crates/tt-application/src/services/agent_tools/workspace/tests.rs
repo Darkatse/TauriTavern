@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 use super::args::{classify_workspace_io_error, optional_list_path_arg};
 use super::policy::WorkspaceAccessPolicy;
-use super::{apply_patch, read_file, write_file};
+use super::{MAX_READ_CHARS, MAX_READ_LINES, apply_patch, read_file, write_file};
 use crate::services::agent_tools::{AgentToolEffect, AgentToolSession};
 use crate::services::hashing::hex_lower;
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
@@ -127,6 +127,22 @@ fn classify_not_found_error_maps_to_file_not_found() {
 }
 
 #[test]
+fn classify_non_text_file_maps_to_recoverable_tool_error() {
+    let call = make_test_tool_call("workspace.read_file");
+    let error = DomainError::workspace_file_not_text("output/image.png");
+
+    let result = classify_workspace_io_error(&call, error)
+        .expect("a non-text file must remain recoverable for the Agent");
+
+    assert!(result.is_error);
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("workspace.file_not_text")
+    );
+    assert!(result.content.contains("Choose another text file"));
+}
+
+#[test]
 fn classify_unknown_error_bubbles_up_for_host_failure() {
     let call = make_test_tool_call("workspace.read_file");
     let error = DomainError::InternalError("disk pressure".to_string());
@@ -190,6 +206,45 @@ async fn workspace_read_hidden_path_returns_recoverable_tool_error() {
         result.content,
         "Permission denied: agent.workspace_read_denied: path `input/prompt_snapshot.json` is not visible in the current workspace policy"
     );
+}
+
+#[tokio::test]
+async fn workspace_read_defaults_to_a_preview_for_oversized_files() {
+    let text = (1..=MAX_READ_LINES + 1)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let repository = TestWorkspaceRepository::with_file("output/large.md", &text);
+    let mut session = AgentToolSession::default();
+    let call = workspace_call("workspace.read_file", json!({ "path": "output/large.md" }));
+
+    let (result, _) = read_file(&repository, "run", &call, &mut session)
+        .await
+        .expect("large read should return a preview");
+
+    assert!(!result.is_error);
+    assert_eq!(result.structured["startLine"], 1);
+    assert_eq!(result.structured["endLine"], MAX_READ_LINES);
+    assert_eq!(result.structured["nextStartLine"], MAX_READ_LINES + 1);
+    assert_eq!(result.structured["truncated"], true);
+    assert!(result.content.contains("Continue with start_line="));
+}
+
+#[tokio::test]
+async fn workspace_read_keeps_a_large_single_line_out_of_the_next_model_request() {
+    let text = "x".repeat(MAX_READ_CHARS + 1);
+    let repository = TestWorkspaceRepository::with_file("output/large.txt", &text);
+    let mut session = AgentToolSession::default();
+    let call = workspace_call("workspace.read_file", json!({ "path": "output/large.txt" }));
+
+    let (result, _) = read_file(&repository, "run", &call, &mut session)
+        .await
+        .expect("large read should return a preview");
+
+    assert!(!result.is_error);
+    assert_eq!(result.structured["lineTruncated"], true);
+    assert_eq!(result.structured["fullRead"], false);
+    assert!(result.content.contains("only its beginning is shown"));
 }
 
 #[tokio::test]
@@ -285,7 +340,7 @@ async fn workspace_write_existing_file_requires_prior_read() {
 
 #[tokio::test]
 async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
-    let repository = TestWorkspaceRepository::with_file("output/main.md", "alpha beta gamma");
+    let repository = TestWorkspaceRepository::with_file("output/main.md", "alpha beta\ngamma");
     let mut session = AgentToolSession::default();
 
     read_file(
@@ -295,8 +350,8 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
             "workspace.read_file",
             json!({
                 "path": "output/main.md",
-                "start_char": 0,
-                "max_chars": 5
+                "start_line": 1,
+                "line_count": 1
             }),
         ),
         &mut session,
@@ -375,7 +430,7 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
             .await
             .expect("read patched file")
             .text,
-        "omega beta gamma"
+        "omega beta\ngamma"
     );
 }
 

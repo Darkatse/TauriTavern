@@ -794,15 +794,15 @@ Agent Mode on：
 | Canonical name | Model-facing alias | 说明 |
 | --- | --- | --- |
 | `chat.search` | `chat_search` | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。返回 message index、snippet 与 ref。 |
-| `chat.read_messages` | `chat_read_messages` | 按 0-based message index 读取当前聊天消息；每项可选 `start_char`、`max_chars` 读取长消息片段。 |
-| `worldinfo.read_activated` | `worldinfo_read_activated` | 读取本次 run 的最终激活世界书条目；模型可读文本只包含条目名、世界书名、条目内容。 |
+| `chat.read_messages` | `chat_read_messages` | 按 0-based message index 读取当前聊天消息；每项可选 1-based `start_line`、`line_count`。默认全文，超限返回可续读预览。 |
+| `worldinfo.read_activated` | `worldinfo_read_activated` | 读取本次 run 的最终激活世界书条目；无参数先列索引，正文项可选 1-based `start_line`、`line_count`，默认全文、超限预览。 |
 | `dice.roll` | `dice_roll` | 为明确的随机、跑团或 roleplay 检定投骰；支持 `d6`、`1d20`、`3d6+4` 与纯数字。默认 Profile 不启用。 |
 | `skill.list` | `skill_list` | 列出当前 Profile 可见的已安装 Skill 索引摘要。 |
 | `skill.search` | `skill_search` | 搜索当前 Profile 可见的单个 Skill 内 UTF-8 文本文件，返回 snippet/ref。 |
-| `skill.read` | `skill_read` | 读取已安装 Skill 内的 UTF-8 文本文件或范围；默认 `SKILL.md`，支持 `path`、行范围、字符范围与 `max_chars`。 |
+| `skill.read` | `skill_read` | 读取已安装 Skill 内的 UTF-8 文本文件或 1-based 行范围；默认完整 `SKILL.md`，超限返回可续读预览。 |
 | `workspace.list_files` | `workspace_list_files` | 列出模型可见 workspace 文件；`path` 省略、空字符串、`.`、`./` 表示 workspace root |
 | `workspace.search_files` | `workspace_search_files` | 搜索模型可见 workspace UTF-8 文本文件，返回 snippet/ref |
-| `workspace.read_file` | `workspace_read_file` | 读取 UTF-8 文本文件并返回行号；支持行范围和字符范围；完整读取记录 read-state |
+| `workspace.read_file` | `workspace_read_file` | 读取 UTF-8 文本文件并返回行号；只支持 1-based 行范围，默认全文、超限预览；完整读取记录 read-state |
 | `workspace.write_file` | `workspace_write_file` | 写 UTF-8 文本到 manifest 可写 roots；`mode` 默认为 `replace`，`append` 原样追加并在缺失时创建文件 |
 | `workspace.apply_patch` | `workspace_apply_patch` | 单文件 `old_string` / `new_string` 精确替换，要求已完整读取或由本 run 创建/修改 |
 | `workspace.commit` | `workspace_commit` | 提交可见 workspace 文件到当前聊天；无参数默认 replace `output/main.md`；append 将本次读取到的文件文本追加到同一消息 |
@@ -812,7 +812,7 @@ Profile 显式选择且在 MCP Manager 中为 Ask/Allow 的 MCP 工具会加入 
 
 当前暂不提供审批交互：Ask 与 Allow 对 Agent 都表示可直接调用；Off、Paused、registration 删除及调用前撤权仍在 application 边界阻止发送。已知 server/tool error 作为可恢复 tool result 回到模型；`outcome_unknown` 可能已经产生副作用，因此不回填模型、不自动 retry，并终止当前 run（已有 commit 时沿用现有 partial-success 收尾）。
 
-MCP `AgentToolResult` 序列化后超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 已先以 create-only 语义保存在 `tool-results/`；模型收到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、路径、字符数与 `workspace_read_file` / `workspace_search_files` 的分段读取指引。该值必须为正整数，并随 resolved Profile 固定到 invocation。`tool-results/` 是所有 invocation 可见但永远不可写的 run root。当前仍不存在 shell 或 extension bridge 工具。
+MCP `AgentToolResult` 序列化后超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 已先以 create-only 语义保存在 `tool-results/`，并额外生成包含 text 与 structured content 的行可读 `.txt` 视图；模型收到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、可读视图与 audit 路径、字符数及 `workspace_read_file` / `workspace_search_files` 的分段读取指引。`.txt` 视图会换行超长物理行，精确原文仍在 JSON audit 中。该值必须为正整数，并随 resolved Profile 固定到 invocation。`tool-results/` 是所有 invocation 可见但永远不可写的 run root。当前仍不存在 shell 或 extension bridge 工具。
 
 模型可修正的工具错误会作为 `is_error = true` tool result 回填下一轮。宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍然让 run failed。
 

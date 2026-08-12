@@ -47,7 +47,7 @@ pub fn materialize_agent_system_prompt(
             "exact indexes you already know".to_string()
         };
         lines.push(format!(
-            "- Use {} with {source_hint} for review. For longer messages, use start_char and max_chars to read smaller ranges.",
+            "- Use {} with {source_hint} for review. Messages are read in full by default; when a preview is returned, continue with start_line and line_count.",
             model_alias(tools, "chat.read_messages")
         ));
     }
@@ -111,7 +111,7 @@ pub fn materialize_agent_system_prompt(
     }
     if has_tool(tools, "skill.read") {
         lines.push(format!(
-            "- Use {} to read SKILL.md first, then only read referenced skill files or specified ranges within them when necessary.",
+            "- Use {} to read SKILL.md first. Files are read in full by default; when a preview is returned, continue with start_line and line_count.",
             model_alias(tools, "skill.read")
         ));
     }
@@ -129,7 +129,7 @@ pub fn materialize_agent_system_prompt(
     }
     if has_tool(tools, "workspace.read_file") {
         lines.push(format!(
-            "- Use {} before modifying an existing file. Read the exact text you want to replace; if a patch fails, fully read the file before retrying. Read content includes line numbers; never include line number prefixes in old_string or new_string.",
+            "- Use {} before modifying an existing file. Omit start_line and line_count to read the full file; if a preview is returned, continue from its next line. Read the exact text you want to replace; if a patch fails, fully read the file before retrying. Read content includes line numbers; never include line number prefixes in old_string or new_string.",
             model_alias(tools, "workspace.read_file")
         ));
     }

@@ -38,6 +38,9 @@ pub enum DomainError {
     #[error("Workspace path is a directory: {path}")]
     WorkspacePathIsDirectory { path: String },
 
+    #[error("Workspace file is not UTF-8 text: {path}")]
+    WorkspaceFileNotText { path: String },
+
     #[error("Workspace write conflict at {path}: {kind}")]
     WorkspaceWriteConflict {
         path: String,
@@ -106,6 +109,10 @@ impl DomainError {
 
     pub fn workspace_path_is_directory(path: impl Into<String>) -> Self {
         Self::WorkspacePathIsDirectory { path: path.into() }
+    }
+
+    pub fn workspace_file_not_text(path: impl Into<String>) -> Self {
+        Self::WorkspaceFileNotText { path: path.into() }
     }
 
     pub fn workspace_write_conflict(

@@ -270,10 +270,9 @@ pub struct SkillReadRequest {
     pub start_line: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_count: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_char: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_chars: Option<usize>,
+    /// Internal output budget. Agent and Host callers do not use it as a
+    /// character-range coordinate.
+    pub max_output_chars: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -299,11 +298,12 @@ pub struct SkillReadResult {
     pub words: usize,
     pub total_chars: usize,
     pub total_words: usize,
-    pub start_char: usize,
-    pub end_char: usize,
     pub total_lines: usize,
     pub start_line: usize,
     pub end_line: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_start_line: Option<usize>,
+    pub line_truncated: bool,
     pub bytes: u64,
     pub sha256: String,
     pub truncated: bool,

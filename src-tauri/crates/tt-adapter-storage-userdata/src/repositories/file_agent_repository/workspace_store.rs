@@ -157,6 +157,8 @@ impl WorkspaceRepository for FileAgentRepository {
         let text = fs::read_to_string(&target).await.map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 DomainError::NotFound(format!("Workspace file not found: {}", path.as_str()))
+            } else if error.kind() == std::io::ErrorKind::InvalidData {
+                DomainError::workspace_file_not_text(path.as_str())
             } else {
                 DomainError::InternalError(format!(
                     "Failed to read workspace file {}: {}",

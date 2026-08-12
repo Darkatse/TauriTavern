@@ -6,11 +6,14 @@ use super::package::{collect_skill_files, sha256_hex};
 use super::paths::{normalize_skill_path, validate_skill_name};
 use tt_domain::errors::DomainError;
 use tt_domain::models::skill::{
-    DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS, SkillFileKind, SkillFileRef, SkillReadRequest,
-    SkillReadResult, SkillScope, SkillSearchHit, SkillSearchRequest, SkillSearchResult,
+    SkillFileKind, SkillFileRef, SkillReadRequest, SkillReadResult, SkillScope, SkillSearchHit,
+    SkillSearchRequest, SkillSearchResult,
 };
+use tt_domain::text_lines::TextLineSelection;
 use tt_domain::text_metrics::TextMetrics;
 use tt_domain::text_search::PreparedTextSearch;
+
+const MAX_SKILL_READ_LINES: usize = 1_200;
 
 struct SkillTextFile {
     scope: SkillScope,
@@ -22,54 +25,48 @@ struct SkillTextFile {
     resource_ref: String,
 }
 
-struct SelectedText {
-    content: String,
-    chars: usize,
-    words: usize,
-    total_chars: usize,
-    total_words: usize,
-    start_char: usize,
-    end_char: usize,
-    total_lines: usize,
-    start_line: usize,
-    end_line: usize,
-    truncated: bool,
-}
-
 pub(super) async fn read_skill_file(
     repository: &FileSkillRepository,
     request: SkillReadRequest,
 ) -> Result<SkillReadResult, DomainError> {
-    let requested_chars = request
-        .max_chars
-        .unwrap_or(DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS);
-    if requested_chars == 0 {
+    if request.max_output_chars == 0 {
         return Err(DomainError::InvalidData(
-            "max_chars must be greater than 0".to_string(),
+            "max_output_chars must be greater than 0".to_string(),
         ));
     }
 
     let file =
         read_skill_text_file(repository, &request.scope, &request.name, &request.path).await?;
-    let selected = select_text(&file.content, &request, requested_chars)?;
+    let selection = TextLineSelection::select(
+        &file.content,
+        request.start_line.unwrap_or(1),
+        request.line_count,
+        MAX_SKILL_READ_LINES,
+        request.max_output_chars,
+    )
+    .map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let selected_metrics = TextMetrics::from_text(&selection.content);
+    let total_metrics = TextMetrics::from_text(&file.content);
+    let next_start_line = selection.next_start_line();
+    let truncated = selection.truncated();
 
     Ok(SkillReadResult {
         scope: file.scope,
         name: file.name,
         path: file.path,
-        content: selected.content,
-        chars: selected.chars,
-        words: selected.words,
-        total_chars: selected.total_chars,
-        total_words: selected.total_words,
-        start_char: selected.start_char,
-        end_char: selected.end_char,
-        total_lines: selected.total_lines,
-        start_line: selected.start_line,
-        end_line: selected.end_line,
+        content: selection.content,
+        chars: selected_metrics.chars,
+        words: selected_metrics.words,
+        total_chars: total_metrics.chars,
+        total_words: total_metrics.words,
+        total_lines: selection.total_lines,
+        start_line: selection.start_line,
+        end_line: selection.end_line,
+        next_start_line,
+        line_truncated: selection.line_truncated,
         bytes: file.bytes,
         sha256: file.sha256,
-        truncated: selected.truncated,
+        truncated,
         resource_ref: file.resource_ref,
     })
 }
@@ -264,139 +261,4 @@ fn read_text_file_at(
         sha256,
         resource_ref: format!("skills/{name}/{path}"),
     })
-}
-
-fn select_text(
-    text: &str,
-    request: &SkillReadRequest,
-    max_chars: usize,
-) -> Result<SelectedText, DomainError> {
-    let uses_char_range = request.start_char.is_some();
-    let uses_line_range = request.start_line.is_some() || request.line_count.is_some();
-    if uses_char_range && uses_line_range {
-        return Err(DomainError::InvalidData(
-            "Use either start_char/max_chars or start_line/line_count, not both".to_string(),
-        ));
-    }
-    if request.line_count == Some(0) {
-        return Err(DomainError::InvalidData(
-            "line_count must be greater than 0".to_string(),
-        ));
-    }
-    if request.start_line == Some(0) {
-        return Err(DomainError::InvalidData(
-            "start_line must be greater than 0".to_string(),
-        ));
-    }
-
-    let total_metrics = TextMetrics::from_text(text);
-    let lines = if text.is_empty() {
-        Vec::new()
-    } else {
-        text.split('\n').collect::<Vec<_>>()
-    };
-    let total_lines = lines.len();
-
-    if uses_char_range {
-        return select_char_range(text, total_metrics, total_lines, request, max_chars);
-    }
-    select_line_range(total_metrics, &lines, request, max_chars)
-}
-
-fn select_char_range(
-    text: &str,
-    total_metrics: TextMetrics,
-    total_lines: usize,
-    request: &SkillReadRequest,
-    max_chars: usize,
-) -> Result<SelectedText, DomainError> {
-    let total_chars = total_metrics.chars;
-    let start_char = request.start_char.unwrap_or(0);
-    if total_chars > 0 && start_char >= total_chars {
-        return Err(DomainError::InvalidData(format!(
-            "start_char {start_char} is outside file with {total_chars} characters"
-        )));
-    }
-    if total_chars == 0 && start_char > 0 {
-        return Err(DomainError::InvalidData(
-            "start_char must be 0 for an empty file".to_string(),
-        ));
-    }
-
-    let end_char = start_char.saturating_add(max_chars).min(total_chars);
-    let content = slice_chars(text, start_char, end_char);
-    let selected_metrics = TextMetrics::from_text(&content);
-    Ok(SelectedText {
-        content,
-        chars: selected_metrics.chars,
-        words: selected_metrics.words,
-        total_chars,
-        total_words: total_metrics.words,
-        start_char,
-        end_char,
-        total_lines,
-        start_line: 0,
-        end_line: 0,
-        truncated: start_char > 0 || end_char < total_chars,
-    })
-}
-
-fn select_line_range(
-    total_metrics: TextMetrics,
-    lines: &[&str],
-    request: &SkillReadRequest,
-    max_chars: usize,
-) -> Result<SelectedText, DomainError> {
-    let total_chars = total_metrics.chars;
-    let total_lines = lines.len();
-    let start_line = request.start_line.unwrap_or(1);
-    if start_line > total_lines.max(1) {
-        return Err(DomainError::InvalidData(format!(
-            "start_line {start_line} is beyond total lines {total_lines}"
-        )));
-    }
-
-    let end_line = match request.line_count {
-        Some(count) => (start_line + count - 1).min(total_lines),
-        None => total_lines,
-    };
-    let selected = if total_lines == 0 {
-        String::new()
-    } else {
-        lines[start_line - 1..end_line].join("\n")
-    };
-
-    let selected_total_chars = selected.chars().count();
-    let returned_chars = selected_total_chars.min(max_chars);
-    let content = selected.chars().take(returned_chars).collect::<String>();
-    let selected_metrics = TextMetrics::from_text(&content);
-    let start_char = if start_line <= 1 {
-        0
-    } else {
-        lines[..start_line - 1]
-            .iter()
-            .map(|line| line.chars().count() + 1)
-            .sum()
-    };
-    let end_char = start_char + selected_metrics.chars;
-
-    Ok(SelectedText {
-        content,
-        chars: selected_metrics.chars,
-        words: selected_metrics.words,
-        total_chars,
-        total_words: total_metrics.words,
-        start_char,
-        end_char,
-        total_lines,
-        start_line: if total_lines == 0 { 0 } else { start_line },
-        end_line: if total_lines == 0 { 0 } else { end_line },
-        truncated: start_line > 1
-            || end_line < total_lines
-            || returned_chars < selected_total_chars,
-    })
-}
-
-fn slice_chars(text: &str, start: usize, end: usize) -> String {
-    text.chars().skip(start).take(end - start).collect()
 }

@@ -256,19 +256,15 @@ function createSkillApi({
     async function readFile(options) {
         const name = requireNonEmptyString(options?.name, 'skill name');
         const path = requireNonEmptyString(options?.path, 'skill file path');
-        const maxChars = normalizeOptionalNonNegativeInteger(options?.maxChars, 'maxChars');
         const startLine = normalizeOptionalNonNegativeInteger(options?.startLine, 'startLine');
         const lineCount = normalizeOptionalNonNegativeInteger(options?.lineCount, 'lineCount');
-        const startChar = normalizeOptionalNonNegativeInteger(options?.startChar, 'startChar');
         const scope = normalizeSkillScope(options?.scope, 'scope');
         return safeInvoke('read_skill_file', {
             name,
             path,
             ...(scope ? { scope } : {}),
-            maxChars,
-            startLine,
-            lineCount,
-            startChar,
+            ...(startLine == null ? {} : { startLine }),
+            ...(lineCount == null ? {} : { lineCount }),
         });
     }
 
