@@ -47,6 +47,7 @@ mod invocation;
 mod journal;
 mod lifecycle;
 mod loop_runner;
+mod markdown;
 mod model_response_store;
 mod model_retry;
 mod model_turn;

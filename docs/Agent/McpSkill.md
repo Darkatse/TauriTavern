@@ -78,10 +78,10 @@ MCP tool result 在 Agent 边界应映射为携带 canonical `ToolId` 的 `Agent
 
 ```text
 Text content        -> bounded content string
-Structured content  -> labeled JSON section in model content + internal audit JSON
-Image/audio/file    -> resource_refs
-Resource link       -> resource_refs
-Error               -> is_error + error_code
+Structured content  -> deduplicated Markdown details + internal audit JSON
+Image/audio/file    -> concise Markdown note + internal diagnostic
+Resource link       -> concise Markdown note + internal diagnostic
+Error               -> Markdown error result + internal is_error/error_code
 ```
 
 大结果不能直接塞进 journal；应写 resource ref。若 MCP production 需要保留一条结果中的多个 typed content block，应先原子扩展 canonical result model，不得在 adapter 中有损拍平成文本。

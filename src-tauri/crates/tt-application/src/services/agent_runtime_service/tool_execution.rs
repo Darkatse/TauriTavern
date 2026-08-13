@@ -1,11 +1,12 @@
 use std::time::Instant;
 
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use super::commit_ledger::RunCommitLedger;
 use super::delegation::workspace_policy::InvocationWorkspaceRepository;
+use super::markdown::render_markdown_value;
 use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::hashing::hex_lower;
@@ -491,44 +492,57 @@ fn project_mcp_result_for_model(
 }
 
 fn mcp_model_content(result: &AgentToolResult) -> String {
-    let mut content = result.content.clone();
-    if let Some(value) = result
+    let structured_content = result
         .structured
         .get("structuredContent")
-        .filter(|value| !value.is_null())
+        .filter(|value| !value.is_null());
+    let mut sections = Vec::new();
+    let text = result.content.trim();
+    if !text.is_empty()
+        && !structured_content.is_some_and(|value| text_is_serialized_value(text, value))
     {
-        append_json_section(&mut content, "Structured content", value);
+        sections.push(text.to_string());
     }
-    if let Some(value) = result
+
+    if let Some(value) = structured_content {
+        sections.push(markdown_value_section("Details", value));
+    }
+
+    let notes = result
         .structured
         .get("diagnostics")
-        .filter(|value| value.as_array().is_some_and(|items| !items.is_empty()))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|diagnostic| {
+            diagnostic.get("code").and_then(Value::as_str) != Some("mcp.call_metadata_unsupported")
+        })
+        .filter_map(|diagnostic| diagnostic.get("message").and_then(Value::as_str))
+        .map(|message| format!("- {}", message.trim()))
+        .collect::<Vec<_>>();
+    if !notes.is_empty() {
+        sections.push(format!("## Notes\n\n{}", notes.join("\n")));
+    }
+
+    if let Some(server_error) = result.structured.get("serverError")
+        && let Some(data) = server_error.get("data").filter(|value| !value.is_null())
     {
-        append_json_section(&mut content, "Diagnostics", value);
+        sections.push(markdown_value_section("Error details", data));
     }
-    if let Some(server_error) = result.structured.get("serverError") {
-        if let Some(code) = server_error.get("code") {
-            content.push_str(&format!("\n\nMCP server code: {code}"));
-        }
-        if let Some(data) = server_error.get("data").filter(|value| !value.is_null()) {
-            append_json_section(&mut content, "MCP server error data", data);
-        }
+
+    if sections.is_empty() {
+        "The MCP tool completed without content.".to_string()
+    } else {
+        sections.join("\n\n")
     }
-    if let Some(response_type) = result
-        .structured
-        .pointer("/unsupportedResponse/type")
-        .and_then(|value| value.as_str())
-    {
-        content.push_str(&format!("\n\nMCP response type: {response_type}"));
-    }
-    content
 }
 
-fn append_json_section(content: &mut String, label: &str, value: &serde_json::Value) {
-    content.push_str(&format!(
-        "\n\n{label}:\n{}",
-        serde_json::to_string_pretty(value).expect("serde_json::Value is always serializable")
-    ));
+fn markdown_value_section(title: &str, value: &Value) -> String {
+    format!("## {title}\n\n{}", render_markdown_value(value, 0))
+}
+
+fn text_is_serialized_value(text: &str, value: &Value) -> bool {
+    serde_json::from_str::<Value>(text).is_ok_and(|parsed| parsed == *value)
 }
 
 fn externalize_mcp_result(
@@ -553,18 +567,17 @@ fn externalize_mcp_result(
         .binding(&search_tool)
         .map(|binding| binding.model_alias());
     let mut instructions = format!(
-        "This MCP result is too large to include in the current context ({char_count} characters; limit {inline_char_limit}). A line-readable view is available at `{}`, and the exact audit result remains at `{}`.",
+        "This MCP result is too large to include here ({char_count} characters; inline limit {inline_char_limit}). The complete readable result is available at `{}`.",
         readable_path.as_str(),
-        audit_path.as_str(),
     );
     if let Some(alias) = read_alias {
         instructions.push_str(&format!(
-            " Use {alias} with path `{}` to read it. If you receive a preview, continue from its reported next start_line until nextStartLine is no longer present. Long source lines are wrapped in this readable view so every part remains reachable.",
+            " Use {alias} with path `{}` to read it. If it returns a preview, continue from the reported nextStartLine using start_line. Long source lines are wrapped so the complete result remains reachable.",
             readable_path.as_str()
         ));
     } else {
         instructions.push_str(
-            " Your current profile does not provide a text-reading tool. Use the prefix preview below and preserve the resource references for the user if more detail is needed.",
+            " This Agent does not have a text-reading tool, so the available prefix is included below and the full path remains available for the user.",
         );
     }
     if let Some(alias) = search_alias {
@@ -575,7 +588,7 @@ fn externalize_mcp_result(
     }
     if !preview.is_empty() {
         instructions.push_str(&format!(
-            "\n\nPrefix preview of the MCP result content (at most {MCP_RESULT_CONTENT_CHUNK_CHARS} Unicode characters; not the complete result):\n<mcp-result-preview>\n{preview}\n</mcp-result-preview>"
+            "\n\n## Prefix preview\n\nThe following is at most {MCP_RESULT_CONTENT_CHUNK_CHARS} Unicode characters and is not the complete result.\n\n{preview}"
         ));
     }
     result.content = instructions;
@@ -620,23 +633,12 @@ fn line_addressable_content(text: &str) -> String {
 fn mcp_known_response_result(call: &ToolInvocation, response: McpKnownResponse) -> AgentToolResult {
     match response {
         McpKnownResponse::ToolResult(result) => {
-            let content = if result.text.is_empty() {
-                result
-                    .structured_content
-                    .as_ref()
-                    .map(|value| {
-                        serde_json::to_string_pretty(value)
-                            .expect("serde_json::Value is always serializable")
-                    })
-                    .unwrap_or_else(|| "MCP tool completed without text content.".to_string())
-            } else {
-                result
-                    .text
-                    .iter()
-                    .map(|block| block.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n\n")
-            };
+            let content = result
+                .text
+                .iter()
+                .map(|block| block.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
             let diagnostics = result
                 .diagnostics
                 .iter()
@@ -793,6 +795,10 @@ mod tests {
                     "code": "mcp.call_content_unsupported",
                     "message": "Image content is not supported",
                     "contentIndex": 1,
+                }, {
+                    "code": "mcp.call_metadata_unsupported",
+                    "message": "Result metadata is not supported",
+                    "contentIndex": null,
                 }],
             }),
             is_error: false,
@@ -802,8 +808,38 @@ mod tests {
 
         let content = mcp_model_content(&result);
         assert!(content.contains("Created issue."));
-        assert!(content.contains("\"issueId\": 42"));
-        assert!(content.contains("mcp.call_content_unsupported"));
+        assert!(content.contains("## Details"));
+        assert!(content.contains("- **issueId**: 42"));
+        assert!(content.contains("## Notes"));
+        assert!(content.contains("- Image content is not supported"));
+        assert!(!content.contains("\"issueId\""));
+        assert!(!content.contains("mcp.call_content_unsupported"));
+        assert!(!content.contains("Result metadata"));
+    }
+
+    #[test]
+    fn mcp_model_content_deduplicates_serialized_structured_data() {
+        let result = AgentToolResult {
+            call_id: "call_mcp".to_string(),
+            tool_id: ToolId::new(
+                &ToolProviderId::parse("mcp/550e8400-e29b-41d4-a716-446655440000").unwrap(),
+                "lookup",
+            )
+            .unwrap(),
+            content: r#"{"issueId":42}"#.to_string(),
+            structured: json!({
+                "structuredContent": { "issueId": 42 },
+                "diagnostics": [],
+            }),
+            is_error: false,
+            error_code: None,
+            resource_refs: Vec::new(),
+        };
+
+        assert_eq!(
+            mcp_model_content(&result),
+            "## Details\n\n- **issueId**: 42"
+        );
     }
 
     #[test]
@@ -876,8 +912,8 @@ mod tests {
 
         assert!(result.content.contains("workspace_read_file"));
         assert!(result.content.contains(readable_path.as_str()));
-        assert!(result.content.contains(audit_path.as_str()));
-        assert!(result.content.contains("<mcp-result-preview>"));
+        assert!(!result.content.contains(audit_path.as_str()));
+        assert!(result.content.contains("## Prefix preview"));
         assert_eq!(
             result.content.matches('界').count(),
             MCP_RESULT_CONTENT_CHUNK_CHARS

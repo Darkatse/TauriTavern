@@ -150,7 +150,7 @@ impl AgentRuntimeService {
                 call_id: call.call_id.clone(),
                 tool_id: call.tool_id.clone(),
                 content: format!(
-                    "Started delegated task {} with Agent {}. You can continue other work; use agent_await only when your next decision needs this task's result or current status.",
+                    "Started delegated task `{}` with Agent `{}`. You can continue other work and call `agent_await` when you need its result or current status.",
                     structured["taskId"].as_str().unwrap_or(""),
                     target.id.as_str()
                 ),

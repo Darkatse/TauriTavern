@@ -152,7 +152,7 @@ LLM Gateway / provider adapter
 - `AgentModelGateway` 仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，在 canonical IR 与现有 provider payload pipeline 之间转换。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native metadata 以 opaque `Native` part 保存和回放；tool call id 缺失会 fail-fast。
 - Agent `provider_state` 已用于 run-scoped continuation；OpenAI Responses 通过 persistent WebSocket、incremental input 与 `previous_response_id` 续接。详见 `docs/CurrentState/AgentProviderState.md`。
-- `workspace.write_file` / `workspace.apply_patch` 成功结果只向模型回填摘要与 resource refs；内部结构化元数据保留给 runtime、audit 与 Timeline UI。需要完整内容时模型必须显式调用 `workspace.read_file`。
+- `workspace.write_file` / `workspace.apply_patch` 成功结果只向模型回填包含目标路径的文本摘要；内部结构化元数据与 resource refs 保留给 runtime、audit 与 Timeline UI。需要完整内容时模型必须显式调用 `workspace.read_file`。
 - `chat.search` 与 `chat.read_messages` 只读取当前 run 绑定的聊天，不允许模型指定任意 chat target；message index 从 0 开始，JSONL header 不计入消息。
 - `worldinfo.read_activated` 只读取本次 run prompt snapshot 中 materialized 的激活结果，不把全局 last activation 当作运行时真相。
 - 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，`workspace.finish` 收尾成功后 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`model-responses/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。

@@ -239,13 +239,13 @@ AgentModelContentPart {
 - journal / workspace 保存的是真实 tool result、tool args、resource refs；MCP 结果总是先完整写入 create-only `tool-results/`。
 - 下一轮模型上下文使用携带 canonical `ToolId` 的 `AgentModelContentPart::ToolResult`。
 
-`AgentToolResult.structured` 只供 runtime、完整 JSON audit 与 Timeline UI 使用。所有 provider 对模型统一编码 `{ ok, content, errorCode, resourceRefs }`；MCP structured content、diagnostics 与可操作错误详情先转为带标签的 `content` 段落。该模型可见 `content` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，下一轮不再复制完整内容，而是收到原始 `content` 最多前 3,000 个 Unicode 字符的前缀预览、行可读 `.txt` 视图与精确 JSON audit 路径、字符数、resource refs 及当前 snapshot 中读取/搜索工具的真实 alias。可读视图换行超长物理行，JSON audit 不改写。该正整数随 resolved Profile 固定到 invocation；root、SubAgent 与 handoff 分别使用自己的 Profile 值。统计复用 domain `TextMetrics`，不依赖模型 tokenizer。模型用 `workspace.read_file` 默认尝试全文；若返回预览，则按结果中的 `nextStartLine` 继续使用 `start_line` 顺序读取。`tool-results/` 对所有 invocation 可见但永远不可写，Profile 没有读取工具时不会为此临时扩大能力。
+`AgentToolResult.structured`、`error_code` 与 `resource_refs` 只供 runtime、完整 JSON audit 与 Timeline UI 使用。所有 provider 对模型发送直接 Text/Markdown；可恢复错误增加 `## Tool error`，不增加通用 JSON envelope。MCP text 保持原文，structured content 去重后转为 `## Details` Markdown，可操作的非文本 content diagnostic 转为 `## Notes`，metadata diagnostic 不进入模型。该模型可见 `content` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，下一轮收到最多前 3,000 个 Unicode 字符的前缀预览、行可读 `.txt` 视图路径、字符数及当前 snapshot 中读取/搜索工具的真实 alias；精确 JSON audit 路径保持内部。可读视图换行超长物理行，JSON audit 不改写。该正整数随 resolved Profile 固定到 invocation；root、SubAgent 与 handoff 分别使用自己的 Profile 值。统计复用 domain `TextMetrics`，不依赖模型 tokenizer。模型用 `workspace.read_file` 默认尝试全文；若返回预览，则按结果中的 `nextStartLine` 继续使用 `start_line` 顺序读取。`tool-results/` 对所有 invocation 可见但永远不可写，Profile 没有读取工具时不会为此临时扩大能力。
 
 MCP KnownResponse（包括 `isError`、server error 与 unsupported response）投影为模型可恢复 tool result，且不能产生 `AgentToolEffect`。NotSent 同样回到模型修正。`OutcomeUnknown` 可能已经执行，runtime 保存审计记录后不回填一个虚构结果、不执行同一模型响应中的后续 calls、也不自动 retry；当前无审批/继续交互 UI，因此以非 retryable error 结束 run，已有成功 commit 时沿用 partial-success 规则。
 
 当前不再自动补入 workspace 写入内容：
 
-- `workspace.write_file` 与 `workspace.apply_patch` 成功结果只把摘要与 resource refs 回填模型；内部结构化元数据继续用于 runtime、audit 与 Timeline UI。
+- `workspace.write_file` 与 `workspace.apply_patch` 成功结果只把包含目标路径的文本摘要回填模型；内部结构化元数据与 resource refs 继续用于 runtime、audit 与 Timeline UI。
 - runtime 不会因前几轮 workspace 写入而自动读取完整文件内容并拼入下一轮模型上下文。
 - 模型需要完整文件内容时必须显式调用 `workspace.read_file`；append 到未完整读过的旧文件后，后续 rewrite / patch 会按 read-state 规则要求重新读取。
 - read-state 由 workspace 工具维护：完整读取、创建/完整替换会记录完整已知；部分读取会记录 Agent 实际读到的片段，允许 `workspace.apply_patch` 替换已读片段中的唯一 `old_string`；基于部分读取的 patch 一旦失败，同文件再次 patch 必须先全文读取；append 只有在旧内容已经完整已知时才延续完整已知。

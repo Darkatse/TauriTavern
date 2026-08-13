@@ -68,19 +68,16 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
             _ => None,
         })
         .expect("MCP result returned to model");
-    assert!(
-        mcp_result
-            .content
-            .contains("too large to include in the current context")
-    );
+    assert!(mcp_result.content.contains("too large to include here"));
     assert!(mcp_result.content.contains("workspace_read_file"));
-    assert!(mcp_result.content.contains("<mcp-result-preview>"));
+    assert!(mcp_result.content.contains("## Prefix preview"));
     assert_eq!(mcp_result.structured["externalized"], true);
     assert_eq!(mcp_result.structured["charLimit"], 10_000);
     let readable_path = mcp_result.structured["path"].as_str().unwrap();
     let audit_path = mcp_result.structured["auditPath"].as_str().unwrap();
     assert_eq!(readable_path, "tool-results/call_fe79da5f09df9787.txt");
     assert_eq!(audit_path, "tool-results/call_fe79da5f09df9787.json");
+    assert!(!mcp_result.content.contains(audit_path));
     assert_eq!(
         mcp_result.resource_refs,
         vec![readable_path.to_string(), audit_path.to_string()]

@@ -246,7 +246,7 @@ fn rejects_tool_choice_outside_the_advertised_set() {
 }
 
 #[test]
-fn encodes_tool_result_alias_and_model_projection() {
+fn encodes_tool_results_as_model_facing_text() {
     let builtin_id = ToolId::builtin("search").unwrap();
     let mcp_id = ToolId::new(
         &ToolProviderId::parse("mcp/registration-1").unwrap(),
@@ -286,16 +286,21 @@ fn encodes_tool_result_alias_and_model_projection() {
 
     let dto = encode_chat_completion_request(&request).unwrap();
     assert_eq!(dto.payload["messages"][0]["name"], "mcp_search");
-    let content: Value =
-        serde_json::from_str(dto.payload["messages"][0]["content"].as_str().unwrap()).unwrap();
     assert_eq!(
-        content,
-        json!({
-            "ok": true,
-            "content": "done",
-            "errorCode": null,
-            "resourceRefs": ["tool-results/call_mcp.json"],
-        })
+        dto.payload["messages"][0]["content"],
+        Value::String("done".to_string())
+    );
+
+    let AgentModelContentPart::ToolResult { result } = &mut request.messages[0].parts[0] else {
+        panic!("expected tool result")
+    };
+    result.content = "The requested file is not available.".to_string();
+    result.is_error = true;
+    result.error_code = Some("workspace.file_not_found".to_string());
+    let dto = encode_chat_completion_request(&request).unwrap();
+    assert_eq!(
+        dto.payload["messages"][0]["content"],
+        Value::String("## Tool error\n\nThe requested file is not available.".to_string())
     );
 }
 

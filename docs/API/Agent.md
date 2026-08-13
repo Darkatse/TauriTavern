@@ -812,7 +812,7 @@ Profile 显式选择且在 MCP Manager 中为 Ask/Allow 的 MCP 工具会加入 
 
 当前暂不提供审批交互：Ask 与 Allow 对 Agent 都表示可直接调用；Off、Paused、registration 删除及调用前撤权仍在 application 边界阻止发送。已知 server/tool error 作为可恢复 tool result 回到模型；`outcome_unknown` 可能已经产生副作用，因此不回填模型、不自动 retry，并终止当前 run（已有 commit 时沿用现有 partial-success 收尾）。
 
-`AgentToolResult.structured` 只供 runtime、audit 与 Timeline UI 使用，不发送给模型。MCP structured content、diagnostics 与可操作错误详情会转为带标签的模型 `content`；该 `content` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 已先以 create-only 语义保存在 `tool-results/`，并额外生成同一完整 `content` 的行可读 `.txt` 视图。模型收到最多前 3,000 个 Unicode 字符的前缀预览、可读视图与 audit 路径、字符数及 `workspace_read_file` / `workspace_search_files` 的分段读取指引。`.txt` 视图会换行超长物理行，精确原始结果仍在 JSON audit 中。该值必须为正整数，并随 resolved Profile 固定到 invocation。`tool-results/` 是所有 invocation 可见但永远不可写的 run root。当前仍不存在 shell 或 extension bridge 工具。
+`AgentToolResult.structured`、`error_code` 与 `resource_refs` 只供 runtime、audit 与 Timeline UI 使用，不作为字段发送给模型。模型看到直接 Text/Markdown；可恢复错误增加 `## Tool error`。MCP text 保持原文，structured content 去重后转为 `## Details` Markdown，可操作的非文本 content diagnostic 转为 `## Notes`，metadata diagnostic 不进入模型。该 `content` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 已先以 create-only 语义保存在内部 audit，runtime 另生成同一完整 Markdown 的行可读 `.txt` 视图。模型收到最多前 3,000 个 Unicode 字符的前缀预览、可读视图路径、字符数及 `workspace_read_file` / `workspace_search_files` 的分段读取指引，不接收 audit JSON 路径。`.txt` 视图会换行超长物理行，精确原始结果仍在 JSON audit 中。该值必须为正整数，并随 resolved Profile 固定到 invocation。`tool-results/` 是所有 invocation 可见但永远不可写的 run root。当前仍不存在 shell 或 extension bridge 工具。
 
 模型可修正的工具错误会作为 `is_error = true` tool result 回填下一轮。宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍然让 run failed。
 

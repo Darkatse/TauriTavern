@@ -151,7 +151,7 @@ fn encode_openai_compatible_message(
             );
             object.insert(
                 "content".to_string(),
-                Value::String(tool_result_message_content(result)?),
+                Value::String(tool_result_message_content(result)),
             );
         }
         _ => {
@@ -316,14 +316,10 @@ fn tool_history_not_advertised(tool_id: &ToolId) -> ApplicationError {
     ))
 }
 
-fn tool_result_message_content(result: &AgentToolResult) -> Result<String, ApplicationError> {
-    serde_json::to_string(&json!({
-        "ok": !result.is_error,
-        "content": result.content.as_str(),
-        "errorCode": result.error_code.as_deref(),
-        "resourceRefs": &result.resource_refs,
-    }))
-    .map_err(|error| {
-        ApplicationError::ValidationError(format!("agent.tool_result_serialize_failed: {error}"))
-    })
+fn tool_result_message_content(result: &AgentToolResult) -> String {
+    if result.is_error {
+        format!("## Tool error\n\n{}", result.content.trim())
+    } else {
+        result.content.clone()
+    }
 }

@@ -202,18 +202,9 @@ Provider tool call id
 
 缺失 id 是 `model.invalid_tool_call`，不得静默生成 `tool_call_{index}`。`AgentToolResult` 同时携带 canonical `ToolId`；历史 call/result 的 alias 都只能通过当前 request 的 model-tool projection 精确编码，不按 native name 猜测。
 
-Tool result 当前会编码为 JSON 字符串，包含：
+Tool result 的模型语言界面是直接 Text/Markdown。成功结果发送 `AgentToolResult.content` 原文；可恢复错误在正文前增加 `## Tool error`。Gateway 不再增加 `{ ok, content, errorCode, resourceRefs }` JSON envelope。
 
-```json
-{
-  "ok": true,
-  "content": "...",
-  "errorCode": null,
-  "resourceRefs": []
-}
-```
-
-`AgentToolResult.structured` 只供 runtime、audit 与 Timeline UI 使用，不发送给模型。`workspace.write_file` / `workspace.apply_patch` 成功结果不会被 runtime 自动补入完整文件内容；下一轮模型只看到 canonical tool result 摘要与 resource refs，需要完整文件内容时必须通过 `workspace.read_file` 显式读取。
+`AgentToolResult.structured`、`error_code` 与 `resource_refs` 只供 runtime、audit 与 Timeline UI 使用，不作为字段发送给模型。模型后续需要使用的路径必须已经出现在 `content`。`workspace.write_file` / `workspace.apply_patch` 成功结果不会被 runtime 自动补入完整文件内容；下一轮模型只看到包含目标路径的文本摘要，需要完整文件内容时必须通过 `workspace.read_file` 显式读取。
 
 ## 8. Policy
 
