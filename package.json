@@ -85,7 +85,7 @@
   },
   "pnpm": {
     "overrides": {
-      "lodash-es": "4.18.0"
+      "lodash-es": "4.18.1"
     }
   }
 }

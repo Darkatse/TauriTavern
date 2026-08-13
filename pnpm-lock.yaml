@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  lodash-es: 4.18.0
+  lodash-es: 4.18.1
 
 importers:
 
@@ -474,9 +474,8 @@ packages:
   localforage@1.10.0:
     resolution: {integrity: sha512-14/H1aX7hzBBmmh7sGPd+AOMkkIrHM3Z1PAyGgZigA1H1p5O5ANnMyWzvpAETtG68/dC4pC0ncy3+PPGzXZHPg==}
 
-  lodash-es@4.18.0:
-    resolution: {integrity: sha512-koAgswPPA+UTaPN64Etp+PGP+WT6oqOS2NMi5yDkMaiGw9qY4VxQbQF0mtKMyr4BlTznWyzePV5UpECTJQmSUA==}
-    deprecated: Bad release. Please use lodash-es@4.17.23 instead.
+  lodash-es@4.18.1:
+    resolution: {integrity: sha512-J8xewKD/Gk22OZbhpOVSwcs60zhd95ESDwezOFuA3/099925PdHJ7OFHNTGtajL3AlZkykD32HykiMo+BIBI8A==}
 
   lodash@4.18.1:
     resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
@@ -576,12 +575,12 @@ snapshots:
     dependencies:
       '@chevrotain/gast': 11.2.0
       '@chevrotain/types': 11.2.0
-      lodash-es: 4.18.0
+      lodash-es: 4.18.1
 
   '@chevrotain/gast@11.2.0':
     dependencies:
       '@chevrotain/types': 11.2.0
-      lodash-es: 4.18.0
+      lodash-es: 4.18.1
 
   '@chevrotain/regexp-to-ast@11.2.0': {}
 
@@ -829,7 +828,7 @@ snapshots:
       '@chevrotain/regexp-to-ast': 11.2.0
       '@chevrotain/types': 11.2.0
       '@chevrotain/utils': 11.2.0
-      lodash-es: 4.18.0
+      lodash-es: 4.18.1
 
   commander@9.5.0: {}
 
@@ -876,7 +875,7 @@ snapshots:
     dependencies:
       lie: 3.1.1
 
-  lodash-es@4.18.0: {}
+  lodash-es@4.18.1: {}
 
   lodash@4.18.1: {}
 
