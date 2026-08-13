@@ -61,8 +61,8 @@ jobs:
             echo "Tag $FEATURE_TAG does not exist, will create new one"
             previous_sha=$(git rev-list --max-parents=0 HEAD)
           elif [ "$previous_sha" = "$GITHUB_SHA" ]; then
-            echo "$FEATURE_TAG already points to $GITHUB_SHA"
-            exit 1
+            echo "::warning::$FEATURE_TAG already points to $GITHUB_SHA, forcing update"
+            # Don't exit, let the update step handle it
           fi
           
           echo "previous_sha=$previous_sha" >> $GITHUB_OUTPUT
