@@ -28,6 +28,8 @@
 	<string>TauriTavern uses the camera only to scan LAN Sync pairing QR codes between your devices.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>TauriTavern uses Local Network access only for LAN Sync between your devices on the same Wi‑Fi.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>TauriTavern saves images to your photo library only when you choose to save an image.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
