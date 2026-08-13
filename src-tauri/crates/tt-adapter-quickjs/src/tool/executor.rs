@@ -36,6 +36,11 @@ impl ScriptToolExecutor {
             .join("scripts")
             .join(format!("{script_name}.js"));
         
+        // Debug: Log script path before execution
+        eprintln!("[QuickJS Debug] Executing script: {}", script_path.display());
+        eprintln!("[QuickJS Debug] Script exists: {}", tokio::fs::try_exists(&script_path).await.unwrap_or(false));
+        eprintln!("[QuickJS Debug] Arguments: {}", args);
+        
         // Verify the script exists
         if !tokio::fs::try_exists(&script_path).await.unwrap_or(false) {
             return AgentToolResult {
