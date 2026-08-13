@@ -153,28 +153,35 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install dependencies (Linux)
+      - name: Install Linux dependencies
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y --no-install-recommends \
+            jq libwebkit2gtk-4.1-dev librsvg2-dev patchelf rpm \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-alsa gstreamer1.0-pulseaudio
 
-      - name: Install dependencies (macOS)
-        if: matrix.platform == 'macos'
-        run: |
-          rustup target add aarch64-apple-darwin
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
 
       - name: Build Tauri App
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
-          args: --target ${{ matrix.target }}
+          projectPath: src-tauri/crates/tauritavern
+          tauriScript: node ../../../scripts/tauri-app.mjs
+          args: ${{ matrix.platform == 'linux' && format('{0} --config {1}', matrix.target, steps.linux-version.outputs.config_path) || matrix.target }}
+          uploadWorkflowArtifacts: true
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.asset_time }}-quickjs-[platform]-[arch]-[bundle]'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
