@@ -11,8 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -35,7 +34,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: feature/quickjs-script-engine
 
       - name: Resolve Feature metadata
         id: metadata
@@ -44,117 +42,61 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          
-          # Define feature tag name
-          FEATURE_TAG="QuickJS-Feature"
-          echo "feature_tag=$FEATURE_TAG" >> $GITHUB_OUTPUT
-          
-          # Try to fetch the feature tag, create if not exists
-          if git fetch --force origin "refs/tags/$FEATURE_TAG:refs/tags/$FEATURE_TAG" 2>/dev/null; then
-            previous_sha=$(git rev-parse "$FEATURE_TAG^{commit}" 2>/dev/null || echo "")
+          feature_tag="QuickJS-Feature"
+          git fetch --force origin "refs/tags/$feature_tag:refs/tags/$feature_tag" || true
+          if git rev-parse -q --verify "refs/tags/$feature_tag^{commit}" >/dev/null; then
+            previous_sha=$(git rev-parse "$feature_tag^{commit}")
           else
-            previous_sha=""
-          fi
-          
-          # If tag doesn't exist or points to different commit, proceed
-          if [ -z "$previous_sha" ]; then
-            echo "Tag $FEATURE_TAG does not exist, will create new one"
             previous_sha=$(git rev-list --max-parents=0 HEAD)
-          elif [ "$previous_sha" = "$GITHUB_SHA" ]; then
-            echo "::warning::$FEATURE_TAG already points to $GITHUB_SHA, forcing update"
-            # Don't exit, let the update step handle it
           fi
-          
-          echo "previous_sha=$previous_sha" >> $GITHUB_OUTPUT
-          
-          # Get short SHA
-          sha12=$(echo "$GITHUB_SHA" | cut -c1-12)
-          echo "sha12=$sha12" >> $GITHUB_OUTPUT
-          
-          # Generate timestamps
-          asset_time=$(date -u +%Y%m%d%H%M%S)
-          display_time=$(date -u +"%Y-%m-%d %H:%M UTC")
-          echo "asset_time=$asset_time" >> $GITHUB_OUTPUT
-          echo "display_time=$display_time" >> $GITHUB_OUTPUT
-          
-          # Get base stable version from upstream or use default
           stable_version="0.0.0"
-          if gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null | grep -q "^v"; then
-            stable_tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
-            stable_version=${stable_tag#v}
+          stable_tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)
+          if [[ "$stable_tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            stable_version=${BASH_REMATCH[1]}
           fi
-          echo "stable_version=$stable_version" >> $GITHUB_OUTPUT
-          
-          # Generate deb version (use timestamp as revision)
-          deb_revision=$(date +%Y%m%d)
-          deb_version="${stable_version}~preview${asset_time}"
-          echo "deb_version=$deb_version" >> $GITHUB_OUTPUT
-          
-          # Generate rpm release number
-          rpm_release="0.preview.${asset_time}"
-          echo "rpm_release=$rpm_release" >> $GITHUB_OUTPUT
+          asset_time=$(TZ=Asia/Shanghai date +'%Y%m%d')
+          {
+            echo "asset_time=$asset_time"
+            echo "display_time=$(TZ=Asia/Shanghai date +'%Y.%m.%d')"
+            echo "previous_sha=$previous_sha"
+            echo "sha12=${GITHUB_SHA:0:12}"
+            echo "stable_version=$stable_version"
+            echo "feature_tag=$feature_tag"
+            echo "deb_version=${stable_version}+quickjs.${GITHUB_RUN_NUMBER}.g${GITHUB_SHA:0:12}"
+            echo "rpm_release=2.quickjs.${GITHUB_RUN_NUMBER}.g${GITHUB_SHA:0:12}"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Update Feature Tag
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FEATURE_TAG: ${{ steps.metadata.outputs.feature_tag }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Delete old tag if exists (both local and remote)
-          git tag -d "$FEATURE_TAG" 2>/dev/null || true
-          git push origin ":refs/tags/$FEATURE_TAG" 2>/dev/null || true
-          
-          # Create new tag
-          git tag -a "$FEATURE_TAG" -m "QuickJS Feature Build: ${{ steps.metadata.outputs.display_time }}"
-          git push origin "$FEATURE_TAG"
-
-  build:
-    needs: [prepare]
+  desktop:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: 'linux'
-            os: ubuntu-latest
-            target: 'x86_64-unknown-linux-gnu'
-          - platform: 'windows'
-            os: windows-latest
-            target: 'x86_64-pc-windows-msvc'
-          - platform: 'macos'
-            os: macos-latest
-            target: 'x86_64-apple-darwin'
-          - platform: 'macos-aarch64'
-            os: macos-latest
-            target: 'aarch64-apple-darwin'
+          - platform: windows-latest
+            target_args: ""
+            portable: true
+            portable_name: windows-x64
+          - platform: macos-latest
+            target_args: --target x86_64-apple-darwin
+            portable: false
+          - platform: macos-latest
+            target_args: --target aarch64-apple-darwin
+            portable: false
+          - platform: ubuntu-22.04
+            target_args: --bundles appimage,deb,rpm
+            portable: true
+            portable_name: linux-x64
+          - platform: ubuntu-22.04-arm
+            target_args: --bundles deb,rpm
+            portable: true
+            portable_name: linux-arm64
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: feature/quickjs-script-engine
-          fetch-depth: 0
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'pnpm'
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'linux'
+        if: startsWith(matrix.platform, 'ubuntu-22.04')
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -164,88 +106,177 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri -> target"
 
-      - name: Build Tauri App
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prepare Linux Feature package version
+        if: startsWith(matrix.platform, 'ubuntu-22.04')
+        id: linux-version
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ needs.prepare.outputs.stable_version }}
+          RPM_RELEASE: ${{ needs.prepare.outputs.rpm_release }}
+        run: |
+          set -euo pipefail
+          config_path="$RUNNER_TEMP/tauritavern-quickjs.json"
+          jq -n \
+            --arg version "$PACKAGE_VERSION" \
+            --arg release "$RPM_RELEASE" \
+            '{version: $version, bundle: {linux: {rpm: {release: $release}}}}' \
+            > "$config_path"
+          echo "config_path=$config_path" >> "$GITHUB_OUTPUT"
+
+      - name: Build desktop bundles
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: src-tauri/crates/tauritavern
           tauriScript: node ../../../scripts/tauri-app.mjs
-          args: ${{ matrix.platform == 'linux' && format('{0} --config {1}', matrix.target, steps.linux-version.outputs.config_path) || matrix.target }}
+          args: ${{ startsWith(matrix.platform, 'ubuntu-22.04') && format('{0} --config {1}', matrix.target_args, steps.linux-version.outputs.config_path) || matrix.target_args }}
           uploadWorkflowArtifacts: true
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
           workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.asset_time }}-quickjs-[platform]-[arch]-[bundle]'
 
-      - name: Upload artifacts
+      - name: Build portable binary
+        if: matrix.portable
+        run: node scripts/build-portable.mjs --skip-web-build --output-dir portable
+
+      - name: Upload portable binary
+        if: matrix.portable
         uses: actions/upload-artifact@v4
         with:
-          name: tauri-${{ matrix.platform }}-${{ needs.prepare.outputs.sha12 }}
-          path: |
-            src-tauri/target/*/release/bundle/**/*.deb
-            src-tauri/target/*/release/bundle/**/*.rpm
-            src-tauri/target/*/release/bundle/**/*.AppImage
-            src-tauri/target/*/release/bundle/**/*.msi
-            src-tauri/target/*/release/bundle/**/*.exe
-            src-tauri/target/*/release/bundle/**/*.dmg
-            src-tauri/target/*/release/bundle/**/*.app
-          if-no-files-found: ignore
+          name: TauriTavern-${{ needs.prepare.outputs.asset_time }}-quickjs-${{ matrix.portable_name }}-portable
+          path: portable/*
+          if-no-files-found: error
 
-  release:
-    needs: [prepare, build]
+  notes:
+    needs: prepare
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: feature/quickjs-script-engine
           fetch-depth: 0
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: tauri-*-${{ needs.prepare.outputs.sha12 }}
-          merge-multiple: true
+      - name: Generate release notes
+        env:
+          PREVIOUS_SHA: ${{ needs.prepare.outputs.previous_sha }}
+          SHA12: ${{ needs.prepare.outputs.sha12 }}
+          DISPLAY_TIME: ${{ needs.prepare.outputs.display_time }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git log --format='- %s (`%h`)' "$PREVIOUS_SHA..$GITHUB_SHA" > changes.md
+          {
+            echo "> QuickJS feature build · Asia/Shanghai $DISPLAY_TIME · feature/quickjs-script-engine@$SHA12"
+            echo
+            echo "## Changes"
+            cat changes.md
+            echo
+            echo "[Full comparison](https://github.com/${GITHUB_REPOSITORY}/compare/${PREVIOUS_SHA}...${GITHUB_SHA})"
+          } > release-notes.md
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ needs.prepare.outputs.feature_tag }}
-          name: QuickJS Feature Build (${{ needs.prepare.outputs.display_time }})
-          body: |
-            ## QuickJS Script Engine Feature Build
-            
-            This is an automated build of the QuickJS script engine feature branch.
-            
-            ### Features
-            - ✅ QuickJs-based script execution engine
-            - ✅ Restricted file system access (work directory only)
-            - ✅ Module loading from public libs and skill scripts
-            - ✅ World info API integration
-            - ✅ Sandboxed execution environment
-            
-            ### Build Info
-            - Branch: `feature/quickjs-script-engine`
-            - Commit: `${{ github.sha }}`
-            - Built: ${{ needs.prepare.outputs.display_time }}
-            
-            ### ⚠️ Warning
-            This is a feature preview build and may contain bugs. Not recommended for production use.
-          draft: false
-          prerelease: true
-          files: |
-            *.deb
-            *.rpm
-            *.AppImage
-            *.msi
-            *.exe
-            *.dmg
-            */*.app
-          token: ${{ secrets.GITHUB_TOKEN }}
+          name: quickjs-release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [prepare, desktop, notes]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      ASSET_PREFIX: TauriTavern-${{ needs.prepare.outputs.asset_time }}-quickjs-
+      DISPLAY_TIME: ${{ needs.prepare.outputs.display_time }}
+      PACKAGE_VERSION: ${{ needs.prepare.outputs.stable_version }}
+      DEB_VERSION: ${{ needs.prepare.outputs.deb_version }}
+      RPM_RELEASE: ${{ needs.prepare.outputs.rpm_release }}
+      FEATURE_TAG: ${{ needs.prepare.outputs.feature_tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 'TauriTavern-*-quickjs-*'
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: quickjs-release-notes
+          path: notes
+
+      - name: Validate complete desktop release set
+        run: node source/scripts/ci/collect-desktop-release-assets.mjs dist release-assets "$ASSET_PREFIX"
+
+      - name: Install Linux package inspection tools
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Normalize Linux repository package versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t debs < <(find release-assets -type f -name '*.deb')
+          mapfile -t rpms < <(find release-assets -type f -name '*.rpm')
+          test "${#debs[@]}" -eq 2
+          test "${#rpms[@]}" -eq 2
+          rpm_db="$RUNNER_TEMP/rpm-query-db"
+          rpm --dbpath "$rpm_db" --initdb
+
+          for package in "${debs[@]}"; do
+            source/distribution/apt-rpm/rewrite-deb-version.sh "$package" "$DEB_VERSION"
+          done
+          for package in "${rpms[@]}"; do
+            test "$(rpm --dbpath "$rpm_db" -qp --queryformat '%{VERSION}' "$package")" = "$PACKAGE_VERSION"
+            test "$(rpm --dbpath "$rpm_db" -qp --queryformat '%{RELEASE}' "$package")" = "$RPM_RELEASE"
+          done
+
+      - name: Create or update Feature release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "$FEATURE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$FEATURE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "QuickJS Feature Build $DISPLAY_TIME" \
+              --notes-file notes/release-notes.md \
+              --prerelease
+          else
+            gh release edit "$FEATURE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "QuickJS Feature Build $DISPLAY_TIME" \
+              --notes-file notes/release-notes.md \
+              --prerelease
+          fi
+          gh release upload "$FEATURE_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            $(find release-assets -type f -name "${ASSET_PREFIX}*")
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/git/refs/tags/$FEATURE_TAG" \
+            -f sha="$GITHUB_SHA" \
+            -F force=true
