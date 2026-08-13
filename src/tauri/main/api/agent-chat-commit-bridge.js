@@ -1,12 +1,18 @@
 // @ts-check
 
 import { resolveStableChatId } from './agent-chat-identity.js';
+import {
+    commitPreparedReasoning,
+    createCommitReasoningState,
+    prepareCommitReasoning,
+    trackCommitReasoningEvent,
+} from './agent-chat-commit-reasoning.js';
 import { CHAT_COMMIT_REASON } from '../../../scripts/chat-payload-transport.js';
 
 const activeCommitBridges = new Map();
 const TERMINAL_EVENTS = new Set(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 
-export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, subscribe, loadScript = loadMainScript, persistChat = persistActiveChat }) {
+export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, readModelTurn, subscribe, loadScript = loadMainScript, persistChat = persistActiveChat }) {
     const normalizedRunId = requireRunId(runId);
     if (activeCommitBridges.has(normalizedRunId)) {
         return activeCommitBridges.get(normalizedRunId);
@@ -27,6 +33,7 @@ export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, s
         // whole target so storage-time regex can match across commit chunks.
         rawCommittedText: '',
         commitSeq: 0,
+        reasoning: createCommitReasoningState(),
         resolvedCommitIds: new Set(),
         resolvedPersistentStateUpdateIds: new Set(),
         loadScript,
@@ -34,17 +41,15 @@ export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, s
         stop: null,
     };
     const stop = subscribe(normalizedRunId, (event) => {
+        trackCommitReasoningEvent(state.reasoning, event);
         if (event?.type === 'chat_commit_requested') {
             void handleChatCommitRequested({
                 state,
                 event,
                 safeInvoke,
                 readWorkspaceFile,
-            }).catch((error) => {
-                queueMicrotask(() => {
-                    throw error;
-                });
-            });
+                readModelTurn,
+            }).catch(reportAsyncError);
             return;
         }
 
@@ -53,24 +58,14 @@ export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, s
                 state,
                 event,
                 safeInvoke,
-            }).catch((error) => {
-                queueMicrotask(() => {
-                    throw error;
-                });
-            });
+            }).catch(reportAsyncError);
             return;
         }
 
         if (TERMINAL_EVENTS.has(event?.type)) {
             detachHostCommitBridge(normalizedRunId);
         }
-    }, {
-        onError(error) {
-            queueMicrotask(() => {
-                throw error;
-            });
-        },
-    });
+    }, { onError: reportAsyncError });
 
     state.stop = stop;
     activeCommitBridges.set(normalizedRunId, state);
@@ -89,7 +84,13 @@ function detachHostCommitBridge(runId) {
     }
 }
 
-async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspaceFile }) {
+function reportAsyncError(error) {
+    queueMicrotask(() => {
+        throw error;
+    });
+}
+
+async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspaceFile, readModelTurn }) {
     const payload = event?.payload || {};
     const commitId = requirePayloadString(payload, 'commitId');
     if (state.resolvedCommitIds.has(commitId)) {
@@ -97,11 +98,17 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
     }
     state.resolvedCommitIds.add(commitId);
 
+    let resolution;
     try {
         await assertCurrentChat(payload.chatRef, payload.stableChatId);
         const path = requirePayloadString(payload, 'path');
+        const checkpointId = requirePayloadString(payload, 'checkpointId');
         const mode = normalizeCommitMode(payload.mode);
-        const file = await readWorkspaceFile({ runId: state.runId, path });
+        const file = await readWorkspaceFile({ runId: state.runId, checkpointId, path });
+        if (file?.sha256 !== requirePayloadString(payload, 'sha256')) {
+            throw new Error('agent.chat_commit_checkpoint_mismatch: checkpoint content does not match commit request');
+        }
+        const reasoning = await prepareCommitReasoning(state.reasoning, state.runId, readModelTurn);
         const script = await state.loadScript();
         if (typeof script.saveReply !== 'function') {
             throw new Error('saveReply is not available');
@@ -123,6 +130,7 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
             await script.saveReply({
                 type: initialCommitSaveType(payload.generationType, mode),
                 getMessage,
+                reasoning: reasoning.delta,
             });
             messageId = getActiveMessageId(script.chat);
             state.messageId = messageId;
@@ -141,9 +149,11 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
             await script.saveReply({
                 type: 'appendFinal',
                 getMessage,
+                reasoning: reasoning.delta,
             });
         }
 
+        commitPreparedReasoning(state.reasoning, reasoning);
         state.rawCommittedText = rawCommittedText;
         state.commitSeq += 1;
         mergeAgentCommitExtraIntoMessage(script.chat, messageId, payload, file, state.commitSeq, {
@@ -151,22 +161,24 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
             firstSwipeId: state.firstSwipeId,
         });
         await state.persistChat(script, CHAT_COMMIT_REASON.GENERATION_CHECKPOINT);
-
-        await safeInvoke('resolve_agent_chat_commit', {
-            dto: {
-                runId: state.runId,
-                commitId,
-                messageId: String(messageId),
-            },
-        });
+        resolution = { messageId: String(messageId) };
     } catch (error) {
-        await safeInvoke('resolve_agent_chat_commit', {
-            dto: {
-                runId: state.runId,
-                commitId,
-                error: String(error?.message ?? error),
-            },
-        });
+        resolution = {
+            error: String(error?.message ?? error),
+        };
+    }
+    await resolveChatCommit(safeInvoke, { runId: state.runId, commitId, ...resolution });
+}
+
+async function resolveChatCommit(safeInvoke, dto) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+            await safeInvoke('resolve_agent_chat_commit', { dto });
+            return;
+        } catch (error) {
+            if (String(error?.message ?? error).includes('agent.chat_commit_not_pending')) return;
+            if (attempt === 1) throw error;
+        }
     }
 }
 

@@ -15,8 +15,8 @@ use crate::services::tool_request_gate::ToolRequestGate;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
-    AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunStatus, AgentToolResult,
-    WorkspacePath,
+    AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
+    AgentToolResult, WorkspacePath,
 };
 use tt_domain::models::tool::ToolTurnContract;
 use tt_domain::text_metrics::TextMetrics;
@@ -46,6 +46,10 @@ impl AgentRuntimeService {
         let invocation_id = prepared.invocation.id.as_str();
         let exit_policy = prepared.invocation.exit_policy;
         let profile = &prepared.profile;
+        let updates_run_status = exit_policy == AgentInvocationExitPolicy::RunFinishAllowed;
+        let auto_commit_text_mutations = updates_run_status
+            && self.run_repository.load_run(run_id).await?.presentation
+                == AgentRunPresentation::Foreground;
         let mut tool_session = AgentToolSession::new(prepared.effective_skills.clone());
         let mut tool_request_gate = ToolRequestGate::default();
         let mut seen_child_result_task_ids = HashSet::new();
@@ -54,7 +58,6 @@ impl AgentRuntimeService {
         // existing maxRounds loop remains the only retry boundary.
         let mut drift_recovery_attempts: usize = 0;
         for round in 1..=profile.tools.max_rounds {
-            let updates_run_status = exit_policy == AgentInvocationExitPolicy::RunFinishAllowed;
             if updates_run_status {
                 self.apply_pending_guidance_to_request(
                     run_id,
@@ -151,7 +154,7 @@ impl AgentRuntimeService {
                 let can_recover = round < profile.tools.max_rounds;
                 if can_recover {
                     drift_recovery_attempts += 1;
-                    let committed_count = commit_ledger.len();
+                    let committed_count = commit_ledger.explicit_count();
                     let nudge_text = build_drift_recovery_nudge(
                         committed_count,
                         drift_recovery_attempts,
@@ -214,25 +217,28 @@ impl AgentRuntimeService {
                         cancel,
                     )
                     .await?;
+                let mut text_mutation = None;
                 match &outcome.effect {
                     AgentToolEffect::WorkspaceFileWritten { file, mode } => {
                         let metrics = TextMetrics::from_text(&file.text);
-                        self.checkpoint_workspace_file(
-                            run_id,
-                            updates_run_status,
-                            "tool_workspace_write",
-                            "workspace_file_written",
-                            json!({
-                                "invocationId": invocation_id,
-                                "path": file.path.as_str(),
-                                "mode": mode,
-                                "chars": metrics.chars,
-                                "words": metrics.words,
-                                "sha256": file.sha256.as_str(),
-                            }),
-                            file.path.clone(),
-                        )
-                        .await?;
+                        let checkpoint = self
+                            .checkpoint_workspace_file(
+                                run_id,
+                                updates_run_status,
+                                "tool_workspace_write",
+                                "workspace_file_written",
+                                json!({
+                                    "invocationId": invocation_id,
+                                    "path": file.path.as_str(),
+                                    "mode": mode,
+                                    "chars": metrics.chars,
+                                    "words": metrics.words,
+                                    "sha256": file.sha256.as_str(),
+                                }),
+                                file,
+                            )
+                            .await?;
+                        text_mutation = Some((file, checkpoint));
                     }
                     AgentToolEffect::WorkspaceFilePatched {
                         file,
@@ -244,44 +250,27 @@ impl AgentRuntimeService {
                                 .await?;
                         }
                         let metrics = TextMetrics::from_text(&file.text);
-                        self.checkpoint_workspace_file(
-                            run_id,
-                            updates_run_status,
-                            "tool_workspace_patch",
-                            "workspace_patch_applied",
-                            json!({
-                                "invocationId": invocation_id,
-                                "path": file.path.as_str(),
-                                "chars": metrics.chars,
-                                "words": metrics.words,
-                                "oldSha256": old_sha256,
-                                "sha256": file.sha256.as_str(),
-                                "replacements": replacements,
-                            }),
-                            file.path.clone(),
-                        )
-                        .await?;
+                        let checkpoint = self
+                            .checkpoint_workspace_file(
+                                run_id,
+                                updates_run_status,
+                                "tool_workspace_patch",
+                                "workspace_patch_applied",
+                                json!({
+                                    "invocationId": invocation_id,
+                                    "path": file.path.as_str(),
+                                    "chars": metrics.chars,
+                                    "words": metrics.words,
+                                    "oldSha256": old_sha256,
+                                    "sha256": file.sha256.as_str(),
+                                    "replacements": replacements,
+                                }),
+                                file,
+                            )
+                            .await?;
+                        text_mutation = Some((file, checkpoint));
                     }
                     AgentToolEffect::ChatCommitRequested { .. } => {}
-                    AgentToolEffect::ChatCommitted {
-                        path,
-                        mode,
-                        message_id,
-                    } => {
-                        self.event(
-                            run_id,
-                            AgentRunEventLevel::Info,
-                            "chat_commit_recorded",
-                            json!({
-                                "invocationId": invocation_id,
-                                "commitCount": commit_ledger.len(),
-                                "path": path.as_str(),
-                                "mode": mode,
-                                "messageId": message_id.as_deref(),
-                            }),
-                        )
-                        .await?;
-                    }
                     AgentToolEffect::Finish => {
                         finished = true;
                     }
@@ -322,6 +311,19 @@ impl AgentRuntimeService {
                     }
                     AgentToolEffect::None => {}
                 }
+                if auto_commit_text_mutations && let Some((file, checkpoint)) = text_mutation {
+                    self.auto_commit_text_file_if_eligible(
+                        run_id,
+                        &call,
+                        file,
+                        checkpoint,
+                        round,
+                        invocation_id,
+                        commit_ledger,
+                        cancel,
+                    )
+                    .await?;
+                }
 
                 tool_results.push(outcome.result);
                 self.ensure_not_cancelled(cancel)?;
@@ -356,7 +358,7 @@ impl AgentRuntimeService {
                     .completed_child_results_message(
                         prepared,
                         &mut seen_child_result_task_ids,
-                        commit_ledger.len(),
+                        commit_ledger.explicit_count(),
                     )
                     .await?
             {
@@ -405,7 +407,7 @@ impl AgentRuntimeService {
                 "sha256": file.sha256.as_str(),
                 "modelResponsePath": model_response_path,
             }),
-            file.path.clone(),
+            &file,
         )
         .await?;
 

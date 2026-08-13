@@ -87,7 +87,7 @@ const EVENT_META = Object.freeze({
     workspace_patch_applied: { icon: 'fa-code-commit', tone: 'success', kind: 'patch', titleKey: 'timelineEventPatchApplied' },
     chat_commit_requested: { icon: 'fa-message', tone: 'active', kind: 'commit', titleKey: 'timelineEventCommitRequested' },
     chat_commit_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'commit', titleKey: 'timelineEventCommitCompleted' },
-    chat_commit_failed: { icon: 'fa-circle-exclamation', tone: 'error', kind: 'fail', titleKey: 'timelineEventCommitFailed' },
+    chat_commit_failed: { icon: 'fa-circle-exclamation', tone: 'warn', kind: 'fail', titleKey: 'timelineEventCommitFailed' },
     persistent_changes_committed: { icon: 'fa-database', tone: 'success', kind: 'persist', titleKey: 'timelineEventPersistentCommitted' },
     drift_recovery_attempted: { icon: 'fa-arrows-rotate', tone: 'warn', kind: 'recover', titleKey: 'timelineEventDriftRecoveryAttempted' },
     user_guidance_submitted: { icon: 'fa-user-pen', tone: 'active', kind: 'guidance', titleKey: 'timelineEventGuidanceSubmitted' },

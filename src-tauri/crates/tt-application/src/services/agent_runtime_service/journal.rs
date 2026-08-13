@@ -5,8 +5,9 @@ use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{
-    AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunStatus, WorkspacePath,
+    AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunStatus, Checkpoint,
 };
+use tt_ports::repositories::workspace_repository::WorkspaceFile;
 
 impl AgentRuntimeService {
     pub(super) async fn transition_status(
@@ -59,8 +60,8 @@ impl AgentRuntimeService {
         reason: &str,
         event_type: &str,
         payload: Value,
-        path: WorkspacePath,
-    ) -> Result<(), ApplicationError> {
+        file: &WorkspaceFile,
+    ) -> Result<Checkpoint, ApplicationError> {
         if update_run_status {
             self.transition_status(run_id, AgentRunStatus::CreatingCheckpoint)
                 .await?;
@@ -70,7 +71,7 @@ impl AgentRuntimeService {
             .await?;
         let checkpoint = self
             .checkpoint_repository
-            .create_checkpoint(run_id, reason, event.seq, &[path])
+            .create_checkpoint(run_id, reason, event.seq, std::slice::from_ref(file))
             .await?;
         self.event(
             run_id,
@@ -79,7 +80,7 @@ impl AgentRuntimeService {
             json!({ "checkpointId": checkpoint.id, "reason": reason }),
         )
         .await?;
-        Ok(())
+        Ok(checkpoint)
     }
 }
 

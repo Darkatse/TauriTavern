@@ -116,9 +116,12 @@ fn run_commit_ledger_preserves_commit_payloads() {
         AgentChatCommitMode::Replace,
         Some("msg_1".to_string()),
         1,
+        false,
     );
 
     assert_eq!(ledger.len(), 1);
+    assert_eq!(ledger.explicit_count(), 0);
+    assert!(!ledger.has_explicit_commit());
     assert_eq!(ledger.latest_message_id(), Some("msg_1"));
     assert_eq!(
         ledger.preserved_commits(),

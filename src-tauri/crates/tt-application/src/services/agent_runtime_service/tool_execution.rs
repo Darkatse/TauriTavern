@@ -155,7 +155,7 @@ impl AgentRuntimeService {
             ))
             .await
         } else if builtin_name == Some(AGENT_AWAIT) {
-            self.dispatch_agent_await_tool(prepared, call, commit_ledger.len(), cancel)
+            self.dispatch_agent_await_tool(prepared, call, commit_ledger.explicit_count(), cancel)
                 .await
         } else if builtin_name == Some(AGENT_HANDOFF) {
             self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile, is_last_call)
@@ -234,7 +234,7 @@ impl AgentRuntimeService {
                                 "Return-mode child Agent invocations must complete with task.return, not workspace.finish.",
                                 outcome.elapsed_ms,
                             )
-                        } else if commit_ledger.is_empty()
+                        } else if !commit_ledger.has_explicit_commit()
                             && self.run_repository.load_run(run_id).await?.presentation
                                 == AgentRunPresentation::Foreground
                         {
@@ -256,7 +256,7 @@ impl AgentRuntimeService {
                         }
                     }
                     AgentToolEffect::ChatCommitRequested { path, mode, reason } => {
-                        self.perform_host_chat_commit(
+                        self.perform_explicit_host_chat_commit(
                             run_id,
                             call,
                             path,

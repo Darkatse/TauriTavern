@@ -382,7 +382,7 @@ type AgentWorkspaceFile = {
 ```
 
 路径必须是 workspace relative path。非法路径直接 reject。
-当前 Host ABI 只读当前 run workspace 的 UTF-8 文本文件，不支持 `checkpointId` 参数。模型侧读取应使用 `workspace_read_file` 工具，前端/扩展侧读取应使用本方法。
+不传 `checkpointId` 时读取当前 run workspace；传入时读取该 run 对应 checkpoint 的不可变 UTF-8 文本。模型侧读取应使用 `workspace_read_file` 工具，前端/扩展侧读取应使用本方法。
 
 ## 10. readModelTurn（Project Contract）
 
@@ -687,16 +687,18 @@ type AgentCommitResult = {
 };
 ```
 
-Chat commit 不是公开 Host API 方法，而是 Agent tool 与 host bridge 的内部握手：
+Chat commit 不是公开 Host API 方法，而是 runtime Committer 与 host bridge 的内部握手：
 
-- 模型调用 `workspace.commit`，无参数时默认 `replace output/main.md`。
-- Rust runtime 读取 workspace 文件、校验 required message body、创建 checkpoint，并写 `chat_commit_requested` event。
+- 前台 root / handoff Agent 在首次成功显式 commit 前，对 `.md`、`.markdown`、`.txt`、`.text` 文件的成功 write/patch 会自动触发 `replace` commit；路径所在 root 不参与判断。
+- 模型也可调用 `workspace.commit`，无参数时默认 `replace output/main.md`；第一次 host-confirmed 显式 commit 后停止当前 run 的自动 commit。
+- 自动提交复用 write/patch 已创建的不可变 checkpoint，并与显式 commit 共用 event 和 host-confirmation 路径。
 - 前端 host bridge 校验当前 active chat 与 run 的 `chatRef/stableChatId` 一致。
-- bridge 先应用上游生成输出保存前后处理，再通过上游 `saveReply()` 写入聊天，最后调用 `resolve_agent_chat_commit`。
+- bridge 从 `chat_commit_requested.checkpointId` 读取并校验正文，同时通过 `readModelTurn()` 读取 root / handoff active chain 的可见 reasoning 投影。bridge 先应用上游生成输出保存前后处理，再通过上游 `saveReply()` 写入聊天、累计到标准 `extra.reasoning`，最后调用 `resolve_agent_chat_commit`。
+- Host 握手只有“已确认提交 / 未确认提交”两种结果且不设置 wall-clock timeout，移动端挂起期间可以继续等待，取消 run 仍会终止等待。未确认提交统一作为可恢复失败且不写 preservation ledger；自动提交继续运行，显式提交返回模型可见 tool error 以便重试。若 `saveReply()` 已成功改写 `chat[]`，正文与 reasoning 会保留，本地 reasoning cursor 同步推进以避免重试时重复追加。Rust 侧 checkpoint、journal、状态机等错误仍 fail-fast。
 - `chat_commit_requested` 不携带 `persistStateId`；该字段只能在 `workspace.finish` 成功提交 persistent state 后，由 `persistent_state_metadata_update_requested` / `resolve_agent_persistent_state_metadata_update` 写回同一条 chat message。
 - 首次 commit 按 generation type 创建或改写目标楼层；后续 commit 使用 `appendFinal` 写入完整 postprocessed 目标文本。`append` mode 会把本次读取到的文件文本作为 raw 追加贡献累计后再整体处理，避免片段级 regex。
 - `append` 在本 run 尚无 commit 时不会报错，会创建本 run 的消息楼层。
-- 前台 run 在 `workspace.finish` 前必须至少成功 commit 一次；后台 run 可无 chat commit 完成。
+- 自动和显式 commit 都进入 preservation ledger；任何一个成功后发生错误都会保留 chat 输出并进入 partial success。前台 run 在 `workspace.finish` 前仍必须至少成功一次显式 `workspace.commit`；后台 run 可无 chat commit 完成。
 
 ## 17. Event Envelope
 
@@ -806,7 +808,7 @@ Agent Mode on：
 | `workspace.write_file` | `workspace_write_file` | 写 UTF-8 文本到 manifest 可写 roots；`mode` 默认为 `replace`，`append` 原样追加并在缺失时创建文件 |
 | `workspace.apply_patch` | `workspace_apply_patch` | 单文件 `old_string` / `new_string` 精确替换，要求已完整读取或由本 run 创建/修改 |
 | `workspace.commit` | `workspace_commit` | 提交可见 workspace 文件到当前聊天；无参数默认 replace `output/main.md`；append 将本次读取到的文件文本追加到同一消息 |
-| `workspace.finish` | `workspace_finish` | 结束工具循环；前台 run 要求已有成功 commit，后台 run 可直接结束 |
+| `workspace.finish` | `workspace_finish` | 结束工具循环；前台 run 要求已有成功显式 commit，自动 commit 不满足该门槛；后台 run 可直接结束 |
 
 Profile 显式选择且在 MCP Manager 中为 Ask/Allow 的 MCP 工具会加入 invocation snapshot。模型侧 alias 为 `mcp__<规范化 server displayName>__<规范化 nativeName>`；碰撞使用确定性 `__2`、`__3` 后缀，provider 的 64-byte 上限内优先保留工具动作部分。alias 只在当前 snapshot 内解析，实际执行始终使用 binding 中的 canonical ToolId 与原始 native name，不反向解析 alias。
 

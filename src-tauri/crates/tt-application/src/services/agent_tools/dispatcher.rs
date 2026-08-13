@@ -45,11 +45,6 @@ pub(crate) enum AgentToolEffect {
         mode: AgentChatCommitMode,
         reason: Option<String>,
     },
-    ChatCommitted {
-        path: WorkspacePath,
-        mode: AgentChatCommitMode,
-        message_id: Option<String>,
-    },
     TaskReturned {
         status: tt_domain::models::agent::AgentTaskStatus,
         result_ref: WorkspacePath,

@@ -3,10 +3,12 @@ use chrono::Utc;
 use tokio::fs;
 
 use super::FileAgentRepository;
-use super::fs_tree::sha256_hex;
+use super::fs_tree::{sha256_hex, workspace_file_from_text};
+use super::paths::validate_segment;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{Checkpoint, CheckpointFile, WorkspacePath};
 use tt_ports::repositories::checkpoint_repository::CheckpointRepository;
+use tt_ports::repositories::workspace_repository::WorkspaceFile;
 
 #[async_trait]
 impl CheckpointRepository for FileAgentRepository {
@@ -15,7 +17,7 @@ impl CheckpointRepository for FileAgentRepository {
         run_id: &str,
         reason: &str,
         event_seq: u64,
-        paths: &[WorkspacePath],
+        snapshot_files: &[WorkspaceFile],
     ) -> Result<Checkpoint, DomainError> {
         let _guard = self.checkpoint_lock.lock().await;
         let run_dir = self.load_run_dir(run_id).await?;
@@ -66,24 +68,9 @@ impl CheckpointRepository for FileAgentRepository {
         })?;
 
         let mut files = Vec::new();
-        for path in paths {
-            let source = self.safe_workspace_path(run_id, path, false).await?;
-            let bytes = fs::read(&source).await.map_err(|error| {
-                if error.kind() == std::io::ErrorKind::NotFound {
-                    DomainError::NotFound(format!(
-                        "Required checkpoint file not found: {}",
-                        path.as_str()
-                    ))
-                } else {
-                    DomainError::InternalError(format!(
-                        "Failed to read checkpoint source {}: {}",
-                        source.display(),
-                        error
-                    ))
-                }
-            })?;
-
-            let target = checkpoint_dir.join(path.as_str());
+        for file in snapshot_files {
+            let bytes = file.text.as_bytes();
+            let target = checkpoint_dir.join(file.path.as_str());
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent).await.map_err(|error| {
                     DomainError::InternalError(format!(
@@ -102,8 +89,8 @@ impl CheckpointRepository for FileAgentRepository {
             })?;
 
             files.push(CheckpointFile {
-                path: path.as_str().to_string(),
-                sha256: sha256_hex(&bytes),
+                path: file.path.as_str().to_string(),
+                sha256: sha256_hex(bytes),
                 bytes: bytes.len() as u64,
             });
         }
@@ -120,5 +107,60 @@ impl CheckpointRepository for FileAgentRepository {
         Self::write_json_atomic(&checkpoint_dir.join("checkpoint.json"), &checkpoint).await?;
 
         Ok(checkpoint)
+    }
+
+    async fn read_checkpoint_text(
+        &self,
+        run_id: &str,
+        checkpoint_id: &str,
+        path: &WorkspacePath,
+    ) -> Result<WorkspaceFile, DomainError> {
+        validate_segment(checkpoint_id, "checkpoint_id")?;
+        let checkpoint_dir = self
+            .load_run_dir(run_id)
+            .await?
+            .join("checkpoints")
+            .join(checkpoint_id);
+        let checkpoint: Checkpoint =
+            Self::read_json(&checkpoint_dir.join("checkpoint.json")).await?;
+        if checkpoint.run_id != run_id {
+            return Err(DomainError::InvalidData(format!(
+                "Checkpoint `{checkpoint_id}` belongs to another run"
+            )));
+        }
+        let expected = checkpoint
+            .files
+            .iter()
+            .find(|file| file.path == path.as_str())
+            .ok_or_else(|| {
+                DomainError::NotFound(format!(
+                    "Checkpoint file not found: {checkpoint_id}/{}",
+                    path.as_str()
+                ))
+            })?;
+        let target = checkpoint_dir.join(path.as_str());
+        let text = fs::read_to_string(&target).await.map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                DomainError::NotFound(format!(
+                    "Checkpoint file not found: {checkpoint_id}/{}",
+                    path.as_str()
+                ))
+            } else if error.kind() == std::io::ErrorKind::InvalidData {
+                DomainError::workspace_file_not_text(path.as_str())
+            } else {
+                DomainError::InternalError(format!(
+                    "Failed to read checkpoint file {}: {error}",
+                    target.display()
+                ))
+            }
+        })?;
+        let file = workspace_file_from_text(path.clone(), text)?;
+        if file.sha256 != expected.sha256 {
+            return Err(DomainError::InvalidData(format!(
+                "Checkpoint file hash mismatch: {checkpoint_id}/{}",
+                path.as_str()
+            )));
+        }
+        Ok(file)
     }
 }

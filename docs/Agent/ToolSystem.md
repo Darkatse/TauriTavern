@@ -201,7 +201,7 @@ Profile 的 `maxCallsPerRun` 是历史字段名，实际语义一直是 invocati
 
 `workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。`old_string` 必须来自模型本 run 已读到的文本片段，或来自本 run 创建/完整替换后已经完整已知的文件；runtime 仍会读取当前完整文件检查版本与全文件唯一匹配，但不会把完整文件隐式塞回模型上下文。版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型；基于部分读取的 patch 一旦失败，同文件后续 patch 必须先完整读取，避免模型在不确定上下文上反复试错。`replace_all=true` 可能修改未读位置，因此必须在完整读取后使用。`workspace.write_file` 支持 `mode = replace | append`，默认 `replace`。`replace` 对已存在文件复用同一个 session read-state 做 CAS：模型不需要传 `expectedSha256`，schema 不暴露 overwrite policy；若文件在最近读取/写入后被其他 invocation 修改，会返回可恢复的 stale-file 工具错误，要求重新读取后再写。`append` 会把 `content` 原样追加到文件末尾，目标缺失时创建文件；不会自动补换行，模型需要新行时应把前导 `\n` 放进 `content`。`append` 工具调用本身只在新建文件或追加前文件已完整读入且版本匹配时更新完整 read-state，避免未读既有内容在同一轮内被隐式授权为后续 rewrite/patch 的依据。模型传入的非法 path、空 path、非法 mode、不可见/不可写 path 也作为可恢复工具错误回填；目标 path 实际指向目录的读写请求会作为 `workspace.path_is_directory` 业务错误回填，提示模型改用 `workspace_list_files`。repository 内部 escape/symlink/journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
 
-`workspace.commit` 与 `workspace.finish` 的契约：模型可以多次 commit；当全部修订与 commit 完成后，必须用 `workspace.finish` 收口，不能用纯文本代替最终 answer。foreground `workspace.finish` 要求同一 run 已经有至少一次成功 chat commit；在 handoff 链中，这个 commit 可以来自前一个 foreground owner。`workspace.commit` 工具的返回字符串只做温和提醒，提示模型可继续修订并再次 commit，但最终不要忘记 finish。
+`workspace.commit` 与 `workspace.finish` 的契约：模型可以多次 commit；当全部修订与 commit 完成后，必须用 `workspace.finish` 收口，不能用纯文本代替最终 answer。foreground `workspace.finish` 要求同一 run 已经有至少一次成功的显式 `workspace.commit`；自动发布不满足该门槛。在 handoff 链中，这个 commit 可以来自前一个 foreground owner。`workspace.commit` 工具的返回字符串只做温和提醒，提示模型可继续修订并再次 commit，但最终不要忘记 finish。
 
 如果模型一回合内仍然返回 0 个 tool_calls（drift），loop runner 会做"软纠正"（issue #64）：把模型的纯文本回复捕获到 workspace 的 `direct_output.md`（默认 `output/direct_output.md`，实际跟随当前 profile 的 messageBody artifact root），写 `direct_output_captured` 与 checkpoint；再把该 assistant 回复推进 history，并追加一条 `user` 角色的合成提醒，让模型在下一轮通过当前 invocation 的结束工具补回流程。root run 使用 `workspace_commit` / `workspace_finish`，return-mode child 使用 `task_return`。direct output 本身没有独立的一次性上限；只要仍有下一轮模型调用预算，就会继续纠偏。每次都会写一条 `drift_recovery_attempted` 事件。
 
@@ -324,7 +324,7 @@ workspace.create_checkpoint
 
 - 控制工具。
 - 表示模型认为本次 run 已完成。
-- 前台 run 在 finish 前必须至少成功 `workspace.commit` 一次；后台 run 可以无 commit。
+- 前台 run 在 finish 前必须至少成功显式 `workspace.commit` 一次；后台 run 可以无 commit。
 - Runtime 在 finish 收尾阶段提交 `persist/` projection。
 - return-mode child invocation 不可用；child 必须使用 `task.return`。
 - 当前允许在 unfinished child task 存在时结束 root run；finish 会默认取消当前 parent 拥有的 unfinished child tasks，run 收尾会取消剩余 unfinished child tasks。

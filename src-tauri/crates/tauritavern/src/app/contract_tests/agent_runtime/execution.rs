@@ -467,82 +467,43 @@ async fn agent_runtime_agent_list_discovers_callable_profiles_with_real_reposito
 }
 
 #[tokio::test]
-async fn agent_runtime_foreground_commit_guard_uses_run_presentation() {
+async fn agent_runtime_foreground_auto_commits_until_explicit_commit() {
     let root = temp_root("agent-foreground");
     let fixture = agent_runtime_fixture_with_responses(
         &root,
         vec![
-            json!({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": null,
-                        "tool_calls": [{
-                            "id": "call_finish_too_early",
-                            "type": "function",
-                            "function": {
-                                "name": "workspace_finish",
-                                "arguments": "{}"
-                            }
-                        }]
-                    }
-                }]
-            }),
-            json!({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": null,
-                        "tool_calls": [
-                            {
-                                "id": "call_finish_still_too_early",
-                                "type": "function",
-                                "function": {
-                                    "name": "workspace_finish",
-                                    "arguments": "{}"
-                                }
-                            },
-                            {
-                                "id": "call_write_after_guard",
-                                "type": "function",
-                                "function": {
-                                    "name": "workspace_write_file",
-                                    "arguments": "{\"path\":\"output/main.md\",\"content\":\"foreground answer\"}"
-                                }
-                            },
-                            {
-                                "id": "call_commit_after_guard",
-                                "type": "function",
-                                "function": {
-                                    "name": "workspace_commit",
-                                    "arguments": "{}"
-                                }
-                            }
-                        ]
-                    }
-                }]
-            }),
-            json!({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": null,
-                        "tool_calls": [{
-                            "id": "call_finish_after_commit",
-                            "type": "function",
-                            "function": {
-                                "name": "workspace_finish",
-                                "arguments": "{}"
-                            }
-                        }]
-                    }
-                }]
-            }),
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_write",
+                    "workspace_write_file",
+                    json!({ "path": "output/main.md", "content": "foreground answer" }),
+                ),
+                model_tool_call(
+                    "call_patch",
+                    "workspace_apply_patch",
+                    json!({
+                        "path": "output/main.md",
+                        "old_string": "foreground answer",
+                        "new_string": "revised foreground answer",
+                    }),
+                ),
+                model_tool_call("call_finish_after_auto", "workspace_finish", json!({})),
+                model_tool_call("call_commit", "workspace_commit", json!({})),
+            ]),
+            model_tool_response(vec![
+                model_tool_call("call_commit_retry", "workspace_commit", json!({})),
+                model_tool_call(
+                    "call_write_after_explicit",
+                    "workspace_write_file",
+                    json!({ "path": "scratch/after.txt", "content": "must not auto commit" }),
+                ),
+                model_tool_call("call_finish", "workspace_finish", json!({})),
+            ]),
         ],
     );
     let mut profile = resolve_contract_profile(&fixture).await;
     profile.run.presentation = AgentRunPresentation::Background;
-    profile.tools.max_rounds = 3;
+    profile.tools.max_rounds = 2;
     let run = contract_run(
         "run_foreground_contract",
         AgentRunPresentation::Foreground,
@@ -553,9 +514,10 @@ async fn agent_runtime_foreground_commit_guard_uses_run_presentation() {
         .create_run(&run)
         .await
         .expect("create run");
-    let request = chat_request("finish too early then recover");
+    let request = chat_request("write, revise, commit, and finish");
     let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
     let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let rejected_commit_calls = ["call_write", "call_commit"];
 
     execute_agent_loop_with_host_resolver(
         fixture.service.clone(),
@@ -564,11 +526,12 @@ async fn agent_runtime_foreground_commit_guard_uses_run_presentation() {
         request,
         profile,
         &mut cancel_receiver,
-        resolve_next_chat_commit_and_persistent_state_update(
+        resolve_chat_commits_and_persistent_state_update(
             fixture.service.clone(),
             fixture.agent_repository.clone(),
             run.id.clone(),
             "message_1",
+            &rejected_commit_calls,
         ),
     )
     .await
@@ -581,52 +544,92 @@ async fn agent_runtime_foreground_commit_guard_uses_run_presentation() {
         .expect("load run");
     assert_eq!(saved.status, AgentRunStatus::Completed);
     let events = read_agent_events(&fixture.agent_repository, &run.id).await;
-    let guard_failure = events
+    let post_auto_guard_failure = events
         .iter()
         .find(|event| {
             event.event_type == "tool_call_failed"
-                && event.payload["callId"] == "call_finish_too_early"
+                && event.payload["callId"] == "call_finish_after_auto"
         })
-        .expect("foreground finish guard failure");
-    assert_eq!(guard_failure.level, AgentRunEventLevel::Warn);
+        .expect("automatic commit must not satisfy foreground finish guard");
+    assert_eq!(post_auto_guard_failure.level, AgentRunEventLevel::Warn);
     assert_eq!(
-        guard_failure.payload["errorCode"],
+        post_auto_guard_failure.payload["errorCode"],
         "agent.foreground_commit_required"
     );
-    let second_guard_failure = events
+    let commit_requests = events
+        .iter()
+        .filter(|event| event.event_type == "chat_commit_requested")
+        .collect::<Vec<_>>();
+    assert_eq!(commit_requests.len(), 4);
+    for request in &commit_requests[..2] {
+        assert_eq!(request.payload["path"], "output/main.md");
+        assert_eq!(request.payload["mode"], "replace");
+        assert!(request.payload["sha256"].as_str().is_some());
+    }
+    assert_ne!(
+        commit_requests[0].payload["sha256"],
+        commit_requests[1].payload["sha256"]
+    );
+    let final_commit_request = commit_requests.last().unwrap();
+    assert_eq!(final_commit_request.payload["runId"], run.id);
+    assert_eq!(
+        final_commit_request.payload["workspaceId"],
+        run.workspace_id
+    );
+    assert_eq!(
+        final_commit_request.payload["stableChatId"],
+        run.stable_chat_id
+    );
+    assert_eq!(final_commit_request.payload["path"], "output/main.md");
+    let commit_failures = events
+        .iter()
+        .filter(|event| event.event_type == "chat_commit_failed")
+        .collect::<Vec<_>>();
+    assert_eq!(commit_failures.len(), 2);
+    assert!(
+        commit_failures
+            .iter()
+            .all(|event| event.level == AgentRunEventLevel::Warn)
+    );
+    let explicit_commit_failure = events
         .iter()
         .find(|event| {
-            event.event_type == "tool_call_failed"
-                && event.payload["callId"] == "call_finish_still_too_early"
+            event.event_type == "tool_call_failed" && event.payload["callId"] == "call_commit"
         })
-        .expect("second foreground finish guard failure");
+        .expect("recoverable explicit commit tool result");
     assert_eq!(
-        second_guard_failure.payload["errorCode"],
-        "agent.foreground_commit_required"
+        explicit_commit_failure.payload["errorCode"],
+        "agent.chat_commit_rejected"
     );
-    let commit_requested = events
-        .iter()
-        .find(|event| event.event_type == "chat_commit_requested")
-        .expect("chat commit requested event");
-    assert_eq!(commit_requested.payload["runId"], run.id);
-    assert_eq!(commit_requested.payload["workspaceId"], run.workspace_id);
-    assert_eq!(commit_requested.payload["stableChatId"], run.stable_chat_id);
-    assert_eq!(commit_requested.payload["path"], "output/main.md");
-    assert_eq!(commit_requested.payload["mode"], "replace");
-    assert!(commit_requested.payload["sha256"].as_str().is_some());
-    assert!(events.iter().any(|event| {
-        event.event_type == "chat_commit_completed" && event.payload["messageId"] == "message_1"
-    }));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == "checkpoint_created")
+            .count(),
+        5
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.event_type == "chat_commit_completed"
+                    && event.payload["messageId"] == "message_1"
+            })
+            .count(),
+        2
+    );
     let commit_recorded = events
         .iter()
-        .find(|event| event.event_type == "chat_commit_recorded")
-        .expect("chat commit recorded event");
-    assert_eq!(commit_recorded.payload["commitCount"], 1);
+        .filter(|event| event.event_type == "chat_commit_recorded")
+        .collect::<Vec<_>>();
+    assert_eq!(commit_recorded.len(), 2);
+    assert_eq!(commit_recorded[0].payload["commitCount"], 1);
+    assert_eq!(commit_recorded[1].payload["commitCount"], 2);
     let loop_finished = events
         .iter()
         .find(|event| event.event_type == "agent_loop_finished")
         .expect("agent loop finished event");
-    assert_eq!(loop_finished.payload["commitCount"], 1);
+    assert_eq!(loop_finished.payload["commitCount"], 2);
     let metadata_requested = events
         .iter()
         .find(|event| event.event_type == "persistent_state_metadata_update_requested")

@@ -183,11 +183,12 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
         "handoff-after-commit",
     )
     .await;
-    resolve_next_chat_commit_and_persistent_state_update(
+    resolve_chat_commits_and_persistent_state_update(
         fixture.service.clone(),
         fixture.agent_repository.clone(),
         handle.run_id.clone(),
         "message_handoff",
+        &[],
     )
     .await
     .expect("resolve host commit");

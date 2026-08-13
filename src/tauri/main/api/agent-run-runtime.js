@@ -138,11 +138,10 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
     async function readWorkspaceFile(input) {
         const runId = requireRunId(input?.runId);
         const path = String(input?.path || '').trim();
-        if (!path) {
-            throw new Error('path is required');
-        }
-
-        return safeInvoke('read_agent_workspace_file', { dto: { runId, path } });
+        if (!path) throw new Error('path is required');
+        const checkpointId = normalizeOptionalString(input?.checkpointId);
+        if (input?.checkpointId != null && !checkpointId) throw new Error('checkpointId cannot be empty');
+        return safeInvoke('read_agent_workspace_file', { dto: { runId, path, ...(checkpointId ? { checkpointId } : {}) } });
     }
 
     async function readModelTurn(input) {

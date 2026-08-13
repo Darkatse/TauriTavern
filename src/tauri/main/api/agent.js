@@ -42,6 +42,7 @@ function createAgentApi({ safeInvoke }) {
             runId: handle?.runId,
             safeInvoke,
             readWorkspaceFile: runtime.readWorkspaceFile,
+            readModelTurn: runtime.readModelTurn,
             subscribe: hostSubscribe,
         });
         attachHostPromptAssemblyBridge({

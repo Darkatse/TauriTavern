@@ -226,7 +226,7 @@ plan/
   runtime 可检查的计划文件和用户/模型可读计划。
 
 scratch/
-  Agent 私有草稿。默认不提交，是否进入 context 由 policy 决定。
+  Agent 草稿；是否进入 context 由 policy 决定。前台首次显式 commit 前，匹配文本后缀的 write/patch 仍会自动发布。
 
 summaries/
   对历史、工具结果、前序步骤的摘要。

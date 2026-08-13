@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use tt_domain::models::agent::{AgentChatCommitMode, WorkspacePath};
 
 #[derive(Debug, Clone)]
-pub(super) struct CommittedChatMessage {
+struct CommittedChatMessage {
     path: String,
     mode: AgentChatCommitMode,
     message_id: Option<String>,
@@ -13,6 +13,7 @@ pub(super) struct CommittedChatMessage {
 #[derive(Debug, Default)]
 pub(super) struct RunCommitLedger {
     commits: Vec<CommittedChatMessage>,
+    explicit_count: usize,
 }
 
 impl RunCommitLedger {
@@ -22,7 +23,9 @@ impl RunCommitLedger {
         mode: AgentChatCommitMode,
         message_id: Option<String>,
         round: usize,
+        is_explicit: bool,
     ) {
+        self.explicit_count += usize::from(is_explicit);
         self.commits.push(CommittedChatMessage {
             path: path.as_str().to_string(),
             mode,
@@ -37,6 +40,14 @@ impl RunCommitLedger {
 
     pub(super) fn len(&self) -> usize {
         self.commits.len()
+    }
+
+    pub(super) fn explicit_count(&self) -> usize {
+        self.explicit_count
+    }
+
+    pub(super) fn has_explicit_commit(&self) -> bool {
+        self.explicit_count() > 0
     }
 
     pub(super) fn latest_message_id(&self) -> Option<&str> {

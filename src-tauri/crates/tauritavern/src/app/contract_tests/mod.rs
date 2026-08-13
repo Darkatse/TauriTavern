@@ -541,37 +541,62 @@ where
     loop_result
 }
 
-async fn resolve_next_chat_commit_and_persistent_state_update(
+async fn resolve_chat_commits_and_persistent_state_update(
     service: Arc<AgentRuntimeService>,
     repository: Arc<FileAgentRepository>,
     run_id: String,
     message_id: &'static str,
+    rejected_call_ids: &[&str],
 ) -> Result<(), ApplicationError> {
-    let commit_id =
-        wait_for_event_field(&repository, &run_id, "chat_commit_requested", "commitId").await?;
-    service
-        .resolve_chat_commit(AgentResolveChatCommitDto {
-            run_id: run_id.clone(),
-            commit_id,
-            message_id: Some(message_id.to_string()),
-            error: None,
-        })
-        .await?;
-
-    let update_id = wait_for_event_field(
-        &repository,
-        &run_id,
-        "persistent_state_metadata_update_requested",
-        "updateId",
-    )
-    .await?;
-    service
-        .resolve_persistent_state_metadata_update(AgentResolvePersistentStateMetadataUpdateDto {
-            run_id,
-            update_id,
-            error: None,
-        })
-        .await
+    tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
+        let mut resolved_commits = 0;
+        loop {
+            let events = read_agent_events(&repository, &run_id).await;
+            for event in events
+                .iter()
+                .filter(|event| event.event_type == "chat_commit_requested")
+                .skip(resolved_commits)
+            {
+                let call_id = event.payload["callId"].as_str().unwrap();
+                let rejected = rejected_call_ids.contains(&call_id);
+                service
+                    .resolve_chat_commit(AgentResolveChatCommitDto {
+                        run_id: run_id.clone(),
+                        commit_id: event.payload["commitId"].as_str().unwrap().to_string(),
+                        message_id: (!rejected).then(|| message_id.to_string()),
+                        error: rejected.then(|| {
+                            "agent.chat_commit_temporarily_unavailable: retry the commit"
+                                .to_string()
+                        }),
+                    })
+                    .await?;
+                resolved_commits += 1;
+            }
+            if let Some(update_id) = events.iter().find_map(|event| {
+                (event.event_type == "persistent_state_metadata_update_requested")
+                    .then(|| event.payload["updateId"].as_str())
+                    .flatten()
+            }) {
+                return service
+                    .resolve_persistent_state_metadata_update(
+                        AgentResolvePersistentStateMetadataUpdateDto {
+                            run_id,
+                            update_id: update_id.to_string(),
+                            error: None,
+                        },
+                    )
+                    .await;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        ApplicationError::InternalError(
+            "agent test timed out waiting for chat commits and persistent metadata update"
+                .to_string(),
+        )
+    })?
 }
 
 async fn wait_for_event_field(
