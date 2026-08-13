@@ -1,0 +1,240 @@
+name: QuickJS Feature Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/quickjs-script-engine
+
+concurrency:
+  group: quickjs-feature-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAURITAVERN_BUILD_BRANCH: feature/quickjs-script-engine
+  TAURITAVERN_BUILD_REVISION: ${{ github.sha }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      asset_time: ${{ steps.metadata.outputs.asset_time }}
+      display_time: ${{ steps.metadata.outputs.display_time }}
+      previous_sha: ${{ steps.metadata.outputs.previous_sha }}
+      sha12: ${{ steps.metadata.outputs.sha12 }}
+      stable_version: ${{ steps.metadata.outputs.stable_version }}
+      deb_version: ${{ steps.metadata.outputs.deb_version }}
+      rpm_release: ${{ steps.metadata.outputs.rpm_release }}
+      feature_tag: ${{ steps.metadata.outputs.feature_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feature/quickjs-script-engine
+
+      - name: Resolve Feature metadata
+        id: metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          
+          # Define feature tag name
+          FEATURE_TAG="QuickJS-Feature"
+          echo "feature_tag=$FEATURE_TAG" >> $GITHUB_OUTPUT
+          
+          # Try to fetch the feature tag, create if not exists
+          if git fetch --force origin "refs/tags/$FEATURE_TAG:refs/tags/$FEATURE_TAG" 2>/dev/null; then
+            previous_sha=$(git rev-parse "$FEATURE_TAG^{commit}" 2>/dev/null || echo "")
+          else
+            previous_sha=""
+          fi
+          
+          # If tag doesn't exist or points to different commit, proceed
+          if [ -z "$previous_sha" ]; then
+            echo "Tag $FEATURE_TAG does not exist, will create new one"
+            previous_sha=$(git rev-list --max-parents=0 HEAD)
+          elif [ "$previous_sha" = "$GITHUB_SHA" ]; then
+            echo "$FEATURE_TAG already points to $GITHUB_SHA"
+            exit 1
+          fi
+          
+          echo "previous_sha=$previous_sha" >> $GITHUB_OUTPUT
+          
+          # Get short SHA
+          sha12=$(echo "$GITHUB_SHA" | cut -c1-12)
+          echo "sha12=$sha12" >> $GITHUB_OUTPUT
+          
+          # Generate timestamps
+          asset_time=$(date -u +%Y%m%d%H%M%S)
+          display_time=$(date -u +"%Y-%m-%d %H:%M UTC")
+          echo "asset_time=$asset_time" >> $GITHUB_OUTPUT
+          echo "display_time=$display_time" >> $GITHUB_OUTPUT
+          
+          # Get base stable version from upstream or use default
+          stable_version="0.0.0"
+          if gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null | grep -q "^v"; then
+            stable_tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+            stable_version=${stable_tag#v}
+          fi
+          echo "stable_version=$stable_version" >> $GITHUB_OUTPUT
+          
+          # Generate deb version (use timestamp as revision)
+          deb_revision=$(date +%Y%m%d)
+          deb_version="${stable_version}~preview${asset_time}"
+          echo "deb_version=$deb_version" >> $GITHUB_OUTPUT
+          
+          # Generate rpm release number
+          rpm_release="0.preview.${asset_time}"
+          echo "rpm_release=$rpm_release" >> $GITHUB_OUTPUT
+
+      - name: Update Feature Tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEATURE_TAG: ${{ steps.metadata.outputs.feature_tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Delete old tag if exists (both local and remote)
+          git tag -d "$FEATURE_TAG" 2>/dev/null || true
+          git push origin ":refs/tags/$FEATURE_TAG" 2>/dev/null || true
+          
+          # Create new tag
+          git tag -a "$FEATURE_TAG" -m "QuickJS Feature Build: ${{ steps.metadata.outputs.display_time }}"
+          git push origin "$FEATURE_TAG"
+
+  build:
+    needs: [prepare]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'linux'
+            os: ubuntu-latest
+            target: 'x86_64-unknown-linux-gnu'
+          - platform: 'windows'
+            os: windows-latest
+            target: 'x86_64-pc-windows-msvc'
+          - platform: 'macos'
+            os: macos-latest
+            target: 'x86_64-apple-darwin'
+          - platform: 'macos-aarch64'
+            os: macos-latest
+            target: 'aarch64-apple-darwin'
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/quickjs-script-engine
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install dependencies (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install dependencies (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          rustup target add aarch64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        with:
+          args: --target ${{ matrix.target }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-${{ matrix.platform }}-${{ needs.prepare.outputs.sha12 }}
+          path: |
+            src-tauri/target/*/release/bundle/**/*.deb
+            src-tauri/target/*/release/bundle/**/*.rpm
+            src-tauri/target/*/release/bundle/**/*.AppImage
+            src-tauri/target/*/release/bundle/**/*.msi
+            src-tauri/target/*/release/bundle/**/*.exe
+            src-tauri/target/*/release/bundle/**/*.dmg
+            src-tauri/target/*/release/bundle/**/*.app
+          if-no-files-found: ignore
+
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/quickjs-script-engine
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tauri-*-${{ needs.prepare.outputs.sha12 }}
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.prepare.outputs.feature_tag }}
+          name: QuickJS Feature Build (${{ needs.prepare.outputs.display_time }})
+          body: |
+            ## QuickJS Script Engine Feature Build
+            
+            This is an automated build of the QuickJS script engine feature branch.
+            
+            ### Features
+            - ✅ QuickJs-based script execution engine
+            - ✅ Restricted file system access (work directory only)
+            - ✅ Module loading from public libs and skill scripts
+            - ✅ World info API integration
+            - ✅ Sandboxed execution environment
+            
+            ### Build Info
+            - Branch: `feature/quickjs-script-engine`
+            - Commit: `${{ github.sha }}`
+            - Built: ${{ needs.prepare.outputs.display_time }}
+            
+            ### ⚠️ Warning
+            This is a feature preview build and may contain bugs. Not recommended for production use.
+          draft: false
+          prerelease: true
+          files: |
+            *.deb
+            *.rpm
+            *.AppImage
+            *.msi
+            *.exe
+            *.dmg
+            */*.app
+          token: ${{ secrets.GITHUB_TOKEN }}
