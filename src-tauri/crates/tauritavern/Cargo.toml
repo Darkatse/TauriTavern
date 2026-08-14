@@ -20,9 +20,9 @@ serde_json = { workspace = true }
 
 [dependencies]
 tauri = { version = "2.11.5", features = ["macos-private-api", "protocol-asset"] }
-tauri-plugin-opener = "2.5.3"
-tauri-plugin-fs = "2.4.5"
-tauri-plugin-notification = "2.3.1"
+tauri-plugin-opener = "2.5.4"
+tauri-plugin-fs = "2.5.1"
+tauri-plugin-notification = "2.3.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -72,7 +72,7 @@ tt-application = { path = "../tt-application", features = ["test-support"] }
 image = { version = "0.24", default-features = false, features = ["png"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
-tauri-plugin-dialog = "2.7.0"
+tauri-plugin-dialog = "2.7.2"
 tauri-plugin-pilot = { version = "0.7.2", optional = true }
 tauri-plugin-single-instance = "2.4.3"
 tauri-plugin-window-state = "2.4.1"
@@ -82,7 +82,7 @@ tauri = { version = "2.11.5", features = ["tray-icon"] }
 tauri-winrt-notification = "0.7.2"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
-tauri-plugin-barcode-scanner = "2.4.4"
+tauri-plugin-barcode-scanner = "2.4.5"
 
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6.4"
