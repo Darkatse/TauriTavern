@@ -164,6 +164,64 @@ impl SkillRepository for FileSkillRepository {
             .await
     }
 
+    async fn skill_file_path(
+        &self,
+        scope: SkillScope,
+        name: &str,
+        relative_path: &str,
+    ) -> Result<PathBuf, DomainError> {
+        let name = paths::validate_skill_name(name)?;
+        let path = paths::normalize_skill_path(relative_path)?;
+        if !path.starts_with("scripts/") {
+            return Err(DomainError::InvalidData(format!(
+                "Skill script path must stay under scripts/: skills/{name}/{path}"
+            )));
+        }
+        let skill_root = self.installed_skill_root(&scope, &name).await?;
+        let full_path = skill_root.join(&path);
+        let metadata = fs::symlink_metadata(&full_path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                DomainError::NotFound(format!("Skill file not found: skills/{name}/{path}"))
+            } else {
+                DomainError::InternalError(format!(
+                    "Failed to read Skill file metadata '{}': {}",
+                    full_path.display(),
+                    error
+                ))
+            }
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(DomainError::InvalidData(format!(
+                "Skill file cannot be a symlink: skills/{name}/{path}"
+            )));
+        }
+        if !metadata.is_file() {
+            return Err(DomainError::InvalidData(format!(
+                "Skill path is not a file: skills/{name}/{path}"
+            )));
+        }
+        let canonical_root = fs::canonicalize(&skill_root).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to resolve Skill directory '{}': {}",
+                skill_root.display(),
+                error
+            ))
+        })?;
+        let canonical_file = fs::canonicalize(&full_path).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to resolve Skill file '{}': {}",
+                full_path.display(),
+                error
+            ))
+        })?;
+        if !canonical_file.starts_with(&canonical_root) {
+            return Err(DomainError::InvalidData(format!(
+                "Skill file escapes installed directory: skills/{name}/{path}"
+            )));
+        }
+        Ok(canonical_file)
+    }
+
     async fn read_skill_file(
         &self,
         request: SkillReadRequest,

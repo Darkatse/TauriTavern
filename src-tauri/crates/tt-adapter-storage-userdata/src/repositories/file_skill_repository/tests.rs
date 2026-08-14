@@ -1844,6 +1844,77 @@ async fn migrate_v1_rolls_back_prepared_global_dirs_on_later_failure() {
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
+async fn install_skill_with_scripts(repository: &FileSkillRepository) {
+    use tt_domain::models::skill::SkillInstallAction;
+
+    let result = repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill(
+                "scripted-skill",
+                vec![("scripts/helper.js", "export const answer = 42;")],
+            ),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+    assert_eq!(result.action, SkillInstallAction::Installed);
+}
+
+#[tokio::test]
+async fn skill_file_path_resolves_canonical_script_file() {
+    let root = temp_root("skill-file-path");
+    let repository = FileSkillRepository::new(root.clone());
+    install_skill_with_scripts(&repository).await;
+
+    let path = repository
+        .skill_file_path(global_scope(), "scripted-skill", "scripts/helper.js")
+        .await
+        .expect("resolve script path");
+
+    assert!(path.is_absolute());
+    assert!(path.ends_with("scripted-skill/scripts/helper.js"));
+    assert!(tokio_fs::try_exists(&path).await.expect("stat script"));
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn skill_file_path_reports_missing_script() {
+    let root = temp_root("skill-file-path-missing");
+    let repository = FileSkillRepository::new(root.clone());
+    install_skill_with_scripts(&repository).await;
+
+    let error = repository
+        .skill_file_path(global_scope(), "scripted-skill", "scripts/nope.js")
+        .await
+        .expect_err("missing script");
+
+    assert!(matches!(error, DomainError::NotFound(message) if message.contains("scripts/nope.js")));
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn skill_file_path_rejects_paths_outside_scripts_dir() {
+    let root = temp_root("skill-file-path-escape");
+    let repository = FileSkillRepository::new(root.clone());
+    install_skill_with_scripts(&repository).await;
+
+    for bad_path in ["SKILL.md", "../outside.js", "scripts/../../escape.js"] {
+        let error = repository
+            .skill_file_path(global_scope(), "scripted-skill", bad_path)
+            .await
+            .expect_err("path outside scripts/ must be rejected");
+        assert!(
+            matches!(error, DomainError::InvalidData(_) | DomainError::NotFound(_)),
+            "unexpected error for {bad_path}: {error:?}"
+        );
+    }
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
 #[tokio::test]
 async fn migrate_v1_accepts_previously_moved_global_dir() {
     let root = temp_root("migrate-v1-previously-moved");

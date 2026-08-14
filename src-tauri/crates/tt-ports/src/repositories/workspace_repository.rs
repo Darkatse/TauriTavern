@@ -58,6 +58,11 @@ pub trait WorkspaceRepository: Send + Sync {
 
     async fn read_manifest(&self, run_id: &str) -> Result<WorkspaceManifest, DomainError>;
 
+    /// 解析当前 run 工作区根目录的**规范化绝对物理路径**（供沙箱脚本引擎做
+    /// 路径前缀门控；run 不存在时返回 `NotFound`）。
+    async fn run_workspace_root(&self, run_id: &str)
+        -> Result<std::path::PathBuf, DomainError>;
+
     async fn write_text(
         &self,
         run_id: &str,
