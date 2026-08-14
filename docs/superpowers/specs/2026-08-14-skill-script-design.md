@@ -122,16 +122,39 @@ pub trait SkillScriptEngine: Send + Sync {
 - `BuiltinAgentToolRegistry` 增加 `skill_script_descriptor()`；
 - `tauritavern` host crate 的 Cargo.toml 新增 `tt-adapter-quickjs` 依赖。
 
-## 8. 错误处理（fail-fast，is_error=true + error_code）
+## 8. 错误处理（fail-fast，与现有工具失败格式严格一致）
 
-| 场景 | error_code |
-|---|---|
-| script 标识符非法 | `skill.script_invalid_name` |
-| skill 不可见或不存在 | `skill.script_skill_not_visible` |
-| 脚本文件不存在 | `skill.script_not_found` |
-| JS 执行异常 | `skill.script_execution_failed`（含异常消息与栈） |
-| 超时 | `skill.script_timeout` |
-| 返回值超限 | `skill.script_result_too_large` |
+**所有失败结果统一经现有 `agent_tools/common.rs` 的 `tool_error(call, error_code, message)` helper 构造**，与全部 builtin 工具的失败格式一致：
+
+```
+AgentToolResult {
+    call_id / tool_id,                    // 来自 ToolInvocation
+    content: message,                     // 模型可读的详细失败说明
+    structured: { "error": { "code", "message" } },  // ToolErrorStructured
+    is_error: true,
+    error_code: Some(code),
+    resource_refs: [],
+}
+```
+
+**消息措辞遵循项目既有约定**：面向模型、说明失败原因并给出恢复建议（参照 `workspace_path_is_directory_message` 的模式）。
+
+| 场景 | error_code | message 要求 |
+|---|---|---|
+| script 标识符非法 | `skill.script_invalid_name` | 说明合法格式，提示核对 SKILL.md 中的脚本名 |
+| skill 不可见或不存在 | `skill.script_skill_not_visible` | 提示用 skill_list 查看当前可用 skill |
+| 脚本文件不存在 | `skill.script_not_found` | 提示用 skill_read 检查该 skill 的 scripts/ 目录 |
+| JS 执行异常（含超时） | `skill.script_execution_failed` | **详细说明脚本如何失败**：JS 异常消息 + 栈（如有）、入口脚本标识；超时在 message 中明确标注 `timed out after Ns` |
+| 返回值超限 | `skill.script_result_too_large` | 说明大小上限，建议脚本精简返回值 |
+
+**JS 异常详情的传播**：`tt-domain` 的 `DomainError` 新增专用变体（对齐 `WorkspacePathIsDirectory` 等现有模式）：
+
+```rust
+#[error("Skill script execution failed: {message}")]
+SkillScriptExecutionFailed { message: String },
+```
+
+quickjs engine 提取 JS 异常消息与栈填入 `message`；application 处理器匹配该变体映射为 `skill.script_execution_failed` 并透传完整 message，不做截断或吞并。
 
 ## 9. 测试策略
 
@@ -152,6 +175,7 @@ pub trait SkillScriptEngine: Send + Sync {
 
 | 层 | 文件 | 动作 |
 |----|------|------|
+| tt-domain | `errors.rs` + `models/`（`ActivatedWorldInfoEntry`） | 新增 `SkillScriptExecutionFailed` 变体；承接世界书快照模型 |
 | tt-ports | `repositories/skill_repository.rs` | 新增 `skill_file_path` |
 | tt-ports | `skill_script.rs`（新） | port trait + request/result |
 | tt-adapter-storage-userdata | `file_skill_repository/` | 实现 `skill_file_path` |
