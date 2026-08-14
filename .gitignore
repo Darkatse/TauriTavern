@@ -20,6 +20,7 @@ venv/
 __pycache__/
 .mypy_cache/
 .pytest_cache/
+.cargo-home/
 dist/
 build/
 target/
