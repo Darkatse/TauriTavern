@@ -15,12 +15,12 @@
 
 ## 2. 完整加载与受限 DOM
 
-角色聊天和群聊分别通过现有 fetch facade 加载完整 payload：
+第一方角色聊天和群聊通过统一的内部 transport 入口加载完整 payload：
 
-- 角色：`POST /api/chats/get`
-- 群聊：`POST /api/chats/group/get`
+- 角色：`loadCharacterChatPayload()`
+- 群聊：`loadGroupChatPayload()`
 
-facade 负责把 Rust 返回的 JSONL stream 转成上游期望的 JSON 数组，并保留 `allow_not_found`、stale-selection guard、header 处理和既有事件时序。
+transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方，不再经过本地 Fetch 的 `JSON.stringify()` / `Response.json()` 往返。角色和群聊调用方继续负责 `allowNotFound`、stale-selection guard、header 处理和既有事件时序。`POST /api/chats/get` 与 `POST /api/chats/group/get` 仍是扩展和脚本可主动调用的兼容路由，并复用同一 transport。
 
 所有平台通过共享的 Tauri FileHandle pull stream 有界读取 JSONL。每次加载始终复用同一个文件 handle，并在 EOF、取消或失败时关闭资源；桌面标准模式、portable 模式及自定义数据目录使用同一个已解析 `data_root` runtime scope。
 

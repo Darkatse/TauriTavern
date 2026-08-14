@@ -89,7 +89,7 @@ import { isExternalMediaAllowed } from './chats.js';
 import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { CHAT_COMMIT_REASON } from './chat-payload-transport.js';
+import { CHAT_COMMIT_REASON, loadGroupChatPayload } from './chat-payload-transport.js';
 import { compressRequest } from './request-compression.js';
 
 export {
@@ -207,22 +207,7 @@ async function loadGroupChat(chatId, { allowNotFound = false } = {}) {
         throw new Error('Invalid group chat payload request');
     }
 
-    const response = await fetch('/api/chats/group/get', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ id: normalizedChatId, allow_not_found: allowNotFound }),
-    });
-
-    if (!response.ok) {
-        throw new Error('Group chat could not be loaded');
-    }
-
-    const data = await response.json();
-    if (!Array.isArray(data)) {
-        throw new Error('Group chat payload response is invalid');
-    }
-
-    return data;
+    return loadGroupChatPayload({ id: normalizedChatId, allowNotFound });
 }
 
 async function hasPersistedGroupChats(groupId) {

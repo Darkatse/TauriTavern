@@ -25,7 +25,11 @@ import {
 } from './tauri/main/services/chat-surface/chat-virtualization-state.js';
 import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
 import { getStreamingRenderInterval, normalizeStreamingFps, shouldCommitStreamingMessage } from './scripts/tauri/perf/streaming-render-policy.js';
-import { CHAT_COMMIT_REASON } from './scripts/chat-payload-transport.js';
+import {
+    CHAT_COMMIT_REASON,
+    loadCharacterChatPayload,
+    loadGroupChatPayload,
+} from './scripts/chat-payload-transport.js';
 import { getActiveChatSnapshot } from './tauri/main/adapters/st/active-chat-ref.js';
 import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
 import { waitForTauriMainReady } from './scripts/extensions/runtime/tauri-ready.js';
@@ -8542,19 +8546,13 @@ async function renamePastChats(oldAvatar, newAvatar, newName) {
     for (const { file_name } of pastChats) {
         try {
             const fileNameWithoutExtension = file_name.replace('.jsonl', '');
-            const getChatResponse = await fetch('/api/chats/get', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    ch_name: newName,
-                    file_name: fileNameWithoutExtension,
-                    avatar_url: newAvatar,
-                }),
-                cache: 'no-cache',
+            const currentChat = await loadCharacterChatPayload({
+                characterName: newName,
+                avatarUrl: newAvatar,
+                fileName: fileNameWithoutExtension,
             });
-            const currentChat = getChatResponse.ok ? await getChatResponse.json() : [];
 
-            if (Array.isArray(currentChat) && currentChat.length) {
+            if (currentChat.length) {
                 for (const message of currentChat) {
                     if (message.is_user || message.is_system || message.extra?.type == system_message_types.NARRATOR) {
                         continue;
@@ -8926,22 +8924,12 @@ export async function getChat({ allowNewChat = false } = {}) {
 
     try {
         await unshallowCharacter(startedChid);
-        const response = await fetch('/api/chats/get', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            cache: 'no-cache',
-            body: JSON.stringify({
-                ch_name: startedCharacter?.name,
-                file_name: startedChatFile,
-                avatar_url: startedCharacter?.avatar,
-                allow_not_found: allowNewChat,
-            }),
+        const data = await loadCharacterChatPayload({
+            characterName: startedCharacter?.name,
+            avatarUrl: startedCharacter?.avatar,
+            fileName: startedChatFile,
+            allowNotFound: allowNewChat,
         });
-
-        if (!response.ok) {
-            throw new Error('Chat could not be loaded');
-        }
-        const data = await response.json();
 
         const currentCharacter = startedChid !== undefined ? characters[startedChid] : null;
         const stillActive = startedSelectedGroup === selected_group
@@ -8951,7 +8939,7 @@ export async function getChat({ allowNewChat = false } = {}) {
             return;
         }
 
-        if (Array.isArray(data) && data.length > 0) {
+        if (data.length > 0) {
             /** @type {ChatHeader} */
             const chatHeader = data.shift();
             chat_metadata = chatHeader?.chat_metadata ?? {};
@@ -9857,9 +9845,8 @@ async function messageEditDone(div) {
 }
 
 /**
- * Fetches the chat content for each chat file from the server and compiles them into a dictionary.
- * The function iterates over a provided list of chat metadata and requests the actual chat content
- * for each chat, either as an individual chat or a group chat based on the context.
+ * Loads each chat file through the internal payload transport and compiles them into a dictionary.
+ * The function handles either individual or group chats based on the context.
  *
  * @param {Array} data - An array containing metadata about each chat such as file_name.
  * @param {boolean} isGroupChat - A flag indicating if the chat is a group chat.
@@ -9868,43 +9855,28 @@ async function messageEditDone(div) {
  */
 export async function getChatsFromFiles(data, isGroupChat) {
     const context = getContext();
-    let chat_dict = {};
-    let chat_list = Object.values(data).sort((a, b) => a.file_name.localeCompare(b.file_name)).reverse();
+    const chat_dict = {};
+    const chat_list = Object.values(data).sort((a, b) => a.file_name.localeCompare(b.file_name)).reverse();
 
-    let chat_promise = chat_list.map(({ file_name }) => {
-        return new Promise(async (res, rej) => {
-            try {
-                const endpoint = isGroupChat ? '/api/chats/group/get' : '/api/chats/get';
-                const requestBody = isGroupChat
-                    ? JSON.stringify({ id: file_name })
-                    : JSON.stringify({
-                        ch_name: characters[context.characterId].name,
-                        file_name: file_name.replace('.jsonl', ''),
-                        avatar_url: characters[context.characterId].avatar,
-                    });
-
-                const chatResponse = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: requestBody,
-                    cache: 'no-cache',
+    const chat_promise = chat_list.map(async ({ file_name }) => {
+        try {
+            const character = characters[context.characterId];
+            const currentChat = isGroupChat
+                ? await loadGroupChatPayload({ id: file_name })
+                : await loadCharacterChatPayload({
+                    characterName: character.name,
+                    avatarUrl: character.avatar,
+                    fileName: file_name.replace('.jsonl', ''),
                 });
-                const currentChat = chatResponse.ok ? await chatResponse.json() : null;
 
-                if (!Array.isArray(currentChat)) {
-                    return res();
-                }
-                if (!isGroupChat) {
-                    // remove the first message, which is metadata, only for individual chats
-                    currentChat.shift();
-                }
-                chat_dict[file_name] = currentChat;
-            } catch (error) {
-                console.error(error);
+            if (!isGroupChat) {
+                // remove the first message, which is metadata, only for individual chats
+                currentChat.shift();
             }
-
-            return res();
-        });
+            chat_dict[file_name] = currentChat;
+        } catch (error) {
+            console.error(error);
+        }
     });
 
     await Promise.all(chat_promise);
