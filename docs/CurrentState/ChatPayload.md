@@ -22,6 +22,8 @@
 
 facade 负责把 Rust 返回的 JSONL stream 转成上游期望的 JSON 数组，并保留 `allow_not_found`、stale-selection guard、header 处理和既有事件时序。
 
+所有平台通过共享的 Tauri FileHandle pull stream 有界读取 JSONL。每次加载始终复用同一个文件 handle，并在 EOF、取消或失败时关闭资源；桌面标准模式、portable 模式及自定义数据目录使用同一个已解析 `data_root` runtime scope。
+
 `power_user.chat_truncation` 只限制首次挂载的 DOM 数量，不裁剪 `chat[]`。`Show more messages` 从完整数组中补挂更早楼层，不发起历史 I/O，也不改变数组索引。后续 DOM virtualization 若实施，也只能替换渲染层，不能改变 canonical data contract。
 
 ## 3. 完整保存
@@ -94,7 +96,8 @@ Rust 仍保留 JSONL tail/before 读取，因为 Agent 和扩展可能只需要�
 - `src/script.js`：角色聊天 canonical load/save、DOM truncation、Show More、保存队列。
 - `src/scripts/group-chats.js`：群聊 canonical load/save。
 - `src/scripts/chat-payload-transport.js`：完整 payload transport 公共入口。
-- `src/scripts/tauri/chat/transport.js`：完整 payload Tauri transport。
+- `src/scripts/tauri/chat/transport.js`：完整 payload Tauri transport 与共享 FileHandle pull stream 接入边界。
+- `src/tauri/main/services/files/readable-file-stream-service.js`：跨平台 plugin-fs open/read/close pull stream。
 - `src/tauri/main/api/chat.js`：扩展历史分页 API 与 `windowInfo()`。
 
 Rust：

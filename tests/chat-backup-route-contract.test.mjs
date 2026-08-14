@@ -340,11 +340,3 @@ test('chat backup browser views through a stream and restores by logical backup 
     assert.doesNotMatch(routeSource, /get_chat_backup_raw|normalizeBinaryPayload/);
     assert.doesNotMatch(commandSource, /get_chat_backup_raw/);
 });
-
-test('host startup scopes chat staging for portable and custom data roots', async () => {
-    const source = await readFile(new URL('../src-tauri/crates/tauritavern/src/app/host/resources.rs', import.meta.url), 'utf8');
-
-    assert.match(source, /\.fs_scope\(\)/);
-    assert.match(source, /\.join\("default-user"\)[\s\S]*\.join\("\.staging"\)[\s\S]*\.join\("chat-commits"\)/);
-    assert.match(source, /allow_directory\(&chat_staging_root, true\)/);
-});

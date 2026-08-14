@@ -4,9 +4,11 @@ import {
     characterStemFromAvatarFileName,
     hasCharacterAvatarIdentity,
 } from '../../../tauri/main/services/characters/character-identity.js';
-import { fetchAssetStream } from './asset-io.js';
+import { createReadableFileStreamService } from '../../../tauri/main/services/files/readable-file-stream-service.js';
 import { commitChatPayload } from './commit.js';
 import { jsonlStreamToPayload } from './jsonl.js';
+
+const { createReadableFileStream } = createReadableFileStreamService({ invoke });
 
 export const CHAT_COMMIT_REASON = Object.freeze({
     MUTATION: 'mutation',
@@ -51,7 +53,7 @@ export async function loadCharacterChatPayload({ characterName, avatarUrl, fileN
         throw new Error('Chat payload path is empty');
     }
 
-    const stream = await fetchAssetStream(path);
+    const stream = createReadableFileStream(path);
     return jsonlStreamToPayload(stream);
 }
 
@@ -92,7 +94,7 @@ export async function loadGroupChatPayload({ id, allowNotFound = false }) {
         throw new Error('Group chat payload path is empty');
     }
 
-    const stream = await fetchAssetStream(path);
+    const stream = createReadableFileStream(path);
     return jsonlStreamToPayload(stream);
 }
 

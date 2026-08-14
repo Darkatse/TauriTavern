@@ -1,6 +1,6 @@
 import { invoke } from '../../../tauri-bridge.js';
 import { encodeBytesToBase64 } from '../../../tauri/main/binary-utils.js';
-import { isAndroidRuntime } from './platform.js';
+import { isAndroidRuntime } from '../../util/mobile-runtime.js';
 import { payloadToJsonlByteChunks } from './jsonl.js';
 
 function positiveSafeInteger(value, label) {
