@@ -1,8 +1,11 @@
 import { normalizeBinaryPayload } from '../binary-utils.js';
 
 const EXTERNAL_IMPORT_ALLOWED_URL_PATTERNS = [
+    /^https?:\/\/localhost(?::\d+)?\/.*/i,
     /^https:\/\/cdn\.discordapp\.com\/attachments\/.+/i,
     /^https:\/\/files\.catbox\.moe\/.+/i,
+    /^https:\/\/raw\.githubusercontent\.com\/.*/i,
+    /^https:\/\/botbooru\.com\/.*/i,
 ];
 
 function parseUrl(value) {
