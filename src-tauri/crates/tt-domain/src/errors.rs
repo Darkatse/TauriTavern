@@ -46,6 +46,15 @@ pub enum DomainError {
         path: String,
         kind: WorkspaceWriteConflictKind,
     },
+
+    #[error("Skill script execution failed: {message}")]
+    SkillScriptExecutionFailed { message: String },
+
+    #[error("Skill script result is {actual_bytes} bytes, exceeding the {limit_bytes}-byte limit")]
+    SkillScriptResultTooLarge {
+        actual_bytes: usize,
+        limit_bytes: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +133,12 @@ impl DomainError {
             kind,
         }
     }
+
+    pub fn skill_script_execution_failed(message: impl Into<String>) -> Self {
+        Self::SkillScriptExecutionFailed {
+            message: message.into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -174,6 +189,32 @@ mod tests {
             &error,
             DomainError::WorkspaceWriteConflict { path, kind: WorkspaceWriteConflictKind::Stale { expected_sha256, actual_sha256: None } }
                 if path == "output/main.md" && expected_sha256 == "old"
+        ));
+    }
+
+    #[test]
+    fn skill_script_execution_failed_constructor_keeps_message() {
+        let error = DomainError::SkillScriptExecutionFailed {
+            message: "boom at line 3".to_string(),
+        };
+
+        assert!(matches!(
+            &error,
+            DomainError::SkillScriptExecutionFailed { message } if message == "boom at line 3"
+        ));
+        assert_eq!(error.to_string(), "Skill script execution failed: boom at line 3");
+    }
+
+    #[test]
+    fn skill_script_result_too_large_constructor_keeps_sizes() {
+        let error = DomainError::SkillScriptResultTooLarge {
+            actual_bytes: 300_000,
+            limit_bytes: 262_144,
+        };
+
+        assert!(matches!(
+            &error,
+            DomainError::SkillScriptResultTooLarge { actual_bytes: 300_000, limit_bytes: 262_144 }
         ));
     }
 }

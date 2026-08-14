@@ -57,6 +57,15 @@ impl From<DomainError> for ApplicationError {
             DomainError::WorkspaceWriteConflict { kind, .. } => {
                 ApplicationError::ValidationError(format!("Workspace write conflict: {kind}"))
             }
+            DomainError::SkillScriptExecutionFailed { message } => {
+                ApplicationError::InternalError(message)
+            }
+            DomainError::SkillScriptResultTooLarge {
+                actual_bytes,
+                limit_bytes,
+            } => ApplicationError::ValidationError(format!(
+                "Skill script result is {actual_bytes} bytes, exceeding the {limit_bytes}-byte limit"
+            )),
         }
     }
 }
@@ -84,6 +93,23 @@ mod tests {
         assert!(matches!(
             error,
             ApplicationError::Conflict(message) if message == "busy"
+        ));
+    }
+
+    #[test]
+    fn skill_script_errors_map_to_application_errors() {
+        let execution = ApplicationError::from(DomainError::SkillScriptExecutionFailed {
+            message: "boom".to_string(),
+        });
+        assert!(matches!(execution, ApplicationError::InternalError(message) if message == "boom"));
+
+        let too_large = ApplicationError::from(DomainError::SkillScriptResultTooLarge {
+            actual_bytes: 300_000,
+            limit_bytes: 262_144,
+        });
+        assert!(matches!(
+            too_large,
+            ApplicationError::ValidationError(message) if message.contains("300000 bytes")
         ));
     }
 }
