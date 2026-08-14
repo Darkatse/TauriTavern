@@ -1,5 +1,5 @@
 // Local override of Wry's generated RustWebChromeClient.
-// Keep this file aligned with wry 0.54.2 and preserve only the fullscreen host handoff.
+// Baseline: wry 0.55.1. Local deltas: fullscreen host handoff and JSONL MIME support.
 
 @file:Suppress("ObsoleteSdkInt", "RedundantOverride", "QueryPermissionsNeeded", "SimpleDateFormat")
 
@@ -461,8 +461,6 @@ class RustWebChromeClient(appActivity: WryActivity) : WebChromeClient() {
   }
 
   override fun onReceivedTitle(view: WebView, title: String) {
-    handleReceivedTitle(view, title)
+    Rust.handleReceivedTitle((view as RustWebView).id, title)
   }
-
-  private external fun handleReceivedTitle(webview: WebView, title: String)
 }

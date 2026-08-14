@@ -13,7 +13,7 @@
 | Nix / NixOS | flake | `x86_64-linux` / `aarch64-linux` |
 | Flatpak | 独立软件源 | `x86_64`；`aarch64` 待验证 |
 
-DEB/RPM 构建要求 `GLIBC_2.34`，并依赖 WebKitGTK 4.1、GTK 3 与 GStreamer。openSUSE Leap 15.x 不能可靠验证当前的 Ed25519 RPM 签名，因此不在支持范围内。
+DEB/RPM 构建要求 `GLIBC_2.34`，并依赖 WebKitGTK 4.1、GTK 3、GStreamer 与 D-Bus 1 runtime；构建环境同时需要 D-Bus development metadata。openSUSE Leap 15.x 不能可靠验证当前的 Ed25519 RPM 签名，因此不在支持范围内。
 
 ## 分发与信任
 

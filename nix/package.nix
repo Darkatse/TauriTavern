@@ -3,6 +3,7 @@
   stdenv,
   rustPlatform,
   cargo-tauri,
+  dbus,
   fetchPnpmDeps,
   glib-networking,
   gst_all_1,
@@ -41,7 +42,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
       ;
     pnpm = pnpm_10;
     fetcherVersion = 3;
-    hash = "sha256-aDxsMBQcMWYJl4FPTo+cReYnkqbiMuSvKRzslwmkGVM=";
+    hash = "sha256-QYMEUw8WH83FlGBkEd6cjSYAW6erhf0aslNclsbCY8I=";
   };
 
   nativeBuildInputs = [
@@ -54,6 +55,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
   ];
 
   buildInputs = [
+    dbus
     glib-networking
     gst_all_1.gstreamer
     gst_all_1.gst-plugins-base

@@ -15,11 +15,11 @@ name = "tauritavern_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.5.5", features = [] }
+tauri-build = { version = "2.6.3", features = [] }
 serde_json = { workspace = true }
 
 [dependencies]
-tauri = { version = "2.10.2", features = ["macos-private-api", "protocol-asset"] }
+tauri = { version = "2.11.5", features = ["macos-private-api", "protocol-asset"] }
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-fs = "2.4.5"
 tauri-plugin-notification = "2.3.1"
@@ -78,7 +78,7 @@ tauri-plugin-single-instance = "2.4.3"
 tauri-plugin-window-state = "2.4.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-tauri = { version = "2.10.2", features = ["tray-icon"] }
+tauri = { version = "2.11.5", features = ["tray-icon"] }
 tauri-winrt-notification = "0.7.2"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
