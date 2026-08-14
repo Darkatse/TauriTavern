@@ -16,5 +16,5 @@ tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 
 [dev-dependencies]
-base64 = "0.22"
+base64 = "0.23"
 rand = { workspace = true }

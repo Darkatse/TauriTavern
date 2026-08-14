@@ -339,10 +339,11 @@ mod tests {
     }
 
     fn test_tls_config() -> (Arc<ServerConfig>, reqwest::Certificate) {
-        let CertifiedKey { cert, key_pair } =
+        let CertifiedKey { cert, signing_key } =
             generate_simple_self_signed(["127.0.0.1".to_string()]).expect("test certificate");
         let certificate = cert.der().clone();
-        let private_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der()));
+        let private_key =
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signing_key.serialize_der()));
         let config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(vec![certificate.clone()], private_key)

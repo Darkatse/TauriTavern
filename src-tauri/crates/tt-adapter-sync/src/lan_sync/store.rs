@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use rand::Rng;
+use rand::RngExt;
 use serde::Deserialize;
 use ttsync_contract::sync::{OverwritePolicy, SyncMode};
 

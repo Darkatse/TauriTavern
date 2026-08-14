@@ -34,7 +34,7 @@ pub(super) fn parse_object(raw: &str) -> Result<Map<String, Value>, ApplicationE
         return Ok(Map::new());
     }
 
-    let value = serde_yaml::from_str::<Value>(raw).map_err(|error| {
+    let value = yaml_serde::from_str::<Value>(raw).map_err(|error| {
         ApplicationError::ValidationError(format!(
             "Failed to parse custom parameter map as YAML/JSON: {error}"
         ))
@@ -76,7 +76,7 @@ pub(super) fn parse_key_list(raw: &str) -> Result<Vec<String>, ApplicationError>
         return Ok(Vec::new());
     }
 
-    let value = serde_yaml::from_str::<Value>(raw).map_err(|error| {
+    let value = yaml_serde::from_str::<Value>(raw).map_err(|error| {
         ApplicationError::ValidationError(format!(
             "Failed to parse custom exclude list as YAML/JSON: {error}"
         ))
