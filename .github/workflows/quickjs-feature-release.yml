@@ -3,8 +3,9 @@ name: QuickJS Feature Release
 on:
   workflow_dispatch:
   push:
-    branches:
-      - feature/quickjs-script-engine
+    tags:
+      - 'quickjs-build*'
+      - 'quickjs-release*'
 
 concurrency:
   group: quickjs-feature-release
@@ -166,6 +167,98 @@ jobs:
           path: portable/*
           if-no-files-found: error
 
+  mobile:
+    needs: prepare
+    runs-on: ubuntu-latest
+    env:
+      # rquickjs-sys compiles QuickJS C sources via cc; point cc at the NDK
+      # cross clang for each Android target so the build script can compile.
+      CC_aarch64_linux_android: aarch64-linux-android21-clang
+      AR_aarch64_linux_android: llvm-ar
+      CC_armv7_linux_androideabi: armv7a-linux-androideabi21-clang
+      AR_armv7_linux_androideabi: llvm-ar
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Android host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: gradle
+          cache-dependency-path: |
+            src-tauri/crates/tauritavern/gen/android/**/*.gradle*
+            src-tauri/crates/tauritavern/gen/android/**/gradle-wrapper.properties
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+          link-to-sdk: true
+
+      - name: Expose NDK clang on PATH for cc
+        shell: bash
+        run: |
+          prebuilt="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "$prebuilt" >> "$GITHUB_PATH"
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Setup Android signing
+        shell: bash
+        run: |
+          cd src-tauri/crates/tauritavern/gen/android
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
+          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+          base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+
+      - name: Enable HTTP access for standard Android bundle
+        run: ./scripts/ci/configure-mobile-http.sh enable android
+
+      - name: Build Android bundle
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        with:
+          projectPath: src-tauri/crates/tauritavern
+          tauriScript: node ../../../scripts/tauri-app.mjs
+          mobile: android
+          args: --verbose --apk --split-per-abi --target aarch64 armv7
+          uploadWorkflowArtifacts: true
+          uploadPlainBinary: true
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.asset_time }}-quickjs-[platform]-[arch]-[bundle]'
+
   notes:
     needs: prepare
     runs-on: ubuntu-latest
@@ -200,7 +293,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: [prepare, desktop, notes]
+    needs: [prepare, desktop, mobile, notes]
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -232,8 +325,32 @@ jobs:
           name: quickjs-release-notes
           path: notes
 
-      - name: Validate complete desktop release set
-        run: node source/scripts/ci/collect-desktop-release-assets.mjs dist release-assets "$ASSET_PREFIX"
+      - name: Validate desktop release set and pass Android artifacts through
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Android artifacts are not part of the desktop naming table; copy
+          # them out first so the strict desktop validator does not reject them.
+          mkdir -p android-assets
+          for artifact in dist/TauriTavern-*-quickjs-android-*; do
+            [ -d "$artifact" ] || continue
+            find "$artifact" -type f \( -name '*.apk' -o -name '*.aab' \) \
+              -exec cp {} android-assets/ \;
+          done
+          # Rebuild a desktop-only artifact tree for the validator.
+          mkdir -p desktop-dist
+          for artifact in dist/TauriTavern-*-quickjs-*; do
+            case "$(basename "$artifact")" in
+              *-quickjs-android-*) continue ;;
+            esac
+            cp -r "$artifact" desktop-dist/
+          done
+          node source/scripts/ci/collect-desktop-release-assets.mjs desktop-dist release-assets "$ASSET_PREFIX"
+          # Merge Android artifacts into the release set with the shared prefix.
+          for file in android-assets/*; do
+            [ -f "$file" ] || continue
+            cp "$file" "release-assets/${ASSET_PREFIX}android-$(basename "$file")"
+          done
 
       - name: Install Linux package inspection tools
         run: sudo apt-get update && sudo apt-get install -y rpm
