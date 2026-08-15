@@ -54,6 +54,7 @@ use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
+use tt_adapter_quickjs::QuickJsScriptEngine;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::{AgentDelegationPolicy, AgentProfileId};
 use tt_domain::models::agent::{
@@ -234,6 +235,7 @@ fn agent_runtime_fixture_with_results(
         llm_connection_service,
         prompt_assembly_service,
         mcp_service.clone(),
+        Arc::new(QuickJsScriptEngine::new(root.join("skill-libs"))),
     ));
 
     AgentRuntimeFixture {

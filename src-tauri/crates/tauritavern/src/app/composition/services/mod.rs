@@ -11,6 +11,7 @@ use crate::app::{AppServices, StartupProfile};
 use crate::infrastructure::apis::http_external_import_downloader::HttpExternalImportDownloader;
 use tt_adapter_http::HttpClientPool;
 use tt_adapter_mcp::RmcpMcpGateway;
+use tt_adapter_quickjs::QuickJsScriptEngine;
 use tt_adapter_storage_core::file_system::DataDirectory;
 use tt_application::services::asset_service::AssetService;
 use tt_application::services::avatar_service::AvatarService;
@@ -47,6 +48,7 @@ use tt_application::services::user_directory_service::UserDirectoryService;
 use tt_application::services::user_service::UserService;
 use tt_application::services::world_info_service::WorldInfoService;
 use tt_domain::errors::DomainError;
+use tt_ports::skill_script::SkillScriptEngine;
 
 use super::{adapters, repositories};
 
@@ -125,12 +127,18 @@ pub(super) async fn build(
         repositories.secret_repository.clone(),
         ios_policy.clone(),
     ));
+    // 公共 skill 脚本库目录（{data_root}/skill-libs/），供 skill.script 沙箱
+    // 的裸模块加载白名单使用；目录无需预先存在。
+    let skill_script_engine: Arc<dyn SkillScriptEngine> = Arc::new(QuickJsScriptEngine::new(
+        data_directory.root().join("skill-libs"),
+    ));
     let agent_services = agent::build(
         &repositories,
         skill_service.clone(),
         chat_completion_service.clone(),
         llm_connection_service.clone(),
         mcp_service.clone(),
+        skill_script_engine,
     );
     let tokenization_service = Arc::new(TokenizationService::new(
         repositories.tokenizer_repository.clone(),

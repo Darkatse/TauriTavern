@@ -69,6 +69,15 @@ impl From<DomainError> for CommandError {
             DomainError::WorkspaceWriteConflict { kind, .. } => {
                 CommandError::BadRequest(format!("Workspace write conflict: {kind}"))
             }
+            DomainError::SkillScriptExecutionFailed { message } => {
+                CommandError::InternalServerError(message)
+            }
+            DomainError::SkillScriptResultTooLarge {
+                actual_bytes,
+                limit_bytes,
+            } => CommandError::BadRequest(format!(
+                "Skill script result is {actual_bytes} bytes, exceeding the {limit_bytes}-byte limit"
+            )),
         }
     }
 }

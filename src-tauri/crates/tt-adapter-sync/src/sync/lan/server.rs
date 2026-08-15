@@ -413,6 +413,18 @@ impl IntoResponse for ApiError {
                 StatusCode::CONFLICT,
                 format!("Workspace write conflict: {kind}"),
             ),
+            DomainError::SkillScriptExecutionFailed { message } => {
+                (StatusCode::INTERNAL_SERVER_ERROR, message)
+            }
+            DomainError::SkillScriptResultTooLarge {
+                actual_bytes,
+                limit_bytes,
+            } => (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Skill script result is {actual_bytes} bytes, exceeding the {limit_bytes}-byte limit"
+                ),
+            ),
         };
         (
             status,
