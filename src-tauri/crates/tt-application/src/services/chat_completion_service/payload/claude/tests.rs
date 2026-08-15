@@ -95,6 +95,37 @@ fn claude_maps_all_canonical_tool_choices_without_downgrade() {
 }
 
 #[test]
+fn claude_web_search_uses_anthropic_server_tool_for_direct_and_custom_routes() {
+    for (source, custom_api_format) in [("claude", None), ("custom", Some("claude_messages"))] {
+        let mut payload = claude_payload("claude-sonnet-4-5");
+        payload.insert("chat_completion_source".to_string(), json!(source));
+        payload.insert("enable_web_search".to_string(), json!(true));
+        if let Some(format) = custom_api_format {
+            payload.insert("custom_api_format".to_string(), json!(format));
+        }
+
+        let (_, upstream) = build(payload).expect("web search should map");
+        assert_eq!(
+            upstream["tools"][0],
+            json!({
+                "type": "web_search_20250305",
+                "name": "web_search"
+            })
+        );
+    }
+}
+
+#[test]
+fn claude_web_search_does_not_leak_into_other_claude_transports() {
+    let mut payload = claude_payload("claude-sonnet-4-5");
+    payload.insert("chat_completion_source".to_string(), json!("aws_bedrock"));
+    payload.insert("enable_web_search".to_string(), json!(true));
+
+    let (_, upstream) = build(payload).expect("payload should build");
+    assert!(upstream.get("tools").is_none());
+}
+
+#[test]
 fn claude_rejects_unknown_tool_choice_instead_of_using_auto() {
     let mut payload = claude_payload("claude-sonnet-4-5");
     payload.insert(

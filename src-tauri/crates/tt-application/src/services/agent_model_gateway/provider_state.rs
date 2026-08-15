@@ -6,6 +6,7 @@ use crate::services::agent_model_gateway::providers::AgentProviderAdapter;
 use tt_domain::models::agent::{AgentModelContentPart, AgentModelRequest, AgentModelResponse};
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionSource,
+    OPENAI_RESPONSES_WEBSOCKET_TRANSPORT,
 };
 
 pub(super) fn apply_provider_state_to_payload(
@@ -67,18 +68,30 @@ pub(super) fn next_provider_state(
         });
     }
 
-    if adapter == AgentProviderAdapter::OpenAiResponses {
+    if adapter == AgentProviderAdapter::OpenAiResponses
+        && string_value(&request.provider_state, "transport")
+            == Some(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT)
+    {
         let response_id = response_id.ok_or_else(|| {
             ApplicationError::ValidationError(
                 "agent.provider_state_invalid: OpenAI Responses continuation is missing response id"
                     .to_string(),
             )
         })?;
-        state["transport"] = Value::String("responses_websocket".to_string());
+        state["transport"] = Value::String(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT.to_string());
         state["previousResponseId"] = Value::String(response_id);
     }
 
     Ok(state)
+}
+
+pub(super) fn responses_websocket_session_id(request: &AgentModelRequest) -> Option<&str> {
+    if string_value(&request.provider_state, "transport")
+        != Some(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT)
+    {
+        return None;
+    }
+    string_value(&request.provider_state, "sessionId")
 }
 
 fn native_part_count(response: &AgentModelResponse, provider: &str) -> usize {

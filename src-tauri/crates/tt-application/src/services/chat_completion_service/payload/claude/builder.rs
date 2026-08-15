@@ -142,6 +142,15 @@ fn build_claude_payload_inner(
         .get("tools")
         .map(map_openai_tools_to_claude)
         .unwrap_or_default();
+    if claude_web_search_enabled(payload) {
+        claude_tools.insert(
+            0,
+            json!({
+                "type": "web_search_20250305",
+                "name": "web_search",
+            }),
+        );
+    }
 
     let mut forced_tool_choice: Option<Value> = None;
     if let Some(json_schema) = payload.get("json_schema").and_then(Value::as_object)
@@ -356,4 +365,21 @@ fn build_claude_adaptive_thinking(payload: &Map<String, Value>) -> Value {
         "type": "adaptive",
         "display": display,
     })
+}
+
+fn claude_web_search_enabled(payload: &Map<String, Value>) -> bool {
+    if payload.get("enable_web_search").and_then(Value::as_bool) != Some(true) {
+        return false;
+    }
+
+    match payload
+        .get("chat_completion_source")
+        .and_then(Value::as_str)
+    {
+        Some("claude") => true,
+        Some("custom") => {
+            payload.get("custom_api_format").and_then(Value::as_str) == Some("claude_messages")
+        }
+        _ => false,
+    }
 }

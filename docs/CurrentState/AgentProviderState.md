@@ -1,6 +1,6 @@
 # Agent Provider State Contract
 
-最后更新：2026-07-26
+最后更新：2026-08-15
 
 本文档记录当前 **已落地** 的 Agent `provider_state` 契约。它不是阶段计划；后续开发应以这里为当前行为基线。
 
@@ -11,7 +11,7 @@
 它解决三个问题：
 
 - 让 Agent 在不绕过 `ChatCompletionService` 的前提下复用 provider 原生续接能力。
-- 让 OpenAI Responses 使用持久 WebSocket、incremental input 与 `previous_response_id`。
+- 让显式启用增强模式的 OpenAI Responses 使用持久 WebSocket、incremental input 与 `previous_response_id`，同时让其他兼容实现保留 portable HTTP/full-replay 路径。
 - 让 Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native metadata 丢失时能够 fail-fast，而不是静默退化成普通文本。
 
 `provider_state` 不是 prompt 内容，不是用户设置，也不是要发送给上游 provider 的公开字段。
@@ -25,6 +25,14 @@ Agent run 初始化时，`prepare_agent_tool_request()` 写入：
 ```json
 {
   "sessionId": "<run-id>"
+}
+```
+
+若 Custom OpenAI Responses 连接显式启用 WebSocket 模式，初始化 state 还会写入：
+
+```json
+{
+  "transport": "responses_websocket"
 }
 ```
 
@@ -44,7 +52,7 @@ Agent run 初始化时，`prepare_agent_tool_request()` 写入：
 }
 ```
 
-OpenAI Responses 额外写入：
+启用 WebSocket 模式的 OpenAI Responses 额外写入：
 
 ```json
 {
@@ -58,10 +66,10 @@ OpenAI Responses 额外写入：
 - `sessionId`：run-scoped provider session id；当前等于 `runId`，缺失会 fail-fast。
 - `chatCompletionSource`：本轮实际使用的 `ChatCompletionSource::key()`。
 - `providerFormat`：gateway 判定后的 provider payload format。
-- `messageCursor`：本轮请求成功发送时的 canonical message 数量，用于下一轮 OpenAI Responses incremental input。
-- `lastResponseId`：本轮 provider/normalized response id；可能为空，但 OpenAI Responses continuation 必须存在。
+- `messageCursor`：本轮请求成功发送时的 canonical message 数量；WebSocket 模式用它计算下一轮 incremental input，portable 模式保留但不消费。
+- `lastResponseId`：本轮 provider/normalized response id；portable 模式允许为空，WebSocket continuation 必须存在。
 - `nativeContinuation`：同 provider 续接需要的 native metadata 计数。native provider 在返回 tool call 但 native part 缺失时 fail-fast。
-- `previousResponseId`：OpenAI Responses 下一轮请求的 `previous_response_id` 来源。
+- `previousResponseId`：仅 WebSocket 模式存在，是 OpenAI Responses 下一轮请求的 `previous_response_id` 来源。
 - `transport`：当前仅用于标记 OpenAI Responses persistent WebSocket continuation。
 
 ## 3. 请求侧流转
@@ -83,11 +91,11 @@ OpenAI Responses 额外写入：
 
 不得把 `_tauritavern_provider_state` 当作上游 API 字段、用户设置字段或 SillyTavern 兼容字段。
 
-## 4. OpenAI Responses 增量输入
+## 4. OpenAI Responses continuation 模式
 
-OpenAI Responses 首轮没有 `previousResponseId` 时，gateway 发送完整 canonical messages。
+默认 portable 模式不写 `transport` / `previousResponseId`：每轮走 HTTP，并发送完整 canonical transcript。assistant 的 raw Responses `output` 通过 native metadata 原样回放，因此 stateless 或忽略 `previous_response_id` 的兼容实现仍可完成多轮 function loop。
 
-从第二轮开始：
+显式启用 WebSocket 模式后，首轮发送完整 canonical messages；从第二轮开始：
 
 - 必须存在 `previousResponseId`。
 - 必须存在合法 `messageCursor`，且 `messageCursor <= messages.len()`。
@@ -95,11 +103,11 @@ OpenAI Responses 首轮没有 `previousResponseId` 时，gateway 发送完整 ca
 - 该尾部消息会过滤掉 assistant messages，只保留新产生的 tool/user/developer 等需要追加给 provider 的输入。
 - gateway 同时在 payload 顶层写入 `previous_response_id`。
 
-这使 Agent 可以依赖 Responses 侧的 previous response state，而不必每轮重放全部 assistant native output。
+WebSocket、`previous_response_id` 与 incremental input 是一个原子 opt-in，不独立协商或静默降级。
 
 ## 5. OpenAI Responses 持久 WebSocket
 
-当 OpenAI Responses payload 带有 `_tauritavern_provider_state.sessionId` 时，repository 使用 run-scoped persistent WebSocket session：
+当 OpenAI Responses payload 带有 `_tauritavern_provider_state.transport = "responses_websocket"` 时，repository 使用 run-scoped persistent WebSocket session：
 
 ```text
 sessionId -> ResponsesWsSessionPool -> response.create -> response.completed
@@ -112,6 +120,7 @@ sessionId -> ResponsesWsSessionPool -> response.create -> response.completed
 - connection key 包含 transport revision；request proxy / client 配置变更会触发 session 重建。
 - persistent session 路径失败时直接返回错误，不做 HTTP fallback。
 - session 出错时会从 pool 移除。
+- 用户取消生成时，gateway 会立即关闭该 WebSocket，使上游生成随连接中断；最终 run 清理仍保持幂等。
 - Agent run 完成、失败或取消后，runtime 会在最终状态写入之后异步关闭 provider session，清理动作不阻塞 `awaiting_commit` / `failed` / `cancelled` 落盘。
 
 ## 6. Native Metadata Fail-Fast

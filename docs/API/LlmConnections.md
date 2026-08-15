@@ -80,6 +80,7 @@ Agent System 负责把 Connection Manager 中的 chat-completion Model Target �
 - 启动 reconcile 或 Model Target 更新无法物化时，Agent System 会删除对应 `model-target-*` LLM Connection，让 Profile 诊断和运行按 missing connection fail-fast，而不是继续使用旧连接。
 - Profile 保存前会重新读取当前 Model Target 列表，再按 `connectionRef + modelId` 找到对应 target 并物化，避免打开面板后的旧快照覆盖新 connection。
 - Agent run 启动前会对当前 Profile 的 `model-target-*` binding 再执行一次同样的物化，确保 prompt assembly 与 runtime 看到 Connection Manager 中最新的 endpoint/provider/API key；该步骤按 `connectionRef` 找源 Model Target，不改写 Profile 的 `modelId`。
+- Model Target 会保真保存 Custom Claude prompt caching 与 Custom Responses WebSocket 等显式 native adapter opt-in，并物化到 `adapterHints`；这些字段不进入 prompt preset。
 - 删除 Model Target 不会自动删除已经物化的 LLM Connection。Profile 是否继续可运行由 `connectionRef` 指向的 LLM Connection 是否存在决定，避免 UI 清理操作隐式破坏已有 Profile。
 - `modelId` 属于 Profile binding，不属于 LLM Connection。更新 Model Target 的模型名不会静默改写已有 Profile；需要用户在 Profile 面板重新选择该 Model Target 才会采纳新的 `modelId`。
 

@@ -17,7 +17,7 @@
 - LLM 调用复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 和取消链路。Responses WebSocket 建连已收敛到 `HttpClientPool` 的 ChatCompletion WebSocket profile。
 - Tool loop 由 Rust runtime 独占推进，不递归调用前端 `Generate()`。
 - Agent runtime 已使用 canonical model IR，不再把 OpenAI-compatible raw JSON 当作运行时事实。
-- `provider_state` 已用于 run-scoped continuation。OpenAI Responses 通过它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
+- `provider_state` 已用于 run-scoped continuation。OpenAI Responses 默认走 portable HTTP/full replay；连接显式启用增强模式后才通过它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 - Agent Skill repository/service、导入导出、embedded skill 导入确认、`api.skill`、`skill.list` / `skill.search` / `skill.read` 已落地。
 - Agent Profile 基线已落地：built-in `default-writer`、file repository、resolver、run snapshot、tool/skill/workspace/output policy、tool budget 与 max rounds。
 - Profile `preset.mode = "ref"` 可加载独立 OpenAI/chat-completion preset；`model.mode = "connectionRef"` + `modelId` 可通过 LLM Connection 解耦 preset source/model，并在 runtime 发送前再次权威覆盖 payload。
@@ -102,7 +102,7 @@ AgentRuntimeService
 - request-scoped `AgentModelTool` 到 provider-facing function tools 的转换。
 - provider-specific schema sanitizer。Gemini / Gemini Interactions 会移除当前不兼容的 JSON Schema 关键字；Claude 只做轻量清洗；OpenAI / Responses 保持完整 schema。
 - OpenAI Responses 请求自动 include `reasoning.encrypted_content`。
-- Agent OpenAI Responses 续接会使用 `provider_state.previousResponseId` 注入 `previous_response_id`，并用 `messageCursor` 只发送新消息。
+- 显式启用 Responses WebSocket 模式后，Agent 会使用 `provider_state.previousResponseId` 注入 `previous_response_id`，并用 `messageCursor` 只发送新消息；默认 portable 模式发送完整 transcript/native replay。
 - Agent payload 内部字段 `_tauritavern_provider_state` 不进入 LLM API log，也不会发送给上游 provider。
 - missing `tool_call_id` fail-fast，不再 fallback 生成 `tool_call_{index}`。
 - response decode 保留 text、reasoning、tool calls、native metadata。
@@ -273,7 +273,7 @@ workspace.finish 收尾并提交 persist projection
 - `AgentModelGateway` 已拆成 `agent_model_gateway/` 模块目录：`mod.rs` wrapper、`encode.rs` / `decode.rs` 转换、`format.rs` 格式解析、`schema.rs` sanitizer、`provider_state.rs` continuation、`providers/*` provider-specific adapter。
 - canonical `AgentModelRequest` / `AgentModelResponse` 已取代 runtime 直接解析 OpenAI-shaped raw JSON。
 - OpenAI-compatible、OpenAI Responses、Claude Messages、Gemini、Gemini Interactions 的 provider format detection 与 schema sanitizer 已落地。
-- OpenAI Responses `provider_state.previousResponseId` / `messageCursor` 增量输入、persistent WebSocket 与 `_tauritavern_provider_state` 内部传递已落地。
+- OpenAI Responses portable HTTP/full replay 与显式 opt-in 的 `provider_state.previousResponseId` / `messageCursor` 增量输入、persistent WebSocket，以及 `_tauritavern_provider_state` 内部传递均已落地。
 - missing `tool_call_id`、same-provider native metadata loss、cross-provider private metadata 迁移均有 fail-fast / 测试守护。
 
 持续守护：

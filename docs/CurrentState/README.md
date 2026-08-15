@@ -69,7 +69,7 @@
 
 14. `docs/CurrentState/AgentProviderState.md`
    - Agent `provider_state` 当前契约
-   - 包含 run-scoped continuation、OpenAI Responses persistent WebSocket / incremental input / `previous_response_id`、内部字段剥离、native metadata fail-fast 与可观测性约束
+   - 包含 run-scoped continuation、OpenAI Responses portable full replay / 显式 WebSocket 增强模式、内部字段剥离、native metadata fail-fast 与可观测性约束
 
 15. `docs/CurrentState/CharacterIdentityContract.md`
    - 角色身份契约当前实现快照

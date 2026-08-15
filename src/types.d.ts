@@ -628,6 +628,8 @@ type TauriTavernLlmConnectionDefinition = {
         customIncludeHeaders?: string;
         customIncludeBody?: string;
         customExcludeBody?: string;
+        claudePromptCaching?: 'enabled';
+        openaiResponsesMode?: 'websocket';
     };
     capabilities?: {
         streaming?: string;

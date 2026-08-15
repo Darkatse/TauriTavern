@@ -1984,7 +1984,7 @@
                                             </span>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="makersuite,vertexai,aimlapi,openrouter,claude,electronhub,chutes,nanogpt">
+                                    <div class="range-block" data-source="makersuite,vertexai,aimlapi,openrouter,claude,electronhub,chutes,nanogpt,custom" data-custom-api-format="claude_messages,openai_responses">
                                         <label for="openai_enable_web_search" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_enable_web_search" type="checkbox" />
                                             <span data-i18n="Enable web search">Enable web search</span>
@@ -3959,13 +3959,22 @@
                                     <span data-i18n="completions note prefix"></span><code id="custom_endpoint_preview_suffix"></code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
                                 </small>
                             </div>
-                            <div id="custom_claude_prompt_caching_section" style="display: none;">
+                            <div id="custom_claude_prompt_caching_section" data-source="custom" data-custom-api-format="claude_messages" style="display: none;">
                                 <label class="checkbox_label marginTopBot5" for="custom_claude_prompt_caching">
                                     <input id="custom_claude_prompt_caching" type="checkbox" />
                                     <span data-i18n="Apply Claude Prompt Caching Strategy">Apply Claude Prompt Caching Strategy</span>
                                 </label>
                                 <div class="toggle-description justifyLeft wide100p">
                                     <span data-i18n="Apply Claude Prompt Caching Strategy Description">Opt in only if this endpoint supports Anthropic Claude prompt caching. TauriTavern will add Claude cache breakpoints and the required caching headers for Custom Claude Messages requests.</span>
+                                </div>
+                            </div>
+                            <div id="custom_openai_responses_websocket_section" data-source="custom" data-custom-api-format="openai_responses" style="display: none;">
+                                <label class="checkbox_label marginTopBot5" for="custom_openai_responses_websocket">
+                                    <input id="custom_openai_responses_websocket" type="checkbox" />
+                                    <span data-i18n="Enable Responses WebSocket Mode">Enable Responses WebSocket Mode</span>
+                                </label>
+                                <div class="toggle-description justifyLeft wide100p">
+                                    <span data-i18n="Enable Responses WebSocket Mode Description">Agent only. Opt in only if this endpoint supports the Responses WebSocket protocol and previous_response_id. TauriTavern will keep a run-scoped connection and send incremental inputs.</span>
                                 </div>
                             </div>
                             <h4>

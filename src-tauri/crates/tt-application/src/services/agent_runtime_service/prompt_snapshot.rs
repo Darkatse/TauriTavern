@@ -7,6 +7,7 @@ use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
 };
 use tt_domain::models::tool::ToolChoice;
+use tt_ports::repositories::chat_completion_repository::OPENAI_RESPONSES_WEBSOCKET_TRANSPORT;
 
 use super::invocation::model_session_id;
 
@@ -48,6 +49,34 @@ pub(super) fn prepare_agent_tool_request(
 ) -> Result<AgentModelRequest, ApplicationError> {
     reject_external_tool_request(&request.payload)?;
 
+    let responses_websocket = match request.payload.get("custom_openai_responses_websocket") {
+        Some(Value::Bool(enabled)) => *enabled,
+        Some(_) => {
+            return Err(ApplicationError::ValidationError(
+                "agent.responses_websocket_invalid: custom_openai_responses_websocket must be boolean"
+                    .to_string(),
+            ));
+        }
+        None => false,
+    };
+    if responses_websocket
+        && (request
+            .payload
+            .get("chat_completion_source")
+            .and_then(Value::as_str)
+            != Some("custom")
+            || request
+                .payload
+                .get("custom_api_format")
+                .and_then(Value::as_str)
+                != Some("openai_responses"))
+    {
+        return Err(ApplicationError::ValidationError(
+            "agent.responses_websocket_format_mismatch: Responses WebSocket mode requires chat_completion_source=custom and custom_api_format=openai_responses"
+                .to_string(),
+        ));
+    }
+
     let messages = messages_from_payload(&mut request.payload)?;
 
     request.payload.remove("tools");
@@ -56,16 +85,22 @@ pub(super) fn prepare_agent_tool_request(
         .payload
         .insert("stream".to_string(), Value::Bool(false));
 
+    let mut provider_state = json!({
+        "sessionId": model_session_id(run_id, invocation_id),
+        "runId": run_id,
+        "invocationId": invocation_id,
+    });
+    if responses_websocket {
+        provider_state["transport"] =
+            Value::String(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT.to_string());
+    }
+
     Ok(AgentModelRequest {
         payload: request.payload,
         messages,
         tools: tools.to_vec(),
         tool_choice,
-        provider_state: json!({
-            "sessionId": model_session_id(run_id, invocation_id),
-            "runId": run_id,
-            "invocationId": invocation_id,
-        }),
+        provider_state,
     })
 }
 
@@ -354,6 +389,50 @@ mod tests {
         );
         assert_eq!(message_text(&request, 2), "hello");
         assert_eq!(request.tool_choice, ToolChoice::Auto);
+    }
+
+    #[test]
+    fn responses_websocket_mode_is_an_explicit_agent_transport() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "chat_completion_source": "custom",
+                "custom_api_format": "openai_responses",
+                "custom_openai_responses_websocket": true,
+                "messages": [{ "role": "user", "content": "hello" }]
+            }
+        }))
+        .expect("request");
+
+        let request =
+            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
+                .expect("agent request");
+
+        assert_eq!(
+            request.provider_state["transport"],
+            json!("responses_websocket")
+        );
+    }
+
+    #[test]
+    fn responses_websocket_mode_rejects_other_provider_formats() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "chat_completion_source": "custom",
+                "custom_api_format": "openai_compat",
+                "custom_openai_responses_websocket": true,
+                "messages": [{ "role": "user", "content": "hello" }]
+            }
+        }))
+        .expect("request");
+
+        let error =
+            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
+                .expect_err("format mismatch must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("responses_websocket_format_mismatch")
+        );
     }
 
     #[test]

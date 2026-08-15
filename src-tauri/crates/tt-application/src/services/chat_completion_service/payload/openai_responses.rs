@@ -103,13 +103,20 @@ fn build_openai_responses_payload(
         request.insert("text".to_string(), json!({ "verbosity": verbosity }));
     }
 
-    if let Some(tools) = payload.get("tools").and_then(Value::as_array)
-        && !tools.is_empty()
+    let mut tools = payload
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| map_openai_tools_to_responses(tools))
+        .unwrap_or_default();
+    if payload.get("enable_web_search").and_then(Value::as_bool) == Some(true)
+        && !tools
+            .iter()
+            .any(|tool| tool.get("type").and_then(Value::as_str) == Some("web_search"))
     {
-        request.insert(
-            "tools".to_string(),
-            Value::Array(map_openai_tools_to_responses(tools)),
-        );
+        tools.insert(0, json!({ "type": "web_search" }));
+    }
+    if !tools.is_empty() {
+        request.insert("tools".to_string(), Value::Array(tools));
 
         if let Some(tool_choice) = payload.get("tool_choice") {
             request.insert(
@@ -1116,6 +1123,26 @@ mod tests {
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["name"], "get_weather");
         assert_eq!(tools[0]["strict"], false);
+    }
+
+    #[test]
+    fn openai_responses_web_search_adds_hosted_tool_once() {
+        for tools in [json!([]), json!([{ "type": "web_search" }])] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": "openai_responses",
+                "model": "deepseek-chat",
+                "messages": [{ "role": "user", "content": "latest news" }],
+                "enable_web_search": true,
+                "tools": tools
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let (_, upstream) = build(payload).expect("web search should map");
+            assert_eq!(upstream["tools"], json!([{ "type": "web_search" }]));
+        }
     }
 
     #[test]

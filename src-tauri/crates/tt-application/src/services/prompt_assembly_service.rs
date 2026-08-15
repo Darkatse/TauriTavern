@@ -62,7 +62,6 @@ const MODEL_PROMPT_SETTING_KEYS: &[&str] = &[
 ];
 const PROMPT_CONNECTION_EXTRA_SETTING_KEYS: &[&str] = &[
     "additional_parameters_by_source",
-    "custom_claude_prompt_caching",
     "azure_base_url",
     "azure_deployment_name",
     "azure_api_version",

@@ -62,6 +62,7 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
         "custom_exclude_body",
         "custom_include_headers",
         "custom_claude_prompt_caching",
+        "custom_openai_responses_websocket",
         "custom_url",
         "secret_id",
         "bypass_status_check",
