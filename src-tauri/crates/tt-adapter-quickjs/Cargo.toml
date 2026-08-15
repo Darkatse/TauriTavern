@@ -15,5 +15,11 @@ tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 path-clean = "1.0"
 
+# Android 目标没有预生成的 rquickjs 绑定（bindings/aarch64-linux-android.rs
+# 等不存在），需开启 bindgen 在编译期实时生成。desktop 平台继续用预生成绑定，
+# 不引入 bindgen/libclang 依赖。
+[target.'cfg(target_os = "android")'.dependencies]
+rquickjs = { version = "0.9", features = ["bindgen"] }
+
 [dev-dependencies]
 tempfile = "3"
