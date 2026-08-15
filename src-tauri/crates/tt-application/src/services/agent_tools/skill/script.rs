@@ -16,11 +16,11 @@ use tt_domain::models::tool::ToolInvocation;
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 use tt_ports::skill_script::{SkillScriptEngine, SkillScriptRequest};
 
-const SKILL_SCRIPT_INVALID_NAME: &str = "skill.script_invalid_name";
-const SKILL_SCRIPT_SKILL_NOT_VISIBLE: &str = "skill.script_skill_not_visible";
-const SKILL_SCRIPT_NOT_FOUND: &str = "skill.script_not_found";
-const SKILL_SCRIPT_EXECUTION_FAILED: &str = "skill.script_execution_failed";
-const SKILL_SCRIPT_RESULT_TOO_LARGE: &str = "skill.script_result_too_large";
+const SKILL_SCRIPT_INVALID_NAME: &str = "skill.run_script_invalid_name";
+const SKILL_SCRIPT_SKILL_NOT_VISIBLE: &str = "skill.run_script_skill_not_visible";
+const SKILL_SCRIPT_NOT_FOUND: &str = "skill.run_script_not_found";
+const SKILL_SCRIPT_EXECUTION_FAILED: &str = "skill.run_script_execution_failed";
+const SKILL_SCRIPT_RESULT_TOO_LARGE: &str = "skill.run_script_result_too_large";
 
 pub(in crate::services::agent_tools) async fn script(
     skill_service: &SkillService,
@@ -144,7 +144,7 @@ pub(in crate::services::agent_tools) async fn script(
         .unwrap_or_default();
 
     tracing::info!(
-        "skill.script invoked: skill=`{skill}` script=`{script}` args={} work_dir={}",
+        "skill.run_script invoked: skill=`{skill}` script=`{script}` args={} work_dir={}",
         serde_json::to_string(&script_args).unwrap_or_else(|_| "<unserializable>".to_string()),
         work_dir.display()
     );
@@ -164,7 +164,7 @@ pub(in crate::services::agent_tools) async fn script(
         Ok(result) => result.value,
         Err(DomainError::SkillScriptExecutionFailed { message }) => {
             tracing::warn!(
-                "skill.script execution failed for skill `{skill}` script `{script}`: {message}"
+                "skill.run_script execution failed for skill `{skill}` script `{script}`: {message}"
             );
             return Ok((
                 tool_error(call, SKILL_SCRIPT_EXECUTION_FAILED, &message),
@@ -176,7 +176,7 @@ pub(in crate::services::agent_tools) async fn script(
             limit_bytes,
         }) => {
             tracing::warn!(
-                "skill.script result too large for skill `{skill}` script `{script}`: {actual_bytes} bytes (limit {limit_bytes})"
+                "skill.run_script result too large for skill `{skill}` script `{script}`: {actual_bytes} bytes (limit {limit_bytes})"
             );
             return Ok((
                 tool_error(
@@ -196,7 +196,7 @@ pub(in crate::services::agent_tools) async fn script(
     let content = format!("Executed skill script `{skill}/scripts/{script}.js`. Result:\n{rendered}");
 
     tracing::info!(
-        "skill.script completed: skill=`{skill}` script=`{script}` result_bytes={}",
+        "skill.run_script completed: skill=`{skill}` script=`{script}` result_bytes={}",
         rendered.len()
     );
 
@@ -561,7 +561,7 @@ mod tests {
     fn call(arguments: Value) -> ToolInvocation {
         ToolInvocation {
             call_id: "call_skill_script".to_string(),
-            tool_id: ToolId::builtin("skill.script").unwrap(),
+            tool_id: ToolId::builtin("skill.run_script").unwrap(),
             arguments,
             provider_metadata: Value::Null,
         }
@@ -652,7 +652,7 @@ mod tests {
         assert!(result.is_error);
         assert_eq!(
             result.error_code.as_deref(),
-            Some("skill.script_invalid_name")
+            Some("skill.run_script_invalid_name")
         );
         assert!(result.content.contains("SKILL.md"));
     }
@@ -667,7 +667,7 @@ mod tests {
         .await;
         assert_eq!(
             result.error_code.as_deref(),
-            Some("skill.script_skill_not_visible")
+            Some("skill.run_script_skill_not_visible")
         );
     }
 
@@ -680,7 +680,7 @@ mod tests {
         .await;
         assert_eq!(
             result.error_code.as_deref(),
-            Some("skill.script_not_found")
+            Some("skill.run_script_not_found")
         );
     }
 
@@ -693,7 +693,7 @@ mod tests {
         .await;
         assert_eq!(
             result.error_code.as_deref(),
-            Some("skill.script_execution_failed")
+            Some("skill.run_script_execution_failed")
         );
         assert!(result.content.contains("TypeError: x is not a function"));
         assert!(result.content.contains("helper.js:3:9"));
@@ -711,7 +711,7 @@ mod tests {
         .await;
         assert_eq!(
             result.error_code.as_deref(),
-            Some("skill.script_result_too_large")
+            Some("skill.run_script_result_too_large")
         );
         assert!(result.content.contains("$fs.writeText"));
     }

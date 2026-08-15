@@ -93,10 +93,8 @@ pub(in crate::services::agent_tools) fn skill_read_descriptor() -> ToolDescripto
 pub(in crate::services::agent_tools) fn skill_script_descriptor() -> ToolDescriptor {
     ToolDescriptor {
         id: ToolId::builtin(SKILL_SCRIPT).expect("builtin tool name must be valid"),
-        title: Some("Skill Script".to_string()),
-        description: Some(
-            "Run a JavaScript script shipped by a visible installed Agent Skill in a sandboxed engine. The skill's SKILL.md documents each script's arguments and return value. Scripts run with $fs access limited to this run's workspace and cannot access the network.".to_string(),
-        ),
+        title: Some("Run Skill Script".to_string()),
+        description: Some("Run a JavaScript script shipped with an installed Agent Skill in a sandboxed engine. Each script's arguments and return value are documented in the skill's SKILL.md — read it before calling. Scripts can only read and write this run's workspace and cannot access the network.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,

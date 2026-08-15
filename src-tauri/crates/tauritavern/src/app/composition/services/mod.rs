@@ -127,7 +127,7 @@ pub(super) async fn build(
         repositories.secret_repository.clone(),
         ios_policy.clone(),
     ));
-    // 公共 skill 脚本库目录（{data_root}/skill-libs/），供 skill.script 沙箱
+    // 公共 skill 脚本库目录（{data_root}/skill-libs/），供 skill.run_script 沙箱
     // 的裸模块加载白名单使用；目录无需预先存在。
     let skill_script_engine: Arc<dyn SkillScriptEngine> = Arc::new(QuickJsScriptEngine::new(
         data_directory.root().join("skill-libs"),

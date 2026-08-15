@@ -373,7 +373,7 @@ mod tests {
         assert!(
             registry
                 .catalog()
-                .get(&ToolId::builtin("skill.script").unwrap())
+                .get(&ToolId::builtin("skill.run_script").unwrap())
                 .is_some()
         );
         for descriptor in registry.catalog().iter() {

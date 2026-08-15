@@ -81,7 +81,7 @@ impl SkillService {
         Ok(self.repository.read_skill_file(request).await?)
     }
 
-    /// 解析已安装 skill 包内文件的规范化绝对物理路径（供 skill.script 引擎定位入口脚本）。
+    /// 解析已安装 skill 包内文件的规范化绝对物理路径（供 skill.run_script 引擎定位入口脚本）。
     pub async fn skill_file_path(
         &self,
         scope: SkillScope,

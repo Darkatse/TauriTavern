@@ -16,4 +16,4 @@ pub(super) use self::search::search;
 pub(super) const SKILL_LIST: &str = "skill.list";
 pub(super) const SKILL_SEARCH: &str = "skill.search";
 pub(super) const SKILL_READ: &str = "skill.read";
-pub(super) const SKILL_SCRIPT: &str = "skill.script";
+pub(super) const SKILL_SCRIPT: &str = "skill.run_script";
