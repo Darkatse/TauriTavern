@@ -41,18 +41,14 @@ release
 .flatpak-builder/
 packaging/flatpak/build-identity.env
 
-<<<<<<< HEAD
-# Dependencies
-node_modules/
-venv/
-.venv/
-__pycache__/
-.mypy_cache/
-.pytest_cache/
-=======
 # Local upstream checkout (junction/symlink)
 sillytavern-*
 
 # Local cargo home cache
->>>>>>> b3903d56... fix: restore original .gitignore overwritten by accident
 .cargo-home/
+
+# Local pnpm build caches (sandbox workarounds)
+.pnpm-store/
+.pnpm-cache/
+.pnpm-home/
+.tmp/
