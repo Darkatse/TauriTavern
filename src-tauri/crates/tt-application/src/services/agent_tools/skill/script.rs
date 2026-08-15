@@ -143,6 +143,12 @@ pub(in crate::services::agent_tools) async fn script(
         })
         .unwrap_or_default();
 
+    tracing::info!(
+        "skill.script invoked: skill=`{skill}` script=`{script}` args={} work_dir={}",
+        serde_json::to_string(&script_args).unwrap_or_else(|_| "<unserializable>".to_string()),
+        work_dir.display()
+    );
+
     let outcome = engine
         .execute(SkillScriptRequest {
             script_path,
@@ -157,6 +163,9 @@ pub(in crate::services::agent_tools) async fn script(
     let value = match outcome {
         Ok(result) => result.value,
         Err(DomainError::SkillScriptExecutionFailed { message }) => {
+            tracing::warn!(
+                "skill.script execution failed for skill `{skill}` script `{script}`: {message}"
+            );
             return Ok((
                 tool_error(call, SKILL_SCRIPT_EXECUTION_FAILED, &message),
                 AgentToolEffect::None,
@@ -166,6 +175,9 @@ pub(in crate::services::agent_tools) async fn script(
             actual_bytes,
             limit_bytes,
         }) => {
+            tracing::warn!(
+                "skill.script result too large for skill `{skill}` script `{script}`: {actual_bytes} bytes (limit {limit_bytes})"
+            );
             return Ok((
                 tool_error(
                     call,
@@ -182,6 +194,11 @@ pub(in crate::services::agent_tools) async fn script(
 
     let rendered = serde_json::to_string(&value).unwrap_or_else(|_| value.to_string());
     let content = format!("Executed skill script `{skill}/scripts/{script}.js`. Result:\n{rendered}");
+
+    tracing::info!(
+        "skill.script completed: skill=`{skill}` script=`{script}` result_bytes={}",
+        rendered.len()
+    );
 
     Ok((
         AgentToolResult {
