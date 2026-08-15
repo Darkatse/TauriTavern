@@ -30,16 +30,6 @@ impl AgentRuntimeService {
         effective_skills: Vec<SkillIndexEntry>,
         mut cancel: AgentCancelReceiver,
     ) {
-        tracing::info!(
-            "agent.run_started: run={} profile={} skills={}",
-            run_id,
-            resolved_profile.id.as_str(),
-            effective_skills
-                .iter()
-                .map(|skill| skill.name.as_str())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
         let mut commit_ledger = RunCommitLedger::default();
         let result = self
             .execute_agent_loop_run_body(

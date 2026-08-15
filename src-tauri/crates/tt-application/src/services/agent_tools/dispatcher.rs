@@ -117,13 +117,7 @@ impl AgentToolDispatcher {
         model_workspace_repository: &dyn WorkspaceRepository,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
-        let tool_name = builtin_tool_name(&call.tool_id)?;
-        tracing::info!(
-            "agent.tool_dispatch: run={} tool={tool_name} call={}",
-            run_id,
-            call.call_id
-        );
-        let outcome = match tool_name {
+        let outcome = match builtin_tool_name(&call.tool_id)? {
             chat::CHAT_SEARCH => {
                 chat::search(
                     self.run_repository.as_ref(),
