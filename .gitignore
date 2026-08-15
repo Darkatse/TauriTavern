@@ -12,6 +12,10 @@
 # Editors
 .vscode/
 .idea/
+.trae/
+
+# Local cache
+.cache/
 
 # Dependencies
 node_modules/
