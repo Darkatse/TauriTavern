@@ -47,6 +47,9 @@ sillytavern-*
 # Local cargo home cache
 .cargo-home/
 
+# Local cargo config (machine-specific target-dir redirect)
+.cargo/
+
 # Local pnpm build caches (sandbox workarounds)
 .pnpm-store/
 .pnpm-cache/
