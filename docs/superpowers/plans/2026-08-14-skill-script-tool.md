@@ -63,7 +63,7 @@
 - 修改：`src-tauri/crates/tt-domain/src/models.rs`（若是 `models/mod.rs` 目录则改该文件）
 - 修改：`src-tauri/crates/tt-application/src/errors.rs`
 
-- [ ] **步骤 1.1：编写失败的测试（错误变体）**
+- [x] **步骤 1.1：编写失败的测试（错误变体）**
 
 在 `tt-domain/src/errors.rs` 的 `mod tests` 中追加：
 
@@ -95,12 +95,12 @@
     }
 ```
 
-- [ ] **步骤 1.2：运行测试验证失败**
+- [x] **步骤 1.2：运行测试验证失败**
 
 运行：`cargo test -p tt-domain --lib errors`
 预期：FAIL，报 `no variant named SkillScriptExecutionFailed`
 
-- [ ] **步骤 1.3：实现错误变体**
+- [x] **步骤 1.3：实现错误变体**
 
 在 `tt-domain/src/errors.rs` 的 `DomainError` 枚举中、`WorkspaceWriteConflict` 变体之后追加（并在 `impl DomainError` 中补构造器）：
 
@@ -123,12 +123,12 @@
     }
 ```
 
-- [ ] **步骤 1.4：运行测试验证通过**
+- [x] **步骤 1.4：运行测试验证通过**
 
 运行：`cargo test -p tt-domain --lib errors`
 预期：PASS
 
-- [ ] **步骤 1.5：编写失败的测试（ActivatedWorldInfoEntry）**
+- [x] **步骤 1.5：编写失败的测试（ActivatedWorldInfoEntry）**
 
 创建 `tt-domain/src/models/skill_script.rs`，先只写测试模块（文件顶部暂留空实现占位会导致编译失败，直接写测试 + 空结构体定义）：
 
@@ -209,12 +209,12 @@ mod tests {
 pub mod skill_script;
 ```
 
-- [ ] **步骤 1.6：运行测试验证失败**
+- [x] **步骤 1.6：运行测试验证失败**
 
 运行：`cargo test -p tt-domain --lib models::skill_script`
 预期：FAIL，报 `from_value` 未定义
 
-- [ ] **步骤 1.7：实现 from_value**
+- [x] **步骤 1.7：实现 from_value**
 
 在 `skill_script.rs` 的 `impl ActivatedWorldInfoEntry` 中实现（对齐 `agent_tools/world_info/read_activated.rs` 的 normalize 语义）：
 
@@ -262,12 +262,12 @@ impl ActivatedWorldInfoEntry {
 }
 ```
 
-- [ ] **步骤 1.8：运行测试验证通过**
+- [x] **步骤 1.8：运行测试验证通过**
 
 运行：`cargo test -p tt-domain`
 预期：PASS（全部）
 
-- [ ] **步骤 1.9：修复 tt-application 的穷尽匹配并补测试**
+- [x] **步骤 1.9：修复 tt-application 的穷尽匹配并补测试**
 
 `cargo check -p tt-application` 会因 `From<DomainError>` 非穷尽而失败。在 `tt-application/src/errors.rs` 的 `impl From<DomainError> for ApplicationError` 中追加两个映射臂：
 
@@ -307,7 +307,7 @@ impl ActivatedWorldInfoEntry {
 运行：`cargo test -p tt-application --lib errors`
 预期：PASS
 
-- [ ] **步骤 1.10：边界检查 + Commit**
+- [x] **步骤 1.10：边界检查 + Commit**
 
 运行：`node scripts/check-rust-crate-boundaries.mjs`
 预期：通过（domain 未引入违禁依赖；serde_json 为 domain 既有依赖）
@@ -333,7 +333,7 @@ git commit -m "feat(skill-script): add domain error variants and world info scri
 - 修改：`src-tauri/crates/tt-application/src/services/skill_service.rs`（fake 补方法）
 - 修改：`src-tauri/crates/tt-application/src/services/agent_tools/workspace/tests.rs`（fake 补方法）
 
-- [ ] **步骤 2.1：编写失败的测试（skill_file_path）**
+- [x] **步骤 2.1：编写失败的测试（skill_file_path）**
 
 在 `file_skill_repository/tests.rs` 末尾追加（复用现有 `temp_root` / `global_scope` / `inline_skill` / `SkillInstallRequest` 基建，参照 `installs_inline_skill_and_reads_file` 测试）：
 
@@ -412,12 +412,12 @@ async fn skill_file_path_rejects_paths_outside_scripts_dir() {
 
 注意：`skill_file_path` 走 trait 调用时需要 `use tt_ports::repositories::skill_repository::SkillRepository;`（tests.rs 顶部已有）。
 
-- [ ] **步骤 2.2：运行测试验证失败**
+- [x] **步骤 2.2：运行测试验证失败**
 
 运行：`cargo test -p tt-adapter-storage-userdata skill_file_path`
 预期：FAIL，报 trait 无 `skill_file_path` 方法
 
-- [ ] **步骤 2.3：port trait + 实现 + fake 修复**
+- [x] **步骤 2.3：port trait + 实现 + fake 修复**
 
 在 `tt-ports/src/repositories/skill_repository.rs` 的 `SkillRepository` trait 中、`read_skill_file` 之前追加：
 
@@ -510,12 +510,12 @@ async fn skill_file_path_rejects_paths_outside_scripts_dir() {
         }
 ```
 
-- [ ] **步骤 2.4：运行测试验证通过**
+- [x] **步骤 2.4：运行测试验证通过**
 
 运行：`cargo test -p tt-adapter-storage-userdata skill_file_path`
 预期：PASS（3 个测试）
 
-- [ ] **步骤 2.5：编写失败的测试（run_workspace_root）**
+- [x] **步骤 2.5：编写失败的测试（run_workspace_root）**
 
 在 `file_agent_repository/tests.rs` 中追加（`initialize_run` 的 profile 参数复用本文件 round-trip 测试 `repository_round_trips_run_workspace_event_and_checkpoint` 所用的 profile helper；若 helper 名不同以现有代码为准）：
 
@@ -551,12 +551,12 @@ async fn run_workspace_root_returns_existing_canonical_run_dir() {
 
 （若 `sample_resolved_profile` 不存在，使用 round-trip 测试中构造 `ResolvedAgentProfile` 的现有 helper/内联字面量。）
 
-- [ ] **步骤 2.6：运行测试验证失败**
+- [x] **步骤 2.6：运行测试验证失败**
 
 运行：`cargo test -p tt-adapter-storage-userdata run_workspace_root`
 预期：FAIL，报 trait 无 `run_workspace_root` 方法
 
-- [ ] **步骤 2.7：port trait + 实现 + fake 修复**
+- [x] **步骤 2.7：port trait + 实现 + fake 修复**
 
 在 `tt-ports/src/repositories/workspace_repository.rs` 的 `WorkspaceRepository` trait 中追加：
 
@@ -597,7 +597,7 @@ async fn run_workspace_root_returns_existing_canonical_run_dir() {
 
 - 若 `agent_runtime_service/delegation/workspace_policy.rs` 的 `InvocationWorkspaceRepository`（第二处实现）因此编译失败，为其补一个基于其内部存储的等价实现或 `unreachable!`（阅读该文件后选择：该实现包装 model workspace repository，可直接委托 `self.inner.run_workspace_root(run_id)`，以其真实结构为准）。
 
-- [ ] **步骤 2.8：运行测试验证通过**
+- [x] **步骤 2.8：运行测试验证通过**
 
 ```bash
 cargo test -p tt-adapter-storage-userdata run_workspace_root
@@ -605,7 +605,7 @@ cargo test -p tt-application --lib services::agent_tools::workspace
 ```
 预期：全部 PASS
 
-- [ ] **步骤 2.9：SkillService 暴露 skill_file_path**
+- [x] **步骤 2.9：SkillService 暴露 skill_file_path**
 
 在 `tt-application/src/services/skill_service.rs` 中（紧邻 `read_skill_file` 方法）追加：
 
@@ -629,7 +629,7 @@ cargo test -p tt-application --lib services::agent_tools::workspace
 运行：`cargo check -p tt-application`
 预期：通过
 
-- [ ] **步骤 2.10：Commit**
+- [x] **步骤 2.10：Commit**
 
 ```bash
 git add src-tauri/crates/tt-ports/src/repositories/skill_repository.rs src-tauri/crates/tt-ports/src/repositories/workspace_repository.rs src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_skill_repository/ src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/ src-tauri/crates/tt-application/src/services/skill_service.rs src-tauri/crates/tt-application/src/services/agent_tools/workspace/tests.rs src-tauri/crates/tt-application/src/services/agent_runtime_service/delegation/workspace_policy.rs
@@ -645,7 +645,7 @@ git commit -m "feat(skill-script): expose skill file and run workspace physical 
 - 修改：`src-tauri/crates/tt-ports/src/lib.rs`
 - 重写：`src-tauri/crates/tt-adapter-quickjs/src/sandbox.rs`
 
-- [ ] **步骤 3.1：定义 port（纯契约，编译即验证）**
+- [x] **步骤 3.1：定义 port（纯契约，编译即验证）**
 
 创建 `tt-ports/src/skill_script.rs`：
 
@@ -701,7 +701,7 @@ pub mod skill_script;
 运行：`cargo check -p tt-ports`
 预期：通过
 
-- [ ] **步骤 3.2：编写失败的测试（SandboxIoPolicy）**
+- [x] **步骤 3.2：编写失败的测试（SandboxIoPolicy）**
 
 重写 `tt-adapter-quickjs/src/sandbox.rs`，先写测试与结构骨架（实现体先不写）：
 
@@ -821,12 +821,12 @@ mod tests {
 }
 ```
 
-- [ ] **步骤 3.3：运行测试验证失败**
+- [x] **步骤 3.3：运行测试验证失败**
 
 运行：`cargo test -p tt-adapter-quickjs sandbox`
 预期：FAIL，报 `check_read`/`resolve_module` 等方法未定义
 
-- [ ] **步骤 3.4：实现 SandboxIoPolicy**
+- [x] **步骤 3.4：实现 SandboxIoPolicy**
 
 在 `sandbox.rs` 的 `impl SandboxIoPolicy` 中追加：
 
@@ -927,12 +927,12 @@ mod tests {
         assert!(index.to_string_lossy().contains("markdown"));
 ```
 
-- [ ] **步骤 3.5：运行测试验证通过**
+- [x] **步骤 3.5：运行测试验证通过**
 
 运行：`cargo test -p tt-adapter-quickjs sandbox`
 预期：PASS（5 个测试）
 
-- [ ] **步骤 3.6：Commit**
+- [x] **步骤 3.6：Commit**
 
 ```bash
 git add src-tauri/crates/tt-ports/src/skill_script.rs src-tauri/crates/tt-ports/src/lib.rs src-tauri/crates/tt-ports/Cargo.toml src-tauri/crates/tt-adapter-quickjs/src/sandbox.rs
@@ -954,7 +954,7 @@ git commit -m "feat(skill-script): add SkillScriptEngine port and sandbox IO pol
 - 删除：`src-tauri/crates/tt-adapter-quickjs/src/tool/`（descriptor.rs、executor.rs、mod.rs）
 - 修改：`src-tauri/crates/tt-adapter-quickjs/Cargo.toml`
 
-- [ ] **步骤 4.1：Cargo.toml 与模块布局调整**
+- [x] **步骤 4.1：Cargo.toml 与模块布局调整**
 
 `tt-adapter-quickjs/Cargo.toml` 依赖区改为（去掉 `anyhow`、`thiserror`；其余保留）：
 
@@ -1004,7 +1004,7 @@ pub(crate) use log::register_log_api;
 pub(crate) use world_info::register_world_info_api;
 ```
 
-- [ ] **步骤 4.2：convert.rs（JSON ↔ JS 值转换）**
+- [x] **步骤 4.2：convert.rs（JSON ↔ JS 值转换）**
 
 创建 `src/convert.rs`：
 
@@ -1094,7 +1094,7 @@ fn as_exact_int(value: f64) -> Option<i64> {
 }
 ```
 
-- [ ] **步骤 4.3：重写 api/fs.rs（同步 std::fs + 门控）**
+- [x] **步骤 4.3：重写 api/fs.rs（同步 std::fs + 门控）**
 
 ```rust
 //! `$fs`：受 SandboxIoPolicy 门控的同步文件 API（执行线程已在 spawn_blocking 中）。
@@ -1194,7 +1194,7 @@ pub(crate) fn register_fs_api<'js>(
 }
 ```
 
-- [ ] **步骤 4.4：重写 api/world_info.rs 与 api/log.rs**
+- [x] **步骤 4.4：重写 api/world_info.rs 与 api/log.rs**
 
 `world_info.rs`（改用 domain 模型，产出 JSON 后经 convert 注入）：
 
@@ -1322,7 +1322,7 @@ pub(crate) fn register_log_api<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<()> {
 }
 ```
 
-- [ ] **步骤 4.5：编写失败的引擎测试**
+- [x] **步骤 4.5：编写失败的引擎测试**
 
 重写 `engine.rs`——先写测试模块（实现骨架为空函数签名，测试无法编译/失败即满足）：
 
@@ -1659,12 +1659,12 @@ mod tests {
 }
 ```
 
-- [ ] **步骤 4.6：运行测试验证失败**
+- [x] **步骤 4.6：运行测试验证失败**
 
 运行：`cargo test -p tt-adapter-quickjs`
 预期：FAIL（`SkillScriptEngine` 未实现）
 
-- [ ] **步骤 4.7：实现引擎**
+- [x] **步骤 4.7：实现引擎**
 
 在 `engine.rs` 中补全（与上方结构体定义合并）：
 
@@ -1855,12 +1855,12 @@ fn format_exception(ctx: &Ctx<'_>, error: &rquickjs::Error) -> String {
 - `Module::evaluate` 的泛型参数按 0.9 实际签名调整。
 - Windows 路径含 `\` 时模块名比较使用 `PathBuf::starts_with`（已按此写）。
 
-- [ ] **步骤 4.8：运行测试验证通过**
+- [x] **步骤 4.8：运行测试验证通过**
 
 运行：`cargo test -p tt-adapter-quickjs`
 预期：PASS（sandbox 5 + engine 10）
 
-- [ ] **步骤 4.9：边界检查 + Commit**
+- [x] **步骤 4.9：边界检查 + Commit**
 
 运行：`node scripts/check-rust-crate-boundaries.mjs`
 预期：通过（adapter 不引用 tt_application/tauritavern/tauri）
@@ -1882,7 +1882,7 @@ git commit -m "feat(skill-script): rewrite quickjs engine as isolated SkillScrip
 - 修改：`src-tauri/crates/tt-application/src/services/agent_tools/dispatcher.rs`
 - 修改：`src-tauri/crates/tt-application/src/services/agent_runtime_service.rs`
 
-- [ ] **步骤 5.1：编写失败的处理器测试**
+- [x] **步骤 5.1：编写失败的处理器测试**
 
 创建 `skill/script.rs`，先写处理器签名骨架与完整测试模块：
 
@@ -2225,12 +2225,12 @@ mod tests {
 
 **实现者注**：测试 helper 中 `run` / `run_with_repo` / `run_with_outcome` / `base_profile` 由上述注释语义补全为具体函数——`base_profile` 直接照抄 `registry.rs` 测试里 `profile_with_skill_budget` 的字段字面量（那个函数是私有的，不能跨模块引用，需要复制），仅改 `skills.visible`、`workspace` 两处。`FakeWorkspaceRepo` 其余 trait 方法按 `workspace_repository.rs` 的 trait 定义逐个补 `unreachable!("not needed")`。
 
-- [ ] **步骤 5.2：运行测试验证失败**
+- [x] **步骤 5.2：运行测试验证失败**
 
 运行：`cargo test -p tt-application --lib services::agent_tools::skill`
 预期：FAIL（`script` 为 `unreachable!`）
 
-- [ ] **步骤 5.3：实现处理器**
+- [x] **步骤 5.3：实现处理器**
 
 替换 `script` 函数体：
 
@@ -2419,12 +2419,12 @@ pub(in crate::services::agent_tools) async fn script(
 }
 ```
 
-- [ ] **步骤 5.4：运行测试验证通过**
+- [x] **步骤 5.4：运行测试验证通过**
 
 运行：`cargo test -p tt-application --lib services::agent_tools::skill`
 预期：PASS（含既有 skill 测试）
 
-- [ ] **步骤 5.5：descriptor + 常量 + 注册**
+- [x] **步骤 5.5：descriptor + 常量 + 注册**
 
 `skill/mod.rs` 改为：
 
@@ -2503,7 +2503,7 @@ pub(in crate::services::agent_tools) fn skill_script_descriptor() -> ToolDescrip
         );
 ```
 
-- [ ] **步骤 5.6：dispatcher + runtime service**
+- [x] **步骤 5.6：dispatcher + runtime service**
 
 `dispatcher.rs`：
 1. 导入区追加：
@@ -2541,12 +2541,12 @@ use tt_ports::skill_script::SkillScriptEngine;
 
 `agent_runtime_service.rs`：`new` 参数列表末尾追加 `skill_script_engine: Arc<dyn SkillScriptEngine>,`（导入 `use tt_ports::skill_script::SkillScriptEngine;`），并在 `AgentToolDispatcher::new(...)` 调用末尾传入 `skill_script_engine,`。`#[expect(clippy::too_many_arguments)]` 已存在，无需改动。
 
-- [ ] **步骤 5.7：运行全部应用层测试**
+- [x] **步骤 5.7：运行全部应用层测试**
 
 运行：`cargo test -p tt-application`
 预期：PASS（含 registry 20 断言与所有既有测试）
 
-- [ ] **步骤 5.8：Commit**
+- [x] **步骤 5.8：Commit**
 
 ```bash
 git add src-tauri/crates/tt-application/
@@ -2562,7 +2562,7 @@ git commit -m "feat(skill-script): register skill.script builtin tool with dispa
 - 修改：`src-tauri/crates/tauritavern/src/app/composition/services/mod.rs`
 - 修改：`src-tauri/crates/tauritavern/src/app/composition/services/agent.rs`
 
-- [ ] **步骤 6.1：host 依赖**
+- [x] **步骤 6.1：host 依赖**
 
 `tauritavern/Cargo.toml` `[dependencies]` 中按现有 tt-adapter 依赖格式追加：
 
@@ -2570,7 +2570,7 @@ git commit -m "feat(skill-script): register skill.script builtin tool with dispa
 tt-adapter-quickjs = { path = "../tt-adapter-quickjs" }
 ```
 
-- [ ] **步骤 6.2：装配引擎（编译即验证，无独立单测）**
+- [x] **步骤 6.2：装配引擎（编译即验证，无独立单测）**
 
 `composition/services/mod.rs`：导入区追加：
 
@@ -2602,12 +2602,12 @@ use tt_ports::skill_script::SkillScriptEngine;
 运行：`cargo check -p tauritavern`
 预期：通过
 
-- [ ] **步骤 6.3：crate 边界检查**
+- [x] **步骤 6.3：crate 边界检查**
 
 运行：`node scripts/check-rust-crate-boundaries.mjs`
 预期：通过（tauritavern host 允许依赖 adapter；tt-application 未新增 adapter 依赖——它只依赖 tt-ports）
 
-- [ ] **步骤 6.4：全量 harness**
+- [x] **步骤 6.4：全量 harness**
 
 ```bash
 cargo test -p tt-domain -p tt-ports -p tt-adapter-quickjs -p tt-adapter-storage-userdata -p tt-application
@@ -2615,7 +2615,7 @@ pnpm run check
 ```
 预期：全部通过（`pnpm run check` 为项目强制门槛）
 
-- [ ] **步骤 6.5：Commit**
+- [x] **步骤 6.5：Commit**
 
 ```bash
 git add src-tauri/crates/tauritavern/Cargo.toml src-tauri/crates/tauritavern/src/app/composition/services/mod.rs src-tauri/crates/tauritavern/src/app/composition/services/agent.rs src-tauri/Cargo.lock
