@@ -83,8 +83,11 @@ test('task failures are reported without wedging future requests', async () => {
     assert.match(errors[0].message, /expected failure/);
 });
 
-test('PromptManager keeps dry-run rendering wired through the latest-task scheduler', async () => {
+test('PromptManager defers hidden dry runs and coalesces visible previews', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/PromptManager.js'), 'utf8');
+    const visibilityStart = source.indexOf('    #observeVisibility() {');
+    const visibilityEnd = source.indexOf('    /**\n     * Get the scroll position', visibilityStart);
+    const visibilitySource = source.slice(visibilityStart, visibilityEnd);
     const dryRunStart = source.indexOf('    async #renderAfterTryGenerate() {');
     const dryRunEnd = source.indexOf('    async #renderWithoutTryGenerate() {', dryRunStart);
     const dryRunSource = source.slice(dryRunStart, dryRunEnd);
@@ -97,6 +100,10 @@ test('PromptManager keeps dry-run rendering wired through the latest-task schedu
         source,
         /this\.renderDryRunLatest = createLatestTaskScheduler\(\s*\(\) => this\.#renderAfterTryGenerate\(\)/,
     );
+    assert.ok(visibilityStart >= 0 && visibilityEnd > visibilityStart);
+    assert.match(visibilitySource, /new IntersectionObserver/);
+    assert.match(visibilitySource, /if \(!this\.#isVisible \|\| !this\.#dryRunPending\) return;/);
+    assert.match(visibilitySource, /this\.#dryRunPending = false;\s*this\.render\(\);/);
     assert.ok(dryRunStart >= 0 && dryRunEnd > dryRunStart);
     const clearError = dryRunSource.indexOf('this.error = null;');
     const tryGenerate = dryRunSource.indexOf('await this.tryGenerate();');
@@ -108,6 +115,7 @@ test('PromptManager keeps dry-run rendering wired through the latest-task schedu
     assert.ok(rethrowError < renderUi);
     assert.match(dryRunSource, /String\(error \|\| t`Unknown error`\)/);
     assert.ok(renderStart >= 0 && renderEnd > renderStart);
-    assert.match(renderSource, /if \(afterTryGenerate === true\) \{\s*this\.renderDryRunLatest\(\);\s*return;/);
+    assert.match(renderSource, /if \(!this\.#isVisible\) \{\s*this\.#dryRunPending = true;\s*return;/);
+    assert.match(renderSource, /this\.renderDryRunLatest\(\);\s*return;/);
     assert.match(renderSource, /void this\.#renderWithoutTryGenerate\(\)\.catch/);
 });
