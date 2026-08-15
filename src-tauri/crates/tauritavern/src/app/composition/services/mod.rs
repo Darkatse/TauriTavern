@@ -128,10 +128,16 @@ pub(super) async fn build(
         ios_policy.clone(),
     ));
     // 公共 skill 脚本库目录（{data_root}/skill-libs/），供 skill.run_script 沙箱
-    // 的裸模块加载白名单使用；目录无需预先存在。
-    let skill_script_engine: Arc<dyn SkillScriptEngine> = Arc::new(QuickJsScriptEngine::new(
-        data_directory.root().join("skill-libs"),
-    ));
+    // 的裸模块加载白名单使用。先把编译期内嵌的预置公共库释放到该目录（首次建目录，
+    // 之后版本变化时覆盖）；释放失败仅告警，不阻断应用启动。
+    let skill_libs_dir = data_directory.root().join("skill-libs");
+    if let Err(error) =
+        crate::infrastructure::skill_libs_seed::seed_bundled_skill_libs(&skill_libs_dir).await
+    {
+        tracing::warn!("Failed to seed bundled skill libs: {}", error);
+    }
+    let skill_script_engine: Arc<dyn SkillScriptEngine> =
+        Arc::new(QuickJsScriptEngine::new(skill_libs_dir));
     let agent_services = agent::build(
         &repositories,
         skill_service.clone(),
