@@ -4,7 +4,10 @@ use super::agent::{
 };
 use super::chat::{chat_read_messages_descriptor, chat_search_descriptor};
 use super::dice::dice_roll_descriptor;
-use super::skill::{skill_list_descriptor, skill_read_descriptor, skill_search_descriptor};
+use super::skill::{
+    skill_list_descriptor, skill_read_descriptor, skill_script_descriptor,
+    skill_search_descriptor,
+};
 use super::workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
     WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_WRITE_FILE,
@@ -40,6 +43,7 @@ impl BuiltinAgentToolRegistry {
             skill_list_descriptor(),
             skill_search_descriptor(),
             skill_read_descriptor(),
+            skill_script_descriptor(),
             workspace_list_files_descriptor(),
             workspace_search_files_descriptor(),
             workspace_read_file_descriptor(),
@@ -365,7 +369,13 @@ mod tests {
     fn registry_declares_canonical_builtin_descriptors() {
         let registry = BuiltinAgentToolRegistry::all();
 
-        assert_eq!(registry.catalog().len(), 19);
+        assert_eq!(registry.catalog().len(), 20);
+        assert!(
+            registry
+                .catalog()
+                .get(&ToolId::builtin("skill.script").unwrap())
+                .is_some()
+        );
         for descriptor in registry.catalog().iter() {
             assert!(descriptor.id.is_builtin());
             assert!(

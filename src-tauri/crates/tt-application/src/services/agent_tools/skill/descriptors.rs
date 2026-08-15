@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::{SKILL_LIST, SKILL_READ, SKILL_SEARCH};
+use super::{SKILL_LIST, SKILL_READ, SKILL_SCRIPT, SKILL_SEARCH};
 use tt_domain::models::tool::{ToolDescriptor, ToolId};
 
 pub(in crate::services::agent_tools) fn skill_list_descriptor() -> ToolDescriptor {
@@ -87,5 +87,37 @@ pub(in crate::services::agent_tools) fn skill_read_descriptor() -> ToolDescripto
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true, "sourceKind": "skill" }),
+    }
+}
+
+pub(in crate::services::agent_tools) fn skill_script_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(SKILL_SCRIPT).expect("builtin tool name must be valid"),
+        title: Some("Skill Script".to_string()),
+        description: Some(
+            "Run a JavaScript script shipped by a visible installed Agent Skill in a sandboxed engine. The skill's SKILL.md documents each script's arguments and return value. Scripts run with $fs access limited to this run's workspace and cannot access the network.".to_string(),
+        ),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "skill": {
+                    "type": "string",
+                    "description": "Visible installed Skill name from skill_list that ships this script."
+                },
+                "script": {
+                    "type": "string",
+                    "description": "Script file name under the skill's scripts/ directory, without the .js extension."
+                },
+                "args": {
+                    "type": "object",
+                    "description": "Arguments object passed to the script's default/main export.",
+                    "additionalProperties": true
+                }
+            },
+            "required": ["skill", "script"]
+        }),
+        output_schema: None,
+        annotations: json!({ "readOnly": false, "sourceKind": "skill" }),
     }
 }

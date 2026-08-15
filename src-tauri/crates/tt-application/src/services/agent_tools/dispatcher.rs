@@ -18,6 +18,7 @@ use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::workspace_repository::{WorkspaceFile, WorkspaceRepository};
+use tt_ports::skill_script::SkillScriptEngine;
 
 const RUN_PROMPT_SNAPSHOT_PATH: &str = "input/prompt_snapshot.json";
 
@@ -68,6 +69,7 @@ pub(crate) struct AgentToolDispatcher {
     group_chat_repository: Arc<dyn GroupChatRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
     skill_service: Arc<SkillService>,
+    skill_script_engine: Arc<dyn SkillScriptEngine>,
 }
 
 impl AgentToolDispatcher {
@@ -77,6 +79,7 @@ impl AgentToolDispatcher {
         group_chat_repository: Arc<dyn GroupChatRepository>,
         workspace_repository: Arc<dyn WorkspaceRepository>,
         skill_service: Arc<SkillService>,
+        skill_script_engine: Arc<dyn SkillScriptEngine>,
     ) -> Self {
         Self {
             run_repository,
@@ -84,6 +87,7 @@ impl AgentToolDispatcher {
             group_chat_repository,
             workspace_repository,
             skill_service,
+            skill_script_engine,
         }
     }
 
@@ -147,6 +151,20 @@ impl AgentToolDispatcher {
             }
             skill::SKILL_READ => {
                 skill::read(self.skill_service.as_ref(), call, session, profile).await?
+            }
+            skill::SKILL_SCRIPT => {
+                let prompt_snapshot = self.read_run_prompt_snapshot(run_id).await?;
+                skill::script(
+                    self.skill_service.as_ref(),
+                    self.skill_script_engine.as_ref(),
+                    self.workspace_repository.as_ref(),
+                    run_id,
+                    Some(&prompt_snapshot),
+                    call,
+                    session,
+                    profile,
+                )
+                .await?
             }
             workspace::WORKSPACE_LIST_FILES => {
                 workspace::list_files(model_workspace_repository, run_id, call).await?
