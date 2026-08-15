@@ -8,8 +8,8 @@ publish = false
 async-trait = "0.1"
 async-compression = { version = "0.4", default-features = false, features = ["tokio", "zstd"] }
 chrono = { workspace = true }
-icu_collator = "2.1.1"
-icu_locale_core = "2.1.1"
+icu_collator = "2.3"
+icu_locale_core = "2.3"
 percent-encoding = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }

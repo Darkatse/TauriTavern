@@ -97,7 +97,7 @@ pub(super) fn parse_skill_frontmatter(text: &str) -> Result<SkillFrontmatter, Do
         ));
     };
     let yaml = &rest[..end];
-    let value: serde_yaml::Value = serde_yaml::from_str(yaml).map_err(|error| {
+    let value: yaml_serde::Value = yaml_serde::from_str(yaml).map_err(|error| {
         DomainError::InvalidData(format!("Invalid SKILL.md frontmatter: {error}"))
     })?;
     let name = yaml_string(&value, "name").ok_or_else(|| {
@@ -169,20 +169,20 @@ pub(super) fn read_sidecar(root: &Path) -> Result<Option<TauriTavernSidecar>, Do
     Ok(Some(sidecar))
 }
 
-fn yaml_string(value: &serde_yaml::Value, key: &str) -> Option<String> {
+fn yaml_string(value: &yaml_serde::Value, key: &str) -> Option<String> {
     let map = value.as_mapping()?;
-    let raw = map.get(serde_yaml::Value::String(key.to_string()))?;
+    let raw = map.get(yaml_serde::Value::String(key.to_string()))?;
     raw.as_str()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
 }
 
-fn yaml_string_array(value: &serde_yaml::Value, key: &str) -> Vec<String> {
+fn yaml_string_array(value: &yaml_serde::Value, key: &str) -> Vec<String> {
     let Some(map) = value.as_mapping() else {
         return Vec::new();
     };
-    let Some(raw) = map.get(serde_yaml::Value::String(key.to_string())) else {
+    let Some(raw) = map.get(yaml_serde::Value::String(key.to_string())) else {
         return Vec::new();
     };
     let Some(items) = raw.as_sequence() else {
@@ -190,7 +190,7 @@ fn yaml_string_array(value: &serde_yaml::Value, key: &str) -> Vec<String> {
     };
     items
         .iter()
-        .filter_map(serde_yaml::Value::as_str)
+        .filter_map(yaml_serde::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
@@ -198,10 +198,10 @@ fn yaml_string_array(value: &serde_yaml::Value, key: &str) -> Vec<String> {
 }
 
 fn yaml_mapping_child<'a>(
-    value: &'a serde_yaml::Value,
+    value: &'a yaml_serde::Value,
     key: &str,
-) -> Option<&'a serde_yaml::Value> {
+) -> Option<&'a yaml_serde::Value> {
     value
         .as_mapping()?
-        .get(serde_yaml::Value::String(key.to_string()))
+        .get(yaml_serde::Value::String(key.to_string()))
 }

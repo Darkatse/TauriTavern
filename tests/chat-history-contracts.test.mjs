@@ -37,23 +37,28 @@ test('chat saves remain serialized across character and group entrypoints', asyn
 test('core chat load keeps full data while initial DOM remains truncated', async () => {
     const script = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
     const groups = await readFile(path.join(REPO_ROOT, 'src/scripts/group-chats.js'), 'utf8');
+    const routes = await readFile(path.join(REPO_ROOT, 'src/tauri/main/routes/chat-routes.js'), 'utf8');
 
     const getChat = script.slice(
         script.indexOf('export async function getChat'),
         script.indexOf('\nasync function getChatResult'),
     );
-    assert.match(getChat, /fetch\(['"]\/api\/chats\/get['"]/);
-    assert.match(getChat, /data\s*=\s*await response\.json\(\)\s*;/);
+    assert.match(getChat, /data\s*=\s*await loadCharacterChatPayload\(\{/);
+    assert.match(getChat, /allowNotFound:\s*allowNewChat/);
     assert.match(getChat, /chat\.splice\(0,\s*chat\.length,\s*\.\.\.data\)/);
-    assert.doesNotMatch(getChat, /PayloadTail|windowState/);
+    assert.doesNotMatch(getChat, /fetch\(|response\.json|PayloadTail|windowState/);
 
     const loadGroupChat = groups.slice(
         groups.indexOf('async function loadGroupChat'),
         groups.indexOf('\nasync function hasPersistedGroupChats'),
     );
-    assert.match(loadGroupChat, /fetch\(['"]\/api\/chats\/group\/get['"]/);
-    assert.match(loadGroupChat, /allow_not_found:\s*allowNotFound/);
-    assert.doesNotMatch(loadGroupChat, /PayloadTail|updateWindowState/);
+    assert.match(loadGroupChat, /loadGroupChatPayload\(\{\s*id:\s*normalizedChatId,\s*allowNotFound\s*\}\)/);
+    assert.doesNotMatch(loadGroupChat, /fetch\(|response\.json|PayloadTail|updateWindowState/);
+
+    assert.doesNotMatch(script, /['"]\/api\/chats\/(?:get|group\/get)['"]/);
+    assert.doesNotMatch(groups, /['"]\/api\/chats\/(?:get|group\/get)['"]/);
+    assert.match(routes, /router\.post\(['"]\/api\/chats\/get['"]/);
+    assert.match(routes, /router\.post\(['"]\/api\/chats\/group\/get['"]/);
 
     const printMessages = script.slice(
         script.indexOf('export async function printMessages'),
@@ -101,8 +106,8 @@ test('missing chat payload only creates a greeting when explicitly allowed', asy
     );
 
     assert.match(getChat, /allowNewChat\s*=\s*false/);
-    assert.match(getChat, /allow_not_found:\s*allowNewChat/);
-    assert.doesNotMatch(getChat, /allowNotFound:\s*allowNewChat/);
+    assert.match(getChat, /allowNotFound:\s*allowNewChat/);
+    assert.doesNotMatch(getChat, /allow_not_found:\s*allowNewChat/);
 
     const getChatResult = script.slice(
         script.indexOf('async function getChatResult'),

@@ -6,15 +6,15 @@ publish = false
 
 [dependencies]
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 chrono = { workspace = true }
 crc32fast = "1"
 flate2 = "1.1.9"
-image = { version = "0.24", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 mime_guess = "2.0.5"
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = "0.9"
+yaml_serde = "0.10"
 sha2 = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "rt", "sync"] }
 tracing = "0.1"

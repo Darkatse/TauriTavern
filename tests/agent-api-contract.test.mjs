@@ -36,18 +36,19 @@ function createFakeCommitScript(cleanUpMessage, saveCalls = []) {
     const script = {
         chat: [],
         cleanUpMessage,
-        async saveReply({ type, getMessage }) {
-            saveCalls.push({ type, getMessage });
+        async saveReply({ type, getMessage, reasoning = '' }) {
+            saveCalls.push({ type, getMessage, reasoning });
             if (type === 'appendFinal') {
                 const message = script.chat[script.chat.length - 1];
                 message.mes = getMessage;
+                message.extra.reasoning += reasoning;
                 message.swipes[message.swipe_id] = getMessage;
                 return { type, getMessage };
             }
 
             script.chat.push({
                 mes: getMessage,
-                extra: {},
+                extra: { reasoning },
                 swipe_id: 0,
                 swipes: [getMessage],
                 swipe_info: [{ extra: {} }],
@@ -81,6 +82,7 @@ function agentCommitPayload(chatRef, overrides = {}) {
         path: 'output/main.md',
         mode: 'replace',
         checkpointId: 'checkpoint-1',
+        sha256: 'sha-19',
         ...overrides,
     };
 }
@@ -739,13 +741,18 @@ test('api.agent.retention fails fast on invalid retention inputs', async () => {
     assert.deepEqual(calls, []);
 });
 
-test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid input', async () => {
+test('api.agent read projections forward camelCase DTOs and reject invalid input', async () => {
     const { calls, agent } = await installHarness();
 
+    await agent.readWorkspaceFile({ runId: 'run-1', path: 'plan/plan.md', checkpointId: ' cp_000001 ' });
     await agent.readModelTurn({ runId: 'run-1', invocationId: 'inv_child', round: 2, maxChars: 12000 });
     await agent.readModelTurn({ runId: 'run-1', round: 3 });
 
     assert.deepEqual(calls, [
+        {
+            command: 'read_agent_workspace_file',
+            args: { dto: { runId: 'run-1', path: 'plan/plan.md', checkpointId: 'cp_000001' } },
+        },
         {
             command: 'read_agent_model_turn',
             args: { dto: { runId: 'run-1', invocationId: 'inv_child', round: 2, maxChars: 12000 } },
@@ -767,6 +774,10 @@ test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid i
     await assert.rejects(
         () => agent.readModelTurn({ runId: 'run-1', round: 1, maxChars: 0 }),
         /maxChars must be a positive integer/,
+    );
+    await assert.rejects(
+        () => agent.readWorkspaceFile({ runId: 'run-1', path: 'plan/plan.md', checkpointId: ' ' }),
+        /checkpointId cannot be empty/,
     );
 });
 
@@ -856,6 +867,7 @@ test('agent chat commit bridge runs generated output cleanup before saving', asy
     }, saveCalls);
     let listener = null;
     const resolutions = [];
+    const workspaceReads = [];
     attachHostCommitBridge({
         runId: 'run-commit-cleanup',
         safeInvoke: async (command, args) => {
@@ -864,7 +876,10 @@ test('agent chat commit bridge runs generated output cleanup before saving', asy
             }
             return {};
         },
-        readWorkspaceFile: async () => workspaceFile('debug <content>real'),
+        readWorkspaceFile: async (input) => {
+            workspaceReads.push(input);
+            return workspaceFile('debug <content>real');
+        },
         subscribe(runId, handler) {
             assert.equal(runId, 'run-commit-cleanup');
             listener = handler;
@@ -891,11 +906,58 @@ test('agent chat commit bridge runs generated output cleanup before saving', asy
         isContinue: false,
         displayIncompleteSentences: false,
     }]);
-    assert.deepEqual(saveCalls, [{ type: 'normal', getMessage: '<content>real' }]);
+    assert.deepEqual(workspaceReads, [{
+        runId: 'run-commit-cleanup',
+        checkpointId: 'checkpoint-1',
+        path: 'output/main.md',
+    }]);
+    assert.deepEqual(saveCalls, [{ type: 'normal', getMessage: '<content>real', reasoning: '' }]);
     assert.equal(script.chat[0].mes, '<content>real');
 });
 
-test('agent chat commit bridge cleans append commits as one raw target message', async () => {
+test('agent chat commit bridge retries failure resolution', async () => {
+    const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-chat-commit-bridge.js'));
+    moduleUrl.search = `?case=commit-recoverable-${Date.now()}`;
+    const { attachHostCommitBridge } = await import(moduleUrl.href);
+    const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
+    installCurrentChatRef(chatRef);
+
+    let listener = null;
+    let resolveAttempt = 0;
+    let resolveCommit;
+    attachHostCommitBridge({
+        runId: 'run-commit-recoverable',
+        safeInvoke: async (command, args) => {
+            if (command !== 'resolve_agent_chat_commit') return {};
+            resolveAttempt += 1;
+            if (resolveAttempt === 1) throw new Error('local IPC interrupted');
+            resolveCommit(args);
+            return {};
+        },
+        readWorkspaceFile: async () => workspaceFile('debug <content>real'),
+        readModelTurn: async () => { throw new Error('reasoning projection unavailable'); },
+        subscribe(_runId, handler) {
+            listener = handler;
+            return () => {};
+        },
+    });
+
+    listener({ type: 'model_completed', payload: { invocationId: 'inv_root', round: 1, hasReasoning: true, reasoningChars: 9 } });
+    const resolved = new Promise(resolve => { resolveCommit = resolve; });
+    listener({
+        type: 'chat_commit_requested',
+        payload: agentCommitPayload(chatRef, {
+            commitId: 'commit-recoverable',
+            runId: 'run-commit-recoverable',
+        }),
+    });
+
+    const result = await resolved;
+    assert.equal(resolveAttempt, 2);
+    assert.match(result.dto.error, /reasoning projection unavailable/);
+});
+
+test('agent chat commit bridge preserves applied reasoning across a persistence retry', async () => {
     const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-chat-commit-bridge.js'));
     moduleUrl.search = `?case=commit-append-cleanup-${Date.now()}`;
     const { attachHostCommitBridge } = await import(moduleUrl.href);
@@ -912,6 +974,8 @@ test('agent chat commit bridge cleans append commits as one raw target message',
     }, saveCalls);
     const files = [workspaceFile('debug '), workspaceFile('<content>real')];
     const resolutions = [];
+    const modelTurnReads = [];
+    let persistAttempts = 0;
     let listener = null;
     attachHostCommitBridge({
         runId: 'run-commit-append-cleanup',
@@ -922,15 +986,31 @@ test('agent chat commit bridge cleans append commits as one raw target message',
             return {};
         },
         readWorkspaceFile: async () => files.shift(),
+        readModelTurn: async (input) => {
+            modelTurnReads.push(input);
+            return {
+                reasoning: [{
+                    text: input.round === 1 ? 'first thought' : 'second thought',
+                    totalChars: input.round === 1 ? 13 : 14,
+                    truncated: false,
+                }],
+            };
+        },
         subscribe(runId, handler) {
             assert.equal(runId, 'run-commit-append-cleanup');
             listener = handler;
             return () => {};
         },
         loadScript: async () => script,
-        persistChat: async () => {},
+        persistChat: async () => {
+            persistAttempts += 1;
+            if (persistAttempts === 1) throw new Error('chat persistence failed');
+        },
     });
 
+    listener({ type: 'agent_invocation_created', payload: { invocationId: 'inv_child', exitPolicy: 'task_return_required' } });
+    listener({ type: 'model_completed', payload: { invocationId: 'inv_child', round: 1, hasReasoning: true, reasoningChars: 7 } });
+    listener({ type: 'model_completed', payload: { invocationId: 'inv_root', round: 1, hasReasoning: true, reasoningChars: 13 } });
     const firstResolved = new Promise(resolve => resolutions.push(resolve));
     listener({
         type: 'chat_commit_requested',
@@ -938,11 +1018,13 @@ test('agent chat commit bridge cleans append commits as one raw target message',
             commitId: 'commit-append-1',
             runId: 'run-commit-append-cleanup',
             mode: 'append',
+            sha256: 'sha-6',
         }),
     });
     const firstResult = await firstResolved;
-    assert.equal(firstResult.dto.error, undefined);
+    assert.match(firstResult.dto.error, /chat persistence failed/);
 
+    listener({ type: 'model_completed', payload: { invocationId: 'inv_root', round: 2, hasReasoning: true, reasoningChars: 14 } });
     const secondResolved = new Promise(resolve => resolutions.push(resolve));
     listener({
         type: 'chat_commit_requested',
@@ -950,17 +1032,24 @@ test('agent chat commit bridge cleans append commits as one raw target message',
             commitId: 'commit-append-2',
             runId: 'run-commit-append-cleanup',
             mode: 'append',
+            sha256: 'sha-13',
         }),
     });
     const secondResult = await secondResolved;
     assert.equal(secondResult.dto.error, undefined);
+    assert.equal(persistAttempts, 2);
 
     assert.deepEqual(cleanups, ['debug ', 'debug <content>real']);
     assert.deepEqual(saveCalls, [
-        { type: 'normal', getMessage: 'debug ' },
-        { type: 'appendFinal', getMessage: '<content>real' },
+        { type: 'normal', getMessage: 'debug ', reasoning: 'first thought' },
+        { type: 'appendFinal', getMessage: '<content>real', reasoning: '\n\nsecond thought' },
     ]);
     assert.equal(script.chat[0].mes, '<content>real');
+    assert.deepEqual(modelTurnReads, [
+        { runId: 'run-commit-append-cleanup', invocationId: 'inv_root', round: 1, maxChars: 13 },
+        { runId: 'run-commit-append-cleanup', invocationId: 'inv_root', round: 2, maxChars: 14 },
+    ]);
+    assert.equal(script.chat[0].extra.reasoning, 'first thought\n\nsecond thought');
 });
 
 test('agent prompt assembly bridge reads pending request by assembly id', async () => {

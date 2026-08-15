@@ -20,6 +20,50 @@ test('Tauri builds use the repository frontend build hook', async () => {
     });
 });
 
+test('Android Wry overrides remain app-owned and follow the generated ABI', async () => {
+    const androidRoot = path.join(
+        REPO_ROOT,
+        'src-tauri/crates/tauritavern/gen/android/app',
+    );
+    const [ignore, gradle, viewClient, chromeClient] = await Promise.all([
+        readFile(path.join(androidRoot, '.gitignore'), 'utf8'),
+        readFile(path.join(androidRoot, 'build.gradle.kts'), 'utf8'),
+        readFile(path.join(
+            androidRoot,
+            'src/main/java/com/tauritavern/client/RustWebViewClient.kt',
+        ), 'utf8'),
+        readFile(path.join(
+            androidRoot,
+            'src/main/java/com/tauritavern/client/RustWebChromeClient.kt',
+        ), 'utf8'),
+    ]);
+
+    assert.match(ignore, /^\/src\/main\/\*\*\/generated$/mu);
+    assert.match(gradle, /generated\/RustWebViewClient\.kt/u);
+    assert.match(gradle, /generated\/RustWebChromeClient\.kt/u);
+    assert.match(viewClient, /Baseline: wry 0\.55\.1/u);
+    assert.match(viewClient, /webView:\s*RustWebView,\s*context:\s*Context,/u);
+    assert.match(viewClient, /Rust\.handleRequest\(view\.id,/u);
+    assert.match(viewClient, /equals\("Cache-Control",\s*ignoreCase\s*=\s*true\)/u);
+    assert.doesNotMatch(viewClient, /external fun/u);
+    assert.match(chromeClient, /Baseline: wry 0\.55\.1/u);
+    assert.match(chromeClient, /Rust\.handleReceivedTitle\(/u);
+});
+
+test('Android support floor stays aligned with the Tauri runtime dependency', async () => {
+    const config = JSON.parse(await readFile(
+        path.join(REPO_ROOT, 'src-tauri/crates/tauritavern/tauri.conf.json'),
+        'utf8',
+    ));
+    const gradle = await readFile(path.join(
+        REPO_ROOT,
+        'src-tauri/crates/tauritavern/gen/android/app/build.gradle.kts',
+    ), 'utf8');
+
+    assert.equal(config.bundle.android.minSdkVersion, 26);
+    assert.match(gradle, /\bminSdk\s*=\s*26\b/u);
+});
+
 test('pnpm Tauri entrypoints prepare frontend assets', async () => {
     const { scripts } = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8'));
     const entrypoints = [

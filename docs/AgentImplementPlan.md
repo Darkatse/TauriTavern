@@ -206,12 +206,14 @@ model -> read-only context tools / skill tools / workspace tools -> model -> ...
   ↓
 workspace mutation 成功后 checkpoint
   ↓
-workspace.commit 触发 host bridge 写入同一 chat message
+首次成功显式 commit 前，文本 mutation 自动复用 checkpoint 触发 Committer
+  ↓
+workspace.commit 通过同一 Committer 写入 chat，并关闭后续自动 commit
   ↓
 workspace.finish 收尾并提交 persist projection
 ```
 
-工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会捕获到 workspace `direct_output.md` 并触发 soft drift recovery；direct output recovery 没有独立的一次性上限，只要仍有下一轮模型调用预算就继续纠偏，直到恢复、取消或在 `maxRounds` 边界以 `model.tool_call_required` 失败 / `run_partial_success` 收口。前台 run 必须在 finish 前至少成功 commit 一次；后台 run 可以无 commit 完成。
+工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会捕获到 workspace `direct_output.md` 并触发 soft drift recovery；direct output recovery 没有独立的一次性上限，只要仍有下一轮模型调用预算就继续纠偏，直到恢复、取消或在 `maxRounds` 边界以 `model.tool_call_required` 失败 / `run_partial_success` 收口。前台 run 必须在 finish 前至少成功一次显式 commit；后台 run 可以无 commit 完成。
 
 ## 8. 能力台账
 

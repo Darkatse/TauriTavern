@@ -38,7 +38,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev librsvg2-dev
+            libdbus-1-dev libwebkit2gtk-4.1-dev librsvg2-dev pkg-config
 
       - name: Install latest stable Rust and Clippy
         uses: dtolnay/rust-toolchain@stable
@@ -62,8 +62,18 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Setup uv
+        if: runner.os == 'Linux'
+        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        with:
+          version: latest-known
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Verify generated Flatpak dependency sources
+        if: runner.os == 'Linux'
+        run: pnpm run flatpak:sources:check
 
       - name: Run checks and tests
         run: pnpm run check

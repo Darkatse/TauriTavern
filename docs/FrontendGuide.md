@@ -130,7 +130,7 @@ src/
 
 - 上游接管点：`src/script.js`（character chat）与 `src/scripts/group-chats.js`（group chat）。
 - 统一入口：上游只 import `src/scripts/chat-payload-transport.js`，不要直接依赖 `src/scripts/tauri/chat/*`。
-- 当前聊天始终通过 `/api/chats/get` 或 `/api/chats/group/get` 加载完整 JSONL；header 与完整、有序的消息数组分离后，generation、扩展和保存共享同一个 canonical `chat[]`。
+- 第一方当前聊天通过 `src/scripts/chat-payload-transport.js` 直接加载完整 JSONL；`/api/chats/get` 与 `/api/chats/group/get` 保留为扩展和脚本的兼容路由。header 与完整、有序的消息数组分离后，generation、扩展和保存共享同一个 canonical `chat[]`。
 - `chat_truncation` 只限制初始 DOM。Show More 从完整 `chat[]` 补挂楼层，不发起分页 I/O，不改变消息绝对索引。
 - 保存始终通过 `/api/chats/save` 或 `/api/chats/group/save`，并经过 `enqueueChatSave()` 与 target-local commit session 原子发布。保存前不要落盘 `chat_metadata.lastInContextMessageId`。
 - tail/before/beforePages 只属于 `api.chat.history` 与 Agent 的显式只读查询，不参与前端当前聊天状态。

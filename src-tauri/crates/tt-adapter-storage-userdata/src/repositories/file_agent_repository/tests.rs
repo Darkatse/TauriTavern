@@ -237,11 +237,26 @@ async fn repository_round_trips_run_workspace_event_and_checkpoint() {
         .expect("read events");
     assert_eq!(events.len(), 1);
 
+    let file = repository
+        .read_text(&run.id, &path)
+        .await
+        .expect("read checkpoint source");
     let checkpoint = repository
-        .create_checkpoint(&run.id, "test", event.seq, &[path])
+        .create_checkpoint(&run.id, "test", event.seq, std::slice::from_ref(&file))
         .await
         .expect("checkpoint");
     assert_eq!(checkpoint.files[0].bytes, 5);
+
+    repository
+        .write_text(&run.id, &path, "newer")
+        .await
+        .expect("replace live workspace file");
+    let snapshot = repository
+        .read_checkpoint_text(&run.id, &checkpoint.id, &path)
+        .await
+        .expect("read checkpoint text");
+    assert_eq!(snapshot.text, "hello");
+    assert_eq!(snapshot.sha256, checkpoint.files[0].sha256);
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }

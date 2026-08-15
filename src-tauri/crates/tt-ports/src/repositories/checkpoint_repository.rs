@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use super::workspace_repository::WorkspaceFile;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{Checkpoint, WorkspacePath};
 
@@ -10,6 +11,13 @@ pub trait CheckpointRepository: Send + Sync {
         run_id: &str,
         reason: &str,
         event_seq: u64,
-        paths: &[WorkspacePath],
+        files: &[WorkspaceFile],
     ) -> Result<Checkpoint, DomainError>;
+
+    async fn read_checkpoint_text(
+        &self,
+        run_id: &str,
+        checkpoint_id: &str,
+        path: &WorkspacePath,
+    ) -> Result<WorkspaceFile, DomainError>;
 }

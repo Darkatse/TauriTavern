@@ -6,8 +6,8 @@ publish = false
 
 [dependencies]
 async-trait = "0.1"
-gix = { version = "=0.85.0", default-features = false, features = ["sha1", "blocking-network-client", "worktree-mutation"] }
-gix-transport = { version = "=0.57.2", default-features = false, features = ["http-client"] }
+gix = { version = "=0.86.0", default-features = false, features = ["sha1", "blocking-network-client", "worktree-mutation"] }
+gix-transport = { version = "=0.58.1", default-features = false, features = ["http-client"] }
 reqwest = { workspace = true, features = ["blocking"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

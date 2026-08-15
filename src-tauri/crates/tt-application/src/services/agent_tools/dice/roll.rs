@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::RngExt;
 use serde::Serialize;
 
 use super::{MAX_ABS_MODIFIER, MAX_DICE, MAX_SIDES};

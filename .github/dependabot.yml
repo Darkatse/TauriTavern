@@ -1,0 +1,22 @@
+version: 2
+
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    allow:
+      - dependency-type: "direct"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+      # Tauri and platform bindings require full native validation beyond Cargo CI.
+      - dependency-name: "tauri*"
+      - dependency-name: "objc2*"
+      - dependency-name: "block2"
+      - dependency-name: "dispatch2"
+    commit-message:
+      prefix: "chore(deps)"

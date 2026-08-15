@@ -304,6 +304,10 @@ export class PromptCollection {
 }
 
 class PromptManager {
+    #isVisible = false;
+    #dryRunPending = false;
+    #visibilityObserver = null;
+
     get promptSources() {
         return {
             charDescription: t`Character Description`,
@@ -449,6 +453,7 @@ class PromptManager {
         this.tokenHandler = this.tokenHandler || new TokenHandler(() => { throw new Error('Token handler not set'); });
         this.serviceSettings = serviceSettings;
         this.containerElement = document.getElementById(this.configuration.containerIdentifier);
+        this.#observeVisibility();
 
         if ('global' === this.configuration.promptOrder.strategy) this.activeCharacter = { id: this.configuration.promptOrder.dummyId };
 
@@ -861,6 +866,18 @@ class PromptManager {
         this.log('Initialized');
     }
 
+    #observeVisibility() {
+        const visibilityTarget = this.containerElement.closest('.drawer-content') ?? this.containerElement;
+        this.#visibilityObserver = new IntersectionObserver(([entry]) => {
+            this.#isVisible = entry.isIntersecting;
+            if (!this.#isVisible || !this.#dryRunPending) return;
+
+            this.#dryRunPending = false;
+            this.render();
+        });
+        this.#visibilityObserver.observe(visibilityTarget);
+    }
+
     /**
      * Get the scroll position of the prompt manager
      * @returns {number} - Scroll position of the prompt manager
@@ -934,6 +951,11 @@ class PromptManager {
         this.error = null;
 
         if (afterTryGenerate === true) {
+            if (!this.#isVisible) {
+                this.#dryRunPending = true;
+                return;
+            }
+
             this.renderDryRunLatest();
             return;
         }
@@ -1776,6 +1798,7 @@ class PromptManager {
      * @param {import('./openai.js').ChatCompletion} chatCompletion
      */
     setChatCompletion(chatCompletion) {
+        this.#dryRunPending = false;
         const messages = chatCompletion.getMessages();
 
         this.setMessages(messages);

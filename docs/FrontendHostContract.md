@@ -168,8 +168,8 @@
 
 - `api.agent`：TauriTavern Agent Run API。用于启动 Agent Run、订阅 run event、取消、审批工具、读取 workspace 文件/diff、rollback。
   - 详细参考见：`docs/API/Agent.md`。
-  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`subscribe()`。
-  - Chat commit 由模型调用 `workspace.commit` 触发；前端内部 host bridge 响应 `chat_commit_requested`，先按完整 raw 目标文本应用上游生成输出保存前后处理，再通过上游 `saveReply()` 写同一消息楼层，最后调用 `resolve_agent_chat_commit`。
+  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`readModelTurn()`、`subscribe()`。
+  - Chat commit 由 pre-explicit 文本文件 mutation policy 或模型显式调用 `workspace.commit` 触发；两者产生相同的 `chat_commit_requested`，前端内部 host bridge 读取事件绑定的不可变 checkpoint 与对应 Model Turn 的可见 reasoning，先按完整 raw 目标文本应用上游生成输出保存前后处理，再通过上游 `saveReply()` 写同一消息楼层、把累计 reasoning 写入标准 `extra.reasoning`，最后调用 `resolve_agent_chat_commit`。
   - `persistStateId` 只在 persistent state 已经落盘后写入 chat metadata；host bridge 响应 `persistent_state_metadata_update_requested` 后调用 `resolve_agent_persistent_state_metadata_update`。
   - `startRunFromLegacyGenerate()` 是当前兼容入口：使用 Legacy dryRun 生成 `promptSnapshot`，再进入 Rust-owned Agent loop。
   - `startRunWithPromptSnapshot()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。

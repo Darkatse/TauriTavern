@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -153,10 +152,7 @@ fn query_refs(
             gix::protocol::LsRefsCommand::new(
                 Some(ref_prefixes),
                 &handshake.capabilities,
-                (
-                    "agent",
-                    Some(Cow::Owned(gix::protocol::agent(PROTOCOL_AGENT))),
-                ),
+                ("agent", Some(gix::protocol::agent(PROTOCOL_AGENT))),
             )
             .invoke_blocking(&mut transport, &mut progress, false)
             .map_err(|error| git_error("Git reference advertisement failed", error))?

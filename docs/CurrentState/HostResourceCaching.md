@@ -133,6 +133,8 @@ Android `WebResourceResponse` 和当前 Wry Android adapter 不支持 300-399。
 
 Android background video 的现有二次 Range workaround 保持：非零 Range 返回 206 和对应 range headers，但提供完整文件 stream，让 WebView 自己应用 Range。
 
+Wry 0.55.1 为没有缓存声明的 Android custom-protocol 响应提供 `Cache-Control: no-store` 默认值。本地 `RustWebViewClient` 只在响应没有任何大小写形式的 `Cache-Control` 时应用该默认值，因此 transport 不会覆盖 Host Resource 的 `private, no-cache`，错误响应仍保持 `no-store`。
+
 ## 7. Origin 与开发态
 
 Production `on_web_resource_request` 只接收 canonical Rust-side URI：

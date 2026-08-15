@@ -91,8 +91,16 @@ fn apply_script(
             .map_err(|error| script_error(script, format!("compile failed: {error}")))?
     };
 
+    if script
+        .required_literal
+        .as_deref()
+        .is_some_and(|literal| !text.contains(literal))
+    {
+        return Ok(text);
+    }
+
     let global = script.global || script.flags.contains('g');
-    replace_matches(&regex, &text, script, global)
+    replace_matches(&regex, text, script, global)
 }
 
 fn compile_flags(script: &NativeRegexScriptDto) -> Result<String, ApplicationError> {
@@ -115,27 +123,27 @@ fn compile_flags(script: &NativeRegexScriptDto) -> Result<String, ApplicationErr
 
 fn replace_matches(
     regex: &Regex,
-    text: &str,
+    text: String,
     script: &NativeRegexScriptDto,
     global: bool,
 ) -> Result<String, ApplicationError> {
+    let mut matches = regex.find_iter(&text);
+    let Some(first_match) = matches.next() else {
+        drop(matches);
+        return Ok(text);
+    };
+
     let mut output = String::with_capacity(text.len());
     let mut last_end = 0;
-    let mut matched = false;
 
-    for mat in regex.find_iter(text) {
-        matched = true;
+    for mat in std::iter::once(first_match).chain(matches) {
         output.push_str(&text[last_end..mat.start()]);
-        append_replacement(&mut output, text, &mat, script);
+        append_replacement(&mut output, &text, &mat, script);
         last_end = mat.end();
 
         if !global {
             break;
         }
-    }
-
-    if !matched {
-        return Ok(text.to_string());
     }
 
     output.push_str(&text[last_end..]);
@@ -302,6 +310,7 @@ mod tests {
             pattern: pattern.to_string(),
             flags: flags.to_string(),
             global: flags.contains('g'),
+            required_literal: None,
             replacement: replacement.to_string(),
             trim_strings: Vec::new(),
         }
@@ -310,6 +319,28 @@ mod tests {
     fn apply(text: &str, script: NativeRegexScriptDto) -> String {
         let cache = Arc::new(Mutex::new(RegexCache::new(8)));
         apply_script(&cache, text.to_string(), &script).expect("regex apply")
+    }
+
+    #[test]
+    fn returns_unmatched_input_without_reallocating() {
+        let cache = Arc::new(Mutex::new(RegexCache::new(8)));
+        let text = String::from("unchanged");
+        let input_pointer = text.as_ptr();
+
+        let result = apply_script(&cache, text, &script(r"missing", "", "X")).expect("regex apply");
+
+        assert_eq!(result, "unchanged");
+        assert_eq!(result.as_ptr(), input_pointer);
+    }
+
+    #[test]
+    fn skips_regex_when_required_literal_is_absent() {
+        let mut regex = script("unchanged", "", "changed");
+        regex.required_literal = Some("<safe>".to_string());
+
+        let result = apply("unchanged", regex);
+
+        assert_eq!(result, "unchanged");
     }
 
     #[test]

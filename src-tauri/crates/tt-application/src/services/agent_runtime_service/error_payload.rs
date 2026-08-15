@@ -218,6 +218,7 @@ mod tests {
             tt_domain::models::agent::AgentChatCommitMode::Replace,
             Some("42".to_string()),
             3,
+            false,
         );
 
         let payload = run_partial_success_payload(

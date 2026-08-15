@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 futures-util = "0.3"
 percent-encoding = "2"
 reqwest = { workspace = true, features = ["http2", "json", "multipart", "query", "rustls", "stream"] }
@@ -14,7 +14,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 tracing = "0.1"
 tt-adapter-http = { path = "../tt-adapter-http" }
 tt-domain = { path = "../tt-domain" }

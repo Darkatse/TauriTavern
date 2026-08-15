@@ -5,6 +5,7 @@ import { regexFromString } from '../../utils.js';
 import { lodash } from '../../../lib.js';
 import { applyNativeRegexBatch, isNativeRegexBackendAvailable } from '../../tauri/regex/native-regex-transform.js';
 import { isNativeRegexBackendEnabled } from '../../tauri/regex/native-regex-settings.js';
+import { getRequiredTagLiteral } from './literal-gate.js';
 
 /**
  * @readonly
@@ -436,6 +437,7 @@ function toNativeRegexScript(regexScript, rawString) {
         pattern: findRegex.source,
         flags: findRegex.flags,
         global: findRegex.global,
+        requiredLiteral: getRequiredTagLiteral(findRegex),
         replacement,
         trimStrings,
     };
@@ -516,8 +518,16 @@ export async function getRegexedStringBatchAsync(items) {
 
         const nativeScripts = scripts.map(script => toNativeRegexScript(script, rawString));
         if (nativeScripts.every(Boolean) && canApplyNativeUnicodeSemantics(nativeScripts, rawString)) {
+            const firstRunnableScript = nativeScripts.findIndex(script =>
+                !script.requiredLiteral || rawString.includes(script.requiredLiteral));
+            if (firstRunnableScript === -1) {
+                results[index] = rawString;
+                continue;
+            }
+
+            // Earlier replacements may introduce a tag required by a later script.
             nativeIndexes.push(index);
-            nativeTasks.push({ text: rawString, scripts: nativeScripts });
+            nativeTasks.push({ text: rawString, scripts: nativeScripts.slice(firstRunnableScript) });
         } else {
             results[index] = runRegexScripts(scripts, rawString, params);
         }
@@ -568,6 +578,11 @@ export function runRegexScript(regexScript, rawString, { characterOverride } = {
 
     // The user skill issued. Return with nothing.
     if (!findRegex) {
+        return newString;
+    }
+
+    const requiredLiteral = getRequiredTagLiteral(findRegex);
+    if (requiredLiteral && !rawString.includes(requiredLiteral)) {
         return newString;
     }
 

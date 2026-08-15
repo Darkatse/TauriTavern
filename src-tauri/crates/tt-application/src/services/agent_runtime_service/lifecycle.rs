@@ -325,10 +325,18 @@ impl AgentRuntimeService {
         dto: AgentReadWorkspaceFileDto,
     ) -> Result<AgentWorkspaceFileDto, ApplicationError> {
         let path = WorkspacePath::parse(dto.path)?;
-        let file = self
-            .workspace_repository
-            .read_text(&dto.run_id, &path)
-            .await?;
+        let file = match dto.checkpoint_id.as_deref() {
+            Some(checkpoint_id) => {
+                self.checkpoint_repository
+                    .read_checkpoint_text(&dto.run_id, checkpoint_id, &path)
+                    .await?
+            }
+            None => {
+                self.workspace_repository
+                    .read_text(&dto.run_id, &path)
+                    .await?
+            }
+        };
 
         let metrics = TextMetrics::from_text(&file.text);
         Ok(AgentWorkspaceFileDto {

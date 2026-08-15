@@ -162,7 +162,7 @@ Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swi
 | `workspace.write_file` | `workspace_write_file` | mutating | 写 UTF-8 文件；`mode` 默认为完整替换，`append` 会原样追加并在缺失时创建文件；成功后按内容可知性更新 read-state 并创建 checkpoint。 |
 | `workspace.apply_patch` | `workspace_apply_patch` | mutating | 单文件 `old_string` / `new_string` 精确替换；`old_string` 必须来自本 run 已读文本或本 run 创建/完整替换的文件；失败后同文件再次 patch 必须先全文读取。 |
 | `workspace.commit` | `workspace_commit` | control/mutating | 将可见 workspace 文件提交到当前聊天；无参数等价于 `replace output/main.md`，`append` 首次创建消息、后续追加同一消息。 |
-| `workspace.finish` | `workspace_finish` | control | 结束 root/active 工具循环；前台 run 必须已有至少一次 run-level 成功 commit，后台 run 可无 commit；return-mode child invocation 不可用；当前会取消 unfinished return-mode child tasks 而不阻塞完成。 |
+| `workspace.finish` | `workspace_finish` | control | 结束 root/active 工具循环；前台 run 必须已有至少一次 run-level 成功显式 commit，自动 commit 不满足该门槛；后台 run 可无 commit；return-mode child invocation 不可用；当前会取消 unfinished return-mode child tasks 而不阻塞完成。 |
 
 当前没有 shell 工具、外部 extension tools、tool approval、profile routing 或模型可见 task cancel；MCP 已分别接入 Agent 与 Legacy，二者只共享 cached descriptor/permission/call outcome，不共享执行器。
 
@@ -266,14 +266,16 @@ persist/
 
 实际 roots 由 resolved Profile 收窄后写入 run manifest。runtime 另加只读可见、never-commit 的 `tool-results/`，不属于 Profile 可配置 root universe。`persist/` 是 chat workspace 级持久 root 的 run projection。run 中修改 `persist/` 只影响本 run；`workspace.finish` 收尾成功时 promote 回 `chats/<workspace-id>/persist/`。
 
-Chat commit 当前由模型显式调用 `workspace.commit` 触发，并由前端 host bridge 执行：
+Chat commit 由 pre-explicit 文本 mutation policy 或模型显式调用 `workspace.commit` 触发，并由同一个前端 host bridge 执行：
 
 ```text
-workspace.commit(path?, mode?)
-  -> backend 读取 workspace file / checkpoint
+workspace.write_file / workspace.apply_patch  # 首次成功显式 commit 前，匹配文本后缀
+或 workspace.commit(path?, mode?)
+  -> backend 以本次 mutation 内容创建 checkpoint；显式 commit 则读取文件后创建
   -> chat_commit_requested event
+  -> Host API 读取事件绑定的 checkpoint 与 root / handoff Model Turn 的可见 reasoning
   -> 前端应用 Legacy generated-output postprocess
-  -> 前端 saveReply() 写同一消息楼层
+  -> 前端 saveReply() 写同一消息楼层与标准 extra.reasoning
   -> resolve_agent_chat_commit
   -> workspace.finish 成功提交 persist projection 后
   -> persistent_state_metadata_update_requested event
@@ -281,7 +283,7 @@ workspace.commit(path?, mode?)
   -> resolve_agent_persistent_state_metadata_update
 ```
 
-`mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。`append` 追加的是本次 commit 读取到的文件文本，不计算 workspace file diff；host bridge 会对累计后的 raw 目标文本做一次 Legacy output postprocess。Commit 必须遵守 SillyTavern 完整 chat payload 与保存串行化契约，不能直接写 chat JSONL。`persistStateId` 只能表示已经落盘的 durable persistent state；`chat_commit_requested` 不携带该字段，partial success 保留的聊天输出不会成为下一轮可复用 persist base。下一轮 run 的 `persistBaseStateId` 由 Rust runtime 从同一个输入历史前缀内解析，前端不再负责扫描聊天历史来决定 base state。
+自动 commit 使用大小写不敏感的固定后缀 `.md`、`.markdown`、`.txt`、`.text`，不按 artifact 或 root 过滤，固定把 mutation 后完整文件以 `replace` 发布；多文件因此在同一楼层遵循 last-write-wins。第一次 host-confirmed 的显式 `workspace.commit` 后自动触发永久停止。显式 `mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。`append` 追加的是本次 commit 读取到的文件文本，不计算 workspace file diff；host bridge 会对累计后的 raw 目标文本做一次 Legacy output postprocess。Commit 必须遵守 SillyTavern 完整 chat payload 与保存串行化契约，不能直接写 chat JSONL。`persistStateId` 只能表示已经落盘的 durable persistent state；`chat_commit_requested` 不携带该字段，partial success 保留的聊天输出不会成为下一轮可复用 persist base。下一轮 run 的 `persistBaseStateId` 由 Rust runtime 从同一个输入历史前缀内解析，前端不再负责扫描聊天历史来决定 base state。
 
 聊天删除现在会联动清理对应的 Agent chat workspace：
 
@@ -318,14 +320,14 @@ prepare_agent_tool_request 从该 turn 生成 AgentModelRequest 与 request-scop
   ↓
 model -> tool -> model -> ... -> workspace.commit? -> workspace.finish
   ↓
-workspace mutation 成功后 checkpoint
+workspace mutation 成功后 checkpoint；符合 pre-explicit policy 时立即进入 Committer
   ↓
-workspace.commit 成功后 host 写入同一条 chat message
+workspace.commit 成功后关闭自动 commit；host 继续写入同一条 chat message
   ↓
 workspace.finish 结束 run，并提交 persist projection
 ```
 
-工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会触发 soft drift recovery：runtime 将直接文本捕获到当前 messageBody artifact root 下的 `direct_output.md`（默认 `output/direct_output.md`），记录 `direct_output_captured` 与 checkpoint，然后提醒模型通过当前 invocation 的 Agent 工具提交/结束。direct output recovery 不再有独立的一次性上限；只要仍有下一轮模型调用预算就继续纠偏，直到恢复、取消或在 `maxRounds` 边界以 `model.tool_call_required` 失败 / `run_partial_success` 收口。前台 run 在 `workspace.finish` 前必须至少成功 `workspace.commit` 一次；后台 run 可以无 chat commit 结束。
+工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会触发 soft drift recovery：runtime 将直接文本捕获到当前 messageBody artifact root 下的 `direct_output.md`（默认 `output/direct_output.md`），记录 `direct_output_captured` 与 checkpoint，然后提醒模型通过当前 invocation 的 Agent 工具提交/结束；该 runtime capture 本身不触发自动 commit。direct output recovery 不再有独立的一次性上限；只要仍有下一轮模型调用预算就继续纠偏，直到恢复、取消或在 `maxRounds` 边界以 `model.tool_call_required` 失败 / `run_partial_success` 收口。前台 run 在 `workspace.finish` 前必须至少成功一次显式 `workspace.commit`；后台 run 可以无 chat commit 结束。
 
 Return-mode SubAgent 当前流程：
 
@@ -404,7 +406,9 @@ Provider stream chunk 不是 Agent run event。Agent UI 必须订阅 `api.agent.
 
 `model_completed` payload 当前包含 `round`、`modelResponsePath`、`toolCallCount`、assistant/reasoning 字节摘要与 `hasAssistantText` / `hasReasoning`。带工具调用且存在可展示 assistant visible text 的模型回合会额外携带可选 `narration` preview；它是模型轮次展示投影，不是 runtime status，不从 reasoning / thinking / thought 提取。工具相关事件携带同一 `round`，便于 UI 从任意工具事件跳回本轮模型回合。
 
-`run_partial_success` 是 warning 级终态：当 run 已经有 host-confirmed `workspace.commit`，但之后因 drift、dispatch、persistent commit 或 persistent metadata 写回错误未能干净完成时，保留已提交 chat 输出，并在 payload 中暴露原始错误与 `preservedCommits`。它不是 `run_completed`，也不触发自动 rollback。partial success 消息不会带可复用的 `persistStateId`；下一轮 Agent run 会跳过它，继续寻找更早的 committed persistent state。
+Host commit bridge 会按事件顺序读取 root / handoff active chain 的 `readModelTurn()` 白名单投影，把尚未写入的可见 reasoning 以 delta 交给 `saveReply()`，最终在当前消息与 swipe metadata 中规范化为累计 `extra.reasoning`。Return-mode child、Native continuation、signature 与 encrypted reasoning 不进入该字段。
+
+`run_partial_success` 是 warning 级终态：当 run 已经有任意 host-confirmed 自动或显式 commit，但之后因 drift、dispatch、persistent commit 或 persistent metadata 写回错误未能干净完成时，保留已提交 chat 输出，并在 payload 中暴露原始错误与 `preservedCommits`。它不是 `run_completed`，也不触发自动 rollback。partial success 消息不会带可复用的 `persistStateId`；下一轮 Agent run 会跳过它，继续寻找更早的 committed persistent state。
 
 ## 当前文件布局
 

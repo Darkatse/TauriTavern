@@ -135,7 +135,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev librsvg2-dev patchelf rpm \
+            libdbus-1-dev libwebkit2gtk-4.1-dev librsvg2-dev patchelf pkg-config rpm \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-alsa gstreamer1.0-pulseaudio
 

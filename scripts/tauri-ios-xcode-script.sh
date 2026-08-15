@@ -43,6 +43,7 @@ ensure_node_on_path() {
 
 run_tauri_ios_xcode_script() {
   cd "$REPO_ROOT"
+  CARGO_PROFILE_RELEASE_PANIC=unwind \
   TAURI_APP_PATH="$REPO_ROOT/src-tauri/crates/tauritavern" \
   TAURI_FRONTEND_PATH="$REPO_ROOT" \
     "$@" tauri ios xcode-script \

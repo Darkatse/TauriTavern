@@ -6,9 +6,15 @@ import YAML from 'yaml';
 const workflowPath = '.github/workflows/stable-release.yml';
 const workflowSource = readFileSync(workflowPath, 'utf8');
 const workflow = YAML.parse(workflowSource);
+const canaryWorkflowSource = readFileSync('.github/workflows/canary-release.yml', 'utf8');
+const qualityGateSource = readFileSync('.github/workflows/pr-quality-gate.yml', 'utf8');
 const flatpakPublisherSource = readFileSync('distribution/flatpak/publish.sh', 'utf8');
 const nixPackageSource = readFileSync('nix/package.nix', 'utf8');
 const cargoLockSource = readFileSync('src-tauri/Cargo.lock', 'utf8');
+const tauriConfig = JSON.parse(readFileSync(
+    'src-tauri/crates/tauritavern/tauri.conf.json',
+    'utf8',
+));
 
 test('stable release workflow starts from a published release or an explicit tag', () => {
     assert.deepEqual(workflow.on.release.types, ['published']);
@@ -88,6 +94,17 @@ test('Nix derives Rust dependencies directly from Cargo.lock', () => {
     assert.match(nixPackageSource, /cargoLock\s*=\s*\{\s*lockFile = \.\.\/src-tauri\/Cargo\.lock;/);
     assert.doesNotMatch(nixPackageSource, /\bcargoHash\s*=/);
     assert.doesNotMatch(cargoLockSource, /^source = "git\+/m);
+});
+
+test('Linux build and package contracts include the Tauri DBus dependency', () => {
+    for (const source of [qualityGateSource, canaryWorkflowSource, workflowSource]) {
+        assert.match(source, /libdbus-1-dev/u);
+        assert.match(source, /pkg-config/u);
+    }
+
+    assert.match(nixPackageSource, /\bdbus\b/u);
+    assert.ok(tauriConfig.bundle.linux.deb.depends.includes('libdbus-1-3'));
+    assert.ok(tauriConfig.bundle.linux.rpm.depends.includes('libdbus-1.so.3()(64bit)'));
 });
 
 test('stable Flatpak build and publication keep signing isolated', () => {
