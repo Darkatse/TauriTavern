@@ -98,3 +98,7 @@
 21. `docs/CurrentState/MCP.md`
    - MCP registration、persistent catalog、user test call 与模型工具调用的当前实现快照
    - 包含 crate/Host ABI、identity、outcome、cache、Agent/Legacy 消费、故障域与明确未支持边界
+
+22. `docs/CurrentState/VectorApi.md`
+   - SillyTavern 1.18.0 Vector 七路由兼容层的当前实现快照
+   - 包含 typed command 链路、redb 事务索引、本地/远端 embedding 边界、精确 cosine 基线与明确未支持范围

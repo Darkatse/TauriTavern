@@ -28,7 +28,8 @@ function extractDeclaration(source, marker) {
     const start = source.indexOf(marker);
     assert.notEqual(start, -1, `Missing declaration marker: ${marker}`);
 
-    const braceStart = source.indexOf('{', start);
+    const functionBody = source.startsWith('function ', start) ? source.indexOf(') {', start) : -1;
+    const braceStart = functionBody === -1 ? source.indexOf('{', start) : functionBody + 2;
     assert.notEqual(braceStart, -1, `Missing declaration body: ${marker}`);
 
     let depth = 0;
@@ -86,6 +87,7 @@ async function getVectorsRuntimeSource() {
         vectorsRuntimeSourcePromise = readFile(new URL('../src/scripts/extensions/vectors/index.js', import.meta.url), 'utf8')
             .then(source => [
                 extractDeclaration(source, 'const remoteEmbeddingEndpoints = {'),
+                extractDeclaration(source, 'function getVectorsRequestBody(args = {})'),
                 extractDeclaration(source, 'function toggleSettings()'),
                 extractDeclaration(source, 'async function loadRemoteEmbeddingModels(source)'),
             ].join('\n\n'));
@@ -150,6 +152,7 @@ async function createVectorsRuntimeHarness({
         workers_ai_model: '',
         siliconflow_model: '',
         electronhub_model: '',
+        transformers_model: 'jinaai/jina-embeddings-v2-base-en',
         ...settingsPatch,
     };
     const extension_settings = { vectors: {} };
@@ -196,7 +199,7 @@ async function createVectorsRuntimeHarness({
         'console',
         'vectorApiRequiresUrl',
         'loadWebLlmModels',
-        `${source}\nreturn { remoteEmbeddingEndpoints, toggleSettings, loadRemoteEmbeddingModels };`,
+        `${source}\nreturn { remoteEmbeddingEndpoints, getVectorsRequestBody, toggleSettings, loadRemoteEmbeddingModels };`,
     );
 
     const runtime = factory(
@@ -453,21 +456,102 @@ test('vectors source toggle exposes remote model failures without clearing curre
     assert.equal(harness.savedSettings.length, 0);
 });
 
-test('native vector endpoints fail fast while backend is not implemented', async () => {
+test('vectors local model selection is forwarded and shown only for transformers', async () => {
+    const harness = await createVectorsRuntimeHarness({
+        settings: {
+            source: 'transformers',
+            transformers_model: 'Qwen/Qwen3-Embedding-0.6B',
+        },
+    });
+
+    assert.deepEqual(harness.runtime.getVectorsRequestBody({ collectionId: 'chat-1' }), {
+        collectionId: 'chat-1',
+        model: 'Qwen/Qwen3-Embedding-0.6B',
+    });
+    harness.runtime.toggleSettings();
+    assert.equal(harness.elements.get('#transformers_vectorsModel').visible, true);
+
+    harness.settings.source = 'openai';
+    harness.runtime.toggleSettings();
+    assert.equal(harness.elements.get('#transformers_vectorsModel').visible, false);
+});
+
+test('native vector endpoints bridge the seven upstream routes to one typed command', async () => {
     const router = createRouteRegistry();
-    registerVectorRoutes(router, {}, { jsonResponse });
+    const calls = [];
+    registerVectorRoutes(router, {
+        safeInvoke: async (command, payload) => {
+            calls.push({ command, payload });
+            if (payload.path === 'list') {
+                return { status: 200, kind: 'json', body: [17, 23] };
+            }
+            if (payload.path === 'query') {
+                throw new Error('Bad request: searchText is required');
+            }
+            if (payload.path === 'koboldcpp-embed') {
+                return { status: 200, kind: 'json', body: { embeddings: [[1, 0]], model: 'embed.gguf' } };
+            }
+            return { status: 200, kind: 'empty', body: null };
+        },
+    }, { jsonResponse });
 
     const response = await router.handle({
         method: 'POST',
         path: '/api/vector/insert',
-        body: { collectionId: 'chat-1', items: [] },
+        body: { collectionId: 'chat-1', items: [], source: 'transformers' },
     });
 
-    assert.equal(response.status, 501);
-    assert.deepEqual(await response.json(), {
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), '');
+    assert.deepEqual(calls, [{
+        command: 'vector_handle',
+        payload: {
+            path: 'insert',
+            request: { collectionId: 'chat-1', items: [], source: 'transformers' },
+        },
+    }]);
+
+    const listResponse = await router.handle({
+        method: 'POST',
+        path: '/api/vector/list',
+        body: { collectionId: 'chat-1' },
+    });
+    assert.deepEqual(await listResponse.json(), [17, 23]);
+
+    const koboldResponse = await router.handle({
+        method: 'POST',
+        path: '/api/backends/kobold/embed',
+        body: { server: 'http://localhost:5001', items: ['hello'] },
+    });
+    assert.deepEqual(await koboldResponse.json(), { embeddings: [[1, 0]], model: 'embed.gguf' });
+    assert.deepEqual(calls.at(-1), {
+        command: 'vector_handle',
+        payload: {
+            path: 'koboldcpp-embed',
+            request: {
+                source: 'koboldcpp',
+                apiUrl: 'http://localhost:5001',
+                texts: ['hello'],
+            },
+        },
+    });
+
+    await router.handle({
+        method: 'POST',
+        path: '/api/backends/kobold/embed',
+        body: { server: 'http://localhost:5001', items: ['query'], isQuery: true },
+    });
+    assert.equal(calls.at(-1).payload.request.isQuery, true);
+
+    const invalidQuery = await router.handle({
+        method: 'POST',
+        path: '/api/vector/query',
+        body: { collectionId: 'chat-1' },
+    });
+    assert.equal(invalidQuery.status, 400);
+    assert.deepEqual(await invalidQuery.json(), {
         error: true,
-        cause: 'vector_endpoint_unavailable',
-        message: 'Vector Storage backend is not implemented in the native TauriTavern backend yet.',
+        message: 'Bad request: searchText is required',
     });
     assert.equal(router.canHandle('POST', '/api/vector/query'), true);
 
@@ -483,7 +567,31 @@ test('native vector endpoints fail fast while backend is not implemented', async
     });
 });
 
-test('top-level native routes register vector fail-fast before provider routes', async () => {
+test('native vector routes classify operation-wide recoverable failures', async () => {
+    const failures = [
+        ['Unauthorized: bad key', 401, 'embedding_auth_failed'],
+        ['Conflict: stale dimensions', 409, 'vector_index_conflict'],
+        ['Too many requests: retry later', 429, 'embedding_rate_limited'],
+        ['Internal server error: provider offline', 500, 'embedding_unavailable'],
+    ];
+
+    for (const [message, status, cause] of failures) {
+        const router = createRouteRegistry();
+        registerVectorRoutes(router, {
+            safeInvoke: async () => { throw new Error(message); },
+        }, { jsonResponse });
+
+        const response = await router.handle({
+            method: 'POST',
+            path: '/api/vector/insert',
+            body: {},
+        });
+        assert.equal(response.status, status);
+        assert.equal((await response.json()).cause, cause);
+    }
+});
+
+test('top-level native routes register vector compatibility before provider routes', async () => {
     const source = await readFile(new URL('../src/tauri/main/routes/index.js', import.meta.url), 'utf8');
     const aiIndex = source.indexOf('registerAiRoutes(router, context, responses);');
     const vectorIndex = source.indexOf('registerVectorRoutes(router, context, responses);');
@@ -497,20 +605,35 @@ test('top-level native routes register vector fail-fast before provider routes',
     assert.ok(vectorIndex < providerIndex);
 });
 
-test('vectors runtime keeps upstream 1.18 summary skip settings and native fatal route semantics', async () => {
+test('vectors runtime keeps upstream 1.18 summary skip settings and native route semantics', async () => {
     const source = await readFile(new URL('../src/scripts/extensions/vectors/index.js', import.meta.url), 'utf8');
     const settingsHtml = await readFile(new URL('../src/scripts/extensions/vectors/settings.html', import.meta.url), 'utf8');
+    const processFiles = extractDeclaration(source, 'async function processFiles(');
+    const vectorizeFile = extractDeclaration(source, 'async function vectorizeFile(');
+    const rearrangeChat = extractDeclaration(source, 'async function rearrangeChat(');
+    const insertVectorItems = extractDeclaration(source, 'async function insertVectorItems(');
+    const purgeFiles = extractDeclaration(source, 'async function purgeFileVectorIndexes(');
 
     assert.match(source, /summary_retries: 2/);
     assert.match(source, /summary_threshold: 200/);
     assert.match(source, /keep_hidden: false/);
     assert.match(source, /const skippedHashes = new Set\(\);/);
     assert.match(source, /vector_endpoint_unavailable/);
-    assert.match(source, /function throwVectorResponseError\(response, action, collectionId = ''\)/);
+    assert.match(source, /async function throwVectorResponseError\(response, action, collectionId = ''\)/);
     assert.match(source, /\[404, 405, 501\]\.includes\(status\)/);
     assert.match(source, /settings\.keep_hidden \|\| !x\.is_system/);
     assert.match(source, /summarize\(toSummarize, settings\.summary_source, \{ skipOnFailure: true \}\)/);
     assert.match(source, /skippedHashes\.add\(item\.hash\)/);
+    assert.match(source, /case 'koboldcpp':\s+body\.apiUrl =/);
+    assert.match(source, /case 'transformers':\s+body\.model = settings\.transformers_model/);
+    assert.match(source, /createKoboldCppEmbeddings/);
+    assert.match(vectorizeFile, /await insertVectorItems\(collectionId, items\)/);
+    assert.doesNotMatch(vectorizeFile, /items\.slice\(/);
+    assert.doesNotMatch(insertVectorItems, /interactive/);
+    assert.match(processFiles, /VECTOR_SOURCE_ABORT_CAUSES\.has\(error\?\.cause\)/);
+    assert.match(rearrangeChat, /World Info vector retrieval skipped\. Chat retrieval will continue\./);
+    assert.match(purgeFiles, /if \(!await purgeFileVectorIndex\(file\.url\)\)/);
+    assert.match(purgeFiles, /return allSuccess/);
 
     for (const id of ['vectors_keep_hidden', 'vectors_summary_retries', 'vectors_summary_threshold']) {
         assert.match(settingsHtml, new RegExp(`id="${id}"`));
@@ -518,6 +641,13 @@ test('vectors runtime keeps upstream 1.18 summary skip settings and native fatal
     }
 
     assert.match(settingsHtml, /gemini-embedding-2-preview/);
+    for (const model of [
+        'BAAI/bge-m3',
+        'Qwen/Qwen3-Embedding-0.6B',
+        'google/embeddinggemma-300m',
+    ]) {
+        assert.match(settingsHtml, new RegExp(model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
 });
 
 test('unrelated secret mutations leave provider metadata caches intact', async () => {

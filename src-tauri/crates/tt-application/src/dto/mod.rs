@@ -24,4 +24,5 @@ pub mod tokenization_dto;
 pub mod tts_dto;
 pub mod user_directory_dto;
 pub mod user_dto;
+pub mod vector_dto;
 pub mod world_info_dto;

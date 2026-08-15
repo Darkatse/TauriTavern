@@ -52,4 +52,5 @@ pub mod update_commands;
 pub mod upload_staging_commands;
 pub mod user_commands;
 pub mod user_directory_commands;
+pub mod vector_commands;
 pub mod world_info_commands;

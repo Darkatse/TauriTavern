@@ -65,6 +65,7 @@ pub async fn spawn_lan_sync_server(
     inbound: Arc<dyn LanInboundRequestHandler>,
     errors: Arc<dyn LanServerErrorReporter>,
 ) -> Result<LanSyncServerHandle, DomainError> {
+    install_rustls_crypto_provider();
     let identity = store.load_or_create_identity().await?;
     let tls = SelfManagedTls::load_or_create(&store.state_dir()).map_err(sync_error_to_domain)?;
     let spki_sha256 = tls.spki_sha256().to_string();
@@ -110,6 +111,15 @@ pub async fn spawn_lan_sync_server(
     );
 
     spawn_router(addr, Arc::new(tls), spki_sha256, app, errors).await
+}
+
+fn install_rustls_crypto_provider() {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        // LAN TLS can run without the HTTP adapter, so this concrete TLS owner selects the same
+        // provider explicitly when workspace dependencies compile more than one rustls backend.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
 }
 
 async fn spawn_router(

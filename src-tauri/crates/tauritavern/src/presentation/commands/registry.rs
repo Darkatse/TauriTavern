@@ -365,6 +365,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // Stable diffusion (local chain) commands
         super::stable_diffusion_commands::sd_handle,
         super::stable_diffusion_commands::cancel_sd_request,
+        super::vector_commands::vector_handle,
         // Translate commands
         super::translate_commands::translate_text,
         // TTS commands

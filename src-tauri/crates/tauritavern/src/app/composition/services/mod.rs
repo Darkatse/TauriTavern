@@ -45,6 +45,7 @@ use tt_application::services::tts_service::TtsService;
 use tt_application::services::update_service::UpdateService;
 use tt_application::services::user_directory_service::UserDirectoryService;
 use tt_application::services::user_service::UserService;
+use tt_application::services::vector_service::VectorService;
 use tt_application::services::world_info_service::WorldInfoService;
 use tt_domain::errors::DomainError;
 
@@ -122,6 +123,13 @@ pub(super) async fn build(
     ));
     let provider_metadata_service = Arc::new(ProviderMetadataService::new(
         repositories.provider_metadata_repository.clone(),
+        repositories.secret_repository.clone(),
+        ios_policy.clone(),
+    ));
+    let vector_service = Arc::new(VectorService::new(
+        repositories.vector_repository.clone(),
+        repositories.remote_embedding_repository.clone(),
+        repositories.local_embedding_repository.clone(),
         repositories.secret_repository.clone(),
         ios_policy.clone(),
     ));
@@ -255,6 +263,7 @@ pub(super) async fn build(
         llm_connection_service,
         mcp_service,
         provider_metadata_service,
+        vector_service,
         tokenization_service,
         stable_diffusion_service,
         translate_service,

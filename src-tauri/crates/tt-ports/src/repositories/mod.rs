@@ -37,5 +37,6 @@ pub mod tts_repository;
 pub mod update_repository;
 pub mod user_directory_repository;
 pub mod user_repository;
+pub mod vector_repository;
 pub mod workspace_repository;
 pub mod world_info_repository;

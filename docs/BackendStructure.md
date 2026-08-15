@@ -56,6 +56,7 @@ src-tauri/
     ├── tt-adapter-http
     ├── tt-adapter-mcp
     ├── tt-adapter-provider-http
+    ├── tt-adapter-vector
     ├── tt-adapter-tokenization
     ├── tt-adapter-storage-core
     ├── tt-adapter-storage-userdata
@@ -76,7 +77,8 @@ src-tauri/
 | `tt-application` | 用例服务、业务编排、任务协调、policy 执行 |
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
 | `tt-adapter-mcp` | RMCP client、Streamable HTTP lifecycle、bounded response、tools/list pagination 与 tool validation |
-| `tt-adapter-provider-http` | LLM、SD、Translate、TTS、provider metadata 的 HTTP repository |
+| `tt-adapter-provider-http` | LLM、SD、Translate、TTS、embedding、provider metadata 的 HTTP repository |
+| `tt-adapter-vector` | Vector 的 ACID 本地索引与本地 embedding runtime；不承载 provider HTTP |
 | `tt-adapter-tokenization` | tokenizer concrete repository |
 | `tt-adapter-storage-core` | `DataDirectory`、基础文件系统 helper、chat/settings/user/theme/secret/quick reply/prompt cache/asset/llm connection/extension-store |
 | `tt-adapter-storage-userdata` | character、world info、agent workspace、agent profile、skill local package store、PNG card metadata |
@@ -260,7 +262,8 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 | 角色卡、世界书、Agent workspace/profile、Skill package | `tt-adapter-storage-userdata` | skill 是 local package store，不是普通 JSON repo |
 | 第三方扩展安装、更新、发现 | `tt-adapter-extension` | 不归入 storage-userdata |
 | avatar/background/user media/host resource 文件读取 | `tt-adapter-media` | 保持浏览器资源契约 |
-| LLM/SD/Translate/TTS/provider metadata HTTP | `tt-adapter-provider-http` | 复用 `tt-adapter-http` |
+| LLM/SD/Translate/TTS/provider metadata/embedding HTTP | `tt-adapter-provider-http` | 复用 `tt-adapter-http` |
+| Vector 索引与本地 embedding runtime | `tt-adapter-vector` | 独立持久化/推理依赖，不下沉到 storage-core |
 | 通用 HTTP pool/profile/helper | `tt-adapter-http` | 不放 provider 业务规则 |
 | LAN/TT Sync runtime | `tt-adapter-sync` | Tauri event/UI adapter 留 host composition |
 | Data Archive import/export executor | `tt-adapter-archive` | Tauri picker/share 留 host infrastructure |
@@ -318,6 +321,7 @@ TauriTavern 私有状态放在 `_tauritavern` 下，例如 agent workspace、age
 | 媒体 Range / browser resource contract | `docs/CurrentState/MediaAssetContract.md` |
 | Logging / Dev observability | `docs/CurrentState/LoggingObservability.md` |
 | Native provider API formats | `docs/CurrentState/NativeApiFormats.md` |
+| Vector 兼容层 | `docs/CurrentState/VectorApi.md` |
 | Sync | `docs/CurrentState/Sync.md` |
 | Agent 总览 | `docs/AgentArchitecture.md` |
 | Agent 细节 | `docs/Agent/README.md` |

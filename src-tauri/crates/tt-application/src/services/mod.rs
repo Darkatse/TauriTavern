@@ -62,4 +62,5 @@ pub mod update_service;
 pub mod user_directory_service;
 pub mod user_media_service;
 pub mod user_service;
+pub mod vector_service;
 pub mod world_info_service;

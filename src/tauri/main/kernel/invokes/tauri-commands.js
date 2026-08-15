@@ -257,6 +257,7 @@ export {};
  *   | 'upload_user_image'
  *   | 'upload_user_file'
  *   | 'verify_user_files'
+ *   | 'vector_handle'
  *   | 'view_secrets'
  *   | 'wait_for_backend_ready'
  *   | 'write_skill_file'
