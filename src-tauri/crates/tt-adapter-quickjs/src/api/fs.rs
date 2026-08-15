@@ -1,146 +1,97 @@
-//! File system API for scripts
-//! 
-//! Provides restricted file system operations that only work within the agent's work directory.
+//! `$fs`：受 SandboxIoPolicy 门控的同步文件 API（执行线程已在 spawn_blocking 中）。
 
-use std::path::PathBuf;
-use rquickjs::{Ctx, Result, Object, Function, Async};
-use serde::{Deserialize, Serialize};
-use tokio::fs;
-use crate::sandbox::SandboxConfig;
+use rquickjs::{Ctx, Function, Object};
 
-/// File entry information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileEntry {
-    pub path: String,
-    pub kind: String, // "file" or "dir"
+use crate::sandbox::SandboxIoPolicy;
+
+fn js_error<'js>(ctx: &Ctx<'js>, message: String) -> rquickjs::Error {
+    rquickjs::Exception::throw_message(ctx, &message)
 }
 
-/// File system API exposed to scripts as $fs
-pub struct FsApi {
-    sandbox: SandboxConfig,
-}
+pub(crate) fn register_fs_api<'js>(
+    ctx: &Ctx<'js>,
+    policy: SandboxIoPolicy,
+) -> rquickjs::Result<()> {
+    let globals = ctx.globals();
+    let fs_object = Object::new(ctx.clone())?;
 
-impl FsApi {
-    pub fn new(sandbox: SandboxConfig) -> Self {
-        Self { sandbox }
-    }
+    let read_policy = policy.clone();
+    let read_text = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'_>, path: String| -> Result<String, rquickjs::Error> {
+            let target = read_policy
+                .check_read(&path)
+                .map_err(|message| js_error(&ctx, message))?;
+            std::fs::read_to_string(&target)
+                .map_err(|error| js_error(&ctx, format!("failed to read `{path}`: {error}")))
+        },
+    )?;
 
-    /// Read text content from a file (relative to work_dir)
-    pub async fn read_text(&self, path: String) -> anyhow::Result<String> {
-        let resolved = self.sandbox.resolve_work_path(&path)?;
-        
-        if !self.sandbox.is_path_allowed_for_io(&resolved) {
-            anyhow::bail!("Access denied: path outside work directory");
-        }
-        
-        fs::read_to_string(&resolved)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", path, e))
-    }
+    let write_policy = policy.clone();
+    let write_text = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'_>, path: String, content: String| -> Result<(), rquickjs::Error> {
+            let target = write_policy
+                .check_write(&path)
+                .map_err(|message| js_error(&ctx, message))?;
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    js_error(&ctx, format!("failed to create directory for `{path}`: {error}"))
+                })?;
+            }
+            std::fs::write(&target, content)
+                .map_err(|error| js_error(&ctx, format!("failed to write `{path}`: {error}")))
+        },
+    )?;
 
-    /// Write text content to a file (relative to work_dir)
-    pub async fn write_text(&self, path: String, content: String) -> anyhow::Result<()> {
-        let resolved = self.sandbox.resolve_work_path(&path)?;
-        
-        if !self.sandbox.is_path_allowed_for_io(&resolved) {
-            anyhow::bail!("Access denied: path outside work directory");
-        }
-        
-        // Ensure parent directory exists
-        if let Some(parent) = resolved.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-        
-        fs::write(&resolved, content)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to write file {}: {}", path, e))
-    }
-
-    /// List files in a directory (relative to work_dir)
-    pub async fn list_files(&self, path: Option<String>) -> anyhow::Result<Vec<FileEntry>> {
-        let base_path = match path {
-            Some(p) => self.sandbox.resolve_work_path(&p)?,
-            None => self.sandbox.work_dir.clone(),
-        };
-        
-        if !self.sandbox.is_path_allowed_for_io(&base_path) {
-            anyhow::bail!("Access denied: path outside work directory");
-        }
-        
-        let mut entries = Vec::new();
-        let mut dir = fs::read_dir(&base_path).await?;
-        
-        while let Some(entry) = dir.next_entry().await? {
-            let file_type = entry.file_type().await?;
-            let entry_path = entry.path();
-            
-            // Get relative path from work_dir
-            let relative_path = entry_path
-                .strip_prefix(&self.sandbox.work_dir)
-                .unwrap_or(&entry_path)
-                .to_string_lossy()
-                .to_string();
-            
-            let kind = if file_type.is_dir() {
-                "dir".to_string()
-            } else {
-                "file".to_string()
+    let list_policy = policy.clone();
+    let list_files = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'_>, path: Option<String>| -> Result<Vec<String>, rquickjs::Error> {
+            // 无参：列出 work_dir 顶层条目名（仅名字，无内容）；
+            // 有参：读取该目录下条目的 work_dir 相对路径，读权限同 check_read。
+            let mut entries = Vec::new();
+            let base = match path.as_deref() {
+                None => list_policy.work_dir.clone(),
+                Some(path) => list_policy
+                    .check_read(path)
+                    .map_err(|message| js_error(&ctx, message))?,
             };
-            
-            entries.push(FileEntry {
-                path: relative_path,
-                kind,
-            });
-        }
-        
-        Ok(entries)
-    }
+            let directory = std::fs::read_dir(&base).map_err(|error| {
+                js_error(&ctx, format!("failed to list `{}`: {error}", base.display()))
+            })?;
+            for entry in directory {
+                let entry = entry
+                    .map_err(|error| js_error(&ctx, format!("failed to read entry: {error}")))?;
+                let name = entry.file_name().to_string_lossy().to_string();
+                entries.push(match path.as_deref() {
+                    None => name,
+                    Some(prefix) => {
+                        let prefix = prefix.trim_end_matches(['/', '\\']);
+                        format!("{prefix}/{name}")
+                    }
+                });
+            }
+            entries.sort();
+            Ok(entries)
+        },
+    )?;
 
-    /// Check if a path exists (relative to work_dir)
-    pub async fn exists(&self, path: String) -> anyhow::Result<bool> {
-        let resolved = self.sandbox.resolve_work_path(&path)?;
-        
-        if !self.sandbox.is_path_allowed_for_io(&resolved) {
-            return Ok(false);
-        }
-        
-        Ok(fs::try_exists(&resolved).await.unwrap_or(false))
-    }
+    let exists_policy = policy.clone();
+    let exists = Function::new(
+        ctx.clone(),
+        move |_ctx: Ctx<'_>, path: String| -> Result<bool, rquickjs::Error> {
+            match exists_policy.check_read(&path) {
+                Ok(target) => Ok(target.is_file() || target.is_dir()),
+                Err(_) => Ok(false),
+            }
+        },
+    )?;
 
-    /// Register the $fs API object in the QuickJs context
-    pub fn register<'js>(&self, ctx: &Ctx<'js>) -> Result<()> {
-        let globals = ctx.globals();
-        
-        let fs_obj = Object::new(ctx.clone())?;
-        
-        // Register async functions
-        let read_text = Function::new(ctx.clone(), move |path: String| {
-            let api = FsApi::new(self.sandbox.clone());
-            async move { api.read_text(path).await }
-        })?;
-        
-        let write_text = Function::new(ctx.clone(), move |path: String, content: String| {
-            let api = FsApi::new(self.sandbox.clone());
-            async move { api.write_text(path, content).await }
-        })?;
-        
-        let list_files = Function::new(ctx.clone(), move |path: Option<String>| {
-            let api = FsApi::new(self.sandbox.clone());
-            async move { api.list_files(path).await }
-        })?;
-        
-        let exists = Function::new(ctx.clone(), move |path: String| {
-            let api = FsApi::new(self.sandbox.clone());
-            async move { api.exists(path).await }
-        })?;
-        
-        fs_obj.set("readText", read_text)?;
-        fs_obj.set("writeText", write_text)?;
-        fs_obj.set("listFiles", list_files)?;
-        fs_obj.set("exists", exists)?;
-        
-        globals.set("$fs", fs_obj)?;
-        
-        Ok(())
-    }
+    fs_object.set("readText", read_text)?;
+    fs_object.set("writeText", write_text)?;
+    fs_object.set("listFiles", list_files)?;
+    fs_object.set("exists", exists)?;
+    globals.set("$fs", fs_object)?;
+    Ok(())
 }

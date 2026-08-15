@@ -5,13 +5,11 @@ edition = "2021"
 description = "QuickJs script execution engine for Tauri Tavern skills"
 
 [dependencies]
-rquickjs = { version = "0.9", features = ["macro", "parallel"] }
+rquickjs = { version = "0.9", features = ["macro", "parallel", "loader"] }
 async-trait = "0.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-anyhow = "1.0"
-thiserror = { workspace = true }
 log = { workspace = true }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }

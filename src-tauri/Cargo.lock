@@ -7876,7 +7876,6 @@ dependencies = [
 name = "tt-adapter-quickjs"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "log",
  "path-clean",
@@ -7884,7 +7883,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
  "tokio",
  "tt-domain",
  "tt-ports",

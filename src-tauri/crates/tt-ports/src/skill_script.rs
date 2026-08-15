@@ -25,6 +25,7 @@ pub struct SkillScriptRequest {
 }
 
 /// 脚本返回值（JSON）。
+#[derive(Debug)]
 pub struct SkillScriptResult {
     pub value: serde_json::Value,
 }

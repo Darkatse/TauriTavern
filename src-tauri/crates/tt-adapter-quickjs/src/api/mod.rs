@@ -1,9 +1,9 @@
-//! API modules exposed to scripts
+//! 注入脚本全局对象的 API（`$fs` / `$worldInfo` / `$log`）。
 
 pub mod fs;
-pub mod world_info;
 pub mod log;
+pub mod world_info;
 
-pub use fs::FsApi;
-pub use world_info::WorldInfoApi;
-pub use log::LogApi;
+pub(crate) use fs::register_fs_api;
+pub(crate) use log::register_log_api;
+pub(crate) use world_info::register_world_info_api;

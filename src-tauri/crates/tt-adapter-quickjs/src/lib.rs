@@ -1,13 +1,9 @@
-//! QuickJs script execution engine for Tauri Tavern skills
-//! 
-//! This crate provides a sandboxed JavaScript execution environment using QuickJs,
-//! with restricted file system access and module loading capabilities.
+//! QuickJS 沙箱脚本引擎（`SkillScriptEngine` 的 adapter 实现）。
 
 pub mod api;
+pub mod convert;
 pub mod engine;
 pub mod sandbox;
-pub mod tool;
 
-pub use engine::QuickJsEngine;
-pub use sandbox::SandboxConfig;
-pub use tool::{ScriptToolDescriptor, ScriptToolExecutor};
+pub use engine::{DEFAULT_EXECUTION_TIMEOUT, DEFAULT_MAX_RESULT_BYTES, QuickJsScriptEngine};
+pub use sandbox::SandboxIoPolicy;
