@@ -85,23 +85,23 @@ impl FileSkillRepository {
         Ok(index)
     }
 
-    pub(super) async fn load_index_import_view(
+    pub(super) async fn load_index_target_view(
         &self,
         scope: &SkillScope,
         name: &str,
     ) -> Result<SkillIndexFile, DomainError> {
         let mut index = self.load_index().await?;
-        self.reconcile_import_target(&mut index, scope, name)?;
+        self.reconcile_target(&mut index, scope, name)?;
         Ok(index)
     }
 
-    pub(super) async fn repair_index_for_import_target(
+    pub(super) async fn repair_index_for_target(
         &self,
         scope: &SkillScope,
         name: &str,
     ) -> Result<SkillIndexFile, DomainError> {
         let mut index = self.load_index().await?;
-        if self.reconcile_import_target(&mut index, scope, name)? {
+        if self.reconcile_target(&mut index, scope, name)? {
             self.save_index(&index).await?;
         }
         Ok(index)
@@ -226,7 +226,7 @@ impl FileSkillRepository {
         Ok(changed)
     }
 
-    fn reconcile_import_target(
+    pub(super) fn reconcile_target(
         &self,
         index: &mut SkillIndexFile,
         scope: &SkillScope,
@@ -241,7 +241,7 @@ impl FileSkillRepository {
             return Ok(changed);
         }
 
-        let Some(entry) = self.validated_orphan_import_target(scope, name)? else {
+        let Some(entry) = self.validated_orphan_target(scope, name)? else {
             return Ok(changed);
         };
         index.skills.push(entry);
@@ -250,7 +250,7 @@ impl FileSkillRepository {
         Ok(changed)
     }
 
-    fn validated_orphan_import_target(
+    fn validated_orphan_target(
         &self,
         scope: &SkillScope,
         name: &str,
@@ -380,7 +380,7 @@ impl FileSkillRepository {
         if let Err(error) = self.save_index(&index).await {
             return Err(rollback_prepared_skill_dirs(&prepared_targets, error));
         }
-        cleanup_committed_skill_dirs("migrate_v1_index", &legacy_dirs)?;
+        cleanup_committed_skill_dirs("migrate_v1_index", &legacy_dirs);
         Ok(index)
     }
 }

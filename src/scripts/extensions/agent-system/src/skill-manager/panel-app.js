@@ -1006,6 +1006,10 @@ export function createSkillManagerPanelRoot() {
                     }));
                 } catch (error) {
                     this.reportError(error);
+                    await Promise.allSettled([
+                        this.refreshSection(section.id),
+                        this.refreshSection(target.id),
+                    ]);
                     throw error;
                 }
             },
