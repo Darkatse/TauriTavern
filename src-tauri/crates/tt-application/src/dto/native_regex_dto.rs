@@ -28,6 +28,8 @@ pub struct NativeRegexScriptDto {
     #[serde(default)]
     pub global: bool,
     #[serde(default)]
+    pub required_literal: Option<String>,
+    #[serde(default)]
     pub replacement: String,
     #[serde(default)]
     pub trim_strings: Vec<String>,
