@@ -13,7 +13,8 @@ import {
 } from './util/openai-token-count.js';
 import { createSingleFlight } from './util/single-flight.js';
 
-export const CHARACTERS_PER_TOKEN_RATIO = 3.35;
+export const BYTES_PER_TOKEN = 3.35;
+export { BYTES_PER_TOKEN as CHARACTERS_PER_TOKEN_RATIO };
 export const TOKENIZER_WARNING_KEY = 'tokenizationWarningShown';
 export const TOKENIZER_SUPPORTED_KEY = 'tokenizationSupported';
 
@@ -159,6 +160,7 @@ const TOKENIZER_URLS = {
     },
 };
 
+const textEncoder = new TextEncoder();
 const objectStore = localforage.createInstance({ name: 'SillyTavern_ChatCompletions' });
 const TAURI_WARM_TOKENIZER_MODEL = 'gpt-4o';
 
@@ -197,17 +199,20 @@ function startTokenCacheLoad(state) {
     }
 
     const storageKey = getTokenCacheStorageKey(state.chatId);
-    state.loadPromise = objectStore.getItem(storageKey).then(bucket => {
-        if (bucket === null || bucket === undefined) {
-            return;
-        }
+    state.loadPromise = objectStore.getItem(storageKey)
+        .then(bucket => {
+            if (bucket === null || bucket === undefined) {
+                return;
+            }
 
-        if (typeof bucket !== 'object' || Array.isArray(bucket)) {
-            throw new Error(`Invalid token cache bucket: ${storageKey}`);
-        }
+            if (typeof bucket !== 'object' || Array.isArray(bucket)) {
+                console.warn(`Ignoring invalid token cache bucket: ${storageKey}`);
+                return;
+            }
 
-        Object.assign(state.cache, bucket);
-    });
+            Object.assign(state.cache, bucket);
+        })
+        .catch(error => console.warn(`Failed to load token cache bucket '${storageKey}':`, error));
 }
 
 async function flushTokenCacheState(state) {
@@ -220,8 +225,13 @@ async function flushTokenCacheState(state) {
         await state.loadPromise;
     }
 
-    await objectStore.setItem(getTokenCacheStorageKey(state.chatId), state.cache);
-    state.dirty = false;
+    const storageKey = getTokenCacheStorageKey(state.chatId);
+    try {
+        await objectStore.setItem(storageKey, state.cache);
+        state.dirty = false;
+    } catch (error) {
+        console.warn(`Failed to save token cache bucket '${storageKey}':`, error);
+    }
 }
 
 function getTokenCacheState(chatId) {
@@ -245,18 +255,14 @@ function getTokenCacheState(chatId) {
  * @returns {number} Token count.
  */
 export function guesstimate(str) {
-    return Math.ceil(str.length / CHARACTERS_PER_TOKEN_RATIO);
+    return Math.ceil(textEncoder.encode(str).length / BYTES_PER_TOKEN);
 }
 
 function scheduleLegacyTokenCacheCleanup() {
     const run = () => objectStore.removeItem('tokenCache');
 
     const runAsync = () => {
-        void run().catch((err) => {
-            queueMicrotask(() => {
-                throw err;
-            });
-        });
+        void run().catch(error => console.warn('Failed to remove legacy token cache:', error));
     };
 
     if (typeof requestIdleCallback === 'function') {
@@ -1040,7 +1046,6 @@ function guesstimateOpenAiMessageTokenCount(message) {
 export function countTokensOpenAI(messages, full = false) {
     const model = getTokenizerModel();
     const tokenizerEndpoint = `/api/tokenizers/openai/count-batch?model=${model}`;
-    const legacyTokenizerEndpoint = `/api/tokenizers/openai/count?model=${model}`;
     const cacheState = getTokenCacheState(resolveTokenCacheChatId());
     const cacheObject = cacheState.cache;
 
@@ -1085,44 +1090,27 @@ export function countTokensOpenAI(messages, full = false) {
             success: function (data) {
                 batchResult = data;
             },
+            error: function (_xhr, _status, errorThrown) {
+                console.warn('OpenAI token count batch request failed, using guesstimate fallback:', errorThrown);
+            },
         });
 
         const tokenCounts = Array.isArray(batchResult?.token_counts)
+            && batchResult.token_counts.length === cacheMisses.length
+            && batchResult.token_counts.every(Number.isFinite)
             ? batchResult.token_counts
             : null;
-        let warnedSingleFailure = false;
+        if (batchResult && !tokenCounts) {
+            console.warn('OpenAI token count batch returned an invalid response, using guesstimate fallback');
+        }
 
         for (let i = 0; i < cacheMissKeys.length; i += 1) {
-            let count = tokenCounts ? Number(tokenCounts[i]) : NaN;
-            let shouldCache = Number.isFinite(count);
-
-            if (!shouldCache) {
-                jQuery.ajax({
-                    async: false,
-                    type: 'POST',
-                    url: legacyTokenizerEndpoint,
-                    data: JSON.stringify([cacheMisses[i]]),
-                    dataType: 'json',
-                    contentType: 'application/json',
-                    success: function (data) {
-                        count = Number(data?.token_count);
-                        shouldCache = Number.isFinite(count);
-                    },
-                    error: function (_xhr, _status, errorThrown) {
-                        if (!warnedSingleFailure) {
-                            warnedSingleFailure = true;
-                            console.warn('OpenAI token count request failed, using guesstimate fallback:', errorThrown);
-                        }
-                    },
-                });
-            }
-
-            if (!shouldCache) {
-                count = guesstimateOpenAiMessageTokenCount(cacheMisses[i]);
-            }
+            const count = tokenCounts
+                ? tokenCounts[i]
+                : guesstimateOpenAiMessageTokenCount(cacheMisses[i]);
 
             token_count += count;
-            if (shouldCache) {
+            if (tokenCounts) {
                 cacheObject[cacheMissKeys[i]] = count;
                 cacheState.dirty = true;
             }
@@ -1165,7 +1153,6 @@ export async function countTokensOpenAIAsync(messages, full = false, settings = 
 async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
     const model = getTokenizerModel(settings);
     const tokenizerEndpoint = `/api/tokenizers/openai/count-batch?model=${model}`;
-    const legacyTokenizerEndpoint = `/api/tokenizers/openai/count?model=${model}`;
     const cacheState = getTokenCacheState(resolveTokenCacheChatId());
     if (cacheState.loadPromise) {
         await cacheState.loadPromise;
@@ -1196,7 +1183,6 @@ async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
 
     if (cacheMisses.length) {
         let tokenCounts = null;
-        let warnedSingleFailure = false;
 
         try {
             const data = await jQuery.ajax({
@@ -1208,44 +1194,24 @@ async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
                 contentType: 'application/json',
             });
 
-            if (Array.isArray(data?.token_counts)) {
+            if (Array.isArray(data?.token_counts)
+                && data.token_counts.length === cacheMisses.length
+                && data.token_counts.every(Number.isFinite)) {
                 tokenCounts = data.token_counts;
+            } else {
+                console.warn('OpenAI token count batch returned an invalid response, using guesstimate fallback');
             }
         } catch (error) {
-            console.warn('OpenAI token count batch request failed:', error);
+            console.warn('OpenAI token count batch request failed, using guesstimate fallback:', error);
         }
 
         for (let i = 0; i < cacheMissKeys.length; i += 1) {
-            let count = tokenCounts ? Number(tokenCounts[i]) : NaN;
-            let shouldCache = Number.isFinite(count);
-
-            if (!shouldCache) {
-                try {
-                    const data = await jQuery.ajax({
-                        async: true,
-                        type: 'POST',
-                        url: legacyTokenizerEndpoint,
-                        data: JSON.stringify([cacheMisses[i]]),
-                        dataType: 'json',
-                        contentType: 'application/json',
-                    });
-
-                    count = Number(data?.token_count);
-                    shouldCache = Number.isFinite(count);
-                } catch (error) {
-                    if (!warnedSingleFailure) {
-                        warnedSingleFailure = true;
-                        console.warn('OpenAI token count request failed, using guesstimate fallback:', error);
-                    }
-                }
-            }
-
-            if (!shouldCache) {
-                count = guesstimateOpenAiMessageTokenCount(cacheMisses[i]);
-            }
+            const count = tokenCounts
+                ? tokenCounts[i]
+                : guesstimateOpenAiMessageTokenCount(cacheMisses[i]);
 
             counts[cacheMissIndices[i]] = count;
-            if (shouldCache) {
+            if (tokenCounts) {
                 cacheObject[cacheMissKeys[i]] = count;
                 cacheState.dirty = true;
             }
@@ -1262,6 +1228,23 @@ async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
  * @param {function} [resolve] Promise resolve function.s
  * @returns {number} Token count.
  */
+function settleTokenCount(data, str, resolve) {
+    if (!data?.error && typeof data?.count === 'number') {
+        resolve?.(data.count);
+        return data.count;
+    }
+
+    if (typeof resolve === 'function') {
+        void apiFailureTokenCountAsync(str).then(resolve, error => {
+            console.warn('Tokenizer fallback failed, using guesstimate:', error);
+            resolve(guesstimate(str));
+        });
+        return 0;
+    }
+
+    return apiFailureTokenCount(str);
+}
+
 function countTokensFromServer(endpoint, str, resolve) {
     const isAsync = typeof resolve === 'function';
     let tokenCount = 0;
@@ -1274,13 +1257,10 @@ function countTokensFromServer(endpoint, str, resolve) {
         dataType: 'json',
         contentType: 'application/json',
         success: function (data) {
-            if (typeof data.count === 'number') {
-                tokenCount = data.count;
-            } else {
-                tokenCount = apiFailureTokenCount(str);
-            }
-
-            isAsync && resolve(tokenCount);
+            tokenCount = settleTokenCount(data, str, resolve);
+        },
+        error: function () {
+            tokenCount = settleTokenCount(null, str, resolve);
         },
     });
 
@@ -1308,13 +1288,10 @@ function countTokensFromKoboldAPI(str, resolve) {
         dataType: 'json',
         contentType: 'application/json',
         success: function (data) {
-            if (typeof data.count === 'number') {
-                tokenCount = data.count;
-            } else {
-                tokenCount = apiFailureTokenCount(str);
-            }
-
-            isAsync && resolve(tokenCount);
+            tokenCount = settleTokenCount(data, str, resolve);
+        },
+        error: function () {
+            tokenCount = settleTokenCount(null, str, resolve);
         },
     });
 
@@ -1326,6 +1303,7 @@ function getTextgenAPITokenizationParams(str) {
         text: str,
         api_type: textgen_settings.type,
         url: getTextGenServer(),
+        model: getTextGenModel(),
         vllm_model: textgen_settings.vllm_model,
         aphrodite_model: textgen_settings.aphrodite_model,
     };
@@ -1349,20 +1327,17 @@ function countTokensFromTextgenAPI(str, resolve) {
         dataType: 'json',
         contentType: 'application/json',
         success: function (data) {
-            if (typeof data.count === 'number') {
-                tokenCount = data.count;
-            } else {
-                tokenCount = apiFailureTokenCount(str);
-            }
-
-            isAsync && resolve(tokenCount);
+            tokenCount = settleTokenCount(data, str, resolve);
+        },
+        error: function () {
+            tokenCount = settleTokenCount(null, str, resolve);
         },
     });
 
     return tokenCount;
 }
 
-function apiFailureTokenCount(str) {
+function recordTokenizerFailure() {
     console.error('Error counting tokens');
     let shouldTryAgain = false;
 
@@ -1375,9 +1350,20 @@ function apiFailureTokenCount(str) {
         }
     }
 
-    // Only try again if we guarantee not to be looped by the same error
-    if (shouldTryAgain && power_user.tokenizer === tokenizers.BEST_MATCH) {
+    return shouldTryAgain && power_user.tokenizer === tokenizers.BEST_MATCH;
+}
+
+function apiFailureTokenCount(str) {
+    if (recordTokenizerFailure()) {
         return getTokenCount(str);
+    }
+
+    return guesstimate(str);
+}
+
+async function apiFailureTokenCountAsync(str) {
+    if (recordTokenizerFailure()) {
+        return getTokenCountAsync(str);
     }
 
     return guesstimate(str);
@@ -1411,6 +1397,30 @@ function getTextTokensFromServer(endpoint, str, resolve) {
             isAsync && resolve(ids);
         },
     });
+    return ids;
+}
+
+async function encodeTextTokensAsync(endpoint, payload) {
+    const data = await jQuery.ajax({
+        async: true,
+        type: 'POST',
+        url: endpoint,
+        data: JSON.stringify(payload),
+        dataType: 'json',
+        contentType: 'application/json',
+    });
+
+    if (data?.error) {
+        throw new Error(String(data.error));
+    }
+    if (!Array.isArray(data?.ids)) {
+        throw new Error('Tokenizer response does not contain token ids');
+    }
+
+    const ids = data.ids;
+    if (Array.isArray(data.chunks)) {
+        Object.defineProperty(ids, 'chunks', { value: data.chunks });
+    }
     return ids;
 }
 
@@ -1530,6 +1540,43 @@ export function getTextTokens(tokenizerType, str) {
 }
 
 /**
+ * Encodes a string to token ids without relying on synchronous XHR.
+ * @param {number} tokenizerType Tokenizer type.
+ * @param {string} str String to tokenize.
+ * @returns {Promise<number[]>} Array of token ids.
+ */
+export async function getTextTokensAsync(tokenizerType, str) {
+    switch (tokenizerType) {
+        case tokenizers.NONE:
+            return [];
+        case tokenizers.API_CURRENT:
+            return getTextTokensAsync(currentRemoteTokenizerAPI(), str);
+        case tokenizers.API_TEXTGENERATIONWEBUI:
+            return encodeTextTokensAsync(
+                TOKENIZER_URLS[tokenizers.API_TEXTGENERATIONWEBUI].encode,
+                getTextgenAPITokenizationParams(str),
+            );
+        case tokenizers.API_KOBOLD:
+            return encodeTextTokensAsync(TOKENIZER_URLS[tokenizers.API_KOBOLD].encode, {
+                text: str,
+                url: kai_settings.api_server,
+            });
+        default: {
+            const tokenizerEndpoints = TOKENIZER_URLS[tokenizerType];
+            if (!tokenizerEndpoints?.encode) {
+                throw new Error(`Tokenizer type ${tokenizerType} does not support encoding`);
+            }
+
+            let endpointUrl = tokenizerEndpoints.encode;
+            if (tokenizerType === tokenizers.OPENAI) {
+                endpointUrl += `?model=${getTokenizerModel()}`;
+            }
+            return encodeTextTokensAsync(endpointUrl, { text: str });
+        }
+    }
+}
+
+/**
  * Decodes token ids to text using the server API.
  * @param {number} tokenizerType Tokenizer type.
  * @param {number[]} ids Array of token ids
@@ -1575,11 +1622,12 @@ export async function initTokenizers() {
     eventSource.on(event_types.CHAT_CHANGED, chatId => {
         getTokenCacheState(chatId);
     });
-    eventSource.on(event_types.CHAT_DELETED, chatId => {
-        void objectStore.removeItem(getTokenCacheStorageKey(chatId === undefined || chatId === null ? 'undefined' : String(chatId)));
-    });
-    eventSource.on(event_types.GROUP_CHAT_DELETED, chatId => {
-        void objectStore.removeItem(getTokenCacheStorageKey(chatId === undefined || chatId === null ? 'undefined' : String(chatId)));
-    });
+    const removeChatTokenCache = chatId => {
+        const storageKey = getTokenCacheStorageKey(chatId === undefined || chatId === null ? 'undefined' : String(chatId));
+        void objectStore.removeItem(storageKey)
+            .catch(error => console.warn(`Failed to remove token cache bucket '${storageKey}':`, error));
+    };
+    eventSource.on(event_types.CHAT_DELETED, removeChatTokenCache);
+    eventSource.on(event_types.GROUP_CHAT_DELETED, removeChatTokenCache);
     registerDebugFunction('resetTokenCache', 'Reset token cache', 'Purges the calculated token counts. Use this if you want to force a full re-tokenization of all chats or suspect the token counts are wrong.', resetTokenCache);
 }

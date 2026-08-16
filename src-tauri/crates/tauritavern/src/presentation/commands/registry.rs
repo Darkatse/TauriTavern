@@ -371,11 +371,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // TTS commands
         super::tts_commands::tts_handle,
         // Tokenizer commands
-        super::tokenizer_commands::count_openai_tokens,
         super::tokenizer_commands::count_openai_tokens_batch,
         super::tokenizer_commands::count_openai_token_prefixes,
-        super::tokenizer_commands::encode_openai_tokens,
-        super::tokenizer_commands::decode_openai_tokens,
+        super::tokenizer_commands::encode_tokens,
+        super::tokenizer_commands::decode_tokens,
         super::tokenizer_commands::build_openai_logit_bias,
         // Native regex commands
         super::native_regex_commands::apply_native_regex_batch,

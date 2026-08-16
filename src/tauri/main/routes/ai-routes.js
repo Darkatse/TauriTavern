@@ -6,7 +6,6 @@ import { createGenerationLifecycleService } from '../services/ai/generation-life
 import { createGenerationStatusBridge } from '../services/ai/generation-status-bridge.js';
 import { consumeChatCompletionStream } from '../services/ai/chat-completion-stream-consumer.js';
 import { createSystemNotificationService } from '../services/notifications/system-notification-service.js';
-import { registerOpenAiTokenizerRoutes } from './openai-tokenizer-routes.js';
 import {
     asUpstreamFailureDetails,
     getErrorMessage,
@@ -746,6 +745,4 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             return jsonResponse(buildErrorCompletionPayload(error, payload));
         }
     });
-
-    registerOpenAiTokenizerRoutes(router, context, { jsonResponse });
 }

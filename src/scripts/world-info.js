@@ -5268,7 +5268,7 @@ async function checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData
             if (canPrefetchWorldInfoTokenCount(entry) && !prefetchedTokenCounts.has(entry)) {
                 const { entries: batchEntries, suffixes: batchSuffixes } = getWorldInfoTokenPrefetchBatch(newEntries, entryIndex);
 
-                const remainingBudget = budget - textToScanTokens;
+                const remainingBudget = Math.max(0, budget - textToScanTokens);
                 const batchCounts = await getTokenPrefixCountsAsync(batchBaseContent, batchSuffixes, undefined, remainingBudget);
                 batchEntries.forEach((batchEntry, index) => prefetchedTokenCounts.set(batchEntry, batchCounts[index]));
             }

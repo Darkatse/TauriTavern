@@ -9,6 +9,7 @@ import { registerCharacterRoutes } from './character-routes.js';
 import { registerChatRoutes } from './chat-routes.js';
 import { registerBackupsRoutes } from './backups-routes.js';
 import { registerAiRoutes } from './ai-routes.js';
+import { registerTokenizerRoutes } from './tokenizer-routes.js';
 import { registerProviderRoutes } from './provider-routes.js';
 import { registerStatsRoutes } from './stats-routes.js';
 import { registerWorldInfoRoutes } from './worldinfo-routes.js';
@@ -35,6 +36,7 @@ export function registerRoutes(router, context, responses) {
     registerAssetsRoutes(router, context, responses);
     registerWorldInfoRoutes(router, context, responses);
     registerAiRoutes(router, context, responses);
+    registerTokenizerRoutes(router, context, responses);
     registerVectorRoutes(router, context, responses);
     registerSpriteRoutes(router, context, responses);
     registerProviderRoutes(router, context, responses);
