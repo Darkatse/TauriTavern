@@ -37,20 +37,19 @@ async function getCaptionErrorMessage(response) {
  * Generates a caption for an image using a multimodal model.
  * @param {string} base64Img Base64 encoded image
  * @param {string} prompt Prompt to use for captioning
+ * @param {AbortSignal} [signal] Signal used to cancel captioning
  * @returns {Promise<string>} Generated caption
  */
-export async function getMultimodalCaption(base64Img, prompt) {
-    if (globalThis.__TAURI_RUNNING__ === true) {
-        throw new Error(NATIVE_CAPTION_UNAVAILABLE_MESSAGE);
-    }
-
+export async function getMultimodalCaption(base64Img, prompt, signal) {
     const useReverseProxy =
         (['openai', 'anthropic', 'google', 'mistral', 'vertexai', 'xai', 'zai', 'moonshot'].includes(extension_settings.caption.multimodal_api))
         && extension_settings.caption.allow_reverse_proxy
         && oai_settings.reverse_proxy
         && isValidUrl(oai_settings.reverse_proxy);
 
-    throwIfInvalidModel(useReverseProxy);
+    if (globalThis.__TAURI_RUNNING__ !== true) {
+        throwIfInvalidModel(useReverseProxy);
+    }
 
     // OpenRouter has a payload limit of ~2MB. Google is 4MB, but we love democracy.
     // Ooba requires all images to be JPEGs. Koboldcpp just asked nicely.
@@ -165,6 +164,10 @@ export async function getMultimodalCaption(base64Img, prompt) {
         requestBody.workers_ai_account_id = oai_settings.workers_ai_account_id;
     }
 
+    if (extension_settings.caption.multimodal_api === 'moonshot') {
+        requestBody.moonshot_endpoint = oai_settings.moonshot_endpoint;
+    }
+
     function getEndpointUrl() {
         switch (extension_settings.caption.multimodal_api) {
             case 'google':
@@ -183,6 +186,7 @@ export async function getMultimodalCaption(base64Img, prompt) {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify(requestBody),
+        signal,
     });
 
     if (!apiResult.ok) {
@@ -190,7 +194,10 @@ export async function getMultimodalCaption(base64Img, prompt) {
     }
 
     const { caption } = await apiResult.json();
-    return String(caption).trim();
+    if (typeof caption !== 'string' || !caption.trim()) {
+        throw new Error('Image captioning response is missing caption text.');
+    }
+    return caption.trim();
 }
 
 function throwIfInvalidModel(useReverseProxy) {

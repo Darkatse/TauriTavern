@@ -479,9 +479,12 @@ export async function init() {
             const hasCaptionModule = (() => {
                 const settings = extension_settings.caption;
 
-                if (globalThis.__TAURI_RUNNING__ === true && ['local', 'horde', 'multimodal'].includes(settings.source)) {
+                if (globalThis.__TAURI_RUNNING__ === true && ['local', 'horde'].includes(settings.source)) {
                     unavailableReason = NATIVE_CAPTION_UNAVAILABLE_MESSAGE;
                     return false;
+                }
+                if (globalThis.__TAURI_RUNNING__ === true && settings.source === 'multimodal') {
+                    return true;
                 }
 
                 // Handle non-multimodal sources
@@ -575,7 +578,11 @@ export async function init() {
         $('#form_sheld').append(imgForm);
     }
     async function switchMultimodalBlocks() {
-        await addRemoteEndpointModels();
+        try {
+            await addRemoteEndpointModels();
+        } catch (error) {
+            console.warn('Caption: multimodal model discovery failed', error);
+        }
         const isMultimodal = extension_settings.caption.source === 'multimodal';
         if (!extension_settings.caption.multimodal_model) {
             const dropdown = $('#caption_multimodal_model');

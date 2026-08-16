@@ -171,6 +171,60 @@ fn wire_log_payload_strips_internal_provider_state() {
 }
 
 #[test]
+fn wire_log_payload_redacts_inline_media_without_mutating_source() {
+    let payload = json!({
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "image_url",
+                "image_url": { "url": "data:image/png;base64,AAAA" }
+            }]
+        }],
+        "claude": {
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": "BBBBB"
+            }
+        },
+        "gemini": {
+            "inlineData": {
+                "mimeType": "video/mp4",
+                "data": "CCCCCC"
+            }
+        }
+    });
+
+    let sanitized = wire_log_payload(&payload);
+
+    assert_eq!(
+        sanitized.pointer("/messages/0/content/0/image_url/url"),
+        Some(&json!(
+            "<inline media omitted; mime=image/png; base64_chars=4>"
+        ))
+    );
+    assert_eq!(
+        sanitized.pointer("/claude/source/data"),
+        Some(&json!(
+            "<inline media omitted; mime=image/jpeg; base64_chars=5>"
+        ))
+    );
+    assert_eq!(
+        sanitized.pointer("/gemini/inlineData/data"),
+        Some(&json!(
+            "<inline media omitted; mime=video/mp4; base64_chars=6>"
+        ))
+    );
+    assert_eq!(
+        payload.pointer("/messages/0/content/0/image_url/url"),
+        Some(&json!("data:image/png;base64,AAAA"))
+    );
+    assert!(!pretty_json(&sanitized).contains("AAAA"));
+    assert!(!pretty_json(&sanitized).contains("BBBBB"));
+    assert!(!pretty_json(&sanitized).contains("CCCCCC"));
+}
+
+#[test]
 fn format_request_readable_supports_gemini_interactions_input_steps() {
     let payload = json!({
         "model": "gemini-3",

@@ -8,11 +8,13 @@ import { consumeChatCompletionStream } from '../services/ai/chat-completion-stre
 import { createSystemNotificationService } from '../services/notifications/system-notification-service.js';
 import {
     asUpstreamFailureDetails,
+    buildLegacyErrorPayload,
     getErrorMessage,
     getUpstreamFailureDetails,
     getUserFacingErrorMessage,
     translateApiErrorLabel,
 } from './ai-error-presenter.js';
+import { registerCaptionRoutes } from './caption-routes.js';
 import { stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
 import { createAbortError, isAbortError } from '../kernel/abort-error.js';
 
@@ -43,15 +45,6 @@ const ANDROID_GENERATION_BRIDGE_NAME = 'TauriTavernAndroidAiBridge';
 const FAILURE_NOTIFICATION_MAX_BODY_LENGTH = 180;
 const ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS = 4000;
 const ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA = 160;
-const CAPTION_UNAVAILABLE_ROUTES = Object.freeze([
-    '/api/extra/caption',
-    '/api/horde/caption-image',
-    '/api/openai/caption-image',
-    '/api/google/caption-image',
-    '/api/anthropic/caption-image',
-    '/api/backends/text-completions/ollama/caption-image',
-]);
-const CAPTION_UNAVAILABLE_MESSAGE = 'Image captioning is not implemented in the TauriTavern native backend.';
 const i18nNotificationKeys = Object.freeze({
     successTitle: 'tauritavern_ai_notification_success_title',
     successBody: 'tauritavern_ai_notification_success_body',
@@ -225,26 +218,6 @@ function buildErrorAssistantText(error) {
     }
 
     return `${errorLabel}\n${normalizedMessage}`;
-}
-
-function buildLegacyErrorPayload(error) {
-    const details = getUpstreamFailureDetails(error);
-    const payload = {
-        message: getUserFacingErrorMessage(error),
-    };
-
-    if (details) {
-        payload.code = details.code;
-        payload.category = details.category;
-        payload.message_key = details.messageKey;
-        if (details.endpoint) {
-            payload.endpoint = details.endpoint;
-        }
-    }
-
-    return {
-        error: payload,
-    };
 }
 
 function buildErrorCompletionPayload(error, payload) {
@@ -647,12 +620,10 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
         progressMinCharsDelta: ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA,
     });
 
-    for (const route of CAPTION_UNAVAILABLE_ROUTES) {
-        router.post(route, async () => jsonResponse({
-            error: true,
-            message: CAPTION_UNAVAILABLE_MESSAGE,
-        }, 501));
-    }
+    registerCaptionRoutes(router, {
+        jsonResponse,
+        invokeChatCompletion: (payload, signal) => invokeChatCompletionWithAbort(context, payload, signal),
+    });
 
     router.post('/api/backends/chat-completions/status', async ({ body }) => {
         const payload = asObject(body);
