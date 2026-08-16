@@ -15,7 +15,7 @@ pub(super) async fn discover_extensions(
     tracing::info!("Discovering extensions");
 
     let mut extensions = Vec::new();
-    for &name in super::ENABLED_SYSTEM_EXTENSIONS {
+    for &name in super::SYSTEM_EXTENSIONS {
         extensions.push(Extension {
             name: name.to_string(),
             extension_type: ExtensionType::System,
