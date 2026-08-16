@@ -55,3 +55,6 @@ sillytavern-*
 .pnpm-cache/
 .pnpm-home/
 .tmp/
+
+# Local Reasonix agent workspace
+.reasonix/
