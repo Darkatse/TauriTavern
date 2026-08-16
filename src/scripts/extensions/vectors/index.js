@@ -37,6 +37,7 @@ import { generateWebLlmChatPrompt, isWebLlmSupported } from '../shared.js';
 import { WebLlmVectorProvider } from './webllm.js';
 import { removeReasoningFromString } from '../../reasoning.js';
 import { oai_settings } from '../../openai.js';
+import { reciprocalRankFusion } from './rank-fusion.js';
 
 /**
  * @typedef {object} HashedMessage
@@ -47,6 +48,7 @@ import { oai_settings } from '../../openai.js';
  */
 
 const MODULE_NAME = 'vectors';
+const MAX_RETRIEVAL_CANDIDATES = 1000;
 
 export const EXTENSION_PROMPT_TAG = '3_vectors';
 export const EXTENSION_PROMPT_TAG_DB = '4_vectors_data_bank';
@@ -334,16 +336,36 @@ async function summarizeExtra(element) {
             }),
         });
 
-        if (apiResult.ok) {
-            const data = await apiResult.json();
-            element.text = removeReasoningFromString(data.summary);
+        if (!apiResult.ok) {
+            return false;
         }
+
+        const data = await apiResult.json();
+        return setSummaryText(element, data.summary);
     }
     catch (error) {
         console.log(error);
         return false;
     }
+}
 
+/**
+ * Applies a non-empty summary to a vector item.
+ * @param {HashedMessage} element Hashed message
+ * @param {unknown} value Summary response
+ * @returns {boolean} Whether a usable summary was applied
+ */
+function setSummaryText(element, value) {
+    if (typeof value !== 'string') {
+        return false;
+    }
+
+    const summary = removeReasoningFromString(value).trim();
+    if (!summary) {
+        return false;
+    }
+
+    element.text = summary;
     return true;
 }
 
@@ -353,8 +375,8 @@ async function summarizeExtra(element) {
  * @returns {Promise<boolean>} Success
  */
 async function summarizeMain(element) {
-    element.text = removeReasoningFromString(await generateRaw({ prompt: element.text, systemPrompt: settings.summary_prompt }));
-    return true;
+    const summary = await generateRaw({ prompt: element.text, systemPrompt: settings.summary_prompt });
+    return setSummaryText(element, summary);
 }
 
 /**
@@ -369,9 +391,7 @@ async function summarizeWebLLM(element) {
     }
 
     const messages = [{ role: 'system', content: settings.summary_prompt }, { role: 'user', content: element.text }];
-    element.text = removeReasoningFromString(await generateWebLlmChatPrompt(messages));
-
-    return true;
+    return setSummaryText(element, await generateWebLlmChatPrompt(messages));
 }
 
 /**
@@ -418,7 +438,7 @@ async function summarize(hashedMessages, endpoint = 'main', { skipOnFailure = fa
                     break;
                 }
             } catch (error) {
-                if (FATAL_CAUSES.has(error?.cause)) {
+                if (VECTOR_JOB_ABORT_CAUSES.has(error?.cause)) {
                     throw error;
                 }
                 console.warn(`Vectors: summary attempt ${attempt}/${maxAttempts} threw for hash ${element.hash}`, error);
@@ -830,8 +850,8 @@ async function rearrangeChat(chat, _contextSize, _abort, type) {
             return;
         }
 
-        if (chat.length < settings.protect) {
-            console.debug(`Vectors: Not enough messages to rearrange (less than ${settings.protect})`);
+        if (chat.length <= settings.protect) {
+            console.debug(`Vectors: Not enough messages to rearrange (${settings.protect} protected)`);
             return;
         }
 
@@ -842,9 +862,27 @@ async function rearrangeChat(chat, _contextSize, _abort, type) {
             return;
         }
 
-        // Get the most relevant messages, excluding the last few
-        const queryResults = await queryCollection(chatId, queryText, settings.insert);
-        const queryHashes = queryResults.hashes.filter(onlyUnique);
+        // ponytail: a bounded 4x pool is enough for rank fusion; tune only if recall benchmarks require it.
+        const candidateCount = Math.min(MAX_RETRIEVAL_CANDIDATES, settings.insert * 4);
+        const lexicalSearch = globalThis.__TAURITAVERN__.api.chat.current.handle().searchMessages({
+            query: queryText,
+            limit: candidateCount,
+            filters: {
+                endIndex: getContext().chat.length - settings.protect - 1,
+                scanLimit: MAX_RETRIEVAL_CANDIDATES,
+            },
+        }).catch(error => {
+            console.warn('Vectors: Text retrieval failed; continuing with semantic results', error);
+            return [];
+        });
+        const [queryResults, lexicalHits] = await Promise.all([
+            queryCollection(chatId, queryText, candidateCount),
+            lexicalSearch,
+        ]);
+        const lexicalHashes = lexicalHits
+            .filter(hit => settings.keep_hidden || !['system', 'tool'].includes(hit.role))
+            .map(hit => getStringHash(substituteParams(hit.text)));
+        const queryHashes = reciprocalRankFusion([queryResults.hashes, lexicalHashes], settings.insert);
         const queriedMessages = [];
         const insertedHashes = new Set();
         const retainMessages = chat.slice(-settings.protect);
@@ -859,10 +897,6 @@ async function rearrangeChat(chat, _contextSize, _abort, type) {
                 insertedHashes.add(hash);
             }
         }
-
-        // Rearrange queried messages to match query order
-        // Order is reversed because more relevant are at the lower indices
-        queriedMessages.sort((a, b) => queryHashes.indexOf(getStringHash(substituteParams(b.mes))) - queryHashes.indexOf(getStringHash(substituteParams(a.mes))));
 
         // Remove queried messages from the original chat array
         for (const message of chat) {

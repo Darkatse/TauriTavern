@@ -37,6 +37,10 @@ same-origin route
 
 当前使用归一化向量的精确 cosine scan，并按分数降序返回。`query-multi` 只计算一次 query embedding，再跨 collection 做全局 threshold 与 top-K。`hashes` 和 `metadata` 始终来自同一组 threshold 后的结果，避免上游实现的数组错位。
 
+聊天生成拦截器在 dense 查询之外并行调用 `window.__TAURITAVERN__.api.chat` 的现有文本检索。两路各取最多 `insert * 4` 个候选（受后端 1000 条上限约束），lexical 路径最多扫描最近 1000 条消息；按 hash 去重后使用 Reciprocal Rank Fusion 合并排名，再截取 `insert` 条。重复 message chunks 不会重复增加同一路排名权重；同时命中 dense 与 lexical 的消息会自然前移。文本检索失败只令本轮退回 dense 结果并留下 console warning，不中止生成。
+
+最终消息按原聊天顺序格式化和注入，而不是按相似度重排叙事顺序；lexical 查询用绝对 `endIndex` 排除 `protect` 范围，最终映射再对 dense 与 lexical 结果共同排除一次。该混合路径只作用于聊天，Data Bank、文件与 World Info 继续使用现有 dense 查询。
+
 这是有意选择的 60/95 基线：聊天与文件集合通常远小于需要 ANN 生命周期的规模。只有真实 profile 显示 collection scan 延迟不可接受时，才在 `VectorRepository` 后替换为 ANN；GraphRAG、知识图谱抽取、reranker 和后台索引任务不属于 SillyTavern Vector 兼容层。
 
 ## 4. Embedding source

@@ -28,7 +28,8 @@ function extractDeclaration(source, marker) {
     const start = source.indexOf(marker);
     assert.notEqual(start, -1, `Missing declaration marker: ${marker}`);
 
-    const functionBody = source.startsWith('function ', start) ? source.indexOf(') {', start) : -1;
+    const isFunction = source.startsWith('function ', start) || source.startsWith('async function ', start);
+    const functionBody = isFunction ? source.indexOf(') {', start) : -1;
     const braceStart = functionBody === -1 ? source.indexOf('{', start) : functionBody + 2;
     assert.notEqual(braceStart, -1, `Missing declaration body: ${marker}`);
 
@@ -632,6 +633,10 @@ test('vectors runtime keeps upstream 1.18 summary skip settings and native route
     assert.doesNotMatch(insertVectorItems, /interactive/);
     assert.match(processFiles, /VECTOR_SOURCE_ABORT_CAUSES\.has\(error\?\.cause\)/);
     assert.match(rearrangeChat, /World Info vector retrieval skipped\. Chat retrieval will continue\./);
+    assert.match(rearrangeChat, /\.searchMessages\(/);
+    assert.match(rearrangeChat, /reciprocalRankFusion/);
+    assert.match(rearrangeChat, /scanLimit: MAX_RETRIEVAL_CANDIDATES/);
+    assert.doesNotMatch(rearrangeChat, /queriedMessages\.sort/);
     assert.match(purgeFiles, /if \(!await purgeFileVectorIndex\(file\.url\)\)/);
     assert.match(purgeFiles, /return allSuccess/);
 
@@ -648,6 +653,73 @@ test('vectors runtime keeps upstream 1.18 summary skip settings and native route
     ]) {
         assert.match(settingsHtml, new RegExp(model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
+});
+
+test('vector summarization treats non-OK and empty Extras responses as failures', async () => {
+    const source = await readFile(new URL('../src/scripts/extensions/vectors/index.js', import.meta.url), 'utf8');
+    let response = { ok: false, json: async () => ({ summary: 'ignored' }) };
+    const factory = new Function(
+        'getApiUrl',
+        'doExtrasFetch',
+        'removeReasoningFromString',
+        'console',
+        `${extractDeclaration(source, 'function setSummaryText(')}\n`
+        + `${extractDeclaration(source, 'async function summarizeExtra(')}\n`
+        + 'return { summarizeExtra };',
+    );
+    const runtime = factory(
+        () => 'http://localhost:5100',
+        async () => response,
+        value => String(value),
+        { log() {} },
+    );
+    const element = { hash: 1, index: 0, text: 'original' };
+
+    assert.equal(await runtime.summarizeExtra(element), false);
+    assert.equal(element.text, 'original');
+
+    response = { ok: true, json: async () => ({ summary: '   ' }) };
+    assert.equal(await runtime.summarizeExtra(element), false);
+    assert.equal(element.text, 'original');
+
+    response = { ok: true, json: async () => ({ summary: { text: 'invalid' } }) };
+    assert.equal(await runtime.summarizeExtra(element), false);
+    assert.equal(element.text, 'original');
+
+    response = { ok: true, json: async () => ({ summary: ' concise memory ' }) };
+    assert.equal(await runtime.summarizeExtra(element), true);
+    assert.equal(element.text, 'concise memory');
+});
+
+test('fatal vector summary causes preserve their original error', async () => {
+    const source = await readFile(new URL('../src/scripts/extensions/vectors/index.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /\bFATAL_CAUSES\b/);
+    const factory = new Function(
+        'settings',
+        'cachedSummaries',
+        'VECTOR_JOB_ABORT_CAUSES',
+        'summarizeMain',
+        'summarizeExtra',
+        'summarizeWebLLM',
+        'console',
+        `${extractDeclaration(source, 'async function summarizeOne(')}\n`
+        + `${extractDeclaration(source, 'async function summarize(')}\n`
+        + 'return summarize;',
+    );
+    const summarize = factory(
+        { summary_retries: 1 },
+        new Map(),
+        new Set(['summary_endpoint_invalid']),
+        async () => true,
+        async () => true,
+        async () => true,
+        { warn() {} },
+    );
+
+    await assert.rejects(
+        summarize([{ hash: 1, index: 0, text: 'message' }], 'unknown'),
+        error => error?.cause === 'summary_endpoint_invalid',
+    );
 });
 
 test('unrelated secret mutations leave provider metadata caches intact', async () => {
