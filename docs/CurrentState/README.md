@@ -69,7 +69,7 @@
 
 14. `docs/CurrentState/AgentProviderState.md`
    - Agent `provider_state` 当前契约
-   - 包含 run-scoped continuation、OpenAI Responses persistent WebSocket / incremental input / `previous_response_id`、内部字段剥离、native metadata fail-fast 与可观测性约束
+   - 包含 run-scoped continuation、OpenAI Responses portable full replay / 显式 WebSocket 增强模式、内部字段剥离、native metadata fail-fast 与可观测性约束
 
 15. `docs/CurrentState/CharacterIdentityContract.md`
    - 角色身份契约当前实现快照
@@ -98,3 +98,7 @@
 21. `docs/CurrentState/MCP.md`
    - MCP registration、persistent catalog、user test call 与模型工具调用的当前实现快照
    - 包含 crate/Host ABI、identity、outcome、cache、Agent/Legacy 消费、故障域与明确未支持边界
+
+22. `docs/CurrentState/VectorApi.md`
+   - SillyTavern 1.18.0 Vector 七路由兼容层的当前实现快照
+   - 包含 typed command 链路、redb 事务索引、本地/远端 embedding 边界、精确 cosine 基线与明确未支持范围

@@ -6,15 +6,14 @@ publish = false
 
 [dependencies]
 reqwest = { workspace = true, features = ["blocking", "http2", "rustls", "socks"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 
 [target.'cfg(target_os = "android")'.dependencies]
-rustls = "0.23"
 webpki-roots = "1"
 
 [dev-dependencies]
 rcgen = "0.14"
-rustls = "0.23"

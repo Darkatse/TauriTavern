@@ -37,6 +37,7 @@ import { generateWebLlmChatPrompt, isWebLlmSupported } from '../shared.js';
 import { WebLlmVectorProvider } from './webllm.js';
 import { removeReasoningFromString } from '../../reasoning.js';
 import { oai_settings } from '../../openai.js';
+import { reciprocalRankFusion } from './rank-fusion.js';
 
 /**
  * @typedef {object} HashedMessage
@@ -47,6 +48,7 @@ import { oai_settings } from '../../openai.js';
  */
 
 const MODULE_NAME = 'vectors';
+const MAX_RETRIEVAL_CANDIDATES = 1000;
 
 export const EXTENSION_PROMPT_TAG = '3_vectors';
 export const EXTENSION_PROMPT_TAG_DB = '4_vectors_data_bank';
@@ -57,6 +59,7 @@ const getBatchSize = () => ['transformers', 'ollama'].includes(settings.source) 
 const settings = {
     // For both
     source: 'transformers',
+    transformers_model: 'jinaai/jina-embeddings-v2-base-en',
     alt_endpoint_url: '',
     use_alt_endpoint: false,
     include_wi: false,
@@ -131,11 +134,10 @@ const cachedSummaries = new Map();
  * @type {Set<number>}
  */
 const skippedHashes = new Set();
-/**
- * Error causes treated as fatal; abort Vectorize All rather than skip.
- * @type {Set<string>}
- */
-const FATAL_CAUSES = new Set(['account_id_missing', 'api_key_missing', 'api_url_missing', 'api_model_missing', 'extras_module_missing', 'webllm_not_supported', 'summary_endpoint_invalid', 'vector_endpoint_unavailable']);
+/** @type {Set<string>} */
+const VECTOR_SOURCE_ABORT_CAUSES = new Set(['account_id_missing', 'api_key_missing', 'api_url_missing', 'api_model_missing', 'embedding_auth_failed', 'embedding_rate_limited', 'embedding_unavailable', 'extras_module_missing', 'webllm_not_supported', 'vector_endpoint_unavailable']);
+/** @type {Set<string>} */
+const VECTOR_JOB_ABORT_CAUSES = new Set([...VECTOR_SOURCE_ABORT_CAUSES, 'summary_endpoint_invalid', 'vector_index_conflict']);
 const vectorApiRequiresUrl = ['llamacpp', 'vllm', 'ollama', 'koboldcpp'];
 
 /**
@@ -334,16 +336,36 @@ async function summarizeExtra(element) {
             }),
         });
 
-        if (apiResult.ok) {
-            const data = await apiResult.json();
-            element.text = removeReasoningFromString(data.summary);
+        if (!apiResult.ok) {
+            return false;
         }
+
+        const data = await apiResult.json();
+        return setSummaryText(element, data.summary);
     }
     catch (error) {
         console.log(error);
         return false;
     }
+}
 
+/**
+ * Applies a non-empty summary to a vector item.
+ * @param {HashedMessage} element Hashed message
+ * @param {unknown} value Summary response
+ * @returns {boolean} Whether a usable summary was applied
+ */
+function setSummaryText(element, value) {
+    if (typeof value !== 'string') {
+        return false;
+    }
+
+    const summary = removeReasoningFromString(value).trim();
+    if (!summary) {
+        return false;
+    }
+
+    element.text = summary;
     return true;
 }
 
@@ -353,8 +375,8 @@ async function summarizeExtra(element) {
  * @returns {Promise<boolean>} Success
  */
 async function summarizeMain(element) {
-    element.text = removeReasoningFromString(await generateRaw({ prompt: element.text, systemPrompt: settings.summary_prompt }));
-    return true;
+    const summary = await generateRaw({ prompt: element.text, systemPrompt: settings.summary_prompt });
+    return setSummaryText(element, summary);
 }
 
 /**
@@ -369,9 +391,7 @@ async function summarizeWebLLM(element) {
     }
 
     const messages = [{ role: 'system', content: settings.summary_prompt }, { role: 'user', content: element.text }];
-    element.text = removeReasoningFromString(await generateWebLlmChatPrompt(messages));
-
-    return true;
+    return setSummaryText(element, await generateWebLlmChatPrompt(messages));
 }
 
 /**
@@ -418,7 +438,7 @@ async function summarize(hashedMessages, endpoint = 'main', { skipOnFailure = fa
                     break;
                 }
             } catch (error) {
-                if (FATAL_CAUSES.has(error?.cause)) {
+                if (VECTOR_JOB_ABORT_CAUSES.has(error?.cause)) {
                     throw error;
                 }
                 console.warn(`Vectors: summary attempt ${attempt}/${maxAttempts} threw for hash ${element.hash}`, error);
@@ -494,7 +514,7 @@ async function synchronizeChat(batchSize = 5) {
             try {
                 await insertVectorItems(chatId, chunkedBatch);
             } catch (insertError) {
-                if (FATAL_CAUSES.has(insertError?.cause)) {
+                if (VECTOR_JOB_ABORT_CAUSES.has(insertError?.cause)) {
                     throw insertError;
                 }
                 console.warn('Vectors: insert failed for batch; marking for skip', insertError);
@@ -511,17 +531,25 @@ async function synchronizeChat(batchSize = 5) {
     } catch (error) {
         /**
          * Gets the error message for a given cause
-         * @param {string} cause Error cause key
+         * @param {Error} error Vector request error
          * @returns {string} Error message
          */
-        function getErrorMessage(cause) {
-            switch (cause) {
+        function getErrorMessage(error) {
+            switch (error?.cause) {
                 case 'api_key_missing':
                     return 'API key missing. Save it in the "API Connections" panel.';
                 case 'api_url_missing':
                     return 'API URL missing. Save it in the "API Connections" panel.';
                 case 'api_model_missing':
                     return 'Vectorization Source Model is required, but not set.';
+                case 'embedding_auth_failed':
+                    return 'Embedding provider authentication failed. Check the active API key.';
+                case 'embedding_rate_limited':
+                    return 'Embedding provider rate limit reached. Retry later.';
+                case 'embedding_unavailable':
+                    return 'Embedding service is temporarily unavailable. Retry later.';
+                case 'vector_index_conflict':
+                    return 'The vector index is incompatible with the current embedding model. Purge it and retry.';
                 case 'extras_module_missing':
                     return 'Extras API must provide an "embeddings" module.';
                 case 'webllm_not_supported':
@@ -533,15 +561,15 @@ async function synchronizeChat(batchSize = 5) {
                 case 'summary_failed':
                     return 'Summarization failed after the configured number of retries.';
                 case 'vector_endpoint_unavailable':
-                    return 'Vector Storage backend is not implemented in the native TauriTavern backend.';
+                    return 'Vector Storage is unavailable in this TauriTavern build.';
                 default:
-                    return 'Check server console for more details';
+                    return error?.message || 'Check server console for more details';
             }
         }
 
         console.error('Vectors: Failed to synchronize chat', error);
 
-        const message = getErrorMessage(error.cause);
+        const message = getErrorMessage(error);
         toastr.error(message, 'Vectorization failed', { preventDuplicates: true });
         return null;
     } finally {
@@ -639,6 +667,9 @@ async function processFiles(chat) {
         }
     } catch (error) {
         console.error('Vectors: Failed to retrieve files', error);
+        if (VECTOR_SOURCE_ABORT_CAUSES.has(error?.cause)) {
+            throw error;
+        }
     }
 }
 
@@ -702,6 +733,9 @@ async function injectDataBankChunks(queryText, collectionIds) {
         setExtensionPrompt(EXTENSION_PROMPT_TAG_DB, insertedText, settings.file_position_db, settings.file_depth_db, settings.include_wi, settings.file_depth_role_db);
     } catch (error) {
         console.error('Vectors: Failed to insert Data Bank chunks', error);
+        if (VECTOR_SOURCE_ABORT_CAUSES.has(error?.cause)) {
+            throw error;
+        }
     }
 }
 
@@ -740,7 +774,6 @@ async function vectorizeFile(fileText, fileName, collectionId, chunkSize, overla
             fileText = translatedText;
         }
 
-        const batchSize = getBatchSize();
         const toastBody = $('<span>').text('This may take a while. Please wait...');
         toast = toastr.info(toastBody, `Ingesting file ${escapeHtml(fileName)}`, { closeButton: false, escapeHtml: false, timeOut: 0, extendedTimeOut: 0 });
         const overlapSize = Math.round(chunkSize * overlapPercent / 100);
@@ -755,19 +788,19 @@ async function vectorizeFile(fileText, fileName, collectionId, chunkSize, overla
 
         const items = chunks.map((chunk, index) => ({ hash: getStringHash(chunk), text: chunk, index: index }));
 
-        for (let i = 0; i < items.length; i += batchSize) {
-            toastBody.text(`${i}/${items.length} (${Math.round((i / items.length) * 100)}%) chunks processed`);
-            const chunkedBatch = items.slice(i, i + batchSize);
-            await insertVectorItems(collectionId, chunkedBatch);
-        }
+        toastBody.text(`Embedding ${items.length} chunks...`);
+        await insertVectorItems(collectionId, items);
 
         toastr.clear(toast);
         console.log(`Vectors: Inserted ${chunks.length} vector items for file ${fileName} into ${collectionId}`);
         return true;
     } catch (error) {
         toastr.clear(toast);
-        toastr.error(String(error), 'Failed to vectorize file', { preventDuplicates: true });
         console.error('Vectors: Failed to vectorize file', error);
+        if (VECTOR_SOURCE_ABORT_CAUSES.has(error?.cause)) {
+            throw error;
+        }
+        toastr.error(String(error), 'Failed to vectorize file', { preventDuplicates: true });
         return false;
     }
 }
@@ -795,7 +828,15 @@ async function rearrangeChat(chat, _contextSize, _abort, type) {
         }
 
         if (settings.enabled_world_info) {
-            await activateWorldInfo(chat);
+            try {
+                await activateWorldInfo(chat);
+            } catch (error) {
+                if (VECTOR_SOURCE_ABORT_CAUSES.has(error?.cause)) {
+                    throw error;
+                }
+                toastr.warning('World Info vector retrieval skipped. Chat retrieval will continue.', 'Vector Storage', { preventDuplicates: true });
+                console.error('Vectors: Failed to activate World Info', error);
+            }
         }
 
         if (!settings.enabled_chats) {
@@ -809,8 +850,8 @@ async function rearrangeChat(chat, _contextSize, _abort, type) {
             return;
         }
 
-        if (chat.length < settings.protect) {
-            console.debug(`Vectors: Not enough messages to rearrange (less than ${settings.protect})`);
+        if (chat.length <= settings.protect) {
+            console.debug(`Vectors: Not enough messages to rearrange (${settings.protect} protected)`);
             return;
         }
 
@@ -821,9 +862,27 @@ async function rearrangeChat(chat, _contextSize, _abort, type) {
             return;
         }
 
-        // Get the most relevant messages, excluding the last few
-        const queryResults = await queryCollection(chatId, queryText, settings.insert);
-        const queryHashes = queryResults.hashes.filter(onlyUnique);
+        // ponytail: a bounded 4x pool is enough for rank fusion; tune only if recall benchmarks require it.
+        const candidateCount = Math.min(MAX_RETRIEVAL_CANDIDATES, settings.insert * 4);
+        const lexicalSearch = globalThis.__TAURITAVERN__.api.chat.current.handle().searchMessages({
+            query: queryText,
+            limit: candidateCount,
+            filters: {
+                endIndex: getContext().chat.length - settings.protect - 1,
+                scanLimit: MAX_RETRIEVAL_CANDIDATES,
+            },
+        }).catch(error => {
+            console.warn('Vectors: Text retrieval failed; continuing with semantic results', error);
+            return [];
+        });
+        const [queryResults, lexicalHits] = await Promise.all([
+            queryCollection(chatId, queryText, candidateCount),
+            lexicalSearch,
+        ]);
+        const lexicalHashes = lexicalHits
+            .filter(hit => settings.keep_hidden || !['system', 'tool'].includes(hit.role))
+            .map(hit => getStringHash(substituteParams(hit.text)));
+        const queryHashes = reciprocalRankFusion([queryResults.hashes, lexicalHashes], settings.insert);
         const queriedMessages = [];
         const insertedHashes = new Set();
         const retainMessages = chat.slice(-settings.protect);
@@ -838,10 +897,6 @@ async function rearrangeChat(chat, _contextSize, _abort, type) {
                 insertedHashes.add(hash);
             }
         }
-
-        // Rearrange queried messages to match query order
-        // Order is reversed because more relevant are at the lower indices
-        queriedMessages.sort((a, b) => queryHashes.indexOf(getStringHash(substituteParams(b.mes))) - queryHashes.indexOf(getStringHash(substituteParams(a.mes))));
 
         // Remove queried messages from the original chat array
         for (const message of chat) {
@@ -859,7 +914,7 @@ async function rearrangeChat(chat, _contextSize, _abort, type) {
         const insertedText = getPromptText(queriedMessages);
         setExtensionPrompt(EXTENSION_PROMPT_TAG, insertedText, settings.position, settings.depth, settings.include_wi);
     } catch (error) {
-        toastr.error('Generation interceptor aborted. Check browser console for more details.', 'Vector Storage');
+        toastr.warning('Vector retrieval skipped. Generation will continue.', 'Vector Storage', { preventDuplicates: true });
         console.error('Vectors: Failed to rearrange chat', error);
     }
 }
@@ -937,6 +992,9 @@ async function getQueryText(chat, initiator) {
 function getVectorsRequestBody(args = {}) {
     const body = Object.assign({}, args);
     switch (settings.source) {
+        case 'transformers':
+            body.model = settings.transformers_model;
+            break;
         case 'extras':
             body.extrasUrl = extension_settings.apiUrl;
             body.extrasKey = extension_settings.apiKey;
@@ -967,6 +1025,9 @@ function getVectorsRequestBody(args = {}) {
         case 'vllm':
             body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.VLLM];
             body.model = extension_settings.vectors.vllm_model;
+            break;
+        case 'koboldcpp':
+            body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP];
             break;
         case 'webllm':
             body.model = extension_settings.vectors.webllm_model;
@@ -1005,16 +1066,17 @@ function getVectorsRequestBody(args = {}) {
 /**
  * Gets additional arguments for vector requests.
  * @param {string[]} items Items to embed
+ * @param {boolean} [isQuery=false] Whether embeddings use query semantics
  * @returns {Promise<object>} Additional arguments
  */
-async function getAdditionalArgs(items) {
+async function getAdditionalArgs(items, isQuery = false) {
     const args = {};
     switch (settings.source) {
         case 'webllm':
             args.embeddings = await createWebLlmEmbeddings(items);
             break;
         case 'koboldcpp': {
-            const { embeddings, model } = await createKoboldCppEmbeddings(items);
+            const { embeddings, model } = await createKoboldCppEmbeddings(items, isQuery);
             args.embeddings = embeddings;
             args.model = model;
             break;
@@ -1029,12 +1091,14 @@ async function getAdditionalArgs(items) {
  * @param {string} action Action being performed
  * @param {string} [collectionId] Optional collection ID
  */
-function throwVectorResponseError(response, action, collectionId = '') {
+async function throwVectorResponseError(response, action, collectionId = '') {
     const status = response?.status;
     const statusText = status ? ` (HTTP ${status})` : '';
     const collectionText = collectionId ? ` for collection ${collectionId}` : '';
-    const cause = [404, 405, 501].includes(status) ? 'vector_endpoint_unavailable' : undefined;
-    throw new Error(`Failed to ${action}${collectionText}${statusText}`, cause ? { cause } : undefined);
+    const payload = await response.clone().json().catch(() => null);
+    const cause = payload?.cause || ([404, 405, 501].includes(status) ? 'vector_endpoint_unavailable' : undefined);
+    const message = payload?.message || `Failed to ${action}${collectionText}${statusText}`;
+    throw new Error(message, cause ? { cause } : undefined);
 }
 
 /**
@@ -1055,7 +1119,7 @@ async function getSavedHashes(collectionId) {
     });
 
     if (!response.ok) {
-        throwVectorResponseError(response, 'get saved hashes', collectionId);
+        await throwVectorResponseError(response, 'get saved hashes', collectionId);
     }
 
     const hashes = await response.json();
@@ -1084,7 +1148,7 @@ async function insertVectorItems(collectionId, items) {
     });
 
     if (!response.ok) {
-        throwVectorResponseError(response, 'insert vector items', collectionId);
+        await throwVectorResponseError(response, 'insert vector items', collectionId);
     }
 }
 
@@ -1159,7 +1223,7 @@ async function deleteVectorItems(collectionId, hashes) {
     });
 
     if (!response.ok) {
-        throwVectorResponseError(response, 'delete vector items', collectionId);
+        await throwVectorResponseError(response, 'delete vector items', collectionId);
     }
 }
 
@@ -1170,7 +1234,8 @@ async function deleteVectorItems(collectionId, hashes) {
  * @returns {Promise<{ hashes: number[], metadata: object[]}>} - Hashes of the results
  */
 async function queryCollection(collectionId, searchText, topK) {
-    const args = await getAdditionalArgs([searchText]);
+    throwIfSourceInvalid();
+    const args = await getAdditionalArgs([searchText], true);
     const response = await fetch('/api/vector/query', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -1185,7 +1250,7 @@ async function queryCollection(collectionId, searchText, topK) {
     });
 
     if (!response.ok) {
-        throwVectorResponseError(response, 'query collection', collectionId);
+        await throwVectorResponseError(response, 'query collection', collectionId);
     }
 
     return await response.json();
@@ -1200,7 +1265,8 @@ async function queryCollection(collectionId, searchText, topK) {
  * @returns {Promise<Record<string, { hashes: number[], metadata: object[] }>>} - Results mapped to collection IDs
  */
 async function queryMultipleCollections(collectionIds, searchText, topK, threshold) {
-    const args = await getAdditionalArgs([searchText]);
+    throwIfSourceInvalid();
+    const args = await getAdditionalArgs([searchText], true);
     const response = await fetch('/api/vector/query-multi', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -1215,7 +1281,7 @@ async function queryMultipleCollections(collectionIds, searchText, topK, thresho
     });
 
     if (!response.ok) {
-        throwVectorResponseError(response, 'query multiple collections');
+        await throwVectorResponseError(response, 'query multiple collections');
     }
 
     return await response.json();
@@ -1227,10 +1293,6 @@ async function queryMultipleCollections(collectionIds, searchText, topK, thresho
  */
 async function purgeFileVectorIndex(fileUrl) {
     try {
-        if (!settings.enabled_files) {
-            return;
-        }
-
         console.log(`Vectors: Purging file vector index for ${fileUrl}`);
         const collectionId = getFileCollectionId(fileUrl);
 
@@ -1244,13 +1306,30 @@ async function purgeFileVectorIndex(fileUrl) {
         });
 
         if (!response.ok) {
-            throwVectorResponseError(response, 'purge vector index', collectionId);
+            await throwVectorResponseError(response, 'purge vector index', collectionId);
         }
 
         console.log(`Vectors: Purged vector index for collection ${collectionId}`);
+        return true;
     } catch (error) {
         console.error('Vectors: Failed to purge file', error);
+        return false;
     }
+}
+
+/**
+ * Purges file indexes without letting one failure block the rest.
+ * @param {{url: string}[]} files File attachments
+ * @returns {Promise<boolean>} Whether every index was purged
+ */
+async function purgeFileVectorIndexes(files) {
+    let allSuccess = true;
+    for (const file of files) {
+        if (!await purgeFileVectorIndex(file.url)) {
+            allSuccess = false;
+        }
+    }
+    return allSuccess;
 }
 
 /**
@@ -1274,7 +1353,7 @@ async function purgeVectorIndex(collectionId) {
         });
 
         if (!response.ok) {
-            throwVectorResponseError(response, 'purge vector index', collectionId);
+            await throwVectorResponseError(response, 'purge vector index', collectionId);
         }
 
         console.log(`Vectors: Purged vector index for collection ${collectionId}`);
@@ -1299,7 +1378,7 @@ async function purgeAllVectorIndexes() {
         });
 
         if (!response.ok) {
-            throwVectorResponseError(response, 'purge all vector indexes');
+            await throwVectorResponseError(response, 'purge all vector indexes');
         }
 
         console.log('Vectors: Purged all vector indexes');
@@ -1315,6 +1394,7 @@ function toggleSettings() {
     $('#vectors_files_settings').toggle(!!settings.enabled_files);
     $('#vectors_chats_settings').toggle(!!settings.enabled_chats);
     $('#vectors_world_info_settings').toggle(!!settings.enabled_world_info);
+    $('#transformers_vectorsModel').toggle(source === 'transformers');
     $('#together_vectorsModel').toggle(source === 'togetherai');
     $('#openai_vectorsModel').toggle(source === 'openai');
     $('#electronhub_vectorsModel').toggle(source === 'electronhub');
@@ -1457,22 +1537,25 @@ async function createWebLlmEmbeddings(items) {
 }
 
 /**
- * Creates KoboldCpp embeddings for a list of items.
+ * Creates KoboldCpp embeddings and keeps the server-reported model as part of
+ * the Vector scope so changing the loaded embedding model cannot mix spaces.
  * @param {string[]} items Items to embed
+ * @param {boolean} [isQuery=false] Whether this is a query embedding
  * @returns {Promise<{embeddings: Record<string, number[]>, model: string}>} Calculated embeddings
  */
-async function createKoboldCppEmbeddings(items) {
+async function createKoboldCppEmbeddings(items, isQuery = false) {
     const response = await fetch('/api/backends/kobold/embed', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
-            items: items,
+            items,
+            isQuery,
             server: settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP],
         }),
     });
 
     if (!response.ok) {
-        throw new Error('Failed to get KoboldCpp embeddings');
+        await throwVectorResponseError(response, 'create KoboldCpp embeddings');
     }
 
     const data = await response.json();
@@ -1480,19 +1563,15 @@ async function createKoboldCppEmbeddings(items) {
         throw new Error('Invalid response from KoboldCpp embeddings');
     }
 
-    const embeddings = /** @type {Record<string, number[]>} */ ({});
+    const embeddings = /** @type {Record<string, number[]>} */ (Object.create(null));
     for (let i = 0; i < data.embeddings.length; i++) {
         if (!Array.isArray(data.embeddings[i]) || data.embeddings[i].length === 0) {
             throw new Error('KoboldCpp returned an empty embedding. Reduce the chunk size and/or size threshold and try again.');
         }
-
         embeddings[items[i]] = data.embeddings[i];
     }
 
-    return {
-        embeddings: embeddings,
-        model: data.model,
-    };
+    return { embeddings, model: data.model };
 }
 
 async function onPurgeClick() {
@@ -1609,7 +1688,7 @@ async function onVectorizeAllFilesClick() {
         }
     } catch (error) {
         console.error('Vectors: Failed to vectorize all files', error);
-        toastr.error('Failed to vectorize all files', 'Vectorization failed');
+        toastr.error(error?.message || 'Failed to vectorize all files', 'Vectorization failed');
     }
 }
 
@@ -1619,11 +1698,12 @@ async function onPurgeFilesClick() {
         const chatAttachments = getContext().chat.filter(x => Array.isArray(x.extra?.files)).map(x => x.extra.files).flat();
         const allFiles = [...dataBank, ...chatAttachments];
 
-        for (const file of allFiles) {
-            await purgeFileVectorIndex(file.url);
+        const allSuccess = await purgeFileVectorIndexes(allFiles);
+        if (allSuccess) {
+            toastr.success('All files purged', 'Purge successful');
+        } else {
+            toastr.warning('Some files failed to purge. Check browser console for details.', 'Purge incomplete');
         }
-
-        toastr.success('All files purged', 'Purge successful');
     } catch (error) {
         console.error('Vectors: Failed to purge all files', error);
         toastr.error('Failed to purge all files', 'Purge failed');
@@ -1773,6 +1853,11 @@ export async function init() {
         Object.assign(extension_settings.vectors, settings);
         saveSettingsDebounced();
         toggleSettings();
+    });
+    $('#vectors_transformers_model').val(settings.transformers_model).on('change', () => {
+        settings.transformers_model = String($('#vectors_transformers_model').val());
+        Object.assign(extension_settings.vectors, settings);
+        saveSettingsDebounced();
     });
     $('#vector_altEndpointUrl_enabled').prop('checked', settings.use_alt_endpoint).on('input', () => {
         settings.use_alt_endpoint = $('#vector_altEndpointUrl_enabled').prop('checked');
@@ -2121,11 +2206,9 @@ export async function init() {
         name: 'db-purge',
         callback: async () => {
             const dataBank = getDataBankAttachments();
-
-            for (const file of dataBank) {
-                await purgeFileVectorIndex(file.url);
+            if (!await purgeFileVectorIndexes(dataBank)) {
+                throw new Error('Some Data Bank vector indexes failed to purge');
             }
-
             return '';
         },
         aliases: ['databank-purge', 'data-bank-purge'],

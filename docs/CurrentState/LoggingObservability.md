@@ -38,7 +38,7 @@ user-error layer 将消息交给 `app/backend_errors.rs::BackendErrorHub`。前�
 
 Dev Observability 通过 `app/dev_observability.rs::DevObservabilityHub` 暴露给 presentation commands。`dev_logging_commands.rs` 和 `settings_commands.rs` 不直接接触 `infrastructure::logging::*` store。
 
-LLM API logs 仍由 infrastructure decorator `LoggingChatCompletionRepository` 记录 raw/readable 请求响应。持久化失败是诊断日志，不触发 backend error toast。
+LLM API logs 仍由 infrastructure decorator `LoggingChatCompletionRepository` 记录 raw/readable 请求响应。JSON 请求及非流式 JSON 响应写入前会移除内部 provider state，并把 data URL、Claude base64 source、Gemini inline data 中的媒体内容替换为只含 MIME 与编码长度的占位符；脱敏只作用于日志副本，不修改出站 payload。持久化失败是诊断日志，不触发 backend error toast。
 
 ## 5. 持续开发守卫
 

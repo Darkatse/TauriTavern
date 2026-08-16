@@ -82,7 +82,7 @@ Connection Profiles（Connection Manager 扩展）：
 
 ### 3.2 明确的当前限制
 
-- **Custom OpenAI Responses 不再维护 call_id → response_id 内存缓存**。普通 Custom 请求依赖完整 transcript / native output replay；带 `previous_response_id` 的请求允许只发送新的 function call outputs。Agent 请求的 `previous_response_id` 来自 run-scoped `provider_state`。
+- **Custom OpenAI Responses 不再维护 call_id → response_id 内存缓存**。普通 Custom 请求和默认关闭增强模式的 Agent 请求依赖完整 transcript / native output replay；显式启用 Responses WebSocket 模式后，Agent 才通过 run-scoped `provider_state` 使用 `previous_response_id` 与 incremental input。
 - **Custom 的 model list / status check** 已按 `custom_api_format` 对齐传输协议：OpenAI-compatible / Responses 继续使用兼容 `/models`，Claude Messages 使用 Claude `/models`，Gemini Interactions 使用 Gemini `/models`。
 - **Claude streaming 不做 chunk 归一化**：前端需走 Anthropic events 分支解析（现状就是如此，优先复用既有 Claude 语义）。
 
@@ -101,11 +101,13 @@ Connection Profiles（Connection Manager 扩展）：
 - 没有 `previous_response_id` 时，`function_call_output` 必须能在同次 transcript 中找到前置 `function_call`；否则 fail-fast
 - 有 `previous_response_id` 时，允许 orphan `function_call_output`，因为前置 function call 可由 provider previous response state 提供
 - `store` 默认 `false`；`include` 会保证包含 `reasoning.encrypted_content`，用于 reasoning/native continuation
+- Preset `enable_web_search=true` 会加入 `{ "type": "web_search" }` hosted tool；它可与本地 function tools 共存，不会进入 Agent 本地工具注册表
 - `previous_response_id`、`max_tokens` / `max_completion_tokens`→`max_output_tokens`、`reasoning_effort`→`reasoning.effort`、`verbosity`→`text.verbosity`、`metadata`、`parallel_tool_calls` 等字段按当前 payload builder 映射
 
 传输侧（repository）：
 - 普通 Custom `/responses` 非流式请求走 HTTP，流式请求走 SSE
-- 带内部 `_tauritavern_provider_state.sessionId` 的请求走 run-scoped persistent WebSocket session；该路径失败时不回退 HTTP
+- 仅当内部 `_tauritavern_provider_state.transport = "responses_websocket"` 时，请求才走 run-scoped persistent WebSocket session；仅有 `sessionId` 的 portable Agent 请求仍走 HTTP
+- Custom Responses 连接设置默认关闭 WebSocket 模式；显式启用后 WebSocket、`previous_response_id` 与 incremental input 作为同一增强模式原子生效，该路径失败时不回退 HTTP
 - Responses WebSocket 建连通过 `HttpClientPool` 的 ChatCompletion WebSocket profile 发起 HTTP Upgrade，再交给 WebSocket frame stream；因此沿用现有代理、TLS/client 构建与连接超时契约
 - persistent session 的 connection key 包含 transport revision；request proxy / client 配置变更后会重建 session
 - 上游 HTTP payload 会剥离 `_tauritavern_provider_state`
@@ -122,7 +124,7 @@ Connection Profiles（Connection Manager 扩展）：
 tool follow-up（关键契约）：
 - 普通 Custom Responses 不再依赖 repository 内存缓存。若没有 `previous_response_id`，请求必须通过 full transcript replay 或 native output replay 提供前置 `function_call`。
 - 若 payload 已有 `previous_response_id`，builder 允许只发送对应的 `function_call_output`。
-- Agent Responses follow-up 由 `AgentModelGateway` 的 `provider_state.previousResponseId` 驱动；详见 `docs/CurrentState/AgentProviderState.md`。
+- portable Agent Responses follow-up 使用 full transcript/native output replay；显式启用 WebSocket 模式后才由 `AgentModelGateway` 的 `provider_state.previousResponseId` 驱动。详见 `docs/CurrentState/AgentProviderState.md`。
 
 ### 4.2 Gemini Interactions（/v1beta/interactions）
 
@@ -153,6 +155,11 @@ signature / native blocks（关键契约）：
 - `incomplete` 若含可消费文本则归一化为 `finish_reason=length`；无可消费输出或不完整 function call 直接报错
 
 ### 4.3 Claude Messages（/messages，Custom 变体）
+
+hosted web search：
+- Preset `enable_web_search=true` 在 direct Claude 与 Custom Claude Messages 中加入 `{ "type": "web_search_20250305", "name": "web_search" }`。
+- `server_tool_use` / `web_search_tool_result` 属于 provider 托管执行，保留在 Claude native content 中，不投影为 Agent 本地 function call。
+- Vertex Claude 与内建 Bedrock Claude 不继承该开关；它们有各自的 hosted-tool 能力边界。
 
 header 策略（关键契约）：
 - **Custom Claude Messages 默认不自动添加 `anthropic-beta`**，避免第三方兼容端报错。

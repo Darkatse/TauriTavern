@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use super::decode::{decode_chat_completion_exchange, decode_chat_completion_response};
 use super::encode::encode_chat_completion_request;
 use super::format::resolve_request_adapter;
-use super::provider_state::next_provider_state;
+use super::provider_state::{next_provider_state, responses_websocket_session_id};
 use super::providers::AgentProviderAdapter;
 use super::schema::{render_openai_tools, sanitize_schema_for_provider};
 use crate::services::agent_tools::BuiltinAgentToolRegistry;
@@ -539,6 +539,7 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
         provider_state: json!({
             "sessionId": "run_1",
             "providerFormat": "openai_responses",
+            "transport": "responses_websocket",
             "previousResponseId": "resp_1",
             "messageCursor": 2
         }),
@@ -558,6 +559,80 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
 }
 
 #[test]
+fn openai_responses_portable_mode_replays_full_transcript() {
+    let mut request = basic_request(
+        "custom",
+        Some("openai_responses"),
+        vec![
+            text_message(AgentModelRole::System, "sys"),
+            text_message(AgentModelRole::User, "hi"),
+        ],
+    );
+    request.provider_state = json!({
+        "sessionId": "run_1",
+        "previousResponseId": "resp_ignored",
+        "messageCursor": 1
+    });
+
+    let dto = encode_chat_completion_request(&request).unwrap();
+    assert_eq!(dto.payload["messages"].as_array().unwrap().len(), 2);
+    assert!(dto.payload.get("previous_response_id").is_none());
+}
+
+#[test]
+fn openai_responses_next_state_only_enables_continuation_for_websocket_mode() {
+    let raw = json!({
+        "id": "resp_2",
+        "model": "test",
+        "choices": [{ "message": { "role": "assistant", "content": "done" } }]
+    });
+    let response = decode_chat_completion_response(raw, &[]).unwrap();
+    let mut request = basic_request("custom", Some("openai_responses"), Vec::new());
+
+    let portable = next_provider_state(
+        &request,
+        ChatCompletionSource::Custom,
+        AgentProviderAdapter::OpenAiResponses,
+        &response,
+    )
+    .unwrap();
+    assert!(portable.get("transport").is_none());
+    assert!(portable.get("previousResponseId").is_none());
+
+    request.provider_state["transport"] = json!("responses_websocket");
+    let enhanced = next_provider_state(
+        &request,
+        ChatCompletionSource::Custom,
+        AgentProviderAdapter::OpenAiResponses,
+        &response,
+    )
+    .unwrap();
+    assert_eq!(enhanced["transport"], "responses_websocket");
+    assert_eq!(enhanced["previousResponseId"], "resp_2");
+    assert_eq!(responses_websocket_session_id(&request), Some("run_1"));
+}
+
+#[test]
+fn openai_responses_portable_mode_does_not_require_response_id() {
+    let raw = json!({
+        "model": "test",
+        "choices": [{ "message": { "role": "assistant", "content": "done" } }]
+    });
+    let response = decode_chat_completion_response(raw, &[]).unwrap();
+    let request = basic_request("custom", Some("openai_responses"), Vec::new());
+
+    let state = next_provider_state(
+        &request,
+        ChatCompletionSource::Custom,
+        AgentProviderAdapter::OpenAiResponses,
+        &response,
+    )
+    .expect("portable mode should not require provider response ids");
+
+    assert!(state.get("previousResponseId").is_none());
+}
+
+#[test]
 fn openai_responses_continuation_requires_valid_cursor() {
     let registry = BuiltinAgentToolRegistry::all();
     let mut request = basic_request(
@@ -568,6 +643,7 @@ fn openai_responses_continuation_requires_valid_cursor() {
     request.tools = model_tools(&registry);
     request.provider_state = json!({
         "sessionId": "run_1",
+        "transport": "responses_websocket",
         "previousResponseId": "resp_1"
     });
 
@@ -576,6 +652,7 @@ fn openai_responses_continuation_requires_valid_cursor() {
 
     request.provider_state = json!({
         "sessionId": "run_1",
+        "transport": "responses_websocket",
         "previousResponseId": "resp_1",
         "messageCursor": 2
     });

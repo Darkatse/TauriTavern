@@ -120,7 +120,7 @@ test('Textgen provider constants stay aligned with the 1.18 upstream reference',
     }
 });
 
-test('Caption F sync fails explicitly in native routes instead of exposing unsupported static model choices', async () => {
+test('Caption F sync exposes native multimodal routes while keeping unavailable backends explicit', async () => {
     globalThis.window = globalThis.window || {};
     const [{ registerAiRoutes }, routesIndex, settings, captionSource, shared, stableDiffusion] = await Promise.all([
         import('../src/tauri/main/routes/ai-routes.js'),
@@ -132,39 +132,61 @@ test('Caption F sync fails explicitly in native routes instead of exposing unsup
     ]);
 
     const router = createRouteRegistry();
+    const invokes = [];
     registerAiRoutes(router, {
-        safeInvoke: async () => {
-            throw new Error('safeInvoke should not be called for caption unavailable routes');
+        safeInvoke: async (command, args) => {
+            invokes.push({ command, args });
+            if (command === 'generate_chat_completion') {
+                return { choices: [{ message: { content: 'A test image.' } }] };
+            }
+            throw new Error(`Unexpected invoke: ${command}`);
         },
     }, { jsonResponse });
 
-    for (const route of [
-        '/api/extra/caption',
-        '/api/horde/caption-image',
-        '/api/openai/caption-image',
-        '/api/google/caption-image',
-        '/api/anthropic/caption-image',
-        '/api/backends/text-completions/ollama/caption-image',
-    ]) {
-        assert.equal(router.canHandle('POST', route), true, route);
-        const response = await router.handle({ method: 'POST', path: route, body: {} });
-        assert.equal(response.status, 501, route);
-        const payload = await response.json();
-        assert.equal(payload.error, true, route);
-        assert.equal(payload.message, 'Image captioning is not implemented in the TauriTavern native backend.', route);
-    }
+    const unavailableResponse = await router.handle({
+        method: 'POST',
+        path: '/api/extra/caption',
+        body: {},
+    });
+    assert.equal(unavailableResponse.status, 501);
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/openai/caption-image',
+        body: {
+            api: 'openai',
+            image: 'data:image/png;base64,AAAA',
+            prompt: 'Describe.',
+            model: 'gpt-4o',
+        },
+        init: {},
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { caption: 'A test image.' });
+    assert.equal(invokes.length, 1);
+    assert.equal(invokes[0].command, 'generate_chat_completion');
+    assert.equal(invokes[0].args.dto.type, 'quiet');
 
     assert.ok(routesIndex.indexOf('registerAiRoutes(router, context, responses);') < routesIndex.indexOf('registerProviderRoutes(router, context, responses);'));
     assert.match(shared, /typeof data\.message === 'string' && data\.message\.trim\(\)/);
     assert.match(shared, /typeof data\.error === 'string' && data\.error\.trim\(\)/);
     assert.doesNotMatch(shared, /data\.message \|\| data\.error \|\| text/);
     assert.match(shared, /export const NATIVE_CAPTION_UNAVAILABLE_MESSAGE = 'Image captioning is not implemented in the TauriTavern native backend\.';/);
-    assert.match(shared, /if \(globalThis\.__TAURI_RUNNING__ === true\) \{\s*throw new Error\(NATIVE_CAPTION_UNAVAILABLE_MESSAGE\);\s*\}/);
+    assert.doesNotMatch(shared, /if \(globalThis\.__TAURI_RUNNING__ === true\) \{\s*throw new Error\(NATIVE_CAPTION_UNAVAILABLE_MESSAGE\);\s*\}/);
+    assert.match(shared, /if \(globalThis\.__TAURI_RUNNING__ !== true\) \{\s*throwIfInvalidModel\(useReverseProxy\);\s*\}/);
     assert.match(shared, /throw new Error\(await getCaptionErrorMessage\(apiResult\)\)/);
+    assert.match(shared, /requestBody\.moonshot_endpoint = oai_settings\.moonshot_endpoint;/);
+    assert.match(shared, /typeof caption !== 'string' \|\| !caption\.trim\(\)/);
+    assert.match(shared, /getMultimodalCaption\(base64Img, prompt, signal\)[\s\S]*?body: JSON\.stringify\(requestBody\),\s*signal,/);
     assert.match(captionSource, /import \{ getMultimodalCaption, NATIVE_CAPTION_UNAVAILABLE_MESSAGE \} from '\.\.\/shared\.js';/);
     assert.match(captionSource, /globalThis\.__TAURI_RUNNING__ === true && \['local', 'horde'\]\.includes\(extension_settings\.caption\.source\)/);
-    assert.match(captionSource, /globalThis\.__TAURI_RUNNING__ === true && \['local', 'horde', 'multimodal'\]\.includes\(settings\.source\)/);
+    assert.match(captionSource, /globalThis\.__TAURI_RUNNING__ === true && \['local', 'horde'\]\.includes\(settings\.source\)/);
+    assert.match(captionSource, /globalThis\.__TAURI_RUNNING__ === true && settings\.source === 'multimodal'/);
     assert.match(captionSource, /toastr\.error\(unavailableReason \|\| 'Choose other captioning source in the extension settings\.', 'Captioning is not available'\)/);
+    assert.match(captionSource, /try \{\s*await addRemoteEndpointModels\(\);\s*\} catch \(error\) \{\s*console\.warn\('Caption: multimodal model discovery failed', error\);\s*\}/);
+    assert.match(stableDiffusion, /if \(typeof args\?\._abortController\?\.addEventListener === 'function'\) \{\s*args\._abortController\.addEventListener\('abort', stopListener\);[\s\S]*?await getPrompt\(/);
+    assert.match(stableDiffusion, /getPrompt\(generationType, message, trigger, quietPrompt, combineNegatives, abortController\.signal\)/);
+    assert.match(stableDiffusion, /fetch\(avatarUrl, \{ signal \}\)[\s\S]*?getMultimodalCaption\(avatarBase64, quietPrompt, signal\)/);
     assert.match(stableDiffusion, /const errorMessage = error\?\.message \|\| String\(error\) \|\| 'Multimodal captioning failed\.';/);
     assert.match(stableDiffusion, /toastr\.error\(errorMessage, 'Image Generation'\)/);
     assert.match(stableDiffusion, /throw new Error\(errorMessage, \{ cause: error \}\)/);

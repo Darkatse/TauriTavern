@@ -57,6 +57,7 @@ pub struct HttpClientPool {
 
 impl HttpClientPool {
     pub fn new(product_user_agent: impl Into<String>) -> Self {
+        install_rustls_crypto_provider();
         let product_user_agent = product_user_agent.into();
         assert!(
             !product_user_agent.trim().is_empty(),
@@ -138,6 +139,15 @@ impl HttpClientPool {
 
         configure_blocking_http_client(builder, &self.product_user_agent)
     }
+}
+
+fn install_rustls_crypto_provider() {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        // Workspace dependencies may compile both rustls providers. Choosing the provider already
+        // used by reqwest keeps every TLS consumer deterministic instead of relying on features.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
 }
 
 impl RequestProxyRuntime for HttpClientPool {
@@ -574,10 +584,11 @@ mod tests {
 
     #[test]
     fn git_blocking_builder_validates_server_certificates() {
+        let pool = pool();
         let (config, root) = test_tls_config();
 
         let (untrusted_url, untrusted_request, untrusted_handle) = tls_server(Arc::clone(&config));
-        let client = pool().git_blocking_client_builder().build().unwrap();
+        let client = pool.git_blocking_client_builder().build().unwrap();
         assert!(client.get(untrusted_url).send().is_err());
         assert!(
             !untrusted_request
@@ -587,7 +598,7 @@ mod tests {
         untrusted_handle.join().expect("untrusted TLS server");
 
         let (trusted_url, trusted_request, trusted_handle) = tls_server(config);
-        let client = pool()
+        let client = pool
             .git_blocking_client_builder()
             .tls_certs_only([root])
             .build()

@@ -14,8 +14,8 @@ use tt_adapter_media::{
     FileAvatarRepository, FileBackgroundRepository, FileImageMetadataRepository,
 };
 use tt_adapter_provider_http::{
-    HttpChatCompletionRepository, HttpProviderMetadataRepository, HttpStableDiffusionRepository,
-    HttpTranslateRepository, HttpTtsRepository,
+    HttpChatCompletionRepository, HttpEmbeddingRepository, HttpProviderMetadataRepository,
+    HttpStableDiffusionRepository, HttpTranslateRepository, HttpTtsRepository,
 };
 use tt_adapter_storage_core::{
     DataDirectory, FileAssetRepository, FileChatRepository, FileExtensionStoreRepository,
@@ -30,6 +30,7 @@ use tt_adapter_storage_userdata::FileCharacterRepository;
 use tt_adapter_storage_userdata::FileWorldInfoRepository;
 use tt_adapter_storage_userdata::{FileSkillRepository, FileSpriteRepository};
 use tt_adapter_tokenization::MiktikTokenizerRepository;
+use tt_adapter_vector::{FastEmbedLocalEmbeddingRepository, RedbVectorRepository};
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
@@ -69,6 +70,9 @@ use tt_ports::repositories::tts_repository::TtsRepository;
 use tt_ports::repositories::update_repository::UpdateRepository;
 use tt_ports::repositories::user_directory_repository::UserDirectoryRepository;
 use tt_ports::repositories::user_repository::UserRepository;
+use tt_ports::repositories::vector_repository::{
+    LocalEmbeddingRepository, RemoteEmbeddingRepository, VectorRepository,
+};
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 use tt_ports::settings::ChatBackupRuntime;
@@ -118,6 +122,9 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) tts_repository: Arc<dyn TtsRepository>,
     pub(in crate::app::composition) world_info_repository: Arc<dyn WorldInfoRepository>,
     pub(in crate::app::composition) update_repository: Arc<dyn UpdateRepository>,
+    pub(in crate::app::composition) vector_repository: Arc<dyn VectorRepository>,
+    pub(in crate::app::composition) remote_embedding_repository: Arc<dyn RemoteEmbeddingRepository>,
+    pub(in crate::app::composition) local_embedding_repository: Arc<dyn LocalEmbeddingRepository>,
 }
 
 pub(super) async fn build(
@@ -296,6 +303,16 @@ pub(super) async fn build(
     let update_repository: Arc<dyn UpdateRepository> =
         Arc::new(GitHubUpdateRepository::new(http_client_pool.clone()));
 
+    let vector_root = default_user_dir.join("vectors");
+    let vector_repository: Arc<dyn VectorRepository> = Arc::new(RedbVectorRepository::new(
+        vector_root.join("tauritavern-v1.redb"),
+    ));
+    let remote_embedding_repository: Arc<dyn RemoteEmbeddingRepository> =
+        Arc::new(HttpEmbeddingRepository::new(http_client_pool));
+    let local_embedding_repository: Arc<dyn LocalEmbeddingRepository> = Arc::new(
+        FastEmbedLocalEmbeddingRepository::new(data_root.join("_cache").join("embedding-models")),
+    );
+
     Ok(AppRepositories {
         character_repository,
         chat_repository,
@@ -337,5 +354,8 @@ pub(super) async fn build(
         tts_repository,
         world_info_repository,
         update_repository,
+        vector_repository,
+        remote_embedding_repository,
+        local_embedding_repository,
     })
 }

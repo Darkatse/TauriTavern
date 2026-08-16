@@ -1,0 +1,5 @@
+mod fastembed_local_embedding_repository;
+mod redb_vector_repository;
+
+pub use fastembed_local_embedding_repository::FastEmbedLocalEmbeddingRepository;
+pub use redb_vector_repository::RedbVectorRepository;

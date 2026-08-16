@@ -212,17 +212,25 @@ pub(super) fn delete_installed_skill_dir(path: &Path, name: &str) -> Result<(), 
     })
 }
 
-pub(super) fn cleanup_committed_skill_dirs(
-    operation: &str,
-    dirs: &[SkillDirCleanup],
-) -> Result<(), DomainError> {
+pub(super) fn cleanup_committed_skill_dirs(operation: &str, dirs: &[SkillDirCleanup]) {
     let mut errors = Vec::new();
     for dir in dirs {
         if let Err(error) = delete_installed_skill_dir(&dir.path, &dir.name) {
             errors.push(format!("{}: {}", dir.path.display(), error));
         }
     }
-    committed_cleanup_result(operation, errors)
+    warn_committed_cleanup_errors(operation, errors);
+}
+
+pub(super) fn warn_committed_cleanup_errors(operation: &str, errors: Vec<String>) {
+    if errors.is_empty() {
+        return;
+    }
+    tracing::warn!(
+        operation = %operation,
+        errors = %errors.join("; "),
+        "Skill mutation committed; recoverable directory cleanup failed"
+    );
 }
 
 pub(super) fn remove_dir_if_exists(path: &Path) -> Result<(), DomainError> {
@@ -294,16 +302,5 @@ fn cleanup_after_copy_error(target: &Path, name: &str, error: DomainError) -> Do
             "{}; additionally failed to clean up prepared Skill directory for '{}': {}",
             error, name, cleanup_error
         )),
-    }
-}
-
-fn committed_cleanup_result(operation: &str, errors: Vec<String>) -> Result<(), DomainError> {
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(DomainError::InternalError(format!(
-            "{operation} committed but failed to clean up Skill directories: {}",
-            errors.join("; ")
-        )))
     }
 }

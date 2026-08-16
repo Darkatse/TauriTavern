@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use super::FileSkillRepository;
 use super::fs_ops::{
     copy_skill_dir_to_empty_target, delete_installed_skill_dir, ensure_installed_skill_dir,
-    rollback_prepared_skill_dirs,
+    rollback_prepared_skill_dirs, warn_committed_cleanup_errors,
 };
 use super::index::sort_index;
 use super::paths::validate_skill_scope;
@@ -60,6 +60,19 @@ pub(super) async fn retarget_scope(
 
     let (from_link, to_link) = scope_source_link_pair(&request.from_scope, &request.to_scope)?;
     let mut index = repository.load_index().await?;
+    let source_names = index
+        .skills
+        .iter()
+        .filter(|skill| skill.scope == request.from_scope)
+        .map(|skill| skill.name.clone())
+        .collect::<Vec<_>>();
+    let mut repaired = false;
+    for name in source_names {
+        repaired |= repository.reconcile_target(&mut index, &request.to_scope, &name)?;
+    }
+    if repaired {
+        repository.save_index(&index).await?;
+    }
     preflight_target_conflicts(&index.skills, &request.from_scope, &request.to_scope)?;
 
     let actions = build_fs_actions(
@@ -110,7 +123,7 @@ pub(super) async fn retarget_scope(
         return Err(rollback_prepared_skill_dirs(&prepared_targets, error));
     }
 
-    cleanup_sources_after_commit(&actions)?;
+    cleanup_sources_after_commit(&actions);
 
     Ok(SkillScopeRetargetResult {
         moved: actions
@@ -318,19 +331,12 @@ fn prepare_target_copies(actions: &[RetargetFsAction]) -> Result<Vec<PathBuf>, D
     Ok(prepared_targets)
 }
 
-fn cleanup_sources_after_commit(actions: &[RetargetFsAction]) -> Result<(), DomainError> {
+fn cleanup_sources_after_commit(actions: &[RetargetFsAction]) {
     let mut errors = Vec::new();
     for action in actions {
         if let Err(error) = delete_installed_skill_dir(action.source_root(), action.name()) {
             errors.push(format!("{}: {}", action.source_root().display(), error));
         }
     }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(DomainError::InternalError(format!(
-            "retarget_skill_scope committed but failed to clean up Skill directories: {}",
-            errors.join("; ")
-        )))
-    }
+    warn_committed_cleanup_errors("retarget_skill_scope", errors);
 }

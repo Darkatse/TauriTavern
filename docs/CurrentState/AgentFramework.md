@@ -14,7 +14,7 @@
 - LLM 调用仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 或取消链路。Responses WebSocket 建连已收敛到 `HttpClientPool` 的 ChatCompletion WebSocket profile，见 `docs/CurrentState/NativeApiFormats.md`。
 - Agent runtime 已不再把 OpenAI-compatible raw JSON 当作内部事实；运行时使用 canonical `AgentModelRequest` / `AgentModelResponse` / `AgentModelMessage` / `AgentModelContentPart`。
 - `AgentModelGateway` 在 Agent canonical IR 与现有 `ChatCompletionGenerateRequestDto` 之间转换；provider-native metadata 作为 opaque `Native` part 保留。
-- `provider_state` 已是 run-owned、invocation-scoped continuation contract；OpenAI Responses 使用它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
+- `provider_state` 已是 run-owned、invocation-scoped continuation contract；OpenAI Responses 默认走 portable HTTP/full replay，连接显式启用增强模式后才使用它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 - Agent Skill 管理、单项/多项归档导入、桌面多目录导入、导出、embedded skill 提示导入、`skill.list` / `skill.search` / `skill.read` 已落地。
 - Agent Profile 基线已落地：`profileId` 会解析为 `ResolvedAgentProfile`，驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds 与 model-facing prompt/tool descriptions。
 - PromptManager 已为 Agent Mode 提供 `agentSystemPrompt` 组装位置与 reserved no-op `agentResults` 位置标记；`agentSystemPrompt` 内容只由 Agent Profile 提供，前端在该 PromptManager index materialize，runtime 只消费最终 messages 并拒绝内部 marker 泄漏；`agentResults` 不再向模型注入历史 commit 内容。
@@ -217,10 +217,10 @@ AgentModelContentPart {
 
 当前 `provider_state` 契约：
 
-- 初始值是 `{ "sessionId": runId }`。
+- 初始值包含 run/invocation scoped `sessionId`；显式启用 Responses WebSocket 模式时还包含 `transport: "responses_websocket"`。
 - 每轮成功后由 `AgentModelGateway` 返回新的 `provider_state`，包含 `sessionId`、`chatCompletionSource`、`providerFormat`、`messageCursor`、`lastResponseId`。
-- OpenAI Responses 额外包含 `transport: "responses_websocket"` 与 `previousResponseId`。
-- OpenAI Responses 第二轮起只发送 `messageCursor` 之后的新消息，并过滤 assistant messages；缺失或越界 cursor 会 fail-fast。
+- 仅 WebSocket 模式的 OpenAI Responses 额外包含 `transport: "responses_websocket"` 与 `previousResponseId`，第二轮起只发送 `messageCursor` 之后的新消息并过滤 assistant messages；缺失或越界 cursor 会 fail-fast。
+- portable OpenAI Responses 不写 `previousResponseId`，每轮发送完整 transcript/native replay。
 - native provider 返回 tool call 但缺失对应 native part 时，以 `model.native_metadata_lost` fail-fast。
 - ChatCompletion payload 内部使用 `_tauritavern_provider_state` 传递该状态；LLM API log 与真正发往上游的 payload 都会剥离该字段。
 - 完整契约见 `docs/CurrentState/AgentProviderState.md`。

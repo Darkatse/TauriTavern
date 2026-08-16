@@ -36,6 +36,19 @@ test('SillyTavern context generate is wired through safeGenerate', async () => {
     assert.match(source, /\bgenerate\s*:\s*generateSafely,/);
 });
 
+test('SillyTavern context world info prompt keeps legacy three-argument calls compatible', async () => {
+    const [contextSource, worldInfoSource] = await Promise.all([
+        readFile(path.join(REPO_ROOT, 'src/scripts/st-context.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/scripts/world-info.js'), 'utf8'),
+    ]);
+
+    assert.match(contextSource, /\bgetWorldInfoPrompt\s*,/);
+    assert.match(
+        worldInfoSource,
+        /export async function getWorldInfoPrompt\(chat, maxContext, isDryRun, globalScanData\) \{\s*if \(globalScanData === undefined\) \{\s*globalScanData = defaultGlobalScanData;\s*\}/,
+    );
+});
+
 test('SillyTavern context exposes 1.18 ecosystem ABI additions', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/st-context.js'), 'utf8');
     const contextStart = source.indexOf('export function getContext()');

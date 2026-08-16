@@ -212,6 +212,7 @@ const profilesProvider = () => [
  * @property {string} [custom-api-format] Custom API Format
  * @property {string} [api-url] Server URL
  * @property {{key:string, id:string, labelSnapshot?:string}} [secretRef] Secret reference
+ * @property {{claudePromptCaching?:string, openaiResponsesMode?:string}} [adapterHints] Native adapter opt-ins
  */
 
 /**
@@ -460,6 +461,36 @@ function setOptionalField(target, key, value) {
 }
 
 /**
+ * Captures endpoint-specific native opt-ins without mixing them into prompt presets.
+ * @param {LlmModelTarget} target Model target to populate
+ */
+function readModelTargetAdapterHints(target) {
+    const settings = getContext().chatCompletionSettings;
+    const format = String(target['custom-api-format'] || '');
+    target.adapterHints = {
+        ...(format === 'claude_messages' && settings.custom_claude_prompt_caching
+            ? { claudePromptCaching: 'enabled' }
+            : {}),
+        ...(format === 'openai_responses' && settings.custom_openai_responses_websocket
+            ? { openaiResponsesMode: 'websocket' }
+            : {}),
+    };
+}
+
+/**
+ * Restores endpoint-specific native opt-ins from a model target snapshot.
+ * @param {LlmModelTarget} target Model target to apply
+ */
+function applyModelTargetAdapterHints(target) {
+    const settings = getContext().chatCompletionSettings;
+    settings.custom_claude_prompt_caching = target.adapterHints?.claudePromptCaching === 'enabled';
+    settings.custom_openai_responses_websocket = target.adapterHints?.openaiResponsesMode === 'websocket';
+    $('#custom_claude_prompt_caching').prop('checked', settings.custom_claude_prompt_caching);
+    $('#custom_openai_responses_websocket').prop('checked', settings.custom_openai_responses_websocket);
+    saveSettingsDebounced();
+}
+
+/**
  * Reads the current UI state as a model-only target.
  * @param {LlmModelTarget} target Model target to populate
  * @returns {Promise<void>}
@@ -482,6 +513,7 @@ async function readModelTargetFromCommands(target) {
 
     setOptionalField(target, 'api-url', await executeManagedCommand('api-url', '', { quiet: 'true' }));
     target.model = await requireManagedCommand('model', '', { quiet: 'true' });
+    readModelTargetAdapterHints(target);
 
     const secretKey = resolveSecretKey();
     if (secretKey) {
@@ -792,6 +824,12 @@ function makeFancyModelTarget(target) {
     if (target.secretRef?.id) {
         result[FANCY_NAMES['secret-id']] = target.secretRef.labelSnapshot || getSecretLabelById(target.secretRef.id) || target.secretRef.id;
     }
+    if (target.adapterHints?.claudePromptCaching === 'enabled') {
+        result['Claude Prompt Caching'] = t`Enabled`;
+    }
+    if (target.adapterHints?.openaiResponsesMode === 'websocket') {
+        result['Responses API Mode'] = 'WebSocket';
+    }
 
     return result;
 }
@@ -846,6 +884,7 @@ async function applyModelTarget(target) {
                     // /api custom intentionally preserves the current custom format for full profiles; model targets must not inherit it.
                     await requireManagedCommand('custom-api-format', 'openai_compat');
                 }
+                applyModelTargetAdapterHints(target);
 
                 if (target['api-url']) {
                     await requireManagedCommand('api-url', target['api-url'], { connect: 'false', quiet: 'true' });

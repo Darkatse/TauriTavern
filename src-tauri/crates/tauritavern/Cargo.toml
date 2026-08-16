@@ -57,6 +57,7 @@ tt-adapter-sync = { path = "../tt-adapter-sync" }
 tt-adapter-archive = { path = "../tt-adapter-archive" }
 tt-adapter-extension = { path = "../tt-adapter-extension" }
 tt-adapter-provider-http = { path = "../tt-adapter-provider-http" }
+tt-adapter-vector = { path = "../tt-adapter-vector" }
 tt-adapter-storage-core = { path = "../tt-adapter-storage-core" }
 tt-adapter-storage-userdata = { path = "../tt-adapter-storage-userdata" }
 tt-adapter-media = { path = "../tt-adapter-media" }

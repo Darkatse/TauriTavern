@@ -606,6 +606,161 @@ async fn moves_skill_between_scopes() {
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
+#[tokio::test]
+async fn move_skill_recovers_matching_orphan_target() {
+    let root = temp_root("move-recover-matching-orphan");
+    let repository = FileSkillRepository::new(root.clone());
+    for scope in [preset_scope("openai", "Writer"), global_scope()] {
+        repository
+            .install_import(SkillInstallRequest {
+                target_scope: scope,
+                input: inline_skill("test-skill", vec![("references/a.md", "same")]),
+                conflict_strategy: None,
+            })
+            .await
+            .expect("install skill");
+    }
+    let mut index = repository.load_index().await.expect("load index");
+    index.skills.retain(|skill| skill.scope != global_scope());
+    repository.save_index(&index).await.expect("orphan target");
+
+    let moved = repository
+        .move_skill(SkillMoveRequest {
+            name: "test-skill".to_string(),
+            from_scope: preset_scope("openai", "Writer"),
+            to_scope: global_scope(),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("recover matching target and move");
+
+    assert_eq!(moved.action, SkillInstallAction::AlreadyInstalled);
+    assert!(
+        repository
+            .list_skills(preset_filter("openai", "Writer"))
+            .await
+            .expect("preset")
+            .is_empty()
+    );
+    assert_eq!(
+        repository
+            .list_skills(global_filter())
+            .await
+            .expect("global")
+            .len(),
+        1
+    );
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn move_skill_recovers_different_orphan_as_explicit_conflict() {
+    let root = temp_root("move-recover-different-orphan");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: preset_scope("openai", "Writer"),
+            input: inline_skill("test-skill", vec![("references/a.md", "source")]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install source");
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill("test-skill", vec![("references/a.md", "target")]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install target");
+    let mut index = repository.load_index().await.expect("load index");
+    index.skills.retain(|skill| skill.scope != global_scope());
+    repository.save_index(&index).await.expect("orphan target");
+
+    let error = repository
+        .move_skill(SkillMoveRequest {
+            name: "test-skill".to_string(),
+            from_scope: preset_scope("openai", "Writer"),
+            to_scope: global_scope(),
+            conflict_strategy: None,
+        })
+        .await
+        .expect_err("different content still requires a decision");
+    assert!(error.to_string().contains("conflict_strategy is required"));
+    assert_eq!(
+        repository
+            .list_skills(global_filter())
+            .await
+            .expect("recovered global target")
+            .len(),
+        1
+    );
+
+    let moved = repository
+        .move_skill(SkillMoveRequest {
+            name: "test-skill".to_string(),
+            from_scope: preset_scope("openai", "Writer"),
+            to_scope: global_scope(),
+            conflict_strategy: Some(SkillInstallConflictStrategy::Replace),
+        })
+        .await
+        .expect("replace recovered target");
+    assert_eq!(moved.action, SkillInstallAction::Replaced);
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn move_skill_succeeds_when_source_cleanup_fails_after_commit() {
+    let root = temp_root("move-cleanup-fail");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill("test-skill", vec![]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+    let source_scope_root = repository
+        .installed_scope_root(&global_scope())
+        .expect("global root");
+
+    set_dir_mode(&source_scope_root, 0o555);
+    let moved = repository
+        .move_skill(SkillMoveRequest {
+            name: "test-skill".to_string(),
+            from_scope: global_scope(),
+            to_scope: profile_scope("writer"),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("cleanup failure must not hide committed move");
+    set_dir_mode(&source_scope_root, 0o755);
+
+    assert_eq!(moved.action, SkillInstallAction::Installed);
+    assert!(
+        repository
+            .list_skills(global_filter())
+            .await
+            .expect("global")
+            .is_empty()
+    );
+    assert_eq!(
+        repository
+            .list_skills(profile_filter("writer"))
+            .await
+            .expect("profile")
+            .len(),
+        1
+    );
+    assert!(source_scope_root.join("test-skill").exists());
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn install_rolls_back_target_when_index_save_fails() {
@@ -906,6 +1061,55 @@ async fn retargets_preset_scope_and_source_refs() {
 }
 
 #[tokio::test]
+async fn retarget_recovers_matching_orphan_target() {
+    let root = temp_root("retarget-recover-matching-orphan");
+    let repository = FileSkillRepository::new(root.clone());
+    for scope in [preset_scope("openai", "Old"), preset_scope("openai", "New")] {
+        repository
+            .install_import(SkillInstallRequest {
+                target_scope: scope,
+                input: inline_skill("test-skill", vec![("references/a.md", "same")]),
+                conflict_strategy: None,
+            })
+            .await
+            .expect("install skill");
+    }
+    let mut index = repository.load_index().await.expect("load index");
+    index
+        .skills
+        .retain(|skill| skill.scope != preset_scope("openai", "New"));
+    repository.save_index(&index).await.expect("orphan target");
+
+    let result = repository
+        .retarget_scope(SkillScopeRetargetRequest {
+            from_scope: preset_scope("openai", "Old"),
+            to_scope: preset_scope("openai", "New"),
+        })
+        .await
+        .expect("recover matching target and retarget");
+
+    assert_eq!(result.moved, 0);
+    assert_eq!(result.merged, 1);
+    assert!(
+        repository
+            .list_skills(preset_filter("openai", "Old"))
+            .await
+            .expect("old scope")
+            .is_empty()
+    );
+    assert_eq!(
+        repository
+            .list_skills(preset_filter("openai", "New"))
+            .await
+            .expect("new scope")
+            .len(),
+        1
+    );
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn retarget_rejects_different_target_content() {
     let root = temp_root("retarget-conflict");
     let repository = FileSkillRepository::new(root.clone());
@@ -1022,7 +1226,7 @@ async fn retarget_rolls_back_prepared_target_when_index_save_fails() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn retarget_reports_cleanup_failure_after_index_commit() {
+async fn retarget_succeeds_when_source_cleanup_fails_after_index_commit() {
     let root = temp_root("retarget-cleanup-fail");
     let repository = FileSkillRepository::new(root.clone());
     repository
@@ -1042,20 +1246,16 @@ async fn retarget_reports_cleanup_failure_after_index_commit() {
         .expect("old root");
 
     set_dir_mode(&old_scope_root, 0o555);
-    let error = repository
+    let result = repository
         .retarget_scope(SkillScopeRetargetRequest {
             from_scope: preset_scope("openai", "Old"),
             to_scope: preset_scope("openai", "New"),
         })
         .await
-        .expect_err("source cleanup should fail after commit");
+        .expect("cleanup failure must not hide committed retarget");
     set_dir_mode(&old_scope_root, 0o755);
 
-    assert!(
-        error
-            .to_string()
-            .contains("retarget_skill_scope committed but failed to clean up Skill directories")
-    );
+    assert_eq!(result.moved, 1);
     assert!(
         repository
             .list_skills(preset_filter("openai", "Old"))

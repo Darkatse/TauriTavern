@@ -32,6 +32,20 @@
                     <option value="webllm" data-i18n="WebLLM Extension">WebLLM Extension</option>
                 </select>
             </div>
+            <div class="flex-container flexFlowColumn" id="transformers_vectorsModel">
+                <label for="vectors_transformers_model" data-i18n="Vectorization Model">
+                    Vectorization Model
+                </label>
+                <select id="vectors_transformers_model" class="text_pole">
+                    <option value="jinaai/jina-embeddings-v2-base-en">Jina Embeddings v2 Base English (legacy)</option>
+                    <option value="BAAI/bge-m3">BGE-M3</option>
+                    <option value="Qwen/Qwen3-Embedding-0.6B">Qwen3-Embedding-0.6B</option>
+                    <option value="google/embeddinggemma-300m">EmbeddingGemma 300M (Q4)</option>
+                </select>
+                <small>
+                    The selected model is downloaded on first use. Each model uses an isolated vector index.
+                </small>
+            </div>
             <div class="flex-container flexFlowColumn" id="chutes_vectorsModel">
                 <label for="vectors_chutes_model" data-i18n="Vectorization Model">
                     Vectorization Model

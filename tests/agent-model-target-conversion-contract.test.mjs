@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -177,6 +178,36 @@ test('Agent model target conversion preserves Moonshot endpoint selection', asyn
             moonshot_endpoint: 'cn',
         },
     });
+});
+
+test('Agent model target conversion preserves native adapter opt-ins', async () => {
+    const { buildLlmConnectionFromModelTarget } = await importConversion();
+    const connection = buildLlmConnectionFromModelTarget(sampleTarget({
+        api: 'custom_openai_responses',
+        model: 'deepseek-chat',
+        'custom-api-format': 'openai_responses',
+        adapterHints: {
+            openaiResponsesMode: 'websocket',
+        },
+    }));
+
+    assert.deepEqual(connection.adapterHints, {
+        openaiResponsesMode: 'websocket',
+    });
+    assert.deepEqual(connection.capabilities, {});
+});
+
+test('Custom native controls keep connection transport separate from preset web search', async () => {
+    const [openaiSource, indexHtml] = await Promise.all([
+        readFile(path.join(REPO_ROOT, 'src/scripts/openai.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/index.html'), 'utf8'),
+    ]);
+
+    assert.match(openaiSource, /custom_openai_responses_websocket:[^\n]+true\]/);
+    assert.match(openaiSource, /custom_api_formats\.OPENAI_RESPONSES[\s\S]*?Boolean\(settings\.custom_openai_responses_websocket\)/);
+    assert.match(openaiSource, /data\('custom-api-format'\)/);
+    assert.match(indexHtml, /id="custom_openai_responses_websocket_section"[^>]+data-custom-api-format="openai_responses"/);
+    assert.match(indexHtml, /data-source="[^"]*custom" data-custom-api-format="claude_messages,openai_responses"[\s\S]{0,300}?openai_enable_web_search/);
 });
 
 test('Agent run model target ensure materializes the current saved target state', async () => {

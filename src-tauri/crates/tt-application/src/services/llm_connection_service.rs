@@ -24,6 +24,8 @@ pub(crate) const CONNECTION_PAYLOAD_KEYS: &[&str] = &[
     "custom_include_headers",
     "custom_include_body",
     "custom_exclude_body",
+    "custom_claude_prompt_caching",
+    "custom_openai_responses_websocket",
 ];
 
 const ALLOWED_CUSTOM_API_FORMATS: &[&str] = &[
@@ -32,6 +34,9 @@ const ALLOWED_CUSTOM_API_FORMATS: &[&str] = &[
     "claude_messages",
     "gemini_interactions",
 ];
+
+const ADAPTER_HINT_ENABLED: &str = "enabled";
+const OPENAI_RESPONSES_MODE_WEBSOCKET: &str = "websocket";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourceSpecificValueKind {
@@ -335,6 +340,32 @@ impl LlmConnectionService {
                 Value::String(value.to_string()),
             );
         }
+        if trimmed_option(
+            resolved
+                .connection
+                .adapter_hints
+                .claude_prompt_caching
+                .as_deref(),
+        ) == Some(ADAPTER_HINT_ENABLED)
+        {
+            payload.insert(
+                "custom_claude_prompt_caching".to_string(),
+                Value::Bool(true),
+            );
+        }
+        if trimmed_option(
+            resolved
+                .connection
+                .adapter_hints
+                .openai_responses_mode
+                .as_deref(),
+        ) == Some(OPENAI_RESPONSES_MODE_WEBSOCKET)
+        {
+            payload.insert(
+                "custom_openai_responses_websocket".to_string(),
+                Value::Bool(true),
+            );
+        }
 
         Ok(resolved.model_binding())
     }
@@ -429,8 +460,48 @@ fn validate_connection(
     validate_source_specific(connection, source)?;
     validate_auth(connection, source)?;
     validate_routing(connection, source)?;
+    validate_adapter_hints(connection, source)?;
 
     Ok(source)
+}
+
+fn validate_adapter_hints(
+    connection: &LlmConnectionDefinition,
+    source: ChatCompletionSource,
+) -> Result<(), ApplicationError> {
+    let format = normalized_custom_api_format(connection);
+
+    if let Some(value) = connection.adapter_hints.claude_prompt_caching.as_deref() {
+        let value = value.trim();
+        if value != ADAPTER_HINT_ENABLED {
+            return Err(ApplicationError::ValidationError(format!(
+                "llm_connection.claude_prompt_caching_unsupported: unsupported adapterHints.claudePromptCaching `{value}`"
+            )));
+        }
+        if source != ChatCompletionSource::Custom || format.as_deref() != Some("claude_messages") {
+            return Err(ApplicationError::ValidationError(
+                "llm_connection.claude_prompt_caching_format_mismatch: adapterHints.claudePromptCaching requires customApiFormat=claude_messages"
+                    .to_string(),
+            ));
+        }
+    }
+
+    if let Some(value) = connection.adapter_hints.openai_responses_mode.as_deref() {
+        let value = value.trim();
+        if value != OPENAI_RESPONSES_MODE_WEBSOCKET {
+            return Err(ApplicationError::ValidationError(format!(
+                "llm_connection.openai_responses_mode_unsupported: unsupported adapterHints.openaiResponsesMode `{value}`"
+            )));
+        }
+        if source != ChatCompletionSource::Custom || format.as_deref() != Some("openai_responses") {
+            return Err(ApplicationError::ValidationError(
+                "llm_connection.openai_responses_mode_format_mismatch: adapterHints.openaiResponsesMode requires customApiFormat=openai_responses"
+                    .to_string(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_custom_api_format(
@@ -758,6 +829,17 @@ mod tests {
         connection
     }
 
+    fn custom_connection(format: &str) -> LlmConnectionDefinition {
+        let mut connection = openrouter_connection();
+        connection.id = LlmConnectionId::parse("custom-main").unwrap();
+        connection.display_name = "Custom Main".to_string();
+        connection.provider.chat_completion_source = "custom".to_string();
+        connection.provider.custom_api_format = Some(format.to_string());
+        connection.endpoint.base_url = Some("https://example.test/v1".to_string());
+        connection.auth.secret_ref.key = "api_key_custom".to_string();
+        connection
+    }
+
     struct TestRepo {
         connection: LlmConnectionDefinition,
     }
@@ -853,6 +935,58 @@ mod tests {
                 .to_string()
                 .contains("aws_bedrock_custom_template_incomplete")
         );
+    }
+
+    #[test]
+    fn validate_adapter_hints_require_the_matching_custom_format() {
+        let mut responses = custom_connection("openai_responses");
+        responses.adapter_hints.openai_responses_mode = Some(String::new());
+        let error = validate_connection(&responses).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("openai_responses_mode_unsupported")
+        );
+
+        responses.adapter_hints.openai_responses_mode = Some("websocket".to_string());
+        validate_connection(&responses).expect("Responses WebSocket hint should validate");
+
+        responses.provider.custom_api_format = Some("openai_compat".to_string());
+        let error = validate_connection(&responses).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("openai_responses_mode_format_mismatch")
+        );
+
+        let mut claude = custom_connection("claude_messages");
+        claude.adapter_hints.claude_prompt_caching = Some("enabled".to_string());
+        validate_connection(&claude).expect("Claude prompt caching hint should validate");
+    }
+
+    #[tokio::test]
+    async fn apply_responses_connection_materializes_websocket_opt_in() {
+        let mut connection = custom_connection("openai_responses");
+        connection.adapter_hints.openai_responses_mode = Some("websocket".to_string());
+        let service = LlmConnectionService::new(std::sync::Arc::new(TestRepo { connection }));
+        let mut payload = json!({
+            "custom_claude_prompt_caching": true,
+            "custom_openai_responses_websocket": false,
+            "enable_web_search": true,
+            "messages": []
+        })
+        .as_object()
+        .cloned()
+        .unwrap_or_else(Map::new);
+
+        service
+            .apply_connection_to_payload("custom-main", "deepseek-chat", &mut payload)
+            .await
+            .expect("connection overlay");
+
+        assert_eq!(payload["custom_openai_responses_websocket"], true);
+        assert_eq!(payload["enable_web_search"], true);
+        assert!(payload.get("custom_claude_prompt_caching").is_none());
     }
 
     #[tokio::test]

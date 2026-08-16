@@ -88,6 +88,7 @@ test('World info batches only safe token-count prefixes', async () => {
 
     assert.match(source, /getTokenCountAsync, getTokenPrefixCountsAsync/);
     assert.match(source, /getWorldInfoTokenPrefetchBatch\(newEntries, entryIndex\)/);
+    assert.match(source, /Math\.max\(0, budget - textToScanTokens\)/);
     assert.match(source, /getTokenPrefixCountsAsync\(batchBaseContent, batchSuffixes, undefined, remainingBudget\)/);
     assert.match(source, /prefetchedTokenCounts\.has\(entry\)[\s\S]*getTokenCountAsync\(newContent\)/);
 });
@@ -120,6 +121,10 @@ test('World info token prefetch rejects behavior-sensitive entries', () => {
     assert.equal(canPrefetchWorldInfoTokenCount({ content: 'plain', ignoreBudget: false, useProbability: true, probability: 100 }), true);
     assert.equal(canPrefetchWorldInfoTokenCount({ content: '{{user}}', ignoreBudget: false, useProbability: false }), false);
     assert.equal(canPrefetchWorldInfoTokenCount({ content: '<USER>', ignoreBudget: false, useProbability: false }), false);
+    assert.equal(canPrefetchWorldInfoTokenCount({ content: '<charIfNotGroup>', ignoreBudget: false, useProbability: false }), false);
+    assert.equal(canPrefetchWorldInfoTokenCount({ content: '{"name":"Alice"}', ignoreBudget: false, useProbability: false }), true);
+    assert.equal(canPrefetchWorldInfoTokenCount({ content: '<section>plain HTML</section>', ignoreBudget: false, useProbability: false }), true);
+    assert.equal(canPrefetchWorldInfoTokenCount({ content: 'score < limit', ignoreBudget: false, useProbability: false }), true);
 });
 
 test('World info token prefetch keeps only the contiguous safe prefix in activation order', () => {

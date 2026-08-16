@@ -156,6 +156,10 @@ pub struct LlmConnectionAdapterHints {
     pub custom_include_body: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_exclude_body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_prompt_caching: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openai_responses_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -16,6 +16,7 @@ use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
+    OPENAI_RESPONSES_WEBSOCKET_TRANSPORT,
 };
 
 use super::HttpChatCompletionRepository;
@@ -704,6 +705,15 @@ fn provider_session_id(payload: &Value) -> Result<Option<String>, DomainError> {
     let Some(provider_state) = payload.get(CHAT_COMPLETION_PROVIDER_STATE_FIELD) else {
         return Ok(None);
     };
+    match provider_state.get("transport").and_then(Value::as_str) {
+        None => return Ok(None),
+        Some(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT) => {}
+        Some(transport) => {
+            return Err(DomainError::InvalidData(format!(
+                "Unsupported OpenAI Responses provider transport: {transport}"
+            )));
+        }
+    }
     let session_id = provider_state
         .get("sessionId")
         .and_then(Value::as_str)
@@ -872,6 +882,33 @@ mod tests {
         assert!(event.get(CHAT_COMPLETION_PROVIDER_STATE_FIELD).is_none());
         assert_eq!(event["model"], json!("gpt-test"));
         assert_eq!(event["input"], json!([]));
+    }
+
+    #[test]
+    fn provider_state_selects_websocket_only_for_explicit_transport() {
+        let portable = json!({
+            CHAT_COMPLETION_PROVIDER_STATE_FIELD: { "sessionId": "run_1" }
+        });
+        assert_eq!(provider_session_id(&portable).unwrap(), None);
+
+        let websocket = json!({
+            CHAT_COMPLETION_PROVIDER_STATE_FIELD: {
+                "sessionId": "run_1",
+                "transport": "responses_websocket"
+            }
+        });
+        assert_eq!(
+            provider_session_id(&websocket).unwrap().as_deref(),
+            Some("run_1")
+        );
+
+        let unknown = json!({
+            CHAT_COMPLETION_PROVIDER_STATE_FIELD: {
+                "sessionId": "run_1",
+                "transport": "unknown"
+            }
+        });
+        assert!(provider_session_id(&unknown).is_err());
     }
 
     #[test]

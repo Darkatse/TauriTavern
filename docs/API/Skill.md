@@ -117,6 +117,8 @@ type conflict.kind = 'new' | 'same' | 'different';
 - `same`：同名且内容 hash 相同。
 - `different`：同名但内容 hash 不同，安装时必须传 `conflictStrategy`。
 
+若目标 scope 中存在合法目录但缺少单个索引项，`installImport()`、`move()` 与 scope retarget 会先恢复该索引项，再按同一套 hash 冲突规则继续。恢复不会覆盖不同内容；无效或无法验证的目录仍会 reject。
+
 `installImport()` 的结果：
 
 ```ts

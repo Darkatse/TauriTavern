@@ -25,7 +25,7 @@ struct CachedServiceAccount {
 static SERVICE_ACCOUNT_CACHE: OnceLock<RwLock<HashMap<String, CachedServiceAccount>>> =
     OnceLock::new();
 
-pub(super) async fn get_service_account_access_token(
+pub(crate) async fn get_service_account_access_token(
     service_account_json: &str,
 ) -> Result<String, DomainError> {
     let cache_key = sha256_hex(service_account_json);

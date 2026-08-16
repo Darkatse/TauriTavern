@@ -7,14 +7,14 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
-use miktik::{TokenizerError, TokenizerRegistry};
+use miktik::{CumulativeEstimateOptions, TokenizerError, TokenizerRegistry};
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::{
-    TokenizerRepository, has_reached_openai_text_token_limit,
+    TokenizerRepository, openai_content_token_limit,
 };
 
 const CLAUDE_JSON_GZIP_BYTES: &[u8] =
@@ -23,6 +23,7 @@ const DEEPSEEK_JSON_GZIP_BYTES: &[u8] =
     include_bytes!("../../../resources/tokenizers/deepseek.json.gz");
 const GEMMA_MODEL_GZIP_BYTES: &[u8] =
     include_bytes!("../../../resources/tokenizers/gemma.model.gz");
+const PREFIX_ESTIMATE_CONTEXT_BYTES: usize = 64;
 
 #[derive(Clone, Copy)]
 enum ResourceCompression {
@@ -133,6 +134,13 @@ impl MiktikTokenizerRepository {
                 file_name: "nerdstash.model",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/nerdstash.model",
+                    compression: ResourceCompression::None,
+                },
+            }),
+            "nerdstash_v2" => Some(ModelResourceSpec {
+                file_name: "nerdstash_v2.model",
+                source: ModelSource::Remote {
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/nerdstash_v2.model",
                     compression: ResourceCompression::None,
                 },
             }),
@@ -647,21 +655,6 @@ impl TokenizerRepository for MiktikTokenizerRepository {
 
         let canonical = Self::canonical_model(model);
         let additions = suffixes.iter().map(String::as_str).collect::<Vec<_>>();
-
-        let mut token_counts = self
-            .registry
-            .estimate_cumulative_token_counts_canonical(canonical, base, &additions)
-            .map_err(|error| {
-                Self::map_tokenizer_error("estimate cumulative token counts", canonical, error)
-            })?;
-        if token_counts.len() != suffixes.len() {
-            return Err(DomainError::InternalError(format!(
-                "cumulative token estimate returned {} counts for {} suffixes on '{canonical}'",
-                token_counts.len(),
-                suffixes.len()
-            )));
-        }
-
         let empty_text_count = self
             .registry
             .count_tokens_canonical(canonical, "")
@@ -681,6 +674,24 @@ impl TokenizerRepository for MiktikTokenizerRepository {
                     "system-message wrapper reduced the token count for '{canonical}'"
                 ))
             })?;
+        let options = CumulativeEstimateOptions {
+            context_bytes: PREFIX_ESTIMATE_CONTEXT_BYTES,
+            stop_at: stop_at.map(|limit| openai_content_token_limit(limit, wrapper_tokens)),
+        };
+
+        let mut token_counts = self
+            .registry
+            .estimate_cumulative_token_counts_canonical(canonical, base, &additions, options)
+            .map_err(|error| {
+                Self::map_tokenizer_error("estimate cumulative token counts", canonical, error)
+            })?;
+        if token_counts.len() != suffixes.len() {
+            return Err(DomainError::InternalError(format!(
+                "cumulative token estimate returned {} counts for {} suffixes on '{canonical}'",
+                token_counts.len(),
+                suffixes.len()
+            )));
+        }
 
         for count in &mut token_counts {
             *count = count.checked_add(wrapper_tokens).ok_or_else(|| {
@@ -688,14 +699,6 @@ impl TokenizerRepository for MiktikTokenizerRepository {
                     "cumulative token estimate overflowed for '{canonical}'"
                 ))
             })?;
-        }
-
-        if let Some(index) = token_counts
-            .iter()
-            .position(|&count| has_reached_openai_text_token_limit(count, stop_at))
-        {
-            let terminal_count = token_counts[index];
-            token_counts[index..].fill(terminal_count);
         }
 
         Ok(token_counts)
@@ -711,7 +714,9 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{MiktikTokenizerRepository, ModelSource, ResourceCompression};
+    use super::{
+        MiktikTokenizerRepository, ModelSource, PREFIX_ESTIMATE_CONTEXT_BYTES, ResourceCompression,
+    };
     use tt_adapter_http::HttpClientPool;
     use tt_ports::repositories::tokenizer_repository::{
         TokenizerRepository, openai_text_token_count,
@@ -739,6 +744,39 @@ mod tests {
             MiktikTokenizerRepository::canonical_model("deepseek-chat"),
             "deepseek"
         );
+        assert_eq!(
+            MiktikTokenizerRepository::canonical_model("nerdstash-v2"),
+            "nerdstash_v2"
+        );
+        assert_eq!(
+            MiktikTokenizerRepository::canonical_model("nerdstash_v2"),
+            "nerdstash_v2"
+        );
+    }
+
+    #[test]
+    fn resource_specs_cover_sillytavern_local_tokenizers() {
+        for canonical in [
+            "llama",
+            "nerdstash",
+            "nerdstash_v2",
+            "mistral",
+            "yi",
+            "gemma",
+            "jamba",
+            "claude",
+            "llama3",
+            "qwen2",
+            "command-r",
+            "command-a",
+            "nemo",
+            "deepseek",
+        ] {
+            assert!(
+                MiktikTokenizerRepository::model_resource_spec(canonical).is_some(),
+                "resource spec should exist for '{canonical}'"
+            );
+        }
     }
 
     #[test]
@@ -886,6 +924,53 @@ mod tests {
         assert!(claude > 0);
         assert!(deepseek > 0);
         assert!(gemini > 0);
+    }
+
+    #[tokio::test]
+    async fn local_engines_match_sillytavern_1_18_golden_ids() {
+        let cache_dir = unique_temp_cache_dir();
+        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+        let text = "Hello, 世界 👨‍👩‍👧‍👦\n";
+        let cases: [(&str, &[u32]); 3] = [
+            (
+                "gpt2",
+                &[
+                    15496, 11, 220, 10310, 244, 45911, 234, 50169, 101, 447, 235, 41840, 102, 447,
+                    235, 41840, 100, 447, 235, 41840, 99, 198,
+                ],
+            ),
+            (
+                "claude",
+                &[
+                    10002, 16, 225, 1499, 249, 37413, 41270, 244, 106, 477, 240, 53965, 107, 477,
+                    240, 53965, 105, 477, 240, 53965, 104, 203,
+                ],
+            ),
+            (
+                "gemma",
+                &[
+                    4521, 235269, 40642, 235248, 241568, 235879, 241355, 235879, 244355, 235879,
+                    244670, 108,
+                ],
+            ),
+        ];
+
+        for (model, expected_ids) in cases {
+            TokenizerRepository::ensure_model_ready(&repository, model)
+                .await
+                .expect("tokenizer should prepare");
+            let ids = TokenizerRepository::encode(&repository, model, text)
+                .expect("golden text should encode");
+            assert_eq!(ids, expected_ids, "token ids changed for '{model}'");
+            assert_eq!(
+                TokenizerRepository::decode(&repository, model, &ids)
+                    .expect("golden token ids should decode"),
+                text,
+                "roundtrip changed for '{model}'"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(cache_dir);
     }
 
     #[tokio::test]
@@ -1171,6 +1256,8 @@ mod tests {
 
     #[tokio::test]
     async fn cumulative_prefix_counts_preserve_stop_at_fill_across_backends() {
+        assert_eq!(PREFIX_ESTIMATE_CONTEXT_BYTES, 64);
+
         let cache_dir = unique_temp_cache_dir();
         let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
         let suffixes = vec![
@@ -1238,6 +1325,7 @@ mod tests {
                     .expect("complete prefix count should succeed")
                 })
                 .collect::<Vec<_>>();
+
             let estimated_counts = TokenizerRepository::count_system_message_prefixes(
                 &repository,
                 model,

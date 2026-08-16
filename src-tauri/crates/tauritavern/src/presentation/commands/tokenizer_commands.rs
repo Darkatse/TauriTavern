@@ -6,26 +6,11 @@ use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::tokenization_dto::{
-    OpenAiDecodeRequestDto, OpenAiDecodeResponseDto, OpenAiEncodeRequestDto,
-    OpenAiEncodeResponseDto, OpenAiLogitBiasRequestDto, OpenAiLogitBiasResponseDto,
-    OpenAiTokenCountBatchRequestDto, OpenAiTokenCountBatchResponseDto, OpenAiTokenCountRequestDto,
-    OpenAiTokenCountResponseDto, OpenAiTokenPrefixCountRequestDto,
+    DecodeTokensRequestDto, DecodeTokensResponseDto, EncodeTokensRequestDto,
+    EncodeTokensResponseDto, OpenAiLogitBiasRequestDto, OpenAiLogitBiasResponseDto,
+    OpenAiTokenCountBatchRequestDto, OpenAiTokenCountBatchResponseDto,
+    OpenAiTokenPrefixCountRequestDto,
 };
-
-#[tauri::command]
-pub async fn count_openai_tokens(
-    dto: OpenAiTokenCountRequestDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<OpenAiTokenCountResponseDto, CommandError> {
-    log_command("count_openai_tokens");
-
-    app_state
-        .services
-        .tokenization_service
-        .count_openai_tokens(dto)
-        .await
-        .map_err(map_command_error("Failed to count OpenAI tokens"))
-}
 
 #[tauri::command]
 pub async fn count_openai_tokens_batch(
@@ -58,33 +43,33 @@ pub async fn count_openai_token_prefixes(
 }
 
 #[tauri::command]
-pub async fn encode_openai_tokens(
-    dto: OpenAiEncodeRequestDto,
+pub async fn encode_tokens(
+    dto: EncodeTokensRequestDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<OpenAiEncodeResponseDto, CommandError> {
-    log_command("encode_openai_tokens");
+) -> Result<EncodeTokensResponseDto, CommandError> {
+    log_command("encode_tokens");
 
     app_state
         .services
         .tokenization_service
-        .encode_openai_tokens(dto)
+        .encode_tokens(dto)
         .await
-        .map_err(map_command_error("Failed to encode OpenAI tokens"))
+        .map_err(map_command_error("Failed to encode tokens"))
 }
 
 #[tauri::command]
-pub async fn decode_openai_tokens(
-    dto: OpenAiDecodeRequestDto,
+pub async fn decode_tokens(
+    dto: DecodeTokensRequestDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<OpenAiDecodeResponseDto, CommandError> {
-    log_command("decode_openai_tokens");
+) -> Result<DecodeTokensResponseDto, CommandError> {
+    log_command("decode_tokens");
 
     app_state
         .services
         .tokenization_service
-        .decode_openai_tokens(dto)
+        .decode_tokens(dto)
         .await
-        .map_err(map_command_error("Failed to decode OpenAI tokens"))
+        .map_err(map_command_error("Failed to decode tokens"))
 }
 
 #[tauri::command]

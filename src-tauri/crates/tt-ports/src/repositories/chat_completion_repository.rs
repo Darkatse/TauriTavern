@@ -38,6 +38,7 @@ pub struct ChatCompletionApiConfig {
 pub type ChatCompletionStreamSender = UnboundedSender<String>;
 pub type ChatCompletionCancelReceiver = watch::Receiver<bool>;
 pub const CHAT_COMPLETION_PROVIDER_STATE_FIELD: &str = "_tauritavern_provider_state";
+pub const OPENAI_RESPONSES_WEBSOCKET_TRANSPORT: &str = "responses_websocket";
 
 #[derive(Debug, Clone, Default)]
 pub struct ChatCompletionNormalizationReport {

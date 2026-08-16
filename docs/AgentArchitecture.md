@@ -151,7 +151,7 @@ LLM Gateway / provider adapter
 - Agent runtime 当前使用 `AgentModelRequest` / `AgentModelResponse` / `AgentModelContentPart` 作为内部模型语义，不再直接读写 OpenAI-compatible raw JSON。
 - `AgentModelGateway` 仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，在 canonical IR 与现有 provider payload pipeline 之间转换。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native metadata 以 opaque `Native` part 保存和回放；tool call id 缺失会 fail-fast。
-- Agent `provider_state` 已用于 run-scoped continuation；OpenAI Responses 通过 persistent WebSocket、incremental input 与 `previous_response_id` 续接。详见 `docs/CurrentState/AgentProviderState.md`。
+- Agent `provider_state` 已用于 run-scoped continuation；OpenAI Responses 默认使用 portable HTTP/full replay，连接显式启用增强模式后才原子使用 persistent WebSocket、incremental input 与 `previous_response_id`。详见 `docs/CurrentState/AgentProviderState.md`。
 - `workspace.write_file` / `workspace.apply_patch` 成功结果只向模型回填包含目标路径的文本摘要；内部结构化元数据与 resource refs 保留给 runtime、audit 与 Timeline UI。需要完整内容时模型必须显式调用 `workspace.read_file`。
 - `chat.search` 与 `chat.read_messages` 只读取当前 run 绑定的聊天，不允许模型指定任意 chat target；message index 从 0 开始，JSONL header 不计入消息。
 - `worldinfo.read_activated` 只读取本次 run prompt snapshot 中 materialized 的激活结果，不把全局 last activation 当作运行时真相。

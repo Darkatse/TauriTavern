@@ -84,7 +84,7 @@ test('Chat rendering and generation rely on index presence, not whole records', 
     assert.doesNotMatch(source, /itemizedPrompts\.push\(additionalPromptStuff\)/);
 });
 
-test('Itemized prompt public lifecycle functions reject directly on storage failures', async () => {
+test('Automatic Prompt Inspector persistence is non-blocking while explicit deletion still reports failure', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/itemized-prompts.js'), 'utf8');
     const loadFn = extractBetween(
         source,
@@ -107,8 +107,17 @@ test('Itemized prompt public lifecycle functions reject directly on storage fail
         'export function unloadItemizedPrompts() {',
     );
 
-    for (const fn of [loadFn, saveFn, deleteFn, clearFn]) {
+    for (const fn of [loadFn, saveFn]) {
+        assert.doesNotMatch(fn, /queueMicrotask/);
+        assert.match(fn, /catch \(error\) \{[\s\S]*console\.warn/);
+        assert.doesNotMatch(fn, /throw error;/);
+    }
+
+    for (const fn of [deleteFn, clearFn]) {
         assert.doesNotMatch(fn, /queueMicrotask/);
         assert.match(fn, /catch \(error\) \{[\s\S]*throw error;/);
     }
+
+    assert.doesNotMatch(source, /queueMicrotask\(\(\) => \{\s*throw/);
+    assert.match(source, /Failed to flush Prompt Inspector data/);
 });

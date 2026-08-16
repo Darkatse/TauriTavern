@@ -23,7 +23,7 @@ mod openai;
 mod openai_responses;
 mod response_body;
 mod vertexai;
-mod vertexai_auth;
+pub(crate) mod vertexai_auth;
 mod workers_ai;
 
 #[derive(Debug, Clone, Copy)]

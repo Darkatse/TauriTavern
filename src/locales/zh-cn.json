@@ -4052,6 +4052,8 @@
     "Prompt Cache help: scope": "适用于 Claude、Google Vertex AI Claude、OpenRouter（anthropic/claude*）以及已显式启用的自定义 Claude Messages 请求。",
     "Apply Claude Prompt Caching Strategy": "应用 Claude 提示词缓存策略",
     "Apply Claude Prompt Caching Strategy Description": "仅当该端点支持 Anthropic Claude 提示词缓存时才启用。启用后，TauriTavern 会为自定义 Claude Messages 请求自动添加 Claude 缓存断点和所需的 caching 标头。",
+    "Enable Responses WebSocket Mode": "启用 Responses WebSocket 模式",
+    "Enable Responses WebSocket Mode Description": "仅用于 Agent。仅当该端点支持 Responses WebSocket 协议和 previous_response_id 时才启用。TauriTavern 将保持实时连接并发送增量输入。",
     "Prompt Cache help: breakpoint": "启用后缓存断点落在系统提示词、聊天记录开始前、历史稳定前缀与末尾块等位置；对不支持 Anthropic 自动缓存的渠道会使用显式块级断点。",
     "Storage": "存储",
     "Data Directory": "数据目录",

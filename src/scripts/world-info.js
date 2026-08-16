@@ -981,10 +981,14 @@ const worldInfoInFlight = new Map();
  * @param {string[]} chat - The chat messages to scan, in reverse order.
  * @param {number} maxContext - The maximum context size of the generation.
  * @param {boolean} isDryRun - If true, the function will not emit any events.
- * @param {WIGlobalScanData} globalScanData Chat independent context to be scanned
+ * @param {WIGlobalScanData} [globalScanData=defaultGlobalScanData] Chat independent context to be scanned
  * @returns {Promise<WIPromptResult>} The world info string and depth.
  */
 export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanData) {
+    if (globalScanData === undefined) {
+        globalScanData = defaultGlobalScanData;
+    }
+
     let worldInfoString = '', worldInfoBefore = '', worldInfoAfter = '';
 
     const activatedWorldInfo = await checkWorldInfo(chat, maxContext, isDryRun, globalScanData);
@@ -5268,7 +5272,7 @@ async function checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData
             if (canPrefetchWorldInfoTokenCount(entry) && !prefetchedTokenCounts.has(entry)) {
                 const { entries: batchEntries, suffixes: batchSuffixes } = getWorldInfoTokenPrefetchBatch(newEntries, entryIndex);
 
-                const remainingBudget = budget - textToScanTokens;
+                const remainingBudget = Math.max(0, budget - textToScanTokens);
                 const batchCounts = await getTokenPrefixCountsAsync(batchBaseContent, batchSuffixes, undefined, remainingBudget);
                 batchEntries.forEach((batchEntry, index) => prefetchedTokenCounts.set(batchEntry, batchCounts[index]));
             }

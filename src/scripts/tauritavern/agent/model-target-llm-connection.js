@@ -129,7 +129,7 @@ export function buildLlmConnectionFromModelTarget(target) {
             },
         },
         routing: {},
-        adapterHints: {},
+        adapterHints: structuredClone(target.adapterHints || {}),
         capabilities: {},
     };
 }

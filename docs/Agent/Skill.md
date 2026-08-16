@@ -49,6 +49,8 @@ data_root/_tauritavern/skills/
 
 `FileSkillRepository` 只负责文件系统、zip、staging、索引与原子安装；运行时可见性、profile policy、journal 由 Agent tool/runtime 层负责。
 
+`skills.json` 是可见状态的权威提交点。Import、Move 与 scope retarget 在写入目标前都会定向检查同名目录：合法的孤立目录会恢复为索引项并进入现有 hash 冲突语义；无效目录继续 fail-fast。索引提交后的旧目录或 backup 清理失败只记录 warning，不把已经提交的操作伪装成失败；残留目录可在后续定向操作中重新协调。
+
 ## 导入导出
 
 支持输入：
@@ -124,7 +126,9 @@ Skill 文件对 Agent 是只读 virtual resource。Agent 不能修改 installed 
 - zip entry 超限、压缩比超限、总大小超限。
 - `agents/tauritavern.json` schema 无效。
 - 同名冲突但没有用户决策。
-- index 缺失但 installed 目录已存在。
+- 整个 index 文件缺失但 installed 目录已存在，无法证明完整索引语义。
+
+单个目标索引项缺失不等于整个 index 丢失：仓储会先验证目录、manifest、名称和内容 hash。只有合法目录才会恢复；内容不同仍要求显式冲突决策，目录不完整、名称不符、symlink 或 IO 状态未知时仍 fail-fast。
 
 Agent tool 层的模型可修正读取错误，例如缺失文件、二进制文件、非法 path 或超出 read budget，应返回 recoverable tool error；repository 内部 IO、index 损坏和安装一致性错误仍 fail-fast。
 

@@ -157,15 +157,15 @@ UI 展示契约：
 
 当前契约：
 
-- 初始状态只包含 `sessionId = runId`。
+- 初始状态包含 invocation-scoped `sessionId`；显式启用 Responses WebSocket 模式时还包含 `transport: "responses_websocket"`。
 - gateway 会把该状态以内部字段 `_tauritavern_provider_state` 写入 ChatCompletion payload。
 - LLM API log 与真正发往 provider 的 payload 都必须剥离 `_tauritavern_provider_state`。
 - 每轮成功后，gateway 返回 `sessionId`、`chatCompletionSource`、`providerFormat`、`messageCursor`、`lastResponseId`。
-- OpenAI Responses 会额外返回 `transport: "responses_websocket"` 与 `previousResponseId`。
-- OpenAI Responses 续接时，gateway 根据 `messageCursor` 只发送新消息，并注入 `previous_response_id`。
+- WebSocket 模式的 OpenAI Responses 会额外返回 `transport: "responses_websocket"` 与 `previousResponseId`；gateway 根据 `messageCursor` 只发送新消息，并注入 `previous_response_id`。
+- portable OpenAI Responses 不写 `previousResponseId`，每轮发送完整 transcript/native replay。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 会记录 `nativeContinuation`；tool call 存在但 native metadata 丢失时 fail-fast。
 
-OpenAI Responses Agent 路径使用 persistent WebSocket session。session 由 `sessionId` 复用，建连复用 `HttpClientPool` 的 ChatCompletion WebSocket profile；run 完成、失败或取消后异步关闭，关闭动作不得阻塞 run 最终状态落盘。
+显式启用增强模式的 OpenAI Responses Agent 路径使用 persistent WebSocket session。session 由 `sessionId` 复用，建连复用 `HttpClientPool` 的 ChatCompletion WebSocket profile；用户取消时 gateway 立即关闭 socket，run 最终清理保持幂等。未启用时使用 HTTP/full replay。
 
 ## 6. Tool Schema
 
@@ -282,7 +282,7 @@ Agent runtime 会按 Profile `run.modelRetry` 重试 `429` rate limit 与 transi
 - Agent loop 通过 canonical response 推进。
 - workspace write/patch result 不再隐式补入完整内容，后续编辑依赖显式 read-state。
 - OpenAI Responses native output items 回放。
-- OpenAI Responses `provider_state.previousResponseId` 注入与 `messageCursor` 增量输入。
+- OpenAI Responses portable full replay，以及显式 WebSocket 模式下的 `provider_state.previousResponseId` 注入与 `messageCursor` 增量输入。
 - Claude / Gemini native continuation 计数与缺失 fail-fast。
 - 内建 Bedrock Claude 使用 Claude Messages adapter；其他 Bedrock family 与自定义模板仍使用通用 adapter。
 - provider refusal 与输出截断在 canonical decode 前 fail-fast。

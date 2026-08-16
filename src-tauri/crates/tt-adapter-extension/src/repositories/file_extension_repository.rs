@@ -37,16 +37,21 @@ pub struct FileExtensionRepository {
     source_store: ExtensionSourceStore,
 }
 
-/// Built-in extensions enabled in TauriTavern.
-/// Keep this list explicit so custom built-ins remain predictable after upstream sync.
-const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
+/// Built-in extensions shipped by TauriTavern.
+const SYSTEM_EXTENSIONS: &[&str] = &[
     "regex",
     "code-render",
     "connection-manager",
     "data-migration",
+    "assets",
     "attachments",
+    "caption",
+    "expressions",
+    "gallery",
+    "memory",
     "quick-reply",
     "stable-diffusion",
+    "token-counter",
     "vectors",
     "tauritavern-version",
     "agent-system",

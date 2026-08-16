@@ -46,6 +46,7 @@ use tt_application::services::tts_service::TtsService;
 use tt_application::services::update_service::UpdateService;
 use tt_application::services::user_directory_service::UserDirectoryService;
 use tt_application::services::user_service::UserService;
+use tt_application::services::vector_service::VectorService;
 use tt_application::services::world_info_service::WorldInfoService;
 use tt_domain::errors::DomainError;
 use tt_domain::ios_policy::IosPolicyActivationReport;
@@ -107,6 +108,7 @@ pub(crate) struct AppServices {
     pub(crate) llm_connection_service: Arc<LlmConnectionService>,
     pub(crate) mcp_service: Arc<McpService>,
     pub(crate) provider_metadata_service: Arc<ProviderMetadataService>,
+    pub(crate) vector_service: Arc<VectorService>,
     pub(crate) tokenization_service: Arc<TokenizationService>,
     pub(crate) stable_diffusion_service: Arc<StableDiffusionService>,
     pub(crate) translate_service: Arc<TranslateService>,

@@ -1,0 +1,22 @@
+[package]
+name = "tt-adapter-vector"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+candle-core = "0.11.0"
+candle-nn = "0.11.0"
+fastembed = { version = "5.17.4", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "qwen3"] }
+hf-hub = { version = "0.5.0", default-features = false }
+redb = "4.1.0"
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "sync"] }
+tokenizers = { version = "0.22.2", default-features = false, features = ["onig"] }
+tt-domain = { path = "../tt-domain" }
+tt-ports = { path = "../tt-ports" }
+
+[dev-dependencies]
+uuid = { workspace = true }

@@ -2964,6 +2964,52 @@ test('Skill Manager keeps the single-import result when the list refresh fails',
     assert.deepEqual(errors, ['refresh failed']);
 });
 
+test('Skill Manager refreshes both scopes after a rejected move', async (t) => {
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    t.after(() => {
+        console.error = originalConsoleError;
+    });
+
+    const errors = [];
+    const refreshes = [];
+    globalThis.toastr = {
+        error: (message) => errors.push(message),
+        success() {},
+    };
+    installWindow({
+        skill: {
+            async move() {
+                throw new Error('target content conflict');
+            },
+        },
+    });
+
+    const vm = await createSkillPanelHarness();
+    const source = {
+        id: 'preset:openai:Writer',
+        available: true,
+        scope: { kind: 'preset', apiId: 'openai', name: 'Writer' },
+        skills: [],
+    };
+    const target = {
+        id: 'global',
+        available: true,
+        scope: { kind: 'global' },
+        skills: [],
+    };
+    vm.refreshSection = async (sectionId) => {
+        refreshes.push(sectionId);
+    };
+
+    await assert.rejects(
+        () => vm.moveSkill(source, { name: 'test-skill', installedHash: 'source' }, target),
+        /target content conflict/,
+    );
+    assert.deepEqual(refreshes, [source.id, target.id]);
+    assert.deepEqual(errors, ['target content conflict']);
+});
+
 test('Agent System profile panel does not statically bundle main app modules', async () => {
     const panelSource = await readFile(path.join(
         REPO_ROOT,

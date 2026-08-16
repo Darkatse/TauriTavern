@@ -74,14 +74,16 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
 
         let request_raw = pretty_json(&log_payload);
         let request_readable = format_request_readable(source, &log_payload);
-        let (response_readable, response_raw_inline, response_raw_kind) = match response_value {
-            Some(value) => (
-                format_response_readable(value),
-                Some(pretty_json(value)),
-                Some(LlmApiRawKind::Json),
-            ),
-            None => (error_message.clone().unwrap_or_default(), None, None),
-        };
+        let response_log_payload = response_value.map(wire_log_payload);
+        let (response_readable, response_raw_inline, response_raw_kind) =
+            match response_log_payload.as_deref() {
+                Some(value) => (
+                    format_response_readable(value),
+                    Some(pretty_json(value)),
+                    Some(LlmApiRawKind::Json),
+                ),
+                None => (error_message.clone().unwrap_or_default(), None, None),
+            };
 
         let meta = LlmApiLogMeta {
             id,
