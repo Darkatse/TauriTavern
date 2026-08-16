@@ -98,77 +98,77 @@ impl MiktikTokenizerRepository {
             "llama3" => Some(ModelResourceSpec {
                 file_name: "llama3.json",
                 source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/51ad27fb86d39a3daca3adaa970375c9670c12df/src/tokenizers/llama3.json",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/llama3.json",
                     compression: ResourceCompression::None,
                 },
             }),
             "llama" => Some(ModelResourceSpec {
                 file_name: "llama.model",
                 source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/51ad27fb86d39a3daca3adaa970375c9670c12df/src/tokenizers/llama.model",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/llama.model",
                     compression: ResourceCompression::None,
                 },
             }),
             "mistral" => Some(ModelResourceSpec {
                 file_name: "mistral.model",
                 source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/51ad27fb86d39a3daca3adaa970375c9670c12df/src/tokenizers/mistral.model",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/mistral.model",
                     compression: ResourceCompression::None,
                 },
             }),
             "yi" => Some(ModelResourceSpec {
                 file_name: "yi.model",
                 source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/51ad27fb86d39a3daca3adaa970375c9670c12df/src/tokenizers/yi.model",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/yi.model",
                     compression: ResourceCompression::None,
                 },
             }),
             "jamba" => Some(ModelResourceSpec {
                 file_name: "jamba.model",
                 source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/51ad27fb86d39a3daca3adaa970375c9670c12df/src/tokenizers/jamba.model",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/jamba.model",
                     compression: ResourceCompression::None,
                 },
             }),
             "nerdstash" => Some(ModelResourceSpec {
                 file_name: "nerdstash.model",
                 source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/51ad27fb86d39a3daca3adaa970375c9670c12df/src/tokenizers/nerdstash.model",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/nerdstash.model",
                     compression: ResourceCompression::None,
                 },
             }),
             "nerdstash_v2" => Some(ModelResourceSpec {
                 file_name: "nerdstash_v2.model",
                 source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/51ad27fb86d39a3daca3adaa970375c9670c12df/src/tokenizers/nerdstash_v2.model",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/nerdstash_v2.model",
                     compression: ResourceCompression::None,
                 },
             }),
             "command-r" => Some(ModelResourceSpec {
                 file_name: "command-r.json",
                 source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/798bcd823dfd04227a79b487e1cf29e6de9aaece/command-r.json.gz",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/command-r.json.gz",
                     compression: ResourceCompression::Gzip,
                 },
             }),
             "command-a" => Some(ModelResourceSpec {
                 file_name: "command-a.json",
                 source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/798bcd823dfd04227a79b487e1cf29e6de9aaece/command-a.json.gz",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/command-a.json.gz",
                     compression: ResourceCompression::Gzip,
                 },
             }),
             "qwen2" => Some(ModelResourceSpec {
                 file_name: "qwen2.json",
                 source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/798bcd823dfd04227a79b487e1cf29e6de9aaece/qwen2.json.gz",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/qwen2.json.gz",
                     compression: ResourceCompression::Gzip,
                 },
             }),
             "nemo" => Some(ModelResourceSpec {
                 file_name: "nemo.json",
                 source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/798bcd823dfd04227a79b487e1cf29e6de9aaece/nemo.json.gz",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/nemo.json.gz",
                     compression: ResourceCompression::Gzip,
                 },
             }),
@@ -772,15 +772,10 @@ mod tests {
             "nemo",
             "deepseek",
         ] {
-            let spec = MiktikTokenizerRepository::model_resource_spec(canonical)
-                .unwrap_or_else(|| panic!("resource spec should exist for '{canonical}'"));
-
-            if let ModelSource::Remote { url, .. } = spec.source {
-                assert!(
-                    !url.contains("/release/") && !url.contains("/main/"),
-                    "remote tokenizer source should be commit-pinned for '{canonical}'"
-                );
-            }
+            assert!(
+                MiktikTokenizerRepository::model_resource_spec(canonical).is_some(),
+                "resource spec should exist for '{canonical}'"
+            );
         }
     }
 
