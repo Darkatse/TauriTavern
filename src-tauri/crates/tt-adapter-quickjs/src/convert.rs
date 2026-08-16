@@ -39,7 +39,7 @@ pub(crate) fn json_to_js<'js>(
 }
 
 pub(crate) fn js_to_json<'js>(
-    ctx: &Ctx<'js>,
+    _ctx: &Ctx<'js>,
     value: &JsValue<'js>,
 ) -> rquickjs::Result<JsonValue> {
     if value.is_undefined() || value.is_null() {
@@ -54,7 +54,7 @@ pub(crate) fn js_to_json<'js>(
         }
         return serde_json::Number::from_f64(value)
             .map(JsonValue::Number)
-            .ok_or_else(|| rquickjs::Error::Unknown);
+            .ok_or(rquickjs::Error::Unknown);
     }
     if let Some(value) = value.as_string() {
         let text = value.to_string()?;
@@ -63,7 +63,7 @@ pub(crate) fn js_to_json<'js>(
     if let Some(array) = value.as_array() {
         let mut items = Vec::with_capacity(array.len());
         for item in array.iter::<JsValue>() {
-            items.push(js_to_json(ctx, &item?)?);
+            items.push(js_to_json(_ctx, &item?)?);
         }
         return Ok(JsonValue::Array(items));
     }
@@ -71,7 +71,7 @@ pub(crate) fn js_to_json<'js>(
         let mut fields = serde_json::Map::new();
         for property in object.props::<rquickjs::String, JsValue>() {
             let (key, field) = property?;
-            fields.insert(key.to_string()?, js_to_json(ctx, &field)?);
+            fields.insert(key.to_string()?, js_to_json(_ctx, &field)?);
         }
         return Ok(JsonValue::Object(fields));
     }

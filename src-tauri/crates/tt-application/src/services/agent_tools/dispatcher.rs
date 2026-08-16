@@ -150,11 +150,13 @@ impl AgentToolDispatcher {
             skill::SKILL_SCRIPT => {
                 let prompt_snapshot = self.read_run_prompt_snapshot(run_id).await?;
                 skill::script(
-                    self.skill_service.as_ref(),
-                    self.skill_script_engine.as_ref(),
-                    self.workspace_repository.as_ref(),
-                    run_id,
-                    Some(&prompt_snapshot),
+                    skill::ScriptContext {
+                        skill_service: self.skill_service.as_ref(),
+                        engine: self.skill_script_engine.as_ref(),
+                        workspace_repository: self.workspace_repository.as_ref(),
+                        run_id,
+                        prompt_snapshot: Some(&prompt_snapshot),
+                    },
                     call,
                     session,
                     profile,

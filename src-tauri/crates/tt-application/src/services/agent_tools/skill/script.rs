@@ -22,16 +22,29 @@ const SKILL_SCRIPT_NOT_FOUND: &str = "skill.run_script_not_found";
 const SKILL_SCRIPT_EXECUTION_FAILED: &str = "skill.run_script_execution_failed";
 const SKILL_SCRIPT_RESULT_TOO_LARGE: &str = "skill.run_script_result_too_large";
 
+/// skill.run_script 依赖的服务与运行上下文。
+/// 与工具共用的 `call` / `session` / `profile` 保持显式参数（与其他工具一致）。
+pub struct ScriptContext<'a> {
+    pub skill_service: &'a SkillService,
+    pub engine: &'a dyn SkillScriptEngine,
+    pub workspace_repository: &'a dyn WorkspaceRepository,
+    pub run_id: &'a str,
+    pub prompt_snapshot: Option<&'a Value>,
+}
+
 pub(in crate::services::agent_tools) async fn script(
-    skill_service: &SkillService,
-    engine: &dyn SkillScriptEngine,
-    workspace_repository: &dyn WorkspaceRepository,
-    run_id: &str,
-    prompt_snapshot: Option<&Value>,
+    context: ScriptContext<'_>,
     call: &ToolInvocation,
     session: &mut AgentToolSession,
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
+    let ScriptContext {
+        skill_service,
+        engine,
+        workspace_repository,
+        run_id,
+        prompt_snapshot,
+    } = context;
     let Some(args) = object_args(call) else {
         return Ok((
             tool_error(call, "tool.invalid_arguments", "arguments must be an object"),
@@ -580,13 +593,15 @@ mod tests {
         });
         let mut session = session;
         script(
-            &SkillService::new(Arc::new(repo)),
-            engine.as_ref(),
-            &FakeWorkspaceRepo {
-                root: PathBuf::from("/fake/run"),
+            ScriptContext {
+                skill_service: &SkillService::new(Arc::new(repo)),
+                engine: engine.as_ref(),
+                workspace_repository: &FakeWorkspaceRepo {
+                    root: PathBuf::from("/fake/run"),
+                },
+                run_id: "run-1",
+                prompt_snapshot: None,
             },
-            "run-1",
-            None,
             &call(arguments),
             &mut session,
             &profile,
@@ -726,15 +741,17 @@ mod tests {
         let profile = profile(true);
 
         let (result, effect) = script(
-            &SkillService::new(Arc::new(FakeSkillRepo {
-                script_path: Some(PathBuf::from("/fake/scripts/helper.js")),
-            })),
-            engine.as_ref(),
-            &FakeWorkspaceRepo {
-                root: PathBuf::from("/fake/run"),
+            ScriptContext {
+                skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
+                    script_path: Some(PathBuf::from("/fake/scripts/helper.js")),
+                })),
+                engine: engine.as_ref(),
+                workspace_repository: &FakeWorkspaceRepo {
+                    root: PathBuf::from("/fake/run"),
+                },
+                run_id: "run-1",
+                prompt_snapshot: None,
             },
-            "run-1",
-            None,
             &call(json!({ "skill": "demo", "script": "helper", "args": { "n": 7 } })),
             &mut session,
             &profile,

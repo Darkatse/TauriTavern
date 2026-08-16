@@ -11,6 +11,7 @@ pub(super) use self::descriptors::{
 pub(super) use self::list::list;
 pub(super) use self::read::read;
 pub(super) use self::script::script;
+pub(super) use self::script::ScriptContext;
 pub(super) use self::search::search;
 
 pub(super) const SKILL_LIST: &str = "skill.list";
