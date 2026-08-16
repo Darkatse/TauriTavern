@@ -2605,8 +2605,12 @@ function registerTagsSlashCommands() {
  */
 export function applyCharacterTagsToMessageDivs({ mesIds = [] } = {}) {
     try {
-        const messagesFilter = buildMessagesFilter(mesIds);
-        const messages = $('#chat').children(messagesFilter);
+        // Direct child query for explicit ids avoids the full children() + filter
+        // pass over every mounted message on every incremental add.
+        const ids = Array.isArray(mesIds) ? mesIds : (mesIds == null ? [] : [mesIds]);
+        const messages = ids.length > 0
+            ? $('#chat > ' + ids.map(id => `.mes[mesid="${id}"]`).join(', #chat > '))
+            : $('#chat').children('.mes');
 
         // Clear existing tags
         messages.each(function () {
@@ -2683,24 +2687,25 @@ export function applyCharacterTagsToMessageDivs({ mesIds = [] } = {}) {
  * buildMessagesFilter([1, 5]); // Returns '.mes[mesid="1"],.mes[mesid="5"]'
  * buildMessagesFilter([]); // Returns '.mes'
  */
-function buildMessagesFilter(mesIds) {
-    const allMessages = '.mes';
-
-    if (!mesIds) {
-        return allMessages; // If no mesIds provided, select all messages
-    }
-
-    const mesIdsArray = Array.isArray(mesIds) ? mesIds : [mesIds];
-
-    if (mesIdsArray?.length) {
-        // Create a valid jQuery selector for multiple attribute values.
-        // Example output: '.mes[mesid="1"],.mes[mesid="5"]'
-        return mesIdsArray.map(id => `.mes[mesid="${id}"]`).join(',');
-    }
-
-    // If mesIds is empty, select all messages.
-    return allMessages;
-}
+// Kept as reference; superseded by the direct child query in applyCharacterTagsToMessageDivs.
+// function buildMessagesFilter(mesIds) {
+//     const allMessages = '.mes';
+//
+//     if (!mesIds) {
+//         return allMessages; // If no mesIds provided, select all messages
+//     }
+//
+//     const mesIdsArray = Array.isArray(mesIds) ? mesIds : [mesIds];
+//
+//     if (mesIdsArray?.length) {
+//         // Create a valid jQuery selector for multiple attribute values.
+//         // Example output: '.mes[mesid="1"],.mes[mesid="5"]'
+//         return mesIdsArray.map(id => `.mes[mesid="${id}"]`).join(',');
+//     }
+//
+//     // If mesIds is empty, select all messages.
+//     return allMessages;
+// }
 
 /**
  * Helper function to apply all necessary data attributes to a DOM element.

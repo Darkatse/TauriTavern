@@ -3267,7 +3267,7 @@ export function addOneMessage(mes, { type = undefined, insertAfter = null, scrol
         messageElement = $(chatSurface.getMessageElement(messageId));
     }
 
-    if (showSwipes) refreshSwipeButtons();
+    if (showSwipes) refreshSwipeButtons(false, true, [messageId]);
     // Don't scroll if not inserting last
     if (!insertAfter && !insertBefore && scroll) {
         scrollChatToBottom({ waitForFrame: true });
@@ -10639,9 +10639,10 @@ export function getOverswipeBehavior(messageId, message = undefined) {
  * This has been optimized for bulk updates by minimizing DOM queries.
  * @param {boolean} updateCounters When true, the swipe counters will also be updated. Typically redundant because addOneMessage updates the counters.
  * @param {boolean} fade By default, the chevrons fade in and out.
+ * @param {number[]|null} [messageIds=null] When provided, only refresh the swipe state of these messages instead of every mounted message.
  * @returns
  */
-export function refreshSwipeButtons(updateCounters = false, fade = true) {
+export function refreshSwipeButtons(updateCounters = false, fade = true, messageIds = null) {
     //Never show swipe buttons on an empty chat.
     if (chat?.length === 0) return false;
 
@@ -10655,7 +10656,9 @@ export function refreshSwipeButtons(updateCounters = false, fade = true) {
         $('body').removeClass('hideAllSwipeButtons');
     }
     //Non-messages can appear in chat. '.mes' is required.
-    const messageElements = chatElement.children('.mes[mesid]');
+    const messageElements = Array.isArray(messageIds) && messageIds.length > 0
+        ? chatElement.find(messageIds.map(id => `.mes[mesid="${id}"]`).join(','))
+        : chatElement.children('.mes[mesid]');
 
     //Group each message.
     messageElements.each((_index, div) => {
