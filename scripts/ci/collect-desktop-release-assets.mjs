@@ -72,6 +72,7 @@ export async function collectReleaseAssets({
     outputDirectory,
     artifactPrefix,
     requireDebug = false,
+    bestEffort = false,
 }) {
     validatePrefix(artifactPrefix);
 
@@ -117,8 +118,14 @@ export async function collectReleaseAssets({
 
     const missing = [...RELEASE_ASSETS.keys()]
         .filter((suffix) => !found.has(suffix) && (requireDebug || !DEBUG_ARTIFACTS.has(suffix)));
-    if (missing.length > 0) {
+    if (missing.length > 0 && !bestEffort) {
         throw new Error(`Missing workflow artifacts: ${missing.map((suffix) => artifactPrefix + suffix).join(', ')}`);
+    }
+    if (bestEffort && missing.length > 0) {
+        process.stderr.write(
+            `Best-effort: skipping ${missing.length} missing workflow artifact(s) not built this run: `
+            + `${missing.map((suffix) => artifactPrefix + suffix).join(', ')}\n`,
+        );
     }
 
     const destinations = copies.map(({ destination }) => destination);
@@ -139,25 +146,28 @@ export async function collectReleaseAssets({
 }
 
 async function main() {
-    const [inputDirectory, outputDirectory, artifactPrefix, option] = process.argv.slice(2);
-    if (
-        !inputDirectory
-        || !outputDirectory
-        || !artifactPrefix
-        || (option !== undefined && option !== '--require-debug')
-        || process.argv.length < 5
-        || process.argv.length > 6
-    ) {
+    const [inputDirectory, outputDirectory, artifactPrefix, option = ''] = process.argv.slice(2);
+    if (!inputDirectory || !outputDirectory || !artifactPrefix) {
         throw new Error(
-            'Usage: collect-desktop-release-assets.mjs <workflow-artifacts-dir> <release-assets-dir> <artifact-prefix> [--require-debug]',
+            'Usage: collect-desktop-release-assets.mjs <workflow-artifacts-dir> <release-assets-dir> <artifact-prefix> [--require-debug] [--best-effort]',
         );
+    }
+    const options = new Set(option ? option.split(',') : []);
+    const KNOWN_OPTIONS = new Set(['--require-debug', '--best-effort']);
+    for (const opt of options) {
+        if (!KNOWN_OPTIONS.has(opt)) {
+            throw new Error(
+                `Unknown option: ${opt}. Usage: collect-desktop-release-assets.mjs <workflow-artifacts-dir> <release-assets-dir> <artifact-prefix> [--require-debug] [--best-effort]`,
+            );
+        }
     }
 
     const assets = await collectReleaseAssets({
         inputDirectory: resolve(inputDirectory),
         outputDirectory: resolve(outputDirectory),
         artifactPrefix,
-        requireDebug: option === '--require-debug',
+        requireDebug: options.has('--require-debug'),
+        bestEffort: options.has('--best-effort'),
     });
     process.stdout.write(`${assets.join('\n')}\n`);
 }

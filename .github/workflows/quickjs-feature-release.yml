@@ -93,6 +93,7 @@ jobs:
             portable_name: linux-arm64
 
     runs-on: ${{ matrix.platform }}
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -169,6 +170,7 @@ jobs:
   mobile:
     needs: prepare
     runs-on: ubuntu-latest
+    continue-on-error: true
     env:
       # rquickjs-sys compiles QuickJS C sources via cc; point cc at the NDK
       # cross clang for the Android target so the build script can compile.
@@ -299,6 +301,7 @@ jobs:
 
   publish:
     needs: [prepare, desktop, mobile, notes]
+    if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -350,7 +353,7 @@ jobs:
             esac
             cp -r "$artifact" desktop-dist/
           done
-          node source/scripts/ci/collect-desktop-release-assets.mjs desktop-dist release-assets "$ASSET_PREFIX"
+          node source/scripts/ci/collect-desktop-release-assets.mjs desktop-dist release-assets "$ASSET_PREFIX" --best-effort
           # Merge Android artifacts into the release set with the shared prefix.
           for file in android-assets/*; do
             [ -f "$file" ] || continue
@@ -366,8 +369,10 @@ jobs:
           set -euo pipefail
           mapfile -t debs < <(find release-assets -type f -name '*.deb')
           mapfile -t rpms < <(find release-assets -type f -name '*.rpm')
-          test "${#debs[@]}" -eq 2
-          test "${#rpms[@]}" -eq 2
+          # Linux sources build deb+rpm per arch; release what succeeded.
+          # A partial run may yield only one arch's packages.
+          test "${#debs[@]}" -ge 1
+          test "${#rpms[@]}" -ge 1
           rpm_db="$RUNNER_TEMP/rpm-query-db"
           rpm --dbpath "$rpm_db" --initdb
 
