@@ -369,10 +369,13 @@ jobs:
           set -euo pipefail
           mapfile -t debs < <(find release-assets -type f -name '*.deb')
           mapfile -t rpms < <(find release-assets -type f -name '*.rpm')
-          # Linux sources build deb+rpm per arch; release what succeeded.
-          # A partial run may yield only one arch's packages.
-          test "${#debs[@]}" -ge 1
-          test "${#rpms[@]}" -ge 1
+          # Best-effort: publish whatever Linux repo packages succeeded.
+          # A partial run may yield only one arch, only debs, or only rpms;
+          # if neither kind is present, skip this step entirely.
+          if [[ "${#debs[@]}" -eq 0 && "${#rpms[@]}" -eq 0 ]]; then
+            echo "No Linux repo packages (deb/rpm) found; skipping normalization."
+            exit 0
+          fi
           rpm_db="$RUNNER_TEMP/rpm-query-db"
           rpm --dbpath "$rpm_db" --initdb
 
