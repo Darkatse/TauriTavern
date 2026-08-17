@@ -188,7 +188,7 @@ Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外
   - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
   - 行为：payload 中出现 enable_web_search/request_images 或 request_image_* 即拒绝
 - `network.request_proxy`
-  - 启动期：`src-tauri/crates/tauritavern/src/lib.rs` 若 settings 中 request_proxy.enabled=true 但 capability 禁用 → 直接启动失败
+  - 启动期：`src-tauri/crates/tauritavern/src/app/host/setup.rs` 若 settings 中 request_proxy.enabled=true 但 capability 禁用 → 应用继续启动，但 HTTP pool 保持 fail-closed，直到用户在 Settings 中关闭 proxy
   - 运行期：`src-tauri/crates/tauritavern/src/presentation/commands/settings_commands.rs:update_tauritavern_settings` 禁止启用 proxy
 - `ai.image_generation`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/stable_diffusion_commands.rs:sd_handle`
@@ -224,8 +224,8 @@ Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外
   - `llm.chat_completion_features.request_images=false`：隐藏 request images block
   - `llm.text_completions.enabled=false`：移除 Text Completion option 并隐藏 panel
   - `ai.image_generation=false`：隐藏 `#bg_chat_hint`（避免 SD 相关提示露出）
-- Settings 面板投影：`src/scripts/tauri/setting/setting-panel/settings-popup.js`
-  - `network.request_proxy=false`：隐藏 Request Proxy details（并在不支持 data root 选择时隐藏 system panel）
+- Settings 面板投影：`src/scripts/tauri/setting/settings-app/SettingsApp.js`
+  - `network.request_proxy=false`：默认隐藏 Request Proxy details；若已有启用配置则保留只允许关闭的修复入口
   - `sync.lan=false`：隐藏 Sync panel（避免触发相机/局域网相关入口）
 - 外部导入点击门禁：`src/script.js`
   - `content.external_import=false` 时直接 toast 并 return（避免“隐藏失效/脚本触发”）

@@ -950,6 +950,7 @@ mod tests {
         let mut config = ChatCompletionApiConfig {
             base_url: "https://aiplatform.googleapis.com/v1/projects/p/locations/global"
                 .to_string(),
+            user_configured_endpoint: false,
             api_key: String::new(),
             authorization_header: None,
             vertexai_service_account_json: None,
@@ -974,6 +975,7 @@ mod tests {
             base_url:
                 "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1"
                     .to_string(),
+            user_configured_endpoint: false,
             api_key: String::new(),
             authorization_header: None,
             vertexai_service_account_json: None,

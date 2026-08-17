@@ -47,9 +47,9 @@ async fn generate_gemini(
     let url = HttpChatCompletionRepository::build_url(
         &config.base_url,
         &format!("/publishers/google/models/{model}:{method}"),
-    );
+    )?;
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -92,9 +92,9 @@ async fn generate_claude(
     })?;
     let body = payload_object(payload)?;
     let endpoint_path = anthropic_endpoint_path(endpoint_path, false)?;
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, &endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, &endpoint_path)?;
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -161,9 +161,9 @@ async fn generate_gemini_stream(
     let url = HttpChatCompletionRepository::build_url(
         &config.base_url,
         &format!("/publishers/google/models/{model}:{method}"),
-    );
+    )?;
 
-    let client = repository.stream_client()?;
+    let client = repository.stream_client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -208,9 +208,9 @@ async fn generate_claude_stream(
     })?;
     let body = payload_object(payload)?;
     let endpoint_path = anthropic_endpoint_path(endpoint_path, true)?;
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, &endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, &endpoint_path)?;
 
-    let client = repository.stream_client()?;
+    let client = repository.stream_client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")

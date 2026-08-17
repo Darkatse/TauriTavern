@@ -9,6 +9,7 @@ pub mod chat;
 pub mod chat_completion_source;
 pub mod claude_model;
 pub mod data_archive;
+pub mod endpoint_url;
 pub mod extension;
 pub mod filename;
 pub mod group;

@@ -10,6 +10,7 @@ pub const UPSTREAM_NETWORK_PROXY_FAILED: &str = "network.proxy_failed";
 pub const UPSTREAM_NETWORK_DNS_FAILED: &str = "network.dns_failed";
 pub const UPSTREAM_NETWORK_TLS_FAILED: &str = "network.tls_failed";
 pub const UPSTREAM_NETWORK_BODY_INTERRUPTED: &str = "network.body_interrupted";
+pub const UPSTREAM_NETWORK_REDIRECT_REJECTED: &str = "network.redirect_rejected";
 pub const UPSTREAM_NETWORK_REQUEST_FAILED: &str = "network.request_failed";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -46,6 +47,7 @@ impl UpstreamFailure {
             UPSTREAM_NETWORK_BODY_INTERRUPTED => {
                 "The response was interrupted while it was being read."
             }
+            UPSTREAM_NETWORK_REDIRECT_REJECTED => "The endpoint redirect was rejected.",
             UPSTREAM_NETWORK_REQUEST_FAILED => "Network request failed.",
             _ => "Upstream request failed.",
         }

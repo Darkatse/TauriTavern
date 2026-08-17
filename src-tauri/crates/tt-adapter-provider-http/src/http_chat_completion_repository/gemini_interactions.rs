@@ -396,7 +396,7 @@ pub(super) async fn generate(
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let url = build_gemini_url(&config.base_url, endpoint_path);
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -436,7 +436,7 @@ pub(super) async fn generate_stream(
 ) -> Result<(), DomainError> {
     let url = build_gemini_url(&config.base_url, endpoint_path);
 
-    let client = repository.stream_client()?;
+    let client = repository.stream_client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")

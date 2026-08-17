@@ -183,6 +183,7 @@ mod tests {
     fn custom_config(base_url: &str) -> ChatCompletionApiConfig {
         ChatCompletionApiConfig {
             base_url: base_url.to_string(),
+            user_configured_endpoint: true,
             api_key: String::new(),
             authorization_header: None,
             vertexai_service_account_json: None,

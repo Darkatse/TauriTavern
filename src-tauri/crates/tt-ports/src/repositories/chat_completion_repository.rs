@@ -17,6 +17,9 @@ pub enum AnthropicBetaHeaderMode {
 #[derive(Debug, Clone)]
 pub struct ChatCompletionApiConfig {
     pub base_url: String,
+    /// The endpoint came from custom_url or reverse_proxy and must use the
+    /// restricted outbound HTTP policy.
+    pub user_configured_endpoint: bool,
     pub api_key: String,
     pub authorization_header: Option<String>,
     pub vertexai_service_account_json: Option<String>,

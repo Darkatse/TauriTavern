@@ -195,15 +195,11 @@ export async function getChatBackupStorageStats() {
 }
 
 export async function updateTauriTavernSettings(dto) {
-    const invokeFn = getInvokeFn();
-    if (!invokeFn) {
-        throw new Error('Tauri invoke is unavailable');
-    }
     if (!isPlainObject(dto)) {
         throw new Error('Invalid TauriTavern settings DTO');
     }
 
-    return invokeFn('update_tauritavern_settings', { dto });
+    return invokeWithHostNormalization('update_tauritavern_settings', { dto });
 }
 
 export async function getRuntimePaths() {

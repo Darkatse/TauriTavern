@@ -79,7 +79,7 @@ fn list_remote_branches(
     current: Option<&str>,
     http_clients: &tt_adapter_http::HttpClientPool,
 ) -> Result<Vec<ExtensionBranch>, DomainError> {
-    let http = GitHttp::new(http_clients.git_blocking_client_builder()).map_err(|error| {
+    let http = GitHttp::new(http_clients.git_blocking_client_builder()?).map_err(|error| {
         DomainError::InternalError(format!("Failed to create Git HTTP client: {error}"))
     })?;
     let refs = advertise_ref_prefix(http, remote_url, BRANCH_PREFIX)?;

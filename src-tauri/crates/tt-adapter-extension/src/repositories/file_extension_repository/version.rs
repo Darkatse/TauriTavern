@@ -73,7 +73,7 @@ fn embedded_version(
 ) -> Result<ExtensionVersion, DomainError> {
     let repo = super::git_remote::open_embedded(extension_path)?;
     let state = read_managed_state(&repo)?;
-    let http = GitHttp::new(http_clients.git_blocking_client_builder()).map_err(|error| {
+    let http = GitHttp::new(http_clients.git_blocking_client_builder()?).map_err(|error| {
         DomainError::InternalError(format!("Failed to create Git HTTP client: {error}"))
     })?;
     let requested = state.selected.remote_ref().to_string();
@@ -96,7 +96,7 @@ fn legacy_version(
 ) -> Result<ExtensionVersion, DomainError> {
     let branch = branch_ref(reference)?;
     let tag = tag_ref(reference)?;
-    let http = GitHttp::new(http_clients.git_blocking_client_builder()).map_err(|error| {
+    let http = GitHttp::new(http_clients.git_blocking_client_builder()?).map_err(|error| {
         DomainError::InternalError(format!("Failed to create Git HTTP client: {error}"))
     })?;
     let refs = advertise_refs(http, remote_url, &[branch.clone(), tag.clone()])?;

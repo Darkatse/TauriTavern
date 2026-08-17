@@ -2,8 +2,8 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest::multipart::{Form, Part};
 
 use super::{bytes_response, send_with_retry};
-use crate::endpoint_url::append_endpoint_segments;
 use tt_domain::errors::DomainError;
+use tt_domain::models::endpoint_url::append_endpoint_segments;
 use tt_ports::repositories::tts_repository::{
     ElevenLabsTtsRequest, ElevenLabsVoiceFile, TtsRouteResponse,
 };

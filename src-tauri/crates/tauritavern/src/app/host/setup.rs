@@ -47,7 +47,7 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
         &startup_profile,
         &http_client_pool,
         &observability.llm_api_logs,
-    )?;
+    );
 
     let backend_readiness = Arc::new(BackendReadiness::new());
     if !app.manage(backend_readiness.clone()) {
@@ -93,25 +93,27 @@ fn apply_startup_profile(
     startup_profile: &StartupProfile,
     http_client_pool: &HttpClientPool,
     llm_api_log_store: &LlmApiLogStore,
-) -> Result<(), Box<dyn std::error::Error>> {
+) {
     let tauritavern_settings = &startup_profile.tauritavern_settings;
     let ios_policy = &startup_profile.ios_policy;
 
-    // Fail fast when startup settings request a host capability that the active
-    // iOS policy forbids. Do not silently disable proxy settings: users should
-    // see an explicit startup failure for an invalid distribution profile.
     if ios_policy.scope == IosPolicyScope::Ios
         && tauritavern_settings.request_proxy.enabled
         && !ios_policy.capabilities.network.request_proxy
     {
-        return Err(Box::new(DomainError::InvalidData(
-            "iOS policy disabled capability: network.request_proxy".to_string(),
-        )));
+        http_client_pool.block_requests_for_invalid_proxy();
+        tracing::error!(
+            "iOS policy disables the configured request proxy; outbound HTTP is blocked until the proxy is disabled in TauriTavern Settings"
+        );
+    } else if let Err(error) =
+        http_client_pool.apply_persisted_request_proxy_settings(&tauritavern_settings.request_proxy)
+    {
+        tracing::error!(
+            error = %error,
+            "Request proxy settings are invalid; outbound HTTP is blocked until corrected"
+        );
     }
 
-    // Apply startup-only runtime effects from the same settings snapshot that is
-    // passed into AppState, avoiding the old double-read drift.
-    http_client_pool.apply_request_proxy_settings(&tauritavern_settings.request_proxy)?;
+    // Apply the remaining startup-only effect from the same settings snapshot.
     llm_api_log_store.apply_settings(tauritavern_settings.dev.effective_llm_api_keep());
-    Ok(())
 }

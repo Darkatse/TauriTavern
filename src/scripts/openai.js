@@ -6327,11 +6327,15 @@ async function getStatusOpen() {
         if ('data' in responseData && Array.isArray(responseData.data)) {
             saveModelList(responseData.data);
         }
-        if (!('error' in responseData)) {
-            setOnlineStatus(t`Valid`);
-        }
-        if (responseData.bypass) {
+        if (responseData.error) {
+            if (!canBypass) {
+                setOnlineStatus('no_connection');
+                toastr.error(String(responseData.message || t`Could not connect to API`));
+            }
+        } else if (responseData.bypass) {
             setOnlineStatus(t`Status check bypassed`);
+        } else {
+            setOnlineStatus(t`Valid`);
         }
     } catch (error) {
         console.error(error);

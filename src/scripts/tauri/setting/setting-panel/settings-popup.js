@@ -392,7 +392,7 @@ export async function openTauriTavernSettingsPopup() {
         actions: createSettingsActions(backgroundModel.backgroundOptions),
         tr: translate,
     });
-    let pendingUpdate = null;
+    let savedUpdate = null;
 
     try {
         const popupPromise = callTauriTavernPanelPopup(mount, POPUP_TYPE.CONFIRM, '', {
@@ -408,27 +408,33 @@ export async function openTauriTavernSettingsPopup() {
                 }
 
                 try {
-                    pendingUpdate = buildTauriTavernSettingsUpdate(viewModel.values, appHandle.getDraft());
+                    const update = buildTauriTavernSettingsUpdate(viewModel.values, appHandle.getDraft());
+
+                    if (
+                        update.requiresChatBackupPurgeConfirmation
+                        && !await confirmChatBackupHistoryPurge()
+                    ) {
+                        return false;
+                    }
+
+                    if (
+                        update.changes.chatVirtualizationEnabled
+                        && update.next.chatVirtualizationEnabled
+                    ) {
+                        await showChatVirtualizationCompatibility();
+                    }
+
+                    if (!update.hasChanges) {
+                        return true;
+                    }
+
+                    const updatedSettings = await updateTauriTavernSettings(update.patch);
+                    savedUpdate = { update, updatedSettings };
+                    return true;
                 } catch (error) {
                     await showErrorPopup(error);
                     return false;
                 }
-
-                if (
-                    pendingUpdate.requiresChatBackupPurgeConfirmation
-                    && !await confirmChatBackupHistoryPurge()
-                ) {
-                    return false;
-                }
-
-                if (
-                    pendingUpdate.changes.chatVirtualizationEnabled
-                    && pendingUpdate.next.chatVirtualizationEnabled
-                ) {
-                    await showChatVirtualizationCompatibility();
-                }
-
-                return true;
             },
         });
         if (viewModel.values.chatBackups.zstdCompressionEnabled) {
@@ -439,18 +445,11 @@ export async function openTauriTavernSettingsPopup() {
 
         const result = await popupPromise;
 
-        if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        if (result !== POPUP_RESULT.AFFIRMATIVE || !savedUpdate) {
             return;
         }
 
-        const update = pendingUpdate
-            ?? buildTauriTavernSettingsUpdate(viewModel.values, appHandle.getDraft());
-        if (!update.hasChanges) {
-            return;
-        }
-
-        const updatedSettings = await updateTauriTavernSettings(update.patch);
-        applyTauriTavernSettingsUpdateEffects(update, updatedSettings);
+        applyTauriTavernSettingsUpdateEffects(savedUpdate.update, savedUpdate.updatedSettings);
     } finally {
         appHandle.unmount();
     }
