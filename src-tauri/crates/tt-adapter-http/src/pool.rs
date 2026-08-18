@@ -1,18 +1,21 @@
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use reqwest::blocking::{Client as BlockingClient, ClientBuilder as BlockingClientBuilder};
 use reqwest::redirect::Policy;
 use reqwest::{Client, NoProxy, Proxy, Url};
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::RequestProxySettings;
+use tt_ports::local_endpoint_access::{LocalEndpointAccessRuntime, LocalEndpointCandidate};
 use tt_ports::settings::RequestProxyRuntime;
 
 use crate::client::{build_http_client, configure_blocking_http_client};
 use crate::restricted_endpoint::{
-    RestrictedEndpointResolver, UserEndpointRoute, restricted_redirect_policy, user_endpoint_route,
+    RestrictedEndpointResolver, UserEndpointRoute, inspect_user_endpoint,
+    restricted_redirect_policy, user_endpoint_route,
 };
 
 pub const CHAT_COMPLETION_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
@@ -83,6 +86,7 @@ struct ClientCacheKey {
 struct HttpClientPoolState {
     revision: u64,
     proxy: RequestProxyState,
+    local_endpoint_grants: HashSet<String>,
     clients: HashMap<ClientCacheKey, Client>,
 }
 
@@ -184,7 +188,11 @@ impl HttpClientPool {
         profile: HttpClientProfile,
         base_url: &str,
     ) -> Result<(Client, u64), DomainError> {
-        self.client_with_revision_for_route(profile, Some(user_endpoint_route(base_url)?))
+        let route = {
+            let state = self.state.read().unwrap();
+            user_endpoint_route(base_url, &state.local_endpoint_grants)?
+        };
+        self.client_with_revision_for_route(profile, Some(route))
     }
 
     fn client_with_revision_for_route(
@@ -203,7 +211,7 @@ impl HttpClientPool {
                     return Ok((client.clone(), state.revision));
                 }
 
-                let proxy = if user_endpoint_route == Some(UserEndpointRoute::Direct) {
+                let proxy = if user_endpoint_route == Some(UserEndpointRoute::LocalDirect) {
                     None
                 } else {
                     state.proxy.configured()?
@@ -214,7 +222,7 @@ impl HttpClientPool {
             let client = build_profile_client(
                 profile,
                 proxy,
-                user_endpoint_route.is_some(),
+                user_endpoint_route,
                 &self.product_user_agent,
             )?;
 
@@ -273,6 +281,27 @@ impl RequestProxyRuntime for HttpClientPool {
         settings: &RequestProxySettings,
     ) -> Result<(), DomainError> {
         HttpClientPool::apply_request_proxy_settings(self, settings)
+    }
+}
+
+#[async_trait]
+impl LocalEndpointAccessRuntime for HttpClientPool {
+    async fn inspect_user_endpoint(
+        &self,
+        endpoint: &str,
+    ) -> Result<Option<LocalEndpointCandidate>, DomainError> {
+        inspect_user_endpoint(endpoint).await
+    }
+
+    fn replace_local_endpoint_grants(&self, endpoints: &[String]) {
+        let grants = endpoints.iter().cloned().collect();
+        let mut state = self.state.write().unwrap();
+        if state.local_endpoint_grants == grants {
+            return;
+        }
+        state.local_endpoint_grants = grants;
+        state.clients.clear();
+        state.revision += 1;
     }
 }
 
@@ -339,7 +368,7 @@ fn normalized_bypass_csv(entries: &[String]) -> String {
 fn build_profile_client(
     profile: HttpClientProfile,
     proxy: Option<ConfiguredProxy>,
-    restricted_endpoint: bool,
+    user_endpoint_route: Option<UserEndpointRoute>,
     product_user_agent: &str,
 ) -> Result<Client, DomainError> {
     let mut builder = Client::builder().no_proxy();
@@ -379,9 +408,9 @@ fn build_profile_client(
             .connect_timeout(MCP_CONNECT_TIMEOUT),
     };
 
-    if restricted_endpoint {
+    if let Some(route) = user_endpoint_route {
         builder = builder.redirect(restricted_redirect_policy()).dns_resolver(
-            RestrictedEndpointResolver::new(proxy.as_ref().map(|proxy| proxy.host.as_str())),
+            RestrictedEndpointResolver::new(proxy.as_ref().map(|proxy| proxy.host.as_str()), route),
         );
     }
 
@@ -409,11 +438,19 @@ mod tests {
     use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
     use rustls::{ServerConfig, ServerConnection, StreamOwned};
     use tt_domain::models::settings::RequestProxySettings;
+    use tt_ports::local_endpoint_access::LocalEndpointAccessRuntime;
 
     const TEST_USER_AGENT: &str = "TauriTavern/test";
 
     fn pool() -> HttpClientPool {
         HttpClientPool::new(TEST_USER_AGENT)
+    }
+
+    fn grant_local_endpoint(pool: &HttpClientPool, endpoint: &str) {
+        let endpoint = tt_domain::models::endpoint_url::parse_user_http_endpoint(endpoint)
+            .unwrap()
+            .to_string();
+        pool.replace_local_endpoint_grants(&[endpoint]);
     }
 
     struct CaptureServer {
@@ -618,6 +655,7 @@ mod tests {
         );
         assert!(pool.client(HttpClientProfile::Default).is_err());
         assert!(pool.git_blocking_client_builder().is_err());
+        grant_local_endpoint(&pool, "http://localhost:11434/v1");
         assert!(
             pool.user_endpoint_client(
                 HttpClientProfile::ChatCompletion,
@@ -658,6 +696,19 @@ mod tests {
 
         let state = pool.state.read().unwrap();
         assert_eq!(state.clients.len(), 0);
+        assert_eq!(state.revision, revision_before + 1);
+    }
+
+    #[test]
+    fn granting_local_access_invalidates_cached_transports() {
+        let pool = pool();
+        pool.client(HttpClientProfile::Default).unwrap();
+        let revision_before = pool.state.read().unwrap().revision;
+
+        grant_local_endpoint(&pool, "http://localhost:11434/v1");
+
+        let state = pool.state.read().unwrap();
+        assert!(state.clients.is_empty());
         assert_eq!(state.revision, revision_before + 1);
     }
 
@@ -827,7 +878,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn loopback_user_endpoint_forces_direct_client() {
+    async fn approved_loopback_user_endpoint_forces_direct_client() {
         let origin = capture_server();
         let (proxy_url, proxy_hit, proxy_handle) = proxy_probe(Duration::from_millis(150));
         let pool = pool();
@@ -837,6 +888,11 @@ mod tests {
             bypass: vec![],
         })
         .unwrap();
+        assert!(
+            pool.user_endpoint_client(HttpClientProfile::ChatCompletion, &origin.url)
+                .is_err()
+        );
+        grant_local_endpoint(&pool, &origin.url);
 
         let client = pool
             .user_endpoint_client(HttpClientProfile::ChatCompletion, &origin.url)
@@ -870,6 +926,7 @@ mod tests {
             (first_request, second_request)
         });
         let pool = pool();
+        grant_local_endpoint(&pool, &base_url);
         let client = pool
             .user_endpoint_client(HttpClientProfile::ChatCompletion, &base_url)
             .unwrap();
@@ -901,6 +958,7 @@ mod tests {
             .expect("write redirect response");
         });
         let pool = pool();
+        grant_local_endpoint(&pool, &redirect_url);
         let client = pool
             .user_endpoint_client(HttpClientProfile::ChatCompletion, &redirect_url)
             .unwrap();

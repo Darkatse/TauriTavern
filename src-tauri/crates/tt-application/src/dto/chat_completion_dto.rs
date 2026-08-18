@@ -3,6 +3,16 @@ use serde_json::{Map, Value};
 use tt_domain::models::upstream_failure::UpstreamFailure;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChatCompletionEndpointAccessRequestDto {
+    #[serde(default)]
+    pub chat_completion_source: String,
+    #[serde(default)]
+    pub reverse_proxy: String,
+    #[serde(default)]
+    pub custom_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatCompletionStatusRequestDto {
     #[serde(default)]
     pub chat_completion_source: String,

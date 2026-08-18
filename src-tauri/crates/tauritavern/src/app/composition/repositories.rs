@@ -6,6 +6,7 @@ use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepositor
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
+use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::repositories::file_content_repository::FileContentRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
 use tt_adapter_extension::FileExtensionRepository;
@@ -19,10 +20,10 @@ use tt_adapter_provider_http::{
 };
 use tt_adapter_storage_core::{
     DataDirectory, FileAssetRepository, FileChatRepository, FileExtensionStoreRepository,
-    FileGroupRepository, FileLlmConnectionRepository, FileMcpServerRepository,
-    FilePromptCacheRepository, FileQuickReplyRepository, FileSecretRepository,
-    FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository, FileUserRepository,
-    chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
+    FileGroupRepository, FileLlmConnectionRepository, FileLocalEndpointGrantRepository,
+    FileMcpServerRepository, FilePromptCacheRepository, FileQuickReplyRepository,
+    FileSecretRepository, FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository,
+    FileUserRepository, chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
 };
 use tt_adapter_storage_userdata::FileAgentProfileRepository;
 use tt_adapter_storage_userdata::FileAgentRepository;
@@ -53,6 +54,7 @@ use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::group_repository::GroupRepository;
 use tt_ports::repositories::image_metadata_repository::ImageMetadataRepository;
 use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
+use tt_ports::repositories::local_endpoint_grant_repository::LocalEndpointGrantRepository;
 use tt_ports::repositories::mcp_server_repository::McpServerRepository;
 use tt_ports::repositories::preset_repository::PresetRepository;
 use tt_ports::repositories::prompt_cache_repository::PromptCacheRepository;
@@ -110,6 +112,8 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) agent_workspace_lifecycle_repository:
         Arc<dyn AgentWorkspaceLifecycleRepository>,
     pub(in crate::app::composition) llm_connection_repository: Arc<dyn LlmConnectionRepository>,
+    pub(in crate::app::composition) local_endpoint_grant_repository:
+        Arc<dyn LocalEndpointGrantRepository>,
     pub(in crate::app::composition) mcp_server_repository: Arc<dyn McpServerRepository>,
     pub(in crate::app::composition) workspace_repository: Arc<dyn WorkspaceRepository>,
     pub(in crate::app::composition) checkpoint_repository: Arc<dyn CheckpointRepository>,
@@ -133,6 +137,7 @@ pub(super) async fn build(
     chat_backup_settings: ChatBackupSettings,
 ) -> Result<AppRepositories, DomainError> {
     let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
+    let runtime_paths = app_handle.state::<RuntimePaths>();
     let data_root = data_directory.root().to_path_buf();
     let default_user_dir = data_directory.default_user().to_path_buf();
     let chat_aliases = new_shared_chat_alias_store_for_user_dir(data_directory.default_user());
@@ -255,6 +260,13 @@ pub(super) async fn build(
     let llm_connection_repository: Arc<dyn LlmConnectionRepository> = Arc::new(
         FileLlmConnectionRepository::new(data_root.join("_tauritavern").join("llm-connections")),
     );
+    let local_endpoint_grant_repository: Arc<dyn LocalEndpointGrantRepository> =
+        Arc::new(FileLocalEndpointGrantRepository::new(
+            runtime_paths
+                .app_root
+                .join("security")
+                .join("local-endpoint-grants.json"),
+        ));
     let mcp_server_repository: Arc<dyn McpServerRepository> = Arc::new(
         FileMcpServerRepository::new(data_root.join("_tauritavern").join("mcp")),
     );
@@ -343,6 +355,7 @@ pub(super) async fn build(
         agent_invocation_repository,
         agent_workspace_lifecycle_repository,
         llm_connection_repository,
+        local_endpoint_grant_repository,
         mcp_server_repository,
         workspace_repository,
         checkpoint_repository,

@@ -802,6 +802,8 @@
     "Bypass (one per line)": "略過清單（每行一條）",
     "Matching hosts will connect directly (no proxy).": "符合的主機將直接連線（不走代理）。",
     "Applies to all backend requests.": "將會套用於所有後端請求。",
+    "Could not authorize local endpoint": "無法授權本地端點",
+    "Local endpoint approval required. Click Connect to continue.": "需要授權本地端點。請點擊連線以繼續。",
     "Click to collapse": "點擊摺疊",
     "User": "使用者",
     "Assistant": "助理",

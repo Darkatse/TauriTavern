@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+async-trait = "0.1"
 reqwest = { workspace = true, features = ["blocking", "http2", "rustls", "socks"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { workspace = true }

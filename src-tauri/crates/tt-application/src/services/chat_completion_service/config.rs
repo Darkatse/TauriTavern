@@ -194,9 +194,11 @@ async fn resolve_api_config(
     purpose: ApiConfigPurpose,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
+    let user_endpoint = resolve_user_configured_endpoint(source, reverse_proxy, custom_url)?;
+
     match source {
         ChatCompletionSource::Custom => {
-            let base_url = resolve_custom_base_url(custom_url, reverse_proxy)?;
+            let base_url = user_endpoint.expect("custom sources require a configured endpoint");
             let extra_headers = source_extra_headers(source);
             let uses_reverse_proxy = custom_url.is_empty() && !reverse_proxy.is_empty();
 
@@ -222,12 +224,10 @@ async fn resolve_api_config(
             })
         }
         _ => {
-            let user_configured_endpoint =
-                supports_reverse_proxy(source) && !reverse_proxy.is_empty();
-            let base_url = if user_configured_endpoint {
-                parse_user_http_endpoint(reverse_proxy)?.to_string()
-            } else {
-                default_base_url(source, purpose, &hints)?
+            let user_configured_endpoint = user_endpoint.is_some();
+            let base_url = match user_endpoint {
+                Some(endpoint) => endpoint,
+                None => default_base_url(source, purpose, &hints)?,
             };
 
             let api_key = if user_configured_endpoint {
@@ -311,21 +311,26 @@ fn source_anthropic_beta_header_mode(source: ChatCompletionSource) -> AnthropicB
     }
 }
 
-fn resolve_custom_base_url(
-    custom_url: &str,
+pub(super) fn resolve_user_configured_endpoint(
+    source: ChatCompletionSource,
     reverse_proxy: &str,
-) -> Result<String, ApplicationError> {
-    if !custom_url.is_empty() {
-        return Ok(parse_user_http_endpoint(custom_url)?.to_string());
-    }
+    custom_url: &str,
+) -> Result<Option<String>, ApplicationError> {
+    let reverse_proxy = reverse_proxy.trim();
+    let custom_url = custom_url.trim();
+    let endpoint = match source {
+        ChatCompletionSource::Custom if !custom_url.is_empty() => custom_url,
+        ChatCompletionSource::Custom if !reverse_proxy.is_empty() => reverse_proxy,
+        ChatCompletionSource::Custom => {
+            return Err(ApplicationError::ValidationError(
+                "Custom endpoint is missing. Please configure custom_url.".to_string(),
+            ));
+        }
+        _ if supports_reverse_proxy(source) && !reverse_proxy.is_empty() => reverse_proxy,
+        _ => return Ok(None),
+    };
 
-    if !reverse_proxy.is_empty() {
-        return Ok(parse_user_http_endpoint(reverse_proxy)?.to_string());
-    }
-
-    Err(ApplicationError::ValidationError(
-        "Custom endpoint is missing. Please configure custom_url.".to_string(),
-    ))
+    Ok(Some(parse_user_http_endpoint(endpoint)?.to_string()))
 }
 
 fn get_payload_string(
@@ -772,7 +777,8 @@ mod tests {
         MINIMAX_API_BASE_CN, MOONSHOT_API_BASE, MOONSHOT_API_BASE_CN, OPENROUTER_API_BASE,
         OPENROUTER_CATEGORIES, OPENROUTER_REFERER, OPENROUTER_TITLE, ZAI_API_BASE_CODING,
         default_base_url, resolve_generate_api_config, resolve_status_api_config,
-        source_extra_headers, supports_reverse_proxy, vertexai_host,
+        resolve_user_configured_endpoint, source_extra_headers, supports_reverse_proxy,
+        vertexai_host,
     };
 
     struct TestSecretRepository {
@@ -1040,6 +1046,22 @@ mod tests {
         assert!(supports_reverse_proxy(ChatCompletionSource::Moonshot));
         assert!(supports_reverse_proxy(ChatCompletionSource::Zai));
         assert!(!supports_reverse_proxy(ChatCompletionSource::MiniMax));
+    }
+
+    #[test]
+    fn user_endpoint_resolution_trims_before_selecting_custom_fallback() {
+        let endpoint = resolve_user_configured_endpoint(
+            ChatCompletionSource::Custom,
+            " http://192.168.1.2:11434/v1 ",
+            "   ",
+        )
+        .unwrap();
+
+        assert_eq!(endpoint.as_deref(), Some("http://192.168.1.2:11434/v1"));
+        assert_eq!(
+            resolve_user_configured_endpoint(ChatCompletionSource::OpenAi, "   ", "").unwrap(),
+            None
+        );
     }
 
     #[tokio::test]

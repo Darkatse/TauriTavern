@@ -12,6 +12,7 @@ export {};
  * @typedef {(
  *   | 'apply_native_regex_batch'
  *   | 'apply_agent_run_prune'
+ *   | 'authorize_chat_completion_endpoint'
  *   | 'build_openai_logit_bias'
  *   | 'bulk_merge_character_card_data'
  *   | 'call_legacy_mcp_tool'

@@ -27,4 +27,3 @@ test('generated iOS Info.plist includes Local Network usage description (LAN Syn
     assert.match(source, LOCAL_NETWORK_KEY_PATTERN);
     assert.match(source, /LAN Sync/i);
 });
-

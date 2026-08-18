@@ -4,6 +4,7 @@ pub mod external_import;
 pub mod generation_background;
 pub mod host_resource;
 pub mod lan_sync;
+pub mod local_endpoint_access;
 pub mod mcp;
 pub mod repositories;
 pub mod runtime_paths;

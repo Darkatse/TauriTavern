@@ -21,15 +21,13 @@ pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::B
     // Moving desktop/mobile plugins into setup would make capability availability
     // depend on runtime initialization order instead of Builder construction.
     let builder = builder
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
 
     #[cfg(target_os = "android")]
     let builder = builder.plugin(crate::platform::generation_background::plugin());
-
-    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-    let builder = builder.plugin(tauri_plugin_dialog::init());
 
     #[cfg(all(
         feature = "devtools-pilot",
