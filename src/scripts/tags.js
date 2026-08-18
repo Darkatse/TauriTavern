@@ -2605,8 +2605,6 @@ function registerTagsSlashCommands() {
  */
 export function applyCharacterTagsToMessageDivs({ mesIds = [] } = {}) {
     try {
-        // Direct child query for explicit ids avoids the full children() + filter
-        // pass over every mounted message on every incremental add.
         const ids = Array.isArray(mesIds) ? mesIds : (mesIds == null ? [] : [mesIds]);
         const messages = ids.length > 0
             ? $('#chat > ' + ids.map(id => `.mes[mesid="${id}"]`).join(', #chat > '))
@@ -2677,35 +2675,6 @@ export function applyCharacterTagsToMessageDivs({ mesIds = [] } = {}) {
         console.error('Error applying character tags to message divs:', error);
     }
 }
-
-/**
- * Builds a jQuery selector string to filter messages by their IDs.
- * @param {number|number[]} mesIds - An id or array of message IDs to filter by.
- * @returns {string} A jQuery selector string that matches messages with the specified IDs.
- * If mesIds is empty, it returns '.mes' to select all messages.
- * @example
- * buildMessagesFilter([1, 5]); // Returns '.mes[mesid="1"],.mes[mesid="5"]'
- * buildMessagesFilter([]); // Returns '.mes'
- */
-// Kept as reference; superseded by the direct child query in applyCharacterTagsToMessageDivs.
-// function buildMessagesFilter(mesIds) {
-//     const allMessages = '.mes';
-//
-//     if (!mesIds) {
-//         return allMessages; // If no mesIds provided, select all messages
-//     }
-//
-//     const mesIdsArray = Array.isArray(mesIds) ? mesIds : [mesIds];
-//
-//     if (mesIdsArray?.length) {
-//         // Create a valid jQuery selector for multiple attribute values.
-//         // Example output: '.mes[mesid="1"],.mes[mesid="5"]'
-//         return mesIdsArray.map(id => `.mes[mesid="${id}"]`).join(',');
-//     }
-//
-//     // If mesIds is empty, select all messages.
-//     return allMessages;
-// }
 
 /**
  * Helper function to apply all necessary data attributes to a DOM element.

@@ -962,6 +962,8 @@ export let max_context = 2048;
 let swipes = true;
 /** Forcefully hide swipes. */
 export let swipesHidden = false;
+/** Message whose DOM swipe state was last synchronized as swipeable. */
+let swipeableMessageId = null;
 /** @type {{ now: number, direction: string }} */
 export let lastSwipeInfo = { now: performance.now(), direction: SWIPE_DIRECTION.RIGHT };
 export let recentSwipes = 0;
@@ -1977,7 +1979,7 @@ export async function showMoreMessages(messagesToLoad = null) {
         includeMessageIds: [...nextIds].sort((left, right) => left - right),
     });
 
-    refreshSwipeButtons();
+    refreshActiveSwipeButtons();
 
     if (firstId === 0) {
         showMoreButton.remove();
@@ -2188,7 +2190,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
         syncChatSurfaceProjectionHold();
     }
 
-    refreshSwipeButtons();
+    refreshActiveSwipeButtons();
 
     await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
     if (deletedAgentStateIds.length > 0) {
@@ -3267,7 +3269,7 @@ export function addOneMessage(mes, { type = undefined, insertAfter = null, scrol
         messageElement = $(chatSurface.getMessageElement(messageId));
     }
 
-    if (showSwipes) refreshSwipeButtons(false, true, [messageId]);
+    if (showSwipes) refreshActiveSwipeButtons([messageId]);
     // Don't scroll if not inserting last
     if (!insertAfter && !insertBefore && scroll) {
         scrollChatToBottom({ waitForFrame: true });
@@ -9610,7 +9612,7 @@ export async function messageEdit(editMessageId) {
     syncChatSurfaceProjectionHold();
     this_edit_mes_chname = editMessage.name || (editMessage.is_user ? name1 : name2);
 
-    refreshSwipeButtons();
+    refreshActiveSwipeButtons();
 
     const chatScrollPosition = getChatScrollTop();
     const messageBlock = messageElement.find('.mes_block');
@@ -9797,7 +9799,7 @@ async function messageEditMove(sourceId, targetId) {
         setChatScrollTop(editorState.chatScrollTop);
     }
 
-    refreshSwipeButtons();
+    refreshActiveSwipeButtons([sourceId, targetId]);
     await saveChatConditional();
     return true;
 }
@@ -10636,30 +10638,34 @@ export function getOverswipeBehavior(messageId, message = undefined) {
 
 /**
  * Refreshes all swipe buttons and updates their swipe counters.
- * This has been optimized for bulk updates by minimizing DOM queries.
+ * This is the external compatibility and full-repair entry point. New internal callers must use refreshActiveSwipeButtons().
  * @param {boolean} updateCounters When true, the swipe counters will also be updated. Typically redundant because addOneMessage updates the counters.
  * @param {boolean} fade By default, the chevrons fade in and out.
- * @param {number[]|null} [messageIds=null] When provided, only refresh the swipe state of these messages instead of every mounted message.
  * @returns
  */
-export function refreshSwipeButtons(updateCounters = false, fade = true, messageIds = null) {
+export function refreshSwipeButtons(updateCounters = false, fade = true) {
+    if (!syncSwipeButtonVisibility()) return false;
+
+    swipeableMessageId = null;
+    refreshSwipeButtonElements(chatElement.children('.mes[mesid]'), updateCounters, fade);
+}
+
+/** @returns {boolean} Whether message-level swipe state should be refreshed. */
+function syncSwipeButtonVisibility() {
     //Never show swipe buttons on an empty chat.
     if (chat?.length === 0) return false;
 
-    //If swipes are disabled or hidden, hide all swipe buttons.
-    if (!isSwipingAllowed()) {
-        $('body').addClass('hideAllSwipeButtons');
-        return;
-        //Don't hide all swipe buttons.
-    } else {
-        //CSS will hide all messages.
-        $('body').removeClass('hideAllSwipeButtons');
-    }
-    //Non-messages can appear in chat. '.mes' is required.
-    const messageElements = Array.isArray(messageIds) && messageIds.length > 0
-        ? chatElement.find(messageIds.map(id => `.mes[mesid="${id}"]`).join(','))
-        : chatElement.children('.mes[mesid]');
+    const allowed = isSwipingAllowed();
+    $('body').toggleClass('hideAllSwipeButtons', !allowed);
+    return allowed;
+}
 
+/**
+ * @param {JQuery<HTMLElement>} messageElements
+ * @param {boolean} updateCounters
+ * @param {boolean} fade
+ */
+function refreshSwipeButtonElements(messageElements, updateCounters, fade) {
     //Group each message.
     messageElements.each((_index, div) => {
         const messageId = Number(div.getAttribute('mesid'));
@@ -10670,6 +10676,8 @@ export function refreshSwipeButtons(updateCounters = false, fade = true, message
         div.classList.toggle('fade', fade);
 
         if (isMessageSwipeable(messageId, message)) {
+            swipeableMessageId = messageId;
+
             //If a right swipe would trigger a generation or loop to the first swipe.
             const isLastSwipe = (message?.swipes?.length ?? 1) - 1 <= (message?.swipe_id ?? 0);
             const hasSwipes = (message?.swipes?.length > 1);
@@ -10694,18 +10702,42 @@ export function refreshSwipeButtons(updateCounters = false, fade = true, message
             //updateSwipeCounter does not need to be awaited, It can run a bit later.
             if (updateCounters) updateSwipeCounter(messageId, { message, messageElement: $(div) });
         } else {
+            if (swipeableMessageId === messageId) swipeableMessageId = null;
+
             //Hide all messages that are not swipeable.
             div.classList.remove('swipes_visible', 'last_swipe');
             $(div).find('.mes_swipe_picker').toggle(canOpenSwipePickerForMessage(messageId));
         }
     });
 }
+
+/**
+ * Refreshes the only messages whose swipe state can change during an incremental update.
+ * @param {readonly number[]} [messageIds=[]] Additional changed message IDs.
+ * @param {boolean} [fade=true] By default, the chevrons fade in and out.
+ */
+function refreshActiveSwipeButtons(messageIds = [], fade = true) {
+    if (!syncSwipeButtonVisibility()) return false;
+
+    const changedMessageIds = new Set();
+    if (swipeableMessageId !== null) changedMessageIds.add(swipeableMessageId);
+    changedMessageIds.add(chat.length - 1);
+    for (const messageId of messageIds) {
+        changedMessageIds.add(messageId);
+    }
+
+    const messageElements = [...changedMessageIds]
+        .map(messageId => chatSurface.getMessageElement(messageId))
+        .filter(Boolean);
+    refreshSwipeButtonElements($(messageElements), false, fade);
+}
+
 /**
  * This function is misleadingly named. It allows generation then refreshes the swipe buttons and counters.
  */
 export function showSwipeButtons() {
     swipesHidden = false;
-    refreshSwipeButtons();
+    refreshActiveSwipeButtons();
 }
 
 /**
@@ -10715,7 +10747,7 @@ export function showSwipeButtons() {
  */
 export function hideSwipeButtons({ hideCounters = false } = {}) {
     swipesHidden = true;
-    refreshSwipeButtons();
+    refreshActiveSwipeButtons();
 
     if (hideCounters === true) {
         chatElement.find('.last_mes .swipes-counter').prop('hidden', true);
@@ -10802,7 +10834,7 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
         if (messageId !== chat.length - 1) {
             await updateSwipeCounter(chat.length - 1);
         }
-        refreshSwipeButtons();
+        refreshActiveSwipeButtons([messageId]);
     }
 
     await saveChatConditional();
@@ -10912,7 +10944,7 @@ function syncMountedChatViewState(messageIds) {
         applyCharacterTagsToMessageDivs({ mesIds: messageIds });
     }
     syncMountedDeleteState(messageIds);
-    refreshSwipeButtons(false);
+    refreshActiveSwipeButtons(messageIds);
     syncStylePinsOnProjectionEdge(messageIds);
     syncLastInContextMessageMarker();
     updateEditArrowClasses();
@@ -10928,6 +10960,7 @@ function reconcileMountedChatSurface(options = {}) {
 
 export function resetChatSurfaceView({ includeAuxiliary = false } = {}) {
     stylePinProjectionState = null;
+    swipeableMessageId = null;
     return chatSurface.resetEpoch({ includeAuxiliary });
 }
 
