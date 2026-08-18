@@ -29,12 +29,6 @@ pub(super) enum AgentLoopExit {
     },
 }
 
-pub(super) fn tool_after_finish_error(completion_tool: &str) -> ApplicationError {
-    ApplicationError::ValidationError(format!(
-        "agent.tool_after_finish: model requested additional tools after {completion_tool}"
-    ))
-}
-
 impl AgentRuntimeService {
     pub(super) async fn run_tool_loop(
         &self,
@@ -197,14 +191,9 @@ impl AgentRuntimeService {
             let mut finished = false;
             let mut handoff = None;
             let tool_call_count = tool_calls.len();
-            let completion_tool = completion_tool_name(exit_policy, &prepared.tool_turn);
             let mut text_mutation = None;
 
             for (index, call) in tool_calls.into_iter().enumerate() {
-                if finished {
-                    return Err(tool_after_finish_error(completion_tool));
-                }
-
                 let outcome = self
                     .dispatch_tool_call(
                         prepared,

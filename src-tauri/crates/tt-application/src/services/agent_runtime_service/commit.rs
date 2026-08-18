@@ -13,10 +13,8 @@ use crate::dto::agent_dto::{
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::{
-    AgentToolDispatchOutcome, AgentToolEffect, WORKSPACE_PATH_IS_DIRECTORY_CODE,
-    workspace_path_is_directory_message,
+    AgentToolDispatchOutcome, AgentToolEffect, classify_workspace_io_error,
 };
-use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{
     AgentChatCommitMode, AgentInvocationStatus, AgentRun, AgentRunEventLevel, AgentRunStatus,
     AgentToolResult, ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
@@ -148,23 +146,16 @@ impl AgentRuntimeService {
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let file = match self.workspace_repository.read_text(run_id, &path).await {
             Ok(file) => file,
-            Err(DomainError::NotFound(message)) => {
-                return Ok(recoverable_tool_error(
-                    call,
-                    "workspace.file_not_found",
-                    &message,
-                    elapsed_ms,
-                ));
-            }
-            Err(DomainError::WorkspacePathIsDirectory { path }) => {
-                return Ok(recoverable_tool_error(
-                    call,
-                    WORKSPACE_PATH_IS_DIRECTORY_CODE,
-                    &workspace_path_is_directory_message(&path),
-                    elapsed_ms,
-                ));
-            }
-            Err(error) => return Err(error.into()),
+            Err(error) => match classify_workspace_io_error(call, error) {
+                Ok(result) => {
+                    return Ok(AgentToolDispatchOutcome {
+                        result,
+                        effect: AgentToolEffect::None,
+                        elapsed_ms,
+                    });
+                }
+                Err(error) => return Err(error.into()),
+            },
         };
         if self.required_artifact_is_empty(run_id, &file).await? {
             return Ok(recoverable_tool_error(

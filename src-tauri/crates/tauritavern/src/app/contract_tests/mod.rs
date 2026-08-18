@@ -597,29 +597,6 @@ async fn resolve_chat_commits_and_persistent_state_update(
     })?
 }
 
-async fn wait_for_event_field(
-    repository: &FileAgentRepository,
-    run_id: &str,
-    event_type: &str,
-    field: &str,
-) -> Result<String, ApplicationError> {
-    tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
-        loop {
-            let events = read_agent_events(repository, run_id).await;
-            if let Some(value) = events
-                .iter()
-                .find(|event| event.event_type == event_type)
-                .and_then(|event| event.payload[field].as_str())
-            {
-                return Ok(value.to_string());
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .map_err(|_| ApplicationError::InternalError(format!("{event_type}.{field} timed out")))?
-}
-
 async fn wait_for_event_type(repository: &FileAgentRepository, run_id: &str, event_type: &str) {
     tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
         loop {

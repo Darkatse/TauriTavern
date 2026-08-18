@@ -14,6 +14,7 @@ mod write_file;
 mod tests;
 
 pub(super) use self::apply_patch::apply_patch;
+pub(crate) use self::args::classify_workspace_io_error;
 pub(super) use self::commit::commit;
 pub(super) use self::descriptors::{
     workspace_apply_patch_descriptor, workspace_commit_descriptor, workspace_finish_descriptor,
@@ -32,7 +33,7 @@ pub(super) const WORKSPACE_READ_FILE: &str = "workspace.read_file";
 pub(super) const WORKSPACE_WRITE_FILE: &str = "workspace.write_file";
 pub(super) const WORKSPACE_APPLY_PATCH: &str = "workspace.apply_patch";
 pub(super) const WORKSPACE_COMMIT: &str = "workspace.commit";
-pub(super) const WORKSPACE_FINISH: &str = "workspace.finish";
+pub(crate) const WORKSPACE_FINISH: &str = "workspace.finish";
 
 const DEFAULT_LIST_DEPTH: usize = 2;
 const MAX_LIST_DEPTH: usize = 4;

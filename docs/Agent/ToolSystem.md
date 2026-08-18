@@ -201,7 +201,7 @@ Profile 的 `maxCallsPerRun` 是历史字段名，实际语义一直是 invocati
 
 `workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。`old_string` 必须来自模型本 run 已读到的文本片段，或来自本 run 创建/完整替换后已经完整已知的文件；runtime 仍会读取当前完整文件检查版本与全文件唯一匹配，但不会把完整文件隐式塞回模型上下文。版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型；基于部分读取的 patch 一旦失败，同文件后续 patch 必须先完整读取，避免模型在不确定上下文上反复试错。`replace_all=true` 可能修改未读位置，因此必须在完整读取后使用。`workspace.write_file` 支持 `mode = replace | append`，默认 `replace`。`replace` 对已存在文件复用同一个 session read-state 做 CAS：模型不需要传 `expectedSha256`，schema 不暴露 overwrite policy；若文件在最近读取/写入后被其他 invocation 修改，会返回可恢复的 stale-file 工具错误，要求重新读取后再写。`append` 会把 `content` 原样追加到文件末尾，目标缺失时创建文件；不会自动补换行，模型需要新行时应把前导 `\n` 放进 `content`。`append` 工具调用本身只在新建文件或追加前文件已完整读入且版本匹配时更新完整 read-state，避免未读既有内容在同一轮内被隐式授权为后续 rewrite/patch 的依据。模型传入的非法 path、空 path、非法 mode、不可见/不可写 path 也作为可恢复工具错误回填；目标 path 实际指向目录的读写请求会作为 `workspace.path_is_directory` 业务错误回填，提示模型改用 `workspace_list_files`。repository 内部 escape/symlink/journal、序列化、取消和模型响应结构错误仍 fail-fast。
 
-`workspace.commit` 与 `workspace.finish` 的契约：模型可以多次 commit；当全部修订与 commit 完成后，必须用 `workspace.finish` 收口，不能用纯文本代替最终 answer。foreground `workspace.finish` 要求同一 run 已经有至少一次成功的显式 `workspace.commit`；自动发布不满足该门槛。在 handoff 链中，这个 commit 可以来自前一个 foreground owner。`workspace.commit` 工具的返回字符串只做温和提醒，提示模型可继续修订并再次 commit，但最终不要忘记 finish。
+`workspace.commit` 与 `workspace.finish` 的契约：模型可以多次 commit；当全部修订与 commit 完成后，必须用 `workspace.finish` 收口，不能用纯文本代替最终 answer。foreground `workspace.finish` 要求同一 run 已经有至少一次成功的显式 `workspace.commit`；自动发布不满足该门槛。在 handoff 链中，这个 commit 可以来自前一个 foreground owner。`workspace.commit` 目标不存在、是目录、不是 UTF-8 文本或内容为空时返回可恢复 tool error。工具的成功返回字符串只做温和提醒，提示模型可继续修订并再次 commit，但最终不要忘记 finish。
 
 前台首次成功显式 commit 前，runtime 只在一轮 tool calls 全部处理后检查该轮最后一次成功的 `workspace.write_file` / `workspace.apply_patch`，并按既有文本后缀规则最多自动发布一次。各 mutation 只保留 CAS 与 journal；Host 在提交前重读当前文件并校验请求 SHA。
 
@@ -210,7 +210,7 @@ Profile 的 `maxCallsPerRun` 是历史字段名，实际语义一直是 invocati
 - 软纠正后模型调用了 `workspace_finish`，或继续修订并再次 `workspace_commit` 后再 `workspace_finish` → run 继续，无 rollback。
 - 软纠正后模型再次 0 tool_calls 且已经没有下一轮预算 → 回落到 `model.tool_call_required` 失败路径；若没有成功 chat commit，则写 `run_failed`（`userRetryable=true`）；若已有成功 chat commit，则写 `run_partial_success`，保留已提交聊天输出并以 warning 暴露底层错误。
 
-违反此契约的其它形态（`agent.tool_after_finish` / `agent.max_tool_rounds_exceeded`）目前不走软纠正，直接进入同一终态分类：没有成功 chat commit 时 fail-fast；已有成功 chat commit 时 `run_partial_success`。细节见 `RunEventJournal.md`。
+`workspace.finish`、`agent.handoff` 或 `task.return` 不是本轮最后一个 tool call 时，执行边界不接受终结动作，而以 `agent.tool_after_finish` 可恢复 tool error 回填；本轮其余工具照常处理，模型可在下一轮重新调用终结工具。只有轮次真正耗尽时，`agent.max_tool_rounds_exceeded` 才进入终态分类。细节见 `RunEventJournal.md`。
 
 当前没有 shell、extension bridge、profile routing、Plan Mode runtime、模型可见 task cancel 或审批工具；Legacy MCP 已通过独立的 JS generation seam 接入，不复用 Agent executor。
 

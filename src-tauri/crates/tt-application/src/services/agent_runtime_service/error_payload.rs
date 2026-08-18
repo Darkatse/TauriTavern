@@ -6,15 +6,12 @@ use crate::errors::ApplicationError;
 /// Drift-class codes that should _never_ be auto-retried (the model
 /// disobeyed the tool contract), but the user is allowed to manually retry
 /// when no host-confirmed chat commit needs to be preserved. See issue #55.
-const USER_RETRYABLE_DRIFT_CODES: &[&str] = &[
-    "model.tool_call_required",
-    "agent.tool_after_finish",
-    "agent.max_tool_rounds_exceeded",
-];
+const USER_RETRYABLE_DRIFT_CODES: &[&str] =
+    &["model.tool_call_required", "agent.max_tool_rounds_exceeded"];
 
 pub(super) fn run_failure_payload(error: &ApplicationError) -> Value {
     let (code, message) = agent_error_code_and_message(error);
-    let retryable = is_retryable(error);
+    let retryable = error.is_retryable();
     let user_retryable = retryable || USER_RETRYABLE_DRIFT_CODES.contains(&code.as_str());
 
     json!({
@@ -103,15 +100,6 @@ fn is_error_code(value: &str) -> bool {
         })
 }
 
-fn is_retryable(error: &ApplicationError) -> bool {
-    matches!(
-        error,
-        ApplicationError::RateLimited(_)
-            | ApplicationError::Transient(_)
-            | ApplicationError::UpstreamFailure(_)
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,18 +155,6 @@ mod tests {
         assert_eq!(payload["message"], "upstream rate limit");
         assert_eq!(payload["retryable"], true);
         // Auto-retryable errors are user-retryable by definition.
-        assert_eq!(payload["userRetryable"], true);
-    }
-
-    #[test]
-    fn tool_after_finish_drift_is_user_retryable() {
-        let payload = run_failure_payload(&ApplicationError::ValidationError(
-            "agent.tool_after_finish: model requested additional tools after workspace.finish"
-                .to_string(),
-        ));
-
-        assert_eq!(payload["code"], "agent.tool_after_finish");
-        assert_eq!(payload["retryable"], false);
         assert_eq!(payload["userRetryable"], true);
     }
 

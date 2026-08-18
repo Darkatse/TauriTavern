@@ -1,4 +1,5 @@
 use super::*;
+use tt_domain::models::upstream_failure::{UPSTREAM_NETWORK_TIMEOUT, UpstreamFailure};
 
 #[tokio::test]
 async fn agent_runtime_background_run_finish_uses_run_presentation() {
@@ -487,8 +488,8 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
                         "new_string": "revised foreground answer",
                     }),
                 ),
-                model_tool_call("call_finish_after_auto", "workspace_finish", json!({})),
                 model_tool_call("call_commit", "workspace_commit", json!({})),
+                model_tool_call("call_finish_after_auto", "workspace_finish", json!({})),
             ]),
             model_tool_response(vec![
                 model_tool_call("call_commit_retry", "workspace_commit", json!({})),
@@ -652,9 +653,11 @@ async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
     let fixture = agent_runtime_fixture_with_results(
         &root,
         vec![
-            Err(ApplicationError::Transient(
-                "temporary transport failure".to_string(),
-            )),
+            Err(ApplicationError::UpstreamFailure(UpstreamFailure::network(
+                UPSTREAM_NETWORK_TIMEOUT,
+                None,
+                "tauritavern.error.network.timeout",
+            ))),
             Ok(json!({
                 "choices": [{
                     "message": {

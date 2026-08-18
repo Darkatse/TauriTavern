@@ -36,6 +36,15 @@ pub enum ApplicationError {
     PermissionDenied(String),
 }
 
+impl ApplicationError {
+    pub(crate) fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::RateLimited(_) | Self::Transient(_) | Self::UpstreamFailure(_)
+        )
+    }
+}
+
 impl From<DomainError> for ApplicationError {
     fn from(error: DomainError) -> Self {
         match error {

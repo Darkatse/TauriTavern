@@ -14,7 +14,7 @@ use crate::services::tool_request_gate::{ToolRequestGate, ToolRequestGateError};
 
 use crate::services::agent_tools::{
     AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, AgentToolDispatchOutcome,
-    AgentToolEffect, AgentToolSession, TASK_RETURN,
+    AgentToolEffect, AgentToolSession, TASK_RETURN, WORKSPACE_FINISH,
 };
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
@@ -143,7 +143,17 @@ impl AgentRuntimeService {
         .await?;
 
         let builtin_name = call.tool_id.is_builtin().then_some(tool_name);
-        let dispatch_result = if builtin_name == Some(AGENT_LIST) {
+        let dispatch_result = if !is_last_call && builtin_name.is_some_and(is_completion_tool) {
+            Ok(recoverable_tool_error(
+                call,
+                "agent.tool_after_finish",
+                &format!(
+                    "{} must be the final tool call in a model turn; complete the other work first, then call it again.",
+                    call.tool_id.native_name()
+                ),
+                started.elapsed().as_millis(),
+            ))
+        } else if builtin_name == Some(AGENT_LIST) {
             self.dispatch_agent_list_tool(call, profile).await
         } else if builtin_name == Some(AGENT_DELEGATE) {
             Box::pin(self.dispatch_agent_delegate_tool(
@@ -158,18 +168,11 @@ impl AgentRuntimeService {
             self.dispatch_agent_await_tool(prepared, call, commit_ledger.explicit_count(), cancel)
                 .await
         } else if builtin_name == Some(AGENT_HANDOFF) {
-            self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile, is_last_call)
+            self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile)
                 .await
         } else if builtin_name == Some(TASK_RETURN) {
-            self.dispatch_task_return_tool(
-                run_id,
-                invocation_id,
-                call,
-                exit_policy,
-                profile,
-                is_last_call,
-            )
-            .await
+            self.dispatch_task_return_tool(run_id, invocation_id, call, exit_policy, profile)
+                .await
         } else if !call.tool_id.is_builtin() {
             match self.call_mcp_tool(call, cancel).await? {
                 McpCallOutcome::KnownResponse(response) => Ok(AgentToolDispatchOutcome {
@@ -701,6 +704,10 @@ fn tool_call_audit_file_stem(call_id: &str) -> String {
         "call_{}",
         hex_lower(&digest[..TOOL_CALL_AUDIT_DIGEST_BYTES])
     )
+}
+
+fn is_completion_tool(tool_name: &str) -> bool {
+    matches!(tool_name, WORKSPACE_FINISH | AGENT_HANDOFF | TASK_RETURN)
 }
 
 fn recoverable_tool_error(

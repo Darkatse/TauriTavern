@@ -7,7 +7,6 @@ use super::task_status::{task_is_terminal, task_return_status, task_status_label
 use super::tool_error::tool_error_outcome;
 use crate::errors::ApplicationError;
 use crate::services::agent_runtime_service::AgentRuntimeService;
-use crate::services::agent_runtime_service::loop_runner::tool_after_finish_error;
 use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
 use crate::services::agent_workspace_scope::{
     format_model_workspace_roots, task_result_summary_path, workspace_path_is_under_any_root,
@@ -26,7 +25,6 @@ impl AgentRuntimeService {
         call: &ToolInvocation,
         exit_policy: AgentInvocationExitPolicy,
         profile: &ResolvedAgentProfile,
-        is_last_call: bool,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
         if exit_policy != AgentInvocationExitPolicy::TaskReturnRequired {
@@ -96,9 +94,6 @@ impl AgentRuntimeService {
                 ));
             }
         };
-        if !is_last_call {
-            return Err(tool_after_finish_error("task_return"));
-        }
         let result_doc = json!({
             "schemaVersion": 1,
             "kind": "tauritavern.agentTaskResult",
