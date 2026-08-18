@@ -156,6 +156,7 @@ Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swi
 | `skill.list` | `skill_list` | read-only | 列出当前 Profile 可见的已安装 Skill 索引摘要。 |
 | `skill.search` | `skill_search` | read-only | 搜索当前 Profile 可见的单个 Skill 内 UTF-8 文本文件；返回 snippet/ref，snippet 字符数计入 Skill read budget。 |
 | `skill.read` | `skill_read` | read-only | 读取当前 Profile 可见 Skill 内的 UTF-8 文本文件或 1-based 行范围；默认完整 `SKILL.md`，超限返回可续读预览，受 Profile read budget 控制。 |
+| `skill.run_script` | `skill_run_script` | mutating | 在当前 run 的 QuickJS 沙箱中执行可见 Skill `scripts/` 下的 `.js` 入口脚本（`default` 或 `main` 导出），传入 `args` 对象并返回 JSON 结果；脚本可读写 Profile workspace roots 内文件，可导入 Skill scripts/ 内模块与公共库（`skill-libs/`），不能访问网络或修改变量/世界书。脚本调用契约以 SKILL.md 记录为准，开发指南见 `docs/SkillScript.md`。
 | `workspace.list_files` | `workspace_list_files` | read-only | 列出模型可见 workspace 文件。`path` 省略、空字符串、`.`、`./` 表示 workspace root。 |
 | `workspace.search_files` | `workspace_search_files` | read-only | 搜索模型可见 workspace UTF-8 文本文件；可限定 `path`，返回 snippet/ref，不搜索隐藏 runtime 存储。 |
 | `workspace.read_file` | `workspace_read_file` | read-only | 读取 UTF-8 文本文件并返回行号；只支持 1-based 行范围，默认全文、超限预览；完整读取会记录 read-state。 |
