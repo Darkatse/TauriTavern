@@ -55,7 +55,7 @@ pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), 
         }
 
         if thinking_mode == Some(DeepSeekThinkingMode::Enabled) {
-            ensure_tool_context_reasoning_content(&mut processed)?;
+            ensure_tool_context_reasoning_content(&mut processed, has_tools)?;
         }
 
         let processed = Value::Array(processed);
@@ -149,18 +149,22 @@ fn apply_thinking_mode(
     }
 }
 
-fn ensure_tool_context_reasoning_content(messages: &mut [Value]) -> Result<(), ApplicationError> {
-    let has_tool_context = messages.iter().any(|message| {
-        let Some(message_object) = message.as_object() else {
-            return false;
-        };
+fn ensure_tool_context_reasoning_content(
+    messages: &mut [Value],
+    has_tools: bool,
+) -> Result<(), ApplicationError> {
+    let has_tool_context = has_tools
+        || messages.iter().any(|message| {
+            let Some(message_object) = message.as_object() else {
+                return false;
+            };
 
-        message_object
-            .get("tool_calls")
-            .and_then(Value::as_array)
-            .is_some_and(|calls| !calls.is_empty())
-            || message_object.get("role").and_then(Value::as_str) == Some("tool")
-    });
+            message_object
+                .get("tool_calls")
+                .and_then(Value::as_array)
+                .is_some_and(|calls| !calls.is_empty())
+                || message_object.get("role").and_then(Value::as_str) == Some("tool")
+        });
 
     if !has_tool_context {
         return Ok(());
@@ -259,6 +263,39 @@ mod tests {
 
         assert_eq!(last.get("role").and_then(Value::as_str), Some("assistant"));
         assert_eq!(last.get("prefix").and_then(Value::as_bool), Some(true));
+    }
+
+    #[test]
+    fn deepseek_thinking_with_tools_fills_terminal_assistant_reasoning_content() {
+        let payload = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role":"user","content":"continue"},
+                {"role":"assistant","content":"Answer:"}
+            ],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "noop",
+                    "description": "Do nothing",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            }],
+            "include_reasoning": true,
+            "chat_completion_source": "deepseek"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("payload should build");
+
+        assert_eq!(
+            upstream
+                .pointer("/messages/1/reasoning_content")
+                .and_then(Value::as_str),
+            Some("")
+        );
     }
 
     #[test]
