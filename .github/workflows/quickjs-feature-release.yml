@@ -173,9 +173,11 @@ jobs:
     continue-on-error: true
     env:
       # rquickjs-sys compiles QuickJS C sources via cc; point cc at the NDK
-      # cross clang for the Android target so the build script can compile.
+      # cross clang for each Android target so the build script can compile.
       CC_aarch64_linux_android: aarch64-linux-android21-clang
       AR_aarch64_linux_android: llvm-ar
+      CC_armv7_linux_androideabi: armv7a-linux-androideabi21-clang
+      AR_armv7_linux_androideabi: llvm-ar
     steps:
       - uses: actions/checkout@v4
 
@@ -187,7 +189,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi
 
       - name: Setup JDK
         uses: actions/setup-java@v5
@@ -221,6 +223,7 @@ jobs:
           sysroot="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           {
             echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$sysroot"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi=--sysroot=$sysroot"
           } >> "$GITHUB_ENV"
 
       - uses: swatinem/rust-cache@v2
@@ -259,7 +262,7 @@ jobs:
           projectPath: src-tauri/crates/tauritavern
           tauriScript: node ../../../scripts/tauri-app.mjs
           mobile: android
-          args: --verbose --apk --split-per-abi --target aarch64
+          args: --verbose --apk --split-per-abi --target aarch64 armv7
           uploadWorkflowArtifacts: true
           uploadPlainBinary: true
           uploadUpdaterJson: false
