@@ -1,13 +1,13 @@
-//! `$sillytavern`：SillyTavern 运行时代理对象（只读快照）。
+//! `$variables`：SillyTavern 变量快照（只读）。
 //!
-//! 当前只实现 `variables` 命名空间，接口签名与
+//! 直接暴露 `local` / `global` 两个作用域，接口签名与
 //! `getContext().variables` 保持一致，使 skill 脚本开发者无需学习新 API。
 //!
 //! ```js
-//! $sillytavern.variables.local.get(name)   // 只读
-//! $sillytavern.variables.local.has(name)   // boolean
-//! $sillytavern.variables.global.get(name)
-//! $sillytavern.variables.global.has(name)
+//! $variables.local.get(name)   // 只读
+//! $variables.local.has(name)   // boolean
+//! $variables.global.get(name)
+//! $variables.global.has(name)
 //! ```
 //!
 //! 写操作（`set` / `del` / `add` / `inc` / `dec`）存在但会抛出
@@ -21,49 +21,16 @@ use tt_domain::models::skill_script::SillyTavernVariableSnapshot;
 
 use crate::convert::json_to_js;
 
-/// 将 `$sillytavern` 全局代理对象注入 JS context。
-///
-/// 结构与 SillyTavern extension API 一致：
-/// ```js
-/// $sillytavern.getContext().variables.local.get(name)
-/// $sillytavern.getContext().variables.global.has(name)
-/// ```
-/// 沙箱内 `getContext()` 每次返回同一份冻结快照。
-pub(crate) fn register_sillytavern_api<'js>(
+/// 将 `$variables` 全局对象注入 JS context，结构为
+/// `{ local: { get, has, ... }, global: { get, has, ... } }`。
+pub(crate) fn register_variables_api<'js>(
     ctx: &Ctx<'js>,
     snapshot: SillyTavernVariableSnapshot,
 ) -> rquickjs::Result<()> {
     let globals = ctx.globals();
-    let sillytavern = Object::new(ctx.clone())?;
-
-    // 预建 context 对象（含 variables），存为 sillytavern 的内部属性。
-    // getContext() 从该属性返回冻结快照，不捕获 'js 生命周期的 handle。
-    let context = build_context_object(ctx, snapshot)?;
-    sillytavern.set("_context", context)?;
-
-    // getContext() — 返回预建的 context 对象。
-    let get_context_fn = Function::new(
-        ctx.clone(),
-        move |this: rquickjs::Object<'js>| -> rquickjs::Result<rquickjs::Value<'js>> {
-            this.get::<_, rquickjs::Value<'js>>("_context")
-        },
-    )?;
-    sillytavern.set("getContext", get_context_fn)?;
-
-    globals.set("$sillytavern", sillytavern)?;
-    Ok(())
-}
-
-/// 构建 `getContext()` 返回的 context 对象。当前只含 `variables` 命名空间，
-/// 未来可扩展 lorebook、chatMessages 等。
-fn build_context_object<'js>(
-    ctx: &Ctx<'js>,
-    snapshot: SillyTavernVariableSnapshot,
-) -> rquickjs::Result<rquickjs::Object<'js>> {
-    let context = Object::new(ctx.clone())?;
     let variables = build_variables_namespace(ctx, snapshot)?;
-    context.set("variables", variables)?;
-    Ok(context)
+    globals.set("$variables", variables)?;
+    Ok(())
 }
 
 fn build_variables_namespace<'js>(
@@ -111,9 +78,12 @@ fn build_variable_scope<'js>(
     let readonly_error = "variables are read-only in skill script sandbox";
     for method in ["set", "del", "add", "inc", "dec"] {
         let error_msg = readonly_error.to_string();
-        let fn_ = Function::new(ctx.clone(), move |_ctx: Ctx<'js>| -> rquickjs::Result<Value> {
-            Err(rquickjs::Error::new_string(error_msg.clone()))
-        })?;
+        let fn_ = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>| -> Result<rquickjs::Value, rquickjs::Error> {
+                Err(rquickjs::Exception::throw_message(&ctx, &error_msg))
+            },
+        )?;
         scope.set(method, fn_)?;
     }
 
@@ -134,7 +104,7 @@ mod tests {
         let runtime = Runtime::new().expect("runtime");
         let context = Context::full(&runtime).expect("context");
         context.with(|ctx| {
-            register_sillytavern_api(&ctx, snapshot).expect("register");
+            register_variables_api(&ctx, snapshot).expect("register");
             body(&ctx);
         });
     }
@@ -151,12 +121,12 @@ mod tests {
 
         run_with_snapshot(snapshot, |ctx| {
             let result = ctx
-                .eval::<rquickjs::Value, _>("$sillytavern.getContext().variables.local.get('score')")
+                .eval::<rquickjs::Value, _>("$variables.local.get('score')")
                 .expect("eval");
             assert_eq!(js_to_json(ctx, &result).unwrap(), json!(42));
 
             let result = ctx
-                .eval::<rquickjs::Value, _>("$sillytavern.getContext().variables.local.get('name')")
+                .eval::<rquickjs::Value, _>("$variables.local.get('name')")
                 .expect("eval");
             assert_eq!(js_to_json(ctx, &result).unwrap(), json!("Alice"));
         });
@@ -168,7 +138,7 @@ mod tests {
 
         run_with_snapshot(snapshot, |ctx| {
             let result = ctx
-                .eval::<rquickjs::Value, _>("$sillytavern.getContext().variables.local.get('missing')")
+                .eval::<rquickjs::Value, _>("$variables.local.get('missing')")
                 .expect("eval");
             assert_eq!(js_to_json(ctx, &result).unwrap(), json!(""));
         });
@@ -185,12 +155,12 @@ mod tests {
 
         run_with_snapshot(snapshot, |ctx| {
             let result = ctx
-                .eval::<bool, _>("$sillytavern.getContext().variables.local.has('exists')")
+                .eval::<bool, _>("$variables.local.has('exists')")
                 .expect("eval");
             assert!(result);
 
             let result = ctx
-                .eval::<bool, _>("$sillytavern.getContext().variables.local.has('nope')")
+                .eval::<bool, _>("$variables.local.has('nope')")
                 .expect("eval");
             assert!(!result);
         });
@@ -207,12 +177,12 @@ mod tests {
 
         run_with_snapshot(snapshot, |ctx| {
             let result = ctx
-                .eval::<rquickjs::Value, _>("$sillytavern.getContext().variables.global.get('theme')")
+                .eval::<rquickjs::Value, _>("$variables.global.get('theme')")
                 .expect("eval");
             assert_eq!(js_to_json(ctx, &result).unwrap(), json!("dark"));
 
             let result = ctx
-                .eval::<bool, _>("$sillytavern.getContext().variables.global.has('theme')")
+                .eval::<bool, _>("$variables.global.has('theme')")
                 .expect("eval");
             assert!(result);
         });
@@ -224,17 +194,17 @@ mod tests {
 
         run_with_snapshot(snapshot, |ctx| {
             let result = ctx.eval::<rquickjs::Value, _>(
-                "$sillytavern.getContext().variables.local.set('x', 1)",
+                "$variables.local.set('x', 1)",
             );
             assert!(result.is_err());
 
             let result = ctx.eval::<rquickjs::Value, _>(
-                "$sillytavern.getContext().variables.global.del('x')",
+                "$variables.global.del('x')",
             );
             assert!(result.is_err());
 
             let result = ctx.eval::<rquickjs::Value, _>(
-                "$sillytavern.getContext().variables.local.inc('x')",
+                "$variables.local.inc('x')",
             );
             assert!(result.is_err());
         });
@@ -251,22 +221,10 @@ mod tests {
 
         run_with_snapshot(snapshot, |ctx| {
             let result = ctx
-                .eval::<rquickjs::Value, _>("$sillytavern.getContext().variables.local.get('count')")
+                .eval::<rquickjs::Value, _>("$variables.local.get('count')")
                 .expect("eval");
             // 应该返回字符串 "42"，不是数字 42
             assert_eq!(js_to_json(ctx, &result).unwrap(), json!("42"));
-        });
-    }
-
-    #[test]
-    fn get_context_returns_same_object_each_call() {
-        let snapshot = SillyTavernVariableSnapshot::default();
-
-        run_with_snapshot(snapshot, |ctx| {
-            let result = ctx
-                .eval::<bool, _>("$sillytavern.getContext() === $sillytavern.getContext()")
-                .expect("eval");
-            assert!(result, "getContext() should return the same object reference");
         });
     }
 }

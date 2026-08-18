@@ -57,7 +57,7 @@ impl ActivatedWorldInfoEntry {
     }
 }
 
-/// SillyTavern 变量快照（预取自 run prompt snapshot），经 `$sillytavern.variables`
+/// SillyTavern 变量快照（预取自 run prompt snapshot），经 `$variables`
 /// API 提供给 skill 脚本。变量在 run 开始时冻结，脚本内只读。
 ///
 /// `local` 对应 `chat_metadata.variables`，`global` 对应
@@ -92,7 +92,7 @@ impl SillyTavernVariableSnapshot {
 #[cfg(test)]
 mod tests {
     use super::{ActivatedWorldInfoEntry, SillyTavernVariableSnapshot};
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn parses_entry_and_builds_ref_key() {

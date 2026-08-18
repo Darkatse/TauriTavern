@@ -14,7 +14,7 @@ use tokio::task::spawn_blocking;
 use tt_domain::errors::DomainError;
 use tt_ports::skill_script::{SkillScriptEngine, SkillScriptRequest, SkillScriptResult};
 
-use crate::api::{register_fs_api, register_log_api, register_sillytavern_api, register_world_info_api};
+use crate::api::{register_fs_api, register_log_api, register_variables_api, register_world_info_api};
 use crate::convert::{json_to_js, js_to_json};
 use crate::sandbox::SandboxIoPolicy;
 
@@ -115,7 +115,7 @@ fn execute_sync(
     let outcome = context.with(|ctx| {
         register_fs_api(&ctx, policy.clone())?;
         register_world_info_api(&ctx, request.world_info_entries.clone())?;
-        register_sillytavern_api(&ctx, request.variables.clone())?;
+        register_variables_api(&ctx, request.variables.clone())?;
         register_log_api(&ctx)?;
 
         let declared = Module::declare(ctx.clone(), module_name.clone(), entry_source)?;
@@ -515,17 +515,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sillytavern_variables_are_readable() {
+    async fn variables_are_readable() {
         let fixture = Fixture::new();
         let script = fixture.write_script(
             "vars.js",
             "export default function () {\n\
              \x20 return {\n\
-             \x20   score: $sillytavern.variables.local.get('score'),\n\
-             \x20   hasName: $sillytavern.variables.local.has('name'),\n\
-             \x20   theme: $sillytavern.variables.global.get('theme'),\n\
-             \x20   hasGlobal: $sillytavern.variables.global.has('theme'),\n\
-             \x20   missing: $sillytavern.variables.local.get('missing'),\n\
+             \x20   score: $variables.local.get('score'),\n\
+             \x20   hasName: $variables.local.has('name'),\n\
+             \x20   theme: $variables.global.get('theme'),\n\
+             \x20   hasGlobal: $variables.global.has('theme'),\n\
+             \x20   missing: $variables.local.get('missing'),\n\
              \x20 };\n\
              }",
         );
@@ -559,11 +559,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sillytavern_write_operations_fail() {
+    async fn variables_write_operations_fail() {
         let fixture = Fixture::new();
         let script = fixture.write_script(
             "write.js",
-            "export default function () { $sillytavern.variables.local.set('x', 1); }",
+            "export default function () { $variables.local.set('x', 1); }",
         );
         let request = fixture.request(script, json!({}));
 

@@ -4210,7 +4210,7 @@ function buildAgentPromptMacroContext(promptInputs = {}) {
 }
 
 /**
- * 采集 SillyTavern 变量快照（只读），供 skill 脚本沙箱 `$sillytavern.variables` 使用。
+ * 采集 SillyTavern 变量快照（只读），供 skill 脚本沙箱 `$variables` 使用。
  * local 对应 chat_metadata.variables（per-chat），global 对应
  * extension_settings.variables.global（跨 chat）。值保持原始存储格式。
  * @returns {{ local: Record<string, any>, global: Record<string, any> }}

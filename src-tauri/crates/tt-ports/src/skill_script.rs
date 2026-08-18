@@ -22,7 +22,7 @@ pub struct SkillScriptRequest {
     pub writable_roots: Vec<String>,
     /// 预取的激活世界书条目快照。
     pub world_info_entries: Vec<ActivatedWorldInfoEntry>,
-    /// 预取的 SillyTavern 变量快照（只读），经 `$sillytavern.variables` API 提供。
+    /// 预取的 SillyTavern 变量快照（只读），经 `$variables` API 提供。
     pub variables: SillyTavernVariableSnapshot,
 }
 
