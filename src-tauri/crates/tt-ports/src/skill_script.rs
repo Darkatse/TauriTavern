@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use tt_domain::errors::DomainError;
-use tt_domain::models::skill_script::ActivatedWorldInfoEntry;
+use tt_domain::models::skill_script::{ActivatedWorldInfoEntry, SillyTavernVariableSnapshot};
 
 /// 一次脚本执行请求。`script_path` 为入口脚本的规范化绝对物理路径，
 /// 其 `parent()` 即当前 skill 的 `scripts/` 目录（相对模块加载白名单根）。
@@ -22,6 +22,8 @@ pub struct SkillScriptRequest {
     pub writable_roots: Vec<String>,
     /// 预取的激活世界书条目快照。
     pub world_info_entries: Vec<ActivatedWorldInfoEntry>,
+    /// 预取的 SillyTavern 变量快照（只读），经 `$sillytavern.variables` API 提供。
+    pub variables: SillyTavernVariableSnapshot,
 }
 
 /// 脚本返回值（JSON）。

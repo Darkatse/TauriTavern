@@ -4209,6 +4209,19 @@ function buildAgentPromptMacroContext(promptInputs = {}) {
     };
 }
 
+/**
+ * 采集 SillyTavern 变量快照（只读），供 skill 脚本沙箱 `$sillytavern.variables` 使用。
+ * local 对应 chat_metadata.variables（per-chat），global 对应
+ * extension_settings.variables.global（跨 chat）。值保持原始存储格式。
+ * @returns {{ local: Record<string, any>, global: Record<string, any> }}
+ */
+function buildAgentVariablesSnapshot() {
+    return {
+        local: { ...(chat_metadata?.variables ?? {}) },
+        global: { ...(extension_settings?.variables?.global ?? {}) },
+    };
+}
+
 function getAgentPromptMacroGroupValue({
     currentChar = '',
     includeMuted = false,
@@ -6249,6 +6262,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                     promptInputs,
                     worldInfoActivation,
                     macroContext: buildAgentPromptMacroContext(promptInputs),
+                    variables: buildAgentVariablesSnapshot(),
                     currentModelConnection,
                 });
             }

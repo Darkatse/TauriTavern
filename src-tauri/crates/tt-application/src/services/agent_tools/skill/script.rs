@@ -11,7 +11,7 @@ use crate::services::skill_service::SkillService;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::AgentToolResult;
-use tt_domain::models::skill_script::ActivatedWorldInfoEntry;
+use tt_domain::models::skill_script::{ActivatedWorldInfoEntry, SillyTavernVariableSnapshot};
 use tt_domain::models::tool::ToolInvocation;
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 use tt_ports::skill_script::{SkillScriptEngine, SkillScriptRequest};
@@ -156,6 +156,12 @@ pub(in crate::services::agent_tools) async fn script(
         })
         .unwrap_or_default();
 
+    let variables = prompt_snapshot
+        .and_then(|snapshot| snapshot.get("frozenRunInputSnapshot"))
+        .and_then(|frozen| frozen.get("variables"))
+        .map(SillyTavernVariableSnapshot::from_value)
+        .unwrap_or_default();
+
     tracing::info!(
         "skill.run_script invoked: skill=`{skill}` script=`{script}` args={} work_dir={}",
         serde_json::to_string(&script_args).unwrap_or_else(|_| "<unserializable>".to_string()),
@@ -170,6 +176,7 @@ pub(in crate::services::agent_tools) async fn script(
             visible_roots: profile.workspace.visible_roots.clone(),
             writable_roots: profile.workspace.writable_roots.clone(),
             world_info_entries,
+            variables,
         })
         .await;
 
@@ -770,11 +777,59 @@ mod tests {
         assert_eq!(requests[0].visible_roots, vec!["output".to_string()]);
         assert_eq!(requests[0].writable_roots, vec!["output".to_string()]);
         assert!(requests[0].world_info_entries.is_empty());
+        assert!(requests[0].variables.local.is_empty());
+        assert!(requests[0].variables.global.is_empty());
 
         assert!(!result.is_error);
         assert_eq!(result.structured, json!({ "answer": 42 }));
         assert!(result.content.contains("demo/scripts/helper.js"));
         assert!(matches!(effect, AgentToolEffect::None));
+    }
+
+    #[tokio::test]
+    async fn variables_from_frozen_run_input_snapshot_are_passed_to_engine() {
+        let engine = Arc::new(FakeScriptEngine {
+            outcome: FakeOutcome::Ok(json!({})),
+            requests: Mutex::new(Vec::new()),
+        });
+        let mut session = session_with_skill("demo");
+        let profile = profile(true);
+
+        let prompt_snapshot = json!({
+            "frozenRunInputSnapshot": {
+                "variables": {
+                    "local": { "score": 42, "name": "Alice" },
+                    "global": { "theme": "dark" }
+                }
+            }
+        });
+
+        let (result, _) = script(
+            ScriptContext {
+                skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
+                    script_path: Some(PathBuf::from("/fake/scripts/helper.js")),
+                })),
+                engine: engine.as_ref(),
+                workspace_repository: &FakeWorkspaceRepo {
+                    root: PathBuf::from("/fake/run"),
+                },
+                run_id: "run-1",
+                prompt_snapshot: Some(&prompt_snapshot),
+            },
+            &call(json!({ "skill": "demo", "script": "helper" })),
+            &mut session,
+            &profile,
+        )
+        .await
+        .expect("script must succeed");
+
+        assert!(!result.is_error);
+
+        let requests = engine.requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].variables.local.get("score"), Some(&json!(42)));
+        assert_eq!(requests[0].variables.local.get("name"), Some(&json!("Alice")));
+        assert_eq!(requests[0].variables.global.get("theme"), Some(&json!("dark")));
     }
 
     #[test]

@@ -8,6 +8,7 @@ export function buildFrozenRunInputSnapshot({
     promptInputs,
     worldInfoActivation,
     macroContext,
+    variables,
     currentModelConnection,
 } = {}) {
     const normalizedGenerationType = normalizeGenerationType(generationType ?? promptInputs?.type);
@@ -22,6 +23,7 @@ export function buildFrozenRunInputSnapshot({
         promptInputs: frozenPromptInputs,
         worldInfoActivation: frozenWorldInfoActivation,
         macroContext: frozenMacroContext,
+        ...(variables ? { variables: clonePlainObject(variables, 'agent.frozen_run_input_variables_invalid: variables must be a structured-cloneable object') } : {}),
         ...(currentModelConnection ? { currentModelConnection: normalizeCurrentModelConnectionSnapshot(currentModelConnection) } : {}),
     };
 }
@@ -184,6 +186,7 @@ export function normalizeFrozenRunInputSnapshot(value) {
         promptInputs,
         worldInfoActivation,
         macroContext,
+        ...(value.variables ? { variables: clonePlainObject(value.variables, 'agent.frozen_run_input_variables_invalid: variables must be a structured-cloneable object') } : {}),
         ...((value.currentModelConnection ?? value.current_model_connection)
             ? { currentModelConnection: normalizeCurrentModelConnectionSnapshot(value.currentModelConnection ?? value.current_model_connection) }
             : {}),

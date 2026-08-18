@@ -481,6 +481,13 @@ fn normalize_frozen_run_input_snapshot(
         "agent.frozen_run_input_macro_context_invalid: macroContext must be an object",
     )?;
     normalized.insert("macroContext".to_string(), macro_context.clone());
+    if let Some(variables) = object.get("variables") {
+        ensure_json_object(
+            variables,
+            "agent.frozen_run_input_variables_invalid: variables must be an object",
+        )?;
+        normalized.insert("variables".to_string(), variables.clone());
+    }
     if let Some(current_model_connection) = object
         .get("currentModelConnection")
         .or_else(|| object.get("current_model_connection"))
@@ -864,6 +871,7 @@ mod tests {
                 "promptInputs": { "type": "swipe", "messages": [] },
                 "worldInfoActivation": { "entries": [] },
                 "macroContext": { "names": { "user": "User", "char": "Char" } },
+                "variables": { "local": { "score": 42 }, "global": { "theme": "dark" } },
                 "currentModelConnection": {
                     "schemaVersion": 1,
                     "kind": CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND,
@@ -884,6 +892,8 @@ mod tests {
         assert_eq!(snapshot["generationType"], "swipe");
         assert_eq!(snapshot["worldInfoActivation"]["entries"], json!([]));
         assert_eq!(snapshot["macroContext"]["names"]["char"], "Char");
+        assert_eq!(snapshot["variables"]["local"]["score"], json!(42));
+        assert_eq!(snapshot["variables"]["global"]["theme"], json!("dark"));
         assert_eq!(
             snapshot["currentModelConnection"]["settings"]["custom_url"],
             "https://opencode.example.test/v1"
@@ -892,6 +902,24 @@ mod tests {
             snapshot["currentModelConnection"]["settings"]["secret_id"],
             "opencode-secret"
         );
+    }
+
+    #[test]
+    fn frozen_run_input_snapshot_variables_is_optional() {
+        let snapshot = normalize_frozen_run_input_snapshot(
+            &json!({
+                "schemaVersion": 1,
+                "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
+                "generationType": "normal",
+                "promptInputs": { "type": "normal", "messages": [] },
+                "worldInfoActivation": { "entries": [] },
+                "macroContext": {},
+            }),
+            "normal",
+        )
+        .unwrap();
+
+        assert!(snapshot.get("variables").is_none());
     }
 
     #[test]

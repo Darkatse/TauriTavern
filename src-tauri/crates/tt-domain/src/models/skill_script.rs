@@ -57,9 +57,41 @@ impl ActivatedWorldInfoEntry {
     }
 }
 
+/// SillyTavern 变量快照（预取自 run prompt snapshot），经 `$sillytavern.variables`
+/// API 提供给 skill 脚本。变量在 run 开始时冻结，脚本内只读。
+///
+/// `local` 对应 `chat_metadata.variables`，`global` 对应
+/// `extension_settings.variables.global`。两者均为 `name → value` 的 flat map，
+/// 值保持原始类型（不做 ST 的 `Number()` 转换）。
+#[derive(Debug, Clone, Default)]
+pub struct SillyTavernVariableSnapshot {
+    pub local: serde_json::Map<String, Value>,
+    pub global: serde_json::Map<String, Value>,
+}
+
+impl SillyTavernVariableSnapshot {
+    /// 从 `promptSnapshot.variables` JSON 项解析。
+    /// 预期格式：`{ "local": { ... }, "global": { ... } }`。
+    /// 缺失的 map 回退为空；非对象字段跳过（不 fail）。
+    pub fn from_value(value: &Value) -> Self {
+        let object = value.as_object();
+        let local = object
+            .and_then(|map| map.get("local"))
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let global = object
+            .and_then(|map| map.get("global"))
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        Self { local, global }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ActivatedWorldInfoEntry;
+    use super::{ActivatedWorldInfoEntry, SillyTavernVariableSnapshot};
     use serde_json::json;
 
     #[test]
@@ -106,5 +138,43 @@ mod tests {
             .expect("valid entry");
 
         assert_eq!(entry.ref_key, "worldinfo:activated#3");
+    }
+
+    #[test]
+    fn variable_snapshot_parses_local_and_global() {
+        let snapshot = SillyTavernVariableSnapshot::from_value(&json!({
+            "local": { "score": 42, "name": "Alice" },
+            "global": { "theme": "dark" }
+        }));
+
+        assert_eq!(snapshot.local.get("score"), Some(&json!(42)));
+        assert_eq!(snapshot.local.get("name"), Some(&json!("Alice")));
+        assert_eq!(snapshot.global.get("theme"), Some(&json!("dark")));
+    }
+
+    #[test]
+    fn variable_snapshot_defaults_missing_maps_to_empty() {
+        let snapshot = SillyTavernVariableSnapshot::from_value(&json!({}));
+
+        assert!(snapshot.local.is_empty());
+        assert!(snapshot.global.is_empty());
+    }
+
+    #[test]
+    fn variable_snapshot_handles_null_input() {
+        let snapshot = SillyTavernVariableSnapshot::from_value(&Value::Null);
+
+        assert!(snapshot.local.is_empty());
+        assert!(snapshot.global.is_empty());
+    }
+
+    #[test]
+    fn variable_snapshot_preserves_string_values_without_number_coercion() {
+        // ST 的 getLocalVariable 会把 "42" 转成 42；快照保持原始值。
+        let snapshot = SillyTavernVariableSnapshot::from_value(&json!({
+            "local": { "count": "42" }
+        }));
+
+        assert_eq!(snapshot.local.get("count"), Some(&json!("42")));
     }
 }
