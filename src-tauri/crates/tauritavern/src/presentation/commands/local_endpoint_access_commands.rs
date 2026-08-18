@@ -99,7 +99,7 @@ async fn show_authorization_dialog(
 
     receiver.await.map_err(|_| {
         CommandError::InternalServerError(
-            "Local endpoint authorization dialog closed unexpectedly".to_string(),
+            "Endpoint authorization dialog closed unexpectedly".to_string(),
         )
     })
 }
@@ -118,33 +118,33 @@ fn dialog_copy(locale: &str) -> DialogCopy {
     let locale = locale.trim().to_ascii_lowercase();
     if locale.starts_with("zh-cn") || locale.starts_with("zh-hans") {
         return DialogCopy {
-            title: "允许连接到本地网络端点？",
+            title: "允许连接到非公网端点？",
             endpoint_label: "端点：",
             addresses_label: "地址：",
-            warning: "第三方扩展也可能发起此请求。仅当这是你刚刚配置并认识的端点时继续；TauriTavern 可能向它发送 API 密钥、提示词和聊天内容。该端点将绕过 Request Proxy 直接连接，并在本次安装中保持信任。",
-            http_warning: "\n此 HTTP 连接未加密，同一网络中的其他设备可能观察或修改传输内容。",
+            warning: "第三方扩展也可能发起此请求。仅当这是你刚刚配置并认识的端点时继续；TauriTavern 可能向它发送 API 密钥、提示词和聊天内容。该端点后续将保持信任，请谨慎授权。",
+            http_warning: "\n此 HTTP 连接未加密，传输内容可能被观察或修改。",
             confirm: "信任并连接",
             cancel: "取消",
         };
     }
     if locale.starts_with("zh-tw") || locale.starts_with("zh-hant") {
         return DialogCopy {
-            title: "允許連線到區域網路端點？",
+            title: "允許連線到非公網端點？",
             endpoint_label: "端點：",
             addresses_label: "位址：",
-            warning: "第三方擴充功能也可能發起此請求。僅當這是你剛剛設定並認識的端點時繼續；TauriTavern 可能向它傳送 API 金鑰、提示詞和聊天內容。該端點將略過 Request Proxy 直接連線，並在本次安裝中保持信任。",
-            http_warning: "\n此 HTTP 連線未加密，同一網路中的其他裝置可能觀察或修改傳輸內容。",
+            warning: "第三方擴充功能也可能發起此請求。僅當這是你剛剛設定並認識的端點時繼續；TauriTavern 可能向它傳送 API 金鑰、提示詞和聊天內容。該端點後續將保持信任，請謹慎授權。",
+            http_warning: "\n此 HTTP 連線未加密，傳輸內容可能被觀察或修改。",
             confirm: "信任並連線",
             cancel: "取消",
         };
     }
 
     DialogCopy {
-        title: "Allow local network endpoint?",
+        title: "Allow non-public endpoint?",
         endpoint_label: "Endpoint:",
         addresses_label: "Addresses:",
-        warning: "A third-party extension can also request this connection. Continue only if you just configured and recognize this endpoint. TauriTavern may send it API keys, prompts, and chat content. It will connect directly, bypassing Request Proxy, and remain trusted for this installation.",
-        http_warning: "\nThis HTTP connection is unencrypted; other devices on the network may observe or modify its traffic.",
+        warning: "A third-party extension can also request this connection. Continue only if you just configured and recognize this endpoint. TauriTavern may send it API keys, prompts, and chat content. This endpoint will remain trusted; authorize it carefully.",
+        http_warning: "\nThis HTTP connection is unencrypted and may be observed or modified in transit.",
         confirm: "Trust & Connect",
         cancel: "Cancel",
     }

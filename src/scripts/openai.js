@@ -7920,26 +7920,26 @@ async function onConnectButtonClick(e) {
     }
 
     // Every reconnect checks the grant, but only a direct user click may request a dialog.
-    const promptForLocalEndpoint = e.originalEvent?.isTrusted === true;
+    const promptForEndpoint = e.originalEvent?.isTrusted === true;
     try {
         const allowed = await authorizeChatCompletionEndpoint({
             chat_completion_source: oai_settings.chat_completion_source,
             reverse_proxy: oai_settings.reverse_proxy,
             custom_url: oai_settings.custom_url,
-        }, getCurrentLocale(), promptForLocalEndpoint);
+        }, getCurrentLocale(), promptForEndpoint);
         if (!allowed) {
             setOnlineStatus('no_connection');
-            if (!promptForLocalEndpoint) {
-                toastr.info(t`Local endpoint approval required. Click Connect to continue.`);
+            if (!promptForEndpoint) {
+                toastr.info(t`Non-public endpoint approval required. Click Connect to continue.`);
             }
             resultCheckStatus();
             return;
         }
     } catch (error) {
-        console.error('Local endpoint authorization failed:', error);
+        console.error('Endpoint authorization failed:', error);
         setOnlineStatus('no_connection');
         resultCheckStatus();
-        toastr.error(stripCommandErrorPrefixes(String(error?.message || error)) || t`Could not authorize local endpoint`);
+        toastr.error(stripCommandErrorPrefixes(String(error?.message || error)) || t`Could not authorize endpoint`);
         return;
     }
 
