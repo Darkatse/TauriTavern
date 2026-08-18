@@ -31,7 +31,7 @@ use tt_adapter_storage_userdata::FileCharacterRepository;
 use tt_adapter_storage_userdata::FileWorldInfoRepository;
 use tt_adapter_storage_userdata::{FileSkillRepository, FileSpriteRepository};
 use tt_adapter_tokenization::MiktikTokenizerRepository;
-use tt_adapter_vector::{FastEmbedLocalEmbeddingRepository, RedbVectorRepository};
+use tt_adapter_vector::{CandleLocalEmbeddingRepository, RedbVectorRepository};
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
@@ -322,7 +322,7 @@ pub(super) async fn build(
     let remote_embedding_repository: Arc<dyn RemoteEmbeddingRepository> =
         Arc::new(HttpEmbeddingRepository::new(http_client_pool));
     let local_embedding_repository: Arc<dyn LocalEmbeddingRepository> = Arc::new(
-        FastEmbedLocalEmbeddingRepository::new(data_root.join("_cache").join("embedding-models")),
+        CandleLocalEmbeddingRepository::new(data_root.join("_cache").join("embedding-models")),
     );
 
     Ok(AppRepositories {

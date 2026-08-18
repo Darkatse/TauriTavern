@@ -49,6 +49,7 @@ import { reciprocalRankFusion } from './rank-fusion.js';
 
 const MODULE_NAME = 'vectors';
 const MAX_RETRIEVAL_CANDIDATES = 1000;
+const LOCAL_EMBEDDING_MODEL = 'Qwen/Qwen3-Embedding-0.6B';
 
 export const EXTENSION_PROMPT_TAG = '3_vectors';
 export const EXTENSION_PROMPT_TAG_DB = '4_vectors_data_bank';
@@ -59,7 +60,7 @@ const getBatchSize = () => ['transformers', 'ollama'].includes(settings.source) 
 const settings = {
     // For both
     source: 'transformers',
-    transformers_model: 'jinaai/jina-embeddings-v2-base-en',
+    transformers_model: LOCAL_EMBEDDING_MODEL,
     alt_endpoint_url: '',
     use_alt_endpoint: false,
     include_wi: false,
@@ -1826,6 +1827,7 @@ export async function init() {
     }
 
     Object.assign(settings, extension_settings.vectors);
+    settings.transformers_model = LOCAL_EMBEDDING_MODEL;
 
     // Migrate from TensorFlow to Transformers
     settings.source = settings.source !== 'local' ? settings.source : 'transformers';

@@ -8,38 +8,21 @@ use tt_domain::errors::DomainError;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LocalEmbeddingModel {
     #[default]
-    JinaV2BaseEn,
-    BgeM3,
     Qwen3Embedding06B,
-    EmbeddingGemma300M,
 }
 
 impl LocalEmbeddingModel {
-    pub const SUPPORTED: [Self; 4] = [
-        Self::JinaV2BaseEn,
-        Self::BgeM3,
-        Self::Qwen3Embedding06B,
-        Self::EmbeddingGemma300M,
-    ];
+    pub const SUPPORTED: [Self; 1] = [Self::Qwen3Embedding06B];
 
     pub const fn id(self) -> &'static str {
         match self {
-            Self::JinaV2BaseEn => "jinaai/jina-embeddings-v2-base-en",
-            Self::BgeM3 => "BAAI/bge-m3",
             Self::Qwen3Embedding06B => "Qwen/Qwen3-Embedding-0.6B",
-            Self::EmbeddingGemma300M => "google/embeddinggemma-300m",
         }
     }
 
     pub const fn profile(self) -> &'static str {
         match self {
-            // Preserve the original profile so existing Jina indexes remain reusable.
-            Self::JinaV2BaseEn => "jinaai/jina-embeddings-v2-base-en",
-            Self::BgeM3 => "BAAI/bge-m3|dense-v1|max=8192",
             Self::Qwen3Embedding06B => "Qwen/Qwen3-Embedding-0.6B|f32-v1|max=8192|query-prompt-v1",
-            Self::EmbeddingGemma300M => {
-                "google/embeddinggemma-300m|q4-v1|max=2048|retrieval-prompt-v1"
-            }
         }
     }
 
