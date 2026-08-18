@@ -245,6 +245,10 @@ export async function openDialog(options = {}) {
     return invokeWithHostNormalization('plugin:dialog|open', { options });
 }
 
+export function writeClipboardText(text) {
+    return invoke('plugin:clipboard-manager|write_text', { text });
+}
+
 function normalizeExternalUrl(url) {
     const value = String(url instanceof URL ? url.href : url ?? '').trim();
     if (!value) {

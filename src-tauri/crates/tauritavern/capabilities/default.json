@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-destroy",
+    "clipboard-manager:allow-write-text",
     "opener:default",
     "notification:allow-notify",
     "notification:allow-is-permission-granted",

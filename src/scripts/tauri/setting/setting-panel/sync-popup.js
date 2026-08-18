@@ -2,6 +2,7 @@ import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
 import { isMobile } from '../../../RossAscends-mods.js';
 import { t, translate } from '../../../i18n.js';
 import { scanQrCodeWithBackCancellation } from '../../../../tauri/main/services/barcode-scanner/barcode-scanner-service.js';
+import { writeClipboardText } from '../../../../tauri-bridge.js';
 import {
     LAN_SYNC_DEVICES_CHANGED_EVENT,
     SYNC_AUTOMATION_CHANGED_EVENT,
@@ -508,7 +509,7 @@ async function editSyncScope(catalog, selection) {
 function createSyncActions(client) {
     return {
         copyText: async (text) => {
-            await navigator.clipboard.writeText(String(text ?? ''));
+            await writeClipboardText(String(text ?? ''));
         },
         scanPairUri: () => scanQrCodeWithBackCancellation(),
         reportError: (error) => showErrorPopup(error),
