@@ -10,6 +10,18 @@ function readProjectFile(relativePath) {
     return readFile(path.join(REPO_ROOT, relativePath), 'utf8');
 }
 
+test('spellcheck preference uses the existing user settings flow and document inheritance', async () => {
+    const [source, html] = await Promise.all([
+        readProjectFile('src/scripts/power-user.js'),
+        readProjectFile('src/index.html'),
+    ]);
+
+    assert.match(source, /spellcheck_enabled: true/);
+    assert.equal(source.match(/document\.body\.spellcheck = power_user\.spellcheck_enabled/g)?.length, 2);
+    assert.match(source, /#spellcheck_enabled[\s\S]*power_user\.spellcheck_enabled[\s\S]*saveSettingsDebounced\(\)/);
+    assert.match(html, /<input id="spellcheck_enabled" type="checkbox" \/>/);
+});
+
 test('OpenAI tool reasoning sync preserves Tauri native reasoning lanes', async () => {
     const source = await readProjectFile('src/scripts/openai.js');
 
