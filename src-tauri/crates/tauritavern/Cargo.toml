@@ -23,6 +23,7 @@ tauri = { version = "2.11.5", features = ["macos-private-api", "protocol-asset"]
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-fs = "2.5.1"
 tauri-plugin-notification = "2.3.3"
+tauri-plugin-dialog = "2.7.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -72,7 +73,6 @@ tt-application = { path = "../tt-application", features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
-tauri-plugin-dialog = "2.7.2"
 tauri-plugin-pilot = { version = "0.7.2", optional = true }
 tauri-plugin-single-instance = "2.4.3"
 tauri-plugin-window-state = "2.4.1"

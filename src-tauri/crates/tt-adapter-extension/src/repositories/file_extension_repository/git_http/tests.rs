@@ -135,8 +135,12 @@ fn ok(stream: &mut TcpStream, body: &[u8]) -> io::Result<()> {
 }
 
 fn git_http() -> GitHttp {
-    GitHttp::new(HttpClientPool::new(TEST_USER_AGENT).git_blocking_client_builder())
-        .expect("build Git HTTP bridge")
+    GitHttp::new(
+        HttpClientPool::new(TEST_USER_AGENT)
+            .git_blocking_client_builder()
+            .expect("configure Git HTTP client"),
+    )
+    .expect("build Git HTTP bridge")
 }
 
 #[test]
@@ -470,6 +474,7 @@ fn status_and_timeout_errors_are_typed_and_redacted() {
     let mut http = GitHttp::new(
         HttpClientPool::new(TEST_USER_AGENT)
             .git_blocking_client_builder()
+            .expect("configure short-timeout client")
             .timeout(Duration::from_millis(50)),
     )
     .expect("build short-timeout bridge");

@@ -158,7 +158,9 @@ export function createTauriTavernSettingsApp(options) {
         },
         computed: {
             systemVisible() {
-                return this.capabilities.supportsDataRootSelection || this.capabilities.requestProxyAllowed;
+                return this.capabilities.supportsDataRootSelection
+                    || this.capabilities.requestProxyAllowed
+                    || this.draft.requestProxy.enabled;
             },
             panelRuntimeOptions() {
                 return translateOptions(PANEL_RUNTIME_OPTIONS, this.tr);
@@ -552,7 +554,7 @@ export function createTauriTavernSettingsApp(options) {
                     </details>
 
                     <details
-                        v-if="capabilities.requestProxyAllowed"
+                        v-if="capabilities.requestProxyAllowed || draft.requestProxy.enabled"
                         class="tt-settings-disclosure"
                         :open="details.requestProxy"
                         @toggle="details.requestProxy = $event.currentTarget.open"
@@ -568,6 +570,7 @@ export function createTauriTavernSettingsApp(options) {
                             <SettingRow :label="tr('Enable Request Proxy')">
                                 <ToggleSwitch
                                     :model-value="draft.requestProxy.enabled"
+                                    :disabled="!capabilities.requestProxyAllowed && !draft.requestProxy.enabled"
                                     @update:model-value="setRequestProxyEnabled"
                                 />
                             </SettingRow>
@@ -577,7 +580,7 @@ export function createTauriTavernSettingsApp(options) {
                                     v-model="draft.requestProxy.url"
                                     class="text_pole tt-settings-input"
                                     type="text"
-                                    :disabled="!draft.requestProxy.enabled"
+                                    :disabled="!draft.requestProxy.enabled || !capabilities.requestProxyAllowed"
                                     placeholder="http://127.0.0.1:7890"
                                 />
                             </SettingRow>
@@ -586,7 +589,7 @@ export function createTauriTavernSettingsApp(options) {
                                 <textarea
                                     v-model="draft.requestProxy.bypass"
                                     rows="6"
-                                    :disabled="!draft.requestProxy.enabled"
+                                    :disabled="!draft.requestProxy.enabled || !capabilities.requestProxyAllowed"
                                     placeholder="localhost&#10;127.0.0.1&#10;10.0.0.0/8"
                                 ></textarea>
                                 <small class="tt-settings-section-note">{{ tr('Matching hosts will connect directly (no proxy).') }}</small>

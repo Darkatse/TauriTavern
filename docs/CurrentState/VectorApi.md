@@ -23,7 +23,7 @@ same-origin route
   -> vector_handle
   -> VectorService
      -> VectorRepository             -> tt-adapter-vector / redb
-     -> LocalEmbeddingRepository     -> tt-adapter-vector / FastEmbed
+     -> LocalEmbeddingRepository     -> tt-adapter-vector / Candle
      -> RemoteEmbeddingRepository    -> tt-adapter-provider-http
 ```
 
@@ -45,11 +45,7 @@ same-origin route
 
 ## 4. Embedding source
 
-- `transformers`：Vector 设置可选择以下本地模型，首次使用时下载到 `_cache/embedding-models/` 并缓存；未携带 `model` 的旧调用继续使用 Jina v2，避免升级时静默切换已有索引。
-  - `jinaai/jina-embeddings-v2-base-en`：兼容旧默认。
-  - `BAAI/bge-m3`：当前只消费 dense 输出。
-  - `Qwen/Qwen3-Embedding-0.6B`：query 使用检索 instruction，document 保持原文。
-  - `google/embeddinggemma-300m`：使用 FastEmbed 的 Q4 ONNX 版本，query/document 分别使用官方 retrieval prompt。
+- `transformers`：本地使用 `Qwen/Qwen3-Embedding-0.6B`，首次使用时下载到 `_cache/embedding-models/` 并缓存；query 使用检索 instruction，document 保持原文，未携带 `model` 时默认使用该模型。
 - `webllm`：沿用前端预计算映射。
 - `koboldcpp`：兼容 `/api/backends/kobold/embed`，并把服务端报告的实际 embedding model 带入 Vector scope，避免同一 endpoint 换模型后混合向量空间。
 - OpenAI-compatible、Cohere、Nomic、Google AI Studio、Vertex AI、Extras、Ollama、llama.cpp、vLLM：由 provider HTTP adapter 按各自协议发送。
@@ -58,4 +54,4 @@ same-origin route
 
 与上游一致，Vector 兼容层不区分交互式与批量请求，也不额外施加生成期或 embedding 专属超时；调用会等待本地推理或远端请求完成并正常传播错误。
 
-本地模型 id、量化/runtime 版本、最大 token 长度和 prompt 版本共同组成 Vector profile。模型切换不会混合向量空间；repository 同时只保留一个已加载 runtime，切换时释放旧模型以限制常驻内存。
+本地模型 id、量化/runtime 版本、最大 token 长度和 prompt 版本共同组成 Vector profile。repository 懒加载并复用 Qwen tokenizer 与 mmap 权重。

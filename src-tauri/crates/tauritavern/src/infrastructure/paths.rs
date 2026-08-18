@@ -39,7 +39,6 @@ pub enum RuntimeMode {
 #[derive(Debug, Clone)]
 pub struct RuntimePaths {
     pub mode: RuntimeMode,
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub app_root: PathBuf,
     pub data_root: PathBuf,
     pub log_root: PathBuf,
@@ -57,7 +56,6 @@ impl RuntimePaths {
 
         Self {
             mode,
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             app_root,
             data_root,
             log_root,

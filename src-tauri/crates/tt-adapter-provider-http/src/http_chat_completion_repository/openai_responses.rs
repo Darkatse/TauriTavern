@@ -46,7 +46,7 @@ impl ResponsesWsSessionPool {
         endpoint_path: &str,
         session_id: &str,
     ) -> Result<Arc<Mutex<ResponsesWsSession>>, DomainError> {
-        let (client, transport_revision) = repository.websocket_client()?;
+        let (client, transport_revision) = repository.websocket_client(config)?;
         let connection_key = ws_connection_key(config, endpoint_path, transport_revision)?;
         if let Some(session) = self.sessions.lock().await.get(session_id).cloned()
             && session.lock().await.connection_key == connection_key
@@ -289,9 +289,9 @@ async fn generate_http(
     payload: &Value,
     provider_name: &str,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let http_payload = upstream_payload(payload)?;
     let request = client
         .post(url)
@@ -352,9 +352,9 @@ async fn generate_stream_http(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
-    let client = repository.stream_client()?;
+    let client = repository.stream_client(config)?;
     let http_payload = upstream_payload(payload)?;
     let request = client
         .post(url)
@@ -505,9 +505,10 @@ async fn connect_responses_ws(
     let key = generate_key();
     let request = build_ws_upgrade_request(&client, config, endpoint_path, &key)?;
     let response = client.execute(request).await.map_err(|error| {
-        DomainError::transient(format!(
-            "OpenAI Responses WebSocket upgrade request failed: {error}"
-        ))
+        HttpChatCompletionRepository::map_transport_error(
+            "OpenAI Responses WebSocket upgrade request failed",
+            error,
+        )
     })?;
 
     if response.status() != StatusCode::SWITCHING_PROTOCOLS {
@@ -626,12 +627,7 @@ fn websocket_authorization_header(config: &ChatCompletionApiConfig) -> Option<St
 }
 
 fn responses_ws_upgrade_url(base_url: &str, endpoint_path: &str) -> Result<String, DomainError> {
-    let http_url = HttpChatCompletionRepository::build_url(base_url, endpoint_path);
-    let mut url = url::Url::parse(&http_url).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Invalid OpenAI Responses WebSocket URL {http_url}: {error}"
-        ))
-    })?;
+    let mut url = HttpChatCompletionRepository::build_url(base_url, endpoint_path)?;
     let scheme = match url.scheme() {
         "https" | "http" => return Ok(url.to_string()),
         "wss" => "https",
@@ -643,18 +639,13 @@ fn responses_ws_upgrade_url(base_url: &str, endpoint_path: &str) -> Result<Strin
         }
     };
     url.set_scheme(scheme).map_err(|_| {
-        DomainError::InvalidData(format!("Invalid OpenAI Responses WebSocket URL {http_url}"))
+        DomainError::InvalidData(format!("Invalid OpenAI Responses WebSocket URL {url}"))
     })?;
     Ok(url.to_string())
 }
 
 fn responses_ws_url(base_url: &str, endpoint_path: &str) -> Result<String, DomainError> {
-    let http_url = HttpChatCompletionRepository::build_url(base_url, endpoint_path);
-    let mut url = url::Url::parse(&http_url).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Invalid OpenAI Responses WebSocket URL {http_url}: {error}"
-        ))
-    })?;
+    let mut url = HttpChatCompletionRepository::build_url(base_url, endpoint_path)?;
     let scheme = match url.scheme() {
         "https" => "wss",
         "http" => "ws",
@@ -666,7 +657,7 @@ fn responses_ws_url(base_url: &str, endpoint_path: &str) -> Result<String, Domai
         }
     };
     url.set_scheme(scheme).map_err(|_| {
-        DomainError::InvalidData(format!("Invalid OpenAI Responses WebSocket URL {http_url}"))
+        DomainError::InvalidData(format!("Invalid OpenAI Responses WebSocket URL {url}"))
     })?;
     Ok(url.to_string())
 }
@@ -915,6 +906,7 @@ mod tests {
     fn websocket_request_prefers_explicit_authorization_header() {
         let config = ChatCompletionApiConfig {
             base_url: "https://api.openai.com/v1".to_string(),
+            user_configured_endpoint: false,
             api_key: "secret".to_string(),
             authorization_header: Some("Bearer override".to_string()),
             vertexai_service_account_json: None,
@@ -948,6 +940,7 @@ mod tests {
     fn ws_connection_key_includes_transport_revision() {
         let config = ChatCompletionApiConfig {
             base_url: "https://api.openai.com/v1".to_string(),
+            user_configured_endpoint: false,
             api_key: "secret".to_string(),
             authorization_header: None,
             vertexai_service_account_json: None,

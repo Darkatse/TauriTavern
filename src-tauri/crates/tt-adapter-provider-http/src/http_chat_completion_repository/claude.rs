@@ -24,9 +24,9 @@ pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
 ) -> Result<Value, DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, "/models");
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, "/models")?;
 
-    let client = repository.client()?;
+    let client = repository.metadata_client(config)?;
     let request = client
         .get(url)
         .header(ACCEPT, "application/json")
@@ -65,9 +65,9 @@ pub(super) async fn generate(
         endpoint_path
     };
 
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -117,9 +117,9 @@ pub(super) async fn generate_stream(
         endpoint_path
     };
 
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
-    let client = repository.stream_client()?;
+    let client = repository.stream_client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")

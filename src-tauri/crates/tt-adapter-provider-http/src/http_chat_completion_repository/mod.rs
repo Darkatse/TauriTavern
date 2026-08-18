@@ -3,11 +3,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Client, RequestBuilder, StatusCode};
+use reqwest::{Client, RequestBuilder, StatusCode, Url};
 use serde_json::Value;
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
+use tt_domain::models::endpoint_url::append_endpoint_path;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamSender,
@@ -125,22 +126,54 @@ impl HttpChatCompletionRepository {
         }
     }
 
-    fn client(&self) -> Result<Client, DomainError> {
-        self.http_clients.client(HttpClientProfile::ChatCompletion)
+    fn client(&self, config: &ChatCompletionApiConfig) -> Result<Client, DomainError> {
+        self.client_for_profile(config, HttpClientProfile::ChatCompletion)
     }
 
-    fn stream_client(&self) -> Result<Client, DomainError> {
-        self.http_clients
-            .client(HttpClientProfile::ChatCompletionStream)
+    fn metadata_client(&self, config: &ChatCompletionApiConfig) -> Result<Client, DomainError> {
+        self.client_for_profile(config, HttpClientProfile::ProviderMetadata)
     }
 
-    fn websocket_client(&self) -> Result<(Client, u64), DomainError> {
-        self.http_clients
-            .client_with_revision(HttpClientProfile::ChatCompletionWebSocket)
+    fn client_for_profile(
+        &self,
+        config: &ChatCompletionApiConfig,
+        profile: HttpClientProfile,
+    ) -> Result<Client, DomainError> {
+        if config.user_configured_endpoint {
+            self.http_clients
+                .user_endpoint_client(profile, &config.base_url)
+        } else {
+            self.http_clients.client(profile)
+        }
     }
 
-    fn build_url(base_url: &str, path: &str) -> String {
-        format!("{}{}", base_url.trim_end_matches('/'), path)
+    fn stream_client(&self, config: &ChatCompletionApiConfig) -> Result<Client, DomainError> {
+        if config.user_configured_endpoint {
+            self.http_clients
+                .user_endpoint_client(HttpClientProfile::ChatCompletionStream, &config.base_url)
+        } else {
+            self.http_clients
+                .client(HttpClientProfile::ChatCompletionStream)
+        }
+    }
+
+    fn websocket_client(
+        &self,
+        config: &ChatCompletionApiConfig,
+    ) -> Result<(Client, u64), DomainError> {
+        if config.user_configured_endpoint {
+            self.http_clients.user_endpoint_client_with_revision(
+                HttpClientProfile::ChatCompletionWebSocket,
+                &config.base_url,
+            )
+        } else {
+            self.http_clients
+                .client_with_revision(HttpClientProfile::ChatCompletionWebSocket)
+        }
+    }
+
+    fn build_url(base_url: &str, path: &str) -> Result<Url, DomainError> {
+        append_endpoint_path(base_url, path)
     }
 
     fn apply_bearer_auth(request: RequestBuilder, api_key: &str) -> RequestBuilder {
@@ -829,6 +862,7 @@ mod tests {
     fn apply_openai_auth_prefers_explicit_authorization_header() {
         let config = ChatCompletionApiConfig {
             base_url: "https://example.com/v1".to_string(),
+            user_configured_endpoint: false,
             api_key: "saved-secret".to_string(),
             authorization_header: Some("Bearer override".to_string()),
             vertexai_service_account_json: None,
@@ -858,6 +892,7 @@ mod tests {
     fn additional_headers_replace_existing_header_values() {
         let config = ChatCompletionApiConfig {
             base_url: "https://example.com/v1".to_string(),
+            user_configured_endpoint: false,
             api_key: "saved-secret".to_string(),
             authorization_header: None,
             vertexai_service_account_json: None,

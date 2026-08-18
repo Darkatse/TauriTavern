@@ -13,9 +13,9 @@ pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
 ) -> Result<Value, DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, "/models");
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, "/models")?;
 
-    let client = repository.client()?;
+    let client = repository.metadata_client(config)?;
     let request = client.get(url).header(ACCEPT, "application/json");
     let request = HttpChatCompletionRepository::apply_bearer_auth(request, &config.api_key);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
@@ -46,9 +46,9 @@ pub(super) async fn generate(
     payload: &Value,
 ) -> Result<Value, DomainError> {
     let endpoint_path = normalize_endpoint_path(endpoint_path);
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -84,9 +84,9 @@ pub(super) async fn generate_stream(
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
     let endpoint_path = normalize_endpoint_path(endpoint_path);
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
-    let client = repository.stream_client()?;
+    let client = repository.stream_client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")

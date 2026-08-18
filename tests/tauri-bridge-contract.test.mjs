@@ -25,11 +25,39 @@ global.window = {
 // Import the bridge under test
 const tauriBridgePath = path.join(REPO_ROOT, 'src/tauri-bridge.js');
 const {
+    authorizeChatCompletionEndpoint,
     getChatBackupStorageStats,
     updateTauriTavernSettings,
     openDialog,
     setDataRoot,
 } = await import(pathToFileURL(tauriBridgePath).href);
+
+test('local endpoint authorization bridge forwards the selected provider config', async () => {
+    const dto = {
+        chat_completion_source: 'custom',
+        custom_url: 'http://192.168.1.2:11434/v1',
+        reverse_proxy: '',
+    };
+
+    await authorizeChatCompletionEndpoint(dto, 'zh-cn', true);
+    assert.equal(lastInvokedCommand, 'authorize_chat_completion_endpoint');
+    assert.deepEqual(lastInvokedArgs, {
+        dto,
+        locale: 'zh-cn',
+        prompt: true,
+    });
+});
+
+test('local endpoint authorization bridge defaults to a non-interactive grant check', async () => {
+    const dto = {
+        chat_completion_source: 'custom',
+        custom_url: 'http://192.168.1.2:11434/v1',
+        reverse_proxy: '',
+    };
+
+    await authorizeChatCompletionEndpoint(dto);
+    assert.equal(lastInvokedArgs.prompt, false);
+});
 
 test('getChatBackupStorageStats invokes the lightweight stats command', async () => {
     lastInvokedCommand = null;

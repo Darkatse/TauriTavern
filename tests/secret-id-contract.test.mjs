@@ -220,6 +220,23 @@ test('chat completion status frontend includes active secret id snapshot', async
     assert.match(getStatusOpen, /data\.secret_id = activeSecret\.id;/);
 });
 
+test('chat completion status frontend does not preserve a stale valid state after errors', async () => {
+    const source = await readFile(
+        new URL('../src/scripts/openai.js', import.meta.url),
+        'utf8',
+    );
+    const getStatusOpen = extractDeclaration(source, 'async function getStatusOpen');
+
+    assert.match(
+        getStatusOpen,
+        /if \(responseData\.error\) \{[\s\S]*?if \(!canBypass\) \{[\s\S]*?setOnlineStatus\('no_connection'\);[\s\S]*?toastr\.error/,
+    );
+    assert.match(
+        getStatusOpen,
+        /else if \(responseData\.bypass\) \{[\s\S]*?setOnlineStatus\(t`Status check bypassed`\);[\s\S]*?\} else \{[\s\S]*?setOnlineStatus\(t`Valid`\)/,
+    );
+});
+
 test('connection manager applies profiles as a suspended validation batch', async () => {
     const source = await readFile(
         new URL('../src/scripts/extensions/connection-manager/index.js', import.meta.url),

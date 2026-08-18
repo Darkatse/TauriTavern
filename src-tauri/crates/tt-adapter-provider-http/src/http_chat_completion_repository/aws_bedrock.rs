@@ -77,7 +77,7 @@ pub(super) async fn list_models(
     let foundation_url = format!("{control_plane_base}/foundation-models?byOutputModality=TEXT");
     let profiles_url = format!("{control_plane_base}/inference-profiles");
 
-    let client = repository.client()?;
+    let client = repository.metadata_client(config)?;
     // Doing the two calls in sequence (rather than `tokio::try_join!`) keeps
     // the dependency graph small and matters very little here: each call is a
     // small JSON GET against the regional control plane.
@@ -246,9 +246,9 @@ pub(super) async fn generate(
         endpoint_path,
         config.aws_bedrock_custom_response_path.as_deref(),
     )?;
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -325,9 +325,9 @@ pub(super) async fn generate_stream(
         endpoint_path,
         config.aws_bedrock_custom_stream_path.as_deref(),
     )?;
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, &stream_endpoint);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, &stream_endpoint)?;
 
-    let client = repository.stream_client()?;
+    let client = repository.stream_client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")

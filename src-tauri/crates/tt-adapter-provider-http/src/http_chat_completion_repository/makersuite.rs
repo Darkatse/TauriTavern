@@ -20,7 +20,7 @@ pub(super) async fn list_models(
 ) -> Result<Value, DomainError> {
     let url = build_gemini_url(&config.base_url, "models");
 
-    let client = repository.client()?;
+    let client = repository.metadata_client(config)?;
     let request = client.get(url).header(ACCEPT, "application/json");
     let request = apply_gemini_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
@@ -98,7 +98,7 @@ pub(super) async fn generate(
     let model_path = format!("{}:{method}", normalize_gemini_model(model));
     let url = build_gemini_url(&config.base_url, &model_path);
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -153,7 +153,7 @@ pub(super) async fn generate_stream(
     let model_path = format!("{}:{method}", normalize_gemini_model(model));
     let url = build_gemini_url(&config.base_url, &model_path);
 
-    let client = repository.stream_client()?;
+    let client = repository.stream_client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -280,6 +280,7 @@ mod tests {
     fn gemini_auth_prefers_explicit_authorization_header() {
         let config = ChatCompletionApiConfig {
             base_url: "https://example.com".to_string(),
+            user_configured_endpoint: false,
             api_key: "saved-secret".to_string(),
             authorization_header: Some("Bearer override".to_string()),
             vertexai_service_account_json: None,

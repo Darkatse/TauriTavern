@@ -29,6 +29,7 @@ use tt_application::services::group_chat_service::GroupChatService;
 use tt_application::services::group_service::GroupService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
+use tt_application::services::local_endpoint_access_service::LocalEndpointAccessService;
 use tt_application::services::mcp_service::McpService;
 use tt_application::services::native_regex_service::NativeRegexService;
 use tt_application::services::preset_service::PresetService;
@@ -49,6 +50,7 @@ use tt_application::services::user_service::UserService;
 use tt_application::services::vector_service::VectorService;
 use tt_application::services::world_info_service::WorldInfoService;
 use tt_domain::errors::DomainError;
+use tt_ports::local_endpoint_access::LocalEndpointAccessRuntime;
 use tt_ports::skill_script::SkillScriptEngine;
 
 use super::{adapters, repositories};
@@ -109,6 +111,14 @@ pub(super) async fn build(
     let llm_connection_service = Arc::new(LlmConnectionService::new(
         repositories.llm_connection_repository.clone(),
     ));
+    let local_endpoint_runtime: Arc<dyn LocalEndpointAccessRuntime> = http_client_pool.clone();
+    let local_endpoint_access_service = Arc::new(
+        LocalEndpointAccessService::initialize(
+            repositories.local_endpoint_grant_repository.clone(),
+            local_endpoint_runtime,
+        )
+        .await,
+    );
     let mcp_gateway = Arc::new(RmcpMcpGateway::new(http_client_pool));
     let mcp_service = Arc::new(McpService::new(
         repositories.mcp_server_repository.clone(),
@@ -275,6 +285,7 @@ pub(super) async fn build(
         agent_runtime_service: agent_services.agent_runtime_service,
         chat_completion_service,
         llm_connection_service,
+        local_endpoint_access_service,
         mcp_service,
         provider_metadata_service,
         vector_service,

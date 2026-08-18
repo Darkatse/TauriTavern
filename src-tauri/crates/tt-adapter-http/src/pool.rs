@@ -1,16 +1,22 @@
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use reqwest::blocking::{Client as BlockingClient, ClientBuilder as BlockingClientBuilder};
 use reqwest::redirect::Policy;
-use reqwest::{Client, NoProxy, Proxy};
+use reqwest::{Client, NoProxy, Proxy, Url};
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::RequestProxySettings;
+use tt_ports::local_endpoint_access::{LocalEndpointAccessRuntime, LocalEndpointCandidate};
 use tt_ports::settings::RequestProxyRuntime;
 
 use crate::client::{build_http_client, configure_blocking_http_client};
+use crate::restricted_endpoint::{
+    RestrictedEndpointResolver, UserEndpointRoute, inspect_user_endpoint,
+    restricted_redirect_policy, user_endpoint_route,
+};
 
 pub const CHAT_COMPLETION_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 pub const CHAT_COMPLETION_NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -43,11 +49,45 @@ pub enum HttpClientProfile {
     Mcp,
 }
 
+#[derive(Clone)]
+struct ConfiguredProxy {
+    proxy: Proxy,
+    host: String,
+}
+
+#[derive(Clone, Default)]
+enum RequestProxyState {
+    #[default]
+    Disabled,
+    Configured(Box<ConfiguredProxy>),
+    Invalid,
+}
+
+impl RequestProxyState {
+    fn configured(&self) -> Result<Option<ConfiguredProxy>, DomainError> {
+        match self {
+            Self::Disabled => Ok(None),
+            Self::Configured(proxy) => Ok(Some(proxy.as_ref().clone())),
+            Self::Invalid => Err(DomainError::InvalidData(
+                "Request proxy settings are invalid; update or disable the proxy in TauriTavern Settings"
+                    .to_string(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ClientCacheKey {
+    profile: HttpClientProfile,
+    user_endpoint_route: Option<UserEndpointRoute>,
+}
+
 #[derive(Default)]
 struct HttpClientPoolState {
     revision: u64,
-    proxy: Option<Proxy>,
-    clients: HashMap<HttpClientProfile, Client>,
+    proxy: RequestProxyState,
+    local_endpoint_grants: HashSet<String>,
+    clients: HashMap<ClientCacheKey, Client>,
 }
 
 pub struct HttpClientPool {
@@ -83,11 +123,43 @@ impl HttpClientPool {
     ) -> Result<(), DomainError> {
         let proxy = proxy_from_settings(settings)?;
 
+        self.replace_request_proxy(
+            proxy
+                .map(Box::new)
+                .map_or(RequestProxyState::Disabled, RequestProxyState::Configured),
+        );
+        Ok(())
+    }
+
+    /// Loads persisted settings without ever degrading an invalid proxy to direct transport.
+    pub fn apply_persisted_request_proxy_settings(
+        &self,
+        settings: &RequestProxySettings,
+    ) -> Result<(), DomainError> {
+        match proxy_from_settings(settings) {
+            Ok(proxy) => self.replace_request_proxy(
+                proxy
+                    .map(Box::new)
+                    .map_or(RequestProxyState::Disabled, RequestProxyState::Configured),
+            ),
+            Err(error) => {
+                self.replace_request_proxy(RequestProxyState::Invalid);
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    /// Keeps the application repairable while preventing policy-invalid proxy bypass.
+    pub fn block_requests_for_invalid_proxy(&self) {
+        self.replace_request_proxy(RequestProxyState::Invalid);
+    }
+
+    fn replace_request_proxy(&self, proxy: RequestProxyState) {
         let mut state = self.state.write().unwrap();
         state.proxy = proxy;
         state.clients.clear();
         state.revision += 1;
-        Ok(())
     }
 
     pub fn client(&self, profile: HttpClientProfile) -> Result<Client, DomainError> {
@@ -99,24 +171,67 @@ impl HttpClientPool {
         &self,
         profile: HttpClientProfile,
     ) -> Result<(Client, u64), DomainError> {
+        self.client_with_revision_for_route(profile, None)
+    }
+
+    pub fn user_endpoint_client(
+        &self,
+        profile: HttpClientProfile,
+        base_url: &str,
+    ) -> Result<Client, DomainError> {
+        self.user_endpoint_client_with_revision(profile, base_url)
+            .map(|(client, _revision)| client)
+    }
+
+    pub fn user_endpoint_client_with_revision(
+        &self,
+        profile: HttpClientProfile,
+        base_url: &str,
+    ) -> Result<(Client, u64), DomainError> {
+        let route = {
+            let state = self.state.read().unwrap();
+            user_endpoint_route(base_url, &state.local_endpoint_grants)?
+        };
+        self.client_with_revision_for_route(profile, Some(route))
+    }
+
+    fn client_with_revision_for_route(
+        &self,
+        profile: HttpClientProfile,
+        user_endpoint_route: Option<UserEndpointRoute>,
+    ) -> Result<(Client, u64), DomainError> {
+        let key = ClientCacheKey {
+            profile,
+            user_endpoint_route,
+        };
         loop {
             let (revision, proxy) = {
                 let state = self.state.read().unwrap();
-                if let Some(client) = state.clients.get(&profile) {
+                if let Some(client) = state.clients.get(&key) {
                     return Ok((client.clone(), state.revision));
                 }
 
-                (state.revision, state.proxy.clone())
+                let proxy = if user_endpoint_route == Some(UserEndpointRoute::LocalDirect) {
+                    None
+                } else {
+                    state.proxy.configured()?
+                };
+                (state.revision, proxy)
             };
 
-            let client = build_profile_client(profile, proxy, &self.product_user_agent)?;
+            let client = build_profile_client(
+                profile,
+                proxy,
+                user_endpoint_route,
+                &self.product_user_agent,
+            )?;
 
             let mut state = self.state.write().unwrap();
             if state.revision != revision {
                 continue;
             }
 
-            match state.clients.entry(profile) {
+            match state.clients.entry(key) {
                 Entry::Occupied(entry) => return Ok((entry.get().clone(), state.revision)),
                 Entry::Vacant(entry) => {
                     entry.insert(client.clone());
@@ -126,18 +241,21 @@ impl HttpClientPool {
         }
     }
 
-    pub fn git_blocking_client_builder(&self) -> BlockingClientBuilder {
-        let proxy = self.state.read().unwrap().proxy.clone();
+    pub fn git_blocking_client_builder(&self) -> Result<BlockingClientBuilder, DomainError> {
+        let proxy = self.state.read().unwrap().proxy.configured()?;
         let mut builder = BlockingClient::builder()
             .no_proxy()
             .connect_timeout(GIT_CONNECT_TIMEOUT)
             .timeout(GIT_REQUEST_TIMEOUT);
 
         if let Some(proxy) = proxy {
-            builder = builder.proxy(proxy);
+            builder = builder.proxy(proxy.proxy);
         }
 
-        configure_blocking_http_client(builder, &self.product_user_agent)
+        Ok(configure_blocking_http_client(
+            builder,
+            &self.product_user_agent,
+        ))
     }
 }
 
@@ -166,7 +284,30 @@ impl RequestProxyRuntime for HttpClientPool {
     }
 }
 
-fn proxy_from_settings(settings: &RequestProxySettings) -> Result<Option<Proxy>, DomainError> {
+#[async_trait]
+impl LocalEndpointAccessRuntime for HttpClientPool {
+    async fn inspect_user_endpoint(
+        &self,
+        endpoint: &str,
+    ) -> Result<Option<LocalEndpointCandidate>, DomainError> {
+        inspect_user_endpoint(endpoint).await
+    }
+
+    fn replace_local_endpoint_grants(&self, endpoints: &[String]) {
+        let grants = endpoints.iter().cloned().collect();
+        let mut state = self.state.write().unwrap();
+        if state.local_endpoint_grants == grants {
+            return;
+        }
+        state.local_endpoint_grants = grants;
+        state.clients.clear();
+        state.revision += 1;
+    }
+}
+
+fn proxy_from_settings(
+    settings: &RequestProxySettings,
+) -> Result<Option<ConfiguredProxy>, DomainError> {
     if !settings.enabled {
         return Ok(None);
     }
@@ -178,7 +319,33 @@ fn proxy_from_settings(settings: &RequestProxySettings) -> Result<Option<Proxy>,
         ));
     }
 
-    let mut proxy = Proxy::all(url)
+    let proxy_url = Url::parse(url)
+        .ok()
+        .filter(Url::has_host)
+        .map_or_else(|| Url::parse(&format!("http://{url}")), Ok)
+        .map_err(|error| DomainError::InvalidData(format!("Invalid request proxy URL: {error}")))?;
+    if !matches!(
+        proxy_url.scheme(),
+        "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h"
+    ) {
+        return Err(DomainError::InvalidData(
+            "Request proxy URL must use http, https, socks4, socks4a, socks5, or socks5h"
+                .to_string(),
+        ));
+    }
+    if !matches!(proxy_url.path(), "" | "/")
+        || proxy_url.query().is_some()
+        || proxy_url.fragment().is_some()
+    {
+        return Err(DomainError::InvalidData(
+            "Request proxy URL must not include a path, query, or fragment".to_string(),
+        ));
+    }
+    let host = proxy_url
+        .host_str()
+        .expect("normalized proxy URL guarantees a host")
+        .to_string();
+    let mut proxy = Proxy::all(proxy_url)
         .map_err(|error| DomainError::InvalidData(format!("Invalid request proxy URL: {error}")))?;
 
     let bypass = normalized_bypass_csv(&settings.bypass);
@@ -186,7 +353,7 @@ fn proxy_from_settings(settings: &RequestProxySettings) -> Result<Option<Proxy>,
         proxy = proxy.no_proxy(NoProxy::from_string(&bypass));
     }
 
-    Ok(Some(proxy))
+    Ok(Some(ConfiguredProxy { proxy, host }))
 }
 
 fn normalized_bypass_csv(entries: &[String]) -> String {
@@ -200,7 +367,8 @@ fn normalized_bypass_csv(entries: &[String]) -> String {
 
 fn build_profile_client(
     profile: HttpClientProfile,
-    proxy: Option<Proxy>,
+    proxy: Option<ConfiguredProxy>,
+    user_endpoint_route: Option<UserEndpointRoute>,
     product_user_agent: &str,
 ) -> Result<Client, DomainError> {
     let mut builder = Client::builder().no_proxy();
@@ -240,8 +408,14 @@ fn build_profile_client(
             .connect_timeout(MCP_CONNECT_TIMEOUT),
     };
 
+    if let Some(route) = user_endpoint_route {
+        builder = builder.redirect(restricted_redirect_policy()).dns_resolver(
+            RestrictedEndpointResolver::new(proxy.as_ref().map(|proxy| proxy.host.as_str()), route),
+        );
+    }
+
     if let Some(proxy) = proxy {
-        builder = builder.proxy(proxy);
+        builder = builder.proxy(proxy.proxy);
     }
 
     build_http_client(builder, product_user_agent).map_err(|error| {
@@ -260,14 +434,23 @@ mod tests {
 
     use super::{HttpClientPool, HttpClientProfile};
     use rcgen::{CertifiedKey, generate_simple_self_signed};
+    use reqwest::StatusCode;
     use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
     use rustls::{ServerConfig, ServerConnection, StreamOwned};
     use tt_domain::models::settings::RequestProxySettings;
+    use tt_ports::local_endpoint_access::LocalEndpointAccessRuntime;
 
     const TEST_USER_AGENT: &str = "TauriTavern/test";
 
     fn pool() -> HttpClientPool {
         HttpClientPool::new(TEST_USER_AGENT)
+    }
+
+    fn grant_local_endpoint(pool: &HttpClientPool, endpoint: &str) {
+        let endpoint = tt_domain::models::endpoint_url::parse_user_http_endpoint(endpoint)
+            .unwrap()
+            .to_string();
+        pool.replace_local_endpoint_grants(&[endpoint]);
     }
 
     struct CaptureServer {
@@ -414,14 +597,15 @@ mod tests {
     }
 
     #[test]
-    fn http_proxy_url_is_accepted() {
+    fn schemeless_proxy_url_is_accepted_and_keeps_its_host() {
         let settings = RequestProxySettings {
             enabled: true,
-            url: "http://127.0.0.1:7890".to_string(),
+            url: "proxy.internal:7890".to_string(),
             bypass: vec!["localhost".to_string()],
         };
 
-        HttpClientPool::validate_request_proxy_settings(&settings).unwrap();
+        let configured = super::proxy_from_settings(&settings).unwrap().unwrap();
+        assert_eq!(configured.host, "proxy.internal");
     }
 
     #[test]
@@ -433,6 +617,56 @@ mod tests {
         };
 
         HttpClientPool::validate_request_proxy_settings(&settings).unwrap();
+    }
+
+    #[test]
+    fn unsupported_or_ambiguous_proxy_urls_are_rejected() {
+        for url in [
+            "ftp://proxy.internal:21",
+            "http://proxy.internal:7890/path",
+            "http://proxy.internal:7890?mode=tunnel",
+            "http://proxy.internal:7890#fragment",
+        ] {
+            let settings = RequestProxySettings {
+                enabled: true,
+                url: url.to_string(),
+                bypass: vec![],
+            };
+
+            assert!(
+                HttpClientPool::validate_request_proxy_settings(&settings).is_err(),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_startup_proxy_blocks_outbound_clients_until_repaired() {
+        let pool = pool();
+        let invalid = RequestProxySettings {
+            enabled: true,
+            url: "ftp://proxy.internal:21".to_string(),
+            bypass: vec![],
+        };
+
+        assert!(
+            pool.apply_persisted_request_proxy_settings(&invalid)
+                .is_err()
+        );
+        assert!(pool.client(HttpClientProfile::Default).is_err());
+        assert!(pool.git_blocking_client_builder().is_err());
+        grant_local_endpoint(&pool, "http://localhost:11434/v1");
+        assert!(
+            pool.user_endpoint_client(
+                HttpClientProfile::ChatCompletion,
+                "http://localhost:11434/v1"
+            )
+            .is_ok()
+        );
+
+        pool.apply_request_proxy_settings(&RequestProxySettings::default())
+            .unwrap();
+        assert!(pool.client(HttpClientProfile::Default).is_ok());
     }
 
     #[test]
@@ -466,6 +700,19 @@ mod tests {
     }
 
     #[test]
+    fn granting_local_access_invalidates_cached_transports() {
+        let pool = pool();
+        pool.client(HttpClientProfile::Default).unwrap();
+        let revision_before = pool.state.read().unwrap().revision;
+
+        grant_local_endpoint(&pool, "http://localhost:11434/v1");
+
+        let state = pool.state.read().unwrap();
+        assert!(state.clients.is_empty());
+        assert_eq!(state.revision, revision_before + 1);
+    }
+
+    #[test]
     fn client_with_revision_tracks_proxy_revision() {
         let pool = pool();
 
@@ -493,17 +740,27 @@ mod tests {
             bypass: vec![],
         };
         pool.apply_request_proxy_settings(&enabled).unwrap();
-        assert!(pool.state.read().unwrap().proxy.is_some());
+        assert!(matches!(
+            pool.state.read().unwrap().proxy,
+            super::RequestProxyState::Configured(_)
+        ));
 
         pool.apply_request_proxy_settings(&RequestProxySettings::default())
             .unwrap();
-        assert!(pool.state.read().unwrap().proxy.is_none());
+        assert!(matches!(
+            pool.state.read().unwrap().proxy,
+            super::RequestProxyState::Disabled
+        ));
     }
 
     #[test]
     fn git_blocking_builder_uses_product_user_agent() {
         let server = capture_server();
-        let client = pool().git_blocking_client_builder().build().unwrap();
+        let client = pool()
+            .git_blocking_client_builder()
+            .unwrap()
+            .build()
+            .unwrap();
 
         client.get(&server.url).send().unwrap();
         let request = server
@@ -529,7 +786,7 @@ mod tests {
             bypass: vec![],
         })
         .unwrap();
-        let first_client = pool.git_blocking_client_builder().build().unwrap();
+        let first_client = pool.git_blocking_client_builder().unwrap().build().unwrap();
 
         pool.apply_request_proxy_settings(&RequestProxySettings {
             enabled: true,
@@ -537,7 +794,7 @@ mod tests {
             bypass: vec![],
         })
         .unwrap();
-        let second_client = pool.git_blocking_client_builder().build().unwrap();
+        let second_client = pool.git_blocking_client_builder().unwrap().build().unwrap();
 
         first_client.get("http://git.invalid/first").send().unwrap();
         second_client
@@ -569,7 +826,7 @@ mod tests {
             bypass: vec!["127.0.0.1".to_string()],
         })
         .unwrap();
-        let client = pool.git_blocking_client_builder().build().unwrap();
+        let client = pool.git_blocking_client_builder().unwrap().build().unwrap();
 
         client.get(&origin.url).send().unwrap();
         let origin_request = origin
@@ -588,7 +845,7 @@ mod tests {
         let (config, root) = test_tls_config();
 
         let (untrusted_url, untrusted_request, untrusted_handle) = tls_server(Arc::clone(&config));
-        let client = pool.git_blocking_client_builder().build().unwrap();
+        let client = pool.git_blocking_client_builder().unwrap().build().unwrap();
         assert!(client.get(untrusted_url).send().is_err());
         assert!(
             !untrusted_request
@@ -600,6 +857,7 @@ mod tests {
         let (trusted_url, trusted_request, trusted_handle) = tls_server(config);
         let client = pool
             .git_blocking_client_builder()
+            .unwrap()
             .tls_certs_only([root])
             .build()
             .unwrap();
@@ -617,5 +875,99 @@ mod tests {
                 .unwrap()
         );
         trusted_handle.join().expect("trusted TLS server");
+    }
+
+    #[tokio::test]
+    async fn approved_loopback_user_endpoint_forces_direct_client() {
+        let origin = capture_server();
+        let (proxy_url, proxy_hit, proxy_handle) = proxy_probe(Duration::from_millis(150));
+        let pool = pool();
+        pool.apply_request_proxy_settings(&RequestProxySettings {
+            enabled: true,
+            url: proxy_url,
+            bypass: vec![],
+        })
+        .unwrap();
+        assert!(
+            pool.user_endpoint_client(HttpClientProfile::ChatCompletion, &origin.url)
+                .is_err()
+        );
+        grant_local_endpoint(&pool, &origin.url);
+
+        let client = pool
+            .user_endpoint_client(HttpClientProfile::ChatCompletion, &origin.url)
+            .unwrap();
+        client.get(&origin.url).send().await.unwrap();
+
+        assert!(origin.requests.recv_timeout(Duration::from_secs(1)).is_ok());
+        assert!(!proxy_hit.recv_timeout(Duration::from_secs(1)).unwrap());
+        origin.finish();
+        proxy_handle.join().expect("proxy probe thread");
+    }
+
+    #[tokio::test]
+    async fn user_endpoint_client_follows_same_origin_redirects() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind redirect server");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let redirect_handle = thread::spawn(move || {
+            let (mut first, _peer) = listener.accept().expect("accept redirect request");
+            let first_request = read_request_head(&first).expect("read redirect request");
+            first
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("write redirect response");
+
+            let (mut second, _peer) = listener.accept().expect("accept redirected request");
+            let second_request = read_request_head(&second).expect("read redirected request");
+            second
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("write final response");
+            (first_request, second_request)
+        });
+        let pool = pool();
+        grant_local_endpoint(&pool, &base_url);
+        let client = pool
+            .user_endpoint_client(HttpClientProfile::ChatCompletion, &base_url)
+            .unwrap();
+
+        let response = client
+            .get(format!("{base_url}/start"))
+            .send()
+            .await
+            .unwrap();
+        let (first_request, second_request) = redirect_handle.join().expect("redirect server");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(first_request.starts_with("GET /start HTTP/1.1"));
+        assert!(second_request.starts_with("GET /final HTTP/1.1"));
+    }
+
+    #[tokio::test]
+    async fn user_endpoint_client_rejects_cross_origin_redirects() {
+        let (target_url, target_hit, target_handle) = proxy_probe(Duration::from_millis(150));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind redirect server");
+        let redirect_url = format!("http://{}", listener.local_addr().unwrap());
+        let redirect_handle = thread::spawn(move || {
+            let (mut stream, _peer) = listener.accept().expect("accept redirect request");
+            read_request_head(&stream).expect("read redirect request");
+            write!(
+                stream,
+                "HTTP/1.1 302 Found\r\nLocation: {target_url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .expect("write redirect response");
+        });
+        let pool = pool();
+        grant_local_endpoint(&pool, &redirect_url);
+        let client = pool
+            .user_endpoint_client(HttpClientProfile::ChatCompletion, &redirect_url)
+            .unwrap();
+
+        let error = client.get(&redirect_url).send().await.unwrap_err();
+
+        assert!(error.is_redirect());
+        assert!(!target_hit.recv_timeout(Duration::from_secs(1)).unwrap());
+        redirect_handle.join().expect("redirect server thread");
+        target_handle.join().expect("redirect target thread");
     }
 }

@@ -974,8 +974,8 @@ mod tests {
     }
 
     #[test]
-    fn local_model_selection_is_validated_and_separates_vector_spaces() {
-        let legacy = SourceContext::from_request(&VectorRouteRequestDto {
+    fn local_model_selection_defaults_to_qwen_and_rejects_unknown_models() {
+        let defaulted = SourceContext::from_request(&VectorRouteRequestDto {
             source: "transformers".to_string(),
             ..Default::default()
         })
@@ -987,12 +987,15 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(legacy.local_model, Some(LocalEmbeddingModel::JinaV2BaseEn));
+        assert_eq!(
+            defaulted.local_model,
+            Some(LocalEmbeddingModel::Qwen3Embedding06B)
+        );
         assert_eq!(
             qwen.local_model,
             Some(LocalEmbeddingModel::Qwen3Embedding06B)
         );
-        assert_ne!(legacy.profile, qwen.profile);
+        assert_eq!(defaulted.profile, qwen.profile);
 
         let error = SourceContext::from_request(&VectorRouteRequestDto {
             source: "transformers".to_string(),

@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{RwLock, watch};
 
 use crate::dto::chat_completion_dto::{
-    ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
-    ChatCompletionStreamReadResultDto,
+    ChatCompletionEndpointAccessRequestDto, ChatCompletionGenerateRequestDto,
+    ChatCompletionStatusRequestDto, ChatCompletionStreamReadResultDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::hashing::hex_lower;
@@ -96,6 +96,27 @@ impl ChatCompletionService {
 
     fn ios_policy_is_active(&self) -> bool {
         self.ios_policy.scope == IosPolicyScope::Ios
+    }
+
+    pub fn resolve_user_endpoint_for_access(
+        &self,
+        dto: &ChatCompletionEndpointAccessRequestDto,
+    ) -> Result<Option<String>, ApplicationError> {
+        let source = self.resolve_source(&dto.chat_completion_source)?;
+        self.ensure_chat_completion_source_allowed(source)?;
+
+        if self.ios_policy_is_active()
+            && !self.ios_policy.capabilities.llm.endpoint_overrides
+            && (source == ChatCompletionSource::Custom
+                || !dto.reverse_proxy.trim().is_empty()
+                || !dto.custom_url.trim().is_empty())
+        {
+            return Err(ApplicationError::PermissionDenied(
+                "iOS policy disabled capability: llm.endpoint_overrides".to_string(),
+            ));
+        }
+
+        config::resolve_user_configured_endpoint(source, &dto.reverse_proxy, &dto.custom_url)
     }
 
     fn ensure_chat_completion_source_allowed(
@@ -950,6 +971,7 @@ mod tests {
         let mut config = ChatCompletionApiConfig {
             base_url: "https://aiplatform.googleapis.com/v1/projects/p/locations/global"
                 .to_string(),
+            user_configured_endpoint: false,
             api_key: String::new(),
             authorization_header: None,
             vertexai_service_account_json: None,
@@ -974,6 +996,7 @@ mod tests {
             base_url:
                 "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1"
                     .to_string(),
+            user_configured_endpoint: false,
             api_key: String::new(),
             authorization_header: None,
             vertexai_service_account_json: None,

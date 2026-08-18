@@ -194,16 +194,24 @@ export async function getChatBackupStorageStats() {
     return invokeFn('get_chat_backup_storage_stats');
 }
 
-export async function updateTauriTavernSettings(dto) {
-    const invokeFn = getInvokeFn();
-    if (!invokeFn) {
-        throw new Error('Tauri invoke is unavailable');
+export async function authorizeChatCompletionEndpoint(dto, locale = 'en', prompt = false) {
+    if (!isPlainObject(dto)) {
+        throw new Error('Invalid chat completion endpoint authorization request');
     }
+
+    return invokeWithHostNormalization('authorize_chat_completion_endpoint', {
+        dto,
+        locale: String(locale || 'en'),
+        prompt: Boolean(prompt),
+    });
+}
+
+export async function updateTauriTavernSettings(dto) {
     if (!isPlainObject(dto)) {
         throw new Error('Invalid TauriTavern settings DTO');
     }
 
-    return invokeFn('update_tauritavern_settings', { dto });
+    return invokeWithHostNormalization('update_tauritavern_settings', { dto });
 }
 
 export async function getRuntimePaths() {

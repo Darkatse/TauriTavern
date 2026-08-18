@@ -1,5 +1,5 @@
-mod fastembed_local_embedding_repository;
+mod candle_local_embedding_repository;
 mod redb_vector_repository;
 
-pub use fastembed_local_embedding_repository::FastEmbedLocalEmbeddingRepository;
+pub use candle_local_embedding_repository::CandleLocalEmbeddingRepository;
 pub use redb_vector_repository::RedbVectorRepository;

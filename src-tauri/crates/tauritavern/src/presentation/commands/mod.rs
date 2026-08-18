@@ -27,6 +27,7 @@ pub mod image_metadata_commands;
 pub mod ios_file_bridge_commands;
 pub mod lan_sync_commands;
 pub mod llm_connection_commands;
+pub mod local_endpoint_access_commands;
 pub mod mcp_commands;
 pub mod native_regex_commands;
 pub mod preset_commands;

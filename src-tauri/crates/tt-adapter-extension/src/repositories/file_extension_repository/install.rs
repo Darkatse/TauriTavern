@@ -128,7 +128,7 @@ pub(super) fn stage_embedded(
     http_clients: &tt_adapter_http::HttpClientPool,
 ) -> Result<StagedEmbedded, DomainError> {
     let mut repo = init_embedded(staging_dir)?;
-    let http = GitHttp::new(http_clients.git_blocking_client_builder()).map_err(|error| {
+    let http = GitHttp::new(http_clients.git_blocking_client_builder()?).map_err(|error| {
         DomainError::InternalError(format!("Failed to create Git HTTP client: {error}"))
     })?;
     let (selected, candidate) = match requested_reference {
@@ -146,7 +146,7 @@ pub(super) fn stage_embedded_branch(
     http_clients: &tt_adapter_http::HttpClientPool,
 ) -> Result<StagedEmbedded, DomainError> {
     let mut repo = init_embedded(staging_dir)?;
-    let http = GitHttp::new(http_clients.git_blocking_client_builder()).map_err(|error| {
+    let http = GitHttp::new(http_clients.git_blocking_client_builder()?).map_err(|error| {
         DomainError::InternalError(format!("Failed to create Git HTTP client: {error}"))
     })?;
     let (selected, candidate) = fetch_branch(&mut repo, http, remote_url, branch)?;

@@ -41,13 +41,22 @@ test('TauriTavern Settings popup is a host wrapper around the Vue bundle', async
     assert.match(source, /mountTauriTavernSettingsApp/);
     assert.doesNotMatch(source, /from\s+['"]vue(?:\/|['"])/);
     assert.match(source, /buildTauriTavernSettingsUpdate\(viewModel\.values,\s*appHandle\.getDraft\(\)\)/);
-    assert.match(source, /applyTauriTavernSettingsUpdateEffects\(update,\s*updatedSettings\)/);
+    assert.match(
+        source,
+        /applyTauriTavernSettingsUpdateEffects\(savedUpdate\.update,\s*savedUpdate\.updatedSettings\)/,
+    );
     assert.match(source, /onClosing:\s*async\s*\(popup\)/);
     assert.match(source, /requiresChatBackupPurgeConfirmation/);
     assert.match(source, /confirmChatBackupHistoryPurge/);
-    assert.match(source, /pendingUpdate\.changes\.chatVirtualizationEnabled/);
-    assert.match(source, /pendingUpdate\.next\.chatVirtualizationEnabled/);
+    assert.match(source, /update\.changes\.chatVirtualizationEnabled/);
+    assert.match(source, /update\.next\.chatVirtualizationEnabled/);
     assert.match(source, /showChatVirtualizationCompatibility/);
+    assert.match(source, /savedUpdate\s*=\s*\{\s*update,\s*updatedSettings\s*\}/);
+    assert.ok(
+        source.indexOf('await updateTauriTavernSettings(update.patch)')
+            < source.indexOf('const result = await popupPromise'),
+        'backend validation must finish before the settings popup closes',
+    );
     assert.match(source, /zstdCompression:\s*\{[\s\S]*existing backups are converted in the background/);
     assert.match(source, /JS-Slash-Runner 4\.9\.1 or later/);
     assert.match(source, /LittleWhiteBox 3\.0\.4 or later/);
@@ -127,6 +136,11 @@ test('TauriTavern Settings Vue app stays presentation-only', async () => {
     assert.match(app, /help-topic="chatVirtualization"/);
     assert.match(app, /:disabled="draft\.chatVirtualizationEnabled"/);
     assert.match(app, /<ToggleSwitch v-model="draft\.chatVirtualizationEnabled"\s*\/>/);
+    assert.match(app, /capabilities\.requestProxyAllowed \|\| draft\.requestProxy\.enabled/);
+    assert.match(
+        app,
+        /:disabled="!capabilities\.requestProxyAllowed && !draft\.requestProxy\.enabled"/,
+    );
     assert.doesNotMatch(app, /Keeps only the viewport and true tail mounted/);
     assert.doesNotMatch(app, /CHAT_SURFACE_OPTIONS|draft\.chatSurfacePolicy/);
 });

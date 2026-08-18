@@ -153,7 +153,7 @@ async function createVectorsRuntimeHarness({
         workers_ai_model: '',
         siliconflow_model: '',
         electronhub_model: '',
-        transformers_model: 'jinaai/jina-embeddings-v2-base-en',
+        transformers_model: 'Qwen/Qwen3-Embedding-0.6B',
         ...settingsPatch,
     };
     const extension_settings = { vectors: {} };
@@ -646,12 +646,9 @@ test('vectors runtime keeps upstream 1.18 summary skip settings and native route
     }
 
     assert.match(settingsHtml, /gemini-embedding-2-preview/);
-    for (const model of [
-        'BAAI/bge-m3',
-        'Qwen/Qwen3-Embedding-0.6B',
-        'google/embeddinggemma-300m',
-    ]) {
-        assert.match(settingsHtml, new RegExp(model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(settingsHtml, /Qwen\/Qwen3-Embedding-0\.6B/);
+    for (const removedModel of ['jina-embeddings', 'BAAI/bge-m3', 'embeddinggemma']) {
+        assert.doesNotMatch(settingsHtml, new RegExp(removedModel, 'i'));
     }
 });
 
