@@ -46,7 +46,6 @@ use tt_ports::repositories::character_repository::CharacterRepository;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionRepository;
 use tt_ports::repositories::chat_payload_commit_repository::ChatPayloadCommitRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
-use tt_ports::repositories::checkpoint_repository::CheckpointRepository;
 use tt_ports::repositories::content_repository::ContentRepository;
 use tt_ports::repositories::extension_repository::ExtensionRepository;
 use tt_ports::repositories::extension_store_repository::ExtensionStoreRepository;
@@ -116,7 +115,6 @@ pub(in crate::app::composition) struct AppRepositories {
         Arc<dyn LocalEndpointGrantRepository>,
     pub(in crate::app::composition) mcp_server_repository: Arc<dyn McpServerRepository>,
     pub(in crate::app::composition) workspace_repository: Arc<dyn WorkspaceRepository>,
-    pub(in crate::app::composition) checkpoint_repository: Arc<dyn CheckpointRepository>,
     pub(in crate::app::composition) chat_completion_repository: Arc<dyn ChatCompletionRepository>,
     pub(in crate::app::composition) provider_metadata_repository:
         Arc<dyn ProviderMetadataRepository>,
@@ -278,7 +276,6 @@ pub(super) async fn build(
     let agent_invocation_repository: Arc<dyn AgentInvocationRepository> =
         file_agent_repository.clone();
     let workspace_repository: Arc<dyn WorkspaceRepository> = file_agent_repository.clone();
-    let checkpoint_repository: Arc<dyn CheckpointRepository> = file_agent_repository.clone();
     let agent_workspace_lifecycle_repository: Arc<dyn AgentWorkspaceLifecycleRepository> =
         file_agent_repository;
 
@@ -358,7 +355,6 @@ pub(super) async fn build(
         local_endpoint_grant_repository,
         mcp_server_repository,
         workspace_repository,
-        checkpoint_repository,
         chat_completion_repository,
         provider_metadata_repository,
         tokenizer_repository,

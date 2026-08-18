@@ -31,7 +31,6 @@ use tt_domain::models::tool::{
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
-use tt_ports::repositories::checkpoint_repository::CheckpointRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 
@@ -115,7 +114,6 @@ pub struct AgentRuntimeService {
     run_repository: Arc<dyn AgentRunRepository>,
     invocation_repository: Arc<dyn AgentInvocationRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
-    checkpoint_repository: Arc<dyn CheckpointRepository>,
     chat_repository: Arc<dyn ChatRepository>,
     group_chat_repository: Arc<dyn GroupChatRepository>,
     model_gateway: Arc<dyn AgentModelGateway>,
@@ -142,7 +140,6 @@ impl AgentRuntimeService {
         run_repository: Arc<dyn AgentRunRepository>,
         invocation_repository: Arc<dyn AgentInvocationRepository>,
         workspace_repository: Arc<dyn WorkspaceRepository>,
-        checkpoint_repository: Arc<dyn CheckpointRepository>,
         chat_repository: Arc<dyn ChatRepository>,
         group_chat_repository: Arc<dyn GroupChatRepository>,
         skill_service: Arc<SkillService>,
@@ -164,7 +161,6 @@ impl AgentRuntimeService {
             run_repository,
             invocation_repository,
             workspace_repository,
-            checkpoint_repository,
             chat_repository,
             group_chat_repository,
             model_gateway,

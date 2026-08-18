@@ -102,11 +102,10 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
     try {
         await assertCurrentChat(payload.chatRef, payload.stableChatId);
         const path = requirePayloadString(payload, 'path');
-        const checkpointId = requirePayloadString(payload, 'checkpointId');
         const mode = normalizeCommitMode(payload.mode);
-        const file = await readWorkspaceFile({ runId: state.runId, checkpointId, path });
+        const file = await readWorkspaceFile({ runId: state.runId, path });
         if (file?.sha256 !== requirePayloadString(payload, 'sha256')) {
-            throw new Error('agent.chat_commit_checkpoint_mismatch: checkpoint content does not match commit request');
+            throw new Error('agent.chat_commit_workspace_changed: workspace content changed before commit');
         }
         const reasoning = await prepareCommitReasoning(state.reasoning, state.runId, readModelTurn);
         const script = await state.loadScript();
@@ -314,7 +313,6 @@ function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commit
     const commit = {
         seq: commitSeq,
         commitId: payload.commitId,
-        checkpointId: payload.checkpointId,
         path: file.path,
         mode: normalizeCommitMode(payload.mode),
         reason: typeof payload.reason === 'string' ? payload.reason : undefined,
@@ -342,7 +340,6 @@ function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commit
                 profileId: payload.profileId ?? null,
                 persistBaseStateId: payload.persistBaseStateId ?? null,
                 persistStateStatus: 'not_committed',
-                checkpointId: payload.checkpointId,
                 commitId: payload.commitId,
                 commitSeq,
                 commits: [...previousCommits, commit],

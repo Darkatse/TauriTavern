@@ -144,7 +144,6 @@ impl AgentRuntimeService {
                 let direct_output_path = self
                     .capture_direct_output(
                         run_id,
-                        updates_run_status,
                         round,
                         model_response_path.as_str(),
                         &response,
@@ -199,6 +198,7 @@ impl AgentRuntimeService {
             let mut handoff = None;
             let tool_call_count = tool_calls.len();
             let completion_tool = completion_tool_name(exit_policy, &prepared.tool_turn);
+            let mut text_mutation = None;
 
             for (index, call) in tool_calls.into_iter().enumerate() {
                 if finished {
@@ -217,28 +217,25 @@ impl AgentRuntimeService {
                         cancel,
                     )
                     .await?;
-                let mut text_mutation = None;
-                match &outcome.effect {
+                let result = outcome.result;
+                match outcome.effect {
                     AgentToolEffect::WorkspaceFileWritten { file, mode } => {
                         let metrics = TextMetrics::from_text(&file.text);
-                        let checkpoint = self
-                            .checkpoint_workspace_file(
-                                run_id,
-                                updates_run_status,
-                                "tool_workspace_write",
-                                "workspace_file_written",
-                                json!({
-                                    "invocationId": invocation_id,
-                                    "path": file.path.as_str(),
-                                    "mode": mode,
-                                    "chars": metrics.chars,
-                                    "words": metrics.words,
-                                    "sha256": file.sha256.as_str(),
-                                }),
-                                file,
-                            )
-                            .await?;
-                        text_mutation = Some((file, checkpoint));
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Info,
+                            "workspace_file_written",
+                            json!({
+                                "invocationId": invocation_id,
+                                "path": file.path.as_str(),
+                                "mode": mode,
+                                "chars": metrics.chars,
+                                "words": metrics.words,
+                                "sha256": file.sha256.as_str(),
+                            }),
+                        )
+                        .await?;
+                        text_mutation = Some((call.call_id, file));
                     }
                     AgentToolEffect::WorkspaceFilePatched {
                         file,
@@ -250,25 +247,22 @@ impl AgentRuntimeService {
                                 .await?;
                         }
                         let metrics = TextMetrics::from_text(&file.text);
-                        let checkpoint = self
-                            .checkpoint_workspace_file(
-                                run_id,
-                                updates_run_status,
-                                "tool_workspace_patch",
-                                "workspace_patch_applied",
-                                json!({
-                                    "invocationId": invocation_id,
-                                    "path": file.path.as_str(),
-                                    "chars": metrics.chars,
-                                    "words": metrics.words,
-                                    "oldSha256": old_sha256,
-                                    "sha256": file.sha256.as_str(),
-                                    "replacements": replacements,
-                                }),
-                                file,
-                            )
-                            .await?;
-                        text_mutation = Some((file, checkpoint));
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Info,
+                            "workspace_patch_applied",
+                            json!({
+                                "invocationId": invocation_id,
+                                "path": file.path.as_str(),
+                                "chars": metrics.chars,
+                                "words": metrics.words,
+                                "oldSha256": old_sha256,
+                                "sha256": file.sha256.as_str(),
+                                "replacements": replacements,
+                            }),
+                        )
+                        .await?;
+                        text_mutation = Some((call.call_id, file));
                     }
                     AgentToolEffect::ChatCommitRequested { .. } => {}
                     AgentToolEffect::Finish => {
@@ -279,7 +273,7 @@ impl AgentRuntimeService {
                         result_ref,
                         summary,
                     } => {
-                        let metrics = TextMetrics::from_text(summary);
+                        let metrics = TextMetrics::from_text(&summary);
                         self.event(
                             run_id,
                             AgentRunEventLevel::Info,
@@ -300,7 +294,7 @@ impl AgentRuntimeService {
                         new_invocation_id,
                         ..
                     } => {
-                        handoff = Some((task_id.clone(), new_invocation_id.clone()));
+                        handoff = Some((task_id, new_invocation_id));
                         self.finish_invocation(
                             run_id,
                             invocation_id,
@@ -311,22 +305,22 @@ impl AgentRuntimeService {
                     }
                     AgentToolEffect::None => {}
                 }
-                if auto_commit_text_mutations && let Some((file, checkpoint)) = text_mutation {
-                    self.auto_commit_text_file_if_eligible(
-                        run_id,
-                        &call,
-                        file,
-                        checkpoint,
-                        round,
-                        invocation_id,
-                        commit_ledger,
-                        cancel,
-                    )
-                    .await?;
-                }
 
-                tool_results.push(outcome.result);
+                tool_results.push(result);
                 self.ensure_not_cancelled(cancel)?;
+            }
+
+            if auto_commit_text_mutations && let Some((call_id, file)) = text_mutation {
+                self.auto_commit_text_file_if_eligible(
+                    run_id,
+                    &call_id,
+                    &file,
+                    round,
+                    invocation_id,
+                    commit_ledger,
+                    cancel,
+                )
+                .await?;
             }
 
             if finished {
@@ -377,7 +371,6 @@ impl AgentRuntimeService {
     async fn capture_direct_output(
         &self,
         run_id: &str,
-        update_run_status: bool,
         round: usize,
         model_response_path: &str,
         response: &AgentModelResponse,
@@ -394,10 +387,9 @@ impl AgentRuntimeService {
             .write_text(run_id, &path, text)
             .await?;
         let metrics = TextMetrics::from_text(&file.text);
-        self.checkpoint_workspace_file(
+        self.event(
             run_id,
-            update_run_status,
-            "direct_output_capture",
+            AgentRunEventLevel::Info,
             "direct_output_captured",
             json!({
                 "round": round,
@@ -407,7 +399,6 @@ impl AgentRuntimeService {
                 "sha256": file.sha256.as_str(),
                 "modelResponsePath": model_response_path,
             }),
-            &file,
         )
         .await?;
 

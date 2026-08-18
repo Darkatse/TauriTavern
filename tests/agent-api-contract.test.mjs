@@ -81,7 +81,6 @@ function agentCommitPayload(chatRef, overrides = {}) {
         persistBaseStateId: null,
         path: 'output/main.md',
         mode: 'replace',
-        checkpointId: 'checkpoint-1',
         sha256: 'sha-19',
         ...overrides,
     };
@@ -744,14 +743,14 @@ test('api.agent.retention fails fast on invalid retention inputs', async () => {
 test('api.agent read projections forward camelCase DTOs and reject invalid input', async () => {
     const { calls, agent } = await installHarness();
 
-    await agent.readWorkspaceFile({ runId: 'run-1', path: 'plan/plan.md', checkpointId: ' cp_000001 ' });
+    await agent.readWorkspaceFile({ runId: 'run-1', path: 'plan/plan.md' });
     await agent.readModelTurn({ runId: 'run-1', invocationId: 'inv_child', round: 2, maxChars: 12000 });
     await agent.readModelTurn({ runId: 'run-1', round: 3 });
 
     assert.deepEqual(calls, [
         {
             command: 'read_agent_workspace_file',
-            args: { dto: { runId: 'run-1', path: 'plan/plan.md', checkpointId: 'cp_000001' } },
+            args: { dto: { runId: 'run-1', path: 'plan/plan.md' } },
         },
         {
             command: 'read_agent_model_turn',
@@ -774,10 +773,6 @@ test('api.agent read projections forward camelCase DTOs and reject invalid input
     await assert.rejects(
         () => agent.readModelTurn({ runId: 'run-1', round: 1, maxChars: 0 }),
         /maxChars must be a positive integer/,
-    );
-    await assert.rejects(
-        () => agent.readWorkspaceFile({ runId: 'run-1', path: 'plan/plan.md', checkpointId: ' ' }),
-        /checkpointId cannot be empty/,
     );
 });
 
@@ -908,14 +903,13 @@ test('agent chat commit bridge runs generated output cleanup before saving', asy
     }]);
     assert.deepEqual(workspaceReads, [{
         runId: 'run-commit-cleanup',
-        checkpointId: 'checkpoint-1',
         path: 'output/main.md',
     }]);
     assert.deepEqual(saveCalls, [{ type: 'normal', getMessage: '<content>real', reasoning: '' }]);
     assert.equal(script.chat[0].mes, '<content>real');
 });
 
-test('agent chat commit bridge retries failure resolution', async () => {
+test('agent chat commit bridge retries failure resolution after workspace SHA mismatch', async () => {
     const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-chat-commit-bridge.js'));
     moduleUrl.search = `?case=commit-recoverable-${Date.now()}`;
     const { attachHostCommitBridge } = await import(moduleUrl.href);
@@ -934,7 +928,7 @@ test('agent chat commit bridge retries failure resolution', async () => {
             resolveCommit(args);
             return {};
         },
-        readWorkspaceFile: async () => workspaceFile('debug <content>real'),
+        readWorkspaceFile: async () => workspaceFile('changed'),
         readModelTurn: async () => { throw new Error('reasoning projection unavailable'); },
         subscribe(_runId, handler) {
             listener = handler;
@@ -954,7 +948,7 @@ test('agent chat commit bridge retries failure resolution', async () => {
 
     const result = await resolved;
     assert.equal(resolveAttempt, 2);
-    assert.match(result.dto.error, /reasoning projection unavailable/);
+    assert.match(result.dto.error, /workspace content changed before commit/);
 });
 
 test('agent chat commit bridge preserves applied reasoning across a persistence retry', async () => {

@@ -12,7 +12,6 @@ pub mod chat_completion_repository;
 pub mod chat_payload_commit_repository;
 pub mod chat_repository;
 pub mod chat_types;
-pub mod checkpoint_repository;
 pub mod content_repository;
 pub mod extension_repository;
 pub mod extension_store_repository;

@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 当前参考。Run 控制入口属于 Public Contract；明确标注为 Project Contract 的 UI/诊断投影可以随 Agent 实验能力演进，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing、Agent run retention facade / dry-run plan preview / manual apply prune / backend auto prune，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval 等未来设计。
+状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing、Agent run retention facade / dry-run plan preview / manual apply prune / backend auto prune，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文只记录当前已落地 Host ABI。
 
 `provider_state` 是 Rust 后端内部 continuation contract，不是 Host ABI。前端/扩展不应读写 `_tauritavern_provider_state`；需要诊断时通过 run events、`modelResponsePath` 与 LLM API log 观察。
 模型回合详情必须通过 `readModelTurn()` 读取后端投影 DTO；前端不解析 `model-responses/` raw JSON。
@@ -74,8 +74,6 @@ type TauriTavernAgentApi = {
     runs: AgentRunSummary[];
     nextCursor?: { createdAt: string; runId: string };
   }>;
-  readDiff(): never;
-  rollback(): never;
 };
 ```
 
@@ -86,7 +84,7 @@ type TauriTavernAgentApi = {
 - `startRunFromLegacyGenerate()`：从当前 Legacy Generate dryRun 兼容桥启动。
 - `startRunWithPromptSnapshot()`：调用方已经持有 prompt snapshot 时启动。
 
-`approveToolCall()`、`readDiff()`、`rollback()` 已预留名称，但当前实现会显式 throw，避免静默降级。
+`approveToolCall()` 已预留名称，但当前实现会显式 throw，避免静默降级。
 
 ## 3. startRunFromLegacyGenerate
 
@@ -369,7 +367,6 @@ type AgentRunTimelineDelegationEdge = {
 type AgentReadWorkspaceFileInput = {
   runId: string;
   path: string;
-  checkpointId?: string;
 };
 
 type AgentWorkspaceFile = {
@@ -381,8 +378,7 @@ type AgentWorkspaceFile = {
 };
 ```
 
-路径必须是 workspace relative path。非法路径直接 reject。
-不传 `checkpointId` 时读取当前 run workspace；传入时读取该 run 对应 checkpoint 的不可变 UTF-8 文本。模型侧读取应使用 `workspace_read_file` 工具，前端/扩展侧读取应使用本方法。
+路径必须是 workspace relative path。非法路径直接 reject。该方法读取当前 run workspace；模型侧读取应使用 `workspace_read_file` 工具，前端/扩展侧读取应使用本方法。
 
 ## 10. readModelTurn（Project Contract）
 
@@ -630,50 +626,7 @@ type AgentListToolsResult = {
 
 Model alias 属于 invocation snapshot，不进入此 DTO。Profile v3 的所有 tool-keyed 字段只接受 canonical ToolId：builtin 为 `builtin:<native-name>`，MCP 为 `mcp/<registration-uuid>:<native-name>`；v1/v2 载入后一次性迁移并写回，不保留 shorthand 双语法。
 
-## 14. readDiff
-
-当前未实现 diff；`readDiff()` 会显式 throw。
-
-```ts
-type AgentReadDiffInput = {
-  runId: string;
-  fromCheckpointId?: string;
-  toCheckpointId?: string;
-  paths?: string[];
-};
-
-type AgentDiff = {
-  runId: string;
-  fromCheckpointId?: string;
-  toCheckpointId?: string;
-  files: Array<{
-    path: string;
-    status: 'added' | 'modified' | 'deleted' | 'unchanged';
-    unifiedDiff?: string;
-  }>;
-};
-```
-
-第一期可以只支持文本 artifact 的 diff。
-
-## 15. rollback
-
-当前未实现 rollback；`rollback()` 会显式 throw。
-
-```ts
-type AgentRollbackInput = {
-  runId: string;
-  checkpointId: string;
-  scope?: 'workspace' | 'committed-message';
-};
-```
-
-语义：
-
-- `workspace`：只恢复 run workspace，不修改 chat。
-- `committed-message`：重组 artifact 并修改已提交聊天消息，必须走 chat 保存契约。
-
-## 16. commit
+## 14. commit
 
 ```ts
 type AgentCommitInput = {
@@ -689,18 +642,17 @@ type AgentCommitResult = {
 
 Chat commit 不是公开 Host API 方法，而是 runtime Committer 与 host bridge 的内部握手：
 
-- 前台 root / handoff Agent 在首次成功显式 commit 前，对 `.md`、`.markdown`、`.txt`、`.text` 文件的成功 write/patch 会自动触发 `replace` commit；路径所在 root 不参与判断。
+- 前台 root / handoff Agent 在首次成功显式 commit 前，会在每轮 tool calls 全部处理后检查该轮最后一次成功的 write/patch；若目标是 `.md`、`.markdown`、`.txt` 或 `.text` 文件，则自动触发一次 `replace` commit。每轮最多自动 commit 一次，路径所在 root 不参与判断。
 - 模型也可调用 `workspace.commit`，无参数时默认 `replace output/main.md`；第一次 host-confirmed 显式 commit 后停止当前 run 的自动 commit。
-- 自动提交复用 write/patch 已创建的不可变 checkpoint，并与显式 commit 共用 event 和 host-confirmation 路径。
 - 前端 host bridge 校验当前 active chat 与 run 的 `chatRef/stableChatId` 一致。
-- bridge 从 `chat_commit_requested.checkpointId` 读取并校验正文，同时通过 `readModelTurn()` 读取 root / handoff active chain 的可见 reasoning 投影。bridge 先应用上游生成输出保存前后处理，再通过上游 `saveReply()` 写入聊天、累计到标准 `extra.reasoning`，最后调用 `resolve_agent_chat_commit`。
-- Host 握手只有“已确认提交 / 未确认提交”两种结果且不设置 wall-clock timeout，移动端挂起期间可以继续等待，取消 run 仍会终止等待。未确认提交统一作为可恢复失败且不写 preservation ledger；自动提交继续运行，显式提交返回模型可见 tool error 以便重试。若 `saveReply()` 已成功改写 `chat[]`，正文与 reasoning 会保留，本地 reasoning cursor 同步推进以避免重试时重复追加。Rust 侧 checkpoint、journal、状态机等错误仍 fail-fast。
+- bridge 读取当前 workspace 文件并校验 `chat_commit_requested.sha256`，内容已变化时拒绝提交；同时通过 `readModelTurn()` 读取 root / handoff active chain 的可见 reasoning 投影。bridge 先应用上游生成输出保存前后处理，再通过上游 `saveReply()` 写入聊天、累计到标准 `extra.reasoning`，最后调用 `resolve_agent_chat_commit`。
+- Host 握手只有“已确认提交 / 未确认提交”两种结果且不设置 wall-clock timeout，移动端挂起期间可以继续等待，取消 run 仍会终止等待。未确认提交统一作为可恢复失败且不写 preservation ledger；自动提交继续运行，显式提交返回模型可见 tool error 以便重试。若 `saveReply()` 已成功改写 `chat[]`，正文与 reasoning 会保留，本地 reasoning cursor 同步推进以避免重试时重复追加。Rust 侧 journal、状态机等错误仍 fail-fast。
 - `chat_commit_requested` 不携带 `persistStateId`；该字段只能在 `workspace.finish` 成功提交 persistent state 后，由 `persistent_state_metadata_update_requested` / `resolve_agent_persistent_state_metadata_update` 写回同一条 chat message。
 - 首次 commit 按 generation type 创建或改写目标楼层；后续 commit 使用 `appendFinal` 写入完整 postprocessed 目标文本。`append` mode 会把本次读取到的文件文本作为 raw 追加贡献累计后再整体处理，避免片段级 regex。
 - `append` 在本 run 尚无 commit 时不会报错，会创建本 run 的消息楼层。
 - 自动和显式 commit 都进入 preservation ledger；任何一个成功后发生错误都会保留 chat 输出并进入 partial success。前台 run 在 `workspace.finish` 前仍必须至少成功一次显式 `workspace.commit`；后台 run 可无 chat commit 完成。
 
-## 17. Event Envelope
+## 15. Event Envelope
 
 ```ts
 type AgentRunEvent = {
@@ -718,7 +670,7 @@ type AgentRunEvent = {
 
 Agent event 不等同 SillyTavern `eventSource` 事件，不得伪装成 `GENERATION_*` 或 `TOOL_CALLS_*`。
 
-## 18. Errors
+## 16. Errors
 
 错误建议结构：
 
@@ -748,7 +700,7 @@ commit.cursor_integrity
 commit.save_failed
 ```
 
-## 19. Rust Command
+## 17. Rust Command
 
 ```text
 start_agent_run(dto)
@@ -774,7 +726,7 @@ read_agent_diff(dto)
 rollback_agent_run(dto)
 ```
 
-## 20. Compatibility
+## 18. Compatibility
 
 Agent Mode off：
 
@@ -789,7 +741,7 @@ Agent Mode on：
 - dryRun 不返回 payload；Agent adapter 通过事件捕获 payload。
 - Agent tool loop 不递归 `Generate()`。
 
-## 21. 当前工具与手动验证
+## 19. 当前工具与手动验证
 
 当前开放十四个非 delegation 内建工具：
 
@@ -816,7 +768,7 @@ Profile 显式选择且在 MCP Manager 中为 Ask/Allow 的 MCP 工具会加入 
 
 `AgentToolResult.structured`、`error_code` 与 `resource_refs` 只供 runtime、audit 与 Timeline UI 使用，不作为字段发送给模型。模型看到直接 Text/Markdown；可恢复错误增加 `## Tool error`。MCP text 保持原文，structured content 去重后转为 `## Details` Markdown，可操作的非文本 content diagnostic 转为 `## Notes`，metadata diagnostic 不进入模型。该 `content` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 已先以 create-only 语义保存在内部 audit，runtime 另生成同一完整 Markdown 的行可读 `.txt` 视图。模型收到最多前 3,000 个 Unicode 字符的前缀预览、可读视图路径、字符数及 `workspace_read_file` / `workspace_search_files` 的分段读取指引，不接收 audit JSON 路径。`.txt` 视图会换行超长物理行，精确原始结果仍在 JSON audit 中。该值必须为正整数，并随 resolved Profile 固定到 invocation。`tool-results/` 是所有 invocation 可见但永远不可写的 run root。当前仍不存在 shell 或 extension bridge 工具。
 
-模型可修正的工具错误会作为 `is_error = true` tool result 回填下一轮。宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍然让 run failed。
+模型可修正的工具错误会作为 `is_error = true` tool result 回填下一轮。宿主级 IO、journal、序列化、取消和模型响应结构错误仍然让 run failed。
 
 推荐最小启动：
 

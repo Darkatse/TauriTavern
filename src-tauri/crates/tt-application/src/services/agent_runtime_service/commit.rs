@@ -19,7 +19,7 @@ use crate::services::agent_tools::{
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{
     AgentChatCommitMode, AgentInvocationStatus, AgentRun, AgentRunEventLevel, AgentRunStatus,
-    AgentToolResult, ArtifactTarget, Checkpoint, WorkspacePath, WorkspacePersistentChangeSet,
+    AgentToolResult, ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
 };
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
@@ -36,9 +36,9 @@ enum HostChatCommitOutcome {
 }
 
 struct HostChatCommit<'a> {
-    call: &'a ToolInvocation,
+    call_id: &'a str,
     file: &'a WorkspaceFile,
-    checkpoint: Option<Checkpoint>,
+    is_explicit: bool,
     mode: AgentChatCommitMode,
     reason: Option<String>,
     round: usize,
@@ -180,9 +180,9 @@ impl AgentRuntimeService {
             .perform_host_chat_commit(
                 run_id,
                 HostChatCommit {
-                    call,
+                    call_id: call.call_id.as_str(),
                     file: &file,
-                    checkpoint: None,
+                    is_explicit: true,
                     mode,
                     reason,
                     round,
@@ -239,14 +239,13 @@ impl AgentRuntimeService {
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "automatic commit forwards one immutable mutation to the shared host boundary"
+        reason = "automatic commit forwards the round's final immutable mutation to the shared host boundary"
     )]
     pub(super) async fn auto_commit_text_file_if_eligible(
         &self,
         run_id: &str,
-        call: &ToolInvocation,
+        call_id: &str,
         file: &WorkspaceFile,
-        checkpoint: Checkpoint,
         round: usize,
         invocation_id: &str,
         commit_ledger: &mut RunCommitLedger,
@@ -262,9 +261,9 @@ impl AgentRuntimeService {
         self.perform_host_chat_commit(
             run_id,
             HostChatCommit {
-                call,
+                call_id,
                 file,
-                checkpoint: Some(checkpoint),
+                is_explicit: false,
                 mode: AgentChatCommitMode::Replace,
                 reason: None,
                 round,
@@ -299,59 +298,16 @@ impl AgentRuntimeService {
         cancel: &mut AgentCancelReceiver,
     ) -> Result<HostChatCommitOutcome, ApplicationError> {
         let HostChatCommit {
-            call,
+            call_id,
             file,
-            checkpoint,
+            is_explicit,
             mode,
             reason,
             round,
             invocation_id,
         } = commit;
-        let is_explicit = checkpoint.is_none();
         let run = self.run_repository.load_run(run_id).await?;
         let commit_id = format!("commit_{}", Uuid::new_v4().simple());
-        let started = self
-            .event(
-                run_id,
-                AgentRunEventLevel::Info,
-                "chat_commit_started",
-                json!({
-                    "commitId": commit_id.as_str(),
-                    "invocationId": invocation_id,
-                    "callId": call.call_id.as_str(),
-                    "path": file.path.as_str(),
-                    "mode": mode,
-                    "reason": reason.as_deref(),
-                }),
-            )
-            .await?;
-        let checkpoint = match checkpoint {
-            Some(checkpoint) => checkpoint,
-            None => {
-                self.transition_status(run_id, AgentRunStatus::CreatingCheckpoint)
-                    .await?;
-                let checkpoint = self
-                    .checkpoint_repository
-                    .create_checkpoint(
-                        run_id,
-                        "chat_commit",
-                        started.seq,
-                        std::slice::from_ref(file),
-                    )
-                    .await?;
-                self.event(
-                    run_id,
-                    AgentRunEventLevel::Info,
-                    "checkpoint_created",
-                    json!({
-                        "checkpointId": checkpoint.id.as_str(),
-                        "reason": "chat_commit",
-                    }),
-                )
-                .await?;
-                checkpoint
-            }
-        };
 
         let (sender, receiver) = oneshot::channel();
         let previous = self.active_chat_commits.write().await.insert(
@@ -377,7 +333,7 @@ impl AgentRuntimeService {
             json!({
                 "commitId": commit_id,
                 "invocationId": invocation_id,
-                "callId": call.call_id.as_str(),
+                "callId": call_id,
                 "runId": run.id.as_str(),
                 "workspaceId": run.workspace_id.as_str(),
                 "stableChatId": run.stable_chat_id.as_str(),
@@ -391,7 +347,6 @@ impl AgentRuntimeService {
                 "chars": file_metrics.chars,
                 "words": file_metrics.words,
                 "sha256": file.sha256.as_str(),
-                "checkpointId": checkpoint.id.as_str(),
             }),
         )
         .await?;
@@ -430,7 +385,7 @@ impl AgentRuntimeService {
                     json!({
                         "commitId": commit_id,
                         "invocationId": invocation_id,
-                        "callId": call.call_id.as_str(),
+                        "callId": call_id,
                         "path": file.path.as_str(),
                         "mode": mode,
                         "messageId": result.message_id.as_deref(),
@@ -467,7 +422,7 @@ impl AgentRuntimeService {
                     json!({
                         "commitId": commit_id,
                         "invocationId": invocation_id,
-                        "callId": call.call_id.as_str(),
+                        "callId": call_id,
                         "path": file.path.as_str(),
                         "mode": mode,
                         "message": message.as_str(),

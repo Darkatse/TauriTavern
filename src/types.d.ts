@@ -77,7 +77,6 @@ type TauriTavernAgentRunStatus =
     | 'calling_model'
     | 'dispatching_tool'
     | 'applying_workspace_patch'
-    | 'creating_checkpoint'
     | 'awaiting_host_commit'
     | 'finishing'
     | 'completed'
@@ -585,8 +584,6 @@ type TauriTavernAgentApi = {
         runs: TauriTavernAgentRunSummary[];
         nextCursor?: TauriTavernAgentRunListCursor;
     }>;
-    readDiff: () => never;
-    rollback: () => never;
 };
 
 type TauriTavernLlmConnectionSummary = {

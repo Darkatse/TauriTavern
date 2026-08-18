@@ -8,7 +8,7 @@
 
 截至 2026-07-31，Agent 当前核心已经落地：
 
-- Rust 后端拥有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
+- Rust 后端拥有 Agent domain model、runtime、workspace、journal 与 commit bridge。
 - 聊天删除会清理对应 Agent chat workspace；active run 存在时删除 fail-fast。
 - 前端 Host ABI 已挂载 `window.__TAURITAVERN__.api.agent`。
 - Agent System 扩展开关开启时，前端将普通发送、regenerate 与 overswipe 新候选生成接入 Agent；普通切换已有 swipe 候选仍保持 Legacy swipe 行为。
@@ -60,8 +60,6 @@ api.agent.tools.list()
 
 ```ts
 approveToolCall()
-readDiff()
-rollback()
 ```
 
 ## 3. 当前 Model Gateway
@@ -165,7 +163,7 @@ Builtin 工具直接声明中性 `ToolDescriptor` 并构造 `ToolCatalog`；invo
 必须区分两类错误：
 
 - Recoverable tool error：模型参数、路径字符串、可见/可写策略、文件不存在、chat message index 不存在、读取范围非法、结果超过工具预算、patch 未完整读取、sha 过期、匹配 0 次或多次等模型可修正问题。返回 `AgentToolResult { is_error: true }`，写入 `tool_call_failed` warn event，并作为 tool message 回填下一轮模型。
-- Fatal runtime error：journal 写入失败、workspace repository 内部 IO 错误、chat JSONL 损坏、manifest/checkpoint 损坏、模型响应结构不可解析、取消、序列化失败、状态机错误等宿主级问题。直接让 run 进入 failed 或 cancelled。
+- Fatal runtime error：journal 写入失败、workspace repository 内部 IO 错误、chat JSONL 损坏、manifest 损坏、模型响应结构不可解析、取消、序列化失败、状态机错误等宿主级问题。直接让 run 进入 failed 或 cancelled。
 
 当前工具结果不做自动内容补入：
 
@@ -204,11 +202,11 @@ model -> read-only context tools / skill tools / workspace tools -> model -> ...
   ↓
 工具调用参数与结果写入 workspace refs
   ↓
-workspace mutation 成功后 checkpoint
+workspace mutation 成功后记录 CAS 结果与 journal
   ↓
-首次成功显式 commit 前，文本 mutation 自动复用 checkpoint 触发 Committer
+首次成功显式 commit 前，每轮最后一次文本 mutation 可触发 Committer
   ↓
-workspace.commit 通过同一 Committer 写入 chat，并关闭后续自动 commit
+自动与显式 commit 通过同一 Committer 请求 Host 校验 workspace SHA 并写入 chat；显式成功后关闭自动 commit
   ↓
 workspace.finish 收尾并提交 persist projection
 ```
@@ -234,7 +232,7 @@ workspace.finish 收尾并提交 persist projection
 
 已完成：
 
-- Rust 后端 Agent runtime、run workspace、manifest、journal、checkpoint、commit bridge 已落地。
+- Rust 后端 Agent runtime、run workspace、manifest、journal 与 commit bridge 已落地。
 - `api.agent.startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` / subscribe / cancel / readEvents / commit bridge 已落地。
 - Agent Mode off 不改变 Legacy Generate、ToolManager、事件顺序与 chat 保存语义。
 
@@ -252,7 +250,7 @@ workspace.finish 收尾并提交 persist projection
 已完成：
 
 - `workspace.list_files`、`workspace.search_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.commit`、`workspace.finish` 已落地。
-- workspace mutation 后创建 checkpoint；完整读取 / 写入 read-state 约束已接入。
+- workspace mutation 使用 CAS 与 journal；Chat Commit 由 Host 重读当前文件并校验 SHA。
 - `output/`、`scratch/`、`plan/`、`summaries/`、`persist/` 是当前模型可见 root。
 
 ### 上下文只读工具
@@ -327,14 +325,8 @@ Agent tool 层已接入 Skill 可见性、deny policy 与 read budget；Skill �
 - commit preview 与手动提交。
 - cancel UI。
 
-### Diff / Rollback / Resume
+### Run Resume
 
-目标：让多轮创作具备可控回退能力。
-
-内容：
-
-- `readDiff()`：基于 checkpoint 对 workspace 文本文件生成 diff。
-- `rollback()`：先只恢复 run workspace，不修改已提交聊天消息。
 - `resumeRun()`：明确 run continuation 语义，避免复用已 closed run 的状态机。
 
 ### MCP / Extension Tool

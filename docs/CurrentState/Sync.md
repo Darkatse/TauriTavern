@@ -53,7 +53,7 @@ Mirror 删除计划文件后，文件系统适配器会继续清理因此变成 
 - `_tauritavern/agent-workspaces/index/runs/**`
 - `_tauritavern/agent-workspaces/chats/**/runs/*/{run.json,events.jsonl}`
 
-`default-user/secrets.json`、Agent `model-responses/`、`checkpoints/`、`backups/`、`vectors/`、`thumbnails/` 被保留为独立数据集，不在 TauriTavern 推荐默认同步中；用户可以在 Sync Panel 的“Sync content”范围选择弹窗里显式勾选。
+`default-user/secrets.json`、Agent `model-responses/`、`backups/`、`vectors/`、`thumbnails/` 被保留为独立数据集，不在 TauriTavern 推荐默认同步中；用户可以在 Sync Panel 的“Sync content”范围选择弹窗里显式勾选。
 
 Agent run history 只同步终态运行。扫描器会读取 `run.json` / run index JSON 的 `status`，仅纳入 `completed`、`partial_success`、`cancelled`、`failed`；运行中的 `calling_model` 等状态不会进入 manifest。
 
@@ -285,7 +285,7 @@ wire framing（见 TT-Sync 的 `ttsync_core::bundle` / `ttsync_client::bundle`�
 4. **不要改动事件语义**：阶段划分与完成/错误时序对前端是契约。
 5. **不要把 iOS policy 本地缓存纳入 scope**：`_tauritavern/.ios-policy.json` 属于 iOS-only 宿主本地状态，用于避免同步覆盖 `tauritavern-settings.json` 时丢失已解锁的 policy。
 6. **不要在 v2 链路重新引入手写 scope 数组**：新增同步目录必须先进入 TT-Sync `DatasetPolicy`，再由 LAN Sync/TT-Sync v2 消费。
-7. **不要把敏感/重型 Agent 数据默认并入无选择同步**：`model-responses/`、`checkpoints/` 与密钥文件需要保持独立数据集。
+7. **不要把敏感/重型 Agent 数据默认并入无选择同步**：`model-responses/` 与密钥文件需要保持独立数据集。
 8. **不要绕过 Sync Panel 的持久化 selection**：前端显示、保存、命令参数必须围绕 `DatasetSelection`；不要在 UI 中复制路径规则或用 manifest omission 伪装范围选择。
 9. **不要把覆盖策略移回服务端配置**：它是逻辑发起方的作业输入；LAN push 必须透传发起方策略，同时保留目标端对 Sync mode 的所有权。
 10. **不要绕过 Dataset boundary 清理目录**：Mirror 删除只能清理 Dataset catalog 为 delete path 推导的 boundary 内的 fileless 祖先树；不得改用物理 data root、手写路径表或 `remove_dir_all`。

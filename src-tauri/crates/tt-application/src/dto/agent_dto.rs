@@ -595,8 +595,6 @@ pub struct AgentRunTimelineDelegationEdgeDto {
 pub struct AgentReadWorkspaceFileDto {
     pub run_id: String,
     pub path: String,
-    #[serde(default)]
-    pub checkpoint_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

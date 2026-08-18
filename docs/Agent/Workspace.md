@@ -1,17 +1,16 @@
 # TauriTavern Agent Workspace
 
-本文档定义 Agent Workspace 的存储模型、路径约束、Artifact Assembly、Checkpoint 与回滚语义。
+本文档定义 Agent Workspace 的存储模型、路径约束与 Artifact Assembly 语义。
 
 Workspace 是 Agent Mode 的中心抽象。Agent 不直接写聊天消息，而是在 workspace 中像编辑项目文件一样多轮修改输出，最后由 runtime 提交 artifact。
 
 ## 1. 核心目标
 
-Workspace 解决四个问题：
+Workspace 解决三个问题：
 
 1. 多轮编辑：允许模型反复修改草稿、计划、状态栏、小剧场等文件。
-2. 可审计：每次写入、patch、checkpoint 都能追踪。
-3. 可回滚：用户不满意时回到某个 checkpoint，而不是只能重新生成。
-4. 可组合：最终聊天消息可以由多个 artifact 组装，而不是只有单个 output。
+2. 可审计：每次写入与 patch 都进入 journal。
+3. 可组合：最终聊天消息可以由多个 artifact 组装，而不是只有单个 output。
 
 ## 2. 两级 Workspace
 
@@ -41,7 +40,6 @@ agent-workspaces/
           scratch/
           summaries/
           persist/
-          checkpoints/
           patches/
           events.jsonl
 ```
@@ -80,10 +78,9 @@ chatWorkspaceId = "chat_" + sha256({ kind, stableChatId })[0..16]
 - 本次计划。
 - 本次 scratch。
 - 本次输出 artifact。
-- 本次 checkpoint。
 - 本次 journal。
 
-这样不同 run 可以比较、回滚、删除或保留，不互相覆盖。
+这样不同 run 可以独立调试、删除或保留，不互相覆盖。
 
 ## 3. Resource 类型
 
@@ -226,13 +223,10 @@ plan/
   runtime 可检查的计划文件和用户/模型可读计划。
 
 scratch/
-  Agent 草稿；是否进入 context 由 policy 决定。前台首次显式 commit 前，匹配文本后缀的 write/patch 仍会自动发布。
+  Agent 草稿；是否进入 context 由 policy 决定。前台首次显式 commit 前，每轮最后一次 write/patch 若匹配文本后缀会自动发布。
 
 summaries/
   对历史、工具结果、前序步骤的摘要。
-
-checkpoints/
-  checkpoint snapshot 与 manifest。
 
 patches/
   可选 patch 记录。第一期可以只做 snapshot。
@@ -274,9 +268,9 @@ Commit 是 workspace 到 chat 的边界。
 
 必须：
 
-- 在 commit 前创建 checkpoint。
 - 读取 manifest。
 - assemble artifacts。
+- 让 Host 按提交请求中的 SHA 校验当前 workspace 文件。
 - 通过现有 chat 保存契约写入。
 - 写入 agent metadata。
 - journal 记录 `artifact_assembled` 与 `run_committed`。
@@ -293,11 +287,10 @@ Commit metadata 建议：
 ```json
 {
   "tauritavern": {
-    "agent": {
-      "runId": "run_...",
-      "stableChatId": "stable-chat-id",
-      "checkpointId": "ckpt_...",
-      "profileId": "writer",
+      "agent": {
+        "runId": "run_...",
+        "stableChatId": "stable-chat-id",
+        "profileId": "writer",
       "artifactSetId": "artifact_set_...",
       "artifacts": [
         { "id": "main", "kind": "body", "path": "output/main.md" }
@@ -307,89 +300,12 @@ Commit metadata 建议：
 }
 ```
 
-## 9. Checkpoint
-
-Checkpoint 是 run 内回滚和 commit 后追踪的基础。
-
-第一期建议 snapshot，不引入 git。
-
-结构：
-
-```text
-checkpoints/
-  000001/
-    checkpoint.json
-    manifest.json
-    output/
-      main.md
-      status.md
-    plan/
-      plan.md
-    summaries/
-      ...
-```
-
-`checkpoint.json` 是内部实现元数据，不作为 Agent/UI payload；其中的 `bytes` 仅服务于存储体积、清理与完整性边界：
-
-```json
-{
-  "id": "ckpt_...",
-  "seq": 1,
-  "runId": "run_...",
-  "createdAt": "2026-04-26T00:00:00Z",
-  "reason": "after_workspace_patch",
-  "eventSeq": 42,
-  "files": [
-    { "path": "output/main.md", "sha256": "...", "bytes": 1024 }
-  ]
-}
-```
-
-Checkpoint 时机：
-
-- workspace 初始化后。
-- plan 创建后。
-- 每次 workspace-mutating tool 后。
-- 每个 plan node 完成后。
-- artifact assembly 前。
-- commit 前。
-
-## 10. 回滚
-
-### 10.1 Run 内回滚
-
-Run 内回滚只恢复 workspace：
-
-```text
-rollback(runId, checkpointId)
-  -> restore workspace files
-  -> append rollback event
-  -> status remains Running/AwaitingApproval or becomes Paused
-```
-
-它不修改 chat。
-
-### 10.2 Commit 后回滚
-
-Commit 后回滚修改 chat message：
-
-```text
-rollbackCommittedMessage(runId, checkpointId)
-  -> assemble artifacts from checkpoint
-  -> replace/delete committed chat message
-  -> save through chat save contract
-  -> append rollback committed event
-```
-
-必须遵守完整 chat payload 保存串行化。
-
-## 11. Retention
+## 9. Retention
 
 默认 retention 应保守：
 
 - Completed run 可以保留完整 workspace。
 - Failed/Cancelled run 默认保留，便于 debug。
-- 移动端可以限制 checkpoint 数量或总大小，但删除必须明确记录。
 - 用户删除聊天时，关联 chat workspace 必须随聊天生命周期清理，避免静默泄漏大量文件。
 
 当前实现：
@@ -406,7 +322,7 @@ rollbackCommittedMessage(runId, checkpointId)
 - 前端只通过 `api.agent.retention.readSettings()` / `updateSettings()` / `planPrune()` / `applyPrune()` facade 接触该策略；`updateSettings()` 只保存设置并唤醒后端调度器重读配置，不同步执行清理。
 - `plan_agent_run_prune(dto)` 是 dry-run command：读取当前设置或调用方传入的一次性 retention override，生成候选动作、原因、文件数与字节数，不删除 run workspace 或重型 artifacts。`detailLimit` 只截断返回明细，不截断 totals；active run、缺失 terminal event、journal/storage 异常会进入 `blockedRuns`，不会被计为可执行 candidate。
 - `apply_agent_run_prune(dto)` 使用同一 planner 的 execution 模式在后端重新生成全量执行计划，不信任前端 preview candidates；同一服务实例内 apply 串行执行。它执行 `slim_heavy_artifacts` / `delete_run` 后返回删除统计、`failedRuns` 和 caller `detailLimit` 下的 `afterPlan`；单个 run 删除失败会显式返回并继续后续 candidate，结构性规划错误仍 fail-fast。
-- dry-run 和 apply 都使用 Agent run storage class 判断清理范围，并与 TT-Sync 的 Agent dataset 边界保持同一套路径归属词汇。核心 history 是 `run_journal`（run 目录根级 `run.json` / `events.jsonl` 与 index run）和本地 `run_summary_projection`；`slim_heavy_artifacts` 删除 `run_context`、`run_workspace_projection`、`run_tool_io`、`workspace_outputs`、`workspace_scratch`、`tasks`、`model_responses`、`checkpoints` 以及未知 run artifact。`delete_run` 删除完整 run 目录加 index run/summary 文件。稳定 `persistent-states/` 不属于 run prune 范围。
+- dry-run 和 apply 都使用 Agent run storage class 判断清理范围，并与 TT-Sync 的 Agent dataset 边界保持同一套路径归属词汇。核心 history 是 `run_journal`（run 目录根级 `run.json` / `events.jsonl` 与 index run）和本地 `run_summary_projection`；`slim_heavy_artifacts` 删除 `run_context`、`run_workspace_projection`、`run_tool_io`、`workspace_outputs`、`workspace_scratch`、`tasks`、`model_responses` 以及未知 run artifact。`delete_run` 删除完整 run 目录加 index run/summary 文件。稳定 `persistent-states/` 不属于 run prune 范围。
 
 run prune 由上述两个窗口推导动作：
 
@@ -421,15 +337,14 @@ rank >= keep_recent_terminal_runs:
   delete terminal run history
 ```
 
-## 12. 性能约束
+## 10. 性能约束
 
 - 不复制完整聊天历史。
 - 不把大 virtual resource materialize 到每个 run。
-- checkpoint 第一版只 snapshot 小文本文件；大文件使用引用或跳过，并在 manifest 声明。
 - workspace tree 展示应懒加载。
 - timeline 读取 journal 应支持分页。
 
-## 13. 当前 Workspace
+## 11. 当前 Workspace
 
 当前 run workspace 物理布局：
 
@@ -463,10 +378,6 @@ _tauritavern/agent-workspaces/
           summaries/
           persist/
             <run projection of chat-level persist files>
-          checkpoints/
-            <checkpoint-id>/
-              checkpoint.json
-              <snapshotted workspace files...>
 ```
 
 当前模型可见 / 可写 workspace 根：
@@ -504,8 +415,6 @@ runs/<run-id>/
   manifest.json
   input/prompt_snapshot.json
   output/main.md
-  checkpoints/000001/checkpoint.json
-  checkpoints/000001/output/main.md
   events.jsonl
 ```
 
@@ -513,7 +422,5 @@ runs/<run-id>/
 
 - minimal run
 - journal
-- checkpoint
 - artifact commit
-- rollback 基础数据结构（当前尚未开放 rollback API）
 - workspace list/read/write/patch 工具循环

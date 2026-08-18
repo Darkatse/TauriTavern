@@ -75,7 +75,6 @@ use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfil
 use tt_ports::repositories::agent_run_repository::{AgentRunEventReadQuery, AgentRunRepository};
 use tt_ports::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
-use tt_ports::repositories::checkpoint_repository::CheckpointRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::preset_repository::PresetRepository;
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
@@ -225,7 +224,6 @@ fn agent_runtime_fixture_with_results(
         agent_repository.clone() as Arc<dyn AgentRunRepository>,
         agent_repository.clone() as Arc<dyn AgentInvocationRepository>,
         agent_repository.clone() as Arc<dyn WorkspaceRepository>,
-        agent_repository.clone() as Arc<dyn CheckpointRepository>,
         chat_file_repository.clone() as Arc<dyn ChatRepository>,
         chat_file_repository.clone() as Arc<dyn GroupChatRepository>,
         skill_service,

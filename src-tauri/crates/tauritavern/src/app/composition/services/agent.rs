@@ -53,7 +53,6 @@ pub(super) fn build(
         repositories.agent_run_repository.clone(),
         repositories.agent_invocation_repository.clone(),
         repositories.workspace_repository.clone(),
-        repositories.checkpoint_repository.clone(),
         repositories.chat_repository.clone(),
         repositories.group_chat_repository.clone(),
         skill_service,

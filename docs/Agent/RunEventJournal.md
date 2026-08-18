@@ -10,7 +10,7 @@ Run Journal 是 Agent 系统的真相源。没有 journal 的 Agent 只是一个
 2. Ordered：每个 run 内 event seq 单调递增。
 3. Durable：关键副作用前后必须落 journal。
 4. Replayable：UI timeline、debug、resume 应尽量从 journal 重建。
-5. User-visible：用户能看到工具调用、审批、diff、checkpoint、错误。
+5. User-visible：用户能看到工具调用、审批、workspace mutation、commit 与错误。
 
 ## 2. 文件格式
 
@@ -57,7 +57,6 @@ AssemblingContext
 CallingModel
 DispatchingTool
 ApplyingWorkspacePatch
-CreatingCheckpoint
 AwaitingHostCommit
 Finishing
 Completed
@@ -78,7 +77,6 @@ CallingModel
 AwaitingApproval
 DispatchingTool
 ApplyingWorkspacePatch
-CreatingCheckpoint
 AwaitingHostCommit
 Finishing
 Completed
@@ -145,7 +143,6 @@ tool_call_completed
 tool_call_failed
 workspace_file_written
 workspace_patch_applied
-checkpoint_created
 agent_loop_finished
 artifact_assembled
 commit_started
@@ -269,7 +266,7 @@ run_failed
 }
 ```
 
-**Soft drift recovery**：在直接 fail-fast 之前，loop runner 会做"软纠正"：当模型返回 0 tool_calls 且包含纯文本时，runtime 会把该文本捕获到当前 profile messageBody artifact 所在 root 的 `direct_output.md`（默认 `output/direct_output.md`），写入 `direct_output_captured` 与 checkpoint；随后把纯文本回复推进 history，再追加一条合成的 `user` 消息提醒它必须通过 Agent 工具继续。root run 如果直接输出就是目标回复，应显式 `workspace_commit` 该捕获文件，再调用 `workspace_finish`；如果需要修订已提交内容，必须先 `workspace_apply_patch` / `workspace_write_file`，再 `workspace_commit`，最后 `workspace_finish`。return-mode child 则必须用 `task_return` 结束。direct output recovery 没有独立的一次性尝试上限；只要仍有下一轮模型调用预算就继续纠偏。每次尝试都会写一条 `drift_recovery_attempted` 事件，便于宿主 UI 给用户显示"系统正在纠正…"提示：
+**Soft drift recovery**：在直接 fail-fast 之前，loop runner 会做"软纠正"：当模型返回 0 tool_calls 且包含纯文本时，runtime 会把该文本捕获到当前 profile messageBody artifact 所在 root 的 `direct_output.md`（默认 `output/direct_output.md`）并写入 `direct_output_captured`；随后把纯文本回复推进 history，再追加一条合成的 `user` 消息提醒它必须通过 Agent 工具继续。root run 如果直接输出就是目标回复，应显式 `workspace_commit` 该捕获文件，再调用 `workspace_finish`；如果需要修订已提交内容，必须先 `workspace_apply_patch` / `workspace_write_file`，再 `workspace_commit`，最后 `workspace_finish`。return-mode child 则必须用 `task_return` 结束。direct output recovery 没有独立的一次性尝试上限；只要仍有下一轮模型调用预算就继续纠偏。每次尝试都会写一条 `drift_recovery_attempted` 事件，便于宿主 UI 给用户显示"系统正在纠正…"提示：
 
 ```json
 {
@@ -315,7 +312,7 @@ workspace_file_deleted
 workspace_rollback_completed
 ```
 
-Workspace event 不应内联大文件全文。面向 Agent/UI 的 payload 应记录 path、sha256、chars、words、patch ref；字节数仅保留在文件系统、checkpoint、hash 等内部实现边界。
+Workspace event 不应内联大文件全文。面向 Agent/UI 的 payload 应记录 path、sha256、chars、words、patch ref；字节数仅保留在文件系统与 hash 等内部实现边界。
 
 ### 4.3 Context
 
@@ -427,17 +424,7 @@ tool_call_failed
 
 `tool_call_started`、`tool_call_completed` 与 `tool_call_failed` 保持 `tool_call_requested` 之后的既有顺序，并携带同一 canonical `toolId` / `snapshotId`。预算耗尽属于可恢复的 `tool_call_failed`；turn/snapshot/choice violation 在 requested 后 fail-fast，不会发出 started。`tool_result_stored` 会携带同一 `round`、`toolId` 与 `path`，用于 UI 读取工具结果详情。
 
-### 4.6 Checkpoint / Diff
-
-```text
-checkpoint_created
-checkpoint_pruned
-diff_created
-```
-
-Checkpoint event must include checkpoint id、reason、file count and internal storage metadata. UI-facing timeline payloads should expose text metrics as chars/words, not raw byte counts.
-
-### 4.7 Plan / Profile
+### 4.6 Plan / Profile
 
 ```text
 plan_created
@@ -453,20 +440,19 @@ profile_switch_denied
 
 Locked plan violation 必须失败或等待用户决策，不能静默忽略。
 
-### 4.8 Artifact / Commit
+### 4.7 Artifact / Commit
 
 ```text
 artifact_assembly_started
 artifact_assembled
 artifact_assembly_failed
-chat_commit_started
 chat_commit_requested
 chat_commit_completed
 chat_commit_failed
 committed_message_rollback_completed
 ```
 
-自动与显式 commit 共用同一事件序列。事件链记录 chat ref、checkpoint id、artifact path，并在 host bridge 已确认时记录 message id。`chat_commit_completed.messageId` 是提交时快照，不是对当前聊天消息位置的反向查询。Host 返回未确认时写 warning 级 `chat_commit_failed`；它不会终止 run，也不会产生 `chat_commit_recorded`。自动提交跳过本次，显式提交另写模型可见的 `tool_call_failed`。
+自动与显式 commit 共用同一事件序列。自动 commit 在一轮 tool calls 全部处理后最多发起一次。`chat_commit_requested` 记录 chat ref、artifact path 与预期 SHA；Host 重读当前 workspace，SHA 不一致时拒绝提交，并在确认后记录 message id。`chat_commit_completed.messageId` 是提交时结果，不是对当前聊天消息位置的反向查询。Host 返回未确认时写 warning 级 `chat_commit_failed`；它不会终止 run，也不会产生 `chat_commit_recorded`。自动提交跳过本次，显式提交另写模型可见的 `tool_call_failed`。
 
 ## 5. 事件与副作用的顺序
 
@@ -493,7 +479,6 @@ tool_call_completed / tool_call_failed
 workspace_patch_requested
 apply patch
 workspace_patch_applied
-checkpoint_created
 ```
 
 当前 `workspace_file_written` 同时覆盖 `workspace.write_file` 的 `replace` 与 `append` 成功结果，payload 必须携带 `mode`，便于 timeline 与恢复逻辑区分完整替换和原样追加。
@@ -525,7 +510,7 @@ readEvents(runId, { beforeSeq, limit })
 ```
 
 移动端 timeline 不应该一次读取巨大 journal。
-默认 timeline UI 应把 raw journal 投影成用户可见操作流，并使用窗口化渲染；状态机、provider state、checkpoint 等审计事件仍保留在 journal 中，但不应因为 UI 容量限制挤掉早期操作轮次。
+默认 timeline UI 应把 raw journal 投影成用户可见操作流，并使用窗口化渲染；状态机、provider state 等审计事件仍保留在 journal 中，但不应因为 UI 容量限制挤掉早期操作轮次。
 
 ## 8. Cancel
 
@@ -546,7 +531,7 @@ cancel_agent_run(runId)
 - LLM call 必须尽量复用现有 cancellation registry 或等价 watch channel。
 - Tool dispatch 需要声明是否 cancellable。
 - Cancel 后不能 commit。
-- Cancel 后 workspace 与 checkpoint 保留。
+- Cancel 后 workspace 保留。
 
 ## 9. Approval
 
@@ -635,7 +620,6 @@ tool_call_completed
 tool_call_failed
 workspace_file_written
 workspace_patch_applied
-checkpoint_created
 agent_loop_finished
 artifact_assembled
 commit_started

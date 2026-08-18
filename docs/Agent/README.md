@@ -10,7 +10,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [Workspace.md](Workspace.md) | Workspace、Artifact、Checkpoint、commit/rollback 语义 |
+| [Workspace.md](Workspace.md) | Workspace、Artifact 与 commit 语义 |
 | [RunEventJournal.md](RunEventJournal.md) | Run Event、状态机、订阅、恢复、取消与审批 |
 | [ProfilesAndPreset.md](ProfilesAndPreset.md) | Agent Profile、Preset agent schema、ContextFrame、Plan Policy |
 | [PromptAssembly.md](PromptAssembly.md) | Agent 独立 Preset / 独立 Model、FrozenRunInputSnapshot 与前后端 prompt assembly 链路 |

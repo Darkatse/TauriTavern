@@ -243,7 +243,7 @@ Provider stream
   来自 ChatCompletionService/Repository 的 SSE data 或 normalized chunk。
 
 Agent run event stream
-  AgentRunEvent：model_delta、tool_call_requested、checkpoint_created 等语义事件。
+  AgentRunEvent：model_delta、tool_call_requested、chat_commit_requested 等语义事件。
 ```
 
 Agent UI 必须订阅 `api.agent.subscribe(runId, handler)` 的 run event，不直接消费 provider raw stream。

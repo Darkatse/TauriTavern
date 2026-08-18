@@ -311,7 +311,7 @@ Agent 可以创建和修改计划。
 运行时仍必须要求：
 
 - 先产出 plan。
-- 每个阶段结束 checkpoint。
+- 每个阶段结束时记录 journal 状态。
 - 完成前检查 artifact manifest。
 - 不能突破全局 tool/resource/budget policy。
 
