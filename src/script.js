@@ -10716,7 +10716,7 @@ function refreshSwipeButtonElements(messageElements, updateCounters, fade) {
  * @param {readonly number[]} [messageIds=[]] Additional changed message IDs.
  * @param {boolean} [fade=true] By default, the chevrons fade in and out.
  */
-function refreshActiveSwipeButtons(messageIds = [], fade = true) {
+export function refreshActiveSwipeButtons(messageIds = [], fade = true) {
     if (!syncSwipeButtonVisibility()) return false;
 
     const changedMessageIds = new Set();

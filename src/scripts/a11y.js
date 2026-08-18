@@ -84,20 +84,28 @@ const a11yRules = {
     },
 };
 
+const a11yRuleEntries = Object.entries(a11yRules);
+const a11ySelector = Object.keys(a11yRules).join(', ');
+
+/** @param {Element} element */
+function applyMatchingA11yRules(element) {
+    for (const [selector, rule] of a11yRuleEntries) {
+        if (element.matches(selector)) {
+            rule(element);
+        }
+    }
+}
+
 /**
- * Apply accessibility rules to an element.
+ * Apply accessibility rules to an element and its descendants.
  * @param {Element} element Element to process.
  */
 function applyA11yRules(element) {
     try {
-        for (const [selector, rule] of Object.entries(a11yRules)) {
-            // Apply if the element directly matches the selector
-            if (element.matches(selector)) {
-                rule(element);
-            }
-            // Apply the rule to descendants
-            element.querySelectorAll(selector).forEach(rule);
+        if (element.matches(a11ySelector)) {
+            applyMatchingA11yRules(element);
         }
+        element.querySelectorAll(a11ySelector).forEach(applyMatchingA11yRules);
     } catch (error) {
         console.error('Error applying accessibility rules to element:', element, error);
     }
@@ -112,7 +120,7 @@ function setAccessibilityObserver() {
         for (const mutation of mutationsList) {
             if (mutation.type === 'childList') {
                 for (const addedNode of mutation.addedNodes) {
-                    if (addedNode instanceof Element && addedNode.nodeType === Node.ELEMENT_NODE) {
+                    if (addedNode instanceof Element) {
                         applyA11yRules(addedNode);
                     }
                 }

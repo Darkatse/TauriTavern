@@ -130,6 +130,7 @@ test('core message roots reconcile through ChatSurface instead of direct DOM mut
 
 test('incremental chat updates refresh only swipe state owners', async () => {
     const script = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+    const slash = await readFile(path.join(REPO_ROOT, 'src/scripts/slash-commands.js'), 'utf8');
     const tags = await readFile(path.join(REPO_ROOT, 'src/scripts/tags.js'), 'utf8');
 
     const publicRefresh = script.slice(
@@ -152,6 +153,15 @@ test('incremental chat updates refresh only swipe state owners', async () => {
         script.indexOf('/**\n * Creates the element of a single message', script.indexOf('export function addOneMessage')),
     );
     assert.match(addOne, /refreshActiveSwipeButtons\(\[messageId\]\)/);
+
+    const addSwipe = slash.slice(
+        slash.indexOf('async function addSwipeCallback'),
+        slash.indexOf('async function deleteSwipeCallback'),
+    );
+    assert.match(addSwipe, /await swipe\(null, SWIPE_DIRECTION\.RIGHT, \{[^}]*forceMesId: lastMessageId, forceSwipeId: newSwipeId/);
+    assert.match(addSwipe, /await updateSwipeCounter\(lastMessageId, \{ message: lastMessage \}\)/);
+    assert.match(addSwipe, /refreshActiveSwipeButtons\(\[lastMessageId\]\)/);
+    assert.doesNotMatch(addSwipe, /reloadCurrentChat|syncMesToSwipe/);
 
     const showHide = script.slice(
         script.indexOf('export function showSwipeButtons'),
