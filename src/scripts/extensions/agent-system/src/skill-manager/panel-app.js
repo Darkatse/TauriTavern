@@ -697,10 +697,11 @@ export function createSkillManagerPanelRoot() {
                 return '';
             },
             async clearImportDraft() {
-                if (this.importDraft.items.length > 0) {
+                const hasItems = this.importDraft.items.length > 0;
+                this.importDraft = emptyImportDraft();
+                if (hasItems) {
                     await requireSkillApi().discardPickedImport();
                 }
-                this.importDraft = emptyImportDraft();
             },
             async pickAndPreviewImport(section, importKind = 'archive') {
                 if (!section.available) {
@@ -730,30 +731,32 @@ export function createSkillManagerPanelRoot() {
                 if (!section.available) {
                     throw new Error(this.sectionUnavailableText(section));
                 }
-                const items = inputs.map(createImportItem);
                 this.importDraft = {
                     ...emptyImportDraft(),
-                    items,
+                    items: inputs.map(createImportItem),
                     sectionId: section.id,
                 };
+                const draft = this.importDraft;
                 const api = requireSkillApi();
-                // Mutate items through the reactive proxy (this.importDraft.items)
-                // so Vue 3 re-evaluates computed properties like importBusy.
-                // Writing to the raw `items` references bypasses reactivity and
-                // leaves :disabled="importBusy" buttons permanently greyed out.
-                for (let index = 0; index < items.length; index += 1) {
+                for (const item of draft.items) {
                     try {
                         const preview = await api.previewImport({
-                            input: items[index].input,
+                            input: item.input,
                             targetScope: section.scope,
                         });
-                        this.importDraft.items[index].preview = preview;
+                        if (this.importDraft !== draft) {
+                            return;
+                        }
+                        item.preview = preview;
                     } catch (error) {
-                        if (items.length === 1) {
+                        if (this.importDraft !== draft) {
+                            return;
+                        }
+                        if (draft.items.length === 1) {
                             this.importDraft = emptyImportDraft();
                             throw error;
                         }
-                        this.importDraft.items[index].error = errorText(error);
+                        item.error = errorText(error);
                         console.error('[AgentSystem:SkillManager] Failed to preview Skill import:', error);
                     }
                 }

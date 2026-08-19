@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { computed, reactive } from 'vue';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -2826,6 +2827,68 @@ test('Agent System profile panel no longer owns legacy Skill management UI', asy
     assert.match(skillExtensionStyles, /\.ttas-skill-import-directory-hint\.visible\s*\{\s*visibility:\s*visible;/);
     assert.doesNotMatch(skillFileViewerSource, /showModal/);
     assert.doesNotMatch(skillFileViewerSource, /createApp/);
+});
+
+test('Skill Manager keeps reactive preview results scoped to the active import draft', async () => {
+    const pendingPreviews = new Map();
+    installWindow({
+        skill: {
+            previewImport({ input }) {
+                return new Promise((resolve, reject) => {
+                    pendingPreviews.set(input.path, { resolve, reject });
+                });
+            },
+            async discardPickedImport() {},
+        },
+    });
+
+    const { createSkillManagerPanelRoot } = await importFresh(
+        'src/scripts/extensions/agent-system/src/skill-manager/panel-app.js',
+    );
+    const options = createSkillManagerPanelRoot();
+    const vm = reactive(options.data());
+    for (const [name, method] of Object.entries(options.methods)) {
+        vm[name] = method.bind(vm);
+    }
+    const importBusy = computed(options.computed.importBusy.bind(vm));
+    const section = { id: 'global', available: true, scope: { kind: 'global' } };
+    const input = (name) => ({ kind: 'archiveFile', path: `/tmp/${name}.zip` });
+    const preview = (name) => ({
+        skill: { name },
+        conflict: { kind: 'new' },
+        warnings: [],
+    });
+
+    const firstRun = vm.previewImportInputs(section, [input('first')]);
+    assert.equal(importBusy.value, true);
+    pendingPreviews.get('/tmp/first.zip').resolve(preview('first'));
+    await firstRun;
+    assert.equal(importBusy.value, false);
+
+    await vm.clearImportDraft();
+    const staleSuccessRun = vm.previewImportInputs(section, [input('stale-success')]);
+    await vm.clearImportDraft();
+    const currentRun = vm.previewImportInputs(section, [input('current')]);
+    pendingPreviews.get('/tmp/stale-success.zip').resolve(preview('stale-success'));
+    await staleSuccessRun;
+    assert.equal(vm.importDraft.items[0].input.path, '/tmp/current.zip');
+    assert.equal(vm.importDraft.items[0].preview, null);
+    assert.equal(importBusy.value, true);
+    pendingPreviews.get('/tmp/current.zip').resolve(preview('current'));
+    await currentRun;
+    assert.equal(importBusy.value, false);
+
+    await vm.clearImportDraft();
+    const staleFailureRun = vm.previewImportInputs(section, [input('stale-failure')]);
+    await vm.clearImportDraft();
+    const finalRun = vm.previewImportInputs(section, [input('final')]);
+    pendingPreviews.get('/tmp/stale-failure.zip').reject(new Error('stale failure'));
+    await staleFailureRun;
+    assert.equal(vm.importDraft.items[0].input.path, '/tmp/final.zip');
+    assert.equal(vm.importDraft.items[0].preview, null);
+    pendingPreviews.get('/tmp/final.zip').resolve(preview('final'));
+    await finalRun;
+    assert.equal(importBusy.value, false);
 });
 
 test('Skill Manager previews and installs selected imports sequentially with per-item failure isolation', async (t) => {
