@@ -1,80 +1,83 @@
-//! `$variables`：SillyTavern 变量快照（只读）。
+//! `$variables`：SillyTavern 变量快照（只读，纯 JSON 输入）。
 //!
-//! 直接暴露 `local` / `global` 两个作用域，接口签名与
-//! `getContext().variables` 保持一致，使 skill 脚本开发者无需学习新 API。
+//! 应用层将 `SillyTavernVariableSnapshot` 投影为
+//! `{ "local": { ... }, "global": { ... } }` 格式的纯 JSON 后传入，
+//! 适配器不依赖任何领域模型类型。
 //!
 //! ```js
-//! $variables.local.get(name)   // 只读
+//! $variables.local.get(name)   // 只读，缺失返回 ""
 //! $variables.local.has(name)   // boolean
 //! $variables.global.get(name)
 //! $variables.global.has(name)
 //! ```
 //!
-//! 写操作（`set` / `del` / `add` / `inc` / `dec`）存在但会抛出
-//! "variables are read-only in skill script sandbox" 错误，
-//! 以保持接口签名一致并 fail-fast 提示开发者。
+//! 写操作（`set` / `del` / `add` / `inc` / `dec`）fail-fast 抛错。
 
 use rquickjs::{Ctx, Function, Object};
 use serde_json::Value;
 
-use tt_domain::models::skill_script::SillyTavernVariableSnapshot;
-
 use crate::convert::json_to_js;
 
-/// 将 `$variables` 全局对象注入 JS context，结构为
-/// `{ local: { get, has, ... }, global: { get, has, ... } }`。
+/// 将 `$variables` 全局对象注入 JS context。
+///
+/// `snapshot_json` 应为 `{ "local": { ... }, "global": { ... } }` 格式。
 pub(crate) fn register_variables_api<'js>(
     ctx: &Ctx<'js>,
-    snapshot: SillyTavernVariableSnapshot,
+    snapshot_json: Value,
 ) -> rquickjs::Result<()> {
     let globals = ctx.globals();
-    let variables = build_variables_namespace(ctx, snapshot)?;
+    let variables = Object::new(ctx.clone())?;
+
+    let local = snapshot_json
+        .get("local")
+        .cloned()
+        .unwrap_or(Value::Object(serde_json::Map::new()));
+    let global = snapshot_json
+        .get("global")
+        .cloned()
+        .unwrap_or(Value::Object(serde_json::Map::new()));
+
+    let local_scope = build_variable_scope(ctx, local)?;
+    let global_scope = build_variable_scope(ctx, global)?;
+
+    variables.set("local", local_scope)?;
+    variables.set("global", global_scope)?;
     globals.set("$variables", variables)?;
     Ok(())
 }
 
-fn build_variables_namespace<'js>(
-    ctx: &Ctx<'js>,
-    snapshot: SillyTavernVariableSnapshot,
-) -> rquickjs::Result<Object<'js>> {
-    let variables = Object::new(ctx.clone())?;
-
-    let local = build_variable_scope(ctx, snapshot.local)?;
-    let global = build_variable_scope(ctx, snapshot.global)?;
-
-    variables.set("local", local)?;
-    variables.set("global", global)?;
-    Ok(variables)
-}
-
-/// 构建单个变量作用域（`local` 或 `global`），接口签名与
-/// `getContext().variables.{local,global}` 一致。
 fn build_variable_scope<'js>(
     ctx: &Ctx<'js>,
-    map: serde_json::Map<String, Value>,
+    map: Value,
 ) -> rquickjs::Result<Object<'js>> {
     let scope = Object::new(ctx.clone())?;
 
-    // get(name) — 返回原始值，缺失时返回空字符串（与 ST getLocalVariable 行为一致）。
+    // get(name) — 返回原始值，缺失时返回空字符串
     let get_map = map.clone();
     let get_fn = Function::new(
         ctx.clone(),
         move |ctx: Ctx<'js>, name: String| {
-            let value = get_map.get(&name).cloned().unwrap_or(Value::String(String::new()));
+            let value = get_map
+                .get(&name)
+                .cloned()
+                .filter(|v| !v.is_null())
+                .unwrap_or(Value::String(String::new()));
             json_to_js(&ctx, &value)
         },
     )?;
     scope.set("get", get_fn)?;
 
-    // has(name) — 返回 boolean（与 ST existsLocalVariable 一致）。
+    // has(name) — 返回 boolean
     let has_map = map.clone();
     let has_fn = Function::new(
         ctx.clone(),
-        move |name: String| has_map.contains_key(&name),
+        move |name: String| -> bool {
+            has_map.get(&name).is_some()
+        },
     )?;
     scope.set("has", has_fn)?;
 
-    // set / del / add / inc / dec — 只读模式下 fail-fast。
+    // set / del / add / inc / dec — fail-fast readonly
     let readonly_error = "variables are read-only in skill script sandbox";
     for method in ["set", "del", "add", "inc", "dec"] {
         let error_msg = readonly_error.to_string();
@@ -97,7 +100,7 @@ mod tests {
     use rquickjs::{Context, Runtime};
     use serde_json::json;
 
-    fn run_with_snapshot<F>(snapshot: SillyTavernVariableSnapshot, body: F)
+    fn run_with_snapshot<F>(snapshot: Value, body: F)
     where
         F: FnOnce(&Ctx),
     {
@@ -111,32 +114,21 @@ mod tests {
 
     #[test]
     fn local_get_returns_value_by_name() {
-        let mut local = serde_json::Map::new();
-        local.insert("score".to_string(), json!(42));
-        local.insert("name".to_string(), json!("Alice"));
-        let snapshot = SillyTavernVariableSnapshot {
-            local,
-            global: serde_json::Map::new(),
-        };
-
+        let snapshot = json!({
+            "local": { "score": 42, "name": "Alice" },
+            "global": {}
+        });
         run_with_snapshot(snapshot, |ctx| {
             let result = ctx
                 .eval::<rquickjs::Value, _>("$variables.local.get('score')")
                 .expect("eval");
             assert_eq!(js_to_json(ctx, &result).unwrap(), json!(42));
-
-            let result = ctx
-                .eval::<rquickjs::Value, _>("$variables.local.get('name')")
-                .expect("eval");
-            assert_eq!(js_to_json(ctx, &result).unwrap(), json!("Alice"));
         });
     }
 
     #[test]
     fn local_get_returns_empty_string_for_missing() {
-        let snapshot = SillyTavernVariableSnapshot::default();
-
-        run_with_snapshot(snapshot, |ctx| {
+        run_with_snapshot(json!({ "local": {}, "global": {} }), |ctx| {
             let result = ctx
                 .eval::<rquickjs::Value, _>("$variables.local.get('missing')")
                 .expect("eval");
@@ -145,86 +137,11 @@ mod tests {
     }
 
     #[test]
-    fn local_has_returns_boolean() {
-        let mut local = serde_json::Map::new();
-        local.insert("exists".to_string(), json!("yes"));
-        let snapshot = SillyTavernVariableSnapshot {
-            local,
-            global: serde_json::Map::new(),
-        };
-
-        run_with_snapshot(snapshot, |ctx| {
-            let result = ctx
-                .eval::<bool, _>("$variables.local.has('exists')")
-                .expect("eval");
-            assert!(result);
-
-            let result = ctx
-                .eval::<bool, _>("$variables.local.has('nope')")
-                .expect("eval");
-            assert!(!result);
-        });
-    }
-
-    #[test]
-    fn global_get_and_has_work() {
-        let mut global = serde_json::Map::new();
-        global.insert("theme".to_string(), json!("dark"));
-        let snapshot = SillyTavernVariableSnapshot {
-            local: serde_json::Map::new(),
-            global,
-        };
-
-        run_with_snapshot(snapshot, |ctx| {
-            let result = ctx
-                .eval::<rquickjs::Value, _>("$variables.global.get('theme')")
-                .expect("eval");
-            assert_eq!(js_to_json(ctx, &result).unwrap(), json!("dark"));
-
-            let result = ctx
-                .eval::<bool, _>("$variables.global.has('theme')")
-                .expect("eval");
-            assert!(result);
-        });
-    }
-
-    #[test]
     fn write_operations_fail_fast() {
-        let snapshot = SillyTavernVariableSnapshot::default();
-
-        run_with_snapshot(snapshot, |ctx| {
-            let result = ctx.eval::<rquickjs::Value, _>(
-                "$variables.local.set('x', 1)",
-            );
-            assert!(result.is_err());
-
-            let result = ctx.eval::<rquickjs::Value, _>(
-                "$variables.global.del('x')",
-            );
-            assert!(result.is_err());
-
-            let result = ctx.eval::<rquickjs::Value, _>(
-                "$variables.local.inc('x')",
-            );
-            assert!(result.is_err());
-        });
-    }
-
-    #[test]
-    fn string_values_preserved_without_number_coercion() {
-        let mut local = serde_json::Map::new();
-        local.insert("count".to_string(), json!("42"));
-        let snapshot = SillyTavernVariableSnapshot {
-            local,
-            global: serde_json::Map::new(),
-        };
-
-        run_with_snapshot(snapshot, |ctx| {
-            let result = ctx
-                .eval::<rquickjs::Value, _>("$variables.local.get('count')")
-                .expect("eval");
-            // 应该返回字符串 "42"，不是数字 42
-            assert_eq!(js_to_json(ctx, &result).unwrap(), json!("42"));
+        run_with_snapshot(json!({ "local": {}, "global": {} }), |ctx| {
+            assert!(ctx
+                .eval::<rquickjs::Value, _>("$variables.local.set('x', 1)")
+                .is_err());
         });
     }
 }

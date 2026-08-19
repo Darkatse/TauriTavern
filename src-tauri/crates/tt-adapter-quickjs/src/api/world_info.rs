@@ -1,69 +1,38 @@
-//! `$worldInfo`：读取预取的激活世界书快照（只读）。
+//! `$worldInfo`：读取预取的激活世界书快照（只读，纯 JSON 输入）。
+//!
+//! 应用层将 `ActivatedWorldInfoEntry` 投影为 JSON 后传入，适配器
+//! 不依赖任何领域模型类型。
 
 use rquickjs::{Ctx, Function, Object};
-use serde::Serialize;
-use serde_json::json;
-
-use tt_domain::models::skill_script::ActivatedWorldInfoEntry;
+use serde_json::Value;
 
 use crate::convert::json_to_js;
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ScriptWorldInfoEntry<'a> {
-    uid: &'a str,
-    #[serde(rename = "ref")]
-    ref_key: &'a str,
-    content: &'a str,
-    constant: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    position: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    display_name: Option<&'a str>,
-    world: &'a str,
-}
-
-fn entries_json(entries: &[ActivatedWorldInfoEntry]) -> serde_json::Value {
-    json!({
-        "entries": entries
-            .iter()
-            .map(|entry| serde_json::to_value(ScriptWorldInfoEntry {
-                uid: entry.uid.as_str(),
-                ref_key: entry.ref_key.as_str(),
-                content: entry.content.as_str(),
-                constant: entry.constant,
-                position: entry.position.as_deref(),
-                display_name: entry.display_name.as_deref(),
-                world: entry.world.as_str(),
-            })
-            .unwrap_or(serde_json::Value::Null))
-            .collect::<Vec<_>>(),
-    })
-}
-
+/// 将 `$worldInfo` 全局对象注入 JS context。
+///
+/// `entries_json` 应为 `{ "entries": [...] }` 格式的纯 JSON 值，
+/// 由应用层从 `ActivatedWorldInfoEntry` 列表投影而成。
 pub(crate) fn register_world_info_api<'js>(
     ctx: &Ctx<'js>,
-    entries: Vec<ActivatedWorldInfoEntry>,
+    entries_json: Value,
 ) -> rquickjs::Result<()> {
     let globals = ctx.globals();
     let object = Object::new(ctx.clone())?;
 
-    let activated = entries.clone();
+    // readActivated() → 全部激活条目的 JSON 快照
+    let activated = entries_json.clone();
     let read_activated = Function::new(
         ctx.clone(),
-        move |ctx: Ctx<'js>| json_to_js(&ctx, &entries_json(&activated)),
+        move |ctx: Ctx<'js>| json_to_js(&ctx, &activated),
     )?;
 
-    let filtered = entries;
+    // readEntries(refs: string[]) → 按 ref 过滤的条目
+    let filtered = entries_json;
     let read_entries = Function::new(
         ctx.clone(),
-        move |ctx: Ctx<'js>, refs: Vec<String>| {
-            let selected: Vec<_> = filtered
-                .iter()
-                .filter(|entry| refs.contains(&entry.ref_key))
-                .cloned()
-                .collect();
-            json_to_js(&ctx, &entries_json(&selected))
+        move |ctx: Ctx<'js>, refs: Vec<String>| -> rquickjs::Result<rquickjs::Value<'js>> {
+            let selected = filter_entries_by_refs(&filtered, &refs);
+            json_to_js(&ctx, &selected)
         },
     )?;
 
@@ -71,4 +40,22 @@ pub(crate) fn register_world_info_api<'js>(
     object.set("readEntries", read_entries)?;
     globals.set("$worldInfo", object)?;
     Ok(())
+}
+
+/// 按 `ref` 字段过滤 `{ "entries": [...] }` 中的条目。
+fn filter_entries_by_refs(entries_json: &Value, refs: &[String]) -> Value {
+    let Some(entries) = entries_json.get("entries").and_then(Value::as_array) else {
+        return serde_json::json!({ "entries": [] });
+    };
+    let selected: Vec<&Value> = entries
+        .iter()
+        .filter(|entry| {
+            entry
+                .get("ref")
+                .and_then(Value::as_str)
+                .map(|r| refs.contains(&r.to_string()))
+                .unwrap_or(false)
+        })
+        .collect();
+    serde_json::json!({ "entries": selected })
 }
