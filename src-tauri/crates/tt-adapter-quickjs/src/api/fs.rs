@@ -1,97 +1,214 @@
-//! `$fs`：受 SandboxIoPolicy 门控的同步文件 API（执行线程已在 spawn_blocking 中）。
+//! `$fs`：操作内存覆盖层的工作区文件 API。
+//!
+//! 所有读写均针对内存中的 `OverlayFs`，不接触物理文件系统。
+//! 写入操作被收集到 `writes` 通道，由应用层在执行完成后落盘。
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::Path;
 
 use rquickjs::{Ctx, Function, Object};
 
-use crate::sandbox::SandboxIoPolicy;
+use tt_ports::skill_script::{SkillScriptLogLevel, SkillScriptLog, SkillScriptWrite};
+
+use crate::convert::json_to_js;
+
+/// 内存覆盖文件系统：快照 + 写入收集器 + 日志收集器。
+pub(crate) struct OverlayFs {
+    /// 初始快照 + 脚本写入的叠加状态。
+    files: HashMap<String, String>,
+    /// 可见根前缀。
+    visible_roots: Vec<String>,
+    /// 可写根前缀。
+    writable_roots: Vec<String>,
+    /// 收集的写入（按调用顺序）。
+    pub writes: Vec<SkillScriptWrite>,
+    /// 收集的日志。
+    pub logs: Vec<SkillScriptLog>,
+}
+
+impl OverlayFs {
+    pub fn new(
+        snapshot: HashMap<String, String>,
+        visible_roots: Vec<String>,
+        writable_roots: Vec<String>,
+    ) -> Self {
+        Self {
+            files: snapshot,
+            visible_roots,
+            writable_roots,
+            writes: Vec::new(),
+            logs: Vec::new(),
+        }
+    }
+
+    fn is_under_roots(cleaned: &str, roots: &[String]) -> bool {
+        roots.iter().any(|root| {
+            let root = root.trim();
+            !root.is_empty() && {
+                let root = root.trim_end_matches(['/', '\\']);
+                cleaned == root
+                    || cleaned.starts_with(&format!("{root}/"))
+                    || cleaned.starts_with(&format!("{root}\\"))
+            }
+        })
+    }
+
+    /// 清洗相对路径：拒绝绝对路径与 `..` 逃逸。
+    fn clean_path(raw: &str) -> Result<String, String> {
+        if raw.contains('\0') {
+            return Err(format!("path must not contain NUL: {raw:?}"));
+        }
+        if Path::new(raw).is_absolute() {
+            return Err(format!("absolute paths are not allowed: {raw}"));
+        }
+        let cleaned = path_clean::clean(raw)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if cleaned.starts_with("..") {
+            return Err(format!("path escapes the workspace: {raw}"));
+        }
+        Ok(cleaned)
+    }
+
+    pub fn read_text(&mut self, raw: &str) -> Result<String, String> {
+        let cleaned = Self::clean_path(raw)?;
+        if !Self::is_under_roots(&cleaned, &self.visible_roots) {
+            return Err(format!("path is outside the visible workspace roots: {raw}"));
+        }
+        self.files
+            .get(&cleaned)
+            .cloned()
+            .ok_or_else(|| format!("file not found: {raw}"))
+    }
+
+    pub fn write_text(&mut self, raw: &str, content: String) -> Result<(), String> {
+        let cleaned = Self::clean_path(raw)?;
+        if !Self::is_under_roots(&cleaned, &self.writable_roots) {
+            return Err(format!("path is outside the writable workspace roots: {raw}"));
+        }
+        self.files.insert(cleaned.clone(), content.clone());
+        self.writes.push(SkillScriptWrite {
+            path: cleaned,
+            text: content,
+        });
+        Ok(())
+    }
+
+    pub fn list_files(&self, raw: Option<&str>) -> Result<Vec<String>, String> {
+        let prefix = match raw {
+            None => String::new(),
+            Some(p) => {
+                let cleaned = Self::clean_path(p)?;
+                if !Self::is_under_roots(&cleaned, &self.visible_roots) {
+                    return Err(format!(
+                        "path is outside the visible workspace roots: {p}"
+                    ));
+                }
+                cleaned.trim_end_matches(['/', '\\']).to_string()
+            }
+        };
+
+        let mut entries: Vec<String> = self
+            .files
+            .keys()
+            .filter_map(|path| {
+                if prefix.is_empty() {
+                    // 列顶层：返回路径的第一段
+                    let first_segment = path.split(['/', '\\']).next().unwrap_or(path);
+                    Some(first_segment.to_string())
+                } else if path.starts_with(&format!("{prefix}/")) || path == prefix.as_str() {
+                    // 列指定目录下：返回 prefix 之后的相对路径
+                    let rest = &path[prefix.len()..];
+                    let rest = rest.trim_start_matches(['/', '\\']);
+                    if rest.is_empty() {
+                        None
+                    } else {
+                        Some(rest.to_string())
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+        entries.sort();
+        entries.dedup();
+        Ok(entries)
+    }
+
+    pub fn exists(&self, raw: &str) -> bool {
+        let cleaned = match Self::clean_path(raw) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        if !Self::is_under_roots(&cleaned, &self.visible_roots) {
+            return false;
+        }
+        self.files.contains_key(&cleaned)
+    }
+
+    pub fn log(&mut self, level: SkillScriptLogLevel, message: String) {
+        self.logs.push(SkillScriptLog { level, message });
+    }
+}
 
 fn js_error<'js>(ctx: &Ctx<'js>, message: String) -> rquickjs::Error {
     rquickjs::Exception::throw_message(ctx, &message)
 }
 
+/// 将 `OverlayFs` 包装为 `RefCell`，通过 `Ctx` 的 userdata 机制传入 JS 回调。
+/// 由于 rquickjs 的 `Function::new` 闭包需要 `'static`，我们使用 `Rc<RefCell<OverlayFs>>`。
 pub(crate) fn register_fs_api<'js>(
     ctx: &Ctx<'js>,
-    policy: SandboxIoPolicy,
+    overlay: std::rc::Rc<RefCell<OverlayFs>>,
 ) -> rquickjs::Result<()> {
     let globals = ctx.globals();
     let fs_object = Object::new(ctx.clone())?;
 
-    let read_policy = policy.clone();
+    // readText(path) → string
+    let read_overlay = overlay.clone();
     let read_text = Function::new(
         ctx.clone(),
         move |ctx: Ctx<'_>, path: String| -> Result<String, rquickjs::Error> {
-            let target = read_policy
-                .check_read(&path)
-                .map_err(|message| js_error(&ctx, message))?;
-            std::fs::read_to_string(&target)
-                .map_err(|error| js_error(&ctx, format!("failed to read `{path}`: {error}")))
+            let mut fs = read_overlay.borrow_mut();
+            fs.read_text(&path).map_err(|m| js_error(&ctx, m))
         },
     )?;
+    fs_object.set("readText", read_text)?;
 
-    let write_policy = policy.clone();
+    // writeText(path, content) → void
+    let write_overlay = overlay.clone();
     let write_text = Function::new(
         ctx.clone(),
         move |ctx: Ctx<'_>, path: String, content: String| -> Result<(), rquickjs::Error> {
-            let target = write_policy
-                .check_write(&path)
-                .map_err(|message| js_error(&ctx, message))?;
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    js_error(&ctx, format!("failed to create directory for `{path}`: {error}"))
-                })?;
-            }
-            std::fs::write(&target, content)
-                .map_err(|error| js_error(&ctx, format!("failed to write `{path}`: {error}")))
+            let mut fs = write_overlay.borrow_mut();
+            fs.write_text(&path, content).map_err(|m| js_error(&ctx, m))
         },
     )?;
+    fs_object.set("writeText", write_text)?;
 
-    let list_policy = policy.clone();
+    // listFiles(path?) → string[]
+    let list_overlay = overlay.clone();
     let list_files = Function::new(
         ctx.clone(),
         move |ctx: Ctx<'_>, path: Option<String>| -> Result<Vec<String>, rquickjs::Error> {
-            // 无参：列出 work_dir 顶层条目名（仅名字，无内容）；
-            // 有参：读取该目录下条目的 work_dir 相对路径，读权限同 check_read。
-            let mut entries = Vec::new();
-            let base = match path.as_deref() {
-                None => list_policy.work_dir.clone(),
-                Some(path) => list_policy
-                    .check_read(path)
-                    .map_err(|message| js_error(&ctx, message))?,
-            };
-            let directory = std::fs::read_dir(&base).map_err(|error| {
-                js_error(&ctx, format!("failed to list `{}`: {error}", base.display()))
-            })?;
-            for entry in directory {
-                let entry = entry
-                    .map_err(|error| js_error(&ctx, format!("failed to read entry: {error}")))?;
-                let name = entry.file_name().to_string_lossy().to_string();
-                entries.push(match path.as_deref() {
-                    None => name,
-                    Some(prefix) => {
-                        let prefix = prefix.trim_end_matches(['/', '\\']);
-                        format!("{prefix}/{name}")
-                    }
-                });
-            }
-            entries.sort();
-            Ok(entries)
+            let fs = list_overlay.borrow();
+            fs.list_files(path.as_deref()).map_err(|m| js_error(&ctx, m))
         },
     )?;
+    fs_object.set("listFiles", list_files)?;
 
-    let exists_policy = policy.clone();
+    // exists(path) → boolean
+    let exists_overlay = overlay.clone();
     let exists = Function::new(
         ctx.clone(),
         move |_ctx: Ctx<'_>, path: String| -> Result<bool, rquickjs::Error> {
-            match exists_policy.check_read(&path) {
-                Ok(target) => Ok(target.is_file() || target.is_dir()),
-                Err(_) => Ok(false),
-            }
+            let fs = exists_overlay.borrow();
+            Ok(fs.exists(&path))
         },
     )?;
-
-    fs_object.set("readText", read_text)?;
-    fs_object.set("writeText", write_text)?;
-    fs_object.set("listFiles", list_files)?;
     fs_object.set("exists", exists)?;
+
     globals.set("$fs", fs_object)?;
     Ok(())
 }
