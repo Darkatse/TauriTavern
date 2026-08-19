@@ -480,13 +480,6 @@ impl WorkspaceRepository for TestWorkspaceRepository {
         Ok(test_manifest())
     }
 
-    async fn run_workspace_root(
-        &self,
-        _run_id: &str,
-    ) -> Result<std::path::PathBuf, DomainError> {
-        unreachable!("not needed for workspace tool tests")
-    }
-
     async fn write_text(
         &self,
         run_id: &str,
