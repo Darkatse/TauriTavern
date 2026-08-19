@@ -164,12 +164,12 @@ impl SkillRepository for FileSkillRepository {
             .await
     }
 
-    async fn skill_file_path(
+    async fn read_skill_script(
         &self,
         scope: SkillScope,
         name: &str,
         relative_path: &str,
-    ) -> Result<PathBuf, DomainError> {
+    ) -> Result<String, DomainError> {
         let name = paths::validate_skill_name(name)?;
         let path = paths::normalize_skill_path(relative_path)?;
         if !path.starts_with("scripts/") {
@@ -219,7 +219,13 @@ impl SkillRepository for FileSkillRepository {
                 "Skill file escapes installed directory: skills/{name}/{path}"
             )));
         }
-        Ok(canonical_file)
+        std::fs::read_to_string(&canonical_file).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read skill script '{}': {}",
+                canonical_file.display(),
+                error
+            ))
+        })
     }
 
     async fn read_skill_file(

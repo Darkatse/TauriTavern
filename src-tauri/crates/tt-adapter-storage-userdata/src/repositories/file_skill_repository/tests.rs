@@ -2062,31 +2062,29 @@ async fn install_skill_with_scripts(repository: &FileSkillRepository) {
 }
 
 #[tokio::test]
-async fn skill_file_path_resolves_canonical_script_file() {
-    let root = temp_root("skill-file-path");
+async fn read_skill_script_returns_source_text() {
+    let root = temp_root("read-skill-script");
     let repository = FileSkillRepository::new(root.clone());
     install_skill_with_scripts(&repository).await;
 
-    let path = repository
-        .skill_file_path(global_scope(), "scripted-skill", "scripts/helper.js")
+    let source = repository
+        .read_skill_script(global_scope(), "scripted-skill", "scripts/helper.js")
         .await
-        .expect("resolve script path");
+        .expect("read script source");
 
-    assert!(path.is_absolute());
-    assert!(path.ends_with("scripted-skill/scripts/helper.js"));
-    assert!(tokio_fs::try_exists(&path).await.expect("stat script"));
+    assert!(!source.is_empty());
 
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
-async fn skill_file_path_reports_missing_script() {
-    let root = temp_root("skill-file-path-missing");
+async fn read_skill_script_reports_missing_script() {
+    let root = temp_root("read-skill-script-missing");
     let repository = FileSkillRepository::new(root.clone());
     install_skill_with_scripts(&repository).await;
 
     let error = repository
-        .skill_file_path(global_scope(), "scripted-skill", "scripts/nope.js")
+        .read_skill_script(global_scope(), "scripted-skill", "scripts/nope.js")
         .await
         .expect_err("missing script");
 
@@ -2096,14 +2094,14 @@ async fn skill_file_path_reports_missing_script() {
 }
 
 #[tokio::test]
-async fn skill_file_path_rejects_paths_outside_scripts_dir() {
-    let root = temp_root("skill-file-path-escape");
+async fn read_skill_script_rejects_paths_outside_scripts_dir() {
+    let root = temp_root("read-skill-script-escape");
     let repository = FileSkillRepository::new(root.clone());
     install_skill_with_scripts(&repository).await;
 
     for bad_path in ["SKILL.md", "../outside.js", "scripts/../../escape.js"] {
         let error = repository
-            .skill_file_path(global_scope(), "scripted-skill", bad_path)
+            .read_skill_script(global_scope(), "scripted-skill", bad_path)
             .await
             .expect_err("path outside scripts/ must be rejected");
         assert!(
