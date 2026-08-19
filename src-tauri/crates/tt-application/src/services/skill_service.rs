@@ -81,16 +81,16 @@ impl SkillService {
         Ok(self.repository.read_skill_file(request).await?)
     }
 
-    /// 解析已安装 skill 包内文件的规范化绝对物理路径（供 skill.run_script 引擎定位入口脚本）。
-    pub async fn skill_file_path(
+    /// 读取已安装 skill 包内脚本文件的源码文本（供 skill.run_script 引擎执行）。
+    pub async fn read_skill_script(
         &self,
         scope: SkillScope,
         name: &str,
         relative_path: &str,
-    ) -> Result<std::path::PathBuf, ApplicationError> {
+    ) -> Result<String, ApplicationError> {
         Ok(self
             .repository
-            .skill_file_path(scope, name, relative_path)
+            .read_skill_script(scope, name, relative_path)
             .await?)
     }
 
@@ -390,12 +390,12 @@ mod tests {
             unreachable!("not needed for resolver tests")
         }
 
-        async fn skill_file_path(
+        async fn read_skill_script(
             &self,
             _scope: SkillScope,
             _name: &str,
             _relative_path: &str,
-        ) -> Result<std::path::PathBuf, DomainError> {
+        ) -> Result<String, DomainError> {
             unreachable!("not needed for resolver tests")
         }
 

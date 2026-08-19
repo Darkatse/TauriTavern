@@ -63,13 +63,6 @@ impl WorkspaceRepository for InvocationWorkspaceRepository<'_> {
         Ok(manifest)
     }
 
-    async fn run_workspace_root(
-        &self,
-        run_id: &str,
-    ) -> Result<std::path::PathBuf, DomainError> {
-        self.inner.run_workspace_root(run_id).await
-    }
-
     async fn write_text(
         &self,
         run_id: &str,
