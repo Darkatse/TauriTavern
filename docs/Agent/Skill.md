@@ -26,7 +26,7 @@ my-skill/
 - `agents/tauritavern.json` 可选；一旦存在，schema 无效就 fail-fast。
 - `scripts/` 会随 Skill 导入、导出，并在预览中提示风险；不会随导入/安装自动执行，只在 Agent 显式调用 `skill.run_script` 时经沙箱执行。
 
-> `scripts/` 内的脚本可由 Agent 通过 `skill.run_script` 在 QuickJS 沙箱中执行。脚本开发指南（全局变量、文件读写边界、模块导入、第三方库）见 [docs/SkillScript.md](../SkillScript.md)。
+> `scripts/` 内的脚本可由 Agent 通过 `skill.run_script` 在 QuickJS 沙箱中执行。脚本开发指南（全局变量、文件读写边界、模块导入、第三方库）见 [docs/Agent/SkillScript.md](./SkillScript.md)。
 
 ## 当前实现
 
@@ -136,7 +136,7 @@ Agent tool 层的模型可修正读取错误，例如缺失文件、二进制文
 
 当前限制：
 
-- 不自动执行 Skill 自带脚本；脚本只在 Agent 显式调用 `skill.run_script` 时经 QuickJS 沙箱执行（见 [docs/SkillScript.md](../SkillScript.md)）。
+- 不自动执行 Skill 自带脚本；脚本只在 Agent 显式调用 `skill.run_script` 时经 QuickJS 沙箱执行（见 [docs/Agent/SkillScript.md](./SkillScript.md)）。
 - 不让 Skill 自动安装 MCP server。
 - 不让 Skill 授予工具权限。
 - 不支持 marketplace、自动更新、多版本并存或依赖解析。
