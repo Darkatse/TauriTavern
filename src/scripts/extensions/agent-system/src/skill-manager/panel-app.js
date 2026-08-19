@@ -737,18 +737,23 @@ export function createSkillManagerPanelRoot() {
                     sectionId: section.id,
                 };
                 const api = requireSkillApi();
-                for (const item of items) {
+                // Mutate items through the reactive proxy (this.importDraft.items)
+                // so Vue 3 re-evaluates computed properties like importBusy.
+                // Writing to the raw `items` references bypasses reactivity and
+                // leaves :disabled="importBusy" buttons permanently greyed out.
+                for (let index = 0; index < items.length; index += 1) {
                     try {
-                        item.preview = await api.previewImport({
-                            input: item.input,
+                        const preview = await api.previewImport({
+                            input: items[index].input,
                             targetScope: section.scope,
                         });
+                        this.importDraft.items[index].preview = preview;
                     } catch (error) {
                         if (items.length === 1) {
                             this.importDraft = emptyImportDraft();
                             throw error;
                         }
-                        item.error = errorText(error);
+                        this.importDraft.items[index].error = errorText(error);
                         console.error('[AgentSystem:SkillManager] Failed to preview Skill import:', error);
                     }
                 }
