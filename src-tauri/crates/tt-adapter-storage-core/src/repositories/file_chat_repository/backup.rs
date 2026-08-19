@@ -5,15 +5,16 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, Local};
 use tokio::fs;
+use tokio::io::AsyncReadExt;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
+use tt_ports::repositories::chat_repository::ChatBackupReader;
 use tt_ports::settings::{ChatBackupRuntime, ChatBackupStorageStats};
 
 use super::FileChatRepository;
 use super::backup_codec::{
     BackupFormat, compress_backup, copy_backup, copy_decoded_backup_reader, decompress_backup,
-    is_materialization_path, materialization_file_name, open_decoded_backup,
-    read_zstd_frame_content_size, set_backup_modified,
+    open_decoded_backup, read_zstd_frame_content_size, set_backup_modified,
 };
 use super::backup_inventory::{
     BackupCandidate, BackupEntry, BackupHistoryState, BackupInventory, BackupInventoryState,
@@ -34,45 +35,44 @@ struct BackupConvergenceOutcome {
     first_error: Option<DomainError>,
 }
 
+struct FileChatBackupReader {
+    source_path: PathBuf,
+    reader: super::backup_codec::DecodedBackupReader,
+}
+
+#[async_trait]
+impl ChatBackupReader for FileChatBackupReader {
+    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, DomainError> {
+        self.reader.read(buffer).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to decode chat backup {}: {error}",
+                self.source_path.display()
+            ))
+        })
+    }
+}
+
 impl FileChatRepository {
-    pub(super) async fn materialize_chat_backup_file(
+    pub(super) async fn open_chat_backup_download_file(
         &self,
         backup_file_name: &str,
-    ) -> Result<PathBuf, DomainError> {
-        fs::create_dir_all(&self.chat_commit_staging_dir)
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to create chat backup materialization directory {}: {error}",
-                    self.chat_commit_staging_dir.display()
-                ))
+    ) -> Result<Box<dyn ChatBackupReader>, DomainError> {
+        let logical_file_name = Self::normalize_backup_file_name(backup_file_name)?;
+        let mut state = self.backup_history.lock().await;
+        self.ensure_backup_inventory_ready(&mut state).await?;
+        let inventory = ready_inventory(&state.inventory)?;
+        let entry = inventory
+            .find_by_logical_name(&logical_file_name)
+            .ok_or_else(|| {
+                DomainError::NotFound(format!("Chat backup not found: {backup_file_name}"))
             })?;
-        let target_path = self
-            .chat_commit_staging_dir
-            .join(materialization_file_name());
-        self.copy_chat_backup_to_path(backup_file_name, &target_path)
-            .await?;
-        Ok(target_path)
-    }
-
-    pub(super) async fn discard_chat_backup_materialization_file(
-        &self,
-        path: &Path,
-    ) -> Result<(), DomainError> {
-        if !is_materialization_path(path, &self.chat_commit_staging_dir) {
-            return Err(DomainError::InvalidData(
-                "Invalid chat backup materialization path".to_string(),
-            ));
-        }
-
-        match fs::remove_file(path).await {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(DomainError::InternalError(format!(
-                "Failed to discard chat backup materialization {}: {error}",
-                path.display()
-            ))),
-        }
+        let source_path = self.backups_dir.join(&entry.file_name);
+        let reader = open_decoded_backup(&source_path, entry.format).await?;
+        drop(state);
+        Ok(Box::new(FileChatBackupReader {
+            source_path,
+            reader,
+        }))
     }
 
     pub(super) async fn copy_chat_backup_to_path(

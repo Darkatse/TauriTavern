@@ -384,29 +384,6 @@ fn decompress_backup_blocking(source_path: &Path, target_path: &Path) -> io::Res
     std::fs::metadata(target_path).map(|metadata| metadata.len())
 }
 
-pub(super) fn materialization_file_name() -> String {
-    format!(
-        "backup-materialization-{}.jsonl",
-        uuid::Uuid::new_v4().simple()
-    )
-}
-
-pub(super) fn is_materialization_path(path: &Path, staging_dir: &Path) -> bool {
-    if path.parent() != Some(staging_dir) {
-        return false;
-    }
-    let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
-        return false;
-    };
-    let Some(identifier) = file_name
-        .strip_prefix("backup-materialization-")
-        .and_then(|value| value.strip_suffix(".jsonl"))
-    else {
-        return false;
-    };
-    identifier.len() == 32 && uuid::Uuid::parse_str(identifier).is_ok()
-}
-
 pub(super) fn restore_staging_file_name() -> String {
     format!("backup-restore-{}.partial", uuid::Uuid::new_v4().simple())
 }

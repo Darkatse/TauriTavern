@@ -11,6 +11,11 @@ pub use super::chat_types::{
     FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
 };
 
+#[async_trait]
+pub trait ChatBackupReader: Send {
+    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, DomainError>;
+}
+
 /// Repository interface for chat management
 #[async_trait]
 pub trait ChatRepository: Send + Sync {
@@ -109,12 +114,11 @@ pub trait ChatRepository: Send + Sync {
     /// List chat backup metadata without opening backup payloads.
     async fn list_chat_backup_catalog(&self) -> Result<Vec<ChatBackupCatalogEntry>, DomainError>;
 
-    /// Decode a chat backup into a temporary JSONL file for streaming consumers.
-    async fn materialize_chat_backup(&self, backup_file_name: &str)
-    -> Result<PathBuf, DomainError>;
-
-    /// Remove a temporary JSONL file returned by [`Self::materialize_chat_backup`].
-    async fn discard_chat_backup_materialization(&self, path: &Path) -> Result<(), DomainError>;
+    /// Open the decoded JSONL payload of a logical chat backup.
+    async fn open_chat_backup_download(
+        &self,
+        backup_file_name: &str,
+    ) -> Result<Box<dyn ChatBackupReader>, DomainError>;
 
     /// Restore a character chat directly from a logical backup name.
     async fn restore_character_chat_backup(

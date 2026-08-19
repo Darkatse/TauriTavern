@@ -54,6 +54,23 @@ fn repository_for_root(root: &Path) -> FileChatRepository {
     )
 }
 
+async fn read_backup_payload(
+    repository: &FileChatRepository,
+    name: &str,
+    chunk_bytes: usize,
+) -> Result<Vec<u8>, DomainError> {
+    let mut reader = repository.open_chat_backup_download(name).await?;
+    let mut chunk = vec![0; chunk_bytes];
+    let mut payload = Vec::new();
+    loop {
+        let bytes_read = reader.read(&mut chunk).await?;
+        if bytes_read == 0 {
+            return Ok(payload);
+        }
+        payload.extend_from_slice(&chunk[..bytes_read]);
+    }
+}
+
 async fn commit_payload_bytes(
     repository: &FileChatRepository,
     target: ChatPayloadTarget,
@@ -774,6 +791,29 @@ async fn explicit_backups_keep_readable_format_without_same_second_overwrite() {
 }
 
 #[tokio::test]
+async fn raw_backup_download_streams_the_published_file_without_writes() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let payload = payload_to_jsonl(&payload_with_integrity("direct"));
+    let chat = root.join("source.jsonl");
+    fs::write(&chat, &payload).await.expect("write source");
+    repository
+        .backup_chat_file_explicit(&chat, "Alice")
+        .await
+        .expect("create raw backup");
+
+    let files_before = backup_file_names(&root).await;
+    let logical_name = files_before[0].clone();
+    let downloaded = read_backup_payload(&repository, &logical_name, 7)
+        .await
+        .expect("stream raw backup");
+
+    assert_eq!(downloaded, payload.as_bytes());
+    assert_eq!(backup_file_names(&root).await, files_before);
+    assert!(!repository.chat_commit_staging_dir.exists());
+}
+
+#[tokio::test]
 async fn zstd_setting_converts_all_backups_in_both_directions() {
     let (repository, root) = setup_repository().await;
     let source = root.join("source.jsonl");
@@ -820,20 +860,10 @@ async fn zstd_setting_converts_all_backups_in_both_directions() {
             .message_count,
         Some(1)
     );
-    let materialized = repository
-        .materialize_chat_backup(&logical_name)
+    let downloaded = read_backup_payload(&repository, &logical_name, 11)
         .await
-        .expect("materialize converted backup");
-    assert_eq!(
-        fs::read(&materialized)
-            .await
-            .expect("read converted backup"),
-        payload.as_bytes()
-    );
-    repository
-        .discard_chat_backup_materialization(&materialized)
-        .await
-        .expect("discard converted backup");
+        .expect("stream converted backup");
+    assert_eq!(downloaded, payload.as_bytes());
 
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
     assert_eq!(backup_file_names(&root).await, vec![logical_name.clone()]);
@@ -986,7 +1016,7 @@ async fn automatic_deduplication_survives_raw_zstd_runtime_toggles() {
 }
 
 #[tokio::test]
-async fn zstd_backup_materialize_and_restore_are_streamed_and_byte_exact() {
+async fn zstd_backup_download_and_restore_are_streamed_and_byte_exact() {
     let (repository, root) = setup_repository().await;
     let mut policy = backup_policy(-1, -1, -1);
     policy.zstd_compression_enabled = true;
@@ -1020,21 +1050,13 @@ async fn zstd_backup_materialize_and_restore_are_streamed_and_byte_exact() {
             < payload.len() as u64
     );
 
-    let materialized = repository
-        .materialize_chat_backup(&descriptor.file_name)
+    let files_before = backup_file_names(&root).await;
+    let downloaded = read_backup_payload(&repository, &descriptor.file_name, 4096)
         .await
-        .expect("materialize zstd backup");
-    assert_eq!(
-        fs::read(&materialized)
-            .await
-            .expect("read materialized backup"),
-        payload.as_bytes()
-    );
-    repository
-        .discard_chat_backup_materialization(&materialized)
-        .await
-        .expect("discard materialized backup");
-    assert!(!materialized.exists());
+        .expect("stream zstd backup");
+    assert_eq!(downloaded, payload.as_bytes());
+    assert_eq!(backup_file_names(&root).await, files_before);
+    assert!(!repository.chat_commit_staging_dir.exists());
 
     let restored_character = repository
         .restore_character_chat_backup(&descriptor.file_name, "alice", "Alice")
@@ -1272,8 +1294,7 @@ async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
         .expect("make corrupt backup newest");
 
     assert!(
-        repository
-            .materialize_chat_backup(&descriptor.file_name)
+        read_backup_payload(&repository, &descriptor.file_name, 4096)
             .await
             .is_err()
     );
@@ -1314,20 +1335,10 @@ async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
     );
     assert!(root.join("backups").join(&healthy.file_name).exists());
     assert!(!healthy.path.exists());
-    let materialized = repository
-        .materialize_chat_backup(&healthy.file_name)
+    let downloaded = read_backup_payload(&repository, &healthy.file_name, 13)
         .await
-        .expect("materialize converted healthy backup");
-    assert_eq!(
-        fs::read(&materialized)
-            .await
-            .expect("read converted healthy backup"),
-        healthy_payload.as_bytes()
-    );
-    repository
-        .discard_chat_backup_materialization(&materialized)
-        .await
-        .expect("discard healthy materialization");
+        .expect("stream converted healthy backup");
+    assert_eq!(downloaded, healthy_payload.as_bytes());
     let mut backup_entries = fs::read_dir(root.join("backups"))
         .await
         .expect("read backup directory");

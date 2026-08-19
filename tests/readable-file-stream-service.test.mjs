@@ -96,7 +96,48 @@ test('readable file stream service reads Tauri fs chunks and closes the resource
     ]);
 });
 
-test('readable file stream service fails on unexpected fs read payloads', async () => {
+test('readable file stream service reads chat backup chunks and closes the resource', async () => {
+    const calls = [];
+    const readResponses = [
+        Uint8Array.from([1, 2]),
+        Uint8Array.from([3]),
+        new Uint8Array(0),
+    ];
+    const service = createReadableFileStreamService({
+        invoke: async (command, args) => {
+            calls.push({ command, args });
+            if (command === 'open_chat_backup_download') {
+                return 8;
+            }
+            if (command === 'read_chat_backup_download') {
+                return readResponses.shift();
+            }
+            if (command === 'plugin:resources|close') {
+                return null;
+            }
+            throw new Error(`Unexpected command: ${command}`);
+        },
+    });
+
+    const stream = await service.createChatBackupDownloadStream('chat_alice.jsonl');
+    assert.deepEqual(await readStreamBytes(stream), [1, 2, 3]);
+    assert.deepEqual(calls, [
+        {
+            command: 'open_chat_backup_download',
+            args: { name: 'chat_alice.jsonl' },
+        },
+        ...Array.from({ length: 3 }, () => ({
+            command: 'read_chat_backup_download',
+            args: { rid: 8 },
+        })),
+        {
+            command: 'plugin:resources|close',
+            args: { rid: 8 },
+        },
+    ]);
+});
+
+test('readable resource stream closes on read failure', async () => {
     const calls = [];
     const service = createReadableFileStreamService({
         invoke: async (command, args) => {
@@ -116,7 +157,7 @@ test('readable file stream service fails on unexpected fs read payloads', async 
 
     const reader = service.createReadableFileStream('/tmp/archive.zip').getReader();
 
-    await assert.rejects(() => reader.read(), /Unexpected fs read response/);
+    await assert.rejects(() => reader.read(), /Unexpected resource read response/);
     assert.deepEqual(calls.at(-1), {
         command: 'plugin:resources|close',
         args: {
