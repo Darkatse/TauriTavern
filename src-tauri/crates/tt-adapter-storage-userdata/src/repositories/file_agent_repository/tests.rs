@@ -1447,38 +1447,3 @@ async fn persistent_workspace_commits_parallel_branch_states() {
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
-
-#[tokio::test]
-async fn run_workspace_root_returns_existing_canonical_run_dir() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-    let run = sample_run();
-    let manifest = sample_manifest(&run);
-    repository.create_run(&run).await.expect("create run");
-    repository
-        .initialize_run(
-            &run,
-            &manifest,
-            &serde_json::json!({}),
-            &sample_resolved_profile(&manifest),
-        )
-        .await
-        .expect("initialize run");
-
-    let workspace_root = WorkspaceRepository::run_workspace_root(&repository, &run.id)
-        .await
-        .expect("resolve workspace root");
-
-    let canonical_root = fs::canonicalize(&root).await.expect("canonicalize root");
-    assert!(workspace_root.is_absolute());
-    assert!(workspace_root.starts_with(&canonical_root));
-    assert!(workspace_root.ends_with("runs/run_test"));
-    assert!(fs::try_exists(&workspace_root).await.expect("stat run dir"));
-
-    let error = WorkspaceRepository::run_workspace_root(&repository, "run_missing")
-        .await
-        .expect_err("missing run");
-    assert!(matches!(error, DomainError::NotFound(_)));
-
-    let _ = fs::remove_dir_all(root).await;
-}

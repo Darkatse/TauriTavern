@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::fs;
@@ -75,25 +73,6 @@ impl WorkspaceRepository for FileAgentRepository {
 
     async fn read_manifest(&self, run_id: &str) -> Result<WorkspaceManifest, DomainError> {
         Self::read_json(&self.load_run_dir(run_id).await?.join("manifest.json")).await
-    }
-
-    async fn run_workspace_root(&self, run_id: &str) -> Result<PathBuf, DomainError> {
-        // 先预检 run 记录是否存在，以便将缺失 run 明确映射为 NotFound
-        //（load_run 对缺失文件统一返回 InternalError，无法区分）。
-        let record_path = self.index_run_path(run_id)?;
-        if !fs::try_exists(&record_path).await.unwrap_or(false) {
-            return Err(DomainError::NotFound(format!(
-                "Agent run not found: {run_id}"
-            )));
-        }
-        let run_dir = self.load_run_dir(run_id).await?;
-        fs::canonicalize(&run_dir).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to resolve agent workspace root {}: {}",
-                run_dir.display(),
-                error
-            ))
-        })
     }
 
     async fn write_text(
