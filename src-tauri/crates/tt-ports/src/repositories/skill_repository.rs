@@ -32,15 +32,15 @@ pub trait SkillRepository: Send + Sync {
         request: SkillInstallRequest,
     ) -> Result<SkillInstallResult, DomainError>;
 
-    /// 解析已安装 skill 包内文件的**规范化绝对物理路径**。
+    /// 读取已安装 skill 包内脚本文件的**源码文本**。
     /// 实现必须校验：skill 已安装、相对路径规范化后未逃逸 skill 目录、
-    /// 目标存在且为普通文件（非符号链接）。
-    async fn skill_file_path(
+    /// 目标存在且为普通文件（非符号链接），然后返回文件文本内容。
+    async fn read_skill_script(
         &self,
         scope: SkillScope,
         name: &str,
         relative_path: &str,
-    ) -> Result<std::path::PathBuf, DomainError>;
+    ) -> Result<String, DomainError>;
 
     async fn read_skill_file(
         &self,
