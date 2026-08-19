@@ -697,10 +697,11 @@ export function createSkillManagerPanelRoot() {
                 return '';
             },
             async clearImportDraft() {
-                if (this.importDraft.items.length > 0) {
+                const hasItems = this.importDraft.items.length > 0;
+                this.importDraft = emptyImportDraft();
+                if (hasItems) {
                     await requireSkillApi().discardPickedImport();
                 }
-                this.importDraft = emptyImportDraft();
             },
             async pickAndPreviewImport(section, importKind = 'archive') {
                 if (!section.available) {
@@ -730,21 +731,28 @@ export function createSkillManagerPanelRoot() {
                 if (!section.available) {
                     throw new Error(this.sectionUnavailableText(section));
                 }
-                const items = inputs.map(createImportItem);
                 this.importDraft = {
                     ...emptyImportDraft(),
-                    items,
+                    items: inputs.map(createImportItem),
                     sectionId: section.id,
                 };
+                const draft = this.importDraft;
                 const api = requireSkillApi();
-                for (const item of items) {
+                for (const item of draft.items) {
                     try {
-                        item.preview = await api.previewImport({
+                        const preview = await api.previewImport({
                             input: item.input,
                             targetScope: section.scope,
                         });
+                        if (this.importDraft !== draft) {
+                            return;
+                        }
+                        item.preview = preview;
                     } catch (error) {
-                        if (items.length === 1) {
+                        if (this.importDraft !== draft) {
+                            return;
+                        }
+                        if (draft.items.length === 1) {
                             this.importDraft = emptyImportDraft();
                             throw error;
                         }
