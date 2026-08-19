@@ -3,7 +3,6 @@
 pub mod api;
 pub mod convert;
 pub mod engine;
-pub mod sandbox;
+pub mod skill_libs;
 
 pub use engine::{DEFAULT_EXECUTION_TIMEOUT, DEFAULT_MAX_RESULT_BYTES, QuickJsScriptEngine};
-pub use sandbox::SandboxIoPolicy;
