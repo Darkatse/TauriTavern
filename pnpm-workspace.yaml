@@ -1,2 +1,4 @@
 onlyBuiltDependencies:
   - protobufjs
+overrides:
+  lodash-es: 4.18.1

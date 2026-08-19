@@ -243,7 +243,7 @@ Provider stream
   来自 ChatCompletionService/Repository 的 SSE data 或 normalized chunk。
 
 Agent run event stream
-  AgentRunEvent：model_delta、tool_call_requested、checkpoint_created 等语义事件。
+  AgentRunEvent：model_delta、tool_call_requested、chat_commit_requested 等语义事件。
 ```
 
 Agent UI 必须订阅 `api.agent.subscribe(runId, handler)` 的 run event，不直接消费 provider raw stream。
@@ -268,7 +268,7 @@ model.output_truncated
 
 Agent gateway 在 canonical decode 与工具执行前检查 terminal reason：`refusal` 返回 `model.provider_refusal`；`max_tokens`、`length`、`model_context_window_exceeded` 返回 `model.output_truncated`。两者都是 provider 已明确给出的终态，不自动重试，也不消费部分文本或工具调用。
 
-Agent runtime 会按 Profile `run.modelRetry` 重试 `429` rate limit 与 transient transport/provider availability 错误。`model.upstream_invalid_response` 专用于上游响应体不可读或不是合法 provider JSON 的暂态异常，可自动重试；payload build、policy denied、provider 明确拒绝、response schema decode、tool call id、native metadata 等本地或 provider 明确契约错误不重试。
+Agent runtime 会按 Profile `run.modelRetry` 重试 `429` rate limit、transient provider availability 与结构化 network `UpstreamFailure`。`model.upstream_invalid_response` 专用于上游响应体不可读或不是合法 provider JSON 的暂态异常，可自动重试；payload build、policy denied、provider 明确拒绝、response schema decode、tool call id、native metadata 等本地或 provider 明确契约错误不重试。
 
 `model.native_metadata_lost` 不应静默降级。
 

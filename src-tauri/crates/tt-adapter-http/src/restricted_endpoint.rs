@@ -14,7 +14,8 @@ const MAX_USER_ENDPOINT_REDIRECTS: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum UserEndpointRoute {
-    LocalDirect,
+    TrustedDirect,
+    TrustedDefault,
     PublicDefault,
 }
 
@@ -111,7 +112,7 @@ pub(crate) async fn inspect_user_endpoint(
         }
     };
 
-    local_candidate(endpoint, &host, addresses)
+    Ok(non_public_candidate(endpoint, addresses))
 }
 
 pub(crate) fn user_endpoint_route(
@@ -124,27 +125,29 @@ pub(crate) fn user_endpoint_route(
         url.host_str()
             .expect("parse_user_http_endpoint guarantees a host"),
     );
+    let explicit_address = host.parse::<IpAddr>().ok();
+    let loopback_host = explicit_loopback_host(&host);
+    let explicit_non_public_host = explicit_address
+        .is_some_and(|address| !is_globally_reachable_address(address))
+        || loopback_host;
+    let explicit_local_host =
+        explicit_address.is_some_and(is_explicit_local_address) || loopback_host;
 
-    let Ok(address) = host.parse::<IpAddr>() else {
-        return Ok(if grants.contains(endpoint) {
-            UserEndpointRoute::LocalDirect
+    if grants.contains(endpoint) {
+        return Ok(if explicit_local_host {
+            UserEndpointRoute::TrustedDirect
         } else {
-            UserEndpointRoute::PublicDefault
+            UserEndpointRoute::TrustedDefault
         });
-    };
-
-    match classify_endpoint_address(address) {
-        EndpointAddressScope::Local if grants.contains(endpoint) => {
-            Ok(UserEndpointRoute::LocalDirect)
-        }
-        EndpointAddressScope::Local => Err(DomainError::InvalidData(format!(
-            "Local endpoint requires approval from the Connect button: {endpoint}"
-        ))),
-        EndpointAddressScope::Global => Ok(UserEndpointRoute::PublicDefault),
-        EndpointAddressScope::Forbidden => Err(DomainError::InvalidData(format!(
-            "User-configured endpoint address is not public, loopback, or private LAN: {address}"
-        ))),
     }
+
+    if explicit_non_public_host {
+        return Err(DomainError::InvalidData(format!(
+            "Non-public endpoint requires approval from the Connect button: {endpoint}"
+        )));
+    }
+
+    Ok(UserEndpointRoute::PublicDefault)
 }
 
 async fn resolve_host_addresses(host: &str) -> Result<Vec<IpAddr>, io::Error> {
@@ -155,42 +158,21 @@ async fn resolve_host_addresses(host: &str) -> Result<Vec<IpAddr>, io::Error> {
     Ok(addresses)
 }
 
-fn local_candidate(
+fn non_public_candidate(
     endpoint: String,
-    host: &str,
     addresses: Vec<IpAddr>,
-) -> Result<Option<LocalEndpointCandidate>, DomainError> {
-    let mut local_addresses = Vec::new();
-    let mut has_global = false;
-    let mut forbidden_address = None;
-
-    for address in addresses {
-        match classify_endpoint_address(address) {
-            EndpointAddressScope::Local => local_addresses.push(address),
-            EndpointAddressScope::Global => has_global = true,
-            EndpointAddressScope::Forbidden => {
-                forbidden_address.get_or_insert(address);
-            }
-        };
+) -> Option<LocalEndpointCandidate> {
+    if addresses.is_empty() || addresses.iter().copied().any(is_globally_reachable_address) {
+        return None;
     }
 
-    if has_global || (local_addresses.is_empty() && forbidden_address.is_none()) {
-        return Ok(None);
-    }
-    if !local_addresses.is_empty() {
-        return Ok(Some(LocalEndpointCandidate {
-            endpoint,
-            addresses: local_addresses
-                .into_iter()
-                .map(|address| address.to_string())
-                .collect(),
-        }));
-    }
-
-    Err(DomainError::InvalidData(format!(
-        "User-configured endpoint host `{host}` resolved only to a forbidden address: {}",
-        forbidden_address.expect("forbidden address was checked above")
-    )))
+    Some(LocalEndpointCandidate {
+        endpoint,
+        addresses: addresses
+            .into_iter()
+            .map(|address| address.to_string())
+            .collect(),
+    })
 }
 
 fn normalize_dns_name(host: &str) -> String {
@@ -205,6 +187,19 @@ fn explicit_loopback_host(host: &str) -> bool {
     host == "localhost" || host.ends_with(".localhost")
 }
 
+fn is_explicit_local_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => address.is_loopback() || address.is_private(),
+        IpAddr::V6(address) => {
+            address.is_loopback()
+                || address.is_unique_local()
+                || address
+                    .to_ipv4_mapped()
+                    .is_some_and(|address| address.is_loopback() || address.is_private())
+        }
+    }
+}
+
 fn filter_resolved_addresses(
     addresses: impl Iterator<Item = SocketAddr>,
     trust_all_addresses: bool,
@@ -213,45 +208,10 @@ fn filter_resolved_addresses(
     addresses
         .filter(|address| {
             trust_all_addresses
-                || matches!(
-                    (route, classify_endpoint_address(address.ip())),
-                    (
-                        UserEndpointRoute::PublicDefault,
-                        EndpointAddressScope::Global
-                    ) | (UserEndpointRoute::LocalDirect, EndpointAddressScope::Local)
-                )
+                || route != UserEndpointRoute::PublicDefault
+                || is_globally_reachable_address(address.ip())
         })
         .collect()
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EndpointAddressScope {
-    Global,
-    Local,
-    Forbidden,
-}
-
-fn classify_endpoint_address(address: IpAddr) -> EndpointAddressScope {
-    if is_local_address(address) {
-        EndpointAddressScope::Local
-    } else if is_globally_reachable_address(address) {
-        EndpointAddressScope::Global
-    } else {
-        EndpointAddressScope::Forbidden
-    }
-}
-
-fn is_local_address(address: IpAddr) -> bool {
-    match address {
-        IpAddr::V4(address) => address.is_loopback() || address.is_private(),
-        IpAddr::V6(address) => {
-            if let Some(mapped) = address.to_ipv4_mapped() {
-                return mapped.is_loopback() || mapped.is_private();
-            }
-
-            address.is_loopback() || address.is_unique_local()
-        }
-    }
 }
 
 // Public means globally reachable according to the IANA IPv4/IPv6 special-purpose
@@ -388,12 +348,19 @@ mod tests {
     }
 
     #[test]
-    fn exact_grants_route_local_endpoints_directly() {
-        let endpoint = "http://192.168.1.2:11434/v1";
-        assert!(user_endpoint_route(endpoint, &HashSet::new()).is_err());
+    fn exact_grants_only_route_explicit_local_hosts_directly() {
+        let local_ip = "http://192.168.1.2:11434/v1";
+        assert!(user_endpoint_route(local_ip, &HashSet::new()).is_err());
         assert_eq!(
-            user_endpoint_route(endpoint, &HashSet::from([endpoint.to_string()])).unwrap(),
-            UserEndpointRoute::LocalDirect
+            user_endpoint_route(local_ip, &HashSet::from([local_ip.to_string()])).unwrap(),
+            UserEndpointRoute::TrustedDirect
+        );
+
+        let localhost = "http://localhost:11434/v1";
+        assert!(user_endpoint_route(localhost, &HashSet::new()).is_err());
+        assert_eq!(
+            user_endpoint_route(localhost, &HashSet::from([localhost.to_string()])).unwrap(),
+            UserEndpointRoute::TrustedDirect
         );
 
         let hostname = "http://model-server.local:11434/v1";
@@ -403,9 +370,15 @@ mod tests {
         );
         assert_eq!(
             user_endpoint_route(hostname, &HashSet::from([hostname.to_string()])).unwrap(),
-            UserEndpointRoute::LocalDirect
+            UserEndpointRoute::TrustedDefault
         );
 
+        let fake_ip = "http://198.18.0.5/v1";
+        assert!(user_endpoint_route(fake_ip, &HashSet::new()).is_err());
+        assert_eq!(
+            user_endpoint_route(fake_ip, &HashSet::from([fake_ip.to_string()])).unwrap(),
+            UserEndpointRoute::TrustedDefault
+        );
         assert_eq!(
             user_endpoint_route("https://8.8.8.8/v1", &HashSet::new()).unwrap(),
             UserEndpointRoute::PublicDefault
@@ -429,34 +402,30 @@ mod tests {
     fn inspection_requests_consent_only_when_no_global_address_is_available() {
         let endpoint = "http://model-server.local:11434/v1".to_string();
         assert!(
-            local_candidate(
-                endpoint.clone(),
-                "model-server.local",
-                vec!["192.168.1.3".parse().unwrap()],
-            )
-            .unwrap()
-            .is_some()
+            non_public_candidate(endpoint.clone(), vec!["192.168.1.3".parse().unwrap()],).is_some()
         );
         assert!(
-            local_candidate(
+            non_public_candidate(endpoint.clone(), vec!["198.18.0.5".parse().unwrap()],).is_some()
+        );
+        assert!(
+            non_public_candidate(
                 endpoint,
-                "model-server.local",
                 vec![
                     "192.168.1.3".parse().unwrap(),
                     "93.184.216.34".parse().unwrap(),
                 ],
             )
-            .unwrap()
             .is_none()
         );
     }
 
     #[test]
-    fn resolver_separates_global_and_local_addresses() {
+    fn resolver_restricts_only_untrusted_endpoints_to_global_addresses() {
         let addresses = [
             "127.0.0.1:443".parse().unwrap(),
             "10.0.0.1:443".parse().unwrap(),
             "93.184.216.34:443".parse().unwrap(),
+            "198.18.0.5:443".parse().unwrap(),
             "[fc00::1]:443".parse().unwrap(),
             "[2606:2800:220:1:248:1893:25c8:1946]:443".parse().unwrap(),
         ];
@@ -467,63 +436,57 @@ mod tests {
                 false,
                 UserEndpointRoute::PublicDefault,
             ),
-            [addresses[2], addresses[4]]
+            [addresses[2], addresses[5]]
         );
-        assert_eq!(
-            filter_resolved_addresses(addresses.into_iter(), false, UserEndpointRoute::LocalDirect,),
-            [addresses[0], addresses[1], addresses[3]]
-        );
+        for route in [
+            UserEndpointRoute::TrustedDefault,
+            UserEndpointRoute::TrustedDirect,
+        ] {
+            assert_eq!(
+                filter_resolved_addresses(addresses.into_iter(), false, route),
+                addresses
+            );
+        }
     }
 
     #[test]
-    fn address_policy_separates_local_global_and_forbidden_ranges() {
-        for address in [
-            "127.0.0.1",
-            "10.0.0.1",
-            "172.16.0.1",
-            "192.168.0.1",
-            "::1",
-            "::ffff:127.0.0.1",
-            "fc00::1",
-        ] {
-            assert_eq!(
-                classify_endpoint_address(address.parse().unwrap()),
-                EndpointAddressScope::Local,
-                "{address}"
-            );
-        }
-
+    fn address_policy_separates_global_and_non_global_ranges() {
         for address in [
             "8.8.8.8",
             "192.0.0.9",
             "64:ff9b::808:808",
             "2606:4700:4700::1111",
         ] {
-            assert_eq!(
-                classify_endpoint_address(address.parse().unwrap()),
-                EndpointAddressScope::Global,
+            assert!(
+                is_globally_reachable_address(address.parse().unwrap()),
                 "{address}"
             );
         }
 
         for address in [
             "0.0.0.0",
+            "10.0.0.1",
+            "127.0.0.1",
             "100.100.100.200",
             "169.254.169.254",
+            "172.16.0.1",
+            "192.168.0.1",
             "198.18.0.1",
             "224.0.0.1",
             "240.0.0.1",
             "::",
+            "::1",
+            "::ffff:127.0.0.1",
             "::ffff:169.254.169.254",
             "64:ff9b::a00:1",
             "2001:db8::1",
             "3fff::1",
+            "fc00::1",
             "fe80::1",
             "ff02::1",
         ] {
-            assert_eq!(
-                classify_endpoint_address(address.parse().unwrap()),
-                EndpointAddressScope::Forbidden,
+            assert!(
+                !is_globally_reachable_address(address.parse().unwrap()),
                 "{address}"
             );
         }

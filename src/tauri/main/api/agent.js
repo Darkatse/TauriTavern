@@ -115,12 +115,6 @@ function createAgentApi({ safeInvoke }) {
             throw new Error('approveToolCall is not implemented');
         },
         listRuns: runtime.listRuns,
-        readDiff() {
-            throw new Error('readDiff is not implemented');
-        },
-        rollback() {
-            throw new Error('rollback is not implemented');
-        },
     };
 }
 

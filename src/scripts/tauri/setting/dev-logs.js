@@ -1,6 +1,7 @@
 import { POPUP_TYPE } from '../../popup.js';
 import { translate } from '../../i18n.js';
 import { trimFrontendLogEntriesInPlace } from '../../../tauri/main/services/dev-logging/frontend-log-retention.js';
+import { writeClipboardText } from '../../../tauri-bridge.js';
 import { openFullscreenTextViewer } from './text-viewer-popup.js';
 import { runTaskOrPopup, showErrorPopup } from './setting-panel/popup-utils.js';
 import { callTauriTavernPanelPopup } from './panel-popup.js';
@@ -34,7 +35,7 @@ async function importDevLogsBundle() {
 function createActions() {
     return {
         copyText: (text) => runTaskOrPopup(async () => {
-            await navigator.clipboard.writeText(String(text ?? ''));
+            await writeClipboardText(String(text ?? ''));
         }),
         openTextViewer: (options) => runTaskOrPopup(async () => {
             await openFullscreenTextViewer(options);

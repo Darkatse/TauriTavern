@@ -83,7 +83,7 @@ test('core message roots reconcile through ChatSurface instead of direct DOM mut
     );
     assert.match(viewStateSync, /applyCharacterTagsToMessageDivs/);
     assert.match(viewStateSync, /syncMountedDeleteState\(messageIds\)/);
-    assert.match(viewStateSync, /refreshSwipeButtons\(false\)/);
+    assert.match(viewStateSync, /refreshActiveSwipeButtons\(messageIds\)/);
     assert.match(viewStateSync, /syncStylePinsOnProjectionEdge\(messageIds\)/);
     assert.match(viewStateSync, /syncLastInContextMessageMarker\(\)/);
     assert.match(viewStateSync, /updateEditArrowClasses\(\)/);
@@ -126,6 +126,56 @@ test('core message roots reconcile through ChatSurface instead of direct DOM mut
     const welcome = await readFile(path.join(REPO_ROOT, 'src/scripts/welcome-screen.js'), 'utf8');
     assert.doesNotMatch(welcome, /\$\(['"]#chat['"]\)\.empty\(\)/);
     assert.match(welcome, /resetChatSurfaceView\(\{ includeAuxiliary: true \}\)/);
+});
+
+test('incremental chat updates refresh only swipe state owners', async () => {
+    const script = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+    const slash = await readFile(path.join(REPO_ROOT, 'src/scripts/slash-commands.js'), 'utf8');
+    const tags = await readFile(path.join(REPO_ROOT, 'src/scripts/tags.js'), 'utf8');
+
+    const publicRefresh = script.slice(
+        script.indexOf('export function refreshSwipeButtons'),
+        script.indexOf('/** @returns {boolean}', script.indexOf('export function refreshSwipeButtons')),
+    );
+    assert.match(publicRefresh, /refreshSwipeButtonElements\(chatElement\.children\('\.mes\[mesid\]'\)/);
+
+    const incrementalRefresh = script.slice(
+        script.indexOf('function refreshActiveSwipeButtons'),
+        script.indexOf('/**\n * This function is misleadingly named', script.indexOf('function refreshActiveSwipeButtons')),
+    );
+    assert.match(incrementalRefresh, /changedMessageIds\.add\(swipeableMessageId\)/);
+    assert.match(incrementalRefresh, /changedMessageIds\.add\(chat\.length - 1\)/);
+    assert.match(incrementalRefresh, /chatSurface\.getMessageElement\(messageId\)/);
+    assert.doesNotMatch(incrementalRefresh, /chatElement\.(children|find)|querySelectorAll/);
+
+    const addOne = script.slice(
+        script.indexOf('export function addOneMessage'),
+        script.indexOf('/**\n * Creates the element of a single message', script.indexOf('export function addOneMessage')),
+    );
+    assert.match(addOne, /refreshActiveSwipeButtons\(\[messageId\]\)/);
+
+    const addSwipe = slash.slice(
+        slash.indexOf('async function addSwipeCallback'),
+        slash.indexOf('async function deleteSwipeCallback'),
+    );
+    assert.match(addSwipe, /await swipe\(null, SWIPE_DIRECTION\.RIGHT, \{[^}]*forceMesId: lastMessageId, forceSwipeId: newSwipeId/);
+    assert.match(addSwipe, /await updateSwipeCounter\(lastMessageId, \{ message: lastMessage \}\)/);
+    assert.match(addSwipe, /refreshActiveSwipeButtons\(\[lastMessageId\]\)/);
+    assert.doesNotMatch(addSwipe, /reloadCurrentChat|syncMesToSwipe/);
+
+    const showHide = script.slice(
+        script.indexOf('export function showSwipeButtons'),
+        script.indexOf('/**\n * Deletes a swipe', script.indexOf('export function showSwipeButtons')),
+    );
+    assert.equal(showHide.match(/refreshActiveSwipeButtons\(\)/g)?.length, 2);
+    assert.doesNotMatch(showHide, /refreshSwipeButtons\(/);
+
+    const applyTags = tags.slice(
+        tags.indexOf('export function applyCharacterTagsToMessageDivs'),
+        tags.indexOf('/**\n * Helper function to apply all necessary', tags.indexOf('export function applyCharacterTagsToMessageDivs')),
+    );
+    assert.match(applyTags, /\$\('#chat > ' \+ ids\.map/);
+    assert.doesNotMatch(applyTags, /buildMessagesFilter|\.children\('\.mes'\)\.filter/);
 });
 
 test('absolute mesid, true tail and scroll writes have one owner seam', async () => {

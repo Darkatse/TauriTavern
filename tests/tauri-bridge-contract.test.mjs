@@ -30,7 +30,15 @@ const {
     updateTauriTavernSettings,
     openDialog,
     setDataRoot,
+    writeClipboardText,
 } = await import(pathToFileURL(tauriBridgePath).href);
+
+test('writeClipboardText invokes the native write-only clipboard command', async () => {
+    await writeClipboardText('ttsync://pair/example');
+
+    assert.equal(lastInvokedCommand, 'plugin:clipboard-manager|write_text');
+    assert.deepEqual(lastInvokedArgs, { text: 'ttsync://pair/example' });
+});
 
 test('local endpoint authorization bridge forwards the selected provider config', async () => {
     const dto = {

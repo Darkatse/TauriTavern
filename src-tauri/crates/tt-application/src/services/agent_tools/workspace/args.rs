@@ -26,7 +26,7 @@ impl WorkspaceToolError {
 /// surface filesystem errors raised by the workspace repository as
 /// recoverable model-facing tool errors instead of bubbling up as
 /// `agent.internal_error`.
-pub(super) fn classify_workspace_io_error(
+pub(crate) fn classify_workspace_io_error(
     call: &ToolInvocation,
     error: DomainError,
 ) -> Result<AgentToolResult, DomainError> {

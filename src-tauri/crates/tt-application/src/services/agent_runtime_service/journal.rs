@@ -4,10 +4,7 @@ use serde_json::{Map, Value, json};
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::{
-    AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunStatus, Checkpoint,
-};
-use tt_ports::repositories::workspace_repository::WorkspaceFile;
+use tt_domain::models::agent::{AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunStatus};
 
 impl AgentRuntimeService {
     pub(super) async fn transition_status(
@@ -51,36 +48,6 @@ impl AgentRuntimeService {
             return Err(DomainError::generation_cancelled_by_user().into());
         }
         Ok(())
-    }
-
-    pub(super) async fn checkpoint_workspace_file(
-        &self,
-        run_id: &str,
-        update_run_status: bool,
-        reason: &str,
-        event_type: &str,
-        payload: Value,
-        file: &WorkspaceFile,
-    ) -> Result<Checkpoint, ApplicationError> {
-        if update_run_status {
-            self.transition_status(run_id, AgentRunStatus::CreatingCheckpoint)
-                .await?;
-        }
-        let event = self
-            .event(run_id, AgentRunEventLevel::Info, event_type, payload)
-            .await?;
-        let checkpoint = self
-            .checkpoint_repository
-            .create_checkpoint(run_id, reason, event.seq, std::slice::from_ref(file))
-            .await?;
-        self.event(
-            run_id,
-            AgentRunEventLevel::Info,
-            "checkpoint_created",
-            json!({ "checkpointId": checkpoint.id, "reason": reason }),
-        )
-        .await?;
-        Ok(checkpoint)
     }
 }
 

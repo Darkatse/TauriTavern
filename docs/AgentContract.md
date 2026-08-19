@@ -32,21 +32,22 @@ summaries/*.md
 - Tool result 直接插入 chat 楼层。
 - workspace-mutating tool 绕过 WorkspaceService 写文件。
 
-理由：只有 workspace 才能提供 checkpoint、diff、rollback、artifact assembly 与 timeline 审计。
+理由：workspace 提供受控的多轮编辑、artifact assembly 与 timeline 审计边界。
 
-当前前台 root / handoff Agent 在第一次成功的显式 `workspace.commit` 之前，成功执行
-`workspace.write_file` / `workspace.apply_patch` 后，如果目标路径以 `.md`、`.markdown`、
-`.txt` 或 `.text`（大小写不敏感）结尾，runtime 会把该目标文件作为一次
-`replace` commit 交给同一个 Committer。它不绕过 workspace、journal、checkpoint、
-Host bridge 或完整 chat 保存契约，也不把 Tool result 直接插入聊天。
+当前前台 root / handoff Agent 在第一次成功的显式 `workspace.commit` 之前，会在每轮
+tool calls 全部处理后检查本轮最后一次成功的 `workspace.write_file` /
+`workspace.apply_patch`。如果目标路径以 `.md`、`.markdown`、`.txt` 或 `.text`
+（大小写不敏感）结尾，runtime 会把该 mutation 作为一次 `replace` commit 交给同一个
+Committer。每轮最多自动 commit 一次；它不绕过 workspace、journal、Host bridge 或完整 chat
+保存契约，也不把 Tool result 直接插入聊天。
 
 第一次 host-confirmed 的显式 `workspace.commit` 成功后，当前 run 永久停止自动 commit。
 自动 commit 是可保留的 chat 输出，但不能满足前台 `workspace.finish` 对显式 commit 的要求。
 Host commit 不设置固定等待期限：宿主挂起时保持 pending，run cancellation 仍可中断。Host
 未能确认提交时统一回到可恢复路径；只有 host-confirmed 结果才能推进 backend commit ledger。
 Reasoning cursor 跟随已成功写入 `chat[]` 的内容：写入前失败不推进，写入后失败保留正文与
-reasoning 并推进 cursor，避免重试重复追加。checkpoint、journal、状态机等 runtime 不变量
-错误仍必须 fail-fast。
+reasoning 并推进 cursor，避免重试重复追加。Host 读取当前 workspace 后必须校验提交请求中的
+SHA；内容变化时拒绝提交。journal、状态机等 runtime 不变量错误仍必须 fail-fast。
 
 ### 1.2 Run Journal 必须是真相源
 
@@ -57,7 +58,6 @@ reasoning 并推进 cursor，避免重试重复追加。checkpoint、journal、�
 - model request created / model completed / model error
 - tool call requested / approved / completed / failed
 - workspace patch applied
-- checkpoint created
 - profile switched
 - summary created
 - artifacts assembled
@@ -211,7 +211,6 @@ Domain 可以定义：
 - `WorkspacePath`
 - `WorkspaceResource`
 - `ArtifactSpec`
-- `Checkpoint`
 - `AgentProfile`
 - `PlanPolicy`
 - `ToolId`
@@ -237,7 +236,7 @@ Application service 可以编排：
 - context assembly
 - LLM gateway call
 - tool dispatch
-- workspace patch/checkpoint
+- workspace patch
 - artifact assembly
 - commit/rollback
 
@@ -249,7 +248,6 @@ Infrastructure 可以实现：
 
 - file workspace repository
 - file event journal repository
-- checkpoint snapshot/diff store
 - skill repository
 - MCP client manager
 - provider adapter
@@ -317,7 +315,7 @@ dryRun 不能被视为纯函数。它仍会触发上游事件、prompt 组合、
 - `startRunFromLegacyGenerate()` 内部可以调用 Legacy dryRun，但工具循环必须在 Rust runtime 中推进，不得递归调用 `Generate()`。
 - 工具注册由 Rust runtime 独占；prompt snapshot 中不得携带 external `tools`、`tool_choice`、`role: "tool"` 或已有 `tool_calls`。
 - 当前只支持非 streaming；请求 `stream: true` 必须 fail-fast。Chat commit 只能由 runtime 的 pre-explicit 文本 mutation policy 或显式 `workspace.commit` 触发，并统一通过 Committer + host bridge 写入。
-- 模型可修正的工具参数错误必须作为 `is_error = true` tool result 回填模型；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误必须 fail-fast。
+- 模型可修正的工具参数错误必须作为 `is_error = true` tool result 回填模型；宿主级 IO、journal、序列化、取消和模型响应结构错误必须 fail-fast。
 
 Agent run/timeline/tool event 不得伪装成上游 `GENERATION_*` 或 `TOOL_CALLS_*` 事件。上游事件属于 Legacy Generate 兼容面。
 
@@ -465,7 +463,7 @@ run 失败时必须：
 
 1. journal 追加 `run_failed`。
 2. 状态进入 `Failed`。
-3. 保留 workspace 与最后 checkpoint。
+3. 保留 workspace。
 4. 前端 timeline 可读到失败原因。
 
 cancel 不是 failure，必须进入 `Cancelled`。
@@ -481,7 +479,6 @@ Agent commit 到 chat message 时，metadata 必须放入 `extra` 下的 TauriTa
       "agent": {
         "runId": "...",
         "stableChatId": "...",
-        "checkpointId": "...",
         "profileId": "...",
         "artifactSetId": "...",
         "artifacts": []

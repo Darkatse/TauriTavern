@@ -1,4 +1,5 @@
 use super::*;
+use tt_domain::models::upstream_failure::{UPSTREAM_NETWORK_TIMEOUT, UpstreamFailure};
 
 #[tokio::test]
 async fn agent_runtime_background_run_finish_uses_run_presentation() {
@@ -467,7 +468,7 @@ async fn agent_runtime_agent_list_discovers_callable_profiles_with_real_reposito
 }
 
 #[tokio::test]
-async fn agent_runtime_foreground_auto_commits_until_explicit_commit() {
+async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_commit() {
     let root = temp_root("agent-foreground");
     let fixture = agent_runtime_fixture_with_responses(
         &root,
@@ -487,8 +488,8 @@ async fn agent_runtime_foreground_auto_commits_until_explicit_commit() {
                         "new_string": "revised foreground answer",
                     }),
                 ),
-                model_tool_call("call_finish_after_auto", "workspace_finish", json!({})),
                 model_tool_call("call_commit", "workspace_commit", json!({})),
+                model_tool_call("call_finish_after_auto", "workspace_finish", json!({})),
             ]),
             model_tool_response(vec![
                 model_tool_call("call_commit_retry", "workspace_commit", json!({})),
@@ -517,7 +518,7 @@ async fn agent_runtime_foreground_auto_commits_until_explicit_commit() {
     let request = chat_request("write, revise, commit, and finish");
     let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
     let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
-    let rejected_commit_calls = ["call_write", "call_commit"];
+    let rejected_commit_calls = ["call_commit"];
 
     execute_agent_loop_with_host_resolver(
         fixture.service.clone(),
@@ -560,15 +561,22 @@ async fn agent_runtime_foreground_auto_commits_until_explicit_commit() {
         .iter()
         .filter(|event| event.event_type == "chat_commit_requested")
         .collect::<Vec<_>>();
-    assert_eq!(commit_requests.len(), 4);
-    for request in &commit_requests[..2] {
-        assert_eq!(request.payload["path"], "output/main.md");
-        assert_eq!(request.payload["mode"], "replace");
-        assert!(request.payload["sha256"].as_str().is_some());
-    }
-    assert_ne!(
-        commit_requests[0].payload["sha256"],
-        commit_requests[1].payload["sha256"]
+    assert_eq!(commit_requests.len(), 3);
+    let automatic_commit_request = commit_requests
+        .iter()
+        .find(|event| event.payload["callId"] == "call_patch")
+        .expect("the round must auto-commit only its final text mutation");
+    assert_eq!(automatic_commit_request.payload["path"], "output/main.md");
+    assert_eq!(automatic_commit_request.payload["mode"], "replace");
+    assert!(
+        automatic_commit_request.payload["sha256"]
+            .as_str()
+            .is_some()
+    );
+    assert!(
+        commit_requests
+            .iter()
+            .all(|event| event.payload["callId"] != "call_write")
     );
     let final_commit_request = commit_requests.last().unwrap();
     assert_eq!(final_commit_request.payload["runId"], run.id);
@@ -585,7 +593,7 @@ async fn agent_runtime_foreground_auto_commits_until_explicit_commit() {
         .iter()
         .filter(|event| event.event_type == "chat_commit_failed")
         .collect::<Vec<_>>();
-    assert_eq!(commit_failures.len(), 2);
+    assert_eq!(commit_failures.len(), 1);
     assert!(
         commit_failures
             .iter()
@@ -600,13 +608,6 @@ async fn agent_runtime_foreground_auto_commits_until_explicit_commit() {
     assert_eq!(
         explicit_commit_failure.payload["errorCode"],
         "agent.chat_commit_rejected"
-    );
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| event.event_type == "checkpoint_created")
-            .count(),
-        5
     );
     assert_eq!(
         events
@@ -652,9 +653,11 @@ async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
     let fixture = agent_runtime_fixture_with_results(
         &root,
         vec![
-            Err(ApplicationError::Transient(
-                "temporary transport failure".to_string(),
-            )),
+            Err(ApplicationError::UpstreamFailure(UpstreamFailure::network(
+                UPSTREAM_NETWORK_TIMEOUT,
+                None,
+                "tauritavern.error.network.timeout",
+            ))),
             Ok(json!({
                 "choices": [{
                     "message": {

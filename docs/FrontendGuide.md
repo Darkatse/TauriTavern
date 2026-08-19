@@ -244,7 +244,7 @@ TauriTavern 自有的新 UI 可以作为 SillyTavern first-party extension 挂�
 
 - 实现位置：`src/tauri/main/compat/mobile/mobile-runtime-compat.js`。
 - 入口：`src/tauri/main/bootstrap.js` 中安装（仅 Tauri mobile）。
-- 行为：仅补齐缺失 API，且只执行一次。
+- 行为：基础 API 仅在缺失时补齐；Android 的 Web Clipboard 写入统一映射到原生写入器；整体只执行一次。
 - 当前按需补齐：
   - `Array.prototype.at`
   - `String.prototype.at`
@@ -253,8 +253,9 @@ TauriTavern 自有的新 UI 可以作为 SillyTavern first-party extension 挂�
   - `Array.prototype.toSorted`
   - `Array.prototype.toReversed`
   - `Object.hasOwn`
+  - `navigator.clipboard.writeText`（仅 Android；保留 Clipboard 对象上的其他方法）
 
-该策略用于修复移动端第三方插件在初始化阶段出现的 `TypeError: *.at is not a function`。
+该策略用于修复移动端第三方插件在初始化阶段出现的 `TypeError: *.at is not a function`，以及 Android WebView 拒绝 Web Clipboard 写入的问题。TauriTavern 第一方代码在所有平台直接使用 `src/tauri-bridge.js` 的原生写入器；宿主只授予 `clipboard-manager:allow-write-text`，不授予剪贴板读取能力，也不需要申请操作系统运行时权限。
 
 #### 7.7.2 CSS `@layer` 降级（Android 旧 WebView）
 
@@ -291,6 +292,8 @@ TauriTavern 自有的新 UI 可以作为 SillyTavern first-party extension 挂�
 
 - 若看到 `*.at is not a function`：
   - 检查是否为 Tauri mobile 会话，并确认 `window.__TAURITAVERN_MOBILE_RUNTIME_COMPAT__ === true`。
+- 若 Android 复制失败：
+  - 检查 `plugin:clipboard-manager|write_text` invoke 的拒绝原因；该链路不会静默回退到 Web Clipboard。
 - 若插件样式错乱但 CSS 已成功请求：
   - 优先检查是否命中 `@layer` 降级分支；
   - 关注 `resolveStylesheetUrl()` 是否返回带 `ttCompat=layer` 的 URL。
@@ -372,7 +375,7 @@ TauriTavern 自有的新 UI 可以作为 SillyTavern first-party extension 挂�
 - 常用导出命令：
   - `window.__TAURITAVERN_PERF__.downloadReport()` 下载 JSON（便于交给 AI 分析）
   - `window.__TAURITAVERN_PERF__.exportJson({ includeResources: true })` 直接拿到 JSON 字符串
-  - `await window.__TAURITAVERN_PERF__.copyReport()` 复制到剪贴板（若可用）
+  - `await window.__TAURITAVERN_PERF__.copyReport()` 通过原生写入器复制到剪贴板
 - HUD 操作：拖动标题栏移动（位置持久化），点击标题栏展开/收起；桌面端可用 `Ctrl+Alt+P` 切换开关。
 
 ## 11. 工程守护（Guardrails + 类型检查）

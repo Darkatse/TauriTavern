@@ -372,25 +372,43 @@ async fn agent_runtime_handoff_target_failure_keeps_root_transferred() {
 }
 
 #[tokio::test]
-async fn agent_runtime_rejects_handoff_before_trailing_tool_without_successor() {
+async fn agent_runtime_recovers_handoff_before_trailing_tool() {
     let root = temp_root("agent-handoff-trailing-tool");
     let fixture = agent_runtime_fixture_with_responses(
         &root,
-        vec![model_tool_response(vec![
-            model_tool_call(
-                "call_handoff",
+        vec![
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_handoff",
+                    "agent_handoff",
+                    json!({
+                        "agentId": "final-editor",
+                        "handoff": { "objective": "Take over and finish." }
+                    }),
+                ),
+                model_tool_call(
+                    "call_after_handoff",
+                    "workspace_write_file",
+                    json!({
+                        "path": "output/main.md",
+                        "content": "Complete this work before handing off."
+                    }),
+                ),
+            ]),
+            model_tool_response(vec![model_tool_call(
+                "call_handoff_retry",
                 "agent_handoff",
                 json!({
                     "agentId": "final-editor",
                     "handoff": { "objective": "Take over and finish." }
                 }),
-            ),
-            model_tool_call(
-                "call_after_handoff",
-                "workspace_write_file",
-                json!({ "path": "output/main.md", "content": "must not run" }),
-            ),
-        ])],
+            )]),
+            model_tool_response(vec![model_tool_call(
+                "call_target_finish",
+                "workspace_finish",
+                json!({}),
+            )]),
+        ],
     );
     let profile = configure_handoff_profiles(&fixture).await;
     let handle = start_contract_agent_run(
@@ -402,32 +420,36 @@ async fn agent_runtime_rejects_handoff_before_trailing_tool_without_successor() 
     .await;
 
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
-    assert_eq!(run.status, AgentRunStatus::Failed);
-    assert!(
-        fixture
-            .agent_repository
-            .list_tasks(&handle.run_id)
-            .await
-            .expect("list handoff tasks")
-            .is_empty()
-    );
-    let invocations = fixture
+    assert_eq!(run.status, AgentRunStatus::Completed);
+    let tasks = fixture
         .agent_repository
-        .list_invocations(&handle.run_id)
+        .list_tasks(&handle.run_id)
         .await
-        .expect("list invocations");
-    assert_eq!(invocations.len(), 1);
-    assert_eq!(invocations[0].id, ROOT_AGENT_INVOCATION_ID);
-    assert_eq!(invocations[0].status, AgentInvocationStatus::Failed);
-    let failure_code = wait_for_event_field(
-        &fixture.agent_repository,
-        &handle.run_id,
-        "run_failed",
-        "code",
-    )
-    .await
-    .expect("run failed event");
-    assert_eq!(failure_code, "agent.tool_after_finish");
+        .expect("list handoff tasks");
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].status, AgentTaskStatus::Completed);
+    let root_invocation = fixture
+        .agent_repository
+        .load_invocation(&handle.run_id, ROOT_AGENT_INVOCATION_ID)
+        .await
+        .expect("load root invocation");
+    assert_eq!(root_invocation.status, AgentInvocationStatus::Transferred);
+    let artifact = fixture
+        .agent_repository
+        .read_text(
+            &handle.run_id,
+            &WorkspacePath::parse("output/main.md").unwrap(),
+        )
+        .await
+        .expect("read artifact");
+    assert_eq!(artifact.text, "Complete this work before handing off.");
+    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    assert!(events.iter().any(|event| {
+        event.event_type == "tool_call_failed"
+            && event.payload["callId"] == "call_handoff"
+            && event.payload["errorCode"] == "agent.tool_after_finish"
+    }));
+    assert!(!events.iter().any(|event| event.event_type == "run_failed"));
 
     let _ = fs::remove_dir_all(root).await;
 }
@@ -505,7 +527,7 @@ async fn configure_handoff_profiles(
         allowed_callers: vec![root.id.as_str().to_string()],
         ..Default::default()
     };
-    root.tools.max_rounds = 1;
+    root.tools.max_rounds = 2;
     root.delegation.can_handoff = true;
     allow_profile_tool(&mut root.tools.allow, "agent.handoff");
     fixture

@@ -211,7 +211,7 @@ impl HttpClientPool {
                     return Ok((client.clone(), state.revision));
                 }
 
-                let proxy = if user_endpoint_route == Some(UserEndpointRoute::LocalDirect) {
+                let proxy = if user_endpoint_route == Some(UserEndpointRoute::TrustedDirect) {
                     None
                 } else {
                     state.proxy.configured()?
@@ -446,7 +446,7 @@ mod tests {
         HttpClientPool::new(TEST_USER_AGENT)
     }
 
-    fn grant_local_endpoint(pool: &HttpClientPool, endpoint: &str) {
+    fn grant_user_endpoint(pool: &HttpClientPool, endpoint: &str) {
         let endpoint = tt_domain::models::endpoint_url::parse_user_http_endpoint(endpoint)
             .unwrap()
             .to_string();
@@ -655,7 +655,7 @@ mod tests {
         );
         assert!(pool.client(HttpClientProfile::Default).is_err());
         assert!(pool.git_blocking_client_builder().is_err());
-        grant_local_endpoint(&pool, "http://localhost:11434/v1");
+        grant_user_endpoint(&pool, "http://localhost:11434/v1");
         assert!(
             pool.user_endpoint_client(
                 HttpClientProfile::ChatCompletion,
@@ -705,7 +705,7 @@ mod tests {
         pool.client(HttpClientProfile::Default).unwrap();
         let revision_before = pool.state.read().unwrap().revision;
 
-        grant_local_endpoint(&pool, "http://localhost:11434/v1");
+        grant_user_endpoint(&pool, "http://localhost:11434/v1");
 
         let state = pool.state.read().unwrap();
         assert!(state.clients.is_empty());
@@ -892,7 +892,7 @@ mod tests {
             pool.user_endpoint_client(HttpClientProfile::ChatCompletion, &origin.url)
                 .is_err()
         );
-        grant_local_endpoint(&pool, &origin.url);
+        grant_user_endpoint(&pool, &origin.url);
 
         let client = pool
             .user_endpoint_client(HttpClientProfile::ChatCompletion, &origin.url)
@@ -903,6 +903,32 @@ mod tests {
         assert!(!proxy_hit.recv_timeout(Duration::from_secs(1)).unwrap());
         origin.finish();
         proxy_handle.join().expect("proxy probe thread");
+    }
+
+    #[tokio::test]
+    async fn approved_hostname_user_endpoint_honors_request_proxy() {
+        let proxy = capture_server();
+        let pool = pool();
+        pool.apply_request_proxy_settings(&RequestProxySettings {
+            enabled: true,
+            url: proxy.url.clone(),
+            bypass: vec![],
+        })
+        .unwrap();
+        let endpoint = "http://provider.invalid/v1";
+        grant_user_endpoint(&pool, endpoint);
+
+        let client = pool
+            .user_endpoint_client(HttpClientProfile::ChatCompletion, endpoint)
+            .unwrap();
+        client.get(endpoint).send().await.unwrap();
+
+        let request = proxy
+            .requests
+            .recv_timeout(Duration::from_secs(1))
+            .expect("proxy request");
+        assert!(request.starts_with("GET http://provider.invalid/v1 HTTP/1.1"));
+        proxy.finish();
     }
 
     #[tokio::test]
@@ -926,7 +952,7 @@ mod tests {
             (first_request, second_request)
         });
         let pool = pool();
-        grant_local_endpoint(&pool, &base_url);
+        grant_user_endpoint(&pool, &base_url);
         let client = pool
             .user_endpoint_client(HttpClientProfile::ChatCompletion, &base_url)
             .unwrap();
@@ -958,7 +984,7 @@ mod tests {
             .expect("write redirect response");
         });
         let pool = pool();
-        grant_local_endpoint(&pool, &redirect_url);
+        grant_user_endpoint(&pool, &redirect_url);
         let client = pool
             .user_endpoint_client(HttpClientProfile::ChatCompletion, &redirect_url)
             .unwrap();

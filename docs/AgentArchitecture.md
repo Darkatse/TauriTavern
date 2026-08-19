@@ -8,7 +8,7 @@
 2. `docs/AgentArchitecture.md`：系统边界、分层、数据流。
 3. `docs/AgentContract.md`：不可破坏的不变量与 fail-fast 约束。
 4. `docs/AgentImplementPlan.md`：当前实施基线、后续顺序与验收命令。
-5. `docs/Agent/Workspace.md`：Workspace、Artifact、Checkpoint 的存储语义。
+5. `docs/Agent/Workspace.md`：Workspace 与 Artifact 的存储语义。
 6. `docs/Agent/RunEventJournal.md`：Run Event、状态机、恢复/取消语义。
 7. `docs/Agent/ProfilesAndPreset.md`：Preset、Agent Profile、Plan Policy。
 8. `docs/Agent/ToolSystem.md`：Tool Registry、Tool Result、权限与审批。
@@ -24,7 +24,7 @@
 
 Agent Mode 的核心定义是：
 
-> 一次生成不是 LLM 返回一段字符串，而是 Agent 对一个受策略约束的 Workspace 进行一组可审计、可回滚的编辑，最后由运行时把 Artifact 组装并提交为聊天消息。
+> 一次生成不是 LLM 返回一段字符串，而是 Agent 对一个受策略约束的 Workspace 进行一组可审计编辑，最后由运行时把 Artifact 组装并提交为聊天消息。
 
 因此 Agent 不是更复杂的 `Generate()`，也不是 SillyTavern 工具调用递归的后端移植版。Agent 是一条新的生成路径：
 
@@ -33,7 +33,7 @@ Legacy Generate
   保持 SillyTavern 1.16.0 的事件语义、扩展兼容和 one-shot 体验
 
 Agent Generate
-  Rust-owned Workspace Runtime + Profile + Plan + Tools + Journal + Checkpoint
+  Rust-owned Workspace Runtime + Profile + Plan + Tools + Journal
 
 MCP / Tool Direct Call
   非 Agent 模式下也可显式调用 MCP 或工具，但不拥有 Agent Run
@@ -56,13 +56,12 @@ MCP / Tool Direct Call
 
 ## 3. 设计目标
 
-Agent 系统必须同时满足五个目标：
+Agent 系统必须同时满足四个目标：
 
 1. 兼容：Agent Mode off 时，Legacy Generate 的行为、事件、扩展注入、世界书语义不变。
 2. 可维护：Agent runtime 位于 Rust application layer，流程可测试，基础设施通过 trait 注入。
-3. 可审计：所有 LLM call、tool call、file write、checkpoint、profile switch、commit 都进入 append-only journal。
-4. 可回滚：Agent 修改 workspace，不直接写 chat；commit 后仍可根据 artifact/checkpoint 回滚聊天消息。
-5. 创作者自由：Preset/角色卡/扩展/Skill 能控制可见内容、工具、预算、计划模式和输出结构，但不能突破宿主安全边界。
+3. 可审计：所有 LLM call、tool call、file write、profile switch、commit 都进入 append-only journal。
+4. 创作者自由：Preset/角色卡/扩展/Skill 能控制可见内容、工具、预算、计划模式和输出结构，但不能突破宿主安全边界。
 
 ## 4. 非目标
 
@@ -101,11 +100,10 @@ Workspace 初始化
   ↓
 ContextFrame 初步组装
   ↓
-Agent Run State Machine
+  Agent Run State Machine
   ├─ model call
   ├─ tool call
   ├─ workspace patch
-  ├─ checkpoint
   ├─ optional plan/profile switch/summary
   └─ finish
   ↓
@@ -155,11 +153,11 @@ LLM Gateway / provider adapter
 - `workspace.write_file` / `workspace.apply_patch` 成功结果只向模型回填包含目标路径的文本摘要；内部结构化元数据与 resource refs 保留给 runtime、audit 与 Timeline UI。需要完整内容时模型必须显式调用 `workspace.read_file`。
 - `chat.search` 与 `chat.read_messages` 只读取当前 run 绑定的聊天，不允许模型指定任意 chat target；message index 从 0 开始，JSONL header 不计入消息。
 - `worldinfo.read_activated` 只读取本次 run prompt snapshot 中 materialized 的激活结果，不把全局 last activation 当作运行时真相。
-- 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，`workspace.finish` 收尾成功后 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`model-responses/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
-- 工具循环最多 80 轮，必须以 `workspace.finish` 结束；前台 run 在 finish 前必须至少成功显式 `workspace.commit` 一次（此前的文本自动发布不计），后台 run 可无 chat commit；模型直接输出文本会捕获到 workspace `direct_output.md` 并触发 soft drift recovery，只要仍有下一轮模型调用预算就继续用合成 `user` 提醒纠偏，直到恢复、取消或 `maxRounds` 边界触发 fail-fast / partial-success。
-- 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
+- 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，`workspace.finish` 收尾成功后 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`model-responses/` 与 `events.jsonl` 不作为模型工具资源暴露。
+- 工具循环最多 80 轮，必须以 `workspace.finish` 结束；前台 run 在一轮 tool calls 结束时最多自动发布该轮最后一次文本 mutation，但 finish 前仍必须至少成功显式 `workspace.commit` 一次，后台 run 可无 chat commit；模型直接输出文本会捕获到 workspace `direct_output.md` 并触发 soft drift recovery，只要仍有下一轮模型调用预算就继续用合成 `user` 提醒纠偏，直到恢复、取消或 `maxRounds` 边界触发 fail-fast / partial-success。
+- 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、序列化、取消和模型响应结构错误仍 fail-fast。
 - root、return-mode child 与 handoff invocation 各自冻结 `InvocationToolSnapshot` / `ToolTurnContract`；provider alias 只在当前 turn 内解析为 canonical `ToolInvocation`，唯一执行入口通过 invocation-local `ToolRequestGate` 检查 contract 并预留冻结预算，完整 manifest 随 run 持久化。
-- Skill profile policy、readDiff、rollback、resume-run、tool approval、profile routing、MCP、timeline UI、streaming Agent loop、主发送按钮 Agent toggle 仍未实现。
+- Skill profile policy、resume-run、tool approval、profile routing、MCP、timeline UI、streaming Agent loop、主发送按钮 Agent toggle 仍未实现。
 
 ### 5.2 Run 与 Workspace 身份
 
@@ -186,7 +184,6 @@ src-tauri/
       event.rs
       workspace.rs
       artifact.rs
-      checkpoint.rs
       profile.rs
       plan.rs
       policy.rs
@@ -196,7 +193,6 @@ src-tauri/
     tt-ports/src/repositories/
       agent_run_repository.rs
       workspace_repository.rs
-      checkpoint_repository.rs
       skill_repository.rs
       mcp_repository.rs
 
@@ -252,7 +248,7 @@ src-tauri/
 - 创建 run。
 - 驱动状态机。
 - 追加 journal event。
-- 调用 workspace、context、tool、LLM、checkpoint、artifact、commit 服务。
+- 调用 workspace、context、tool、LLM、artifact、commit 服务。
 - 管理 cancel / await approval / resume。
 
 `AgentRunService` 不应该知道具体文件路径如何落盘，也不应该直接拼 provider-specific payload。
@@ -265,7 +261,6 @@ src-tauri/
 - 管理 materialized file、virtual resource、generated artifact。
 - 应用 patch/write。
 - 做 path normalization 与 traversal 拒绝。
-- 生成 checkpoint snapshot/diff 所需文件视图。
 
 详见 `docs/Agent/Workspace.md`。
 
@@ -315,7 +310,7 @@ Gateway 代码已拆成 `agent_model_gateway/` 模块目录：`mod.rs` 保留 tr
 - 根据 workspace manifest 读取一个或多个 artifact。
 - 组装 message body 与 message extra。
 - 通过现有 chat 保存路径提交。
-- commit 后写入 `agentRunId`、`agentCheckpointId`、`agentArtifacts` 等 metadata。
+- commit 后写入 Agent run 与 artifact metadata。
 
 Commit 必须遵守完整 chat payload 与保存串行化契约，不能直接写 JSONL 文件。
 
@@ -366,7 +361,6 @@ Running
   ├─ AwaitingToolApproval
   ├─ DispatchingTool
   ├─ ApplyingWorkspacePatch
-  ├─ CreatingCheckpoint
   ├─ Summarizing?
   └─ SwitchingProfile?
   ├─ AwaitingHostCommit
@@ -413,7 +407,7 @@ SillyTavern 上游的事件和 chat message 结构仍是兼容层的基础。Age
 - Workspace 不复制完整历史、完整世界书、完整记忆库。
 - Context assembly 必须有 token/resource budget。
 - Tool result 进入 journal 后，进入 prompt 前可以摘要、裁剪或按需读取。
-- 移动端默认更小预算、更短 checkpoint retention、更保守的并发。
+- 移动端默认更小预算与更保守的并发。
 - Streaming event 应该可节流，journal 应该可 append-only 顺序写入。
 
 ## 12. 安全策略
@@ -433,13 +427,12 @@ SillyTavern 上游的事件和 chat message 结构仍是兼容层的基础。Age
 2. run workspace 与 chat 级 `persist/` projection。
 3. append-only `events.jsonl`。
 4. `output/main.md` artifact。
-5. checkpoint snapshot。
-6. Rust-owned model/tool loop。
-7. chat/worldinfo/workspace 内建工具。
-8. artifact commit 到 chat。
-9. Agent Mode off 行为完全不变。
-10. canonical model IR 与 `AgentModelGateway`。
-11. provider native metadata opaque 保留/回放。
+5. Rust-owned model/tool loop。
+6. chat/worldinfo/workspace 内建工具。
+7. artifact commit 到 chat。
+8. Agent Mode off 行为完全不变。
+9. canonical model IR 与 `AgentModelGateway`。
+10. provider native metadata opaque 保留/回放。
 12. workspace write/patch read-state 与显式 read-before-edit 语义。
 
 下一步的架构重点不再是证明 Agent loop 可行，而是补齐三个长期能力：更清晰的 provider adapter 模块、创作者可控的 profile/context policy、可理解的 timeline/diff/rollback UI。

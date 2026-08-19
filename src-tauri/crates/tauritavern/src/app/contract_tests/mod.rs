@@ -76,7 +76,6 @@ use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfil
 use tt_ports::repositories::agent_run_repository::{AgentRunEventReadQuery, AgentRunRepository};
 use tt_ports::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
-use tt_ports::repositories::checkpoint_repository::CheckpointRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::preset_repository::PresetRepository;
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
@@ -226,7 +225,6 @@ fn agent_runtime_fixture_with_results(
         agent_repository.clone() as Arc<dyn AgentRunRepository>,
         agent_repository.clone() as Arc<dyn AgentInvocationRepository>,
         agent_repository.clone() as Arc<dyn WorkspaceRepository>,
-        agent_repository.clone() as Arc<dyn CheckpointRepository>,
         chat_file_repository.clone() as Arc<dyn ChatRepository>,
         chat_file_repository.clone() as Arc<dyn GroupChatRepository>,
         skill_service,
@@ -599,29 +597,6 @@ async fn resolve_chat_commits_and_persistent_state_update(
                 .to_string(),
         )
     })?
-}
-
-async fn wait_for_event_field(
-    repository: &FileAgentRepository,
-    run_id: &str,
-    event_type: &str,
-    field: &str,
-) -> Result<String, ApplicationError> {
-    tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
-        loop {
-            let events = read_agent_events(repository, run_id).await;
-            if let Some(value) = events
-                .iter()
-                .find(|event| event.event_type == event_type)
-                .and_then(|event| event.payload[field].as_str())
-            {
-                return Ok(value.to_string());
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .map_err(|_| ApplicationError::InternalError(format!("{event_type}.{field} timed out")))?
 }
 
 async fn wait_for_event_type(repository: &FileAgentRepository, run_id: &str, event_type: &str) {

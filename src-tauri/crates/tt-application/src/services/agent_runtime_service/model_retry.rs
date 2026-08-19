@@ -41,7 +41,7 @@ impl AgentRuntimeService {
             {
                 Ok(exchange) => return Ok(exchange),
                 Err(error) => {
-                    let retryable = is_retryable_model_error(&error);
+                    let retryable = error.is_retryable();
                     let will_retry = retryable && attempt <= retry.max_retries;
                     self.event(
                         run_id,
@@ -113,11 +113,4 @@ impl AgentRuntimeService {
             }
         }
     }
-}
-
-fn is_retryable_model_error(error: &ApplicationError) -> bool {
-    matches!(
-        error,
-        ApplicationError::RateLimited(_) | ApplicationError::Transient(_)
-    )
 }

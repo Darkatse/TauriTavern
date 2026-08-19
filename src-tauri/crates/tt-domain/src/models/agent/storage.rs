@@ -9,7 +9,6 @@ pub enum AgentRunStorageClass {
     WorkspaceScratch,
     Tasks,
     ModelResponses,
-    Checkpoints,
     OtherRunArtifact,
 }
 
@@ -33,7 +32,6 @@ impl AgentRunStorageClass {
             "scratch" => Self::WorkspaceScratch,
             "tasks" => Self::Tasks,
             "model-responses" => Self::ModelResponses,
-            "checkpoints" => Self::Checkpoints,
             _ => Self::OtherRunArtifact,
         }
     }
@@ -124,10 +122,6 @@ mod tests {
         assert_eq!(
             AgentRunStorageClass::from_run_relative_path("model-responses/round-001.json"),
             AgentRunStorageClass::ModelResponses
-        );
-        assert_eq!(
-            AgentRunStorageClass::from_run_relative_path("checkpoints/cp-1.json"),
-            AgentRunStorageClass::Checkpoints
         );
     }
 

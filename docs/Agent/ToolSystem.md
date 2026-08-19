@@ -13,7 +13,7 @@ Agent 的能力上限很大程度由工具决定，但第一期更重要的是�
 - 工具调用可审计。
 - 工具结果能进入 ContextFrame。
 - 工具错误能被模型和用户理解。
-- 工具副作用可 checkpoint/rollback 或明确不可回滚。
+- 工具副作用使用 CAS、journal 与明确错误语义约束。
 - MCP、extension 与 builtin 工具使用同一控制面契约，并保留各自 executor。
 
 ## 2. 非目标
@@ -166,8 +166,8 @@ Agent-facing 文案必须从调用或执行 Agent 的角度描述可操作路径
 | `workspace.list_files` | `workspace_list_files` | 只读列出模型可见 workspace 文件 | 已落地 |
 | `workspace.search_files` | `workspace_search_files` | 只读搜索模型可见 workspace UTF-8 文本文件，返回 snippet 与 ref | 已落地 |
 | `workspace.read_file` | `workspace_read_file` | 只读读取 UTF-8 文本或范围，完整读取记录 read-state | 已落地 |
-| `workspace.write_file` | `workspace_write_file` | 写 run workspace 文件，成功后 checkpoint | 已落地 |
-| `workspace.apply_patch` | `workspace_apply_patch` | 单文件精确替换，成功后 checkpoint | 已落地 |
+| `workspace.write_file` | `workspace_write_file` | 写 run workspace 文件 | 已落地 |
+| `workspace.apply_patch` | `workspace_apply_patch` | 单文件精确替换 | 已落地 |
 | `workspace.commit` | `workspace_commit` | 将 workspace 文件提交到当前 chat message | 已落地 |
 | `workspace.finish` | `workspace_finish` | 结束工具循环，进入 run 收尾 | 已落地 |
 
@@ -199,16 +199,18 @@ Timeline 的隐藏、side-effect 关联与 builtin 类型判定只使用 journal
 
 Profile 的 `maxCallsPerRun` 是历史字段名，实际语义一直是 invocation 生命周期。Snapshot 使用真实名称 `maxCallsPerInvocation`；invocation-local `ToolRequestGate` 按 canonical `ToolId` 检查并预留总预算和 per-tool 预算。Gate 在当前串行 tool loop 中通过唯一 `&mut` 所有权保证一次“检查并预留”不可交错；预算从承载 workspace/skill 状态的 `AgentToolSession` 中移除。Profile 字段的纯命名迁移留到 selector schema 迁移时一次完成。
 
-`workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。`old_string` 必须来自模型本 run 已读到的文本片段，或来自本 run 创建/完整替换后已经完整已知的文件；runtime 仍会读取当前完整文件检查版本与全文件唯一匹配，但不会把完整文件隐式塞回模型上下文。版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型；基于部分读取的 patch 一旦失败，同文件后续 patch 必须先完整读取，避免模型在不确定上下文上反复试错。`replace_all=true` 可能修改未读位置，因此必须在完整读取后使用。`workspace.write_file` 支持 `mode = replace | append`，默认 `replace`。`replace` 对已存在文件复用同一个 session read-state 做 CAS：模型不需要传 `expectedSha256`，schema 不暴露 overwrite policy；若文件在最近读取/写入后被其他 invocation 修改，会返回可恢复的 stale-file 工具错误，要求重新读取后再写。`append` 会把 `content` 原样追加到文件末尾，目标缺失时创建文件；不会自动补换行，模型需要新行时应把前导 `\n` 放进 `content`。`append` 工具调用本身只在新建文件或追加前文件已完整读入且版本匹配时更新完整 read-state，避免未读既有内容在同一轮内被隐式授权为后续 rewrite/patch 的依据。模型传入的非法 path、空 path、非法 mode、不可见/不可写 path 也作为可恢复工具错误回填；目标 path 实际指向目录的读写请求会作为 `workspace.path_is_directory` 业务错误回填，提示模型改用 `workspace_list_files`。repository 内部 escape/symlink/journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
+`workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。`old_string` 必须来自模型本 run 已读到的文本片段，或来自本 run 创建/完整替换后已经完整已知的文件；runtime 仍会读取当前完整文件检查版本与全文件唯一匹配，但不会把完整文件隐式塞回模型上下文。版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型；基于部分读取的 patch 一旦失败，同文件后续 patch 必须先完整读取，避免模型在不确定上下文上反复试错。`replace_all=true` 可能修改未读位置，因此必须在完整读取后使用。`workspace.write_file` 支持 `mode = replace | append`，默认 `replace`。`replace` 对已存在文件复用同一个 session read-state 做 CAS：模型不需要传 `expectedSha256`，schema 不暴露 overwrite policy；若文件在最近读取/写入后被其他 invocation 修改，会返回可恢复的 stale-file 工具错误，要求重新读取后再写。`append` 会把 `content` 原样追加到文件末尾，目标缺失时创建文件；不会自动补换行，模型需要新行时应把前导 `\n` 放进 `content`。`append` 工具调用本身只在新建文件或追加前文件已完整读入且版本匹配时更新完整 read-state，避免未读既有内容在同一轮内被隐式授权为后续 rewrite/patch 的依据。模型传入的非法 path、空 path、非法 mode、不可见/不可写 path 也作为可恢复工具错误回填；目标 path 实际指向目录的读写请求会作为 `workspace.path_is_directory` 业务错误回填，提示模型改用 `workspace_list_files`。repository 内部 escape/symlink/journal、序列化、取消和模型响应结构错误仍 fail-fast。
 
-`workspace.commit` 与 `workspace.finish` 的契约：模型可以多次 commit；当全部修订与 commit 完成后，必须用 `workspace.finish` 收口，不能用纯文本代替最终 answer。foreground `workspace.finish` 要求同一 run 已经有至少一次成功的显式 `workspace.commit`；自动发布不满足该门槛。在 handoff 链中，这个 commit 可以来自前一个 foreground owner。`workspace.commit` 工具的返回字符串只做温和提醒，提示模型可继续修订并再次 commit，但最终不要忘记 finish。
+`workspace.commit` 与 `workspace.finish` 的契约：模型可以多次 commit；当全部修订与 commit 完成后，必须用 `workspace.finish` 收口，不能用纯文本代替最终 answer。foreground `workspace.finish` 要求同一 run 已经有至少一次成功的显式 `workspace.commit`；自动发布不满足该门槛。在 handoff 链中，这个 commit 可以来自前一个 foreground owner。`workspace.commit` 目标不存在、是目录、不是 UTF-8 文本或内容为空时返回可恢复 tool error。工具的成功返回字符串只做温和提醒，提示模型可继续修订并再次 commit，但最终不要忘记 finish。
 
-如果模型一回合内仍然返回 0 个 tool_calls（drift），loop runner 会做"软纠正"（issue #64）：把模型的纯文本回复捕获到 workspace 的 `direct_output.md`（默认 `output/direct_output.md`，实际跟随当前 profile 的 messageBody artifact root），写 `direct_output_captured` 与 checkpoint；再把该 assistant 回复推进 history，并追加一条 `user` 角色的合成提醒，让模型在下一轮通过当前 invocation 的结束工具补回流程。root run 使用 `workspace_commit` / `workspace_finish`，return-mode child 使用 `task_return`。direct output 本身没有独立的一次性上限；只要仍有下一轮模型调用预算，就会继续纠偏。每次都会写一条 `drift_recovery_attempted` 事件。
+前台首次成功显式 commit 前，runtime 只在一轮 tool calls 全部处理后检查该轮最后一次成功的 `workspace.write_file` / `workspace.apply_patch`，并按既有文本后缀规则最多自动发布一次。各 mutation 只保留 CAS 与 journal；Host 在提交前重读当前文件并校验请求 SHA。
+
+如果模型一回合内仍然返回 0 个 tool_calls（drift），loop runner 会做"软纠正"（issue #64）：把模型的纯文本回复捕获到 workspace 的 `direct_output.md`（默认 `output/direct_output.md`，实际跟随当前 profile 的 messageBody artifact root），写 `direct_output_captured`；再把该 assistant 回复推进 history，并追加一条 `user` 角色的合成提醒，让模型在下一轮通过当前 invocation 的结束工具补回流程。root run 使用 `workspace_commit` / `workspace_finish`，return-mode child 使用 `task_return`。direct output 本身没有独立的一次性上限；只要仍有下一轮模型调用预算，就会继续纠偏。每次都会写一条 `drift_recovery_attempted` 事件。
 
 - 软纠正后模型调用了 `workspace_finish`，或继续修订并再次 `workspace_commit` 后再 `workspace_finish` → run 继续，无 rollback。
 - 软纠正后模型再次 0 tool_calls 且已经没有下一轮预算 → 回落到 `model.tool_call_required` 失败路径；若没有成功 chat commit，则写 `run_failed`（`userRetryable=true`）；若已有成功 chat commit，则写 `run_partial_success`，保留已提交聊天输出并以 warning 暴露底层错误。
 
-违反此契约的其它形态（`agent.tool_after_finish` / `agent.max_tool_rounds_exceeded`）目前不走软纠正，直接进入同一终态分类：没有成功 chat commit 时 fail-fast；已有成功 chat commit 时 `run_partial_success`。细节见 `RunEventJournal.md`。
+`workspace.finish`、`agent.handoff` 或 `task.return` 不是本轮最后一个 tool call 时，执行边界不接受终结动作，而以 `agent.tool_after_finish` 可恢复 tool error 回填；本轮其余工具照常处理，模型可在下一轮重新调用终结工具。只有轮次真正耗尽时，`agent.max_tool_rounds_exceeded` 才进入终态分类。细节见 `RunEventJournal.md`。
 
 当前没有 shell、extension bridge、profile routing、Plan Mode runtime、模型可见 task cancel 或审批工具；Legacy MCP 已通过独立的 JS generation seam 接入，不复用 Agent executor。
 
@@ -254,15 +256,7 @@ Profile 的 `maxCallsPerRun` 是历史字段名，实际语义一直是 invocati
 - 调用后写入 `agent-results/<child-invocation-id>.json` 与 `summaries/<workspace-key>-result.md`。
 - child invocation 必须用它结束工作，不能用 `workspace.finish`。
 
-### 7.2 后续内置工具候选
-
-后续优先补齐策略与 checkpoint 工具：
-
-```text
-workspace.create_checkpoint
-```
-
-### 7.3 Workspace Tools
+### 7.2 Workspace Tools
 
 `chat.search`、`workspace.search_files` 与 `skill.search` 共享纯查询规范化规则：包含字母、数字或 `_` 的 query 继续使用既有分词评分；非空 query 若分词后没有任何词项，则保留 trim 后 query，并由既有空白分词生成字面量 token。因此纯标点和符号片段可搜索，混合 query 的既有召回与排序语义不变。
 
@@ -281,7 +275,7 @@ workspace.create_checkpoint
 - 输入为 `query`，可选 `path`、`limit`、`context_lines`。
 - 返回 path、score、line range、snippet 与 `workspace:<path>#Lx-Ly` ref；sha256 只保留在内部结果与审计中。
 - 0 命中是成功结果；非法 path、不可见 path、缺失 path 是 recoverable tool error。
-- 不搜索 `input/`、`model-responses/`、`checkpoints/`、`events.jsonl` 等隐藏 runtime 存储；`tool-results/` 是唯一显式可见的 runtime result root。
+- 不搜索 `input/`、`model-responses/`、`events.jsonl` 等隐藏 runtime 存储；`tool-results/` 是唯一显式可见的 runtime result root。
 
 `workspace.read_file`
 
@@ -298,7 +292,6 @@ workspace.create_checkpoint
 - 只能写 writable path；return-mode child 应把 `summaries/` / `scratch/` 用作私有笔记，只在任务要求 artifact 或 edit 时写共享 writable roots。
 - `mode` 默认为 `replace`；`append` 把 `content` 原样追加到文件末尾，文件不存在时创建文件。
 - `append` 不自动补换行；需要另起一行时，模型应在 `content` 开头包含 `\n`。
-- 写后应 checkpoint。
 - `replace` 写已存在文件若发生并发修改，会返回 recoverable stale-file tool error；模型重新读取后再写。
 
 `workspace.apply_patch`
@@ -307,11 +300,6 @@ workspace.create_checkpoint
 - 应使用明确 patch 格式；编辑已有文件前必须先读到要替换的精确文本，`replace_all=true` 必须完整读取。
 - patch 失败返回可恢复 tool error；如果失败发生在部分读取基础上，同文件再次 patch 前必须完整读取。
 - path escape 是 system failure。
-
-`workspace.create_checkpoint`
-
-- Mutating metadata。
-- 可由 runtime 自动调用，也可暴露给模型。
 
 `workspace.commit`
 
@@ -536,7 +524,6 @@ AgentToolResult returns to backend journal
 - tool arguments / tool results resource refs。
 - recoverable tool error 回填模型。
 - workspace write/patch 成功结果只向模型回填包含目标路径的文本摘要；内部结构化元数据与 resource refs 保留给 runtime、audit 与 Timeline UI。需要完整内容时由模型显式调用 workspace_read_file。
-- workspace mutation checkpoint。
 - journal events。
 - MCP cached descriptor resolution、permission-aware call 与 known/unknown outcome 投影。
 

@@ -32,7 +32,6 @@ ToolPolicy allow/deny/approval
 InvocationToolSnapshot ordered binding/duplicate alias invariants
 ToolTurnContract all-snapshot/choice invariants
 Profile resolution precedence
-Checkpoint metadata
 ```
 
 Domain tests 不应需要 Tauri、文件系统或 HTTP。
@@ -48,7 +47,6 @@ agent loop success
 agent loop model failure
 cancel before model call
 cancel during model call
-workspace write creates checkpoint
 artifact assembly success/failure
 commit service called through expected boundary
 tool loop success
@@ -86,7 +84,6 @@ child tool snapshot removes commit/finish/delegation and appends task.return
 
 ```text
 file event journal append/read pagination
-checkpoint snapshot restore
 workspace repository rejects symlink escape
 workspace repository handles unicode relative paths
 file sizes and retention
@@ -165,6 +162,8 @@ Agent PromptManager assembly materializes a working copy and does not mutate Fro
 external tools/tool_choice/tool turns are rejected
 stream true is rejected
 foreground finish before workspace.commit returns recoverable tool error
+foreground text mutations auto-commit only the final write/patch once per model round
+chat commit rejects a workspace file whose SHA changed before Host read
 workspace.commit append without prior commit creates the run message
 subscribe polling can read events in seq order
 readWorkspaceFile returns UTF-8 text, chars, words, sha256
@@ -180,14 +179,14 @@ missing current-chat reads return recoverable errors and the next model turn sti
 externalized MCP results expose a fully line-readable text view plus the exact JSON audit
 workspace_write_file append creates missing files and appends existing files without a rewrite read
 workspace_write_file append does not auto-insert newlines and does not unlock rewrite or patch state for unread existing content
-workspace_apply_patch requires full read-state and checkpoints on success
+workspace_apply_patch requires full read-state
 chat deletion removes the corresponding Agent chat workspace and run index
 chat deletion fails clearly while the corresponding Agent workspace has an active run
 skill_search respects visible/deny policy and read budget
 all model-facing text read schemas expose start_line/line_count and no character range
 recoverable tool errors are returned to the model instead of failing the run
 listRuns returns paginated Agent run history summaries
-future APIs approveToolCall/readDiff/rollback throw explicitly
+future API approveToolCall throws explicitly
 run timeline/detail view switching has a single explicit state source and does not derive detailsOpen from scrollLeft
 run timeline main panel does not use horizontal scroll-snap or smooth scroll as a view state machine
 run timeline closes detail by resetting detail state and does not measure or auto-stick hidden timeline scrollers
@@ -235,7 +234,6 @@ provider source denied by policy
 large chat history remains virtual
 journal pagination does not load full file
 workspace tree lazy read
-checkpoint retention cap
 tool result budget truncation/summary
 mobile default budgets
 ```
@@ -259,7 +257,6 @@ fixtures/agent/
   manifest_main_only.json
   manifest_multi_artifact.json
   tool_result_chat_search.json
-  checkpoint_snapshot/
 ```
 
 Golden fixtures 应尽量脱敏，不包含真实 API key 或私人聊天。

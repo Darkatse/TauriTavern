@@ -31,7 +31,7 @@ finalizer verifies, commits, finish
 
 ## 2. 核心不变量
 
-- Handoff 仍在同一个 `AgentRun` 内运行，共享 run workspace、journal、cancel、checkpoint、commit ledger 与 persistent projection。
+- Handoff 仍在同一个 `AgentRun` 内运行，共享 run workspace、journal、cancel、commit ledger 与 persistent projection。
 - 每个 handoff stage 是独立 `AgentInvocation`，拥有自己的 provider session id、target Profile、冻结 tool snapshot/turn、Skill 解析与 prompt assembly。
 - `agent.handoff` 是模型可见工具，`TransferControl` 是 runtime 内部 continuation。不要把 `continuation`、`invocationId` 或 provider state 暴露给模型参数。
 - 当前 Agent 成功 handoff 后必须停止工具调用。runtime 将当前 invocation 记为 `Transferred`。

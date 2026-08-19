@@ -12,7 +12,6 @@ const AGENT_RUN_STATUSES = new Set([
     'calling_model',
     'dispatching_tool',
     'applying_workspace_patch',
-    'creating_checkpoint',
     'awaiting_host_commit',
     'finishing',
     'completed',
@@ -139,9 +138,7 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
         const runId = requireRunId(input?.runId);
         const path = String(input?.path || '').trim();
         if (!path) throw new Error('path is required');
-        const checkpointId = normalizeOptionalString(input?.checkpointId);
-        if (input?.checkpointId != null && !checkpointId) throw new Error('checkpointId cannot be empty');
-        return safeInvoke('read_agent_workspace_file', { dto: { runId, path, ...(checkpointId ? { checkpointId } : {}) } });
+        return safeInvoke('read_agent_workspace_file', { dto: { runId, path } });
     }
 
     async function readModelTurn(input) {

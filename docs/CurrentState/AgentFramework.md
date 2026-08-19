@@ -8,7 +8,7 @@
 
 截至 2026-08-03，Agent 当前基线：
 
-- Rust 后端已有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
+- Rust 后端已有 Agent domain model、runtime、workspace、journal 与 commit bridge。
 - 前端已挂载 `window.__TAURITAVERN__.api.agent` Host ABI。
 - Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；root run 已支持 Agent Profile 独立 preset 与独立 model 的 Frontend PromptAssemblyBroker 组装，`GenerationIntent + ContextFrame` 尚未完全接管上下文组装。
 - LLM 调用仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 或取消链路。Responses WebSocket 建连已收敛到 `HttpClientPool` 的 ChatCompletion WebSocket profile，见 `docs/CurrentState/NativeApiFormats.md`。
@@ -160,7 +160,7 @@ Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swi
 | `workspace.list_files` | `workspace_list_files` | read-only | 列出模型可见 workspace 文件。`path` 省略、空字符串、`.`、`./` 表示 workspace root。 |
 | `workspace.search_files` | `workspace_search_files` | read-only | 搜索模型可见 workspace UTF-8 文本文件；可限定 `path`，返回 snippet/ref，不搜索隐藏 runtime 存储。 |
 | `workspace.read_file` | `workspace_read_file` | read-only | 读取 UTF-8 文本文件并返回行号；只支持 1-based 行范围，默认全文、超限预览；完整读取会记录 read-state。 |
-| `workspace.write_file` | `workspace_write_file` | mutating | 写 UTF-8 文件；`mode` 默认为完整替换，`append` 会原样追加并在缺失时创建文件；成功后按内容可知性更新 read-state 并创建 checkpoint。 |
+| `workspace.write_file` | `workspace_write_file` | mutating | 写 UTF-8 文件；`mode` 默认为完整替换，`append` 会原样追加并在缺失时创建文件；成功后按内容可知性更新 read-state。 |
 | `workspace.apply_patch` | `workspace_apply_patch` | mutating | 单文件 `old_string` / `new_string` 精确替换；`old_string` 必须来自本 run 已读文本或本 run 创建/完整替换的文件；失败后同文件再次 patch 必须先全文读取。 |
 | `workspace.commit` | `workspace_commit` | control/mutating | 将可见 workspace 文件提交到当前聊天；无参数等价于 `replace output/main.md`，`append` 首次创建消息、后续追加同一消息。 |
 | `workspace.finish` | `workspace_finish` | control | 结束 root/active 工具循环；前台 run 必须已有至少一次 run-level 成功显式 commit，自动 commit 不满足该门槛；后台 run 可无 commit；return-mode child invocation 不可用；当前会取消 unfinished return-mode child tasks 而不阻塞完成。 |
@@ -270,11 +270,10 @@ persist/
 Chat commit 由 pre-explicit 文本 mutation policy 或模型显式调用 `workspace.commit` 触发，并由同一个前端 host bridge 执行：
 
 ```text
-workspace.write_file / workspace.apply_patch  # 首次成功显式 commit 前，匹配文本后缀
+每轮最后一次 workspace.write_file / workspace.apply_patch  # 首次成功显式 commit 前，匹配文本后缀
 或 workspace.commit(path?, mode?)
-  -> backend 以本次 mutation 内容创建 checkpoint；显式 commit 则读取文件后创建
   -> chat_commit_requested event
-  -> Host API 读取事件绑定的 checkpoint 与 root / handoff Model Turn 的可见 reasoning
+  -> Host API 重读当前 workspace 文件并校验事件 SHA，同时读取 root / handoff Model Turn 的可见 reasoning
   -> 前端应用 Legacy generated-output postprocess
   -> 前端 saveReply() 写同一消息楼层与标准 extra.reasoning
   -> resolve_agent_chat_commit
@@ -284,7 +283,7 @@ workspace.write_file / workspace.apply_patch  # 首次成功显式 commit 前，
   -> resolve_agent_persistent_state_metadata_update
 ```
 
-自动 commit 使用大小写不敏感的固定后缀 `.md`、`.markdown`、`.txt`、`.text`，不按 artifact 或 root 过滤，固定把 mutation 后完整文件以 `replace` 发布；多文件因此在同一楼层遵循 last-write-wins。第一次 host-confirmed 的显式 `workspace.commit` 后自动触发永久停止。显式 `mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。`append` 追加的是本次 commit 读取到的文件文本，不计算 workspace file diff；host bridge 会对累计后的 raw 目标文本做一次 Legacy output postprocess。Commit 必须遵守 SillyTavern 完整 chat payload 与保存串行化契约，不能直接写 chat JSONL。`persistStateId` 只能表示已经落盘的 durable persistent state；`chat_commit_requested` 不携带该字段，partial success 保留的聊天输出不会成为下一轮可复用 persist base。下一轮 run 的 `persistBaseStateId` 由 Rust runtime 从同一个输入历史前缀内解析，前端不再负责扫描聊天历史来决定 base state。
+自动 commit 只在一轮 tool calls 全部处理后检查该轮最后一次成功的 write/patch，每轮最多一次。它使用大小写不敏感的固定后缀 `.md`、`.markdown`、`.txt`、`.text`，不按 artifact 或 root 过滤，并把该 mutation 的完整文件以 `replace` 发布；跨轮多次发布仍在同一楼层遵循 last-write-wins。第一次 host-confirmed 的显式 `workspace.commit` 后自动触发永久停止。显式 `mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。`append` 追加的是本次 commit 读取到的文件文本，不计算 workspace file diff；host bridge 会对累计后的 raw 目标文本做一次 Legacy output postprocess。Commit 必须遵守 SillyTavern 完整 chat payload 与保存串行化契约，不能直接写 chat JSONL。`persistStateId` 只能表示已经落盘的 durable persistent state；`chat_commit_requested` 不携带该字段，partial success 保留的聊天输出不会成为下一轮可复用 persist base。下一轮 run 的 `persistBaseStateId` 由 Rust runtime 从同一个输入历史前缀内解析，前端不再负责扫描聊天历史来决定 base state。
 
 聊天删除现在会联动清理对应的 Agent chat workspace：
 
@@ -321,14 +320,14 @@ prepare_agent_tool_request 从该 turn 生成 AgentModelRequest 与 request-scop
   ↓
 model -> tool -> model -> ... -> workspace.commit? -> workspace.finish
   ↓
-workspace mutation 成功后 checkpoint；符合 pre-explicit policy 时立即进入 Committer
+workspace mutation 成功后记录 CAS 结果与 journal；每轮结束时由最后一次 mutation 检查 pre-explicit policy
   ↓
 workspace.commit 成功后关闭自动 commit；host 继续写入同一条 chat message
   ↓
 workspace.finish 结束 run，并提交 persist projection
 ```
 
-工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会触发 soft drift recovery：runtime 将直接文本捕获到当前 messageBody artifact root 下的 `direct_output.md`（默认 `output/direct_output.md`），记录 `direct_output_captured` 与 checkpoint，然后提醒模型通过当前 invocation 的 Agent 工具提交/结束；该 runtime capture 本身不触发自动 commit。direct output recovery 不再有独立的一次性上限；只要仍有下一轮模型调用预算就继续纠偏，直到恢复、取消或在 `maxRounds` 边界以 `model.tool_call_required` 失败 / `run_partial_success` 收口。前台 run 在 `workspace.finish` 前必须至少成功一次显式 `workspace.commit`；后台 run 可以无 chat commit 结束。
+工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会触发 soft drift recovery：runtime 将直接文本捕获到当前 messageBody artifact root 下的 `direct_output.md`（默认 `output/direct_output.md`），记录 `direct_output_captured`，然后提醒模型通过当前 invocation 的 Agent 工具提交/结束；该 runtime capture 本身不触发自动 commit。direct output recovery 不再有独立的一次性上限；只要仍有下一轮模型调用预算就继续纠偏，直到恢复、取消或在 `maxRounds` 边界以 `model.tool_call_required` 失败 / `run_partial_success` 收口。前台 run 在 `workspace.finish` 前必须至少成功一次显式 `workspace.commit`；后台 run 可以无 chat commit 结束。
 
 Return-mode SubAgent 当前流程：
 
@@ -385,11 +384,9 @@ tool_result_stored
 tool_call_completed / tool_call_failed
 workspace_file_written
 workspace_patch_applied
-checkpoint_created
 provider_state_updated
 model_response_stored
 agent_loop_finished
-chat_commit_started
 chat_commit_requested
 chat_commit_completed / chat_commit_failed
 chat_commit_recorded
@@ -457,10 +454,6 @@ _tauritavern/agent-workspaces/
               <workspace-key>/
                 result.md
           persist/
-          checkpoints/
-            <checkpoint-id>/
-              checkpoint.json
-              <snapshotted files...>
 _tauritavern/skills/
   installed/
     <skill-name>/
@@ -475,7 +468,7 @@ _tauritavern/agent-profiles/
   .staging/
 ```
 
-Workspace path 必须是相对路径。绝对路径、Windows drive prefix、NUL、`..` 会被拒绝。工具参数层可修正的问题返回 recoverable tool error；repository 内部 IO、journal、checkpoint、chat JSONL 损坏、序列化、取消和模型响应结构错误是 fatal runtime error。
+Workspace path 必须是相对路径。绝对路径、Windows drive prefix、NUL、`..` 会被拒绝。工具参数层可修正的问题返回 recoverable tool error；repository 内部 IO、journal、chat JSONL 损坏、序列化、取消和模型响应结构错误是 fatal runtime error。
 
 工具参数与结果的审计文件名使用 provider `tool_call_id` 的 SHA-256 前 8 字节 hex 派生；原始 `tool_call_id` 仍保存在 event payload、审计 JSON 内容与下一轮模型 tool result 中，不能被截断、清洗或替换。
 
@@ -531,7 +524,7 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - 继续完善运行中 prompt assembly 的恢复/诊断体验；当前 child / handoff 已有独立 provider_state、model binding 与 host bridge prompt assembly handshake。
 - 实现模型可见 task cancel 与更完整的 scheduler policy。
 - 明确多 Agent provider/model switch policy；root run 的 `connectionRef` 模型绑定已经可用。
-- 实现 readDiff、rollback、resume-run、streaming 的明确策略。
+- 实现 resume-run、streaming 的明确策略。
 
 ## 每次 Agent 相关变更必须更新
 

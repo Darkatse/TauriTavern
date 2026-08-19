@@ -173,7 +173,6 @@ pub(super) fn validate_workspace_root_path(value: &str) -> Result<String, Domain
             | "input"
             | "model-responses"
             | "tool-args"
-            | "checkpoints"
             | "events.jsonl"
             | "manifest.json"
             | "run.json"

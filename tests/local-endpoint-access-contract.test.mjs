@@ -19,9 +19,9 @@ test('Connect authorizes the selected endpoint before saving secrets or checking
     assert.ok(authorization >= 0);
     assert.ok(authorization < secretWrite);
     assert.ok(secretWrite < statusCheck);
-    assert.match(handler, /const promptForLocalEndpoint = e\.originalEvent\?\.isTrusted === true/);
-    assert.match(handler, /getCurrentLocale\(\), promptForLocalEndpoint/);
-    assert.match(handler, /toastr\.info\(t`Local endpoint approval required\. Click Connect to continue\.`\)/);
+    assert.match(handler, /const promptForEndpoint = e\.originalEvent\?\.isTrusted === true/);
+    assert.match(handler, /getCurrentLocale\(\), promptForEndpoint/);
+    assert.match(handler, /toastr\.info\(t`Non-public endpoint approval required\. Click Connect to continue\.`\)/);
     assert.match(handler, /if \(!allowed\)/);
 });
 

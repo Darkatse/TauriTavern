@@ -257,7 +257,9 @@ Android AI 生成使用任务级 `dataSync` Foreground Service。Rust `ChatCompl
 
 以下问题仅在 Android 旧 WebView 上高概率出现，桌面端通常不复现。
 
-### 7.1 `*.at is not a function`
+### 7.1 JavaScript 运行时兼容
+
+#### `*.at is not a function`
 
 现象：
 
@@ -273,7 +275,13 @@ Android AI 生成使用任务级 `dataSync` Foreground Service。Rust `ChatCompl
 - 在 Tauri mobile 启动期安装运行时兼容层：
   - 实现：`src/tauri/main/compat/mobile/mobile-runtime-compat.js`
   - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
-  - 行为：仅补齐缺失 API，且只执行一次；桌面端/移动端 Web 不启用。
+  - 行为：基础 API 仅在缺失时补齐，且只执行一次；桌面端/移动端 Web 不启用。
+
+#### Web Clipboard 写入被拒绝
+
+Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时以 `NotAllowedError` 拒绝写入。TauriTavern 第一方复制在所有平台统一走 `writeClipboardText()`；Android 兼容层只把上游 Web Clipboard 的 `writeText` 映射到同一原生写入器，并保留 Clipboard 对象上的其他方法。
+
+原生侧只授予 `clipboard-manager:allow-write-text`。写入剪贴板不需要 Android manifest 或运行时权限，也不开放读取能力；失败直接返回调用方，不静默回退。
 
 ### 7.2 插件面板样式大面积失效（如 `TH-custom-tailwind` 布局错乱）
 

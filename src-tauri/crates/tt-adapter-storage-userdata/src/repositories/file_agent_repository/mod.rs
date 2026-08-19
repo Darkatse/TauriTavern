@@ -1,4 +1,3 @@
-mod checkpoint_store;
 mod event_journal;
 mod fs_tree;
 mod invocation_store;
@@ -28,7 +27,6 @@ use tt_domain::errors::DomainError;
 pub struct FileAgentRepository {
     pub(super) root: PathBuf,
     pub(super) event_lock: Arc<Mutex<()>>,
-    pub(super) checkpoint_lock: Arc<Mutex<()>>,
     pub(super) persist_lock: Arc<Mutex<()>>,
     pub(super) workspace_write_locks: Arc<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>>,
 }
@@ -38,7 +36,6 @@ impl FileAgentRepository {
         Self {
             root,
             event_lock: Arc::new(Mutex::new(())),
-            checkpoint_lock: Arc::new(Mutex::new(())),
             persist_lock: Arc::new(Mutex::new(())),
             workspace_write_locks: Arc::new(Mutex::new(HashMap::new())),
         }

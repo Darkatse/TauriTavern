@@ -17,7 +17,7 @@ AgentRun
 
 这样可以保持：
 
-- 同一个 run workspace、journal、cancel、checkpoint 与最终 commit 边界。
+- 同一个 run workspace、journal、cancel 与最终 commit 边界。
 - 每个 Agent Profile 有独立 prompt、model binding、工具面与预算。
 - return-mode child Agent 只产出任务结果，不直接写聊天消息。
 - 主 Agent 负责整合、审稿与最终 `workspace.commit` / `workspace.finish`。

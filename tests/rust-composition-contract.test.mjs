@@ -27,7 +27,7 @@ test('Rust composition keeps repository sharing explicit', async () => {
     );
     assert.match(
         source,
-        /let file_agent_repository = Arc::new\(FileAgentRepository::new\([\s\S]*?let agent_run_repository: Arc<dyn AgentRunRepository> = file_agent_repository\.clone\(\);[\s\S]*?let agent_invocation_repository: Arc<dyn AgentInvocationRepository> =\s*file_agent_repository\.clone\(\);[\s\S]*?let workspace_repository: Arc<dyn WorkspaceRepository> = file_agent_repository\.clone\(\);[\s\S]*?let checkpoint_repository: Arc<dyn CheckpointRepository> = file_agent_repository\.clone\(\);[\s\S]*?let agent_workspace_lifecycle_repository: Arc<dyn AgentWorkspaceLifecycleRepository> =\s*file_agent_repository;/,
+        /let file_agent_repository = Arc::new\(FileAgentRepository::new\([\s\S]*?let agent_run_repository: Arc<dyn AgentRunRepository> = file_agent_repository\.clone\(\);[\s\S]*?let agent_invocation_repository: Arc<dyn AgentInvocationRepository> =\s*file_agent_repository\.clone\(\);[\s\S]*?let workspace_repository: Arc<dyn WorkspaceRepository> = file_agent_repository\.clone\(\);[\s\S]*?let agent_workspace_lifecycle_repository: Arc<dyn AgentWorkspaceLifecycleRepository> =\s*file_agent_repository;/,
     );
 });
 

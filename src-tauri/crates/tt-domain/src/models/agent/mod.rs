@@ -40,7 +40,6 @@ pub enum AgentRunStatus {
     CallingModel,
     DispatchingTool,
     ApplyingWorkspacePatch,
-    CreatingCheckpoint,
     AwaitingHostCommit,
     Finishing,
     Completed,
@@ -502,26 +501,6 @@ pub struct CommitPolicy {
     pub combine_template: Option<String>,
     #[serde(default)]
     pub store_artifacts_in_extra: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Checkpoint {
-    pub id: String,
-    pub seq: u64,
-    pub run_id: String,
-    pub created_at: DateTime<Utc>,
-    pub reason: String,
-    pub event_seq: u64,
-    pub files: Vec<CheckpointFile>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CheckpointFile {
-    pub path: String,
-    pub sha256: String,
-    pub bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
