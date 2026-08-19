@@ -85,9 +85,7 @@ import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashComma
 import { renderTemplateAsync } from './templates.js';
 import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
-import { getCurrentLocale, t } from './i18n.js';
-import { authorizeChatCompletionEndpoint } from '../tauri-bridge.js';
-import { stripCommandErrorPrefixes } from './util/command-error-utils.js';
+import { t } from './i18n.js';
 import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE, inject_ids } from './constants.js';
@@ -6326,18 +6324,22 @@ async function getStatusOpen() {
 
         const responseData = await response.json();
 
-        if ('data' in responseData && Array.isArray(responseData.data)) {
-            saveModelList(responseData.data);
-        }
-        if (responseData.error) {
-            if (!canBypass) {
-                setOnlineStatus('no_connection');
-                toastr.error(String(responseData.message || t`Could not connect to API`));
-            }
-        } else if (responseData.bypass) {
-            setOnlineStatus(t`Status check bypassed`);
+        if (responseData.cancelled) {
+            setOnlineStatus('no_connection');
         } else {
-            setOnlineStatus(t`Valid`);
+            if ('data' in responseData && Array.isArray(responseData.data)) {
+                saveModelList(responseData.data);
+            }
+            if (responseData.error) {
+                if (!canBypass) {
+                    setOnlineStatus('no_connection');
+                    toastr.error(String(responseData.message || t`Could not connect to API`));
+                }
+            } else if (responseData.bypass) {
+                setOnlineStatus(t`Status check bypassed`);
+            } else {
+                setOnlineStatus(t`Valid`);
+            }
         }
     } catch (error) {
         console.error(error);
@@ -7917,30 +7919,6 @@ async function onConnectButtonClick(e) {
             toastr.error(t`Service Account JSON is required for Vertex AI full version. Please validate and save your Service Account JSON.`);
             return;
         }
-    }
-
-    // Every reconnect checks the grant, but only a direct user click may request a dialog.
-    const promptForEndpoint = e.originalEvent?.isTrusted === true;
-    try {
-        const allowed = await authorizeChatCompletionEndpoint({
-            chat_completion_source: oai_settings.chat_completion_source,
-            reverse_proxy: oai_settings.reverse_proxy,
-            custom_url: oai_settings.custom_url,
-        }, getCurrentLocale(), promptForEndpoint);
-        if (!allowed) {
-            setOnlineStatus('no_connection');
-            if (!promptForEndpoint) {
-                toastr.info(t`Non-public endpoint approval required. Click Connect to continue.`);
-            }
-            resultCheckStatus();
-            return;
-        }
-    } catch (error) {
-        console.error('Endpoint authorization failed:', error);
-        setOnlineStatus('no_connection');
-        resultCheckStatus();
-        toastr.error(stripCommandErrorPrefixes(String(error?.message || error)) || t`Could not authorize endpoint`);
-        return;
     }
 
     // Other generic configs

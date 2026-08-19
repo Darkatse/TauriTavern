@@ -1,86 +1,54 @@
-use std::sync::Arc;
-
-use tauri::{AppHandle, State};
+use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio::sync::{Mutex, oneshot};
 
-use crate::app::AppState;
-use crate::presentation::commands::helpers::log_command;
 use crate::presentation::errors::CommandError;
-use tt_application::dto::chat_completion_dto::ChatCompletionEndpointAccessRequestDto;
-use tt_ports::local_endpoint_access::LocalEndpointCandidate;
+use tt_application::services::user_endpoint_access_service::UserEndpointAccessService;
 
 static DIALOG_GATE: Mutex<()> = Mutex::const_new(());
 
-#[tauri::command]
-pub async fn authorize_chat_completion_endpoint(
-    dto: ChatCompletionEndpointAccessRequestDto,
-    locale: String,
-    prompt: bool,
-    app_handle: AppHandle,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<bool, CommandError> {
-    log_command("authorize_chat_completion_endpoint");
-
-    let endpoint = app_state
-        .services
-        .chat_completion_service
-        .resolve_user_endpoint_for_access(&dto)?;
+pub(super) async fn ensure_user_endpoint_access(
+    endpoint: Option<String>,
+    locale: &str,
+    app_handle: &AppHandle,
+    access_service: &UserEndpointAccessService,
+) -> Result<(), CommandError> {
     let Some(endpoint) = endpoint else {
-        return Ok(true);
+        return Ok(());
     };
 
-    // `prompt` suppresses automatic reconnect dialogs; native confirmation remains
-    // the authorization boundary and cannot be supplied by the caller.
-    let _dialog_guard = if prompt {
-        Some(DIALOG_GATE.lock().await)
-    } else {
-        None
-    };
-    let candidate = app_state
-        .services
-        .local_endpoint_access_service
-        .authorization_candidate(&endpoint)
-        .await?;
-    let Some(candidate) = candidate else {
-        return Ok(true);
-    };
-
-    if !prompt {
-        return Ok(false);
-    }
-    if !show_authorization_dialog(&app_handle, &candidate, &locale).await? {
-        return Ok(false);
+    if access_service.is_granted(&endpoint).await {
+        return Ok(());
     }
 
-    app_state
-        .services
-        .local_endpoint_access_service
-        .grant(candidate.endpoint)
-        .await;
-    Ok(true)
+    let _guard = DIALOG_GATE.lock().await;
+    if access_service.is_granted(&endpoint).await {
+        return Ok(());
+    }
+    if !show_authorization_dialog(app_handle, &endpoint, locale).await? {
+        return Err(CommandError::Cancelled(
+            "Endpoint authorization cancelled by user".to_string(),
+        ));
+    }
+
+    access_service.grant(endpoint).await;
+    Ok(())
 }
 
 async fn show_authorization_dialog(
     app_handle: &AppHandle,
-    candidate: &LocalEndpointCandidate,
+    endpoint: &str,
     locale: &str,
 ) -> Result<bool, CommandError> {
     let copy = dialog_copy(locale);
-    let addresses = candidate.addresses.join(", ");
-    let http_warning = if candidate.endpoint.starts_with("http://") {
+    let http_warning = if endpoint.starts_with("http://") {
         copy.http_warning
     } else {
         ""
     };
     let message = format!(
-        "{} {}\n{} {}\n\n{}{}",
-        copy.endpoint_label,
-        candidate.endpoint,
-        copy.addresses_label,
-        addresses,
-        copy.warning,
-        http_warning,
+        "{} {}\n\n{}{}",
+        copy.endpoint_label, endpoint, copy.warning, http_warning
     );
 
     let (sender, receiver) = oneshot::channel();
@@ -107,7 +75,6 @@ async fn show_authorization_dialog(
 struct DialogCopy {
     title: &'static str,
     endpoint_label: &'static str,
-    addresses_label: &'static str,
     warning: &'static str,
     http_warning: &'static str,
     confirm: &'static str,
@@ -118,9 +85,8 @@ fn dialog_copy(locale: &str) -> DialogCopy {
     let locale = locale.trim().to_ascii_lowercase();
     if locale.starts_with("zh-cn") || locale.starts_with("zh-hans") {
         return DialogCopy {
-            title: "允许连接到非公网端点？",
+            title: "允许连接到自定义端点？",
             endpoint_label: "端点：",
-            addresses_label: "地址：",
             warning: "第三方扩展也可能发起此请求。仅当这是你刚刚配置并认识的端点时继续；TauriTavern 可能向它发送 API 密钥、提示词和聊天内容。该端点后续将保持信任，请谨慎授权。",
             http_warning: "\n此 HTTP 连接未加密，传输内容可能被观察或修改。",
             confirm: "信任并连接",
@@ -129,9 +95,8 @@ fn dialog_copy(locale: &str) -> DialogCopy {
     }
     if locale.starts_with("zh-tw") || locale.starts_with("zh-hant") {
         return DialogCopy {
-            title: "允許連線到非公網端點？",
+            title: "允許連線到自訂端點？",
             endpoint_label: "端點：",
-            addresses_label: "位址：",
             warning: "第三方擴充功能也可能發起此請求。僅當這是你剛剛設定並認識的端點時繼續；TauriTavern 可能向它傳送 API 金鑰、提示詞和聊天內容。該端點後續將保持信任，請謹慎授權。",
             http_warning: "\n此 HTTP 連線未加密，傳輸內容可能被觀察或修改。",
             confirm: "信任並連線",
@@ -140,9 +105,8 @@ fn dialog_copy(locale: &str) -> DialogCopy {
     }
 
     DialogCopy {
-        title: "Allow non-public endpoint?",
+        title: "Allow custom endpoint?",
         endpoint_label: "Endpoint:",
-        addresses_label: "Addresses:",
         warning: "A third-party extension can also request this connection. Continue only if you just configured and recognize this endpoint. TauriTavern may send it API keys, prompts, and chat content. This endpoint will remain trusted; authorize it carefully.",
         http_warning: "\nThis HTTP connection is unencrypted and may be observed or modified in transit.",
         confirm: "Trust & Connect",

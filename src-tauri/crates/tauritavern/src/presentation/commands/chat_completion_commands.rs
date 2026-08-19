@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::commands::user_endpoint_access::ensure_user_endpoint_access;
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
@@ -14,9 +15,23 @@ use tt_application::dto::chat_completion_dto::{
 #[tauri::command]
 pub async fn get_chat_completions_status(
     dto: ChatCompletionStatusRequestDto,
+    locale: String,
+    app_handle: AppHandle,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Value, CommandError> {
     log_command("get_chat_completions_status");
+
+    let endpoint = app_state
+        .services
+        .chat_completion_service
+        .resolve_status_user_endpoint(&dto)?;
+    ensure_user_endpoint_access(
+        endpoint,
+        &locale,
+        &app_handle,
+        &app_state.services.user_endpoint_access_service,
+    )
+    .await?;
 
     app_state
         .services
@@ -30,11 +45,25 @@ pub async fn get_chat_completions_status(
 pub async fn generate_chat_completion(
     dto: ChatCompletionGenerateRequestDto,
     request_id: String,
+    locale: String,
+    app_handle: AppHandle,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Value, CommandError> {
     let request_id = request_id.trim().to_string();
     validate_stream_id(&request_id)?;
     log_command(format!("generate_chat_completion {}", request_id));
+
+    let endpoint = app_state
+        .services
+        .chat_completion_service
+        .resolve_generate_user_endpoint(&dto)?;
+    ensure_user_endpoint_access(
+        endpoint,
+        &locale,
+        &app_handle,
+        &app_state.services.user_endpoint_access_service,
+    )
+    .await?;
 
     app_state
         .services
@@ -48,11 +77,25 @@ pub async fn generate_chat_completion(
 pub async fn start_chat_completion_stream(
     stream_id: String,
     dto: ChatCompletionGenerateRequestDto,
+    locale: String,
+    app_handle: AppHandle,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     let stream_id = stream_id.trim().to_string();
     validate_stream_id(&stream_id)?;
     log_command(format!("start_chat_completion_stream {}", stream_id));
+
+    let endpoint = app_state
+        .services
+        .chat_completion_service
+        .resolve_generate_user_endpoint(&dto)?;
+    ensure_user_endpoint_access(
+        endpoint,
+        &locale,
+        &app_handle,
+        &app_state.services.user_endpoint_access_service,
+    )
+    .await?;
 
     app_state
         .services

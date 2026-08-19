@@ -2,22 +2,22 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::local_endpoint_grant_repository::LocalEndpointGrantRepository;
+use tt_ports::repositories::user_endpoint_grant_repository::UserEndpointGrantRepository;
 
 use crate::file_system::{read_json_file, write_json_file};
 
-pub struct FileLocalEndpointGrantRepository {
+pub struct FileUserEndpointGrantRepository {
     path: PathBuf,
 }
 
-impl FileLocalEndpointGrantRepository {
+impl FileUserEndpointGrantRepository {
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 }
 
 #[async_trait]
-impl LocalEndpointGrantRepository for FileLocalEndpointGrantRepository {
+impl UserEndpointGrantRepository for FileUserEndpointGrantRepository {
     async fn load(&self) -> Result<Vec<String>, DomainError> {
         match read_json_file(&self.path).await {
             Ok(endpoints) => Ok(endpoints),
@@ -40,13 +40,13 @@ mod tests {
 
     #[tokio::test]
     async fn missing_file_is_empty_and_grants_round_trip() {
-        let root = unique_temp_path(&std::env::temp_dir().join("local-endpoint-grants"));
-        let path = root.join("local-endpoint-grants.json");
-        let repository = FileLocalEndpointGrantRepository::new(path);
+        let root = unique_temp_path(&std::env::temp_dir().join("user-endpoint-grants"));
+        let path = root.join("user-endpoint-grants.json");
+        let repository = FileUserEndpointGrantRepository::new(path);
 
         assert!(repository.load().await.unwrap().is_empty());
 
-        let endpoints = vec!["http://lan.example:11434/v1".to_string()];
+        let endpoints = vec!["https://api.example.com/v1".to_string()];
         repository.replace(&endpoints).await.unwrap();
 
         assert_eq!(repository.load().await.unwrap(), endpoints);

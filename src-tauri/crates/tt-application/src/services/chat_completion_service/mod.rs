@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{RwLock, watch};
 
 use crate::dto::chat_completion_dto::{
-    ChatCompletionEndpointAccessRequestDto, ChatCompletionGenerateRequestDto,
-    ChatCompletionStatusRequestDto, ChatCompletionStreamReadResultDto,
+    ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
+    ChatCompletionStreamReadResultDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::hashing::hex_lower;
@@ -98,25 +98,61 @@ impl ChatCompletionService {
         self.ios_policy.scope == IosPolicyScope::Ios
     }
 
-    pub fn resolve_user_endpoint_for_access(
+    fn resolve_status_source(
         &self,
-        dto: &ChatCompletionEndpointAccessRequestDto,
-    ) -> Result<Option<String>, ApplicationError> {
-        let source = self.resolve_source(&dto.chat_completion_source)?;
-        self.ensure_chat_completion_source_allowed(source)?;
-
-        if self.ios_policy_is_active()
-            && !self.ios_policy.capabilities.llm.endpoint_overrides
-            && (source == ChatCompletionSource::Custom
-                || !dto.reverse_proxy.trim().is_empty()
-                || !dto.custom_url.trim().is_empty())
-        {
-            return Err(ApplicationError::PermissionDenied(
-                "iOS policy disabled capability: llm.endpoint_overrides".to_string(),
-            ));
+        dto: &ChatCompletionStatusRequestDto,
+    ) -> Result<Option<ChatCompletionSource>, ApplicationError> {
+        if dto.bypass_status_check {
+            return Ok(None);
         }
 
+        let source = self.resolve_source(&dto.chat_completion_source)?;
+        self.ensure_chat_completion_source_allowed(source)?;
+        self.ensure_endpoint_overrides_allowed_for_status(source, dto)?;
+
+        match source {
+            ChatCompletionSource::VertexAi | ChatCompletionSource::MiniMax => Ok(None),
+            _ => Ok(Some(source)),
+        }
+    }
+
+    fn resolve_generate_source(
+        &self,
+        dto: &ChatCompletionGenerateRequestDto,
+    ) -> Result<ChatCompletionSource, ApplicationError> {
+        let source = self.resolve_source(
+            dto.get_string("chat_completion_source")
+                .unwrap_or(OPENAI_SOURCE),
+        )?;
+        self.ensure_chat_completion_source_allowed(source)?;
+        self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
+        self.ensure_chat_completion_features_allowed(&dto.payload)?;
+        Ok(source)
+    }
+
+    pub fn resolve_status_user_endpoint(
+        &self,
+        dto: &ChatCompletionStatusRequestDto,
+    ) -> Result<Option<String>, ApplicationError> {
+        let Some(source) = self.resolve_status_source(dto)? else {
+            return Ok(None);
+        };
+
         config::resolve_user_configured_endpoint(source, &dto.reverse_proxy, &dto.custom_url)
+    }
+
+    pub fn resolve_generate_user_endpoint(
+        &self,
+        dto: &ChatCompletionGenerateRequestDto,
+    ) -> Result<Option<String>, ApplicationError> {
+        let source = self.resolve_generate_source(dto)?;
+        let custom_url = config::get_payload_string(&dto.payload, "custom_url")?;
+
+        config::resolve_user_configured_endpoint(
+            source,
+            dto.get_string("reverse_proxy").unwrap_or_default(),
+            &custom_url,
+        )
     }
 
     fn ensure_chat_completion_source_allowed(
@@ -344,27 +380,14 @@ impl ChatCompletionService {
         &self,
         dto: ChatCompletionStatusRequestDto,
     ) -> Result<Value, ApplicationError> {
-        if dto.bypass_status_check {
+        let Some(source) = self.resolve_status_source(&dto)? else {
             return Ok(json!({
                 "bypass": true,
                 "data": []
             }));
-        }
+        };
 
-        let source = self.resolve_source(&dto.chat_completion_source)?;
-        self.ensure_chat_completion_source_allowed(source)?;
-        self.ensure_endpoint_overrides_allowed_for_status(source, &dto)?;
         let model_list_source = resolve_status_model_list_source(source, &dto.custom_api_format)?;
-
-        if matches!(
-            source,
-            ChatCompletionSource::VertexAi | ChatCompletionSource::MiniMax
-        ) {
-            return Ok(json!({
-                "bypass": true,
-                "data": []
-            }));
-        }
         let config =
             config::resolve_status_api_config(source, &dto, &self.secret_repository).await?;
 
@@ -378,13 +401,7 @@ impl ChatCompletionService {
         &self,
         dto: ChatCompletionGenerateRequestDto,
     ) -> Result<ChatCompletionExecution, ApplicationError> {
-        let source = self.resolve_source(
-            dto.get_string("chat_completion_source")
-                .unwrap_or(OPENAI_SOURCE),
-        )?;
-        self.ensure_chat_completion_source_allowed(source)?;
-        self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
-        self.ensure_chat_completion_features_allowed(&dto.payload)?;
+        let source = self.resolve_generate_source(&dto)?;
         let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
         Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
         let provider_format = ChatCompletionProviderFormat::from_payload(source, &dto.payload)?;
@@ -509,13 +526,7 @@ impl ChatCompletionService {
         sender: ChatCompletionStreamSender,
         cancel: ChatCompletionCancelReceiver,
     ) -> Result<(), ApplicationError> {
-        let source = self.resolve_source(
-            dto.get_string("chat_completion_source")
-                .unwrap_or(OPENAI_SOURCE),
-        )?;
-        self.ensure_chat_completion_source_allowed(source)?;
-        self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
-        self.ensure_chat_completion_features_allowed(&dto.payload)?;
+        let source = self.resolve_generate_source(&dto)?;
         let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
         Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
 

@@ -23,3 +23,7 @@ export function translateSillyTavern(key, fallback) {
 
     return fallback;
 }
+
+export function getSillyTavernLocale() {
+    return String(globalThis.document?.documentElement?.lang || globalThis.navigator?.language || 'en').toLowerCase();
+}

@@ -1,7 +1,7 @@
 import { estimateTokenCount } from '../brokers/token-count-broker.js';
 import { createAndroidGenerationBridge } from '../adapters/android/android-generation-bridge.js';
 import { confirmAiNotificationPermissionRationale } from '../adapters/st/ai-notification-permission-rationale-popup.js';
-import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
+import { getSillyTavernLocale, translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
 import { createGenerationLifecycleService } from '../services/ai/generation-lifecycle-service.js';
 import { createGenerationStatusBridge } from '../services/ai/generation-status-bridge.js';
 import { consumeChatCompletionStream } from '../services/ai/chat-completion-stream-consumer.js';
@@ -177,6 +177,11 @@ function getChatCompletionSource(payload) {
 
 function isQuietRequest(payload) {
     return String(asObject(payload).type || '').trim().toLowerCase() === 'quiet';
+}
+
+function isRequestCancelled(error) {
+    return isAbortError(error)
+        || /(?:generation|endpoint authorization) cancelled by user/i.test(getErrorMessage(error));
 }
 
 function getCompletionModel(payload) {
@@ -357,6 +362,7 @@ async function invokeChatCompletionWithAbort(context, payload, signal) {
         const result = await context.safeInvoke('generate_chat_completion', {
             requestId,
             dto: payload,
+            locale: getSillyTavernLocale(),
         });
 
         if (abortRequested) {
@@ -570,6 +576,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                 await context.safeInvoke('start_chat_completion_stream', {
                     streamId,
                     dto: payload,
+                    locale: getSillyTavernLocale(),
                 });
 
                 // If abort happened while stream registration was in-flight, run cancellation again
@@ -579,6 +586,10 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                     await closeSession();
                 }
             } catch (error) {
+                if (isRequestCancelled(error)) {
+                    await closeStream({ cancelUpstream: true });
+                    return;
+                }
                 const message = getUserFacingErrorMessage(error);
                 await closeStream({
                     appendDone: true,
@@ -644,9 +655,15 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
         };
 
         try {
-            const result = await context.safeInvoke('get_chat_completions_status', { dto });
+            const result = await context.safeInvoke('get_chat_completions_status', {
+                dto,
+                locale: getSillyTavernLocale(),
+            });
             return jsonResponse(result || { data: [] });
         } catch (error) {
+            if (isRequestCancelled(error)) {
+                return jsonResponse({ cancelled: true, data: [] });
+            }
             console.error('Chat completion status failed:', error);
             const details = getUpstreamFailureDetails(error);
             return jsonResponse(
@@ -683,10 +700,8 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             await lifecycle.finish({ success: true });
             return jsonResponse(completion || {});
         } catch (error) {
-            const rawErrorMessage = getErrorMessage(error);
             const errorMessage = getUserFacingErrorMessage(error);
-            const aborted = isAbortError(error)
-                || /generation cancelled by user/i.test(rawErrorMessage);
+            const aborted = isRequestCancelled(error);
 
             await lifecycle.finish({
                 success: false,

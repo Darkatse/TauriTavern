@@ -26,7 +26,6 @@ use tt_application::services::group_service::GroupService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
 use tt_application::services::lan_sync_service::LanSyncService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
-use tt_application::services::local_endpoint_access_service::LocalEndpointAccessService;
 use tt_application::services::mcp_service::McpService;
 use tt_application::services::native_regex_service::NativeRegexService;
 use tt_application::services::preset_service::PresetService;
@@ -46,6 +45,7 @@ use tt_application::services::tt_sync_service::TtSyncService;
 use tt_application::services::tts_service::TtsService;
 use tt_application::services::update_service::UpdateService;
 use tt_application::services::user_directory_service::UserDirectoryService;
+use tt_application::services::user_endpoint_access_service::UserEndpointAccessService;
 use tt_application::services::user_service::UserService;
 use tt_application::services::vector_service::VectorService;
 use tt_application::services::world_info_service::WorldInfoService;
@@ -107,7 +107,7 @@ pub(crate) struct AppServices {
     pub(crate) agent_runtime_service: Arc<AgentRuntimeService>,
     pub(crate) chat_completion_service: Arc<ChatCompletionService>,
     pub(crate) llm_connection_service: Arc<LlmConnectionService>,
-    pub(crate) local_endpoint_access_service: Arc<LocalEndpointAccessService>,
+    pub(crate) user_endpoint_access_service: Arc<UserEndpointAccessService>,
     pub(crate) mcp_service: Arc<McpService>,
     pub(crate) provider_metadata_service: Arc<ProviderMetadataService>,
     pub(crate) vector_service: Arc<VectorService>,

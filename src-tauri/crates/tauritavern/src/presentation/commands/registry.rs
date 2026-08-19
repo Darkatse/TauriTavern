@@ -357,7 +357,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::skill_commands::retarget_skill_scope,
         // Chat completion commands
         super::chat_completion_commands::get_chat_completions_status,
-        super::local_endpoint_access_commands::authorize_chat_completion_endpoint,
         super::chat_completion_commands::generate_chat_completion,
         super::chat_completion_commands::start_chat_completion_stream,
         super::chat_completion_commands::read_chat_completion_stream,

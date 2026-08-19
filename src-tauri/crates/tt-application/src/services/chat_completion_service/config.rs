@@ -9,7 +9,7 @@ use crate::dto::chat_completion_dto::{
 };
 use crate::errors::ApplicationError;
 use tt_domain::models::claude_model::is_vertex_ai_claude_model_id;
-use tt_domain::models::endpoint_url::parse_user_http_endpoint;
+use tt_domain::models::endpoint_url::{append_endpoint_segments, parse_user_http_endpoint};
 use tt_domain::models::secret::SecretKeys;
 use tt_ports::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
@@ -330,10 +330,17 @@ pub(super) fn resolve_user_configured_endpoint(
         _ => return Ok(None),
     };
 
-    Ok(Some(parse_user_http_endpoint(endpoint)?.to_string()))
+    let endpoint = parse_user_http_endpoint(endpoint)?;
+    if source == ChatCompletionSource::VertexAi {
+        return Ok(Some(
+            append_endpoint_segments(endpoint.as_str(), &["v1"])?.to_string(),
+        ));
+    }
+
+    Ok(Some(endpoint.to_string()))
 }
 
-fn get_payload_string(
+pub(super) fn get_payload_string(
     payload: &serde_json::Map<String, Value>,
     key: &str,
 ) -> Result<String, ApplicationError> {
@@ -576,9 +583,11 @@ async fn resolve_vertexai_generate_api_config(
     let extra_headers = HashMap::new();
 
     if !reverse_proxy.is_empty() {
-        let reverse_proxy = parse_user_http_endpoint(reverse_proxy)?.to_string();
+        let base_url =
+            resolve_user_configured_endpoint(ChatCompletionSource::VertexAi, reverse_proxy, "")?
+                .expect("non-empty Vertex AI reverse proxy must resolve");
         return Ok(ChatCompletionApiConfig {
-            base_url: format!("{}/v1", reverse_proxy.trim_end_matches('/')),
+            base_url,
             user_configured_endpoint: true,
             api_key: String::new(),
             authorization_header: Some(format!("Bearer {}", proxy_password)),
@@ -1061,6 +1070,16 @@ mod tests {
         assert_eq!(
             resolve_user_configured_endpoint(ChatCompletionSource::OpenAi, "   ", "").unwrap(),
             None
+        );
+        assert_eq!(
+            resolve_user_configured_endpoint(
+                ChatCompletionSource::VertexAi,
+                " https://proxy.example.com/base/ ",
+                "",
+            )
+            .unwrap()
+            .as_deref(),
+            Some("https://proxy.example.com/base/v1")
         );
     }
 

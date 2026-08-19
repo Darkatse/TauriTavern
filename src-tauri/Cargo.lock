@@ -8164,7 +8164,6 @@ dependencies = [
 name = "tt-adapter-http"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "rcgen 0.14.9",
  "reqwest",
  "rustls",
