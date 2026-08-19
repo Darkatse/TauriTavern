@@ -15,7 +15,6 @@ pub mod persistence;
 pub mod repositories;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 pub mod runtime_paths_config_store;
-pub(crate) mod skill_libs_seed;
 pub mod zipkit;
 
 #[cfg(test)]
