@@ -11,8 +11,6 @@ use rquickjs::{Ctx, Function, Object};
 
 use tt_ports::skill_script::{SkillScriptLogLevel, SkillScriptLog, SkillScriptWrite};
 
-use crate::convert::json_to_js;
-
 /// 内存覆盖文件系统：快照 + 写入收集器 + 日志收集器。
 pub(crate) struct OverlayFs {
     /// 初始快照 + 脚本写入的叠加状态。

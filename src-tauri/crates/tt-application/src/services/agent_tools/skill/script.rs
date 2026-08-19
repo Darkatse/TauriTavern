@@ -277,6 +277,9 @@ async fn build_workspace_snapshot(
     run_id: &str,
     visible_roots: &[String],
 ) -> Result<HashMap<String, String>, ApplicationError> {
+    const MAX_DEPTH: usize = 10;
+    const MAX_ENTRIES: usize = 1000;
+
     let mut snapshot = HashMap::new();
     for root in visible_roots {
         let root = root.trim();
@@ -286,13 +289,23 @@ async fn build_workspace_snapshot(
         let root_path = WorkspacePath::parse(root).map_err(ApplicationError::from)?;
         // 列出该根目录下的文件（深度足够覆盖常见场景）
         let listing = repo
-            .list_files(run_id, Some(&root_path), 10, 1000)
+            .list_files(run_id, Some(&root_path), MAX_DEPTH, MAX_ENTRIES)
             .await
             .map_err(ApplicationError::from)?;
         for entry in listing.entries {
-            if entry.kind == tt_ports::repositories::workspace_repository::WorkspaceEntryKind::File {
-                if let Ok(file) = repo.read_text(run_id, &entry.path).await {
-                    snapshot.insert(entry.path.as_str().to_string(), file.text);
+            if entry.kind == tt_ports::repositories::workspace_repository::WorkspaceEntryKind::File
+            {
+                match repo.read_text(run_id, &entry.path).await {
+                    Ok(file) => {
+                        snapshot.insert(entry.path.as_str().to_string(), file.text);
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            path = entry.path.as_str(),
+                            "Failed to read workspace file for script snapshot; skipping"
+                        );
+                    }
                 }
             }
         }
