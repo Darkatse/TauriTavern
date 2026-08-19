@@ -55,7 +55,7 @@ export function main(args) {
 | `$fs` | 读写 | 受沙箱策略门控的文件系统 API |
 | `$worldInfo` | 只读 | 当前 run 预取的激活世界书条目快照 |
 | `$variables` | 只读 | SillyTavern 变量快照（`local` / `global` 两个作用域） |
-| `$log` | 只写 | 日志输出到宿主 log |
+| `$log` | 只写 | 日志经宿主 tracing 收集输出 |
 
 ### 3.1 `$fs` — 文件系统 API
 
@@ -72,7 +72,7 @@ $fs.writeText('output/result.txt', 'Hello World');
 // 无参：列出 workspace 根目录顶层条目名
 // 有参：列出指定目录下条目的 workspace 相对路径
 const files = $fs.listFiles('output');
-// 返回: ['output/a.md', 'output/b.txt', ...]
+// 返回: ['a.md', 'b.txt', ...]
 
 // 检查文件或目录是否存在
 const exists = $fs.exists('output/config.json');
