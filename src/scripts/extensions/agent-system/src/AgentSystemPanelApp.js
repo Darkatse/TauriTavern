@@ -92,7 +92,7 @@ const TOOL_GROUPS = Object.freeze([
         id: 'skills',
         labelKey: 'skillTools',
         icon: 'fa-book-open',
-        tools: ['builtin:skill.list', 'builtin:skill.search', 'builtin:skill.read'],
+        tools: ['builtin:skill.list', 'builtin:skill.search', 'builtin:skill.read', 'builtin:skill.run_script'],
     },
     {
         id: 'workspace-read',
