@@ -18,8 +18,8 @@ pub(crate) const RUNTIME_MODULE_NAME: &str = "@tauritavern/runtime";
 
 /// 一次执行的 Runtime 状态，经 ctx userdata 传给原生模块。
 pub(crate) struct RuntimeState {
-    pub overlay: Rc<RefCell<OverlayFs>>,
-    pub context: Value,
+    pub(crate) overlay: Rc<RefCell<OverlayFs>>,
+    pub(crate) context: Value,
 }
 
 // 纯 Rust 数据（不含任何 rquickjs 'js 引用），Changed<'to> 即自身，
