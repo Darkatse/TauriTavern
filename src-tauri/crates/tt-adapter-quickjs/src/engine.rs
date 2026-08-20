@@ -24,7 +24,6 @@ use tt_ports::skill_script::{
 use crate::api::OverlayFs;
 use crate::convert::json_to_js;
 use crate::runtime_module::{RuntimeV1Module, RuntimeV1State, RUNTIME_MODULE_NAME};
-use crate::skill_libs::builtin_modules;
 
 pub const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_MAX_RESULT_BYTES: usize = 256 * 1024;
@@ -156,16 +155,11 @@ fn execute_sync(
         false
     })));
 
-    // 注册内嵌公共库与本次执行的内存模块快照到 BuiltinResolver/BuiltinLoader。
+    // 注册本次执行的内存模块快照到 BuiltinResolver/BuiltinLoader。
     // 相对导入经 BuiltinResolver 规范化后必须命中注册名单；
-    // 快照外的模块（含越界 ../）解析失败，模块声明/求值报错。
-    let builtin = builtin_modules();
+    // 快照外的模块（含越界 ../ 与未知的裸模块名）解析失败，模块声明/求值报错。
     let mut resolver = BuiltinResolver::default();
     let mut loader = BuiltinLoader::default();
-    for (name, source) in &builtin {
-        resolver = resolver.with_module(name.to_string());
-        loader = loader.with_module(name.to_string(), (*source).to_string());
-    }
     for (name, source) in &request.modules {
         resolver = resolver.with_module(name.clone());
         loader = loader.with_module(name.clone(), source.clone());
@@ -452,17 +446,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn namespaced_builtin_libs_resolve() {
+    async fn vendor_namespace_imports_fail() {
+        // 内置库已移除：宿主不内嵌任何第三方库，
+        // `@tauritavern/vendor/*` 不在模块快照与注册表中 → 解析失败。
         let engine = QuickJsScriptEngine::new();
-        // slugify 库体积小、为 `export default` 形式，适合冒烟。
-        let result = engine
+        let error = engine
             .execute(request(
                 "import slugify from '@tauritavern/vendor/slugify';\nexport default function () { return slugify('Hello World!'); }",
                 json!({}),
             ))
             .await
-            .expect("execute");
-        assert!(result.value.is_string());
+            .expect_err("vendor imports must fail");
+        assert!(matches!(
+            error,
+            SkillScriptEngineError::ExecutionFailed { .. }
+        ));
     }
 
     #[tokio::test]
