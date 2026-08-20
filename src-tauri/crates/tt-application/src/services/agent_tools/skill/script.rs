@@ -13,6 +13,7 @@ use crate::errors::ApplicationError;
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{AgentToolResult, WorkspaceFileWriteMode, WorkspacePath};
+use tt_domain::models::skill::{SkillFileKind, SkillFileRef, SkillScope};
 use tt_domain::models::skill_script::{ActivatedWorldInfoEntry, SillyTavernVariableSnapshot};
 use tt_domain::models::tool::ToolInvocation;
 use tt_ports::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
@@ -23,6 +24,10 @@ const SKILL_SCRIPT_SKILL_NOT_VISIBLE: &str = "skill.run_script_skill_not_visible
 const SKILL_SCRIPT_NOT_FOUND: &str = "skill.run_script_not_found";
 const SKILL_SCRIPT_EXECUTION_FAILED: &str = "skill.run_script_execution_failed";
 const SKILL_SCRIPT_RESULT_TOO_LARGE: &str = "skill.run_script_result_too_large";
+
+/// 单个 skill 脚本执行允许携带的最大模块数与源码总字节数（fail-fast 上限）。
+const MAX_SCRIPT_MODULES: usize = 32;
+const MAX_SCRIPT_MODULE_TOTAL_BYTES: usize = 512 * 1024;
 
 /// skill.run_script 依赖的服务与运行上下文。
 pub struct ScriptContext<'a> {
@@ -118,26 +123,20 @@ pub(in crate::services::agent_tools) async fn script(
         ));
     };
 
-    let relative_path = format!("scripts/{script}.js");
-    let script_source = match skill_service
-        .read_skill_script(scope, skill, &relative_path)
-        .await
-    {
-        Ok(source) => source,
-        Err(ApplicationError::NotFound(_)) | Err(ApplicationError::ValidationError(_)) => {
-            return Ok((
-                tool_error(
-                    call,
-                    SKILL_SCRIPT_NOT_FOUND,
-                    &format!(
-                        "Script `{relative_path}` was not found in skill `{skill}`. Call skill_read on this skill's SKILL.md to check which scripts it ships."
-                    ),
+    let entry_module = format!("scripts/{script}.js");
+    let modules = build_script_modules(skill_service, &scope, skill).await?;
+    if !modules.contains_key(&entry_module) {
+        return Ok((
+            tool_error(
+                call,
+                SKILL_SCRIPT_NOT_FOUND,
+                &format!(
+                    "Script `{entry_module}` was not found in skill `{skill}`. Call skill_read on this skill's SKILL.md to check which scripts it ships."
                 ),
-                AgentToolEffect::None,
-            ));
-        }
-        Err(error) => return Err(error),
-    };
+            ),
+            AgentToolEffect::None,
+        ));
+    }
 
     // 构建工作区文件快照：列出 visible_roots 下的文件并读取内容。
     let workspace_files = build_workspace_snapshot(
@@ -153,8 +152,6 @@ pub(in crate::services::agent_tools) async fn script(
     // 投影变量快照为纯 JSON
     let variables = build_variables_json(prompt_snapshot);
 
-    let script_name = format!("{skill}/scripts/{script}.js");
-
     tracing::info!(
         "skill.run_script invoked: skill=`{skill}` script=`{script}` args={}",
         serde_json::to_string(&script_args).unwrap_or_else(|_| "<unserializable>".to_string())
@@ -162,8 +159,8 @@ pub(in crate::services::agent_tools) async fn script(
 
     let outcome = engine
         .execute(SkillScriptRequest {
-            script_source,
-            script_name: script_name.clone(),
+            entry_module: entry_module.clone(),
+            modules,
             args: script_args,
             workspace_files,
             visible_roots: profile.workspace.visible_roots.clone(),
@@ -240,7 +237,7 @@ pub(in crate::services::agent_tools) async fn script(
     }
 
     let rendered = serde_json::to_string(&result.value).unwrap_or_else(|_| result.value.to_string());
-    let content = format!("Executed skill script `{script_name}`. Result:\n{rendered}");
+    let content = format!("Executed skill script `{skill}/{entry_module}`. Result:\n{rendered}");
 
     tracing::info!(
         "skill.run_script completed: skill=`{skill}` script=`{script}` result_bytes={} writes={}",
@@ -268,6 +265,46 @@ pub(in crate::services::agent_tools) async fn script(
         },
         effect,
     ))
+}
+
+/// 把 skill 包内 `scripts/**/*.js` 读取为内存模块快照。
+/// fail-fast：超过数量/字节上限、或任一模块读取失败时直接报错。
+async fn build_script_modules(
+    skill_service: &SkillService,
+    scope: &SkillScope,
+    skill: &str,
+) -> Result<HashMap<String, String>, ApplicationError> {
+    let files = skill_service.list_skill_files(scope.clone(), skill).await?;
+    let script_files: Vec<&SkillFileRef> = files
+        .iter()
+        .filter(|file| {
+            file.kind == SkillFileKind::Text
+                && file.path.starts_with("scripts/")
+                && file.path.ends_with(".js")
+        })
+        .collect();
+    if script_files.len() > MAX_SCRIPT_MODULES {
+        return Err(ApplicationError::ValidationError(format!(
+            "Skill `{skill}` ships {} script modules, exceeding the limit of {MAX_SCRIPT_MODULES}",
+            script_files.len()
+        )));
+    }
+    let mut modules = HashMap::new();
+    let mut total_bytes = 0usize;
+    for file in script_files {
+        let source = skill_service
+            .read_skill_script(scope.clone(), skill, &file.path)
+            .await?;
+        total_bytes += source.len();
+        if total_bytes > MAX_SCRIPT_MODULE_TOTAL_BYTES {
+            return Err(ApplicationError::ValidationError(format!(
+                "Skill `{skill}` script modules total {} bytes, exceeding the limit of {MAX_SCRIPT_MODULE_TOTAL_BYTES} bytes",
+                total_bytes
+            )));
+        }
+        modules.insert(file.path.clone(), source);
+    }
+    Ok(modules)
 }
 
 /// 从 visible_roots 下读取所有文件，构建 `逻辑路径 → 文本内容` 快照。
@@ -468,7 +505,35 @@ mod tests {
             _scope: SkillScope,
             _name: &str,
         ) -> Result<Vec<SkillFileRef>, DomainError> {
-            unreachable!("not needed")
+            let mut files = vec![
+                SkillFileRef {
+                    path: "scripts/lib/util.js".to_string(),
+                    kind: SkillFileKind::Text,
+                    media_type: "text/javascript".to_string(),
+                    size_bytes: 24,
+                    sha256: "x".to_string(),
+                },
+                SkillFileRef {
+                    path: "SKILL.md".to_string(),
+                    kind: SkillFileKind::Text,
+                    media_type: "text/markdown".to_string(),
+                    size_bytes: 8,
+                    sha256: "x".to_string(),
+                },
+            ];
+            if self.script_source.is_some() {
+                files.insert(
+                    0,
+                    SkillFileRef {
+                        path: "scripts/helper.js".to_string(),
+                        kind: SkillFileKind::Text,
+                        media_type: "text/javascript".to_string(),
+                        size_bytes: 8,
+                        sha256: "x".to_string(),
+                    },
+                );
+            }
+            Ok(files)
         }
         async fn preview_import(
             &self,
@@ -487,11 +552,12 @@ mod tests {
             &self,
             _scope: SkillScope,
             _name: &str,
-            _relative_path: &str,
+            relative_path: &str,
         ) -> Result<String, DomainError> {
-            match &self.script_source {
-                Some(source) => Ok(source.clone()),
-                None => Err(DomainError::NotFound("Skill file not found".to_string())),
+            match relative_path {
+                "scripts/helper.js" => Ok(self.script_source.clone().expect("entry listed only when present")),
+                "scripts/lib/util.js" => Ok("export const answer = 42;".to_string()),
+                _ => Err(DomainError::NotFound(format!("Skill file not found: {relative_path}"))),
             }
         }
         async fn read_skill_file(
@@ -936,9 +1002,11 @@ mod tests {
 
         let requests = engine.requests.lock().await;
         assert_eq!(requests.len(), 1);
-        assert!(requests[0]
-            .script_source
-            .contains("export default"));
+        assert_eq!(requests[0].entry_module, "scripts/helper.js");
+        assert!(requests[0].modules.contains_key("scripts/helper.js"));
+        assert!(requests[0].modules.contains_key("scripts/lib/util.js"));
+        // SKILL.md 不在 scripts/ 下，不得进入模块快照
+        assert!(!requests[0].modules.contains_key("SKILL.md"));
         assert_eq!(requests[0].args, json!({ "n": 7 }));
         assert_eq!(requests[0].visible_roots, vec!["output".to_string()]);
         assert_eq!(requests[0].writable_roots, vec!["output".to_string()]);
@@ -949,6 +1017,41 @@ mod tests {
         assert_eq!(result.structured, json!({ "answer": 42 }));
         assert!(result.content.contains("demo/scripts/helper.js"));
         assert!(matches!(effect, AgentToolEffect::None));
+    }
+
+    #[tokio::test]
+    async fn module_snapshot_contains_only_script_modules() {
+        let engine = Arc::new(FakeScriptEngine {
+            outcome: FakeOutcome::Ok(json!({})),
+            requests: Mutex::new(Vec::new()),
+        });
+        let mut session = session_with_skill("demo");
+        let profile = profile(true);
+        let (result, _) = script(
+            ScriptContext {
+                skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
+                    script_source: Some(
+                        "import { answer } from './lib/util.js';\nexport default function () { return answer; }"
+                            .to_string(),
+                    ),
+                })),
+                engine: engine.as_ref(),
+                workspace_repository: &FakeWorkspaceRepo {
+                    files: HashMap::new(),
+                    written: Mutex::new(Vec::new()),
+                },
+                run_id: "run-1",
+                prompt_snapshot: None,
+            },
+            &call(json!({ "skill": "demo", "script": "helper" })),
+            &mut session,
+            &profile,
+        )
+        .await
+        .expect("script must succeed");
+        assert!(!result.is_error);
+        let requests = engine.requests.lock().await;
+        assert_eq!(requests[0].modules.get("scripts/lib/util.js").map(String::as_str), Some("export const answer = 42;"));
     }
 
     #[tokio::test]

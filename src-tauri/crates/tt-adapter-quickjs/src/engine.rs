@@ -105,19 +105,29 @@ fn execute_sync(
         false
     })));
 
-    // 注册内嵌 skill-libs 到 BuiltinLoader
-    let modules = builtin_modules();
+    // 注册内嵌公共库与本次执行的内存模块快照到 BuiltinResolver/BuiltinLoader。
+    // 相对导入经 BuiltinResolver 规范化后必须命中注册名单；
+    // 快照外的模块（含越界 ../）解析失败，模块声明/求值报错。
+    let builtin = builtin_modules();
     let mut resolver = BuiltinResolver::default();
     let mut loader = BuiltinLoader::default();
-    for (name, source) in &modules {
+    for (name, source) in &builtin {
         resolver = resolver.with_module(name.to_string());
         loader = loader.with_module(name.to_string(), (*source).to_string());
+    }
+    for (name, source) in &request.modules {
+        resolver = resolver.with_module(name.clone());
+        loader = loader.with_module(name.clone(), source.clone());
     }
     runtime.set_loader(resolver, loader);
 
     let context = Context::full(&runtime).map_err(internal_error)?;
-    let module_name = request.script_name.clone();
-    let entry_source = request.script_source.clone();
+    let entry_module = request.entry_module.clone();
+    let entry_source = request.modules.get(&entry_module).cloned().ok_or_else(|| {
+        SkillScriptEngineError::Internal(format!(
+            "entry module `{entry_module}` is missing from the module snapshot"
+        ))
+    })?;
 
     let overlay_for_fs = overlay.clone();
     let overlay_for_log = overlay.clone();
@@ -131,7 +141,7 @@ fn execute_sync(
         register_variables_api(&ctx, variables)?;
         register_log_api(&ctx, overlay_for_log)?;
 
-        let declared = Module::declare(ctx.clone(), module_name.clone(), entry_source)?;
+        let declared = Module::declare(ctx.clone(), entry_module.clone(), entry_source)?;
         let (module, _promise) = declared.eval()?;
 
         let js_args = json_to_js(&ctx, &args)?;
@@ -171,14 +181,14 @@ fn execute_sync(
                 return Err(SkillScriptEngineError::ExecutionFailed {
                     message: format!(
                         "Skill script {} timed out after {:.1}s and was interrupted.",
-                        module_name,
+                        entry_module,
                         timeout.as_secs_f64()
                     ),
                 });
             }
             let detail = context.with(|ctx| format_exception(&ctx, &error));
             Err(SkillScriptEngineError::ExecutionFailed {
-                message: format!("Skill script {} failed: {detail}", module_name),
+                message: format!("Skill script {} failed: {detail}", entry_module),
             })
         }
     }
@@ -220,9 +230,11 @@ mod tests {
     use super::QuickJsScriptEngine;
 
     fn request(source: &str, args: serde_json::Value) -> SkillScriptRequest {
+        let mut modules = HashMap::new();
+        modules.insert("scripts/main.js".to_string(), source.to_string());
         SkillScriptRequest {
-            script_source: source.to_string(),
-            script_name: "test.js".to_string(),
+            entry_module: "scripts/main.js".to_string(),
+            modules,
             args,
             workspace_files: HashMap::new(),
             visible_roots: vec!["output".to_string()],
@@ -325,6 +337,49 @@ mod tests {
             .expect("execute");
         // slugify 应返回某种 slug 形式
         assert!(result.value.is_string());
+    }
+
+    #[tokio::test]
+    async fn relative_imports_resolve_within_module_snapshot() {
+        let engine = QuickJsScriptEngine::new();
+        let mut req = request(
+            "import { add } from './lib/a.js';\nexport default function () { return add(1, 2); }",
+            json!({}),
+        );
+        req.modules.insert(
+            "scripts/lib/a.js".to_string(),
+            "export const add = (a, b) => a + b;".to_string(),
+        );
+        let result = engine.execute(req).await.expect("execute");
+        assert_eq!(result.value, json!(3));
+    }
+
+    #[tokio::test]
+    async fn imports_outside_module_snapshot_fail() {
+        // `../outside.js` 从 scripts/main.js 规范化为 outside.js，
+        // 不在模块快照中 → 解析失败（Application 只提供 scripts/ 下的模块，
+        // 越界导入由此天然失败，无需物理路径沙箱）。
+        let engine = QuickJsScriptEngine::new();
+        let error = engine
+            .execute(request(
+                "import { secret } from '../outside.js';\nexport default function () { return secret; }",
+                json!({}),
+            ))
+            .await
+            .expect_err("must fail");
+        assert!(matches!(
+            error,
+            SkillScriptEngineError::ExecutionFailed { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn missing_entry_module_in_snapshot_fails() {
+        let engine = QuickJsScriptEngine::new();
+        let mut req = request("export default function () { return 1; }", json!({}));
+        req.entry_module = "scripts/absent.js".to_string();
+        let error = engine.execute(req).await.expect_err("must fail");
+        assert!(matches!(error, SkillScriptEngineError::Internal(..)));
     }
 
     #[tokio::test]

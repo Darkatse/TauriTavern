@@ -30,13 +30,15 @@ pub enum SkillScriptEngineError {
     Internal(String),
 }
 
-/// 一次脚本执行请求。适配器只接触源码字符串与纯 JSON 上下文，
+/// 一次脚本执行请求。适配器只接触逻辑模块名、源码字符串与纯 JSON 上下文，
 /// 不接收任何物理路径或领域模型类型。
 pub struct SkillScriptRequest {
-    /// 入口脚本的完整源码（由应用层从 skill 包读取）。
-    pub script_source: String,
-    /// 入口模块名（仅用于错误消息与模块声明标识，非物理路径）。
-    pub script_name: String,
+    /// 入口模块的逻辑名（如 `scripts/main.js`），必须存在于 `modules` 中。
+    pub entry_module: String,
+    /// 内存模块快照：逻辑模块名 → 模块源码（含入口模块）。
+    /// 相对导入（`./x.js`、`../x.js`）按 importer 的逻辑模块名规范化解析，
+    /// 且只能命中这张 map；`@tauritavern/runtime/*` 命中内嵌公共库。
+    pub modules: HashMap<String, String>,
     /// 调用方传入的参数对象。
     pub args: serde_json::Value,
     /// 工作区文件快照：逻辑路径 → 文件文本内容。
