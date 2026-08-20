@@ -498,6 +498,53 @@ const ADAPTER_MEDIA_FORBIDDEN_SOURCE_PATTERNS = [
     ['network IO', /\bstd::net::/],
 ];
 
+const ADAPTER_QUICKJS_FORBIDDEN_PACKAGES = new Set([
+    'axum',
+    'miktik',
+    'qrcode',
+    'reqwest',
+    'rmcp',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'tt-adapter-archive',
+    'tt-adapter-extension',
+    'tt-adapter-http',
+    'tt-adapter-media',
+    'tt-adapter-mcp',
+    'tt-adapter-provider-http',
+    'tt-adapter-storage-core',
+    'tt-adapter-storage-userdata',
+    'tt-adapter-sync',
+    'tt-adapter-tokenization',
+    'tt-adapter-vector',
+    'tt-application',
+    'ttsync-core',
+]);
+
+const ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS = [
+    ...ADAPTER_FORBIDDEN_SOURCE_PATTERNS,
+    ['axum', /\baxum::/],
+    ['image', /\bimage::/],
+    ['miktik', /\bmiktik::/],
+    ['qrcode', /\bqrcode::/],
+    ['reqwest', /\breqwest::/],
+    ['rmcp', /\brmcp::/],
+    ['tar', /\btar::/],
+    ['tt-adapter-archive', /\btt_adapter_archive::/],
+    ['tt-adapter-http', /\btt_adapter_http::/],
+    ['tt-adapter-media', /\btt_adapter_media::/],
+    ['tt-adapter-mcp', /\btt_adapter_mcp::/],
+    ['tt-adapter-provider-http', /\btt_adapter_provider_http::/],
+    ['tt-adapter-storage-core', /\btt_adapter_storage_core::/],
+    ['tt-adapter-storage-userdata', /\btt_adapter_storage_userdata::/],
+    ['tt-adapter-sync', /\btt_adapter_sync::/],
+    ['tt-adapter-tokenization', /\btt_adapter_tokenization::/],
+    ['tt-adapter-vector', /\btt_adapter_vector::/],
+    ['ttsync-core', /\bttsync_core::/],
+    ['zip', /\bzip::/],
+];
+
 const ADAPTER_EXTENSION_FORBIDDEN_PACKAGES = new Set([
     'axum',
     'image',
@@ -548,6 +595,7 @@ const CRATES = [
     crateConfig('tt-adapter-storage-core', ADAPTER_STORAGE_CORE_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_CORE_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-storage-userdata', ADAPTER_STORAGE_USERDATA_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_USERDATA_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-media', ADAPTER_MEDIA_FORBIDDEN_PACKAGES, ADAPTER_MEDIA_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-quickjs', ADAPTER_QUICKJS_FORBIDDEN_PACKAGES, ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS),
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [
