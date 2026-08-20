@@ -160,8 +160,8 @@ pub(in crate::services::agent_tools) async fn script(
     let variables = build_variables_json(prompt_snapshot);
 
     tracing::info!(
-        "skill.run_script invoked: skill=`{skill}` script=`{script}` args={}",
-        serde_json::to_string(&script_args).unwrap_or_else(|_| "<unserializable>".to_string())
+        "skill.run_script invoked: skill=`{skill}` script=`{script}` args_bytes={}",
+        serde_json::to_string(&script_args).map(|text| text.len()).unwrap_or(0)
     );
 
     let outcome = engine
@@ -200,7 +200,7 @@ pub(in crate::services::agent_tools) async fn script(
                     call,
                     SKILL_SCRIPT_RESULT_TOO_LARGE,
                     &format!(
-                        "Skill script result is {actual_bytes} bytes, exceeding the {limit_bytes}-byte limit. Return less data from the script and write large output to the workspace with $fs.writeText instead."
+                        "Skill script result is {actual_bytes} bytes, exceeding the {limit_bytes}-byte limit. Return less data from the script and write large output to the workspace with workspace.writeText instead."
                     ),
                 ),
                 AgentToolEffect::None,
@@ -263,7 +263,7 @@ pub(in crate::services::agent_tools) async fn script(
             }
             Err(error) => {
                 // fail-fast：停止后续写入；已写入文件保留在 effect 与错误消息中，
-                // 副作用不从 journal / 事件 / auto-commit 中消失。
+                // 副作用不从 journal / 事件 / auto-commit / resource refs 中消失。
                 tracing::warn!(
                     error = %error,
                     "skill.run_script write failed: {}", write.path
@@ -272,8 +272,8 @@ pub(in crate::services::agent_tools) async fn script(
                 let written_paths = written_files
                     .iter()
                     .map(|f| f.path.as_str().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .collect::<Vec<_>>();
+                let written_paths_summary = written_paths.join(", ");
                 let effect = if written_files.is_empty() {
                     AgentToolEffect::None
                 } else {
@@ -281,18 +281,18 @@ pub(in crate::services::agent_tools) async fn script(
                         files: written_files,
                     }
                 };
-                return Ok((
-                    tool_error(
-                        call,
-                        SKILL_SCRIPT_WRITE_FAILED,
-                        &format!(
-                            "Write to `{}` failed: {error}. {already_written}/{} writes were applied; already written: {written_paths}. Re-read the listed files before retrying.",
-                            write.path,
-                            result.writes.len(),
-                        ),
+                let mut result = tool_error(
+                    call,
+                    SKILL_SCRIPT_WRITE_FAILED,
+                    &format!(
+                        "Write to `{}` failed: {error}. {already_written}/{} writes were applied; already written: {written_paths_summary}. Re-read the listed files before retrying.",
+                        write.path,
+                        result.writes.len(),
                     ),
-                    effect,
-                ));
+                );
+                // 已发生副作用同样进入 resource refs（journal 事件 tool_call_completed 消费）
+                result.resource_refs = written_paths;
+                return Ok((result, effect));
             }
         }
     }
@@ -318,10 +318,16 @@ pub(in crate::services::agent_tools) async fn script(
     let rendered = serde_json::to_string(&result.value).unwrap_or_else(|_| result.value.to_string());
     let content = format!("Executed skill script `{skill}/{entry_module}`. Result:\n{rendered}");
 
+    let resource_refs = written_files
+        .iter()
+        .map(|file| file.path.as_str().to_string())
+        .collect::<Vec<_>>();
+
     tracing::info!(
-        "skill.run_script completed: skill=`{skill}` script=`{script}` result_bytes={} writes={}",
+        "skill.run_script completed: skill=`{skill}` script=`{script}` result_bytes={} writes={} write_bytes={}",
         rendered.len(),
-        result.writes.len()
+        result.writes.len(),
+        written_files.iter().map(|f| f.bytes as usize).sum::<usize>()
     );
 
     let effect = if written_files.is_empty() {
@@ -340,7 +346,7 @@ pub(in crate::services::agent_tools) async fn script(
             structured: result.value,
             is_error: false,
             error_code: None,
-            resource_refs: Vec::new(),
+            resource_refs,
         },
         effect,
     ))
@@ -1112,7 +1118,7 @@ mod tests {
             result.error_code.as_deref(),
             Some("skill.run_script_result_too_large")
         );
-        assert!(result.content.contains("$fs.writeText"));
+        assert!(result.content.contains("workspace.writeText"));
     }
 
     #[tokio::test]
@@ -1304,6 +1310,7 @@ mod tests {
 
         assert!(!result.is_error);
         assert!(matches!(effect, AgentToolEffect::WorkspaceFilesWritten { .. }));
+        assert_eq!(result.resource_refs, vec!["output/result.txt".to_string()]);
 
         let written = workspace_repo.written.lock().await;
         assert_eq!(written.len(), 1);
@@ -1374,6 +1381,10 @@ mod tests {
                 assert_eq!(files.len(), 2);
                 assert_eq!(files[0].path.as_str(), "output/a.txt");
                 assert_eq!(files[1].path.as_str(), "output/b.txt");
+                assert_eq!(
+                    result.resource_refs,
+                    vec!["output/a.txt".to_string(), "output/b.txt".to_string()]
+                );
             }
             other => panic!("expected batch effect, got: {other:?}"),
         }
@@ -1597,6 +1608,7 @@ mod tests {
             AgentToolEffect::WorkspaceFilesWritten { files } => {
                 assert_eq!(files.len(), 1);
                 assert_eq!(files[0].path.as_str(), "output/first.txt");
+                assert_eq!(result.resource_refs, vec!["output/first.txt".to_string()]);
             }
             other => panic!("expected partial batch effect, got: {other:?}"),
         }
