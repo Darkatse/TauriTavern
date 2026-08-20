@@ -1,4 +1,4 @@
-//! `$log`：脚本日志收集到结果通道（`SkillScriptResult.logs`）。
+//! `log`：脚本日志收集到结果通道（`SkillScriptResult.logs`）。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -9,11 +9,12 @@ use tt_ports::skill_script::SkillScriptLogLevel;
 
 use crate::api::fs::OverlayFs;
 
-pub(crate) fn register_log_api<'js>(
+/// 构建 `log` 对象：info / warn / error / debug。
+/// 由 `@tauritavern/runtime/v1` 原生模块导出，不再注入全局。
+pub(crate) fn build_log_object<'js>(
     ctx: &Ctx<'js>,
     overlay: Rc<RefCell<OverlayFs>>,
-) -> rquickjs::Result<()> {
-    let globals = ctx.globals();
+) -> rquickjs::Result<Object<'js>> {
     let object = Object::new(ctx.clone())?;
 
     for (name, level) in [
@@ -32,6 +33,5 @@ pub(crate) fn register_log_api<'js>(
         object.set(name, function)?;
     }
 
-    globals.set("$log", object)?;
-    Ok(())
+    Ok(object)
 }

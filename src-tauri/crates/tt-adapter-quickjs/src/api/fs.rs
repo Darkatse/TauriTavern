@@ -1,4 +1,4 @@
-//! `$fs`：操作内存覆盖层的工作区文件 API。
+//! `workspace`：操作内存覆盖层的工作区文件 API。
 //!
 //! 所有读写均针对内存中的 `OverlayFs`，不接触物理文件系统。
 //! 写入操作被收集到 `writes` 通道，由应用层在执行完成后落盘。
@@ -152,13 +152,12 @@ fn js_error<'js>(ctx: &Ctx<'js>, message: String) -> rquickjs::Error {
     rquickjs::Exception::throw_message(ctx, &message)
 }
 
-/// 将 `OverlayFs` 包装为 `RefCell`，通过 `Ctx` 的 userdata 机制传入 JS 回调。
-/// 由于 rquickjs 的 `Function::new` 闭包需要 `'static`，我们使用 `Rc<RefCell<OverlayFs>>`。
-pub(crate) fn register_fs_api<'js>(
+/// 构建 `workspace` 对象：readText / writeText / listFiles / exists。
+/// 由 `@tauritavern/runtime/v1` 原生模块导出，不再注入全局。
+pub(crate) fn build_workspace_object<'js>(
     ctx: &Ctx<'js>,
     overlay: std::rc::Rc<RefCell<OverlayFs>>,
-) -> rquickjs::Result<()> {
-    let globals = ctx.globals();
+) -> rquickjs::Result<Object<'js>> {
     let fs_object = Object::new(ctx.clone())?;
 
     // readText(path) → string
@@ -205,6 +204,5 @@ pub(crate) fn register_fs_api<'js>(
     )?;
     fs_object.set("exists", exists)?;
 
-    globals.set("$fs", fs_object)?;
-    Ok(())
+    Ok(fs_object)
 }

@@ -1,4 +1,4 @@
-//! `$worldInfo`：读取预取的激活世界书快照（只读，纯 JSON 输入）。
+//! `context.worldInfo`：读取预取的激活世界书快照（只读，纯 JSON 输入）。
 //!
 //! 应用层将激活世界书条目投影为 JSON 后传入，适配器
 //! 不依赖任何领域模型类型。
@@ -8,15 +8,15 @@ use serde_json::Value;
 
 use crate::convert::json_to_js;
 
-/// 将 `$worldInfo` 全局对象注入 JS context。
+/// 构建 `worldInfo` 对象：readActivated / readEntries。
+/// 由 `@tauritavern/runtime/v1` 原生模块的 `context` 导出，不再注入全局。
 ///
 /// `entries_json` 应为 `{ "entries": [...] }` 格式的纯 JSON 值，
 /// 由应用层从激活世界书条目列表投影而成。
-pub(crate) fn register_world_info_api<'js>(
+pub(crate) fn build_world_info_object<'js>(
     ctx: &Ctx<'js>,
     entries_json: Value,
-) -> rquickjs::Result<()> {
-    let globals = ctx.globals();
+) -> rquickjs::Result<Object<'js>> {
     let object = Object::new(ctx.clone())?;
 
     // readActivated() → 全部激活条目的 JSON 快照
@@ -38,8 +38,7 @@ pub(crate) fn register_world_info_api<'js>(
 
     object.set("readActivated", read_activated)?;
     object.set("readEntries", read_entries)?;
-    globals.set("$worldInfo", object)?;
-    Ok(())
+    Ok(object)
 }
 
 /// 按 `ref` 字段过滤 `{ "entries": [...] }` 中的条目。

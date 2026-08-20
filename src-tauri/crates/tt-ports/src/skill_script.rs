@@ -37,27 +37,27 @@ pub struct SkillScriptRequest {
     pub entry_module: String,
     /// 内存模块快照：逻辑模块名 → 模块源码（含入口模块）。
     /// 相对导入（`./x.js`、`../x.js`）按 importer 的逻辑模块名规范化解析，
-    /// 且只能命中这张 map；`@tauritavern/runtime/*` 命中内嵌公共库。
+    /// 且只能命中这张 map；`@tauritavern/vendor/*` 命中内嵌公共库。
     pub modules: HashMap<String, String>,
     /// 调用方传入的参数对象。
     pub args: serde_json::Value,
     /// 工作区文件快照：逻辑路径 → 文件文本内容。
-    /// 脚本通过 `$fs.readText` 读取这些文件；`$fs.writeText` 写入
+    /// 脚本通过 `workspace.readText` 读取这些文件；`workspace.writeText` 写入
     /// 的文件若已存在则覆盖此快照中的值，不存在则新增。
     pub workspace_files: HashMap<String, String>,
     /// 可见根前缀列表（逻辑路径前缀，如 `["output"]`）。
-    /// `$fs.readText` / `$fs.listFiles` / `$fs.exists` 仅允许访问
+    /// `workspace.readText` / `workspace.listFiles` / `workspace.exists` 仅允许访问
     /// 这些前缀下的路径。
     pub visible_roots: Vec<String>,
     /// 可写根前缀列表（逻辑路径前缀，如 `["output"]`）。
-    /// `$fs.writeText` 仅允许写入这些前缀下的路径。
+    /// `workspace.writeText` 仅允许写入这些前缀下的路径。
     pub writable_roots: Vec<String>,
     /// 预取的世界书快照（纯 JSON，由应用层从激活条目
-    /// 投影而成），经 `$worldInfo` API 提供给脚本。
+    /// 投影而成），经 `context.worldInfo` API 提供给脚本。
     pub world_info: serde_json::Value,
     /// 预取的 SillyTavern 变量快照（纯 JSON），格式为
     /// `{ "local": { ... }, "global": { ... } }`，
-    /// 经 `$variables` API 提供给脚本（只读）。
+    /// 经 `context.variables` API 提供给脚本（只读）。
     pub variables: serde_json::Value,
 }
 
@@ -90,10 +90,10 @@ pub enum SkillScriptLogLevel {
 pub struct SkillScriptResult {
     /// 脚本 `default(args)` 或 `main(args)` 导出的 JSON 返回值。
     pub value: serde_json::Value,
-    /// 脚本通过 `$fs.writeText` 产生的写入（按路径排序的最终 delta，
+    /// 脚本通过 `workspace.writeText` 产生的写入（按路径排序的最终 delta，
     /// 同一路径仅保留最终内容）。应用层负责通过 `write_text_guarded` 落盘。
     pub writes: Vec<SkillScriptWrite>,
-    /// 脚本通过 `$log` 产生的日志条目。
+    /// 脚本通过 `log` 产生的日志条目。
     pub logs: Vec<SkillScriptLog>,
 }
 

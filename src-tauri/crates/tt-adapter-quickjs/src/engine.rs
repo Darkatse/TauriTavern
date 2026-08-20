@@ -1,7 +1,7 @@
 //! `SkillScriptEngine` 实现：每次执行独立 Runtime+Context，spawn_blocking 中运行，
 //! 30s 超时中断、32MB 内存/256KB 栈限制、256KB 返回值上限。
 //!
-//! 脚本源码 + 工作区快照 + JSON 上下文由应用层传入；`$fs` 操作内存覆盖层，
+//! 脚本源码 + 工作区快照 + JSON 上下文由应用层传入；`workspace` API 操作内存覆盖层，
 //! 写入 delta 收集到 `SkillScriptResult.writes`，由应用层落盘。
 
 use std::cell::RefCell;
@@ -20,10 +20,9 @@ use tt_ports::skill_script::{
     SkillScriptWrite,
 };
 
-use crate::api::{
-    register_fs_api, register_log_api, register_variables_api, register_world_info_api, OverlayFs,
-};
+use crate::api::OverlayFs;
 use crate::convert::json_to_js;
+use crate::runtime_module::{RuntimeV1Module, RuntimeV1State, RUNTIME_MODULE_NAME};
 use crate::skill_libs::builtin_modules;
 
 pub const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -120,6 +119,9 @@ fn execute_sync(
         resolver = resolver.with_module(name.clone());
         loader = loader.with_module(name.clone(), source.clone());
     }
+    // runtime/v1 原生模块：import 解析命中 loaded_modules 注册表，
+    // declare_def 声明的模块无需 loader，但名字必须在 resolver 集合中。
+    resolver = resolver.with_module(RUNTIME_MODULE_NAME);
     runtime.set_loader(resolver, loader);
 
     let context = Context::full(&runtime).map_err(internal_error)?;
@@ -130,17 +132,21 @@ fn execute_sync(
         ))
     })?;
 
-    let overlay_for_fs = overlay.clone();
-    let overlay_for_log = overlay.clone();
-    let world_info = request.world_info.clone();
-    let variables = request.variables.clone();
     let args = request.args.clone();
 
     let outcome = context.with(|ctx| {
-        register_fs_api(&ctx, overlay_for_fs)?;
-        register_world_info_api(&ctx, world_info)?;
-        register_variables_api(&ctx, variables)?;
-        register_log_api(&ctx, overlay_for_log)?;
+        // runtime/v1 状态经 ctx userdata 传入原生模块（模块求值时读取）。
+        // store_userdata 仅在 userdata 被并发访问时失败，此处不可能。
+        ctx.store_userdata(RuntimeV1State {
+            overlay: overlay.clone(),
+            world_info: request.world_info.clone(),
+            variables: request.variables.clone(),
+        })
+        .map_err(|_| rquickjs::Error::Unknown)?;
+
+        // 版本化 runtime 模块：import 解析命中 loaded_modules 注册表，
+        // 依赖求值先于入口 body，userdata 此时已就绪。
+        Module::declare_def::<RuntimeV1Module, _>(ctx.clone(), RUNTIME_MODULE_NAME)?;
 
         let declared = Module::declare(ctx.clone(), entry_module.clone(), entry_source)?;
         let (module, eval_promise) = declared.eval()?;
@@ -542,10 +548,7 @@ mod tests {
     async fn fs_api_reads_and_writes_overlay() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
-            "export default function () {\n\
-             \x20 $fs.writeText('output/note.txt', 'hello');\n\
-             \x20 return $fs.readText('output/note.txt');\n\
-             }",
+            "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () {\n  workspace.writeText('output/note.txt', 'hello');\n  return workspace.readText('output/note.txt');\n}",
             json!({}),
         );
         req.workspace_files
@@ -564,12 +567,7 @@ mod tests {
         let engine = QuickJsScriptEngine::new();
         let result = engine
             .execute(request(
-                "export default function () {\n\
-                 \x20 $fs.writeText('output/log.txt', 'first');\n\
-                 \x20 $fs.writeText('output/log.txt', 'second');\n\
-                 \x20 $fs.writeText('output/log.txt', 'final');\n\
-                 \x20 return 1;\n\
-                 }",
+                "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () {\n  workspace.writeText('output/log.txt', 'first');\n  workspace.writeText('output/log.txt', 'second');\n  workspace.writeText('output/log.txt', 'final');\n  return 1;\n}",
                 json!({}),
             ))
             .await
@@ -583,7 +581,7 @@ mod tests {
     async fn fs_api_rejects_reads_outside_visible_roots() {
         let engine = QuickJsScriptEngine::new();
         let req = request(
-            "export default function () { return $fs.readText('input/secret.json'); }",
+            "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () { return workspace.readText('input/secret.json'); }",
             json!({}),
         );
         let error = engine.execute(req).await.expect_err("must reject");
@@ -597,7 +595,7 @@ mod tests {
     async fn fs_api_rejects_writes_outside_writable_roots() {
         let engine = QuickJsScriptEngine::new();
         let req = request(
-            "export default function () { $fs.writeText('input/note.txt', 'x'); }",
+            "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () { workspace.writeText('input/note.txt', 'x'); }",
             json!({}),
         );
         let error = engine.execute(req).await.expect_err("must reject");
@@ -611,12 +609,7 @@ mod tests {
     async fn fs_exists_checks_overlay() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
-            "export default function () {\n\
-             \x20 return {\n\
-             \x20   hasExisting: $fs.exists('output/data.txt'),\n\
-             \x20   hasMissing: $fs.exists('output/nope.txt'),\n\
-             \x20 };\n\
-             }",
+            "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () {\n  return {\n    hasExisting: workspace.exists('output/data.txt'),\n    hasMissing: workspace.exists('output/nope.txt'),\n  };\n}",
             json!({}),
         );
         req.workspace_files
@@ -630,7 +623,7 @@ mod tests {
     async fn world_info_snapshot_is_readable() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
-            "export default function () { return $worldInfo.readActivated(); }",
+            "import { context } from '@tauritavern/runtime/v1';\nexport default function () { return context.worldInfo.readActivated(); }",
             json!({}),
         );
         req.world_info = json!({
@@ -662,14 +655,7 @@ mod tests {
     async fn variables_are_readable() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
-            "export default function () {\n\
-             \x20 return {\n\
-             \x20   score: $variables.local.get('score'),\n\
-             \x20   hasName: $variables.local.has('name'),\n\
-             \x20   theme: $variables.global.get('theme'),\n\
-             \x20   missing: $variables.local.get('missing'),\n\
-             \x20 };\n\
-             }",
+            "import { context } from '@tauritavern/runtime/v1';\nexport default function () {\n  return {\n    score: context.variables.local.get('score'),\n    hasName: context.variables.local.has('name'),\n    theme: context.variables.global.get('theme'),\n    missing: context.variables.local.get('missing'),\n  };\n}",
             json!({}),
         );
         req.variables = json!({
@@ -694,7 +680,7 @@ mod tests {
         let engine = QuickJsScriptEngine::new();
         let error = engine
             .execute(request(
-                "export default function () { $variables.local.set('x', 1); }",
+                "import { context } from '@tauritavern/runtime/v1';\nexport default function () { context.variables.local.set('x', 1); }",
                 json!({}),
             ))
             .await
@@ -710,7 +696,7 @@ mod tests {
         let engine = QuickJsScriptEngine::new();
         let result = engine
             .execute(request(
-                "export default function () { $log.info('hello'); $log.warn('careful'); return 1; }",
+                "import { log } from '@tauritavern/runtime/v1';\nexport default function () { log.info('hello'); log.warn('careful'); return 1; }",
                 json!({}),
             ))
             .await
@@ -719,5 +705,40 @@ mod tests {
         assert_eq!(result.logs.len(), 2);
         assert_eq!(result.logs[0].message, "hello");
         assert_eq!(result.logs[1].message, "careful");
+    }
+
+    #[tokio::test]
+    async fn runtime_api_globals_are_not_injected() {
+        let engine = QuickJsScriptEngine::new();
+        let result = engine
+            .execute(request(
+                "import { workspace, log, context } from '@tauritavern/runtime/v1';\n\
+                 export default function () {\n\
+                 \x20 return {\n\
+                 \x20   hasFs: typeof $fs !== 'undefined',\n\
+                 \x20   hasLog: typeof $log !== 'undefined',\n\
+                 \x20   hasWorldInfo: typeof $worldInfo !== 'undefined',\n\
+                 \x20   hasVariables: typeof $variables !== 'undefined',\n\
+                 \x20   workspaceWorks: typeof workspace.writeText === 'function',\n\
+                 \x20   logWorks: typeof log.info === 'function',\n\
+                 \x20   contextWorks: typeof context.worldInfo.readActivated === 'function',\n\
+                 \x20 };\n\
+                 }",
+                json!({}),
+            ))
+            .await
+            .expect("execute");
+        assert_eq!(
+            result.value,
+            json!({
+                "hasFs": false,
+                "hasLog": false,
+                "hasWorldInfo": false,
+                "hasVariables": false,
+                "workspaceWorks": true,
+                "logWorks": true,
+                "contextWorks": true,
+            })
+        );
     }
 }
