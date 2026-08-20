@@ -11,13 +11,12 @@ use super::super::session::AgentToolSession;
 use super::list::skill_is_visible;
 use crate::errors::ApplicationError;
 use crate::services::skill_service::SkillService;
-use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{AgentToolResult, WorkspaceFileWriteMode, WorkspacePath};
 use tt_domain::models::skill_script::{ActivatedWorldInfoEntry, SillyTavernVariableSnapshot};
 use tt_domain::models::tool::ToolInvocation;
 use tt_ports::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
-use tt_ports::skill_script::{SkillScriptEngine, SkillScriptRequest};
+use tt_ports::skill_script::{SkillScriptEngine, SkillScriptEngineError, SkillScriptRequest};
 
 const SKILL_SCRIPT_INVALID_NAME: &str = "skill.run_script_invalid_name";
 const SKILL_SCRIPT_SKILL_NOT_VISIBLE: &str = "skill.run_script_skill_not_visible";
@@ -176,7 +175,7 @@ pub(in crate::services::agent_tools) async fn script(
 
     let result = match outcome {
         Ok(result) => result,
-        Err(DomainError::SkillScriptExecutionFailed { message }) => {
+        Err(SkillScriptEngineError::ExecutionFailed { message }) => {
             tracing::warn!(
                 "skill.run_script execution failed for skill `{skill}` script `{script}`: {message}"
             );
@@ -185,7 +184,7 @@ pub(in crate::services::agent_tools) async fn script(
                 AgentToolEffect::None,
             ));
         }
-        Err(DomainError::SkillScriptResultTooLarge {
+        Err(SkillScriptEngineError::ResultTooLarge {
             actual_bytes,
             limit_bytes,
         }) => {
@@ -373,6 +372,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
+    use tt_domain::errors::DomainError;
     use tt_domain::models::agent::profile::{
         AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy,
         AgentDelegationPolicy, AgentModelBinding, AgentModelBindingMode, AgentPresetBinding,
@@ -420,7 +420,7 @@ mod tests {
         async fn execute(
             &self,
             request: SkillScriptRequest,
-        ) -> Result<tt_ports::skill_script::SkillScriptResult, DomainError> {
+        ) -> Result<tt_ports::skill_script::SkillScriptResult, SkillScriptEngineError> {
             self.requests.lock().await.push(request);
             match &self.outcome {
                 FakeOutcome::Ok(value) => Ok(tt_ports::skill_script::SkillScriptResult {
@@ -436,12 +436,14 @@ mod tests {
                     })
                 }
                 FakeOutcome::Failed(message) => {
-                    Err(DomainError::skill_script_execution_failed(message.clone()))
+                    Err(SkillScriptEngineError::ExecutionFailed {
+                        message: message.clone(),
+                    })
                 }
                 FakeOutcome::TooLarge {
                     actual_bytes,
                     limit_bytes,
-                } => Err(DomainError::SkillScriptResultTooLarge {
+                } => Err(SkillScriptEngineError::ResultTooLarge {
                     actual_bytes: *actual_bytes,
                     limit_bytes: *limit_bytes,
                 }),

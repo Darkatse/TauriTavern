@@ -205,13 +205,6 @@ pub(crate) fn domain_error_to_sync(error: DomainError) -> SyncError {
         DomainError::WorkspaceWriteConflict { kind, .. } => {
             SyncError::InvalidData(format!("Workspace write conflict: {kind}"))
         }
-        DomainError::SkillScriptExecutionFailed { message } => SyncError::Internal(message),
-        DomainError::SkillScriptResultTooLarge {
-            actual_bytes,
-            limit_bytes,
-        } => SyncError::InvalidData(format!(
-            "Skill script result is {actual_bytes} bytes, exceeding the {limit_bytes}-byte limit"
-        )),
     }
 }
 

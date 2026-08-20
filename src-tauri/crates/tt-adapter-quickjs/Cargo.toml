@@ -10,7 +10,6 @@ async-trait = "0.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 path-clean = "1.0"
 

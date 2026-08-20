@@ -2,6 +2,7 @@ use thiserror::Error;
 
 use tt_domain::errors::DomainError;
 use tt_domain::models::upstream_failure::UpstreamFailure;
+use tt_ports::skill_script::SkillScriptEngineError;
 
 #[derive(Error, Debug)]
 pub enum ApplicationError {
@@ -66,15 +67,25 @@ impl From<DomainError> for ApplicationError {
             DomainError::WorkspaceWriteConflict { kind, .. } => {
                 ApplicationError::ValidationError(format!("Workspace write conflict: {kind}"))
             }
-            DomainError::SkillScriptExecutionFailed { message } => {
+        }
+    }
+}
+
+impl From<SkillScriptEngineError> for ApplicationError {
+    fn from(error: SkillScriptEngineError) -> Self {
+        match error {
+            SkillScriptEngineError::ExecutionFailed { message } => {
                 ApplicationError::InternalError(message)
             }
-            DomainError::SkillScriptResultTooLarge {
+            SkillScriptEngineError::ResultTooLarge {
                 actual_bytes,
                 limit_bytes,
             } => ApplicationError::ValidationError(format!(
                 "Skill script result is {actual_bytes} bytes, exceeding the {limit_bytes}-byte limit"
             )),
+            SkillScriptEngineError::Internal(message) => {
+                ApplicationError::InternalError(message)
+            }
         }
     }
 }
@@ -106,13 +117,11 @@ mod tests {
     }
 
     #[test]
-    fn skill_script_errors_map_to_application_errors() {
-        let execution = ApplicationError::from(DomainError::SkillScriptExecutionFailed {
-            message: "boom".to_string(),
-        });
-        assert!(matches!(execution, ApplicationError::InternalError(message) if message == "boom"));
+    fn skill_script_engine_errors_map_to_application_errors() {
+        let internal = ApplicationError::from(SkillScriptEngineError::Internal("boom".to_string()));
+        assert!(matches!(internal, ApplicationError::InternalError(message) if message == "boom"));
 
-        let too_large = ApplicationError::from(DomainError::SkillScriptResultTooLarge {
+        let too_large = ApplicationError::from(SkillScriptEngineError::ResultTooLarge {
             actual_bytes: 300_000,
             limit_bytes: 262_144,
         });

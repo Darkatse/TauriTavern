@@ -15,8 +15,9 @@ use rquickjs::loader::{BuiltinLoader, BuiltinResolver};
 use rquickjs::{Context, Ctx, Function, Module, Runtime, Value as JsValue};
 use tokio::task::spawn_blocking;
 
-use tt_domain::errors::DomainError;
-use tt_ports::skill_script::{SkillScriptEngine, SkillScriptRequest, SkillScriptResult};
+use tt_ports::skill_script::{
+    SkillScriptEngine, SkillScriptEngineError, SkillScriptRequest, SkillScriptResult,
+};
 
 use crate::api::{
     register_fs_api, register_log_api, register_variables_api, register_world_info_api, OverlayFs,
@@ -58,26 +59,31 @@ impl Default for QuickJsScriptEngine {
 
 #[async_trait]
 impl SkillScriptEngine for QuickJsScriptEngine {
-    async fn execute(&self, request: SkillScriptRequest) -> Result<SkillScriptResult, DomainError> {
+    async fn execute(
+        &self,
+        request: SkillScriptRequest,
+    ) -> Result<SkillScriptResult, SkillScriptEngineError> {
         let timeout = self.timeout;
         let max_result_bytes = self.max_result_bytes;
         spawn_blocking(move || execute_sync(request, timeout, max_result_bytes))
             .await
             .map_err(|error| {
-                DomainError::InternalError(format!("Skill script engine task failed: {error}"))
+                SkillScriptEngineError::Internal(format!(
+                    "Skill script engine task failed: {error}"
+                ))
             })?
     }
 }
 
-fn internal_error(error: rquickjs::Error) -> DomainError {
-    DomainError::InternalError(format!("QuickJS runtime failure: {error}"))
+fn internal_error(error: rquickjs::Error) -> SkillScriptEngineError {
+    SkillScriptEngineError::Internal(format!("QuickJS runtime failure: {error}"))
 }
 
 fn execute_sync(
     request: SkillScriptRequest,
     timeout: Duration,
     max_result_bytes: usize,
-) -> Result<SkillScriptResult, DomainError> {
+) -> Result<SkillScriptResult, SkillScriptEngineError> {
     let overlay = Rc::new(RefCell::new(OverlayFs::new(
         request.workspace_files,
         request.visible_roots,
@@ -143,12 +149,12 @@ fn execute_sync(
     match outcome {
         Ok(value) => {
             let encoded = serde_json::to_string(&value).map_err(|error| {
-                DomainError::skill_script_execution_failed(format!(
-                    "Failed to serialize skill script result: {error}"
-                ))
+                SkillScriptEngineError::ExecutionFailed {
+                    message: format!("Failed to serialize skill script result: {error}"),
+                }
             })?;
             if encoded.len() > max_result_bytes {
-                return Err(DomainError::SkillScriptResultTooLarge {
+                return Err(SkillScriptEngineError::ResultTooLarge {
                     actual_bytes: encoded.len(),
                     limit_bytes: max_result_bytes,
                 });
@@ -162,17 +168,18 @@ fn execute_sync(
         }
         Err(error) => {
             if timed_out.load(Ordering::SeqCst) {
-                return Err(DomainError::skill_script_execution_failed(format!(
-                    "Skill script {} timed out after {:.1}s and was interrupted.",
-                    module_name,
-                    timeout.as_secs_f64()
-                )));
+                return Err(SkillScriptEngineError::ExecutionFailed {
+                    message: format!(
+                        "Skill script {} timed out after {:.1}s and was interrupted.",
+                        module_name,
+                        timeout.as_secs_f64()
+                    ),
+                });
             }
             let detail = context.with(|ctx| format_exception(&ctx, &error));
-            Err(DomainError::skill_script_execution_failed(format!(
-                "Skill script {} failed: {detail}",
-                module_name
-            )))
+            Err(SkillScriptEngineError::ExecutionFailed {
+                message: format!("Skill script {} failed: {detail}", module_name),
+            })
         }
     }
 }
@@ -208,8 +215,7 @@ mod tests {
     use serde_json::json;
     use std::collections::HashMap;
     use std::time::Duration;
-    use tt_domain::errors::DomainError;
-    use tt_ports::skill_script::{SkillScriptEngine, SkillScriptRequest};
+    use tt_ports::skill_script::{SkillScriptEngine, SkillScriptEngineError, SkillScriptRequest};
 
     use super::QuickJsScriptEngine;
 
@@ -263,7 +269,7 @@ mod tests {
             .await
             .expect_err("must fail");
         match error {
-            DomainError::SkillScriptExecutionFailed { message } => {
+            SkillScriptEngineError::ExecutionFailed { message } => {
                 assert!(message.contains("kaboom"), "message was: {message}");
             }
             other => panic!("unexpected error: {other:?}"),
@@ -282,7 +288,7 @@ mod tests {
             .await
             .expect_err("must time out");
         match error {
-            DomainError::SkillScriptExecutionFailed { message } => {
+            SkillScriptEngineError::ExecutionFailed { message } => {
                 assert!(message.contains("timed out"), "message was: {message}");
             }
             other => panic!("unexpected error: {other:?}"),
@@ -302,7 +308,7 @@ mod tests {
             .expect_err("must exceed");
         assert!(matches!(
             error,
-            DomainError::SkillScriptResultTooLarge { .. }
+            SkillScriptEngineError::ResultTooLarge { .. }
         ));
     }
 
@@ -352,7 +358,7 @@ mod tests {
         let error = engine.execute(req).await.expect_err("must reject");
         assert!(matches!(
             error,
-            DomainError::SkillScriptExecutionFailed { .. }
+            SkillScriptEngineError::ExecutionFailed { .. }
         ));
     }
 
@@ -366,7 +372,7 @@ mod tests {
         let error = engine.execute(req).await.expect_err("must reject");
         assert!(matches!(
             error,
-            DomainError::SkillScriptExecutionFailed { .. }
+            SkillScriptEngineError::ExecutionFailed { .. }
         ));
     }
 
@@ -464,7 +470,7 @@ mod tests {
             .expect_err("must fail");
         assert!(matches!(
             error,
-            DomainError::SkillScriptExecutionFailed { .. }
+            SkillScriptEngineError::ExecutionFailed { .. }
         ));
     }
 

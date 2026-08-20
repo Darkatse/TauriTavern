@@ -7,7 +7,28 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use tt_domain::errors::DomainError;
+use thiserror::Error;
+
+/// Skill 脚本引擎错误。port 层独立错误类型，不依赖 `DomainError`，
+/// 由 Application 映射为对外错误。
+#[derive(Error, Debug)]
+pub enum SkillScriptEngineError {
+    /// JS 异常、模块声明/求值失败、API 调用失败、超时等执行错误。
+    /// 消息包含 JS 异常 message + stack（如可用）。
+    #[error("Skill script execution failed: {message}")]
+    ExecutionFailed { message: String },
+
+    /// 返回值序列化后超过引擎限制。
+    #[error("Skill script result is {actual_bytes} bytes, exceeding the {limit_bytes}-byte limit")]
+    ResultTooLarge {
+        actual_bytes: usize,
+        limit_bytes: usize,
+    },
+
+    /// 引擎内部故障（Runtime 创建失败、spawn_blocking panic 等）。
+    #[error("Skill script engine internal error: {0}")]
+    Internal(String),
+}
 
 /// 一次脚本执行请求。适配器只接触源码字符串与纯 JSON 上下文，
 /// 不接收任何物理路径或领域模型类型。
@@ -77,8 +98,10 @@ pub struct SkillScriptResult {
 #[async_trait]
 pub trait SkillScriptEngine: Send + Sync {
     /// 执行入口脚本的 `default(args)` 或 `main(args)` 导出并返回
-    /// `{value, writes, logs}`。JS 异常、超时与返回值超限分别以
-    /// `DomainError::SkillScriptExecutionFailed` 与
-    /// `DomainError::SkillScriptResultTooLarge` 传播。
-    async fn execute(&self, request: SkillScriptRequest) -> Result<SkillScriptResult, DomainError>;
+    /// `{value, writes, logs}`。JS 异常与超时以 `ExecutionFailed`、
+    /// 返回值超限以 `ResultTooLarge` 传播。
+    async fn execute(
+        &self,
+        request: SkillScriptRequest,
+    ) -> Result<SkillScriptResult, SkillScriptEngineError>;
 }
