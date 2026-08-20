@@ -80,21 +80,11 @@ test('/api/backups/chat/get uses the metadata-only catalog only when requested',
     assert.deepEqual(calls, ['list_chat_backup_catalog', 'list_chat_backups']);
 });
 
-test('/api/backups/chat/download streams and discards the decoded materialization at EOF', async () => {
+test('/api/backups/chat/download streams the decoded backup resource', async () => {
     const calls = [];
     const router = createBackupsRouter({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'materialize_chat_backup') {
-                return '/tmp/chat-backup-materialized.jsonl';
-            }
-            if (command === 'discard_chat_backup_materialization') {
-                return null;
-            }
-            throw new Error(`Unexpected command: ${command}`);
-        },
-        createReadableFileStream: async (path) => {
-            assert.equal(path, '/tmp/chat-backup-materialized.jsonl');
+        createChatBackupDownloadStream: async (name) => {
+            calls.push(name);
             return new ReadableStream({
                 start(controller) {
                     controller.enqueue(new TextEncoder().encode('{"mes":"hello"}\n'));
@@ -112,125 +102,23 @@ test('/api/backups/chat/download streams and discards the decoded materializatio
 
     assert.equal(response.status, 200);
     assert.equal(await response.text(), '{"mes":"hello"}\n');
-    assert.deepEqual(calls, [
-        {
-            command: 'materialize_chat_backup',
-            args: { name: 'chat_alice_20260722-120000.jsonl' },
-        },
-        {
-            command: 'discard_chat_backup_materialization',
-            args: { path: '/tmp/chat-backup-materialized.jsonl' },
-        },
-    ]);
+    assert.deepEqual(calls, ['chat_alice_20260722-120000.jsonl']);
 });
 
-test('/api/backups/chat/download keeps a completed stream successful when cleanup fails', async () => {
-    const calls = [];
+test('/api/backups/chat/download maps resource open failures before sending the response', async () => {
     const router = createBackupsRouter({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'materialize_chat_backup') {
-                return '/tmp/chat-backup-cleanup-error.jsonl';
-            }
-            if (command === 'discard_chat_backup_materialization') {
-                throw new Error('cleanup failed');
-            }
-            throw new Error(`Unexpected command: ${command}`);
+        createChatBackupDownloadStream: async () => {
+            throw new Error('Chat backup not found');
         },
-        createReadableFileStream: () => new ReadableStream({
-            start(controller) {
-                controller.enqueue(new TextEncoder().encode('{"mes":"hello"}\n'));
-                controller.close();
-            },
-        }),
     });
 
     const response = await router.handle({
         method: 'POST',
         path: '/api/backups/chat/download',
-        body: { name: 'chat_alice_20260722-120000.jsonl' },
-    });
-    const originalWarn = console.warn;
-    const warnings = [];
-    console.warn = (...args) => warnings.push(args);
-    let text;
-    try {
-        text = await response.text();
-    } finally {
-        console.warn = originalWarn;
-    }
-
-    assert.equal(response.status, 200);
-    assert.equal(text, '{"mes":"hello"}\n');
-    assert.equal(calls.filter(({ command }) => command === 'discard_chat_backup_materialization').length, 1);
-    assert.equal(warnings.length, 1);
-});
-
-test('/api/backups/chat/download discards the materialization when the consumer cancels', async () => {
-    const calls = [];
-    let sourceCanceled = false;
-    const router = createBackupsRouter({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'materialize_chat_backup') {
-                return '/tmp/chat-backup-cancel.jsonl';
-            }
-            return null;
-        },
-        createReadableFileStream: () => new ReadableStream({
-            start(controller) {
-                controller.enqueue(new Uint8Array([1, 2, 3]));
-            },
-            cancel() {
-                sourceCanceled = true;
-            },
-        }),
+        body: { name: 'missing.jsonl' },
     });
 
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/backups/chat/download',
-        body: { name: 'chat_alice_20260722-120000.jsonl' },
-    });
-    const reader = response.body.getReader();
-    await reader.read();
-    await reader.cancel('test cancellation');
-
-    assert.equal(sourceCanceled, true);
-    assert.deepEqual(calls.at(-1), {
-        command: 'discard_chat_backup_materialization',
-        args: { path: '/tmp/chat-backup-cancel.jsonl' },
-    });
-});
-
-test('/api/backups/chat/download discards the materialization when the source stream fails', async () => {
-    const calls = [];
-    const router = createBackupsRouter({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'materialize_chat_backup') {
-                return '/tmp/chat-backup-error.jsonl';
-            }
-            return null;
-        },
-        createReadableFileStream: () => new ReadableStream({
-            pull(controller) {
-                controller.error(new Error('read failed'));
-            },
-        }),
-    });
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/backups/chat/download',
-        body: { name: 'chat_alice_20260722-120000.jsonl' },
-    });
-
-    await assert.rejects(() => response.arrayBuffer(), /read failed/);
-    assert.deepEqual(calls.at(-1), {
-        command: 'discard_chat_backup_materialization',
-        args: { path: '/tmp/chat-backup-error.jsonl' },
-    });
+    assert.equal(response.status, 404);
 });
 
 test('/api/chats/import restores a character backup without an upload Blob', async () => {
@@ -337,6 +225,9 @@ test('chat backup browser views through a stream and restores by logical backup 
     assert.match(source, /formData\.set\('backup_name', name\)/);
     assert.match(source, /JSON\.stringify\(\{ detail: 'catalog' \}\)/);
     assert.doesNotMatch(source, /response\.blob\(\)|new File\(\[blob\]/);
-    assert.doesNotMatch(routeSource, /get_chat_backup_raw|normalizeBinaryPayload/);
-    assert.doesNotMatch(commandSource, /get_chat_backup_raw/);
+    assert.match(routeSource, /createChatBackupDownloadStream\(name\)/);
+    assert.doesNotMatch(routeSource, /createReadableFileStream|chat_backup_materialization/);
+    assert.match(commandSource, /open_chat_backup_download/);
+    assert.match(commandSource, /read_chat_backup_download/);
+    assert.doesNotMatch(commandSource, /materialize_chat_backup|discard_chat_backup_materialization/);
 });

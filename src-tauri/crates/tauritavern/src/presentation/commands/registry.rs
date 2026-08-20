@@ -39,8 +39,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_commands::backup_chat,
         super::chat_commands::list_chat_backup_catalog,
         super::chat_commands::list_chat_backups,
-        super::chat_commands::materialize_chat_backup,
-        super::chat_commands::discard_chat_backup_materialization,
+        super::chat_commands::open_chat_backup_download,
+        super::chat_commands::read_chat_backup_download,
         super::chat_commands::restore_character_chat_backup,
         super::chat_commands::delete_chat_backup,
         super::chat_commands::clear_chat_cache,
@@ -357,7 +357,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::skill_commands::retarget_skill_scope,
         // Chat completion commands
         super::chat_completion_commands::get_chat_completions_status,
-        super::local_endpoint_access_commands::authorize_chat_completion_endpoint,
         super::chat_completion_commands::generate_chat_completion,
         super::chat_completion_commands::start_chat_completion_stream,
         super::chat_completion_commands::read_chat_completion_stream,

@@ -23,7 +23,7 @@ use tt_ports::repositories::agent_workspace_lifecycle_repository::{
 };
 use tt_ports::repositories::character_repository::CharacterRepository;
 use tt_ports::repositories::chat_repository::{
-    ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatRepository,
+    ChatBackupCatalogEntry, ChatBackupReader, ChatExportFormat, ChatImportFormat, ChatRepository,
 };
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
@@ -382,43 +382,21 @@ impl ChatService {
         Ok(self.chat_repository.list_chat_backup_catalog().await?)
     }
 
-    /// Decode a chat backup into a temporary JSONL file for streaming consumers.
-    pub async fn materialize_chat_backup(
+    /// Open the decoded JSONL payload of a logical chat backup.
+    pub async fn open_chat_backup_download(
         &self,
         backup_file_name: &str,
-    ) -> Result<String, ApplicationError> {
+    ) -> Result<Box<dyn ChatBackupReader>, ApplicationError> {
         if backup_file_name.trim().is_empty() {
             return Err(ApplicationError::ValidationError(
                 "Backup file name cannot be empty".to_string(),
             ));
         }
 
-        let path = self
+        Ok(self
             .chat_repository
-            .materialize_chat_backup(backup_file_name)
-            .await?;
-        path.into_os_string().into_string().map_err(|_| {
-            ApplicationError::InternalError(
-                "Chat backup materialization path is not valid UTF-8".to_string(),
-            )
-        })
-    }
-
-    /// Remove a temporary JSONL backup materialization.
-    pub async fn discard_chat_backup_materialization(
-        &self,
-        path: &str,
-    ) -> Result<(), ApplicationError> {
-        if path.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "Backup materialization path cannot be empty".to_string(),
-            ));
-        }
-
-        self.chat_repository
-            .discard_chat_backup_materialization(Path::new(path))
-            .await?;
-        Ok(())
+            .open_chat_backup_download(backup_file_name)
+            .await?)
     }
 
     /// Restore a character chat directly from a history backup.

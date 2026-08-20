@@ -299,7 +299,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 - `OpenAI Settings`
 - `TextGen Settings`
 
-TauriTavern 用户数据中的私有状态放在 `_tauritavern` 下，例如 agent workspace、agent profiles、skills、prompt cache、legacy extension source metadata、LLM connections。能够授予宿主权限的安全状态不属于用户数据：本地端点 grant 存在 `app_root/security`，不会随可切换的 `data_root`、备份或导入迁移。
+TauriTavern 用户数据中的私有状态放在 `_tauritavern` 下，例如 agent workspace、agent profiles、skills、prompt cache、legacy extension source metadata、LLM connections。能够授予宿主权限的安全状态不属于用户数据：自定义端点 grant 存在 `app_root/security`，不会随可切换的 `data_root`、备份或导入迁移。
 
 权威代码入口：
 
@@ -321,7 +321,7 @@ TauriTavern 用户数据中的私有状态放在 `_tauritavern` 下，例如 age
 | 媒体 Range / browser resource contract | `docs/CurrentState/MediaAssetContract.md` |
 | Logging / Dev observability | `docs/CurrentState/LoggingObservability.md` |
 | Native provider API formats | `docs/CurrentState/NativeApiFormats.md` |
-| Custom endpoint SSRF 与本地端点授权 | `docs/CurrentState/LocalEndpointAccess.md` |
+| Custom endpoint SSRF 与用户授权 | `docs/CurrentState/UserEndpointAccess.md` |
 | Vector 兼容层 | `docs/CurrentState/VectorApi.md` |
 | Sync | `docs/CurrentState/Sync.md` |
 | Agent 总览 | `docs/AgentArchitecture.md` |

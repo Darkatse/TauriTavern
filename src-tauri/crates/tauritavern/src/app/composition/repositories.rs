@@ -20,10 +20,11 @@ use tt_adapter_provider_http::{
 };
 use tt_adapter_storage_core::{
     DataDirectory, FileAssetRepository, FileChatRepository, FileExtensionStoreRepository,
-    FileGroupRepository, FileLlmConnectionRepository, FileLocalEndpointGrantRepository,
-    FileMcpServerRepository, FilePromptCacheRepository, FileQuickReplyRepository,
-    FileSecretRepository, FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository,
-    FileUserRepository, chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
+    FileGroupRepository, FileLlmConnectionRepository, FileMcpServerRepository,
+    FilePromptCacheRepository, FileQuickReplyRepository, FileSecretRepository,
+    FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository,
+    FileUserEndpointGrantRepository, FileUserRepository,
+    chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
 };
 use tt_adapter_storage_userdata::FileAgentProfileRepository;
 use tt_adapter_storage_userdata::FileAgentRepository;
@@ -53,7 +54,6 @@ use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::group_repository::GroupRepository;
 use tt_ports::repositories::image_metadata_repository::ImageMetadataRepository;
 use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
-use tt_ports::repositories::local_endpoint_grant_repository::LocalEndpointGrantRepository;
 use tt_ports::repositories::mcp_server_repository::McpServerRepository;
 use tt_ports::repositories::preset_repository::PresetRepository;
 use tt_ports::repositories::prompt_cache_repository::PromptCacheRepository;
@@ -70,6 +70,7 @@ use tt_ports::repositories::translate_repository::TranslateRepository;
 use tt_ports::repositories::tts_repository::TtsRepository;
 use tt_ports::repositories::update_repository::UpdateRepository;
 use tt_ports::repositories::user_directory_repository::UserDirectoryRepository;
+use tt_ports::repositories::user_endpoint_grant_repository::UserEndpointGrantRepository;
 use tt_ports::repositories::user_repository::UserRepository;
 use tt_ports::repositories::vector_repository::{
     LocalEmbeddingRepository, RemoteEmbeddingRepository, VectorRepository,
@@ -111,8 +112,8 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) agent_workspace_lifecycle_repository:
         Arc<dyn AgentWorkspaceLifecycleRepository>,
     pub(in crate::app::composition) llm_connection_repository: Arc<dyn LlmConnectionRepository>,
-    pub(in crate::app::composition) local_endpoint_grant_repository:
-        Arc<dyn LocalEndpointGrantRepository>,
+    pub(in crate::app::composition) user_endpoint_grant_repository:
+        Arc<dyn UserEndpointGrantRepository>,
     pub(in crate::app::composition) mcp_server_repository: Arc<dyn McpServerRepository>,
     pub(in crate::app::composition) workspace_repository: Arc<dyn WorkspaceRepository>,
     pub(in crate::app::composition) chat_completion_repository: Arc<dyn ChatCompletionRepository>,
@@ -258,12 +259,12 @@ pub(super) async fn build(
     let llm_connection_repository: Arc<dyn LlmConnectionRepository> = Arc::new(
         FileLlmConnectionRepository::new(data_root.join("_tauritavern").join("llm-connections")),
     );
-    let local_endpoint_grant_repository: Arc<dyn LocalEndpointGrantRepository> =
-        Arc::new(FileLocalEndpointGrantRepository::new(
+    let user_endpoint_grant_repository: Arc<dyn UserEndpointGrantRepository> =
+        Arc::new(FileUserEndpointGrantRepository::new(
             runtime_paths
                 .app_root
                 .join("security")
-                .join("local-endpoint-grants.json"),
+                .join("user-endpoint-grants.json"),
         ));
     let mcp_server_repository: Arc<dyn McpServerRepository> = Arc::new(
         FileMcpServerRepository::new(data_root.join("_tauritavern").join("mcp")),
@@ -352,7 +353,7 @@ pub(super) async fn build(
         agent_invocation_repository,
         agent_workspace_lifecycle_repository,
         llm_connection_repository,
-        local_endpoint_grant_repository,
+        user_endpoint_grant_repository,
         mcp_server_repository,
         workspace_repository,
         chat_completion_repository,

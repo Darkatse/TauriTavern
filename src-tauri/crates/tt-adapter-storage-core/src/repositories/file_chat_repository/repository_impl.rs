@@ -534,15 +534,12 @@ impl ChatRepository for FileChatRepository {
         self.list_chat_backup_catalog_entries().await
     }
 
-    async fn materialize_chat_backup(
+    async fn open_chat_backup_download(
         &self,
         backup_file_name: &str,
-    ) -> Result<std::path::PathBuf, DomainError> {
-        self.materialize_chat_backup_file(backup_file_name).await
-    }
-
-    async fn discard_chat_backup_materialization(&self, path: &Path) -> Result<(), DomainError> {
-        self.discard_chat_backup_materialization_file(path).await
+    ) -> Result<Box<dyn tt_ports::repositories::chat_repository::ChatBackupReader>, DomainError>
+    {
+        self.open_chat_backup_download_file(backup_file_name).await
     }
 
     async fn restore_character_chat_backup(

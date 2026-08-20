@@ -113,6 +113,7 @@ export function createTauriMainContext({ invoke }) {
         materializeAndroidSkillImportArchive: androidArchiveService.materializeAndroidSkillImportArchive,
         pickAndroidImportArchive: androidArchiveService.pickAndroidImportArchive,
         removeTemporaryFile,
+        createChatBackupDownloadStream: readableFileStreamService.createChatBackupDownloadStream,
         createReadableFileStream: readableFileStreamService.createReadableFileStream,
         saveAndroidExportArchive: androidArchiveService.saveAndroidExportArchive,
     };

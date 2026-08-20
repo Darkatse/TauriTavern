@@ -3,19 +3,17 @@ use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use reqwest::blocking::{Client as BlockingClient, ClientBuilder as BlockingClientBuilder};
 use reqwest::redirect::Policy;
 use reqwest::{Client, NoProxy, Proxy, Url};
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::RequestProxySettings;
-use tt_ports::local_endpoint_access::{LocalEndpointAccessRuntime, LocalEndpointCandidate};
 use tt_ports::settings::RequestProxyRuntime;
+use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
 use crate::client::{build_http_client, configure_blocking_http_client};
 use crate::restricted_endpoint::{
-    RestrictedEndpointResolver, UserEndpointRoute, inspect_user_endpoint,
-    restricted_redirect_policy, user_endpoint_route,
+    UserEndpointRoute, restricted_redirect_policy, user_endpoint_route,
 };
 
 pub const CHAT_COMPLETION_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
@@ -49,22 +47,16 @@ pub enum HttpClientProfile {
     Mcp,
 }
 
-#[derive(Clone)]
-struct ConfiguredProxy {
-    proxy: Proxy,
-    host: String,
-}
-
 #[derive(Clone, Default)]
 enum RequestProxyState {
     #[default]
     Disabled,
-    Configured(Box<ConfiguredProxy>),
+    Configured(Box<Proxy>),
     Invalid,
 }
 
 impl RequestProxyState {
-    fn configured(&self) -> Result<Option<ConfiguredProxy>, DomainError> {
+    fn configured(&self) -> Result<Option<Proxy>, DomainError> {
         match self {
             Self::Disabled => Ok(None),
             Self::Configured(proxy) => Ok(Some(proxy.as_ref().clone())),
@@ -86,7 +78,7 @@ struct ClientCacheKey {
 struct HttpClientPoolState {
     revision: u64,
     proxy: RequestProxyState,
-    local_endpoint_grants: HashSet<String>,
+    user_endpoint_grants: HashSet<String>,
     clients: HashMap<ClientCacheKey, Client>,
 }
 
@@ -190,7 +182,7 @@ impl HttpClientPool {
     ) -> Result<(Client, u64), DomainError> {
         let route = {
             let state = self.state.read().unwrap();
-            user_endpoint_route(base_url, &state.local_endpoint_grants)?
+            user_endpoint_route(base_url, &state.user_endpoint_grants)?
         };
         self.client_with_revision_for_route(profile, Some(route))
     }
@@ -211,7 +203,7 @@ impl HttpClientPool {
                     return Ok((client.clone(), state.revision));
                 }
 
-                let proxy = if user_endpoint_route == Some(UserEndpointRoute::TrustedDirect) {
+                let proxy = if user_endpoint_route == Some(UserEndpointRoute::Direct) {
                     None
                 } else {
                     state.proxy.configured()?
@@ -249,7 +241,7 @@ impl HttpClientPool {
             .timeout(GIT_REQUEST_TIMEOUT);
 
         if let Some(proxy) = proxy {
-            builder = builder.proxy(proxy.proxy);
+            builder = builder.proxy(proxy);
         }
 
         Ok(configure_blocking_http_client(
@@ -284,30 +276,13 @@ impl RequestProxyRuntime for HttpClientPool {
     }
 }
 
-#[async_trait]
-impl LocalEndpointAccessRuntime for HttpClientPool {
-    async fn inspect_user_endpoint(
-        &self,
-        endpoint: &str,
-    ) -> Result<Option<LocalEndpointCandidate>, DomainError> {
-        inspect_user_endpoint(endpoint).await
-    }
-
-    fn replace_local_endpoint_grants(&self, endpoints: &[String]) {
-        let grants = endpoints.iter().cloned().collect();
-        let mut state = self.state.write().unwrap();
-        if state.local_endpoint_grants == grants {
-            return;
-        }
-        state.local_endpoint_grants = grants;
-        state.clients.clear();
-        state.revision += 1;
+impl UserEndpointGrantRuntime for HttpClientPool {
+    fn replace_user_endpoint_grants(&self, endpoints: &[String]) {
+        self.state.write().unwrap().user_endpoint_grants = endpoints.iter().cloned().collect();
     }
 }
 
-fn proxy_from_settings(
-    settings: &RequestProxySettings,
-) -> Result<Option<ConfiguredProxy>, DomainError> {
+fn proxy_from_settings(settings: &RequestProxySettings) -> Result<Option<Proxy>, DomainError> {
     if !settings.enabled {
         return Ok(None);
     }
@@ -341,10 +316,6 @@ fn proxy_from_settings(
             "Request proxy URL must not include a path, query, or fragment".to_string(),
         ));
     }
-    let host = proxy_url
-        .host_str()
-        .expect("normalized proxy URL guarantees a host")
-        .to_string();
     let mut proxy = Proxy::all(proxy_url)
         .map_err(|error| DomainError::InvalidData(format!("Invalid request proxy URL: {error}")))?;
 
@@ -353,7 +324,7 @@ fn proxy_from_settings(
         proxy = proxy.no_proxy(NoProxy::from_string(&bypass));
     }
 
-    Ok(Some(ConfiguredProxy { proxy, host }))
+    Ok(Some(proxy))
 }
 
 fn normalized_bypass_csv(entries: &[String]) -> String {
@@ -367,7 +338,7 @@ fn normalized_bypass_csv(entries: &[String]) -> String {
 
 fn build_profile_client(
     profile: HttpClientProfile,
-    proxy: Option<ConfiguredProxy>,
+    proxy: Option<Proxy>,
     user_endpoint_route: Option<UserEndpointRoute>,
     product_user_agent: &str,
 ) -> Result<Client, DomainError> {
@@ -408,14 +379,12 @@ fn build_profile_client(
             .connect_timeout(MCP_CONNECT_TIMEOUT),
     };
 
-    if let Some(route) = user_endpoint_route {
-        builder = builder.redirect(restricted_redirect_policy()).dns_resolver(
-            RestrictedEndpointResolver::new(proxy.as_ref().map(|proxy| proxy.host.as_str()), route),
-        );
+    if user_endpoint_route.is_some() {
+        builder = builder.redirect(restricted_redirect_policy());
     }
 
     if let Some(proxy) = proxy {
-        builder = builder.proxy(proxy.proxy);
+        builder = builder.proxy(proxy);
     }
 
     build_http_client(builder, product_user_agent).map_err(|error| {
@@ -438,7 +407,7 @@ mod tests {
     use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
     use rustls::{ServerConfig, ServerConnection, StreamOwned};
     use tt_domain::models::settings::RequestProxySettings;
-    use tt_ports::local_endpoint_access::LocalEndpointAccessRuntime;
+    use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
     const TEST_USER_AGENT: &str = "TauriTavern/test";
 
@@ -450,7 +419,7 @@ mod tests {
         let endpoint = tt_domain::models::endpoint_url::parse_user_http_endpoint(endpoint)
             .unwrap()
             .to_string();
-        pool.replace_local_endpoint_grants(&[endpoint]);
+        pool.replace_user_endpoint_grants(&[endpoint]);
     }
 
     struct CaptureServer {
@@ -597,15 +566,14 @@ mod tests {
     }
 
     #[test]
-    fn schemeless_proxy_url_is_accepted_and_keeps_its_host() {
+    fn schemeless_proxy_url_is_accepted() {
         let settings = RequestProxySettings {
             enabled: true,
             url: "proxy.internal:7890".to_string(),
             bypass: vec!["localhost".to_string()],
         };
 
-        let configured = super::proxy_from_settings(&settings).unwrap().unwrap();
-        assert_eq!(configured.host, "proxy.internal");
+        HttpClientPool::validate_request_proxy_settings(&settings).unwrap();
     }
 
     #[test]
@@ -696,19 +664,6 @@ mod tests {
 
         let state = pool.state.read().unwrap();
         assert_eq!(state.clients.len(), 0);
-        assert_eq!(state.revision, revision_before + 1);
-    }
-
-    #[test]
-    fn granting_local_access_invalidates_cached_transports() {
-        let pool = pool();
-        pool.client(HttpClientProfile::Default).unwrap();
-        let revision_before = pool.state.read().unwrap().revision;
-
-        grant_user_endpoint(&pool, "http://localhost:11434/v1");
-
-        let state = pool.state.read().unwrap();
-        assert!(state.clients.is_empty());
         assert_eq!(state.revision, revision_before + 1);
     }
 

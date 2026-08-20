@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{Manager, Resource, ResourceId, State, Webview};
+use tokio::sync::Mutex;
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -14,8 +15,16 @@ use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_application::errors::ApplicationError;
 use tt_contracts::chat::ChatBackupCatalogEntry;
 use tt_ports::repositories::chat_repository::{
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
+    ChatBackupReader, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
 };
+
+const CHAT_BACKUP_DOWNLOAD_CHUNK_BYTES: usize = 512 * 1024;
+
+struct ChatBackupDownloadResource {
+    reader: Mutex<Box<dyn ChatBackupReader>>,
+}
+
+impl Resource for ChatBackupDownloadResource {}
 
 #[tauri::command]
 pub async fn get_all_chats(
@@ -308,35 +317,45 @@ pub async fn list_chat_backup_catalog(
 }
 
 #[tauri::command]
-pub async fn materialize_chat_backup(
+pub async fn open_chat_backup_download(
     name: String,
+    webview: Webview,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<String, CommandError> {
-    log_command(format!("materialize_chat_backup {}", name));
+) -> Result<ResourceId, CommandError> {
+    log_command(format!("open_chat_backup_download {}", name));
 
-    app_state
+    let reader = app_state
         .services
         .chat_service
-        .materialize_chat_backup(&name)
+        .open_chat_backup_download(&name)
         .await
-        .map_err(map_command_error("Failed to materialize chat backup"))
+        .map_err(map_command_error("Failed to open chat backup download"))?;
+
+    Ok(webview.resources_table().add(ChatBackupDownloadResource {
+        reader: Mutex::new(reader),
+    }))
 }
 
 #[tauri::command]
-pub async fn discard_chat_backup_materialization(
-    path: String,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    log_command("discard_chat_backup_materialization");
-
-    app_state
-        .services
-        .chat_service
-        .discard_chat_backup_materialization(&path)
+pub async fn read_chat_backup_download(
+    rid: ResourceId,
+    webview: Webview,
+) -> Result<tauri::ipc::Response, CommandError> {
+    let resource = webview
+        .resources_table()
+        .get::<ChatBackupDownloadResource>(rid)
+        .map_err(map_command_error("Failed to access chat backup download"))?;
+    let mut buffer = vec![0; CHAT_BACKUP_DOWNLOAD_CHUNK_BYTES];
+    let bytes_read = resource
+        .reader
+        .lock()
         .await
-        .map_err(map_command_error(
-            "Failed to discard chat backup materialization",
-        ))
+        .read(&mut buffer)
+        .await
+        .map_err(map_command_error("Failed to read chat backup download"))?;
+    buffer.truncate(bytes_read);
+
+    Ok(tauri::ipc::Response::new(buffer))
 }
 
 #[tauri::command]
