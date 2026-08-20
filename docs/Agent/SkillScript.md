@@ -48,56 +48,67 @@ export function main(args) {
 
 脚本名称（`skill.run_script` 的 `script` 参数）是 `scripts/` 目录下不带 `.js` 扩展名的文件名，且必须匹配 `^[a-z0-9][a-z0-9-]*$`（小写字母、数字、连字符，字母或数字开头）。例如 `scripts/helper.js` 对应 script 名 `helper`，`scripts/parse-xml.js` 对应 `parse-xml`。
 
-## 3. 可访问的全局变量
+## 3. Runtime 模块（`@tauritavern/runtime/v1`）
 
-沙箱在每次执行时注入以下全局对象。除此之外**没有** `process`、`Buffer`、`fs`、`http`、`crypto`、`setTimeout`、`setInterval` 等 Node 或浏览器 API。
-
-| 全局变量 | 读写 | 说明 |
-| --- | --- | --- |
-| `$fs` | 读写 | 受沙箱策略门控的文件系统 API |
-| `$worldInfo` | 只读 | 当前 run 预取的激活世界书条目快照 |
-| `$variables` | 只读 | SillyTavern 变量快照（`local` / `global` 两个作用域） |
-| `$log` | 只写 | 日志经宿主 tracing 收集输出 |
-
-### 3.1 `$fs` — 文件系统 API
-
-`$fs` 提供受限的文件读写能力。所有路径相对于当前 run 的 workspace 根目录，经过路径清洗后必须落在 Agent Profile 的 `visible_roots`（读）或 `writable_roots`（写）内。绝对路径和 `..` 逃逸会被拒绝。
+宿主能力经版本化 ES Module 导入，沙箱不注入任何全局对象。脚本通过 `import` 从 `@tauritavern/runtime/v1` 获取宿主能力：
 
 ```js
+import { context, workspace, log } from '@tauritavern/runtime/v1';
+```
+
+导出表：
+
+| 导出 | 读写 | 说明 |
+| --- | --- | --- |
+| `workspace` | 读写 | 受沙箱策略门控的文件 API |
+| `context` | 只读 | `worldInfo` + `variables` 快照 |
+| `log` | 只写 | 经宿主 tracing 输出的日志 API |
+
+除此之外**没有** `process`、`Buffer`、`fs`、`http`、`crypto`、`setTimeout`、`setInterval` 等 Node 或浏览器 API。
+
+### 3.1 `workspace` — 文件 API
+
+`workspace` 提供受限的文件读写能力。所有路径相对于当前 run 的 workspace 根目录，经过路径清洗后必须落在 Agent Profile 的 `visible_roots`（读）或 `writable_roots`（写）内。绝对路径和 `..` 逃逸会被拒绝。
+
+```js
+import { workspace } from '@tauritavern/runtime/v1';
+
 // 读取文件内容（路径相对 workspace 根目录）
-const content = $fs.readText('output/config.json');
+const content = workspace.readText('output/config.json');
 
 // 写入文件内容（自动创建父目录）
-$fs.writeText('output/result.txt', 'Hello World');
+workspace.writeText('output/result.txt', 'Hello World');
 
 // 列出目录下的条目名（相对路径前缀）
 // 无参：列出 workspace 根目录顶层条目名
 // 有参：列出指定目录下条目的 workspace 相对路径
-const files = $fs.listFiles('output');
+const files = workspace.listFiles('output');
 // 返回: ['a.md', 'b.txt', ...]
 
 // 检查文件或目录是否存在
-const exists = $fs.exists('output/config.json');
+const exists = workspace.exists('output/config.json');
 ```
 
 | 方法 | 签名 | 说明 |
 | --- | --- | --- |
 | `readText(path)` | `(path: string) → string` | 读取 UTF-8 文本文件；路径必须在 visible roots 内 |
-| `writeText(path, content)` | `(path: string, content: string) → void` | 写入 UTF-8 文本文件；路径必须在 writable roots 内；自动创建父目录 |
+| `writeText(path, content)` | `(path: string, content: string) → void` | 写入 UTF-8 文本文件；路径必须是 writable root 的子项；自动创建父目录 |
 | `listFiles(path?)` | `(path?: string) → string[]` | 列出目录条目；无参列出根目录条目名，有参列出相对路径；读权限同 `readText` |
 | `exists(path)` | `(path: string) → boolean` | 检查文件或目录是否存在；路径不在 visible roots 内时返回 `false` 而非抛错 |
 
-### 3.2 `$worldInfo` — 世界书快照（只读）
+### 3.2 `context.worldInfo` — 世界书快照（只读）
 
-`$worldInfo` 提供当前 run 启动时预取的激活世界书条目快照。数据是冻结的，脚本无法修改世界书。
+`context.worldInfo` 提供当前 run 启动时预取的激活世界书条目快照。数据是冻结的，脚本无法修改世界书。
 
 ```js
+import { context } from '@tauritavern/runtime/v1';
+
 // 读取所有激活的世界书条目
-const result = $worldInfo.readActivated();
+const result = context.worldInfo.readActivated();
 // 返回: { entries: [{ uid, ref, content, constant, position, displayName, world }, ...] }
 
 // 按 ref 读取特定的世界书条目
-const result = $worldInfo.readEntries(['worldinfo:lore#1', 'worldinfo:chars#2']);
+const result = context.worldInfo.readEntries(['worldinfo:lore#1', 'worldinfo:chars#2']);
 ```
 
 每个条目的字段：
@@ -112,22 +123,24 @@ const result = $worldInfo.readEntries(['worldinfo:lore#1', 'worldinfo:chars#2'])
 | `displayName` | `string?` | 显示名称（可能为空） |
 | `world` | `string` | 所属世界书名称 |
 
-### 3.3 `$variables` — SillyTavern 变量快照（只读）
+### 3.3 `context.variables` — SillyTavern 变量快照（只读）
 
-`$variables` 提供当前 run 的 SillyTavern 变量快照，接口签名与 `getContext().variables` 保持一致。`local` 和 `global` 两个作用域各提供 `get` / `has`（只读）方法。
+`context.variables` 提供当前 run 的 SillyTavern 变量快照，接口签名与 `getContext().variables` 保持一致。`local` 和 `global` 两个作用域各提供 `get` / `has`（只读）方法。
 
 ```js
+import { context } from '@tauritavern/runtime/v1';
+
 // 读取 local 变量（不存在时返回空字符串，与 ST getLocalVariable 行为一致）
-const score = $variables.local.get('score');
+const score = context.variables.local.get('score');
 
 // 检查 local 变量是否存在
-const hasName = $variables.local.has('name');
+const hasName = context.variables.local.has('name');
 
 // 读取 global 变量
-const theme = $variables.global.get('theme');
+const theme = context.variables.global.get('theme');
 
 // 检查 global 变量是否存在
-const hasGlobal = $variables.global.has('theme');
+const hasGlobal = context.variables.global.has('theme');
 ```
 
 | 方法 | 签名 | 说明 |
@@ -139,22 +152,24 @@ const hasGlobal = $variables.global.has('theme');
 
 写操作（`set` / `del` / `add` / `inc` / `dec`）存在但会 fail-fast 抛出 `"variables are read-only in skill script sandbox"` 错误。这些方法仅为保持接口签名一致，脚本不能修改变量。
 
-### 3.4 `$log` — 日志 API
+### 3.4 `log` — 日志 API
 
-`$log` 将日志输出到宿主的日志系统，供开发者调试。日志不会进入 Agent 上下文或聊天消息。
+`log` 将日志输出到宿主的日志系统，供开发者调试。日志不会进入 Agent 上下文或聊天消息。
 
 ```js
-$log.info('Processing started');
-$log.warn('Deprecated format detected');
-$log.error('Failed to parse input');
-$log.debug('Debug value: ' + JSON.stringify(someValue));
+import { log } from '@tauritavern/runtime/v1';
+
+log.info('Processing started');
+log.warn('Deprecated format detected');
+log.error('Failed to parse input');
+log.debug('Debug value: ' + JSON.stringify(someValue));
 ```
 
-`$log` 的各方法接受一个 `string` 参数；传入非字符串会抛出类型错误。输出前缀为 `[skill-script]`，写入宿主日志系统。
+`log` 的各方法接受一个 `string` 参数；传入非字符串会抛出类型错误。输出前缀为 `[skill-script]`，写入宿主日志系统。
 
 ## 4. 文件系统读写边界
 
-`$fs` 的读写权限由 Agent Profile 的 `workspace.visible_roots` 和 `workspace.writable_roots` 控制。这两个列表是相对 workspace 根目录的子目录名。
+`workspace` 的读写权限由 Agent Profile 的 `workspace.visible_roots` 和 `workspace.writable_roots` 控制。这两个列表是相对 workspace 根目录的子目录名。
 
 默认 Agent Profile 的 visible / writable roots 为：
 
@@ -181,8 +196,8 @@ run-workspace/
 
 规则：
 
-- 读操作（`readText` / `listFiles`）：路径清洗后必须落在某个 visible root 内。
-- 写操作（`writeText`）：路径清洗后必须落在某个 writable root 内。
+- 读操作（`readText` / `listFiles`）：路径清洗后必须落在某个 visible root 内（root 本身或其子项）。
+- 写操作（`writeText`）：路径清洗后必须是某个 writable root 的**子项**（root 本身不可写，与宿主 canonical 写策略一致）。
 - 绝对路径（如 `/etc/passwd`）一律拒绝。
 - `..` 路径逃逸（如 `../outside` 或 `output/../../escape`）一律拒绝。
 - 路径中包含 NUL 字符一律拒绝。
@@ -192,7 +207,7 @@ Profile 的 visible / writable roots 可被自定义 Profile 覆盖；脚本开�
 
 ### 4.1 写入语义
 
-`$fs.writeText` 的写入采用**最终状态语义**：
+`workspace.writeText` 的写入采用**最终状态语义**：
 
 - **同路径多次写**：脚本对同一文件多次调用 `writeText` 时，引擎只保留最后一次的内容。落盘的 delta 是最终状态，而非多次追加。
 - **写入冲突检测**：引擎在执行前对工作区做文件快照（含 SHA-256）。落盘时，如果文件在快照后被外部修改（SHA-256 不匹配），写入会以 `stale` 冲突报错 fail-fast——不会覆盖外部修改。
@@ -230,17 +245,17 @@ my-skill/
       parser.js      ← 可被 main.js import (./lib/parser.js)
 ```
 
-### 5.2 内置库导入（`@tauritavern/runtime/*`）
+### 5.2 内置库导入（`@tauritavern/vendor/*`）
 
-内置公共库以 `@tauritavern/runtime/` 为命名空间前缀，在编译期内嵌进 adapter 二进制，通过 `BuiltinLoader` 注册到运行时。脚本经带命名空间的模块名导入，不会与 skill 自带模块冲突。
+内置公共库以 `@tauritavern/vendor/` 为命名空间前缀，在编译期内嵌进 adapter 二进制，通过 `BuiltinLoader` 注册到运行时。脚本经带命名空间的模块名导入，不会与 skill 自带模块冲突。
 
 ```js
-import { marked } from '@tauritavern/runtime/marked';
-import dayjs from '@tauritavern/runtime/dayjs';
-import { chunk, uniq } from '@tauritavern/runtime/es-toolkit';
+import { marked } from '@tauritavern/vendor/marked';
+import dayjs from '@tauritavern/vendor/dayjs';
+import { chunk, uniq } from '@tauritavern/vendor/es-toolkit';
 ```
 
-内置库列表见第 6 节。裸模块名（如 `marked`、`dayjs`）**不再支持**——必须使用 `@tauritavern/runtime/` 前缀。
+内置库列表见第 6 节。裸模块名（如 `marked`、`dayjs`）**不再支持**——必须使用 `@tauritavern/vendor/` 前缀。
 
 ## 6. 可用的内置库
 
@@ -248,12 +263,12 @@ import { chunk, uniq } from '@tauritavern/runtime/es-toolkit';
 
 | 模块名 | 版本 | 用途 |
 | --- | --- | --- |
-| `@tauritavern/runtime/marked` | 18.x | Markdown → HTML（剧情摘要、世界书渲染等） |
-| `@tauritavern/runtime/dayjs` | 1.11.x | 时间解析 / 格式化 / 计算（不可变 API） |
-| `@tauritavern/runtime/es-toolkit` | 1.x | 通用工具库（lodash 的轻量替代）：数组 / 字符串 / 对象 / 函数 |
-| `@tauritavern/runtime/slugify` | 1.x | 字符串 slug 化（标题 → URL / 文件名） |
-| `@tauritavern/runtime/fast-xml-parser` | 5.x | XML ↔ JS 对象双向转换（含属性 / CDATA / 命名空间） |
-| `@tauritavern/runtime/papaparse` | 5.x | CSV ↔ JSON 双向转换（自动分隔符检测、RFC 4180） |
+| `@tauritavern/vendor/marked` | 18.x | Markdown → HTML（剧情摘要、世界书渲染等） |
+| `@tauritavern/vendor/dayjs` | 1.11.x | 时间解析 / 格式化 / 计算（不可变 API） |
+| `@tauritavern/vendor/es-toolkit` | 1.x | 通用工具库（lodash 的轻量替代）：数组 / 字符串 / 对象 / 函数 |
+| `@tauritavern/vendor/slugify` | 1.x | 字符串 slug 化（标题 → URL / 文件名） |
+| `@tauritavern/vendor/fast-xml-parser` | 5.x | XML ↔ JS 对象双向转换（含属性 / CDATA / 命名空间） |
+| `@tauritavern/vendor/papaparse` | 5.x | CSV ↔ JSON 双向转换（自动分隔符检测、RFC 4180） |
 
 > JSON 处理不需要库：QuickJS 内置 `JSON.parse` / `JSON.stringify`。
 > 正则表达式不需要库：QuickJS 内置完整 `RegExp` 支持。
@@ -262,7 +277,7 @@ import { chunk, uniq } from '@tauritavern/runtime/es-toolkit';
 
 ```js
 // marked — Markdown → HTML
-import { marked } from '@tauritavern/runtime/marked';
+import { marked } from '@tauritavern/vendor/marked';
 
 export default function (args) {
   const html = marked.parse(args.markdown ?? '');
@@ -272,7 +287,7 @@ export default function (args) {
 
 ```js
 // dayjs — 时间处理
-import dayjs from '@tauritavern/runtime/dayjs';
+import dayjs from '@tauritavern/vendor/dayjs';
 
 export default function (args) {
   const d = dayjs(args.date);
@@ -285,7 +300,7 @@ export default function (args) {
 
 ```js
 // es-toolkit — 通用工具
-import { chunk, uniq, pick, sum, groupBy } from '@tauritavern/runtime/es-toolkit';
+import { chunk, uniq, pick, sum, groupBy } from '@tauritavern/vendor/es-toolkit';
 
 export default function () {
   return {
@@ -299,7 +314,7 @@ export default function () {
 
 ```js
 // slugify — 标题 → slug
-import slugify from '@tauritavern/runtime/slugify';
+import slugify from '@tauritavern/vendor/slugify';
 
 export default function (args) {
   return { slug: slugify(args.title ?? '') };
@@ -308,7 +323,7 @@ export default function (args) {
 
 ```js
 // fast-xml-parser — XML ↔ JS 对象
-import { XMLParser, XMLBuilder } from '@tauritavern/runtime/fast-xml-parser';
+import { XMLParser, XMLBuilder } from '@tauritavern/vendor/fast-xml-parser';
 
 export default function (args) {
   const parser = new XMLParser({ ignoreAttributes: false });
@@ -321,7 +336,7 @@ export default function (args) {
 
 ```js
 // papaparse — CSV ↔ JSON
-import Papa from '@tauritavern/runtime/papaparse';
+import Papa from '@tauritavern/vendor/papaparse';
 
 export default function (args) {
   const result = Papa.parse(args.csv, { header: true, skipEmptyLines: true });
@@ -332,7 +347,7 @@ export default function (args) {
 
 ### 6.2 dayjs 插件说明
 
-dayjs 默认只带核心功能。当前提供的是**核心单文件**，插件（如 `relativeTime`、`utc`、`timezone`）与 locale 未打包。如需这些能力，应以内置库形式新增 `@tauritavern/runtime/` 前缀的打包插件文件。
+dayjs 默认只带核心功能。当前提供的是**核心单文件**，插件（如 `relativeTime`、`utc`、`timezone`）与 locale 未打包。如需这些能力，应以内置库形式新增 `@tauritavern/vendor/` 前缀的打包插件文件。
 
 ## 7. 沙箱限制
 
@@ -346,6 +361,9 @@ dayjs 默认只带核心功能。当前提供的是**核心单文件**，插件�
 | 返回值大小上限 | 256 KB（262,144 字节） | 返回值经 `JSON.stringify` 序列化后超过此大小则 fail-fast |
 | 模块快照数量上限 | 32 个 | skill `scripts/` 下 `.js` 文件数超过此上限则拒绝执行 |
 | 模块快照字节上限 | 512 KB（524,288 字节） | skill `scripts/` 下所有 `.js` 源码总字节数超过此上限则拒绝执行 |
+| 总输入预算 | 8 MiB | 模块源码 + 工作区快照 + args + 世界书/变量上下文的总字节数，超过直接终止 |
+| 总输出预算 | 1 MiB | 最终 delta + 日志 + 返回值的总字节数（每项含少量固定记账成本），超过直接终止 |
+| 全局并发上限 | 2 | 多个 Agent / 子 Agent 同时执行脚本时排队 |
 
 返回值经 JavaScript `JSON.stringify` 序列化后传回宿主。以下值会导致序列化失败并报错：
 
@@ -357,7 +375,7 @@ dayjs 默认只带核心功能。当前提供的是**核心单文件**，插件�
 超时和返回值超限分别以专用错误传播给 Agent：
 
 - 超时：`skill.run_script_execution_failed`，消息包含 `timed out`。
-- 返回值超限：`skill.run_script_result_too_large`，提示用 `$fs.writeText` 将大输出写入 workspace 而非直接返回。
+- 返回值超限：`skill.run_script_result_too_large`，提示用 `workspace.writeText` 将大输出写入 workspace 而非直接返回。
 
 ### 7.2 隔离语义
 
@@ -366,8 +384,8 @@ dayjs 默认只带核心功能。当前提供的是**核心单文件**，插件�
 - 没有网络访问能力：不能发起 HTTP 请求、不能使用 `fetch` / `XMLHttpRequest`。
 - 没有定时器：不能使用 `setTimeout` / `setInterval` / `setImmediate`。
 - 没有进程访问能力：不能执行 shell 命令、不能 spawn 子进程。
-- 没有 Node / 浏览器内置对象：`process`、`Buffer`、`module`、`require`（CommonJS）、`window`、`document` 等均不可用；脚本只能通过 ES Module `import` 和注入的 `$fs` / `$worldInfo` / `$variables` / `$log` 访问外部能力。
-- `eval()` / `new Function()` 是 QuickJS 的标准语言特性、并未禁用，但它们无法逃逸沙箱（没有 Node 对象、没有网络、文件读写受 `$fs` 门禁）。不要依赖它们访问外部资源。
+- 没有 Node / 浏览器内置对象：`process`、`Buffer`、`module`、`require`（CommonJS）、`window`、`document` 等均不可用；脚本只能通过 ES Module `import` 从 `@tauritavern/runtime/v1` 导入 `workspace` / `context` / `log` 访问外部能力。
+- `eval()` / `new Function()` 是 QuickJS 的标准语言特性、并未禁用，但它们无法逃逸沙箱（没有 Node 对象、没有网络、文件读写受 `workspace` 门禁）。不要依赖它们访问外部资源。
 
 ### 7.3 安全边界汇总
 
@@ -378,7 +396,7 @@ dayjs 默认只带核心功能。当前提供的是**核心单文件**，插件�
 | 读 visible roots 外文件 | 否（fail-fast） |
 | 绝对路径 / `..` 逃逸 | 否（fail-fast） |
 | 导入 Skill scripts/ 内的模块 | 是（内存快照解析） |
-| 导入内置库（`@tauritavern/runtime/*`） | 是 |
+| 导入内置库（`@tauritavern/vendor/*`） | 是 |
 | 导入快照外 / scripts/ 外的模块 | 否（fail-fast） |
 | 网络请求 | 否 |
 | 修改变量 / 世界书 | 否（fail-fast） |
@@ -392,15 +410,16 @@ dayjs 默认只带核心功能。当前提供的是**核心单文件**，插件�
 ```js
 // skills/data-processor/scripts/process.js
 
-import { chunk } from '@tauritavern/runtime/es-toolkit';
+import { chunk } from '@tauritavern/vendor/es-toolkit';
+import { context, workspace, log } from '@tauritavern/runtime/v1';
 
 export default function (args) {
   const { text, format } = args;
 
-  $log.info('Processing text');
+  log.info('Processing text');
 
   // 读取配置文件
-  const config = JSON.parse($fs.readText('output/config.json'));
+  const config = JSON.parse(workspace.readText('output/config.json'));
 
   // 处理文本
   let result = text.trim();
@@ -413,14 +432,14 @@ export default function (args) {
   const batches = chunk(lines, config.batchSize ?? 10);
 
   // 写入结果
-  $fs.writeText('output/result.txt', batches.map(b => b.join('\n')).join('\n---\n'));
+  workspace.writeText('output/result.txt', batches.map(b => b.join('\n')).join('\n---\n'));
 
   // 访问世界书
-  const worldData = $worldInfo.readActivated();
+  const worldData = context.worldInfo.readActivated();
   const loreEntries = worldData.entries.filter(e => e.constant);
 
   // 读取变量
-  const counter = $variables.local.get('counter');
+  const counter = context.variables.local.get('counter');
 
   return {
     processed: result,
@@ -436,8 +455,9 @@ export default function (args) {
 ```js
 // skills/markdown-builder/scripts/main.js
 
-import { marked } from '@tauritavern/runtime/marked';
-import dayjs from '@tauritavern/runtime/dayjs';
+import { marked } from '@tauritavern/vendor/marked';
+import dayjs from '@tauritavern/vendor/dayjs';
+import { workspace } from '@tauritavern/runtime/v1';
 import { formatHeader } from './format.js';
 
 export default function (args) {
@@ -446,7 +466,7 @@ export default function (args) {
   const markdown = `# ${header}\n\n_Generated at ${timestamp}_\n\n${args.body}`;
   const html = marked.parse(markdown);
 
-  $fs.writeText('output/article.html', html);
+  workspace.writeText('output/article.html', html);
 
   return {
     markdown,
@@ -499,13 +519,14 @@ Processes input text with configurable format and batch size.
 
 1. **入口脚本必须是 ES module**：使用 `export default` 或 `export function main` 导出入口函数；缺失导出会报错，不会静默返回 `undefined`。
 2. **返回值必须 JSON 可序列化**：返回值经 `JSON.stringify` 序列化传回宿主；循环引用、`BigInt`、`Symbol`、函数、`undefined` 会导致失败。
-3. **大输出写入文件**：返回值超过 256 KB 会 fail-fast；大输出应通过 `$fs.writeText` 写入 workspace，返回值只携带摘要或文件路径。
+3. **大输出写入文件**：返回值超过 256 KB 会 fail-fast；大输出应通过 `workspace.writeText` 写入 workspace，返回值只携带摘要或文件路径。
 4. **路径必须相对 workspace 根目录**：不要使用绝对路径或 `..` 逃逸。
 5. **变量和世界书是只读的**：脚本不能修改 SillyTavern 变量或世界书条目。
 6. **脚本名称必须匹配 `^[a-z0-9][a-z0-9-]*$`**：小写字母、数字、连字符，字母或数字开头；不带 `.js` 扩展名。
 7. **不要依赖跨执行状态**：每次 `skill.run_script` 调用都是全新的 Runtime，没有全局变量、缓存或闭包持久化。
 8. **不要使用 Node / 浏览器 API**：没有 `process`、`Buffer`、`fs`、`http`、`crypto`、`setTimeout`、`fetch` 等。
-9. **内置库使用 `@tauritavern/runtime/` 前缀导入**：裸模块名（如 `marked`）不再支持，必须使用 `@tauritavern/runtime/marked`。
+9. **内置库使用 `@tauritavern/vendor/` 前缀导入**：裸模块名（如 `marked`）不再支持，必须使用 `@tauritavern/vendor/marked`。
 10. **模块快照有上限**：skill `scripts/` 下最多 32 个 `.js` 文件、总计 512 KB；超过则拒绝执行。
 11. **写入是最终状态语义**：同路径多次写只保留最后一次内容；快照后外部修改会导致 stale 冲突报错。
 12. **在 SKILL.md 中记录脚本契约**：模型通过 SKILL.md 了解脚本参数和返回值；缺少文档会导致模型无法正确调用。
+13. **宿主能力只能从 `@tauritavern/runtime/v1` 导入**：沙箱没有全局对象，`workspace` / `context` / `log` 必须通过 `import` 从 `@tauritavern/runtime/v1` 获取。
