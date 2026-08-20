@@ -1,6 +1,6 @@
 # TauriTavern Skill Script 指南
 
-本文档面向 Skill 开发者，说明如何在 Skill 包的 `scripts/` 目录中编写可被 Agent 执行的 JavaScript 脚本。它覆盖脚本格式、可访问的全局变量、文件系统读写边界、模块导入规则、可用的内置库以及沙箱限制。
+本文档面向 Skill 开发者，说明如何在 Skill 包的 `scripts/` 目录中编写可被 Agent 执行的 JavaScript 脚本。它覆盖脚本格式、Runtime 模块 API、文件系统读写边界、模块导入规则（含自带第三方库）、以及沙箱限制。
 
 > 本文记录的是**当前已落地**的 `skill.run_script` 能力，不是方案讨论。长期开发以本文、`docs/Agent/Skill.md` 与 `docs/API/Skill.md` 为准。
 
@@ -215,11 +215,11 @@ Profile 的 visible / writable roots 可被自定义 Profile 覆盖；脚本开�
 
 ## 5. 模块导入
 
-脚本支持 ES Module 的 `import` 语法。模块解析有两种方式：相对导入和内置库导入。两者都由引擎在内存中解析——脚本不接触物理文件系统。
+脚本支持 ES Module 的 `import` 语法。模块解析由引擎在内存中完成——脚本不接触物理文件系统。宿主**不内嵌任何第三方库**：需要的库由 skill 自己随 `scripts/` 目录分发，版本完全由 skill 开发者掌控。
 
 ### 5.1 相对导入（`./` 或 `../`）
 
-相对导入引用当前 Skill `scripts/` 目录内的其他模块。执行时，Application 将 skill 的 `scripts/**/*.js` 全部读取为**内存模块快照**（逻辑模块名 → 源码字符串），相对导入按 importer 的逻辑模块名规范化解析，且只能命中这张快照中的模块——快照外的模块（含越界 `../`）解析失败，模块声明/求值报错。
+相对导入引用当前 Skill `scripts/` 目录内的其他模块（含自带的第三方库文件）。执行时，Application 将 skill 的 `scripts/**/*.js` 全部读取为**内存模块快照**（逻辑模块名 → 源码字符串），相对导入按 importer 的逻辑模块名规范化解析，且只能命中这张快照中的模块——快照外的模块（含越界 `../` 与裸模块名）解析失败，模块声明/求值报错。
 
 ```js
 // 导入同目录下的 helper.js
@@ -227,14 +227,17 @@ import { format } from './helper.js';
 
 // 导入子目录下的模块
 import { parse } from './lib/parser.js';
+
+// 导入自带的第三方库（见 5.2）
+import { marked } from './vendor/marked.js';
 ```
 
 模块快照上限（fail-fast，超过即拒绝执行）：
 
 | 限制项 | 上限 |
 | --- | --- |
-| 模块数量 | 32 个 |
-| 源码总字节数 | 512 KB（524,288 字节） |
+| 模块数量 | 64 个 |
+| 源码总字节数 | 2 MB（2,097,152 字节） |
 
 ```text
 my-skill/
@@ -243,115 +246,45 @@ my-skill/
     helper.js        ← 可被 main.js import
     lib/
       parser.js      ← 可被 main.js import (./lib/parser.js)
+    vendor/
+      marked.js      ← 自带的第三方库 (./vendor/marked.js)
 ```
 
-### 5.2 内置库导入（`@tauritavern/vendor/*`）
+### 5.2 自带第三方库
 
-内置公共库以 `@tauritavern/vendor/` 为命名空间前缀，在编译期内嵌进 adapter 二进制，通过 `BuiltinLoader` 注册到运行时。脚本经带命名空间的模块名导入，不会与 skill 自带模块冲突。
+沙箱不提供任何内置第三方库，宿主升级也不会改变脚本可用的库版本——需要的库随 skill 分发，skill 开发者自行管理版本与更新。
+
+放置位置：skill 的 `scripts/` 下任意子目录（推荐 `scripts/vendor/`），经相对导入使用。
+
+打包要求：
+
+- **单文件 ESM bundle**：把库及其全部依赖打进一个 `.js` 文件（`import`/`export` 语法保留，不能有残留的外部裸模块导入）。
+- **零 Node / 浏览器依赖**：不能引用 `process`、`Buffer`、`fs`、DOM 等宿主对象。
+- **计入模块快照上限**：64 个文件 / 2 MB 总量（见 5.1），带多个大库时注意精简。
+
+推荐用 [esbuild](https://esbuild.github.io/) 打包：
+
+```bash
+# 在含 node_modules 的目录下，把 marked 连同依赖打成单文件 ESM
+npx esbuild --bundle marked --format=esm --outfile=my-skill/scripts/vendor/marked.js
+```
 
 ```js
-import { marked } from '@tauritavern/vendor/marked';
-import dayjs from '@tauritavern/vendor/dayjs';
-import { chunk, uniq } from '@tauritavern/vendor/es-toolkit';
+// my-skill/scripts/main.js
+import { marked } from './vendor/marked.js';
+
+export default function (args) {
+  return { html: marked.parse(args.markdown ?? '') };
+}
 ```
-
-内置库列表见第 6 节。裸模块名（如 `marked`、`dayjs`）**不再支持**——必须使用 `@tauritavern/vendor/` 前缀。
-
-## 6. 可用的内置库
-
-内置库当前提供以下库，均以单文件 ESM bundle 形式编译期内嵌进 adapter 二进制，自包含、零外部依赖：
-
-| 模块名 | 版本 | 用途 |
-| --- | --- | --- |
-| `@tauritavern/vendor/marked` | 18.x | Markdown → HTML（剧情摘要、世界书渲染等） |
-| `@tauritavern/vendor/dayjs` | 1.11.x | 时间解析 / 格式化 / 计算（不可变 API） |
-| `@tauritavern/vendor/es-toolkit` | 1.x | 通用工具库（lodash 的轻量替代）：数组 / 字符串 / 对象 / 函数 |
-| `@tauritavern/vendor/slugify` | 1.x | 字符串 slug 化（标题 → URL / 文件名） |
-| `@tauritavern/vendor/fast-xml-parser` | 5.x | XML ↔ JS 对象双向转换（含属性 / CDATA / 命名空间） |
-| `@tauritavern/vendor/papaparse` | 5.x | CSV ↔ JSON 双向转换（自动分隔符检测、RFC 4180） |
 
 > JSON 处理不需要库：QuickJS 内置 `JSON.parse` / `JSON.stringify`。
 > 正则表达式不需要库：QuickJS 内置完整 `RegExp` 支持。
+> 打包后建议本地冒烟执行一次，确认无外部依赖残留。
 
-### 6.1 用法示例
+## 6. 沙箱限制
 
-```js
-// marked — Markdown → HTML
-import { marked } from '@tauritavern/vendor/marked';
-
-export default function (args) {
-  const html = marked.parse(args.markdown ?? '');
-  return { html };
-}
-```
-
-```js
-// dayjs — 时间处理
-import dayjs from '@tauritavern/vendor/dayjs';
-
-export default function (args) {
-  const d = dayjs(args.date);
-  return {
-    formatted: d.format('YYYY-MM-DD HH:mm:ss'),
-    plusDays: d.add(3, 'day').format('YYYY-MM-DD'),
-  };
-}
-```
-
-```js
-// es-toolkit — 通用工具
-import { chunk, uniq, pick, sum, groupBy } from '@tauritavern/vendor/es-toolkit';
-
-export default function () {
-  return {
-    chunk: chunk([1, 2, 3, 4, 5], 2),           // [[1,2],[3,4],[5]]
-    uniq: uniq([1, 1, 2, 3, 3]),                 // [1,2,3]
-    pick: pick({ a: 1, b: 2, c: 3 }, ['a', 'c']),// { a:1, c:3 }
-    sum: sum([1, 2, 3]),                          // 6
-  };
-}
-```
-
-```js
-// slugify — 标题 → slug
-import slugify from '@tauritavern/vendor/slugify';
-
-export default function (args) {
-  return { slug: slugify(args.title ?? '') };
-}
-```
-
-```js
-// fast-xml-parser — XML ↔ JS 对象
-import { XMLParser, XMLBuilder } from '@tauritavern/vendor/fast-xml-parser';
-
-export default function (args) {
-  const parser = new XMLParser({ ignoreAttributes: false });
-  const obj = parser.parse(args.xml);
-  const builder = new XMLBuilder({ ignoreAttributes: false });
-  const xml = builder.build({ note: { to: 'Tove' } });
-  return { obj, xml };
-}
-```
-
-```js
-// papaparse — CSV ↔ JSON
-import Papa from '@tauritavern/vendor/papaparse';
-
-export default function (args) {
-  const result = Papa.parse(args.csv, { header: true, skipEmptyLines: true });
-  const csv = Papa.unparse([{ name: 'A', age: 20 }, { name: 'B', age: 30 }]);
-  return { rows: result.data, csv };
-}
-```
-
-### 6.2 dayjs 插件说明
-
-dayjs 默认只带核心功能。当前提供的是**核心单文件**，插件（如 `relativeTime`、`utc`、`timezone`）与 locale 未打包。如需这些能力，应以内置库形式新增 `@tauritavern/vendor/` 前缀的打包插件文件。
-
-## 7. 沙箱限制
-
-### 7.1 资源限制
+### 6.1 资源限制
 
 | 限制项 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -377,7 +310,7 @@ dayjs 默认只带核心功能。当前提供的是**核心单文件**，插件�
 - 超时：`skill.run_script_execution_failed`，消息包含 `timed out`。
 - 返回值超限：`skill.run_script_result_too_large`，提示用 `workspace.writeText` 将大输出写入 workspace 而非直接返回。
 
-### 7.2 隔离语义
+### 6.2 隔离语义
 
 - 每次执行创建**全新的 QuickJS Runtime + Context**，不存在跨执行的共享状态。
 - 脚本在 `spawn_blocking` 中同步执行，不阻塞 tokio 运行时。
@@ -387,7 +320,7 @@ dayjs 默认只带核心功能。当前提供的是**核心单文件**，插件�
 - 没有 Node / 浏览器内置对象：`process`、`Buffer`、`module`、`require`（CommonJS）、`window`、`document` 等均不可用；脚本只能通过 ES Module `import` 从 `@tauritavern/runtime/v1` 导入 `workspace` / `context` / `log` 访问外部能力。
 - `eval()` / `new Function()` 是 QuickJS 的标准语言特性、并未禁用，但它们无法逃逸沙箱（没有 Node 对象、没有网络、文件读写受 `workspace` 门禁）。不要依赖它们访问外部资源。
 
-### 7.3 安全边界汇总
+### 6.3 安全边界汇总
 
 | 能力 | 是否可用 |
 | --- | --- |
@@ -395,22 +328,20 @@ dayjs 默认只带核心功能。当前提供的是**核心单文件**，插件�
 | 写 writable roots 内文件 | 是 |
 | 读 visible roots 外文件 | 否（fail-fast） |
 | 绝对路径 / `..` 逃逸 | 否（fail-fast） |
-| 导入 Skill scripts/ 内的模块 | 是（内存快照解析） |
-| 导入内置库（`@tauritavern/vendor/*`） | 是 |
+| 导入 Skill scripts/ 内的模块（含自带库） | 是（内存快照解析） |
 | 导入快照外 / scripts/ 外的模块 | 否（fail-fast） |
 | 网络请求 | 否 |
 | 修改变量 / 世界书 | 否（fail-fast） |
 | 访问 Node / 浏览器内置对象 | 否 |
 | 访问进程 / shell | 否 |
 
-## 8. 完整示例
+## 7. 完整示例
 
-### 8.1 数据处理脚本
+### 7.1 数据处理脚本
 
 ```js
 // skills/data-processor/scripts/process.js
 
-import { chunk } from '@tauritavern/vendor/es-toolkit';
 import { context, workspace, log } from '@tauritavern/runtime/v1';
 
 export default function (args) {
@@ -427,9 +358,13 @@ export default function (args) {
     result = result.toUpperCase();
   }
 
-  // 分块处理
+  // 分块处理（原生实现，无需第三方库）
   const lines = result.split('\n');
-  const batches = chunk(lines, config.batchSize ?? 10);
+  const size = config.batchSize ?? 10;
+  const batches = [];
+  for (let i = 0; i < lines.length; i += size) {
+    batches.push(lines.slice(i, i + size));
+  }
 
   // 写入结果
   workspace.writeText('output/result.txt', batches.map(b => b.join('\n')).join('\n---\n'));
@@ -450,13 +385,15 @@ export default function (args) {
 }
 ```
 
-### 8.2 使用多模块的脚本
+### 7.2 使用多模块与自带库的脚本
 
 ```js
 // skills/markdown-builder/scripts/main.js
+// marked 与 dayjs 由 skill 自带（见 5.2 的 esbuild 打包方式），
+// 版本由 skill 开发者自行管理。
 
-import { marked } from '@tauritavern/vendor/marked';
-import dayjs from '@tauritavern/vendor/dayjs';
+import { marked } from './vendor/marked.js';
+import dayjs from './vendor/dayjs.js';
 import { workspace } from '@tauritavern/runtime/v1';
 import { formatHeader } from './format.js';
 
@@ -484,7 +421,7 @@ export function formatHeader(title) {
 }
 ```
 
-### 8.3 SKILL.md 中的脚本说明
+### 7.3 SKILL.md 中的脚本说明
 
 在 `SKILL.md` 中应明确记录每个脚本的参数和返回值，以便模型正确调用：
 
@@ -515,7 +452,7 @@ Processes input text with configurable format and batch size.
 - Writes `output/result.txt`.
 ```
 
-## 9. 约束清单
+## 8. 约束清单
 
 1. **入口脚本必须是 ES module**：使用 `export default` 或 `export function main` 导出入口函数；缺失导出会报错，不会静默返回 `undefined`。
 2. **返回值必须 JSON 可序列化**：返回值经 `JSON.stringify` 序列化传回宿主；循环引用、`BigInt`、`Symbol`、函数、`undefined` 会导致失败。
@@ -525,8 +462,8 @@ Processes input text with configurable format and batch size.
 6. **脚本名称必须匹配 `^[a-z0-9][a-z0-9-]*$`**：小写字母、数字、连字符，字母或数字开头；不带 `.js` 扩展名。
 7. **不要依赖跨执行状态**：每次 `skill.run_script` 调用都是全新的 Runtime，没有全局变量、缓存或闭包持久化。
 8. **不要使用 Node / 浏览器 API**：没有 `process`、`Buffer`、`fs`、`http`、`crypto`、`setTimeout`、`fetch` 等。
-9. **内置库使用 `@tauritavern/vendor/` 前缀导入**：裸模块名（如 `marked`）不再支持，必须使用 `@tauritavern/vendor/marked`。
-10. **模块快照有上限**：skill `scripts/` 下最多 32 个 `.js` 文件、总计 512 KB；超过则拒绝执行。
+9. **宿主没有内置第三方库**：需要的库随 skill 自己的 `scripts/` 分发（单文件 ESM bundle，见 5.2），版本由 skill 开发者管理。
+10. **模块快照有上限**：skill `scripts/` 下最多 64 个 `.js` 文件、总计 2 MB；超过则拒绝执行。
 11. **写入是最终状态语义**：同路径多次写只保留最后一次内容；快照后外部修改会导致 stale 冲突报错。
 12. **在 SKILL.md 中记录脚本契约**：模型通过 SKILL.md 了解脚本参数和返回值；缺少文档会导致模型无法正确调用。
 13. **宿主能力只能从 `@tauritavern/runtime/v1` 导入**：沙箱没有全局对象，`workspace` / `context` / `log` 必须通过 `import` 从 `@tauritavern/runtime/v1` 获取。
