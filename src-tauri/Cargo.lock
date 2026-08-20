@@ -8392,7 +8392,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "tt-domain",
  "tt-ports",
 ]
 
@@ -8571,6 +8570,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
  "tokio",
  "tokio-util",
  "tt-contracts",

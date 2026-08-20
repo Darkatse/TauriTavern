@@ -38,6 +38,8 @@ pub(crate) fn json_to_js<'js>(
     }
 }
 
+/// 仅测试使用的 JS → JSON 转换（引擎返回值边界已改用 JS 侧 JSON.stringify）。
+#[cfg(test)]
 pub(crate) fn js_to_json<'js>(
     _ctx: &Ctx<'js>,
     value: &JsValue<'js>,
@@ -78,6 +80,7 @@ pub(crate) fn js_to_json<'js>(
     Ok(JsonValue::Null)
 }
 
+#[cfg(test)]
 fn as_exact_int(value: f64) -> Option<i64> {
     if value.fract() == 0.0 && value.is_finite() && value.abs() <= 9.007_199_254_740_992e15 {
         Some(value as i64)

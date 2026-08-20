@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use rquickjs::loader::{BuiltinLoader, BuiltinResolver};
-use rquickjs::{Context, Ctx, Function, Module, Runtime, Value as JsValue};
+use rquickjs::{Context, Ctx, Function, Module, Object, Runtime, Value as JsValue};
 use tokio::task::spawn_blocking;
 
 use tt_ports::skill_script::{
@@ -22,7 +22,7 @@ use tt_ports::skill_script::{
 use crate::api::{
     register_fs_api, register_log_api, register_variables_api, register_world_info_api, OverlayFs,
 };
-use crate::convert::{json_to_js, js_to_json};
+use crate::convert::json_to_js;
 use crate::skill_libs::builtin_modules;
 
 pub const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -142,33 +142,68 @@ fn execute_sync(
         register_log_api(&ctx, overlay_for_log)?;
 
         let declared = Module::declare(ctx.clone(), entry_module.clone(), entry_source)?;
-        let (module, _promise) = declared.eval()?;
+        let (module, eval_promise) = declared.eval()?;
+        // 顶层 await：驱动 job 队列直到模块求值 settle。
+        // 沙箱内没有宿主异步 API，等待外部事件的 await 无法 settle
+        // → job 队列耗尽返回 WouldBlock → 落入下方执行错误分支。
+        eval_promise.finish::<JsValue>()?;
 
         let js_args = json_to_js(&ctx, &args)?;
-        let entry_result = if let Ok(function) = module.get::<_, Function>("default") {
-            function.call::<_, JsValue>((js_args,))?
-        } else if let Ok(function) = module.get::<_, Function>("main") {
-            function.call::<_, JsValue>((js_args,))?
+        let entry = module
+            .get::<_, Function>("default")
+            .or_else(|_| module.get::<_, Function>("main"))
+            .map_err(|_| {
+                rquickjs::Exception::throw_message(
+                    &ctx,
+                    "skill script must export a `default` or `main` function",
+                )
+            })?;
+        let returned = entry.call::<_, JsValue>((js_args,))?;
+        // async 入口：等待返回的 Promise settle（rejection 作为 JS 异常传播）
+        let entry_value = if returned.is_promise() {
+            returned
+                .into_promise()
+                .ok_or_else(|| {
+                    rquickjs::Exception::throw_message(&ctx, "expected a promise value")
+                })?
+                .finish::<JsValue>()?
         } else {
-            JsValue::new_undefined(ctx.clone())
+            returned
         };
 
-        js_to_json(&ctx, &entry_result)
+        // 返回值边界：用 JavaScript 的 JSON.stringify 序列化，再交给 serde 解析。
+        // 循环结构在 JS 侧抛 TypeError；undefined/函数不可序列化时明确报错。
+        let json_object = ctx.globals().get::<_, Object>("JSON")?;
+        let stringify = json_object.get::<_, Function>("stringify")?;
+        let stringified = stringify.call::<_, JsValue>((entry_value,))?;
+        if stringified.is_undefined() {
+            return Err(rquickjs::Exception::throw_message(
+                &ctx,
+                "skill script must return a JSON-serializable value; `undefined` and functions cannot be returned (return `null` explicitly instead)",
+            ));
+        }
+        let text = stringified
+            .as_string()
+            .ok_or_else(|| {
+                rquickjs::Exception::throw_message(&ctx, "JSON.stringify returned a non-string value")
+            })?
+            .to_string()?;
+        Ok(text)
     });
 
     match outcome {
-        Ok(value) => {
-            let encoded = serde_json::to_string(&value).map_err(|error| {
-                SkillScriptEngineError::ExecutionFailed {
-                    message: format!("Failed to serialize skill script result: {error}"),
-                }
-            })?;
-            if encoded.len() > max_result_bytes {
+        Ok(text) => {
+            if text.len() > max_result_bytes {
                 return Err(SkillScriptEngineError::ResultTooLarge {
-                    actual_bytes: encoded.len(),
+                    actual_bytes: text.len(),
                     limit_bytes: max_result_bytes,
                 });
             }
+            let value = serde_json::from_str(&text).map_err(|error| {
+                SkillScriptEngineError::ExecutionFailed {
+                    message: format!("Skill script result is not valid JSON: {error}"),
+                }
+            })?;
             let overlay = overlay.borrow();
             Ok(SkillScriptResult {
                 value,
@@ -380,6 +415,118 @@ mod tests {
         req.entry_module = "scripts/absent.js".to_string();
         let error = engine.execute(req).await.expect_err("must fail");
         assert!(matches!(error, SkillScriptEngineError::Internal(..)));
+    }
+
+    #[tokio::test]
+    async fn async_entry_function_resolves() {
+        let engine = QuickJsScriptEngine::new();
+        let result = engine
+            .execute(request(
+                "export default async function (args) { return { doubled: args.n * 2 }; }",
+                json!({ "n": 21 }),
+            ))
+            .await
+            .expect("async entry must resolve");
+        assert_eq!(result.value, json!({ "doubled": 42 }));
+    }
+
+    #[tokio::test]
+    async fn promise_rejection_propagates() {
+        let engine = QuickJsScriptEngine::new();
+        let error = engine
+            .execute(request(
+                "export default async function () { throw new Error('async kaboom'); }",
+                json!({}),
+            ))
+            .await
+            .expect_err("rejection must propagate");
+        match error {
+            SkillScriptEngineError::ExecutionFailed { message } => {
+                assert!(message.contains("async kaboom"), "message was: {message}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn top_level_await_is_waited() {
+        let engine = QuickJsScriptEngine::new();
+        let result = engine
+            .execute(request(
+                "let ready = false;\nawait Promise.resolve().then(() => { ready = true; });\nexport default function () { return { ready }; }",
+                json!({}),
+            ))
+            .await
+            .expect("top-level await must settle");
+        assert_eq!(result.value, json!({ "ready": true }));
+    }
+
+    #[tokio::test]
+    async fn unresolved_top_level_await_fails() {
+        // 没有宿主异步 API：永远 pending 的顶层 await 无法 settle → 报错而非丢弃
+        let engine = QuickJsScriptEngine::new();
+        let error = engine
+            .execute(request(
+                "await new Promise(() => {});\nexport default function () { return 1; }",
+                json!({}),
+            ))
+            .await
+            .expect_err("must fail");
+        assert!(matches!(
+            error,
+            SkillScriptEngineError::ExecutionFailed { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn missing_export_fails_with_clear_message() {
+        let engine = QuickJsScriptEngine::new();
+        let error = engine
+            .execute(request("export const helper = 42;", json!({})))
+            .await
+            .expect_err("must fail on missing export");
+        match error {
+            SkillScriptEngineError::ExecutionFailed { message } => {
+                assert!(
+                    message.contains("default") || message.contains("main"),
+                    "message was: {message}"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn circular_reference_fails_instead_of_recursing() {
+        // JSON.stringify 在 JS 侧对循环结构抛 TypeError，不再依赖 Rust 递归转换
+        let engine = QuickJsScriptEngine::new();
+        let error = engine
+            .execute(request(
+                "export default function () { const a = {}; a.self = a; return a; }",
+                json!({}),
+            ))
+            .await
+            .expect_err("must fail");
+        match error {
+            SkillScriptEngineError::ExecutionFailed { message } => {
+                assert!(message.to_lowercase().contains("circular"), "message was: {message}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn undefined_return_is_rejected() {
+        // undefined / 函数不可 JSON 序列化：明确报错，不再静默转 null
+        let engine = QuickJsScriptEngine::new();
+        let error = engine
+            .execute(request("export default function () { return undefined; }", json!({})))
+            .await
+            .expect_err("must fail");
+        assert!(matches!(
+            error,
+            SkillScriptEngineError::ExecutionFailed { .. }
+        ));
     }
 
     #[tokio::test]
