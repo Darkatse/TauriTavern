@@ -653,7 +653,7 @@ fn persistent_change_payloads(changes: &WorkspacePersistentChangeSet) -> Vec<Val
         .collect()
 }
 
-fn is_auto_commit_text_path(path: &WorkspacePath) -> bool {
+pub(super) fn is_auto_commit_text_path(path: &WorkspacePath) -> bool {
     Path::new(path.as_str())
         .extension()
         .and_then(|extension| extension.to_str())

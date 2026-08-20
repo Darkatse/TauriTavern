@@ -10,13 +10,16 @@ use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
 use super::list::skill_is_visible;
 use crate::errors::ApplicationError;
+use crate::services::agent_workspace_scope::is_writable_workspace_path;
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentToolResult, WorkspaceFileWriteMode, WorkspacePath};
+use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
 use tt_domain::models::skill::{SkillFileKind, SkillFileRef, SkillScope};
 use tt_domain::models::skill_script::{ActivatedWorldInfoEntry, SillyTavernVariableSnapshot};
 use tt_domain::models::tool::ToolInvocation;
-use tt_ports::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
+use tt_ports::repositories::workspace_repository::{
+    WorkspaceEntryKind, WorkspaceFile, WorkspaceRepository, WorkspaceWriteGuard,
+};
 use tt_ports::skill_script::{SkillScriptEngine, SkillScriptEngineError, SkillScriptRequest};
 
 const SKILL_SCRIPT_INVALID_NAME: &str = "skill.run_script_invalid_name";
@@ -24,6 +27,7 @@ const SKILL_SCRIPT_SKILL_NOT_VISIBLE: &str = "skill.run_script_skill_not_visible
 const SKILL_SCRIPT_NOT_FOUND: &str = "skill.run_script_not_found";
 const SKILL_SCRIPT_EXECUTION_FAILED: &str = "skill.run_script_execution_failed";
 const SKILL_SCRIPT_RESULT_TOO_LARGE: &str = "skill.run_script_result_too_large";
+const SKILL_SCRIPT_WRITE_FAILED: &str = "skill.run_script_write_failed";
 
 /// 单个 skill 脚本执行允许携带的最大模块数与源码总字节数（fail-fast 上限）。
 const MAX_SCRIPT_MODULES: usize = 32;
@@ -138,13 +142,17 @@ pub(in crate::services::agent_tools) async fn script(
         ));
     }
 
-    // 构建工作区文件快照：列出 visible_roots 下的文件并读取内容。
-    let workspace_files = build_workspace_snapshot(
+    // 构建工作区文件快照：列出 visible_roots 下的文件并读取内容（含 sha256）。
+    let workspace_snapshot = build_workspace_snapshot(
         workspace_repository,
         run_id,
         &profile.workspace.visible_roots,
     )
     .await?;
+    let workspace_files = workspace_snapshot
+        .iter()
+        .map(|(path, file)| (path.clone(), file.text.clone()))
+        .collect::<HashMap<_, _>>();
 
     // 投影世界书快照为纯 JSON
     let world_info = build_world_info_json(prompt_snapshot);
@@ -202,20 +210,92 @@ pub(in crate::services::agent_tools) async fn script(
         Err(error) => return Err(ApplicationError::from(error)),
     };
 
-    // 应用 delta 写入：通过 write_text_guarded 落盘
-    let mut last_written_file: Option<tt_ports::repositories::workspace_repository::WorkspaceFile> = None;
+    // ---- 落盘前一次性验证所有路径 ----
+    // Application 重新验证正式写入策略（不复用 adapter 内存前缀检查的结论），
+    // 并按快照时的文件状态映射 CAS guard；任何路径非法都在落盘前失败。
+    let mut guards: Vec<(&tt_ports::skill_script::SkillScriptWrite, WorkspacePath, WorkspaceWriteGuard)> =
+        Vec::with_capacity(result.writes.len());
     for write in &result.writes {
         let path = WorkspacePath::parse(&write.path).map_err(ApplicationError::from)?;
-        let file = workspace_repository
-            .write_text_guarded(run_id, &path, &write.text, WorkspaceWriteGuard::Unchecked)
+        if !is_writable_workspace_path(&path, &profile.workspace.writable_roots) {
+            tracing::warn!(
+                "skill.run_script rejected write outside writable roots: {}",
+                write.path
+            );
+            return Ok((
+                tool_error(
+                    call,
+                    SKILL_SCRIPT_WRITE_FAILED,
+                    &format!(
+                        "Write path `{}` is outside the writable workspace roots ({}); \
+                         only paths under {} can be written.",
+                        write.path,
+                        profile.workspace.writable_roots.join(", "),
+                        profile.workspace.writable_roots.join(", ")
+                    ),
+                ),
+                AgentToolEffect::None,
+            ));
+        }
+        // guard 基于快照时的文件状态：存在 → MustMatch(快照 sha)；不存在 → MustNotExist
+        let guard = match workspace_snapshot.get(write.path.as_str()) {
+            Some(existing) => {
+                WorkspaceWriteGuard::MustMatchSha256(existing.sha256.clone())
+            }
+            None => WorkspaceWriteGuard::MustNotExist,
+        };
+        guards.push((write, path, guard));
+    }
+
+    // ---- 批量落盘：最终 delta 逐文件提交；中途失败保留已发生副作用 ----
+    let mut written_files: Vec<WorkspaceFile> = Vec::with_capacity(guards.len());
+    for (write, path, guard) in guards {
+        match workspace_repository
+            .write_text_guarded(run_id, &path, &write.text, guard)
             .await
-            .map_err(ApplicationError::from)?;
-        tracing::info!(
-            "skill.run_script wrote workspace file: {} ({} bytes)",
-            write.path,
-            write.text.len()
-        );
-        last_written_file = Some(file);
+        {
+            Ok(file) => {
+                tracing::info!(
+                    "skill.run_script wrote workspace file: {} ({} bytes)",
+                    write.path,
+                    write.text.len()
+                );
+                written_files.push(file);
+            }
+            Err(error) => {
+                // fail-fast：停止后续写入；已写入文件保留在 effect 与错误消息中，
+                // 副作用不从 journal / 事件 / auto-commit 中消失。
+                tracing::warn!(
+                    error = %error,
+                    "skill.run_script write failed: {}", write.path
+                );
+                let already_written = written_files.len();
+                let written_paths = written_files
+                    .iter()
+                    .map(|f| f.path.as_str().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let effect = if written_files.is_empty() {
+                    AgentToolEffect::None
+                } else {
+                    AgentToolEffect::WorkspaceFilesWritten {
+                        files: written_files,
+                    }
+                };
+                return Ok((
+                    tool_error(
+                        call,
+                        SKILL_SCRIPT_WRITE_FAILED,
+                        &format!(
+                            "Write to `{}` failed: {error}. {already_written}/{} writes were applied; already written: {written_paths}. Re-read the listed files before retrying.",
+                            write.path,
+                            result.writes.len(),
+                        ),
+                    ),
+                    effect,
+                ));
+            }
+        }
     }
 
     // 输出日志
@@ -245,12 +325,12 @@ pub(in crate::services::agent_tools) async fn script(
         result.writes.len()
     );
 
-    let effect = match last_written_file {
-        Some(file) => AgentToolEffect::WorkspaceFileWritten {
-            file,
-            mode: WorkspaceFileWriteMode::Replace,
-        },
-        None => AgentToolEffect::None,
+    let effect = if written_files.is_empty() {
+        AgentToolEffect::None
+    } else {
+        AgentToolEffect::WorkspaceFilesWritten {
+            files: written_files,
+        }
     };
 
     Ok((
@@ -307,12 +387,15 @@ async fn build_script_modules(
     Ok(modules)
 }
 
-/// 从 visible_roots 下读取所有文件，构建 `逻辑路径 → 文本内容` 快照。
+/// 从 visible_roots 下读取所有文件，构建 `逻辑路径 → WorkspaceFile` 快照
+/// （含 sha256，供写入 guard 映射使用）。
+/// fail-fast：列表截断或任一文件读取失败时直接报错，
+/// 不给脚本一个不完整却不可知的 VFS。
 async fn build_workspace_snapshot(
     repo: &dyn WorkspaceRepository,
     run_id: &str,
     visible_roots: &[String],
-) -> Result<HashMap<String, String>, ApplicationError> {
+) -> Result<HashMap<String, WorkspaceFile>, ApplicationError> {
     const MAX_DEPTH: usize = 10;
     const MAX_ENTRIES: usize = 1000;
 
@@ -323,26 +406,24 @@ async fn build_workspace_snapshot(
             continue;
         }
         let root_path = WorkspacePath::parse(root).map_err(ApplicationError::from)?;
-        // 列出该根目录下的文件（深度足够覆盖常见场景）
         let listing = repo
             .list_files(run_id, Some(&root_path), MAX_DEPTH, MAX_ENTRIES)
             .await
             .map_err(ApplicationError::from)?;
+        if listing.truncated {
+            return Err(ApplicationError::ValidationError(format!(
+                "Workspace snapshot for root `{root}` was truncated at {MAX_ENTRIES} entries; \
+                 the skill script would see an incomplete workspace. \
+                 Reduce the number of files in the workspace."
+            )));
+        }
         for entry in listing.entries {
-            if entry.kind == tt_ports::repositories::workspace_repository::WorkspaceEntryKind::File
-            {
-                match repo.read_text(run_id, &entry.path).await {
-                    Ok(file) => {
-                        snapshot.insert(entry.path.as_str().to_string(), file.text);
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error,
-                            path = entry.path.as_str(),
-                            "Failed to read workspace file for script snapshot; skipping"
-                        );
-                    }
-                }
+            if entry.kind == WorkspaceEntryKind::File {
+                let file = repo
+                    .read_text(run_id, &entry.path)
+                    .await
+                    .map_err(ApplicationError::from)?;
+                snapshot.insert(entry.path.as_str().to_string(), file);
             }
         }
     }
@@ -409,7 +490,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
-    use tt_domain::errors::DomainError;
+    use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
     use tt_domain::models::agent::profile::{
         AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy,
         AgentDelegationPolicy, AgentModelBinding, AgentModelBindingMode, AgentPresetBinding,
@@ -612,6 +693,17 @@ mod tests {
     struct FakeWorkspaceRepo {
         files: HashMap<String, String>,
         written: Mutex<Vec<(String, String)>>,
+        /// list_files 是否报告 truncated
+        truncated: bool,
+        /// 指定此路径时，write_text_guarded 返回 InternalError 模拟落盘失败
+        fail_write_on: Option<String>,
+        /// 快照阶段 read_text 的数据源；为 None 时退回 self.files。
+        /// 用于模拟"快照后文件被外部修改"的并发场景。
+        snapshot_content: Option<HashMap<String, String>>,
+    }
+
+    fn fake_sha(text: &str) -> String {
+        format!("sha:{text}")
     }
 
     #[async_trait]
@@ -641,8 +733,40 @@ mod tests {
             _run_id: &str,
             path: &WorkspacePath,
             text: &str,
-            _guard: WorkspaceWriteGuard,
+            guard: WorkspaceWriteGuard,
         ) -> Result<WorkspaceFile, DomainError> {
+            if self.fail_write_on.as_deref() == Some(path.as_str()) {
+                return Err(DomainError::InternalError(format!(
+                    "simulated write failure: {}",
+                    path.as_str()
+                )));
+            }
+            let existing = self.files.get(path.as_str());
+            match guard {
+                WorkspaceWriteGuard::Unchecked => {}
+                WorkspaceWriteGuard::MustNotExist => {
+                    if let Some(existing_text) = existing {
+                        return Err(DomainError::workspace_write_conflict(
+                            path.as_str(),
+                            WorkspaceWriteConflictKind::AlreadyExists {
+                                actual_sha256: fake_sha(existing_text),
+                            },
+                        ));
+                    }
+                }
+                WorkspaceWriteGuard::MustMatchSha256(expected) => {
+                    let actual = existing.map(|t| fake_sha(t));
+                    if actual.as_deref() != Some(expected.as_str()) {
+                        return Err(DomainError::workspace_write_conflict(
+                            path.as_str(),
+                            WorkspaceWriteConflictKind::Stale {
+                                expected_sha256: expected,
+                                actual_sha256: actual,
+                            },
+                        ));
+                    }
+                }
+            }
             self.written
                 .lock()
                 .await
@@ -651,7 +775,7 @@ mod tests {
                 path: path.clone(),
                 text: text.to_string(),
                 bytes: text.len() as u64,
-                sha256: "fake-sha".to_string(),
+                sha256: fake_sha(text),
             })
         }
         async fn append_text(
@@ -667,13 +791,14 @@ mod tests {
             _run_id: &str,
             path: &WorkspacePath,
         ) -> Result<WorkspaceFile, DomainError> {
-            self.files
+            let source = self.snapshot_content.as_ref().unwrap_or(&self.files);
+            source
                 .get(path.as_str())
                 .map(|text| WorkspaceFile {
                     path: path.clone(),
                     text: text.clone(),
                     bytes: text.len() as u64,
-                    sha256: "fake-sha".to_string(),
+                    sha256: fake_sha(text),
                 })
                 .ok_or_else(|| DomainError::NotFound(format!("File not found: {}", path.as_str())))
         }
@@ -685,8 +810,8 @@ mod tests {
             _max_entries: usize,
         ) -> Result<WorkspaceFileList, DomainError> {
             let prefix = path.map(|p| p.as_str().to_string()).unwrap_or_default();
-            let entries: Vec<_> = self
-                .files
+            let source = self.snapshot_content.as_ref().unwrap_or(&self.files);
+            let entries: Vec<_> = source
                 .keys()
                 .filter_map(|key| {
                     if prefix.is_empty() || key.starts_with(&prefix) {
@@ -701,7 +826,7 @@ mod tests {
                 .collect();
             Ok(WorkspaceFileList {
                 entries,
-                truncated: false,
+                truncated: self.truncated,
             })
         }
         async fn commit_persistent_changes(
@@ -838,6 +963,9 @@ mod tests {
                 workspace_repository: &FakeWorkspaceRepo {
                     files: HashMap::new(),
                     written: Mutex::new(Vec::new()),
+                    truncated: false,
+                    fail_write_on: None,
+                    snapshot_content: None,
                 },
                 run_id: "run-1",
                 prompt_snapshot: None,
@@ -989,6 +1117,9 @@ mod tests {
                 workspace_repository: &FakeWorkspaceRepo {
                     files: HashMap::new(),
                     written: Mutex::new(Vec::new()),
+                    truncated: false,
+                    fail_write_on: None,
+                    snapshot_content: None,
                 },
                 run_id: "run-1",
                 prompt_snapshot: None,
@@ -1039,6 +1170,9 @@ mod tests {
                 workspace_repository: &FakeWorkspaceRepo {
                     files: HashMap::new(),
                     written: Mutex::new(Vec::new()),
+                    truncated: false,
+                    fail_write_on: None,
+                    snapshot_content: None,
                 },
                 run_id: "run-1",
                 prompt_snapshot: None,
@@ -1081,6 +1215,9 @@ mod tests {
                 workspace_repository: &FakeWorkspaceRepo {
                     files: HashMap::new(),
                     written: Mutex::new(Vec::new()),
+                    truncated: false,
+                    fail_write_on: None,
+                    snapshot_content: None,
                 },
                 run_id: "run-1",
                 prompt_snapshot: Some(&prompt_snapshot),
@@ -1125,6 +1262,9 @@ mod tests {
         let workspace_repo = FakeWorkspaceRepo {
             files: HashMap::new(),
             written: Mutex::new(Vec::new()),
+            truncated: false,
+            fail_write_on: None,
+            snapshot_content: None,
         };
         let mut session = session_with_skill("demo");
         let profile = profile(true);
@@ -1132,7 +1272,7 @@ mod tests {
         let (result, effect) = script(
             ScriptContext {
                 skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
-                    script_source: Some("export default function() { return 1; }".to_string()),
+                    script_source: Some("export default function () { return 1; }".to_string()),
                 })),
                 engine: engine.as_ref(),
                 workspace_repository: &workspace_repo,
@@ -1147,7 +1287,7 @@ mod tests {
         .expect("script must succeed");
 
         assert!(!result.is_error);
-        assert!(matches!(effect, AgentToolEffect::WorkspaceFileWritten { .. }));
+        assert!(matches!(effect, AgentToolEffect::WorkspaceFilesWritten { .. }));
 
         let written = workspace_repo.written.lock().await;
         assert_eq!(written.len(), 1);
@@ -1165,6 +1305,322 @@ mod tests {
         .await;
         assert!(!result.is_error);
         assert!(matches!(effect, AgentToolEffect::None));
+    }
+
+    #[tokio::test]
+    async fn multiple_files_written_produce_batch_effect() {
+        let engine = Arc::new(FakeScriptEngine {
+            outcome: FakeOutcome::OkWithWrites {
+                value: json!({ "done": true }),
+                writes: vec![
+                    tt_ports::skill_script::SkillScriptWrite {
+                        path: "output/a.txt".to_string(),
+                        text: "alpha".to_string(),
+                    },
+                    tt_ports::skill_script::SkillScriptWrite {
+                        path: "output/b.txt".to_string(),
+                        text: "beta".to_string(),
+                    },
+                ],
+            },
+            requests: Mutex::new(Vec::new()),
+        });
+        let workspace_repo = FakeWorkspaceRepo {
+            files: HashMap::new(),
+            written: Mutex::new(Vec::new()),
+            truncated: false,
+            fail_write_on: None,
+            snapshot_content: None,
+        };
+        let mut session = session_with_skill("demo");
+        let profile = profile(true);
+
+        let (result, effect) = script(
+            ScriptContext {
+                skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
+                    script_source: Some("export default function () { return 1; }".to_string()),
+                })),
+                engine: engine.as_ref(),
+                workspace_repository: &workspace_repo,
+                run_id: "run-1",
+                prompt_snapshot: None,
+            },
+            &call(json!({ "skill": "demo", "script": "helper" })),
+            &mut session,
+            &profile,
+        )
+        .await
+        .expect("script must succeed");
+
+        assert!(!result.is_error);
+        match effect {
+            AgentToolEffect::WorkspaceFilesWritten { files } => {
+                assert_eq!(files.len(), 2);
+                assert_eq!(files[0].path.as_str(), "output/a.txt");
+                assert_eq!(files[1].path.as_str(), "output/b.txt");
+            }
+            other => panic!("expected batch effect, got: {other:?}"),
+        }
+        let written = workspace_repo.written.lock().await;
+        assert_eq!(written.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn write_outside_writable_roots_is_rejected_before_any_disk_write() {
+        let engine = Arc::new(FakeScriptEngine {
+            outcome: FakeOutcome::OkWithWrites {
+                value: json!({}),
+                writes: vec![
+                    tt_ports::skill_script::SkillScriptWrite {
+                        path: "output/ok.txt".to_string(),
+                        text: "ok".to_string(),
+                    },
+                    tt_ports::skill_script::SkillScriptWrite {
+                        path: "input/forbidden.txt".to_string(),
+                        text: "no".to_string(),
+                    },
+                ],
+            },
+            requests: Mutex::new(Vec::new()),
+        });
+        let workspace_repo = FakeWorkspaceRepo {
+            files: HashMap::new(),
+            written: Mutex::new(Vec::new()),
+            truncated: false,
+            fail_write_on: None,
+            snapshot_content: None,
+        };
+        let mut session = session_with_skill("demo");
+        let profile = profile(true);
+
+        let (result, effect) = script(
+            ScriptContext {
+                skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
+                    script_source: Some("export default function () { return 1; }".to_string()),
+                })),
+                engine: engine.as_ref(),
+                workspace_repository: &workspace_repo,
+                run_id: "run-1",
+                prompt_snapshot: None,
+            },
+            &call(json!({ "skill": "demo", "script": "helper" })),
+            &mut session,
+            &profile,
+        )
+        .await
+        .expect("handler must not propagate application errors");
+
+        assert!(result.is_error);
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some("skill.run_script_write_failed")
+        );
+        assert!(matches!(effect, AgentToolEffect::None));
+        // 一次性验证：任何文件都不落盘（包括列表中合法的 output/ok.txt）
+        let written = workspace_repo.written.lock().await;
+        assert!(written.is_empty(), "no file may be written when any path is invalid");
+    }
+
+    #[tokio::test]
+    async fn existing_file_write_uses_snapshot_sha_guard() {
+        // 快照时文件已存在：guard 必须是 MustMatchSha256(快照 sha)。
+        // 落盘时文件内容未变 → 写入成功。
+        let engine = Arc::new(FakeScriptEngine {
+            outcome: FakeOutcome::OkWithWrites {
+                value: json!({}),
+                writes: vec![tt_ports::skill_script::SkillScriptWrite {
+                    path: "output/existing.txt".to_string(),
+                    text: "rewritten".to_string(),
+                }],
+            },
+            requests: Mutex::new(Vec::new()),
+        });
+        let mut files = HashMap::new();
+        files.insert("output/existing.txt".to_string(), "original".to_string());
+        let workspace_repo = FakeWorkspaceRepo {
+            files,
+            written: Mutex::new(Vec::new()),
+            truncated: false,
+            fail_write_on: None,
+            snapshot_content: None,
+        };
+        let mut session = session_with_skill("demo");
+        let profile = profile(true);
+
+        let (result, effect) = script(
+            ScriptContext {
+                skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
+                    script_source: Some("export default function () { return 1; }".to_string()),
+                })),
+                engine: engine.as_ref(),
+                workspace_repository: &workspace_repo,
+                run_id: "run-1",
+                prompt_snapshot: None,
+            },
+            &call(json!({ "skill": "demo", "script": "helper" })),
+            &mut session,
+            &profile,
+        )
+        .await
+        .expect("script must succeed");
+
+        assert!(!result.is_error);
+        assert!(matches!(effect, AgentToolEffect::WorkspaceFilesWritten { .. }));
+    }
+
+    #[tokio::test]
+    async fn stale_conflict_fails_without_side_effects() {
+        // 快照后文件被外部改动（磁盘 sha 与快照 sha 不符）→ MustMatchSha256 冲突，
+        // 且该冲突在任何落盘前暴露：第一个文件即冲突 → 零副作用。
+        let engine = Arc::new(FakeScriptEngine {
+            outcome: FakeOutcome::OkWithWrites {
+                value: json!({}),
+                writes: vec![tt_ports::skill_script::SkillScriptWrite {
+                    path: "output/stale.txt".to_string(),
+                    text: "new".to_string(),
+                }],
+            },
+            requests: Mutex::new(Vec::new()),
+        });
+        // 快照阶段读到 "original"，写入阶段磁盘已是 "changed-by-someone-else"
+        let mut snapshot_files = HashMap::new();
+        snapshot_files.insert("output/stale.txt".to_string(), "original".to_string());
+        let mut disk_files = HashMap::new();
+        disk_files.insert("output/stale.txt".to_string(), "changed-by-someone-else".to_string());
+        let workspace_repo = FakeWorkspaceRepo {
+            files: disk_files,
+            written: Mutex::new(Vec::new()),
+            truncated: false,
+            fail_write_on: None,
+            snapshot_content: Some(snapshot_files),
+        };
+        let mut session = session_with_skill("demo");
+        let profile = profile(true);
+
+        let (result, effect) = script(
+            ScriptContext {
+                skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
+                    script_source: Some("export default function () { return 1; }".to_string()),
+                })),
+                engine: engine.as_ref(),
+                workspace_repository: &workspace_repo,
+                run_id: "run-1",
+                prompt_snapshot: None,
+            },
+            &call(json!({ "skill": "demo", "script": "helper" })),
+            &mut session,
+            &profile,
+        )
+        .await
+        .expect("conflict must surface as tool error");
+
+        assert!(result.is_error);
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some("skill.run_script_write_failed")
+        );
+        assert!(matches!(effect, AgentToolEffect::None));
+        let written = workspace_repo.written.lock().await;
+        assert!(written.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mid_batch_failure_preserves_already_written_files_in_effect() {
+        // 前一个文件已成功落盘、后一个失败：调用返回 tool_error，
+        // 但已写入文件保留在 effect 中——副作用不从 journal 消失。
+        let engine = Arc::new(FakeScriptEngine {
+            outcome: FakeOutcome::OkWithWrites {
+                value: json!({}),
+                writes: vec![
+                    tt_ports::skill_script::SkillScriptWrite {
+                        path: "output/first.txt".to_string(),
+                        text: "first".to_string(),
+                    },
+                    tt_ports::skill_script::SkillScriptWrite {
+                        path: "output/second.txt".to_string(),
+                        text: "second".to_string(),
+                    },
+                ],
+            },
+            requests: Mutex::new(Vec::new()),
+        });
+        let workspace_repo = FakeWorkspaceRepo {
+            files: HashMap::new(),
+            written: Mutex::new(Vec::new()),
+            truncated: false,
+            fail_write_on: Some("output/second.txt".to_string()),
+            snapshot_content: None,
+        };
+        let mut session = session_with_skill("demo");
+        let profile = profile(true);
+
+        let (result, effect) = script(
+            ScriptContext {
+                skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
+                    script_source: Some("export default function () { return 1; }".to_string()),
+                })),
+                engine: engine.as_ref(),
+                workspace_repository: &workspace_repo,
+                run_id: "run-1",
+                prompt_snapshot: None,
+            },
+            &call(json!({ "skill": "demo", "script": "helper" })),
+            &mut session,
+            &profile,
+        )
+        .await
+        .expect("partial failure must surface as tool error");
+
+        assert!(result.is_error);
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some("skill.run_script_write_failed")
+        );
+        assert!(result.content.contains("output/first.txt"), "message was: {}", result.content);
+        match effect {
+            AgentToolEffect::WorkspaceFilesWritten { files } => {
+                assert_eq!(files.len(), 1);
+                assert_eq!(files[0].path.as_str(), "output/first.txt");
+            }
+            other => panic!("expected partial batch effect, got: {other:?}"),
+        }
+        let written = workspace_repo.written.lock().await;
+        assert_eq!(written.len(), 1);
+        assert_eq!(written[0].0, "output/first.txt");
+    }
+
+    #[tokio::test]
+    async fn truncated_workspace_snapshot_fails_fast() {
+        let engine = Arc::new(FakeScriptEngine {
+            outcome: FakeOutcome::Ok(json!({})),
+            requests: Mutex::new(Vec::new()),
+        });
+        let mut session = session_with_skill("demo");
+        let profile = profile(true);
+
+        let error = script(
+            ScriptContext {
+                skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
+                    script_source: Some("export default function () { return 1; }".to_string()),
+                })),
+                engine: engine.as_ref(),
+                workspace_repository: &FakeWorkspaceRepo {
+                    files: HashMap::new(),
+                    written: Mutex::new(Vec::new()),
+                    truncated: true,
+                    fail_write_on: None,
+                    snapshot_content: None,
+                },
+                run_id: "run-1",
+                prompt_snapshot: None,
+            },
+            &call(json!({ "skill": "demo", "script": "helper" })),
+            &mut session,
+            &profile,
+        )
+        .await
+        .expect_err("truncated snapshot must fail fast");
+        assert!(matches!(error, ApplicationError::ValidationError(message) if message.contains("truncated")));
     }
 
     #[test]

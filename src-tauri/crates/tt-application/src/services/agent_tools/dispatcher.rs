@@ -41,6 +41,11 @@ pub(crate) enum AgentToolEffect {
         replacements: usize,
         old_sha256: String,
     },
+    /// 一次工具调用批量写入多个工作区文件（如 skill 脚本的最终 delta）。
+    /// journal / 事件 / auto-commit 逐文件处理，不再只知最后一个文件。
+    WorkspaceFilesWritten {
+        files: Vec<WorkspaceFile>,
+    },
     ChatCommitRequested {
         path: WorkspacePath,
         mode: AgentChatCommitMode,

@@ -1,5 +1,5 @@
 use crate::errors::ApplicationError;
-use crate::services::agent_workspace_scope::workspace_path_is_under_any_root;
+use crate::services::agent_workspace_scope::{is_writable_workspace_path, workspace_path_is_under_any_root};
 use tt_domain::models::agent::{WorkspaceManifest, WorkspacePath};
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 
@@ -63,9 +63,7 @@ impl WorkspaceAccessPolicy {
     }
 
     pub(super) fn is_writable(&self, path: &WorkspacePath) -> bool {
-        self.writable_roots
-            .iter()
-            .any(|root| path_matches_child(path.as_str(), root.as_str()))
+        is_writable_workspace_path(path, &self.writable_roots)
     }
 }
 
@@ -75,10 +73,4 @@ pub(super) async fn workspace_access_policy(
 ) -> Result<WorkspaceAccessPolicy, ApplicationError> {
     let manifest = workspace_repository.read_manifest(run_id).await?;
     WorkspaceAccessPolicy::from_manifest(&manifest)
-}
-
-fn path_matches_child(path: &str, root: &str) -> bool {
-    path.len() > root.len()
-        && path.starts_with(root)
-        && path.as_bytes().get(root.len()) == Some(&b'/')
 }

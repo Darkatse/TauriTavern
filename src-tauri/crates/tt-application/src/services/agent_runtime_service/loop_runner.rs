@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use serde_json::{Value, json};
 
 use super::commit_ledger::RunCommitLedger;
+use super::commit::is_auto_commit_text_path;
 use super::model_turn::{
     append_tool_turn_to_request, assistant_message_for_next_turn, extract_response_text,
 };
@@ -16,7 +17,7 @@ use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
     AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentToolResult, WorkspacePath,
+    AgentToolResult, WorkspaceFileWriteMode, WorkspacePath,
 };
 use tt_domain::models::tool::ToolTurnContract;
 use tt_domain::text_metrics::TextMetrics;
@@ -225,6 +226,30 @@ impl AgentRuntimeService {
                         )
                         .await?;
                         text_mutation = Some((call.call_id, file));
+                    }
+                    AgentToolEffect::WorkspaceFilesWritten { files } => {
+                        for file in &files {
+                            let metrics = TextMetrics::from_text(&file.text);
+                            self.event(
+                                run_id,
+                                AgentRunEventLevel::Info,
+                                "workspace_file_written",
+                                json!({
+                                    "invocationId": invocation_id,
+                                    "path": file.path.as_str(),
+                                    "mode": WorkspaceFileWriteMode::Replace,
+                                    "chars": metrics.chars,
+                                    "words": metrics.words,
+                                    "sha256": file.sha256.as_str(),
+                                }),
+                            )
+                            .await?;
+                            // auto-commit：批量写入中所有符合资格的路径都参与，
+                            // 取最后一个符合条件的文件（与单文件写入语义一致）
+                            if is_auto_commit_text_path(&file.path) {
+                                text_mutation = Some((call.call_id.clone(), file.clone()));
+                            }
+                        }
                     }
                     AgentToolEffect::WorkspaceFilePatched {
                         file,
