@@ -682,6 +682,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fs_api_rejects_write_to_root_itself() {
+        // 与 Application canonical 写策略一致：root 本身不是合法写路径
+        let engine = QuickJsScriptEngine::new();
+        let error = engine
+            .execute(request(
+                "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () { workspace.writeText('output', 'x'); return 1; }",
+                json!({}),
+            ))
+            .await
+            .expect_err("must reject");
+        assert!(matches!(
+            error,
+            SkillScriptEngineError::ExecutionFailed { .. }
+        ));
+    }
+
+    #[tokio::test]
     async fn fs_exists_checks_overlay() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(

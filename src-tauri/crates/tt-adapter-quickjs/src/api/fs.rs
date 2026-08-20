@@ -55,15 +55,21 @@ impl OverlayFs {
         self.output_bytes
     }
 
+    /// 读侧：root 本身或其子项（与 canonical `workspace_path_is_under_any_root`
+    /// 一致；clean_path 已把 `\` 归一为 `/`，只需 `/` 前缀匹配）。
     fn is_under_roots(cleaned: &str, roots: &[String]) -> bool {
         roots.iter().any(|root| {
-            let root = root.trim();
-            !root.is_empty() && {
-                let root = root.trim_end_matches(['/', '\\']);
-                cleaned == root
-                    || cleaned.starts_with(&format!("{root}/"))
-                    || cleaned.starts_with(&format!("{root}\\"))
-            }
+            let root = root.trim().trim_end_matches(['/', '\\']);
+            !root.is_empty() && (cleaned == root || cleaned.starts_with(&format!("{root}/")))
+        })
+    }
+
+    /// 写侧：仅 root 的子项（与 canonical `is_writable_workspace_path` 一致，
+    /// root 本身不可写）。
+    fn is_writable_child(cleaned: &str, roots: &[String]) -> bool {
+        roots.iter().any(|root| {
+            let root = root.trim().trim_end_matches(['/', '\\']);
+            !root.is_empty() && cleaned.starts_with(&format!("{root}/"))
         })
     }
 
@@ -97,7 +103,7 @@ impl OverlayFs {
 
     pub fn write_text(&mut self, raw: &str, content: String) -> Result<(), String> {
         let cleaned = Self::clean_path(raw)?;
-        if !Self::is_under_roots(&cleaned, &self.writable_roots) {
+        if !Self::is_writable_child(&cleaned, &self.writable_roots) {
             return Err(format!("path is outside the writable workspace roots: {raw}"));
         }
         // 同路径覆盖写：扣除上次的全部记账（路径 + 固定成本 + 旧内容），再按新值计入。
