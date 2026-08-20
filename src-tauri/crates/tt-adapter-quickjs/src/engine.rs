@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use rquickjs::loader::{BuiltinLoader, BuiltinResolver};
 use rquickjs::{Context, Ctx, Function, Module, Object, Runtime, Value as JsValue};
+use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
 
 use tt_ports::skill_script::{
@@ -32,6 +33,10 @@ pub const DEFAULT_MAX_TOTAL_OUTPUT_BYTES: usize = 1024 * 1024;
 const MEMORY_LIMIT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_STACK_BYTES: usize = 256 * 1024;
 
+/// 全局并发执行上限（固定值，与 NativeRegexService 一致；
+/// 每次 QuickJS 执行独立 Runtime，2 个并发 ≈ 64MB 峰值内存）。
+const MAX_CONCURRENT_EXECUTIONS: usize = 2;
+
 /// 一次执行的引擎限制集合。
 #[derive(Clone, Copy)]
 struct ExecutionLimits {
@@ -43,6 +48,8 @@ struct ExecutionLimits {
 
 pub struct QuickJsScriptEngine {
     limits: ExecutionLimits,
+    /// 并发 permit 池，spawn_blocking 前取得。
+    jobs: Arc<Semaphore>,
 }
 
 impl QuickJsScriptEngine {
@@ -54,6 +61,7 @@ impl QuickJsScriptEngine {
                 max_total_input_bytes: DEFAULT_MAX_TOTAL_INPUT_BYTES,
                 max_total_output_bytes: DEFAULT_MAX_TOTAL_OUTPUT_BYTES,
             },
+            jobs: Arc::new(Semaphore::new(MAX_CONCURRENT_EXECUTIONS)),
         }
     }
 
@@ -88,14 +96,22 @@ impl SkillScriptEngine for QuickJsScriptEngine {
         &self,
         request: SkillScriptRequest,
     ) -> Result<SkillScriptResult, SkillScriptEngineError> {
+        let permit = self.jobs.clone().acquire_owned().await.map_err(|error| {
+            SkillScriptEngineError::Internal(format!(
+                "Skill script engine queue closed: {error}"
+            ))
+        })?;
         let limits = self.limits;
-        spawn_blocking(move || execute_sync(request, limits))
-            .await
-            .map_err(|error| {
-                SkillScriptEngineError::Internal(format!(
-                    "Skill script engine task failed: {error}"
-                ))
-            })?
+        spawn_blocking(move || {
+            let _permit = permit;
+            execute_sync(request, limits)
+        })
+        .await
+        .map_err(|error| {
+            SkillScriptEngineError::Internal(format!(
+                "Skill script engine task failed: {error}"
+            ))
+        })?
     }
 }
 
@@ -881,5 +897,22 @@ mod tests {
             .await
             .expect("within budget");
         assert_eq!(result.writes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_executions_all_complete() {
+        let engine = std::sync::Arc::new(QuickJsScriptEngine::new());
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let engine = engine.clone();
+            handles.push(tokio::spawn(async move {
+                engine
+                    .execute(request("export default function () { return 1; }", json!({})))
+                    .await
+            }));
+        }
+        for handle in handles {
+            handle.await.expect("join").expect("execute");
+        }
     }
 }

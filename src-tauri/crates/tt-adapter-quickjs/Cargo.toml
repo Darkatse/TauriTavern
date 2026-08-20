@@ -10,8 +10,8 @@ async-trait = "0.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 # 只保留 spawn_blocking（rt）与 #[tokio::test]（macros）所需的最小 feature 集，
-# 不继承 workspace 的 full。
-tokio = { version = "1", features = ["rt", "macros"] }
+# 不继承 workspace 的 full。sync 仅为 Semaphore。
+tokio = { version = "1", features = ["rt", "macros", "sync"] }
 tt-ports = { path = "../tt-ports" }
 path-clean = "1.0"
 
