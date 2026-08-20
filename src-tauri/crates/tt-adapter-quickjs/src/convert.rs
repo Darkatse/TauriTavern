@@ -6,10 +6,7 @@
 use rquickjs::{Ctx, Value as JsValue};
 use serde_json::Value as JsonValue;
 
-pub(crate) fn json_to_js<'js>(
-    ctx: &Ctx<'js>,
-    value: &JsonValue,
-) -> rquickjs::Result<JsValue<'js>> {
+pub(crate) fn json_to_js<'js>(ctx: &Ctx<'js>, value: &JsonValue) -> rquickjs::Result<JsValue<'js>> {
     match value {
         JsonValue::Null => Ok(JsValue::new_null(ctx.clone())),
         JsonValue::Bool(value) => Ok(JsValue::new_bool(ctx.clone(), *value)),
@@ -23,7 +20,9 @@ pub(crate) fn json_to_js<'js>(
                 ))
             }
         }
-        JsonValue::String(value) => Ok(rquickjs::String::from_str(ctx.clone(), value)?.into_value()),
+        JsonValue::String(value) => {
+            Ok(rquickjs::String::from_str(ctx.clone(), value)?.into_value())
+        }
         JsonValue::Array(items) => {
             let array = rquickjs::Array::new(ctx.clone())?;
             for (index, item) in items.iter().enumerate() {

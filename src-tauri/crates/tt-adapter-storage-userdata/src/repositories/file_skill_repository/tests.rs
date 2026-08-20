@@ -2105,7 +2105,10 @@ async fn read_skill_script_rejects_paths_outside_scripts_dir() {
             .await
             .expect_err("path outside scripts/ must be rejected");
         assert!(
-            matches!(error, DomainError::InvalidData(_) | DomainError::NotFound(_)),
+            matches!(
+                error,
+                DomainError::InvalidData(_) | DomainError::NotFound(_)
+            ),
             "unexpected error for {bad_path}: {error:?}"
         );
     }

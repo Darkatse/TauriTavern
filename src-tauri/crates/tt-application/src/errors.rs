@@ -83,9 +83,7 @@ impl From<SkillScriptEngineError> for ApplicationError {
             } => ApplicationError::ValidationError(format!(
                 "Skill script result is {actual_bytes} bytes, exceeding the {limit_bytes}-byte limit"
             )),
-            SkillScriptEngineError::Internal(message) => {
-                ApplicationError::InternalError(message)
-            }
+            SkillScriptEngineError::Internal(message) => ApplicationError::InternalError(message),
         }
     }
 }

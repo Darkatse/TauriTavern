@@ -5,8 +5,7 @@ use super::agent::{
 use super::chat::{chat_read_messages_descriptor, chat_search_descriptor};
 use super::dice::dice_roll_descriptor;
 use super::skill::{
-    skill_list_descriptor, skill_read_descriptor, skill_script_descriptor,
-    skill_search_descriptor,
+    skill_list_descriptor, skill_read_descriptor, skill_script_descriptor, skill_search_descriptor,
 };
 use super::workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,

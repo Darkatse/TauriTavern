@@ -21,10 +21,9 @@ pub(crate) fn build_world_info_object<'js>(
 
     // readActivated() → 全部激活条目的 JSON 快照
     let activated = entries_json.clone();
-    let read_activated = Function::new(
-        ctx.clone(),
-        move |ctx: Ctx<'js>| json_to_js(&ctx, &activated),
-    )?;
+    let read_activated = Function::new(ctx.clone(), move |ctx: Ctx<'js>| {
+        json_to_js(&ctx, &activated)
+    })?;
 
     // readEntries(refs: string[]) → 按 ref 过滤的条目
     let filtered = entries_json;

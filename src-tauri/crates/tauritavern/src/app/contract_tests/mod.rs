@@ -13,6 +13,7 @@ use tokio::sync::{Mutex, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use tt_adapter_quickjs::QuickJsScriptEngine;
 use tt_adapter_storage_core::FileChatRepository;
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_adapter_storage_core::{FileLlmConnectionRepository, FileMcpServerRepository};
@@ -54,7 +55,6 @@ use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
-use tt_adapter_quickjs::QuickJsScriptEngine;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::{AgentDelegationPolicy, AgentProfileId};
 use tt_domain::models::agent::{

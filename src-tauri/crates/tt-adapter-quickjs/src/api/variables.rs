@@ -45,35 +45,26 @@ pub(crate) fn build_variables_object<'js>(
     Ok(variables)
 }
 
-fn build_variable_scope<'js>(
-    ctx: &Ctx<'js>,
-    map: Value,
-) -> rquickjs::Result<Object<'js>> {
+fn build_variable_scope<'js>(ctx: &Ctx<'js>, map: Value) -> rquickjs::Result<Object<'js>> {
     let scope = Object::new(ctx.clone())?;
 
     // get(name) — 返回原始值，缺失时返回空字符串
     let get_map = map.clone();
-    let get_fn = Function::new(
-        ctx.clone(),
-        move |ctx: Ctx<'js>, name: String| {
-            let value = get_map
-                .get(&name)
-                .cloned()
-                .filter(|v| !v.is_null())
-                .unwrap_or(Value::String(String::new()));
-            json_to_js(&ctx, &value)
-        },
-    )?;
+    let get_fn = Function::new(ctx.clone(), move |ctx: Ctx<'js>, name: String| {
+        let value = get_map
+            .get(&name)
+            .cloned()
+            .filter(|v| !v.is_null())
+            .unwrap_or(Value::String(String::new()));
+        json_to_js(&ctx, &value)
+    })?;
     scope.set("get", get_fn)?;
 
     // has(name) — 返回 boolean
     let has_map = map.clone();
-    let has_fn = Function::new(
-        ctx.clone(),
-        move |name: String| -> bool {
-            has_map.get(&name).is_some()
-        },
-    )?;
+    let has_fn = Function::new(ctx.clone(), move |name: String| -> bool {
+        has_map.get(&name).is_some()
+    })?;
     scope.set("has", has_fn)?;
 
     // set / del / add / inc / dec — fail-fast readonly

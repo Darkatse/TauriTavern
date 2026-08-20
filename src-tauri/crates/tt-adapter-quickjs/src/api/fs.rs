@@ -9,7 +9,7 @@ use std::path::Path;
 
 use rquickjs::{Ctx, Function, Object};
 
-use tt_ports::skill_script::{SkillScriptLogLevel, SkillScriptLog};
+use tt_ports::skill_script::{SkillScriptLog, SkillScriptLogLevel};
 
 /// 每个输出项（写入路径 / 日志条目）的固定记账成本，
 /// 防止海量空条目绕过字节预算。
@@ -84,9 +84,7 @@ impl OverlayFs {
         if Path::new(raw).is_absolute() {
             return Err(format!("absolute paths are not allowed: {raw}"));
         }
-        let cleaned = path_clean::clean(raw)
-            .to_string_lossy()
-            .replace('\\', "/");
+        let cleaned = path_clean::clean(raw).to_string_lossy().replace('\\', "/");
         if cleaned.starts_with("..") {
             return Err(format!("path escapes the workspace: {raw}"));
         }
@@ -96,7 +94,9 @@ impl OverlayFs {
     pub fn read_text(&mut self, raw: &str) -> Result<String, String> {
         let cleaned = Self::clean_path(raw)?;
         if !Self::is_under_roots(&cleaned, &self.visible_roots) {
-            return Err(format!("path is outside the visible workspace roots: {raw}"));
+            return Err(format!(
+                "path is outside the visible workspace roots: {raw}"
+            ));
         }
         self.files
             .get(&cleaned)
@@ -107,7 +107,9 @@ impl OverlayFs {
     pub fn write_text(&mut self, raw: &str, content: String) -> Result<(), String> {
         let cleaned = Self::clean_path(raw)?;
         if !Self::is_writable_child(&cleaned, &self.writable_roots) {
-            return Err(format!("path is outside the writable workspace roots: {raw}"));
+            return Err(format!(
+                "path is outside the writable workspace roots: {raw}"
+            ));
         }
         // 同路径覆盖写：扣除上次的全部记账（路径 + 固定成本 + 旧内容），再按新值计入。
         let previous_cost = self
@@ -137,9 +139,7 @@ impl OverlayFs {
             Some(p) => {
                 let cleaned = Self::clean_path(p)?;
                 if !Self::is_under_roots(&cleaned, &self.visible_roots) {
-                    return Err(format!(
-                        "path is outside the visible workspace roots: {p}"
-                    ));
+                    return Err(format!("path is outside the visible workspace roots: {p}"));
                 }
                 cleaned.trim_end_matches(['/', '\\']).to_string()
             }
@@ -182,7 +182,10 @@ impl OverlayFs {
         }
         let directory_prefix = format!("{cleaned}/");
         self.files.contains_key(&cleaned)
-            || self.files.keys().any(|path| path.starts_with(&directory_prefix))
+            || self
+                .files
+                .keys()
+                .any(|path| path.starts_with(&directory_prefix))
     }
 
     pub fn log(&mut self, level: SkillScriptLogLevel, message: String) -> Result<(), String> {
@@ -239,7 +242,8 @@ pub(crate) fn build_workspace_object<'js>(
         ctx.clone(),
         move |ctx: Ctx<'_>, path: Option<String>| -> Result<Vec<String>, rquickjs::Error> {
             let fs = list_overlay.borrow();
-            fs.list_files(path.as_deref()).map_err(|m| js_error(&ctx, m))
+            fs.list_files(path.as_deref())
+                .map_err(|m| js_error(&ctx, m))
         },
     )?;
     fs_object.set("listFiles", list_files)?;

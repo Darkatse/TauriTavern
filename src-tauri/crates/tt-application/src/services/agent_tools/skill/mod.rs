@@ -5,13 +5,12 @@ mod script;
 mod search;
 
 pub(super) use self::descriptors::{
-    skill_list_descriptor, skill_read_descriptor, skill_script_descriptor,
-    skill_search_descriptor,
+    skill_list_descriptor, skill_read_descriptor, skill_script_descriptor, skill_search_descriptor,
 };
 pub(super) use self::list::list;
 pub(super) use self::read::read;
-pub(super) use self::script::script;
 pub(super) use self::script::ScriptContext;
+pub(super) use self::script::script;
 pub(super) use self::search::search;
 
 pub(super) const SKILL_LIST: &str = "skill.list";

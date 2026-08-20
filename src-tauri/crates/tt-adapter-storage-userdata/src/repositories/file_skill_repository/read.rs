@@ -28,7 +28,9 @@ pub(super) async fn read_skill_script(
             "Skill script path must stay under scripts/: skills/{name}/{path}"
         )));
     }
-    Ok(read_skill_text_file(repository, scope, &name, &path).await?.content)
+    Ok(read_skill_text_file(repository, scope, &name, &path)
+        .await?
+        .content)
 }
 
 struct SkillTextFile {

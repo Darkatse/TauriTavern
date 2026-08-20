@@ -6,8 +6,8 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -74,11 +74,7 @@ impl QuickJsScriptEngine {
 
     /// 测试侧收紧输入/输出总预算的构造器。
     #[cfg(test)]
-    fn with_budgets(
-        mut self,
-        max_total_input_bytes: usize,
-        max_total_output_bytes: usize,
-    ) -> Self {
+    fn with_budgets(mut self, max_total_input_bytes: usize, max_total_output_bytes: usize) -> Self {
         self.limits.max_total_input_bytes = max_total_input_bytes;
         self.limits.max_total_output_bytes = max_total_output_bytes;
         self
@@ -98,9 +94,7 @@ impl SkillScriptEngine for QuickJsScriptEngine {
         request: SkillScriptRequest,
     ) -> Result<SkillScriptResult, SkillScriptEngineError> {
         let permit = self.jobs.clone().acquire_owned().await.map_err(|error| {
-            SkillScriptEngineError::Internal(format!(
-                "Skill script engine queue closed: {error}"
-            ))
+            SkillScriptEngineError::Internal(format!("Skill script engine queue closed: {error}"))
         })?;
         let limits = self.limits;
         spawn_blocking(move || {
@@ -109,9 +103,7 @@ impl SkillScriptEngine for QuickJsScriptEngine {
         })
         .await
         .map_err(|error| {
-            SkillScriptEngineError::Internal(format!(
-                "Skill script engine task failed: {error}"
-            ))
+            SkillScriptEngineError::Internal(format!("Skill script engine task failed: {error}"))
         })?
     }
 }
@@ -307,10 +299,16 @@ fn execute_sync(
 /// serde_json::Value 由宿主构造，总是可序列化；失败按 0 计不放大内存。
 fn total_input_bytes(request: &SkillScriptRequest) -> usize {
     fn json_len(value: &serde_json::Value) -> usize {
-        serde_json::to_string(value).map(|text| text.len()).unwrap_or(0)
+        serde_json::to_string(value)
+            .map(|text| text.len())
+            .unwrap_or(0)
     }
     request.modules.values().map(|s| s.len()).sum::<usize>()
-        + request.workspace_files.values().map(|s| s.len()).sum::<usize>()
+        + request
+            .workspace_files
+            .values()
+            .map(|s| s.len())
+            .sum::<usize>()
         + json_len(&request.args)
         + json_len(&request.world_info)
         + json_len(&request.variables)
@@ -414,8 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn timeout_interrupts_infinite_loop() {
-        let engine = QuickJsScriptEngine::new()
-            .with_limits(Duration::from_millis(200), 256 * 1024);
+        let engine = QuickJsScriptEngine::new().with_limits(Duration::from_millis(200), 256 * 1024);
         let error = engine
             .execute(request(
                 "export default function () { while (true) {} }",
@@ -433,8 +430,7 @@ mod tests {
 
     #[tokio::test]
     async fn result_size_limit_is_enforced() {
-        let engine =
-            QuickJsScriptEngine::new().with_limits(Duration::from_secs(5), 512);
+        let engine = QuickJsScriptEngine::new().with_limits(Duration::from_secs(5), 512);
         let error = engine
             .execute(request(
                 "export default function () { return 'x'.repeat(1024); }",
@@ -601,7 +597,10 @@ mod tests {
             .expect_err("must fail");
         match error {
             SkillScriptEngineError::ExecutionFailed { message } => {
-                assert!(message.to_lowercase().contains("circular"), "message was: {message}");
+                assert!(
+                    message.to_lowercase().contains("circular"),
+                    "message was: {message}"
+                );
             }
             other => panic!("unexpected error: {other:?}"),
         }
@@ -612,7 +611,10 @@ mod tests {
         // undefined / 函数不可 JSON 序列化：明确报错，不再静默转 null
         let engine = QuickJsScriptEngine::new();
         let error = engine
-            .execute(request("export default function () { return undefined; }", json!({})))
+            .execute(request(
+                "export default function () { return undefined; }",
+                json!({}),
+            ))
             .await
             .expect_err("must fail");
         assert!(matches!(
@@ -628,8 +630,10 @@ mod tests {
             "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () {\n  workspace.writeText('output/note.txt', 'hello');\n  return workspace.readText('output/note.txt');\n}",
             json!({}),
         );
-        req.workspace_files
-            .insert("output/existing.txt".to_string(), "pre-existing".to_string());
+        req.workspace_files.insert(
+            "output/existing.txt".to_string(),
+            "pre-existing".to_string(),
+        );
 
         let result = engine.execute(req).await.expect("execute");
 
@@ -863,8 +867,7 @@ mod tests {
 
     #[tokio::test]
     async fn input_budget_exceeded_fails_fast() {
-        let engine =
-            QuickJsScriptEngine::new().with_budgets(1024, DEFAULT_MAX_TOTAL_OUTPUT_BYTES);
+        let engine = QuickJsScriptEngine::new().with_budgets(1024, DEFAULT_MAX_TOTAL_OUTPUT_BYTES);
         let mut req = request("export default function () { return 1; }", json!({}));
         req.workspace_files
             .insert("output/big.txt".to_string(), "x".repeat(2048));
@@ -879,8 +882,7 @@ mod tests {
 
     #[tokio::test]
     async fn output_budget_exceeded_by_writes_fails_fast() {
-        let engine =
-            QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 1024);
+        let engine = QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 1024);
         let error = engine
             .execute(request(
                 "import { workspace } from '@tauritavern/runtime/v1';\n\
@@ -904,8 +906,7 @@ mod tests {
 
     #[tokio::test]
     async fn output_budget_exceeded_by_logs_fails_fast() {
-        let engine =
-            QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 512);
+        let engine = QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 512);
         let error = engine
             .execute(request(
                 "import { log } from '@tauritavern/runtime/v1';\n\
@@ -926,8 +927,7 @@ mod tests {
     #[tokio::test]
     async fn repeated_writes_to_same_path_do_not_double_count() {
         // 同路径覆盖写按最终值记账：预算 512 时 10 次 32 字节覆盖写成功。
-        let engine =
-            QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 512);
+        let engine = QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 512);
         let result = engine
             .execute(request(
                 "import { workspace } from '@tauritavern/runtime/v1';\n\
@@ -950,7 +950,10 @@ mod tests {
             let engine = engine.clone();
             handles.push(tokio::spawn(async move {
                 engine
-                    .execute(request("export default function () { return 1; }", json!({})))
+                    .execute(request(
+                        "export default function () { return 1; }",
+                        json!({}),
+                    ))
                     .await
             }));
         }

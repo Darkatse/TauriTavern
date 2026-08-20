@@ -1,5 +1,7 @@
 use crate::errors::ApplicationError;
-use crate::services::agent_workspace_scope::{is_writable_workspace_path, workspace_path_is_under_any_root};
+use crate::services::agent_workspace_scope::{
+    is_writable_workspace_path, workspace_path_is_under_any_root,
+};
 use tt_domain::models::agent::{WorkspaceManifest, WorkspacePath};
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 

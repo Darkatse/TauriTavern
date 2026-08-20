@@ -57,7 +57,11 @@ pub(in crate::services::agent_tools) async fn script(
     } = context;
     let Some(args) = object_args(call) else {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", "arguments must be an object"),
+            tool_error(
+                call,
+                "tool.invalid_arguments",
+                "arguments must be an object",
+            ),
             AgentToolEffect::None,
         ));
     };
@@ -165,7 +169,9 @@ pub(in crate::services::agent_tools) async fn script(
 
     tracing::info!(
         "skill.run_script invoked: skill=`{skill}` script=`{script}` args_bytes={}",
-        serde_json::to_string(&script_args).map(|text| text.len()).unwrap_or(0)
+        serde_json::to_string(&script_args)
+            .map(|text| text.len())
+            .unwrap_or(0)
     );
 
     let outcome = engine
@@ -226,8 +232,11 @@ pub(in crate::services::agent_tools) async fn script(
     // ---- 落盘前一次性验证所有路径 ----
     // Application 重新验证正式写入策略（不复用 adapter 内存前缀检查的结论），
     // 并按快照时的文件状态映射 CAS guard；任何路径非法都在落盘前失败。
-    let mut guards: Vec<(&tt_ports::skill_script::SkillScriptWrite, WorkspacePath, WorkspaceWriteGuard)> =
-        Vec::with_capacity(result.writes.len());
+    let mut guards: Vec<(
+        &tt_ports::skill_script::SkillScriptWrite,
+        WorkspacePath,
+        WorkspaceWriteGuard,
+    )> = Vec::with_capacity(result.writes.len());
     for write in &result.writes {
         let path = WorkspacePath::parse(&write.path).map_err(ApplicationError::from)?;
         if !workspace_policy.is_writable(&path) {
@@ -252,9 +261,7 @@ pub(in crate::services::agent_tools) async fn script(
         }
         // guard 基于快照时的文件状态：存在 → MustMatch(快照 sha)；不存在 → MustNotExist
         let guard = match workspace_snapshot.get(write.path.as_str()) {
-            Some(existing) => {
-                WorkspaceWriteGuard::MustMatchSha256(existing.sha256.clone())
-            }
+            Some(existing) => WorkspaceWriteGuard::MustMatchSha256(existing.sha256.clone()),
             None => WorkspaceWriteGuard::MustNotExist,
         };
         guards.push((write, path, guard));
@@ -330,7 +337,8 @@ pub(in crate::services::agent_tools) async fn script(
         }
     }
 
-    let rendered = serde_json::to_string(&result.value).unwrap_or_else(|_| result.value.to_string());
+    let rendered =
+        serde_json::to_string(&result.value).unwrap_or_else(|_| result.value.to_string());
     let content = format!("Executed skill script `{skill}/{entry_module}`. Result:\n{rendered}");
 
     let resource_refs = written_files
@@ -348,7 +356,10 @@ pub(in crate::services::agent_tools) async fn script(
         "skill.run_script completed: skill=`{skill}` script=`{script}` result_bytes={} writes={} write_bytes={}",
         rendered.len(),
         result.writes.len(),
-        written_files.iter().map(|f| f.bytes as usize).sum::<usize>()
+        written_files
+            .iter()
+            .map(|f| f.bytes as usize)
+            .sum::<usize>()
     );
 
     let effect = if written_files.is_empty() {
@@ -459,9 +470,7 @@ async fn build_workspace_snapshot(
 
 /// 从 prompt_snapshot 投影世界书条目为纯 JSON `{ "entries": [...] }`。
 /// 复用 world_info::normalize_entry 做 fail-fast 解析，异常条目直接传播错误。
-fn build_world_info_json(
-    prompt_snapshot: Option<&Value>,
-) -> Result<Value, ApplicationError> {
+fn build_world_info_json(prompt_snapshot: Option<&Value>) -> Result<Value, ApplicationError> {
     let entries = match prompt_snapshot
         .and_then(|snapshot| snapshot.get("worldInfoActivation"))
         .and_then(|batch| batch.get("entries"))
@@ -535,20 +544,20 @@ mod tests {
 
     use super::*;
     use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
+    use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
     use tt_domain::models::agent::profile::{
         AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy,
         AgentDelegationPolicy, AgentModelBinding, AgentModelBindingMode, AgentPresetBinding,
-        AgentPresetBindingMode, AgentProfileId, AgentProfileInstructions,
-        AgentProfileSourceTrace, AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy,
-        AgentWorkspacePolicy, ResolvedAgentOutputPolicy,
+        AgentPresetBindingMode, AgentProfileId, AgentProfileInstructions, AgentProfileSourceTrace,
+        AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy, AgentWorkspacePolicy,
+        ResolvedAgentOutputPolicy,
     };
     use tt_domain::models::agent::{
         AgentChatRef, AgentRun, AgentRunPresentation, ArtifactSpec, ArtifactTarget, CommitPolicy,
-        WorkspaceInputManifest, WorkspaceManifest, WorkspacePersistentChangeSet, WorkspacePath,
+        WorkspaceInputManifest, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
         WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope,
         WorkspaceRootSpec,
     };
-    use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
     use tt_domain::models::skill::{
         SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
         SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest,
@@ -558,8 +567,8 @@ mod tests {
     use tt_domain::models::tool::ToolId;
     use tt_ports::repositories::skill_repository::SkillRepository;
     use tt_ports::repositories::workspace_repository::{
-        WorkspaceAppendResult, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList,
-        WorkspaceWriteGuard,
+        WorkspaceAppendResult, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile,
+        WorkspaceFileList, WorkspaceWriteGuard,
     };
 
     // ---- fakes ----------------------------------------------------------
@@ -601,19 +610,15 @@ mod tests {
                     value,
                     writes,
                     last_write_path,
-                } => {
-                    Ok(tt_ports::skill_script::SkillScriptResult {
-                        value: value.clone(),
-                        writes: writes.clone(),
-                        last_write_path: last_write_path.clone(),
-                        logs: Vec::new(),
-                    })
-                }
-                FakeOutcome::Failed(message) => {
-                    Err(SkillScriptEngineError::ExecutionFailed {
-                        message: message.clone(),
-                    })
-                }
+                } => Ok(tt_ports::skill_script::SkillScriptResult {
+                    value: value.clone(),
+                    writes: writes.clone(),
+                    last_write_path: last_write_path.clone(),
+                    logs: Vec::new(),
+                }),
+                FakeOutcome::Failed(message) => Err(SkillScriptEngineError::ExecutionFailed {
+                    message: message.clone(),
+                }),
                 FakeOutcome::TooLarge {
                     actual_bytes,
                     limit_bytes,
@@ -692,9 +697,14 @@ mod tests {
             relative_path: &str,
         ) -> Result<String, DomainError> {
             match relative_path {
-                "scripts/helper.js" => Ok(self.script_source.clone().expect("entry listed only when present")),
+                "scripts/helper.js" => Ok(self
+                    .script_source
+                    .clone()
+                    .expect("entry listed only when present")),
                 "scripts/lib/util.js" => Ok("export const answer = 42;".to_string()),
-                _ => Err(DomainError::NotFound(format!("Skill file not found: {relative_path}"))),
+                _ => Err(DomainError::NotFound(format!(
+                    "Skill file not found: {relative_path}"
+                ))),
             }
         }
         async fn read_skill_file(
@@ -1080,7 +1090,10 @@ mod tests {
         .await
     }
 
-    async fn run_with_repo(arguments: Value, repo: FakeSkillRepo) -> (AgentToolResult, AgentToolEffect) {
+    async fn run_with_repo(
+        arguments: Value,
+        repo: FakeSkillRepo,
+    ) -> (AgentToolResult, AgentToolEffect) {
         run_with_repo_and_outcome(
             arguments,
             repo,
@@ -1143,7 +1156,9 @@ mod tests {
     async fn missing_script_file_reports_not_found() {
         let (result, _) = run_with_repo(
             json!({ "skill": "demo", "script": "helper" }),
-            FakeSkillRepo { script_source: None },
+            FakeSkillRepo {
+                script_source: None,
+            },
         )
         .await;
         assert_eq!(
@@ -1273,7 +1288,13 @@ mod tests {
         .expect("script must succeed");
         assert!(!result.is_error);
         let requests = engine.requests.lock().await;
-        assert_eq!(requests[0].modules.get("scripts/lib/util.js").map(String::as_str), Some("export const answer = 42;"));
+        assert_eq!(
+            requests[0]
+                .modules
+                .get("scripts/lib/util.js")
+                .map(String::as_str),
+            Some("export const answer = 42;")
+        );
     }
 
     #[tokio::test]
@@ -1376,7 +1397,10 @@ mod tests {
         .expect("script must succeed");
 
         assert!(!result.is_error);
-        assert!(matches!(effect, AgentToolEffect::WorkspaceFilesWritten { .. }));
+        assert!(matches!(
+            effect,
+            AgentToolEffect::WorkspaceFilesWritten { .. }
+        ));
         assert_eq!(result.resource_refs, vec!["output/result.txt".to_string()]);
 
         let written = workspace_repo.written.lock().await;
@@ -1522,7 +1546,10 @@ mod tests {
         assert!(matches!(effect, AgentToolEffect::None));
         // 一次性验证：任何文件都不落盘（包括列表中合法的 output/ok.txt）
         let written = workspace_repo.written.lock().await;
-        assert!(written.is_empty(), "no file may be written when any path is invalid");
+        assert!(
+            written.is_empty(),
+            "no file may be written when any path is invalid"
+        );
     }
 
     #[tokio::test]
@@ -1570,7 +1597,10 @@ mod tests {
         .expect("script must succeed");
 
         assert!(!result.is_error);
-        assert!(matches!(effect, AgentToolEffect::WorkspaceFilesWritten { .. }));
+        assert!(matches!(
+            effect,
+            AgentToolEffect::WorkspaceFilesWritten { .. }
+        ));
     }
 
     #[tokio::test]
@@ -1592,7 +1622,10 @@ mod tests {
         let mut snapshot_files = HashMap::new();
         snapshot_files.insert("output/stale.txt".to_string(), "original".to_string());
         let mut disk_files = HashMap::new();
-        disk_files.insert("output/stale.txt".to_string(), "changed-by-someone-else".to_string());
+        disk_files.insert(
+            "output/stale.txt".to_string(),
+            "changed-by-someone-else".to_string(),
+        );
         let workspace_repo = FakeWorkspaceRepo {
             files: disk_files,
             written: Mutex::new(Vec::new()),
@@ -1683,7 +1716,11 @@ mod tests {
             result.error_code.as_deref(),
             Some("skill.run_script_write_failed")
         );
-        assert!(result.content.contains("output/first.txt"), "message was: {}", result.content);
+        assert!(
+            result.content.contains("output/first.txt"),
+            "message was: {}",
+            result.content
+        );
         match effect {
             AgentToolEffect::WorkspaceFilesWritten {
                 files,
@@ -1732,7 +1769,9 @@ mod tests {
         )
         .await
         .expect_err("truncated snapshot must fail fast");
-        assert!(matches!(error, ApplicationError::ValidationError(message) if message.contains("truncated")));
+        assert!(
+            matches!(error, ApplicationError::ValidationError(message) if message.contains("truncated"))
+        );
     }
 
     #[test]
