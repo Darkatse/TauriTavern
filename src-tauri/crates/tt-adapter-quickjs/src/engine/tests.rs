@@ -1,9 +1,12 @@
-use serde_json::json;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+
+use serde_json::json;
+
 use tt_ports::skill_script::{SkillScriptEngine, SkillScriptEngineError, SkillScriptRequest};
 
-use super::{QuickJsScriptEngine, DEFAULT_MAX_TOTAL_INPUT_BYTES, DEFAULT_MAX_TOTAL_OUTPUT_BYTES};
+use super::{DEFAULT_MAX_TOTAL_INPUT_BYTES, DEFAULT_MAX_TOTAL_OUTPUT_BYTES, QuickJsScriptEngine};
 
 fn request(source: &str, args: serde_json::Value) -> SkillScriptRequest {
     let mut modules = HashMap::new();
@@ -626,7 +629,7 @@ async fn repeated_writes_to_same_path_do_not_double_count() {
 
 #[tokio::test]
 async fn concurrent_executions_all_complete() {
-    let engine = std::sync::Arc::new(QuickJsScriptEngine::new());
+    let engine = Arc::new(QuickJsScriptEngine::new());
     let mut handles = Vec::new();
     for _ in 0..8 {
         let engine = engine.clone();

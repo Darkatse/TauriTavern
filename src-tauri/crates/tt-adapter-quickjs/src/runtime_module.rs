@@ -12,7 +12,7 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, JsLifetime, Result};
 use serde_json::Value;
 
-use crate::api::fs::OverlayFs;
+use crate::api::{OverlayFs, build_log_object, build_workspace_object};
 
 pub(crate) const RUNTIME_MODULE_NAME: &str = "@tauritavern/runtime";
 
@@ -49,8 +49,8 @@ impl ModuleDef for RuntimeModule {
             }
         };
 
-        let workspace = crate::api::fs::build_workspace_object(ctx, overlay.clone())?;
-        let log = crate::api::log::build_log_object(ctx, overlay)?;
+        let workspace = build_workspace_object(ctx, overlay.clone())?;
+        let log = build_log_object(ctx, overlay)?;
         let context = ctx.json_parse(context.to_string())?;
 
         exports.export("workspace", workspace)?;

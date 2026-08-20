@@ -6,8 +6,8 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -23,7 +23,7 @@ use tt_ports::skill_script::{
 
 use crate::api::OverlayFs;
 use crate::kit::MODULES as KIT_MODULES;
-use crate::runtime_module::{RuntimeModule, RuntimeState, RUNTIME_MODULE_NAME};
+use crate::runtime_module::{RUNTIME_MODULE_NAME, RuntimeModule, RuntimeState};
 
 const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_RESULT_BYTES: usize = 256 * 1024;
