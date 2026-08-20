@@ -375,7 +375,7 @@ mod tests {
         // slugify 库体积小、为 `export default` 形式，适合冒烟。
         let result = engine
             .execute(request(
-                "import slugify from '@tauritavern/runtime/slugify';\nexport default function () { return slugify('Hello World!'); }",
+                "import slugify from '@tauritavern/vendor/slugify';\nexport default function () { return slugify('Hello World!'); }",
                 json!({}),
             ))
             .await
