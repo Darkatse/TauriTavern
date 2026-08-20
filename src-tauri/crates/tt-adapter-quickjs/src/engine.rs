@@ -22,7 +22,8 @@ use tt_ports::skill_script::{
 };
 
 use crate::api::OverlayFs;
-use crate::runtime_module::{RuntimeV1Module, RuntimeV1State, RUNTIME_MODULE_NAME};
+use crate::kit::MODULES as KIT_MODULES;
+use crate::runtime_module::{RuntimeModule, RuntimeState, RUNTIME_MODULE_NAME};
 
 const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_RESULT_BYTES: usize = 256 * 1024;
@@ -148,18 +149,22 @@ fn execute_sync(
         false
     })));
 
-    // 注册本次执行的内存模块快照到 BuiltinResolver/BuiltinLoader。
+    // 注册内嵌工具箱与本次执行的内存模块快照。
     // 相对导入经 BuiltinResolver 规范化后必须命中注册名单；
     // 快照外的模块（含越界 ../ 与未知的裸模块名）解析失败，模块声明/求值报错。
     let mut resolver = BuiltinResolver::default();
     let mut loader = BuiltinLoader::default();
-    for (name, source) in &request.modules {
-        resolver = resolver.with_module(name.clone());
-        loader = loader.with_module(name.clone(), source.clone());
+    for &(name, source) in KIT_MODULES {
+        resolver.add_module(name);
+        loader.add_module(name, source);
     }
-    // runtime/v1 原生模块：import 解析命中 loaded_modules 注册表，
+    for (name, source) in &request.modules {
+        resolver.add_module(name.clone());
+        loader.add_module(name.clone(), source.clone());
+    }
+    // Runtime 原生模块：import 解析命中 loaded_modules 注册表，
     // declare_def 声明的模块无需 loader，但名字必须在 resolver 集合中。
-    resolver = resolver.with_module(RUNTIME_MODULE_NAME);
+    resolver.add_module(RUNTIME_MODULE_NAME);
     runtime.set_loader(resolver, loader);
 
     let context = Context::full(&runtime).map_err(internal_error)?;
@@ -173,17 +178,17 @@ fn execute_sync(
     let args = request.args.clone();
 
     let outcome = context.with(|ctx| {
-        // runtime/v1 状态经 ctx userdata 传入原生模块（模块求值时读取）。
+        // Runtime 状态经 ctx userdata 传入原生模块（模块求值时读取）。
         // store_userdata 仅在 userdata 被并发访问时失败，此处不可能。
-        ctx.store_userdata(RuntimeV1State {
+        ctx.store_userdata(RuntimeState {
             overlay: overlay.clone(),
             context: request.context.clone(),
         })
         .map_err(|_| rquickjs::Error::Unknown)?;
 
-        // 版本化 runtime 模块：import 解析命中 loaded_modules 注册表，
+        // Runtime 模块：import 解析命中 loaded_modules 注册表，
         // 依赖求值先于入口 body，userdata 此时已就绪。
-        Module::declare_def::<RuntimeV1Module, _>(ctx.clone(), RUNTIME_MODULE_NAME)?;
+        Module::declare_def::<RuntimeModule, _>(ctx.clone(), RUNTIME_MODULE_NAME)?;
 
         let declared = Module::declare(ctx.clone(), entry_module.clone(), entry_source)?;
         let (module, eval_promise) = declared.eval()?;
@@ -431,21 +436,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vendor_namespace_imports_fail() {
-        // 内置库已移除：宿主不内嵌任何第三方库，
-        // `@tauritavern/vendor/*` 不在模块快照与注册表中 → 解析失败。
-        let engine = QuickJsScriptEngine::new();
-        let error = engine
+    async fn kit_modules_are_available() {
+        let result = QuickJsScriptEngine::new()
             .execute(request(
-                "import slugify from '@tauritavern/vendor/slugify';\nexport default function () { return slugify('Hello World!'); }",
+                r#"
+import dayjs from '@tauritavern/kit/dayjs';
+import { uniq } from '@tauritavern/kit/es-toolkit';
+import { XMLParser } from '@tauritavern/kit/fast-xml-parser';
+import { marked } from '@tauritavern/kit/marked';
+import Papa from '@tauritavern/kit/papaparse';
+import slugify from '@tauritavern/kit/slugify';
+
+export default function () {
+  return {
+    date: dayjs('2026-08-20').add(2, 'day').format('YYYY-MM-DD'),
+    unique: uniq([1, 1, 2]),
+    xml: new XMLParser().parse('<note><to>Tove</to></note>').note.to,
+    markdown: marked.parseInline('**hi**'),
+    csv: Papa.parse('name\nAlice', { header: true }).data[0].name,
+    slug: slugify('Hello World!', { lower: true, strict: true }),
+  };
+}
+"#,
                 json!({}),
             ))
             .await
-            .expect_err("vendor imports must fail");
-        assert!(matches!(
-            error,
-            SkillScriptEngineError::ExecutionFailed { .. }
-        ));
+            .expect("kit modules must execute");
+
+        assert_eq!(
+            result.value,
+            json!({
+                "date": "2026-08-22",
+                "unique": [1, 2],
+                "xml": "Tove",
+                "markdown": "<strong>hi</strong>",
+                "csv": "Alice",
+                "slug": "hello-world",
+            })
+        );
     }
 
     #[tokio::test]
@@ -626,7 +654,7 @@ mod tests {
     async fn fs_api_reads_and_writes_overlay() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
-            "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () {\n  workspace.writeText('output/note.txt', 'hello');\n  return workspace.readText('output/note.txt');\n}",
+            "import { workspace } from '@tauritavern/runtime';\nexport default function () {\n  workspace.writeText('output/note.txt', 'hello');\n  return workspace.readText('output/note.txt');\n}",
             json!({}),
         );
         req.workspace_files.insert(
@@ -647,7 +675,7 @@ mod tests {
         let engine = QuickJsScriptEngine::new();
         let result = engine
             .execute(request(
-                "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () {\n  workspace.writeText('output/log.txt', 'first');\n  workspace.writeText('output/log.txt', 'second');\n  workspace.writeText('output/log.txt', 'final');\n  return 1;\n}",
+                "import { workspace } from '@tauritavern/runtime';\nexport default function () {\n  workspace.writeText('output/log.txt', 'first');\n  workspace.writeText('output/log.txt', 'second');\n  workspace.writeText('output/log.txt', 'final');\n  return 1;\n}",
                 json!({}),
             ))
             .await
@@ -662,7 +690,7 @@ mod tests {
     async fn final_delta_keeps_last_write_separate_from_path_order() {
         let result = QuickJsScriptEngine::new()
             .execute(request(
-                "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () {\n  workspace.writeText('output/z-debug.txt', 'debug');\n  workspace.writeText('output/a-final.md', 'final');\n  return 1;\n}",
+                "import { workspace } from '@tauritavern/runtime';\nexport default function () {\n  workspace.writeText('output/z-debug.txt', 'debug');\n  workspace.writeText('output/a-final.md', 'final');\n  return 1;\n}",
                 json!({}),
             ))
             .await
@@ -683,7 +711,7 @@ mod tests {
     async fn fs_api_rejects_reads_outside_visible_roots() {
         let engine = QuickJsScriptEngine::new();
         let req = request(
-            "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () { return workspace.readText('input/secret.json'); }",
+            "import { workspace } from '@tauritavern/runtime';\nexport default function () { return workspace.readText('input/secret.json'); }",
             json!({}),
         );
         let error = engine.execute(req).await.expect_err("must reject");
@@ -697,7 +725,7 @@ mod tests {
     async fn fs_api_rejects_writes_outside_writable_roots() {
         let engine = QuickJsScriptEngine::new();
         let req = request(
-            "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () { workspace.writeText('input/note.txt', 'x'); }",
+            "import { workspace } from '@tauritavern/runtime';\nexport default function () { workspace.writeText('input/note.txt', 'x'); }",
             json!({}),
         );
         let error = engine.execute(req).await.expect_err("must reject");
@@ -713,7 +741,7 @@ mod tests {
         let engine = QuickJsScriptEngine::new();
         let error = engine
             .execute(request(
-                "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () { workspace.writeText('output', 'x'); return 1; }",
+                "import { workspace } from '@tauritavern/runtime';\nexport default function () { workspace.writeText('output', 'x'); return 1; }",
                 json!({}),
             ))
             .await
@@ -728,7 +756,7 @@ mod tests {
     async fn fs_exists_checks_overlay() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
-            "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () {\n  return {\n    hasDirectory: workspace.exists('output'),\n    hasExisting: workspace.exists('output/data.txt'),\n    hasMissing: workspace.exists('output/nope.txt'),\n  };\n}",
+            "import { workspace } from '@tauritavern/runtime';\nexport default function () {\n  return {\n    hasDirectory: workspace.exists('output'),\n    hasExisting: workspace.exists('output/data.txt'),\n    hasMissing: workspace.exists('output/nope.txt'),\n  };\n}",
             json!({}),
         );
         req.workspace_files
@@ -745,7 +773,7 @@ mod tests {
     async fn world_info_snapshot_is_readable() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
-            "import { context } from '@tauritavern/runtime/v1';\nexport default function () { return context.worldInfo; }",
+            "import { context } from '@tauritavern/runtime';\nexport default function () { return context.worldInfo; }",
             json!({}),
         );
         req.context = json!({
@@ -780,7 +808,7 @@ mod tests {
     async fn variables_are_readable() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
-            "import { context } from '@tauritavern/runtime/v1';\nexport default function () {\n  return {\n    score: context.variables.local.score,\n    hasName: Object.hasOwn(context.variables.local, 'name'),\n    theme: context.variables.global.theme,\n    missing: context.variables.local.missing ?? '',\n  };\n}",
+            "import { context } from '@tauritavern/runtime';\nexport default function () {\n  return {\n    score: context.variables.local.score,\n    hasName: Object.hasOwn(context.variables.local, 'name'),\n    theme: context.variables.global.theme,\n    missing: context.variables.local.missing ?? '',\n  };\n}",
             json!({}),
         );
         req.context = json!({
@@ -808,7 +836,7 @@ mod tests {
         let engine = QuickJsScriptEngine::new();
         let result = engine
             .execute(request(
-                "import { log } from '@tauritavern/runtime/v1';\nexport default function () { log.info('hello'); log.warn('careful'); return 1; }",
+                "import { log } from '@tauritavern/runtime';\nexport default function () { log.info('hello'); log.warn('careful'); return 1; }",
                 json!({}),
             ))
             .await
@@ -824,7 +852,7 @@ mod tests {
         let engine = QuickJsScriptEngine::new();
         let result = engine
             .execute(request(
-                "import { workspace, log, context } from '@tauritavern/runtime/v1';\n\
+                "import { workspace, log, context } from '@tauritavern/runtime';\n\
                  export default function () {\n\
                  \x20 return {\n\
                  \x20   hasFs: typeof $fs !== 'undefined',\n\
@@ -874,7 +902,7 @@ mod tests {
         let engine = QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 1024);
         let error = engine
             .execute(request(
-                "import { workspace } from '@tauritavern/runtime/v1';\n\
+                "import { workspace } from '@tauritavern/runtime';\n\
                  export default function () {\n\
                  \x20 for (let i = 0; i < 40; i++) {\n\
                  \x20   workspace.writeText('output/f' + i + '.txt', 'x'.repeat(64));\n\
@@ -898,7 +926,7 @@ mod tests {
         let engine = QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 512);
         let error = engine
             .execute(request(
-                "import { log } from '@tauritavern/runtime/v1';\n\
+                "import { log } from '@tauritavern/runtime';\n\
                  export default function () {\n\
                  \x20 for (let i = 0; i < 100; i++) { log.info('x'); }\n\
                  \x20 return 1;\n\
@@ -919,7 +947,7 @@ mod tests {
         let engine = QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 512);
         let result = engine
             .execute(request(
-                "import { workspace } from '@tauritavern/runtime/v1';\n\
+                "import { workspace } from '@tauritavern/runtime';\n\
                  export default function () {\n\
                  \x20 for (let i = 0; i < 10; i++) { workspace.writeText('output/same.txt', 'x'.repeat(32)); }\n\
                  \x20 return 1;\n\

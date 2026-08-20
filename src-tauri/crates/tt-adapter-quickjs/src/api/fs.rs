@@ -212,7 +212,7 @@ fn js_error<'js>(ctx: &Ctx<'js>, message: String) -> rquickjs::Error {
 }
 
 /// 构建 `workspace` 对象：readText / writeText / listFiles / exists。
-/// 由 `@tauritavern/runtime/v1` 原生模块导出，不再注入全局。
+/// 由 `@tauritavern/runtime` 原生模块导出，不再注入全局。
 pub(crate) fn build_workspace_object<'js>(
     ctx: &Ctx<'js>,
     overlay: std::rc::Rc<RefCell<OverlayFs>>,

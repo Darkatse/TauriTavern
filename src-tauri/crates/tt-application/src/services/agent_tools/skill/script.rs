@@ -29,7 +29,7 @@ const SKILL_SCRIPT_RESULT_TOO_LARGE: &str = "skill.run_script_result_too_large";
 const SKILL_SCRIPT_WRITE_FAILED: &str = "skill.run_script_write_failed";
 
 /// 单个 skill 脚本执行允许携带的最大模块数与源码总字节数（fail-fast 上限）。
-/// 宿主不内嵌第三方库，skill 需要的库随 `scripts/` 自带，因此预留足够空间。
+/// 为多模块脚本与 Skill 自带依赖预留足够空间。
 const MAX_SCRIPT_MODULES: usize = 64;
 const MAX_SCRIPT_MODULE_TOTAL_BYTES: usize = 2 * 1024 * 1024;
 

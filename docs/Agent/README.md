@@ -20,7 +20,7 @@
 | [LlmGateway.md](LlmGateway.md) | provider-agnostic LLM gateway 与现有 `ChatCompletionService` 的复用边界 |
 | [McpSkill.md](McpSkill.md) | MCP 独立集成、Skill 渐进披露、安全边界 |
 | [Skill.md](Skill.md) | 当前 Skill 格式、存储、导入导出、Agent tool 与安全边界 |
-| [SkillScript.md](./SkillScript.md) | `skill.run_script` 脚本开发指南：context 快照、文件读写边界、模块导入与第三方库 |
+| [SkillScript.md](./SkillScript.md) | `skill.run_script` 脚本开发指南：context 快照、文件读写边界、模块导入与脚本工具箱 |
 | [TestingStrategy.md](TestingStrategy.md) | Domain/Application/Frontend/Security/Performance 测试矩阵 |
 
 ## 进度跟踪

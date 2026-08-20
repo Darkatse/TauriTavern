@@ -1,6 +1,6 @@
 # TauriTavern Skill Script 指南
 
-本文档面向 Skill 开发者，说明如何在 Skill 包的 `scripts/` 目录中编写可被 Agent 执行的 JavaScript 脚本。它覆盖脚本格式、Runtime 模块 API、文件系统读写边界、模块导入规则（含自带第三方库）、以及沙箱限制。
+本文档面向 Skill 开发者，说明如何在 Skill 包的 `scripts/` 目录中编写可被 Agent 执行的 JavaScript 脚本。它覆盖脚本格式、Runtime 模块 API、文件系统读写边界、脚本工具箱、模块导入以及沙箱限制。
 
 > 本文记录的是**当前已落地**的 `skill.run_script` 能力，不是方案讨论。长期开发以本文、`docs/Agent/Skill.md` 与 `docs/API/Skill.md` 为准。
 
@@ -48,12 +48,12 @@ export function main(args) {
 
 脚本名称（`skill.run_script` 的 `script` 参数）是 `scripts/` 目录下不带 `.js` 扩展名的文件名，且必须匹配 `^[a-z0-9][a-z0-9-]*$`（小写字母、数字、连字符，字母或数字开头）。例如 `scripts/helper.js` 对应 script 名 `helper`，`scripts/parse-xml.js` 对应 `parse-xml`。
 
-## 3. Runtime 模块（`@tauritavern/runtime/v1`）
+## 3. Runtime 模块（`@tauritavern/runtime`）
 
-宿主能力经版本化 ES Module 导入，沙箱不注入任何全局对象。脚本通过 `import` 从 `@tauritavern/runtime/v1` 获取宿主能力：
+宿主能力经 ES Module 导入，沙箱不注入任何全局对象。脚本通过 `import` 从 `@tauritavern/runtime` 获取宿主能力：
 
 ```js
-import { context, workspace, log } from '@tauritavern/runtime/v1';
+import { context, workspace, log } from '@tauritavern/runtime';
 ```
 
 导出表：
@@ -71,7 +71,7 @@ import { context, workspace, log } from '@tauritavern/runtime/v1';
 `workspace` 提供受限的文件读写能力。所有路径相对于当前 run 的 workspace 根目录，经过路径清洗后必须落在当前 invocation Workspace policy 的 `visible_roots`（读）或 `writable_roots`（写）内。绝对路径和 `..` 逃逸会被拒绝。
 
 ```js
-import { workspace } from '@tauritavern/runtime/v1';
+import { workspace } from '@tauritavern/runtime';
 
 // 读取文件内容（路径相对 workspace 根目录）
 const content = workspace.readText('output/config.json');
@@ -101,7 +101,7 @@ const exists = workspace.exists('output/config.json');
 `context.worldInfo` 是当前 run 启动时预取的激活世界书快照。它是普通 JSON；脚本可以在本次执行中处理这份副本，但不会修改宿主世界书。
 
 ```js
-import { context } from '@tauritavern/runtime/v1';
+import { context } from '@tauritavern/runtime';
 
 const entries = context.worldInfo.entries;
 // [{ uid, ref, content, constant, position, displayName, world }, ...]
@@ -127,7 +127,7 @@ const selected = entries.filter(entry => wanted.has(entry.ref));
 `context.variables` 是当前 run 的 SillyTavern 变量快照，包含 `local` 和 `global` 两个普通 JSON 对象。值保持快照中的原始 JSON 类型。
 
 ```js
-import { context } from '@tauritavern/runtime/v1';
+import { context } from '@tauritavern/runtime';
 
 // 读取 local 变量
 const score = context.variables.local.score;
@@ -147,7 +147,7 @@ const theme = context.variables.global.theme;
 `log` 将日志输出到宿主的日志系统，供开发者调试。日志不会进入 Agent 上下文或聊天消息。
 
 ```js
-import { log } from '@tauritavern/runtime/v1';
+import { log } from '@tauritavern/runtime';
 
 log.info('Processing started');
 log.warn('Deprecated format detected');
@@ -205,7 +205,7 @@ Profile 可以自定义基础 visible / writable roots；调用级 policy 还可
 
 ## 5. 模块导入
 
-脚本支持 ES Module 的 `import` 语法。模块解析由引擎在内存中完成——脚本不接触物理文件系统。宿主**不内嵌任何第三方库**：需要的库由 skill 自己随 `scripts/` 目录分发，版本完全由 skill 开发者掌控。
+脚本支持 ES Module 的 `import` 语法。模块解析全部在内存中完成：常用库从 TauriTavern 脚本工具箱导入，Skill 自己的模块通过相对路径导入，脚本不接触物理文件系统。
 
 ### 5.1 相对导入（`./` 或 `../`）
 
@@ -218,7 +218,7 @@ import { format } from './helper.js';
 // 导入子目录下的模块
 import { parse } from './lib/parser.js';
 
-// 导入自带的第三方库（见 5.2）
+// 导入 Skill 自带的第三方库（见 5.3）
 import { marked } from './vendor/marked.js';
 ```
 
@@ -235,9 +235,38 @@ my-skill/
       marked.js      ← 自带的第三方库 (./vendor/marked.js)
 ```
 
-### 5.2 自带第三方库
+### 5.2 脚本工具箱（`@tauritavern/kit/*`）
 
-沙箱不提供任何内置第三方库，宿主升级也不会改变脚本可用的库版本——需要的库随 skill 分发，skill 开发者自行管理版本与更新。
+TauriTavern 内嵌六个常用的单文件 ESM 库。Skill 可以直接导入，不需要复制依赖，也不占用 Skill 自身的模块数量与源码预算：
+
+| 模块 | 版本 | 用途 |
+| --- | --- | --- |
+| `@tauritavern/kit/dayjs` | 1.11.21 | 日期解析、格式化与计算 |
+| `@tauritavern/kit/es-toolkit` | 1.50.0 | 数组、对象、字符串等通用处理 |
+| `@tauritavern/kit/fast-xml-parser` | 5.10.1 | XML 校验、解析与构建 |
+| `@tauritavern/kit/marked` | 18.0.9 | Markdown 转换 |
+| `@tauritavern/kit/papaparse` | 5.6.0 | CSV 解析与生成 |
+| `@tauritavern/kit/slugify` | 1.6.9 | 将标题转换为适合路径或标识符的文本 |
+
+```js
+import dayjs from '@tauritavern/kit/dayjs';
+import { marked } from '@tauritavern/kit/marked';
+import { chunk } from '@tauritavern/kit/es-toolkit';
+
+export default function (args) {
+  return {
+    date: dayjs(args.date).format('YYYY-MM-DD'),
+    html: marked.parse(args.markdown ?? ''),
+    pages: chunk(args.items ?? [], 10),
+  };
+}
+```
+
+这些模块保留各自的上游 API。沙箱没有浏览器、Node 或定时器，因此依赖 `window`、`File`、`Worker`、`setTimeout` 等环境能力的库功能不可用。dayjs 只包含核心模块；插件和 locale 需要由 Skill 自带。Marked 生成 HTML，但不负责净化 HTML。
+
+### 5.3 自带第三方库
+
+工具箱之外的库，或必须固定为其他版本的库，可以随 Skill 的 `scripts/` 目录分发，由 Skill 作者自行管理。
 
 放置位置：skill 的 `scripts/` 下任意子目录（推荐 `scripts/vendor/`），经相对导入使用。
 
@@ -303,7 +332,7 @@ export default function (args) {
 - 没有网络访问能力：不能发起 HTTP 请求、不能使用 `fetch` / `XMLHttpRequest`。
 - 没有定时器：不能使用 `setTimeout` / `setInterval` / `setImmediate`。
 - 没有进程访问能力：不能执行 shell 命令、不能 spawn 子进程。
-- 没有 Node / 浏览器内置对象：`process`、`Buffer`、`module`、`require`（CommonJS）、`window`、`document` 等均不可用；脚本只能通过 ES Module `import` 从 `@tauritavern/runtime/v1` 导入 `workspace` / `context` / `log` 访问外部能力。
+- 没有 Node / 浏览器内置对象：`process`、`Buffer`、`module`、`require`（CommonJS）、`window`、`document` 等均不可用；脚本只能通过 ES Module `import` 从 `@tauritavern/runtime` 导入 `workspace` / `context` / `log` 访问外部能力。
 - `eval()` / `new Function()` 是 QuickJS 的标准语言特性、并未禁用，但它们无法逃逸沙箱（没有 Node 对象、没有网络、文件读写受 `workspace` 门禁）。不要依赖它们访问外部资源。
 
 ### 6.3 安全边界汇总
@@ -315,6 +344,7 @@ export default function (args) {
 | 读 visible roots 外文件 | 否（fail-fast） |
 | 绝对路径 / `..` 逃逸 | 否（fail-fast） |
 | 导入 Skill scripts/ 内的模块（含自带库） | 是（内存快照解析） |
+| 导入 `@tauritavern/kit/*` 工具箱模块 | 是（内存加载） |
 | 导入快照外 / scripts/ 外的模块 | 否（fail-fast） |
 | 网络请求 | 否 |
 | 修改宿主变量 / 世界书 | 否；`context` 只是本次执行的副本 |
@@ -328,7 +358,7 @@ export default function (args) {
 ```js
 // skills/data-processor/scripts/process.js
 
-import { context, workspace, log } from '@tauritavern/runtime/v1';
+import { context, workspace, log } from '@tauritavern/runtime';
 
 export default function (args) {
   const { text, format } = args;
@@ -370,16 +400,13 @@ export default function (args) {
 }
 ```
 
-### 7.2 使用多模块与自带库的脚本
+### 7.2 使用多模块与脚本工具箱
 
 ```js
 // skills/markdown-builder/scripts/main.js
-// marked 与 dayjs 由 skill 自带（见 5.2 的 esbuild 打包方式），
-// 版本由 skill 开发者自行管理。
-
-import { marked } from './vendor/marked.js';
-import dayjs from './vendor/dayjs.js';
-import { workspace } from '@tauritavern/runtime/v1';
+import { marked } from '@tauritavern/kit/marked';
+import dayjs from '@tauritavern/kit/dayjs';
+import { workspace } from '@tauritavern/runtime';
 import { formatHeader } from './format.js';
 
 export default function (args) {
@@ -443,5 +470,5 @@ Processes input text with configurable format and batch size.
 2. 返回 JSON 可序列化的小结果；大内容写入 workspace。
 3. workspace 路径使用当前 policy 允许的相对路径。
 4. `context` 是隔离快照，不会把修改写回宿主。
-5. 第三方依赖随 Skill 打包，不依赖 Node、浏览器或网络 API。
+5. 优先使用 `@tauritavern/kit/*`；其他依赖随 Skill 打包，且不能依赖 Node、浏览器或网络 API。
 6. 在 `SKILL.md` 中写清脚本参数、返回值和文件副作用。

@@ -85,7 +85,7 @@ src-tauri/
 | `tt-adapter-storage-userdata` | character、world info、agent workspace、agent profile、skill local package store、PNG card metadata |
 | `tt-adapter-media` | avatar/background/user media/image metadata、browser-visible host resource file store |
 | `tt-adapter-extension` | third-party extension 发现、安装、版本检查、更新、分支查询/切换、删除与移动；Gitoxide smart HTTP 与 embedded worktree |
-| `tt-adapter-quickjs` | QuickJS Runtime/Context、内存 ESM 与版本化 JavaScript binding；只接触逻辑模块、JSON、内存 workspace snapshot/delta |
+| `tt-adapter-quickjs` | QuickJS Runtime/Context、内存 ESM 与 JavaScript binding；只接触逻辑模块、JSON、内存 workspace snapshot/delta |
 | `tt-adapter-sync` | LAN Sync、TT-Sync v2 runtime、stores、client/server、sync jobs |
 | `tt-adapter-archive` | data archive import/export executor、archive path safety |
 
