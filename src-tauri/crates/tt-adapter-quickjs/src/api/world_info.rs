@@ -1,6 +1,6 @@
 //! `$worldInfo`：读取预取的激活世界书快照（只读，纯 JSON 输入）。
 //!
-//! 应用层将 `ActivatedWorldInfoEntry` 投影为 JSON 后传入，适配器
+//! 应用层将激活世界书条目投影为 JSON 后传入，适配器
 //! 不依赖任何领域模型类型。
 
 use rquickjs::{Ctx, Function, Object};
@@ -11,7 +11,7 @@ use crate::convert::json_to_js;
 /// 将 `$worldInfo` 全局对象注入 JS context。
 ///
 /// `entries_json` 应为 `{ "entries": [...] }` 格式的纯 JSON 值，
-/// 由应用层从 `ActivatedWorldInfoEntry` 列表投影而成。
+/// 由应用层从激活世界书条目列表投影而成。
 pub(crate) fn register_world_info_api<'js>(
     ctx: &Ctx<'js>,
     entries_json: Value,

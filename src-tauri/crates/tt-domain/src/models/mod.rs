@@ -22,7 +22,6 @@ pub mod quick_reply;
 pub mod secret;
 pub mod settings;
 pub mod skill;
-pub mod skill_script;
 pub mod theme;
 pub mod tool;
 pub mod tt_sync;

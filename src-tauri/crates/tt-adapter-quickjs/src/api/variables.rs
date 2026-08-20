@@ -1,6 +1,6 @@
 //! `$variables`：SillyTavern 变量快照（只读，纯 JSON 输入）。
 //!
-//! 应用层将 `SillyTavernVariableSnapshot` 投影为
+//! 应用层将变量快照投影为
 //! `{ "local": { ... }, "global": { ... } }` 格式的纯 JSON 后传入，
 //! 适配器不依赖任何领域模型类型。
 //!

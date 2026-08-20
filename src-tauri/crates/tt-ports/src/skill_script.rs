@@ -52,7 +52,7 @@ pub struct SkillScriptRequest {
     /// 可写根前缀列表（逻辑路径前缀，如 `["output"]`）。
     /// `$fs.writeText` 仅允许写入这些前缀下的路径。
     pub writable_roots: Vec<String>,
-    /// 预取的世界书快照（纯 JSON，由应用层从 `ActivatedWorldInfoEntry`
+    /// 预取的世界书快照（纯 JSON，由应用层从激活条目
     /// 投影而成），经 `$worldInfo` API 提供给脚本。
     pub world_info: serde_json::Value,
     /// 预取的 SillyTavern 变量快照（纯 JSON），格式为

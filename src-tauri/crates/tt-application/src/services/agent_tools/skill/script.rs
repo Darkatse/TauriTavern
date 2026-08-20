@@ -15,7 +15,6 @@ use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
 use tt_domain::models::skill::{SkillFileKind, SkillFileRef, SkillScope};
-use tt_domain::models::skill_script::{ActivatedWorldInfoEntry, SillyTavernVariableSnapshot};
 use tt_domain::models::tool::ToolInvocation;
 use tt_ports::repositories::workspace_repository::{
     WorkspaceEntryKind, WorkspaceFile, WorkspaceRepository, WorkspaceWriteGuard,
@@ -154,8 +153,8 @@ pub(in crate::services::agent_tools) async fn script(
         .map(|(path, file)| (path.clone(), file.text.clone()))
         .collect::<HashMap<_, _>>();
 
-    // 投影世界书快照为纯 JSON
-    let world_info = build_world_info_json(prompt_snapshot);
+    // 投影世界书快照为纯 JSON（fail-fast：异常条目直接传播错误）
+    let world_info = build_world_info_json(prompt_snapshot)?;
 
     // 投影变量快照为纯 JSON
     let variables = build_variables_json(prompt_snapshot);
@@ -431,43 +430,60 @@ async fn build_workspace_snapshot(
 }
 
 /// 从 prompt_snapshot 投影世界书条目为纯 JSON `{ "entries": [...] }`。
-fn build_world_info_json(prompt_snapshot: Option<&Value>) -> Value {
-    let entries = prompt_snapshot
+/// 复用 world_info::normalize_entry 做 fail-fast 解析，异常条目直接传播错误。
+fn build_world_info_json(
+    prompt_snapshot: Option<&Value>,
+) -> Result<Value, ApplicationError> {
+    let entries = match prompt_snapshot
         .and_then(|snapshot| snapshot.get("worldInfoActivation"))
         .and_then(|batch| batch.get("entries"))
         .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .enumerate()
-                .filter_map(|(index, entry)| ActivatedWorldInfoEntry::from_value(index, entry))
-                .map(|e| {
-                    json!({
-                        "uid": e.uid,
-                        "ref": e.ref_key,
-                        "content": e.content,
-                        "constant": e.constant,
-                        "world": e.world,
-                        "position": e.position,
-                        "displayName": e.display_name,
-                    })
-                })
-                .collect::<Vec<_>>()
+    {
+        Some(entries) => entries,
+        None => return Ok(json!({ "entries": [] })),
+    };
+    let normalized: Vec<super::super::world_info::ActivatedEntry> = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| super::super::world_info::normalize_entry(index, entry))
+        .collect::<Result<Vec<_>, _>>()?;
+    let entries_json = normalized
+        .iter()
+        .map(|e| {
+            json!({
+                "uid": e.uid,
+                "ref": e.ref_id,
+                "content": e.content,
+                "constant": e.constant,
+                "world": e.world,
+                "position": e.position,
+                "displayName": e.display_name,
+            })
         })
-        .unwrap_or_default();
-    json!({ "entries": entries })
+        .collect::<Vec<_>>();
+    Ok(json!({ "entries": entries_json }))
 }
 
 /// 从 prompt_snapshot 投影变量快照为纯 JSON `{ "local": { ... }, "global": { ... } }`。
+/// 直接从 frozenRunInputSnapshot.variables 提取 local/global map，缺失则回退空对象。
 fn build_variables_json(prompt_snapshot: Option<&Value>) -> Value {
-    let snapshot = prompt_snapshot
+    let variables = prompt_snapshot
         .and_then(|snapshot| snapshot.get("frozenRunInputSnapshot"))
         .and_then(|frozen| frozen.get("variables"))
-        .map(SillyTavernVariableSnapshot::from_value)
+        .and_then(Value::as_object);
+    let local = variables
+        .and_then(|map| map.get("local"))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let global = variables
+        .and_then(|map| map.get("global"))
+        .and_then(Value::as_object)
+        .cloned()
         .unwrap_or_default();
     json!({
-        "local": snapshot.local,
-        "global": snapshot.global,
+        "local": local,
+        "global": global,
     })
 }
 
