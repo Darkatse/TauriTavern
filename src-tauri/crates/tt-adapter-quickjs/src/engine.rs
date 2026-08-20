@@ -17,6 +17,7 @@ use tokio::task::spawn_blocking;
 
 use tt_ports::skill_script::{
     SkillScriptEngine, SkillScriptEngineError, SkillScriptRequest, SkillScriptResult,
+    SkillScriptWrite,
 };
 
 use crate::api::{
@@ -205,9 +206,18 @@ fn execute_sync(
                 }
             })?;
             let overlay = overlay.borrow();
+            // 收集最终 delta（BTreeMap 路径序，同一路径仅保留最终内容）
+            let writes = overlay
+                .writes
+                .iter()
+                .map(|(path, text)| SkillScriptWrite {
+                    path: path.clone(),
+                    text: text.clone(),
+                })
+                .collect();
             Ok(SkillScriptResult {
                 value,
-                writes: overlay.writes.clone(),
+                writes,
                 logs: overlay.logs.clone(),
             })
         }
@@ -547,6 +557,26 @@ mod tests {
         assert_eq!(result.writes.len(), 1);
         assert_eq!(result.writes[0].path, "output/note.txt");
         assert_eq!(result.writes[0].text, "hello");
+    }
+
+    #[tokio::test]
+    async fn multiple_writes_to_same_path_produce_single_final_delta() {
+        let engine = QuickJsScriptEngine::new();
+        let result = engine
+            .execute(request(
+                "export default function () {\n\
+                 \x20 $fs.writeText('output/log.txt', 'first');\n\
+                 \x20 $fs.writeText('output/log.txt', 'second');\n\
+                 \x20 $fs.writeText('output/log.txt', 'final');\n\
+                 \x20 return 1;\n\
+                 }",
+                json!({}),
+            ))
+            .await
+            .expect("execute");
+        assert_eq!(result.writes.len(), 1);
+        assert_eq!(result.writes[0].path, "output/log.txt");
+        assert_eq!(result.writes[0].text, "final");
     }
 
     #[tokio::test]

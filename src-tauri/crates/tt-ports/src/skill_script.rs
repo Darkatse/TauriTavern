@@ -90,8 +90,8 @@ pub enum SkillScriptLogLevel {
 pub struct SkillScriptResult {
     /// 脚本 `default(args)` 或 `main(args)` 导出的 JSON 返回值。
     pub value: serde_json::Value,
-    /// 脚本通过 `$fs.writeText` 产生的写入（按调用顺序排列）。
-    /// 应用层负责通过 `write_text_guarded` 落盘。
+    /// 脚本通过 `$fs.writeText` 产生的写入（按路径排序的最终 delta，
+    /// 同一路径仅保留最终内容）。应用层负责通过 `write_text_guarded` 落盘。
     pub writes: Vec<SkillScriptWrite>,
     /// 脚本通过 `$log` 产生的日志条目。
     pub logs: Vec<SkillScriptLog>,

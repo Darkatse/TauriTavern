@@ -4,12 +4,12 @@
 //! 写入操作被收集到 `writes` 通道，由应用层在执行完成后落盘。
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use rquickjs::{Ctx, Function, Object};
 
-use tt_ports::skill_script::{SkillScriptLogLevel, SkillScriptLog, SkillScriptWrite};
+use tt_ports::skill_script::{SkillScriptLogLevel, SkillScriptLog};
 
 /// 内存覆盖文件系统：快照 + 写入收集器 + 日志收集器。
 pub(crate) struct OverlayFs {
@@ -19,8 +19,8 @@ pub(crate) struct OverlayFs {
     visible_roots: Vec<String>,
     /// 可写根前缀。
     writable_roots: Vec<String>,
-    /// 收集的写入（按调用顺序）。
-    pub writes: Vec<SkillScriptWrite>,
+    /// 最终状态写入 map：同路径 insert 覆盖，天然去重为最终 delta。
+    pub writes: BTreeMap<String, String>,
     /// 收集的日志。
     pub logs: Vec<SkillScriptLog>,
 }
@@ -35,7 +35,7 @@ impl OverlayFs {
             files: snapshot,
             visible_roots,
             writable_roots,
-            writes: Vec::new(),
+            writes: BTreeMap::new(),
             logs: Vec::new(),
         }
     }
@@ -86,10 +86,8 @@ impl OverlayFs {
             return Err(format!("path is outside the writable workspace roots: {raw}"));
         }
         self.files.insert(cleaned.clone(), content.clone());
-        self.writes.push(SkillScriptWrite {
-            path: cleaned,
-            text: content,
-        });
+        // 最终状态 map：同一路径覆盖，天然去重为最终 delta
+        self.writes.insert(cleaned, content);
         Ok(())
     }
 
