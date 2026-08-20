@@ -37,7 +37,7 @@ pub struct SkillScriptRequest {
     pub entry_module: String,
     /// 内存模块快照：逻辑模块名 → 模块源码（含入口模块）。
     /// 相对导入（`./x.js`、`../x.js`）按 importer 的逻辑模块名规范化解析，
-    /// 且只能命中这张 map；`@tauritavern/vendor/*` 命中内嵌公共库。
+    /// 且只能命中这张 map；宿主不内嵌任何第三方库，需要的库随 skill 分发。
     pub modules: HashMap<String, String>,
     /// 调用方传入的参数对象。
     pub args: serde_json::Value,
