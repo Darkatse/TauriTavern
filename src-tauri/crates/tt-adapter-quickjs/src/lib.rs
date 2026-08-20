@@ -6,4 +6,7 @@ pub mod engine;
 pub mod runtime_module;
 pub mod skill_libs;
 
-pub use engine::{DEFAULT_EXECUTION_TIMEOUT, DEFAULT_MAX_RESULT_BYTES, QuickJsScriptEngine};
+pub use engine::{
+    QuickJsScriptEngine, DEFAULT_EXECUTION_TIMEOUT, DEFAULT_MAX_RESULT_BYTES,
+    DEFAULT_MAX_TOTAL_INPUT_BYTES, DEFAULT_MAX_TOTAL_OUTPUT_BYTES,
+};

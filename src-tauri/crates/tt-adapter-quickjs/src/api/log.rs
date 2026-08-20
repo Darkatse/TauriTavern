@@ -26,8 +26,11 @@ pub(crate) fn build_log_object<'js>(
         let log_overlay = overlay.clone();
         let function = Function::new(
             ctx.clone(),
-            move |message: String| {
-                log_overlay.borrow_mut().log(level, message);
+            move |ctx: Ctx<'_>, message: String| -> Result<(), rquickjs::Error> {
+                log_overlay
+                    .borrow_mut()
+                    .log(level, message)
+                    .map_err(|m| rquickjs::Exception::throw_message(&ctx, &m))
             },
         )?;
         object.set(name, function)?;

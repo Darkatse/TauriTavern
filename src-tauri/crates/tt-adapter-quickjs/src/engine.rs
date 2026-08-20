@@ -27,26 +27,51 @@ use crate::skill_libs::builtin_modules;
 
 pub const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_MAX_RESULT_BYTES: usize = 256 * 1024;
+pub const DEFAULT_MAX_TOTAL_INPUT_BYTES: usize = 8 * 1024 * 1024;
+pub const DEFAULT_MAX_TOTAL_OUTPUT_BYTES: usize = 1024 * 1024;
 const MEMORY_LIMIT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_STACK_BYTES: usize = 256 * 1024;
 
-pub struct QuickJsScriptEngine {
+/// 一次执行的引擎限制集合。
+#[derive(Clone, Copy)]
+struct ExecutionLimits {
     timeout: Duration,
     max_result_bytes: usize,
+    max_total_input_bytes: usize,
+    max_total_output_bytes: usize,
+}
+
+pub struct QuickJsScriptEngine {
+    limits: ExecutionLimits,
 }
 
 impl QuickJsScriptEngine {
     pub fn new() -> Self {
         Self {
-            timeout: DEFAULT_EXECUTION_TIMEOUT,
-            max_result_bytes: DEFAULT_MAX_RESULT_BYTES,
+            limits: ExecutionLimits {
+                timeout: DEFAULT_EXECUTION_TIMEOUT,
+                max_result_bytes: DEFAULT_MAX_RESULT_BYTES,
+                max_total_input_bytes: DEFAULT_MAX_TOTAL_INPUT_BYTES,
+                max_total_output_bytes: DEFAULT_MAX_TOTAL_OUTPUT_BYTES,
+            },
         }
     }
 
     /// 测试侧收紧限制的构造器。
     pub fn with_limits(mut self, timeout: Duration, max_result_bytes: usize) -> Self {
-        self.timeout = timeout;
-        self.max_result_bytes = max_result_bytes;
+        self.limits.timeout = timeout;
+        self.limits.max_result_bytes = max_result_bytes;
+        self
+    }
+
+    /// 测试侧收紧输入/输出总预算的构造器。
+    pub fn with_budgets(
+        mut self,
+        max_total_input_bytes: usize,
+        max_total_output_bytes: usize,
+    ) -> Self {
+        self.limits.max_total_input_bytes = max_total_input_bytes;
+        self.limits.max_total_output_bytes = max_total_output_bytes;
         self
     }
 }
@@ -63,9 +88,8 @@ impl SkillScriptEngine for QuickJsScriptEngine {
         &self,
         request: SkillScriptRequest,
     ) -> Result<SkillScriptResult, SkillScriptEngineError> {
-        let timeout = self.timeout;
-        let max_result_bytes = self.max_result_bytes;
-        spawn_blocking(move || execute_sync(request, timeout, max_result_bytes))
+        let limits = self.limits;
+        spawn_blocking(move || execute_sync(request, limits))
             .await
             .map_err(|error| {
                 SkillScriptEngineError::Internal(format!(
@@ -81,20 +105,31 @@ fn internal_error(error: rquickjs::Error) -> SkillScriptEngineError {
 
 fn execute_sync(
     request: SkillScriptRequest,
-    timeout: Duration,
-    max_result_bytes: usize,
+    limits: ExecutionLimits,
 ) -> Result<SkillScriptResult, SkillScriptEngineError> {
+    let input_bytes = total_input_bytes(&request);
+    if input_bytes > limits.max_total_input_bytes {
+        return Err(SkillScriptEngineError::ExecutionFailed {
+            message: format!(
+                "total skill script input is {input_bytes} bytes (modules + workspace snapshot + args + context), \
+                 exceeding the {}-byte limit",
+                limits.max_total_input_bytes
+            ),
+        });
+    }
+
     let overlay = Rc::new(RefCell::new(OverlayFs::new(
         request.workspace_files,
         request.visible_roots,
         request.writable_roots,
+        limits.max_total_output_bytes,
     )));
 
     let runtime = Runtime::new().map_err(internal_error)?;
     runtime.set_memory_limit(MEMORY_LIMIT_BYTES);
     runtime.set_max_stack_size(MAX_STACK_BYTES);
 
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + limits.timeout;
     let timed_out = Arc::new(AtomicBool::new(false));
     let interrupt_flag = timed_out.clone();
     runtime.set_interrupt_handler(Some(Box::new(move || {
@@ -200,10 +235,21 @@ fn execute_sync(
 
     match outcome {
         Ok(text) => {
-            if text.len() > max_result_bytes {
+            let overlay_ref = overlay.borrow();
+            let total_output = overlay_ref.output_bytes() + text.len();
+            if total_output > limits.max_total_output_bytes {
+                return Err(SkillScriptEngineError::ExecutionFailed {
+                    message: format!(
+                        "total script output is {total_output} bytes (workspace writes + logs + result), \
+                         exceeding the {}-byte limit",
+                        limits.max_total_output_bytes
+                    ),
+                });
+            }
+            if text.len() > limits.max_result_bytes {
                 return Err(SkillScriptEngineError::ResultTooLarge {
                     actual_bytes: text.len(),
-                    limit_bytes: max_result_bytes,
+                    limit_bytes: limits.max_result_bytes,
                 });
             }
             let value = serde_json::from_str(&text).map_err(|error| {
@@ -211,9 +257,8 @@ fn execute_sync(
                     message: format!("Skill script result is not valid JSON: {error}"),
                 }
             })?;
-            let overlay = overlay.borrow();
             // 收集最终 delta（BTreeMap 路径序，同一路径仅保留最终内容）
-            let writes = overlay
+            let writes = overlay_ref
                 .writes
                 .iter()
                 .map(|(path, text)| SkillScriptWrite {
@@ -224,7 +269,7 @@ fn execute_sync(
             Ok(SkillScriptResult {
                 value,
                 writes,
-                logs: overlay.logs.clone(),
+                logs: overlay_ref.logs.clone(),
             })
         }
         Err(error) => {
@@ -233,7 +278,7 @@ fn execute_sync(
                     message: format!(
                         "Skill script {} timed out after {:.1}s and was interrupted.",
                         entry_module,
-                        timeout.as_secs_f64()
+                        limits.timeout.as_secs_f64()
                     ),
                 });
             }
@@ -243,6 +288,19 @@ fn execute_sync(
             })
         }
     }
+}
+
+/// 输入总量：模块源码 + 工作区快照 + args + 世界书/变量上下文。
+/// serde_json::Value 由宿主构造，总是可序列化；失败按 0 计不放大内存。
+fn total_input_bytes(request: &SkillScriptRequest) -> usize {
+    fn json_len(value: &serde_json::Value) -> usize {
+        serde_json::to_string(value).map(|text| text.len()).unwrap_or(0)
+    }
+    request.modules.values().map(|s| s.len()).sum::<usize>()
+        + request.workspace_files.values().map(|s| s.len()).sum::<usize>()
+        + json_len(&request.args)
+        + json_len(&request.world_info)
+        + json_len(&request.variables)
 }
 
 /// 提取 JS 异常的 message 与 stack（如可用），否则回退到错误字符串。
@@ -278,7 +336,9 @@ mod tests {
     use std::time::Duration;
     use tt_ports::skill_script::{SkillScriptEngine, SkillScriptEngineError, SkillScriptRequest};
 
-    use super::QuickJsScriptEngine;
+    use super::{
+        QuickJsScriptEngine, DEFAULT_MAX_TOTAL_INPUT_BYTES, DEFAULT_MAX_TOTAL_OUTPUT_BYTES,
+    };
 
     fn request(source: &str, args: serde_json::Value) -> SkillScriptRequest {
         let mut modules = HashMap::new();
@@ -740,5 +800,86 @@ mod tests {
                 "contextWorks": true,
             })
         );
+    }
+
+    #[tokio::test]
+    async fn input_budget_exceeded_fails_fast() {
+        let engine =
+            QuickJsScriptEngine::new().with_budgets(1024, DEFAULT_MAX_TOTAL_OUTPUT_BYTES);
+        let mut req = request("export default function () { return 1; }", json!({}));
+        req.workspace_files
+            .insert("output/big.txt".to_string(), "x".repeat(2048));
+        let error = engine.execute(req).await.expect_err("must fail");
+        match error {
+            SkillScriptEngineError::ExecutionFailed { message } => {
+                assert!(message.contains("input"), "message was: {message}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn output_budget_exceeded_by_writes_fails_fast() {
+        let engine =
+            QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 1024);
+        let error = engine
+            .execute(request(
+                "import { workspace } from '@tauritavern/runtime/v1';\n\
+                 export default function () {\n\
+                 \x20 for (let i = 0; i < 40; i++) {\n\
+                 \x20   workspace.writeText('output/f' + i + '.txt', 'x'.repeat(64));\n\
+                 \x20 }\n\
+                 \x20 return 1;\n\
+                 }",
+                json!({}),
+            ))
+            .await
+            .expect_err("must exceed output budget");
+        match error {
+            SkillScriptEngineError::ExecutionFailed { message } => {
+                assert!(message.contains("output"), "message was: {message}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn output_budget_exceeded_by_logs_fails_fast() {
+        let engine =
+            QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 512);
+        let error = engine
+            .execute(request(
+                "import { log } from '@tauritavern/runtime/v1';\n\
+                 export default function () {\n\
+                 \x20 for (let i = 0; i < 100; i++) { log.info('x'); }\n\
+                 \x20 return 1;\n\
+                 }",
+                json!({}),
+            ))
+            .await
+            .expect_err("must exceed output budget");
+        assert!(matches!(
+            error,
+            SkillScriptEngineError::ExecutionFailed { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn repeated_writes_to_same_path_do_not_double_count() {
+        // 同路径覆盖写按最终值记账：预算 512 时 10 次 32 字节覆盖写成功。
+        let engine =
+            QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 512);
+        let result = engine
+            .execute(request(
+                "import { workspace } from '@tauritavern/runtime/v1';\n\
+                 export default function () {\n\
+                 \x20 for (let i = 0; i < 10; i++) { workspace.writeText('output/same.txt', 'x'.repeat(32)); }\n\
+                 \x20 return 1;\n\
+                 }",
+                json!({}),
+            ))
+            .await
+            .expect("within budget");
+        assert_eq!(result.writes.len(), 1);
     }
 }

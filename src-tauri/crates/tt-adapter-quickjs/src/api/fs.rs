@@ -11,6 +11,10 @@ use rquickjs::{Ctx, Function, Object};
 
 use tt_ports::skill_script::{SkillScriptLogLevel, SkillScriptLog};
 
+/// 每个输出项（写入路径 / 日志条目）的固定记账成本，
+/// 防止海量空条目绕过字节预算。
+pub(crate) const OUTPUT_ITEM_FIXED_COST: usize = 64;
+
 /// 内存覆盖文件系统：快照 + 写入收集器 + 日志收集器。
 pub(crate) struct OverlayFs {
     /// 初始快照 + 脚本写入的叠加状态。
@@ -23,6 +27,9 @@ pub(crate) struct OverlayFs {
     pub writes: BTreeMap<String, String>,
     /// 收集的日志。
     pub logs: Vec<SkillScriptLog>,
+    /// 输出记账：Σ(路径 + 内容) + 每项固定成本 + 日志字节数。
+    output_bytes: usize,
+    max_output_bytes: usize,
 }
 
 impl OverlayFs {
@@ -30,6 +37,7 @@ impl OverlayFs {
         snapshot: HashMap<String, String>,
         visible_roots: Vec<String>,
         writable_roots: Vec<String>,
+        max_output_bytes: usize,
     ) -> Self {
         Self {
             files: snapshot,
@@ -37,7 +45,14 @@ impl OverlayFs {
             writable_roots,
             writes: BTreeMap::new(),
             logs: Vec::new(),
+            output_bytes: 0,
+            max_output_bytes,
         }
+    }
+
+    /// 当前输出记账字节数（引擎在结果序列化后叠加 result 计入总预算）。
+    pub(crate) fn output_bytes(&self) -> usize {
+        self.output_bytes
     }
 
     fn is_under_roots(cleaned: &str, roots: &[String]) -> bool {
@@ -85,6 +100,21 @@ impl OverlayFs {
         if !Self::is_under_roots(&cleaned, &self.writable_roots) {
             return Err(format!("path is outside the writable workspace roots: {raw}"));
         }
+        // 同路径覆盖写：扣除上次的全部记账（路径 + 固定成本 + 旧内容），再按新值计入。
+        let previous_cost = self
+            .writes
+            .get(&cleaned)
+            .map(|text| cleaned.len() + OUTPUT_ITEM_FIXED_COST + text.len())
+            .unwrap_or(0);
+        let next = self.output_bytes + cleaned.len() + OUTPUT_ITEM_FIXED_COST + content.len()
+            - previous_cost;
+        if next > self.max_output_bytes {
+            return Err(format!(
+                "total script output exceeds the {}-byte limit (workspace writes + logs + result)",
+                self.max_output_bytes
+            ));
+        }
+        self.output_bytes = next;
         self.files.insert(cleaned.clone(), content.clone());
         // 最终状态 map：同一路径覆盖，天然去重为最终 delta
         self.writes.insert(cleaned, content);
@@ -143,8 +173,17 @@ impl OverlayFs {
         self.files.contains_key(&cleaned)
     }
 
-    pub fn log(&mut self, level: SkillScriptLogLevel, message: String) {
+    pub fn log(&mut self, level: SkillScriptLogLevel, message: String) -> Result<(), String> {
+        let next = self.output_bytes + message.len() + OUTPUT_ITEM_FIXED_COST;
+        if next > self.max_output_bytes {
+            return Err(format!(
+                "total script output exceeds the {}-byte limit (workspace writes + logs + result)",
+                self.max_output_bytes
+            ));
+        }
+        self.output_bytes = next;
         self.logs.push(SkillScriptLog { level, message });
+        Ok(())
     }
 }
 
