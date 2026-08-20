@@ -1,15 +1,18 @@
 //! 预置公共 skill 脚本库（单文件 ESM），编译期内嵌进二进制。
-//! 通过 rquickjs `BuiltinLoader` 注册到运行时，脚本可经裸模块名导入。
+//! 通过 rquickjs `BuiltinLoader` 注册到运行时，脚本经带命名空间的
+//! 模块名导入，避免与 skill 自带模块或未来的 npm 解析冲突。
+
+/// 内置库的命名空间前缀。
+pub const BUILTIN_MODULE_PREFIX: &str = "@tauritavern/runtime/";
 
 /// 返回所有内嵌公共库的 `(模块名, 源码)` 列表。
-/// 模块名是裸导入名（不含 `.js` 后缀），与 `BuiltinLoader` 注册键一致。
 pub fn builtin_modules() -> Vec<(&'static str, &'static str)> {
     vec![
-        ("dayjs", include_str!("../../tauritavern/resources/skill-libs/dayjs.js")),
-        ("es-toolkit", include_str!("../../tauritavern/resources/skill-libs/es-toolkit.js")),
-        ("fast-xml-parser", include_str!("../../tauritavern/resources/skill-libs/fast-xml-parser.js")),
-        ("marked", include_str!("../../tauritavern/resources/skill-libs/marked.js")),
-        ("papaparse", include_str!("../../tauritavern/resources/skill-libs/papaparse.js")),
-        ("slugify", include_str!("../../tauritavern/resources/skill-libs/slugify.js")),
+        ("@tauritavern/runtime/dayjs", include_str!("../resources/skill-libs/dayjs.js")),
+        ("@tauritavern/runtime/es-toolkit", include_str!("../resources/skill-libs/es-toolkit.js")),
+        ("@tauritavern/runtime/fast-xml-parser", include_str!("../resources/skill-libs/fast-xml-parser.js")),
+        ("@tauritavern/runtime/marked", include_str!("../resources/skill-libs/marked.js")),
+        ("@tauritavern/runtime/papaparse", include_str!("../resources/skill-libs/papaparse.js")),
+        ("@tauritavern/runtime/slugify", include_str!("../resources/skill-libs/slugify.js")),
     ]
 }

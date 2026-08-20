@@ -360,17 +360,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bare_imports_resolve_from_builtin_libs() {
+    async fn namespaced_builtin_libs_resolve() {
         let engine = QuickJsScriptEngine::new();
-        // 使用 slugify 库（体积小，适合测试），该库为 `export default` 形式。
+        // slugify 库体积小、为 `export default` 形式，适合冒烟。
         let result = engine
             .execute(request(
-                "import slugify from 'slugify';\nexport default function () { return slugify('Hello World!'); }",
+                "import slugify from '@tauritavern/runtime/slugify';\nexport default function () { return slugify('Hello World!'); }",
                 json!({}),
             ))
             .await
             .expect("execute");
-        // slugify 应返回某种 slug 形式
         assert!(result.value.is_string());
     }
 
