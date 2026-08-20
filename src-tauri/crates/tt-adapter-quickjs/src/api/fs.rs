@@ -81,10 +81,11 @@ impl OverlayFs {
         if raw.contains('\0') {
             return Err(format!("path must not contain NUL: {raw:?}"));
         }
-        if Path::new(raw).is_absolute() {
+        let normalized = raw.replace('\\', "/");
+        if Path::new(&normalized).is_absolute() {
             return Err(format!("absolute paths are not allowed: {raw}"));
         }
-        let cleaned = path_clean::clean(raw).to_string_lossy().replace('\\', "/");
+        let cleaned = path_clean::clean(normalized).to_string_lossy().into_owned();
         if cleaned.starts_with("..") {
             return Err(format!("path escapes the workspace: {raw}"));
         }

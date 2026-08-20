@@ -132,7 +132,10 @@ pub(in crate::services::agent_tools) async fn script(
     };
 
     let entry_module = format!("scripts/{script}.js");
-    let modules = build_script_modules(skill_service, &scope, skill).await?;
+    let modules = match build_script_modules(skill_service, &scope, skill).await {
+        Ok(modules) => modules,
+        Err(error) => return reject_preparation(call, error),
+    };
     if !modules.contains_key(&entry_module) {
         return Ok((
             tool_error(
@@ -150,12 +153,16 @@ pub(in crate::services::agent_tools) async fn script(
     let workspace_policy = workspace_access_policy(workspace_repository, run_id).await?;
 
     // 构建工作区文件快照：列出 visible_roots 下的文件并读取内容（含 sha256）。
-    let workspace_snapshot = build_workspace_snapshot(
+    let workspace_snapshot = match build_workspace_snapshot(
         workspace_repository,
         run_id,
         &workspace_policy.visible_roots,
     )
-    .await?;
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(error) => return reject_preparation(call, error),
+    };
     let workspace_files = workspace_snapshot
         .iter()
         .map(|(path, file)| (path.clone(), file.text.clone()))
@@ -373,7 +380,7 @@ pub(in crate::services::agent_tools) async fn script(
 }
 
 /// 把 skill 包内 `scripts/**/*.js` 读取为内存模块快照。
-/// fail-fast：超过数量/字节上限、或任一模块读取失败时直接报错。
+/// 超过数量/字节上限、或任一模块读取失败时拒绝本次脚本调用。
 async fn build_script_modules(
     skill_service: &SkillService,
     scope: &SkillScope,
@@ -414,7 +421,7 @@ async fn build_script_modules(
 
 /// 从 visible_roots 下读取所有文件，构建 `逻辑路径 → WorkspaceFile` 快照
 /// （含 sha256，供写入 guard 映射使用）。
-/// fail-fast：列表截断或任一文件读取失败时直接报错，
+/// 列表截断或任一文件读取失败时拒绝本次脚本调用，
 /// 不给脚本一个不完整却不可知的 VFS。
 async fn build_workspace_snapshot(
     repo: &dyn WorkspaceRepository,
@@ -453,6 +460,19 @@ async fn build_workspace_snapshot(
         }
     }
     Ok(snapshot)
+}
+
+fn reject_preparation(
+    call: &ToolInvocation,
+    error: ApplicationError,
+) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
+    match error {
+        ApplicationError::ValidationError(message) | ApplicationError::NotFound(message) => Ok((
+            tool_error(call, SKILL_SCRIPT_EXECUTION_FAILED, &message),
+            AgentToolEffect::None,
+        )),
+        error => Err(error),
+    }
 }
 
 /// 把本次 run 的宿主事实投影为引擎无关的 JSON context。

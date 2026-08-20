@@ -78,6 +78,24 @@ async fn result_too_large_maps_dedicated_code() {
 }
 
 #[tokio::test]
+async fn module_budget_returns_tool_error() {
+    let (result, effect) = run_with_repo(
+        json!({ "skill": "demo", "script": "helper" }),
+        FakeSkillRepo {
+            script_source: Some("x".repeat(MAX_SCRIPT_MODULE_TOTAL_BYTES + 1)),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("skill.run_script_execution_failed")
+    );
+    assert!(result.content.contains("exceeding the limit"));
+    assert!(matches!(effect, AgentToolEffect::None));
+}
+
+#[tokio::test]
 async fn success_builds_result_and_passes_workspace_context() {
     let engine = Arc::new(FakeScriptEngine {
         outcome: FakeOutcome::Ok(json!({ "answer": 42 })),
@@ -252,6 +270,16 @@ fn malformed_script_context_fails_fast() {
         }))
         .is_err()
     );
+}
+
+#[test]
+fn internal_preparation_error_remains_fatal() {
+    let error = reject_preparation(
+        &call(json!({})),
+        ApplicationError::InternalError("disk failure".to_string()),
+    )
+    .expect_err("internal errors must remain fatal");
+    assert!(matches!(error, ApplicationError::InternalError(_)));
 }
 
 #[test]

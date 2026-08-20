@@ -404,6 +404,22 @@ async fn fs_api_rejects_writes_outside_writable_roots() {
 }
 
 #[tokio::test]
+async fn fs_api_rejects_backslash_path_escape() {
+    let error = QuickJsScriptEngine::new()
+        .execute(request(
+            r#"import { workspace } from '@tauritavern/runtime';
+export default function () { workspace.writeText('output\\..\\input\\note.txt', 'x'); }"#,
+            json!({}),
+        ))
+        .await
+        .expect_err("must reject");
+    assert!(matches!(
+        error,
+        SkillScriptEngineError::ExecutionFailed { .. }
+    ));
+}
+
+#[tokio::test]
 async fn fs_api_rejects_write_to_root_itself() {
     // 与 Application canonical 写策略一致：root 本身不是合法写路径
     let engine = QuickJsScriptEngine::new();

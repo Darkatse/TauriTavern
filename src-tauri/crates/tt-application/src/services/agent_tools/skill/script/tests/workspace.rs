@@ -383,7 +383,7 @@ async fn mid_batch_failure_preserves_already_written_files_in_effect() {
 }
 
 #[tokio::test]
-async fn truncated_workspace_snapshot_fails_fast() {
+async fn truncated_workspace_snapshot_returns_tool_error() {
     let engine = Arc::new(FakeScriptEngine {
         outcome: FakeOutcome::Ok(json!({})),
         requests: Mutex::new(Vec::new()),
@@ -391,7 +391,7 @@ async fn truncated_workspace_snapshot_fails_fast() {
     let session = session_with_skill("demo");
     let profile = profile(true);
 
-    let error = script(
+    let (result, effect) = script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
                 script_source: Some("export default function () { return 1; }".to_string()),
@@ -412,8 +412,11 @@ async fn truncated_workspace_snapshot_fails_fast() {
         &profile,
     )
     .await
-    .expect_err("truncated snapshot must fail fast");
-    assert!(
-        matches!(error, ApplicationError::ValidationError(message) if message.contains("truncated"))
+    .expect("truncated snapshot must remain recoverable");
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("skill.run_script_execution_failed")
     );
+    assert!(result.content.contains("truncated"));
+    assert!(matches!(effect, AgentToolEffect::None));
 }
