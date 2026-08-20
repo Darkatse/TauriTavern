@@ -5,7 +5,7 @@ edition = "2021"
 description = "QuickJs script execution engine for Tauri Tavern skills"
 
 [dependencies]
-rquickjs = { version = "0.12.2", features = ["macro", "parallel", "loader"] }
+rquickjs = { version = "0.12.2", features = ["loader"] }
 async-trait = "0.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -13,8 +13,11 @@ tokio = { workspace = true }
 tt-ports = { path = "../tt-ports" }
 path-clean = "1.0"
 
-# Android 目标没有预生成的 rquickjs 绑定，需开启 bindgen 在编译期实时生成。
+# Android / iOS 目标没有预生成的 rquickjs 绑定，需开启 bindgen 在编译期实时生成。
 [target.'cfg(target_os = "android")'.dependencies]
+rquickjs = { version = "0.12.2", features = ["bindgen"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
 rquickjs = { version = "0.12.2", features = ["bindgen"] }
 
 [dev-dependencies]

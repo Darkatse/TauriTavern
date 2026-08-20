@@ -233,7 +233,7 @@ fn agent_runtime_fixture_with_results(
         llm_connection_service,
         prompt_assembly_service,
         mcp_service.clone(),
-        Arc::new(QuickJsScriptEngine::new(root.join("skill-libs"))),
+        Arc::new(QuickJsScriptEngine::new()),
     ));
 
     AgentRuntimeFixture {
