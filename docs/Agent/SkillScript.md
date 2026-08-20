@@ -61,14 +61,14 @@ import { context, workspace, log } from '@tauritavern/runtime/v1';
 | 导出 | 读写 | 说明 |
 | --- | --- | --- |
 | `workspace` | 读写 | 受沙箱策略门控的文件 API |
-| `context` | 只读 | `worldInfo` + `variables` 快照 |
+| `context` | 只读 | 与宿主状态隔离的 `worldInfo` + `variables` 快照 |
 | `log` | 只写 | 经宿主 tracing 输出的日志 API |
 
 除此之外**没有** `process`、`Buffer`、`fs`、`http`、`crypto`、`setTimeout`、`setInterval` 等 Node 或浏览器 API。
 
 ### 3.1 `workspace` — 文件 API
 
-`workspace` 提供受限的文件读写能力。所有路径相对于当前 run 的 workspace 根目录，经过路径清洗后必须落在 Agent Profile 的 `visible_roots`（读）或 `writable_roots`（写）内。绝对路径和 `..` 逃逸会被拒绝。
+`workspace` 提供受限的文件读写能力。所有路径相对于当前 run 的 workspace 根目录，经过路径清洗后必须落在当前 invocation Workspace policy 的 `visible_roots`（读）或 `writable_roots`（写）内。绝对路径和 `..` 逃逸会被拒绝。
 
 ```js
 import { workspace } from '@tauritavern/runtime/v1';
@@ -98,7 +98,7 @@ const exists = workspace.exists('output/config.json');
 
 ### 3.2 `context.worldInfo` — 世界书快照（只读）
 
-`context.worldInfo` 提供当前 run 启动时预取的激活世界书条目快照。数据是冻结的，脚本无法修改世界书。
+`context.worldInfo` 提供当前 run 启动时预取的激活世界书条目快照。返回对象与宿主状态隔离，脚本对它的本地修改不会修改世界书。
 
 ```js
 import { context } from '@tauritavern/runtime/v1';
@@ -169,7 +169,7 @@ log.debug('Debug value: ' + JSON.stringify(someValue));
 
 ## 4. 文件系统读写边界
 
-`workspace` 的读写权限由 Agent Profile 的 `workspace.visible_roots` 和 `workspace.writable_roots` 控制。这两个列表是相对 workspace 根目录的子目录名。
+`workspace` 的基础读写权限来自 Agent Profile，并由当前 invocation 的 Workspace manifest 投影为最终 policy。这些 roots 是相对 workspace 根目录的子目录名。
 
 默认 Agent Profile 的 visible / writable roots 为：
 
@@ -190,7 +190,7 @@ run-workspace/
   persist/     ← 可读可写
   input/       ← 不可读写
   tool-args/   ← 不可读写
-  tool-results/← 不可读写
+  tool-results/← 默认不可见；return-mode 子 Agent 中只读
   ...
 ```
 
@@ -203,7 +203,7 @@ run-workspace/
 - 路径中包含 NUL 字符一律拒绝。
 - `exists` 是例外：路径不在 visible roots 内时返回 `false` 而非抛错，方便脚本做条件判断。
 
-Profile 的 visible / writable roots 可被自定义 Profile 覆盖；脚本开发者应以实际运行的 Profile 配置为准。如果脚本需要写入某个目录，确保该目录在 Profile 的 `writable_roots` 中。
+Profile 可以自定义基础 visible / writable roots；调用级 policy 还可能进一步投影只读 root。脚本开发者应以实际 invocation 为准。如果脚本需要写入某个目录，确保该目录最终可写。
 
 ### 4.1 写入语义
 
@@ -211,7 +211,7 @@ Profile 的 visible / writable roots 可被自定义 Profile 覆盖；脚本开�
 
 - **同路径多次写**：脚本对同一文件多次调用 `writeText` 时，引擎只保留最后一次的内容。落盘的 delta 是最终状态，而非多次追加。
 - **写入冲突检测**：引擎在执行前对工作区做文件快照（含 SHA-256）。落盘时，如果文件在快照后被外部修改（SHA-256 不匹配），写入会以 `stale` 冲突报错 fail-fast——不会覆盖外部修改。
-- **部分失败语义**：批量写入时如果中途某个文件失败，已成功写入的文件不会被回滚——错误消息中包含已写入文件列表与失败文件，调用者需重新读取已写入文件后再重试。
+- **部分失败语义**：批量写入时如果中途某个文件失败，已成功写入的文件不会被回滚，也不会自动提交到聊天——错误消息中包含已写入文件列表与失败文件，调用者需重新读取已写入文件后再重试。
 
 ## 5. 模块导入
 
@@ -292,8 +292,8 @@ export default function (args) {
 | 栈大小上限 | 256 KB | 超限时 QuickJS 自动中断 |
 | 执行超时 | 30 秒 | 超时后通过 interrupt handler 中断（如死循环） |
 | 返回值大小上限 | 256 KB（262,144 字节） | 返回值经 `JSON.stringify` 序列化后超过此大小则 fail-fast |
-| 模块快照数量上限 | 32 个 | skill `scripts/` 下 `.js` 文件数超过此上限则拒绝执行 |
-| 模块快照字节上限 | 512 KB（524,288 字节） | skill `scripts/` 下所有 `.js` 源码总字节数超过此上限则拒绝执行 |
+| 模块快照数量上限 | 64 个 | skill `scripts/` 下 `.js` 文件数超过此上限则拒绝执行 |
+| 模块快照字节上限 | 2 MiB（2,097,152 字节） | skill `scripts/` 下所有 `.js` 源码总字节数超过此上限则拒绝执行 |
 | 总输入预算 | 8 MiB | 模块源码 + 工作区快照 + args + 世界书/变量上下文的总字节数，超过直接终止 |
 | 总输出预算 | 1 MiB | 最终 delta + 日志 + 返回值的总字节数（每项含少量固定记账成本），超过直接终止 |
 | 全局并发上限 | 2 | 多个 Agent / 子 Agent 同时执行脚本时排队 |
@@ -302,7 +302,8 @@ export default function (args) {
 
 - **循环引用**：`JSON.stringify` 抛出 `Converting circular structure to JSON` TypeError。
 - **`BigInt`**：`JSON.stringify` 抛出 `Do not know how to serialize a BigInt` TypeError。
-- **`Symbol` / 函数**：作为对象属性值时被丢弃，作为数组元素或顶层返回值时返回 `undefined` → 被明确拒绝。
+- **`Symbol` / 函数**：作为对象属性值时被丢弃，作为数组元素时变成 `null`；顶层返回时得到 `undefined` 并被明确拒绝。
+- **数组中的 `undefined`**：序列化为 `null`，与标准 `JSON.stringify` 一致。
 - **`undefined`**：返回 `undefined` 会被明确拒绝——返回 `null` 显式表示空值。
 
 超时和返回值超限分别以专用错误传播给 Agent：

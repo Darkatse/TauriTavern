@@ -226,6 +226,23 @@ jobs:
           ndk-version: r29
           link-to-sdk: true
 
+      - name: Configure Android compiler
+        if: matrix.mobile == 'android'
+        shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          {
+            echo "AR_aarch64_linux_android=$toolchain/llvm-ar"
+            echo "CC_aarch64_linux_android=$toolchain/aarch64-linux-android24-clang"
+            echo "AR_armv7_linux_androideabi=$toolchain/llvm-ar"
+            echo "CC_armv7_linux_androideabi=$toolchain/armv7a-linux-androideabi24-clang"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$sysroot"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi=--sysroot=$sysroot"
+          } >> "$GITHUB_ENV"
+
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri -> target"

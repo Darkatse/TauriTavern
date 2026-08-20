@@ -8387,9 +8387,7 @@ dependencies = [
  "async-trait",
  "path-clean",
  "rquickjs",
- "serde",
  "serde_json",
- "tempfile",
  "tokio",
  "tt-ports",
 ]

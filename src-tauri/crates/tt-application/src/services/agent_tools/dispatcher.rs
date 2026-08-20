@@ -42,9 +42,10 @@ pub(crate) enum AgentToolEffect {
         old_sha256: String,
     },
     /// 一次工具调用批量写入多个工作区文件（如 skill 脚本的最终 delta）。
-    /// journal / 事件 / auto-commit 逐文件处理，不再只知最后一个文件。
+    /// 所有文件进入 journal / 事件；最后一次 mutation 单独供 auto-commit 使用。
     WorkspaceFilesWritten {
         files: Vec<WorkspaceFile>,
+        last_text_mutation: Option<WorkspacePath>,
     },
     ChatCommitRequested {
         path: WorkspacePath,
@@ -158,7 +159,7 @@ impl AgentToolDispatcher {
                     skill::ScriptContext {
                         skill_service: self.skill_service.as_ref(),
                         engine: self.skill_script_engine.as_ref(),
-                        workspace_repository: self.workspace_repository.as_ref(),
+                        workspace_repository: model_workspace_repository,
                         run_id,
                         prompt_snapshot: Some(&prompt_snapshot),
                     },

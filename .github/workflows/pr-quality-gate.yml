@@ -116,12 +116,14 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           {
             echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
             echo "AR_aarch64_linux_android=$toolchain/llvm-ar"
             echo "CC_aarch64_linux_android=$toolchain/aarch64-linux-android24-clang"
             echo "CXX_aarch64_linux_android=$toolchain/aarch64-linux-android24-clang++"
             echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$toolchain/aarch64-linux-android24-clang"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$sysroot"
           } >> "$GITHUB_ENV"
 
       - name: Cache Rust build artifacts

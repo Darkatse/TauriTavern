@@ -25,10 +25,10 @@ use crate::api::OverlayFs;
 use crate::convert::json_to_js;
 use crate::runtime_module::{RuntimeV1Module, RuntimeV1State, RUNTIME_MODULE_NAME};
 
-pub const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
-pub const DEFAULT_MAX_RESULT_BYTES: usize = 256 * 1024;
-pub const DEFAULT_MAX_TOTAL_INPUT_BYTES: usize = 8 * 1024 * 1024;
-pub const DEFAULT_MAX_TOTAL_OUTPUT_BYTES: usize = 1024 * 1024;
+const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_MAX_RESULT_BYTES: usize = 256 * 1024;
+const DEFAULT_MAX_TOTAL_INPUT_BYTES: usize = 8 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_OUTPUT_BYTES: usize = 1024 * 1024;
 const MEMORY_LIMIT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_STACK_BYTES: usize = 256 * 1024;
 
@@ -65,14 +65,16 @@ impl QuickJsScriptEngine {
     }
 
     /// 测试侧收紧限制的构造器。
-    pub fn with_limits(mut self, timeout: Duration, max_result_bytes: usize) -> Self {
+    #[cfg(test)]
+    fn with_limits(mut self, timeout: Duration, max_result_bytes: usize) -> Self {
         self.limits.timeout = timeout;
         self.limits.max_result_bytes = max_result_bytes;
         self
     }
 
     /// 测试侧收紧输入/输出总预算的构造器。
-    pub fn with_budgets(
+    #[cfg(test)]
+    fn with_budgets(
         mut self,
         max_total_input_bytes: usize,
         max_total_output_bytes: usize,
@@ -279,6 +281,7 @@ fn execute_sync(
             Ok(SkillScriptResult {
                 value,
                 writes,
+                last_write_path: overlay_ref.last_write_path.clone(),
                 logs: overlay_ref.logs.clone(),
             })
         }
@@ -649,6 +652,28 @@ mod tests {
         assert_eq!(result.writes.len(), 1);
         assert_eq!(result.writes[0].path, "output/log.txt");
         assert_eq!(result.writes[0].text, "final");
+        assert_eq!(result.last_write_path.as_deref(), Some("output/log.txt"));
+    }
+
+    #[tokio::test]
+    async fn final_delta_keeps_last_write_separate_from_path_order() {
+        let result = QuickJsScriptEngine::new()
+            .execute(request(
+                "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () {\n  workspace.writeText('output/z-debug.txt', 'debug');\n  workspace.writeText('output/a-final.md', 'final');\n  return 1;\n}",
+                json!({}),
+            ))
+            .await
+            .expect("execute");
+
+        assert_eq!(
+            result
+                .writes
+                .iter()
+                .map(|write| write.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["output/a-final.md", "output/z-debug.txt"]
+        );
+        assert_eq!(result.last_write_path.as_deref(), Some("output/a-final.md"));
     }
 
     #[tokio::test]
@@ -700,14 +725,17 @@ mod tests {
     async fn fs_exists_checks_overlay() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
-            "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () {\n  return {\n    hasExisting: workspace.exists('output/data.txt'),\n    hasMissing: workspace.exists('output/nope.txt'),\n  };\n}",
+            "import { workspace } from '@tauritavern/runtime/v1';\nexport default function () {\n  return {\n    hasDirectory: workspace.exists('output'),\n    hasExisting: workspace.exists('output/data.txt'),\n    hasMissing: workspace.exists('output/nope.txt'),\n  };\n}",
             json!({}),
         );
         req.workspace_files
             .insert("output/data.txt".to_string(), "content".to_string());
 
         let result = engine.execute(req).await.expect("execute");
-        assert_eq!(result.value, json!({ "hasExisting": true, "hasMissing": false }));
+        assert_eq!(
+            result.value,
+            json!({ "hasDirectory": true, "hasExisting": true, "hasMissing": false })
+        );
     }
 
     #[tokio::test]

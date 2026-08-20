@@ -7,7 +7,6 @@ description = "QuickJs script execution engine for Tauri Tavern skills"
 [dependencies]
 rquickjs = { version = "0.12.2", features = ["loader"] }
 async-trait = "0.1"
-serde = { workspace = true }
 serde_json = { workspace = true }
 # 只保留 spawn_blocking（rt）与 #[tokio::test]（macros）所需的最小 feature 集，
 # 不继承 workspace 的 full。sync 仅为 Semaphore。
@@ -21,6 +20,3 @@ rquickjs = { version = "0.12.2", features = ["bindgen"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 rquickjs = { version = "0.12.2", features = ["bindgen"] }
-
-[dev-dependencies]
-tempfile = "3"

@@ -25,6 +25,8 @@ pub(crate) struct OverlayFs {
     writable_roots: Vec<String>,
     /// 最终状态写入 map：同路径 insert 覆盖，天然去重为最终 delta。
     pub writes: BTreeMap<String, String>,
+    /// 最后一次 writeText 的路径；最终 delta 的路径排序不能表达调用顺序。
+    pub last_write_path: Option<String>,
     /// 收集的日志。
     pub logs: Vec<SkillScriptLog>,
     /// 输出记账：Σ(路径 + 内容) + 每项固定成本 + 日志字节数。
@@ -44,6 +46,7 @@ impl OverlayFs {
             visible_roots,
             writable_roots,
             writes: BTreeMap::new(),
+            last_write_path: None,
             logs: Vec::new(),
             output_bytes: 0,
             max_output_bytes,
@@ -123,7 +126,8 @@ impl OverlayFs {
         self.output_bytes = next;
         self.files.insert(cleaned.clone(), content.clone());
         // 最终状态 map：同一路径覆盖，天然去重为最终 delta
-        self.writes.insert(cleaned, content);
+        self.writes.insert(cleaned.clone(), content);
+        self.last_write_path = Some(cleaned);
         Ok(())
     }
 
@@ -176,7 +180,9 @@ impl OverlayFs {
         if !Self::is_under_roots(&cleaned, &self.visible_roots) {
             return false;
         }
+        let directory_prefix = format!("{cleaned}/");
         self.files.contains_key(&cleaned)
+            || self.files.keys().any(|path| path.starts_with(&directory_prefix))
     }
 
     pub fn log(&mut self, level: SkillScriptLogLevel, message: String) -> Result<(), String> {

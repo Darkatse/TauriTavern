@@ -8,9 +8,9 @@ use super::super::common::{
 };
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
+use super::super::workspace::workspace_access_policy;
 use super::list::skill_is_visible;
 use crate::errors::ApplicationError;
-use crate::services::agent_workspace_scope::is_writable_workspace_path;
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
@@ -142,11 +142,14 @@ pub(in crate::services::agent_tools) async fn script(
         ));
     }
 
+    // invocation repository 的 manifest 是本次调用唯一的 Workspace policy。
+    let workspace_policy = workspace_access_policy(workspace_repository, run_id).await?;
+
     // 构建工作区文件快照：列出 visible_roots 下的文件并读取内容（含 sha256）。
     let workspace_snapshot = build_workspace_snapshot(
         workspace_repository,
         run_id,
-        &profile.workspace.visible_roots,
+        &workspace_policy.visible_roots,
     )
     .await?;
     let workspace_files = workspace_snapshot
@@ -171,8 +174,8 @@ pub(in crate::services::agent_tools) async fn script(
             modules,
             args: script_args,
             workspace_files,
-            visible_roots: profile.workspace.visible_roots.clone(),
-            writable_roots: profile.workspace.writable_roots.clone(),
+            visible_roots: workspace_policy.visible_roots.clone(),
+            writable_roots: workspace_policy.writable_roots.clone(),
             world_info,
             variables,
         })
@@ -210,6 +213,16 @@ pub(in crate::services::agent_tools) async fn script(
         Err(error) => return Err(ApplicationError::from(error)),
     };
 
+    let last_write_path = match result.last_write_path.as_deref() {
+        None if result.writes.is_empty() => None,
+        Some(path) if result.writes.iter().any(|write| write.path == path) => Some(path),
+        _ => {
+            return Err(ApplicationError::InternalError(
+                "Skill script engine returned an inconsistent final workspace delta".to_string(),
+            ));
+        }
+    };
+
     // ---- 落盘前一次性验证所有路径 ----
     // Application 重新验证正式写入策略（不复用 adapter 内存前缀检查的结论），
     // 并按快照时的文件状态映射 CAS guard；任何路径非法都在落盘前失败。
@@ -217,7 +230,7 @@ pub(in crate::services::agent_tools) async fn script(
         Vec::with_capacity(result.writes.len());
     for write in &result.writes {
         let path = WorkspacePath::parse(&write.path).map_err(ApplicationError::from)?;
-        if !is_writable_workspace_path(&path, &profile.workspace.writable_roots) {
+        if !workspace_policy.is_writable(&path) {
             tracing::warn!(
                 "skill.run_script rejected write outside writable roots: {}",
                 write.path
@@ -230,8 +243,8 @@ pub(in crate::services::agent_tools) async fn script(
                         "Write path `{}` is outside the writable workspace roots ({}); \
                          only paths under {} can be written.",
                         write.path,
-                        profile.workspace.writable_roots.join(", "),
-                        profile.workspace.writable_roots.join(", ")
+                        workspace_policy.writable_roots.join(", "),
+                        workspace_policy.writable_roots.join(", ")
                     ),
                 ),
                 AgentToolEffect::None,
@@ -264,7 +277,7 @@ pub(in crate::services::agent_tools) async fn script(
             }
             Err(error) => {
                 // fail-fast：停止后续写入；已写入文件保留在 effect 与错误消息中，
-                // 副作用不从 journal / 事件 / auto-commit / resource refs 中消失。
+                // 进入 journal / 事件 / resource refs，但失败的 batch 不自动提交到聊天。
                 tracing::warn!(
                     error = %error,
                     "skill.run_script write failed: {}", write.path
@@ -280,6 +293,7 @@ pub(in crate::services::agent_tools) async fn script(
                 } else {
                     AgentToolEffect::WorkspaceFilesWritten {
                         files: written_files,
+                        last_text_mutation: None,
                     }
                 };
                 let mut result = tool_error(
@@ -323,6 +337,12 @@ pub(in crate::services::agent_tools) async fn script(
         .iter()
         .map(|file| file.path.as_str().to_string())
         .collect::<Vec<_>>();
+    let last_text_mutation = last_write_path.and_then(|path| {
+        written_files
+            .iter()
+            .find(|file| file.path.as_str() == path)
+            .map(|file| file.path.clone())
+    });
 
     tracing::info!(
         "skill.run_script completed: skill=`{skill}` script=`{script}` result_bytes={} writes={} write_bytes={}",
@@ -336,6 +356,7 @@ pub(in crate::services::agent_tools) async fn script(
     } else {
         AgentToolEffect::WorkspaceFilesWritten {
             files: written_files,
+            last_text_mutation,
         }
     };
 
@@ -522,8 +543,10 @@ mod tests {
         AgentWorkspacePolicy, ResolvedAgentOutputPolicy,
     };
     use tt_domain::models::agent::{
-        AgentRun, AgentRunPresentation, ArtifactSpec, ArtifactTarget, WorkspaceManifest,
-        WorkspacePersistentChangeSet, WorkspacePath,
+        AgentChatRef, AgentRun, AgentRunPresentation, ArtifactSpec, ArtifactTarget, CommitPolicy,
+        WorkspaceInputManifest, WorkspaceManifest, WorkspacePersistentChangeSet, WorkspacePath,
+        WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope,
+        WorkspaceRootSpec,
     };
     use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
     use tt_domain::models::skill::{
@@ -543,7 +566,11 @@ mod tests {
 
     enum FakeOutcome {
         Ok(Value),
-        OkWithWrites { value: Value, writes: Vec<tt_ports::skill_script::SkillScriptWrite> },
+        OkWithWrites {
+            value: Value,
+            writes: Vec<tt_ports::skill_script::SkillScriptWrite>,
+            last_write_path: Option<String>,
+        },
         Failed(String),
         TooLarge {
             actual_bytes: usize,
@@ -567,12 +594,18 @@ mod tests {
                 FakeOutcome::Ok(value) => Ok(tt_ports::skill_script::SkillScriptResult {
                     value: value.clone(),
                     writes: Vec::new(),
+                    last_write_path: None,
                     logs: Vec::new(),
                 }),
-                FakeOutcome::OkWithWrites { value, writes } => {
+                FakeOutcome::OkWithWrites {
+                    value,
+                    writes,
+                    last_write_path,
+                } => {
                     Ok(tt_ports::skill_script::SkillScriptResult {
                         value: value.clone(),
                         writes: writes.clone(),
+                        last_write_path: last_write_path.clone(),
                         logs: Vec::new(),
                     })
                 }
@@ -740,8 +773,37 @@ mod tests {
         ) -> Result<(), DomainError> {
             unreachable!("not needed")
         }
-        async fn read_manifest(&self, _run_id: &str) -> Result<WorkspaceManifest, DomainError> {
-            unreachable!("not needed")
+        async fn read_manifest(&self, run_id: &str) -> Result<WorkspaceManifest, DomainError> {
+            Ok(WorkspaceManifest {
+                workspace_version: 1,
+                run_id: run_id.to_string(),
+                stable_chat_id: "chat-1".to_string(),
+                chat_ref: AgentChatRef::Character {
+                    character_id: "character-1".to_string(),
+                    file_name: "character.png".to_string(),
+                },
+                created_at: chrono::Utc::now(),
+                input: WorkspaceInputManifest {
+                    mode: "snapshot".to_string(),
+                    prompt_snapshot_path: "input/prompt_snapshot.json".to_string(),
+                    resolved_profile_path: "input/resolved_profile.json".to_string(),
+                },
+                roots: vec![WorkspaceRootSpec {
+                    path: "output".to_string(),
+                    lifecycle: WorkspaceRootLifecycle::Run,
+                    scope: WorkspaceRootScope::Run,
+                    mount: WorkspaceRootMount::Materialized,
+                    visible: true,
+                    writable: true,
+                    commit: WorkspaceRootCommit::Never,
+                }],
+                artifacts: Vec::new(),
+                commit_policy: CommitPolicy {
+                    default_target: ArtifactTarget::MessageBody,
+                    combine_template: None,
+                    store_artifacts_in_extra: false,
+                },
+            })
         }
         async fn write_text(
             &self,
@@ -1129,7 +1191,9 @@ mod tests {
             requests: Mutex::new(Vec::new()),
         });
         let mut session = session_with_skill("demo");
-        let profile = profile(true);
+        let mut profile = profile(true);
+        profile.workspace.visible_roots = vec!["profile-only".to_string()];
+        profile.workspace.writable_roots = vec!["profile-only".to_string()];
 
         let (result, effect) = script(
             ScriptContext {
@@ -1162,6 +1226,7 @@ mod tests {
         // SKILL.md 不在 scripts/ 下，不得进入模块快照
         assert!(!requests[0].modules.contains_key("SKILL.md"));
         assert_eq!(requests[0].args, json!({ "n": 7 }));
+        // Workspace authority 来自调用级 repository manifest，而不是 Profile 副本。
         assert_eq!(requests[0].visible_roots, vec!["output".to_string()]);
         assert_eq!(requests[0].writable_roots, vec!["output".to_string()]);
         assert_eq!(requests[0].world_info, json!({ "entries": [] }));
@@ -1279,6 +1344,7 @@ mod tests {
                     path: "output/result.txt".to_string(),
                     text: "generated content".to_string(),
                 }],
+                last_write_path: Some("output/result.txt".to_string()),
             },
             requests: Mutex::new(Vec::new()),
         });
@@ -1346,6 +1412,8 @@ mod tests {
                         text: "beta".to_string(),
                     },
                 ],
+                // final delta 按路径排序，但真实最后一次 writeText 是 a.txt。
+                last_write_path: Some("output/a.txt".to_string()),
             },
             requests: Mutex::new(Vec::new()),
         });
@@ -1378,10 +1446,17 @@ mod tests {
 
         assert!(!result.is_error);
         match effect {
-            AgentToolEffect::WorkspaceFilesWritten { files } => {
+            AgentToolEffect::WorkspaceFilesWritten {
+                files,
+                last_text_mutation,
+            } => {
                 assert_eq!(files.len(), 2);
                 assert_eq!(files[0].path.as_str(), "output/a.txt");
                 assert_eq!(files[1].path.as_str(), "output/b.txt");
+                assert_eq!(
+                    last_text_mutation.as_ref().map(WorkspacePath::as_str),
+                    Some("output/a.txt")
+                );
                 assert_eq!(
                     result.resource_refs,
                     vec!["output/a.txt".to_string(), "output/b.txt".to_string()]
@@ -1408,6 +1483,7 @@ mod tests {
                         text: "no".to_string(),
                     },
                 ],
+                last_write_path: Some("input/forbidden.txt".to_string()),
             },
             requests: Mutex::new(Vec::new()),
         });
@@ -1460,6 +1536,7 @@ mod tests {
                     path: "output/existing.txt".to_string(),
                     text: "rewritten".to_string(),
                 }],
+                last_write_path: Some("output/existing.txt".to_string()),
             },
             requests: Mutex::new(Vec::new()),
         });
@@ -1507,6 +1584,7 @@ mod tests {
                     path: "output/stale.txt".to_string(),
                     text: "new".to_string(),
                 }],
+                last_write_path: Some("output/stale.txt".to_string()),
             },
             requests: Mutex::new(Vec::new()),
         });
@@ -1569,6 +1647,7 @@ mod tests {
                         text: "second".to_string(),
                     },
                 ],
+                last_write_path: Some("output/second.txt".to_string()),
             },
             requests: Mutex::new(Vec::new()),
         });
@@ -1606,9 +1685,13 @@ mod tests {
         );
         assert!(result.content.contains("output/first.txt"), "message was: {}", result.content);
         match effect {
-            AgentToolEffect::WorkspaceFilesWritten { files } => {
+            AgentToolEffect::WorkspaceFilesWritten {
+                files,
+                last_text_mutation,
+            } => {
                 assert_eq!(files.len(), 1);
                 assert_eq!(files[0].path.as_str(), "output/first.txt");
+                assert!(last_text_mutation.is_none());
                 assert_eq!(result.resource_refs, vec!["output/first.txt".to_string()]);
             }
             other => panic!("expected partial batch effect, got: {other:?}"),

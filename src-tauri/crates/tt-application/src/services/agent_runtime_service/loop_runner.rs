@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use serde_json::{Value, json};
 
 use super::commit_ledger::RunCommitLedger;
-use super::commit::is_auto_commit_text_path;
 use super::model_turn::{
     append_tool_turn_to_request, assistant_message_for_next_turn, extract_response_text,
 };
@@ -227,7 +226,10 @@ impl AgentRuntimeService {
                         .await?;
                         text_mutation = Some((call.call_id, file));
                     }
-                    AgentToolEffect::WorkspaceFilesWritten { files } => {
+                    AgentToolEffect::WorkspaceFilesWritten {
+                        files,
+                        last_text_mutation,
+                    } => {
                         for file in &files {
                             let metrics = TextMetrics::from_text(&file.text);
                             self.event(
@@ -244,11 +246,18 @@ impl AgentRuntimeService {
                                 }),
                             )
                             .await?;
-                            // auto-commit：批量写入中所有符合资格的路径都参与，
-                            // 取最后一个符合条件的文件（与单文件写入语义一致）
-                            if is_auto_commit_text_path(&file.path) {
-                                text_mutation = Some((call.call_id.clone(), file.clone()));
-                            }
+                        }
+                        if let Some(path) = last_text_mutation {
+                            let file = files
+                                .into_iter()
+                                .find(|file| file.path == path)
+                                .ok_or_else(|| {
+                                    ApplicationError::InternalError(format!(
+                                        "Workspace batch effect is missing its last mutation `{}`",
+                                        path.as_str()
+                                    ))
+                                })?;
+                            text_mutation = Some((call.call_id, file));
                         }
                     }
                     AgentToolEffect::WorkspaceFilePatched {

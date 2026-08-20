@@ -23,6 +23,7 @@ pub(super) use self::descriptors::{
 };
 pub(super) use self::finish::finish;
 pub(super) use self::list_files::list_files;
+pub(super) use self::policy::workspace_access_policy;
 pub(super) use self::read_file::read_file;
 pub(super) use self::search_files::search_files;
 pub(super) use self::write_file::write_file;

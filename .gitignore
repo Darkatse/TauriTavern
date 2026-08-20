@@ -20,17 +20,12 @@ dist-ssr
 !.vscode/settings.json
 .idea
 .cursor/
-.trae/
 .DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
-
-# Environment
-.env
-.env.local
 
 # FasTools
 FasTools.exe
@@ -43,18 +38,3 @@ packaging/flatpak/build-identity.env
 
 # Local upstream checkout (junction/symlink)
 sillytavern-*
-
-# Local cargo home cache
-.cargo-home/
-
-# Local cargo config (machine-specific target-dir redirect)
-.cargo/
-
-# Local pnpm build caches (sandbox workarounds)
-.pnpm-store/
-.pnpm-cache/
-.pnpm-home/
-.tmp/
-
-# Local Reasonix agent workspace
-.reasonix/

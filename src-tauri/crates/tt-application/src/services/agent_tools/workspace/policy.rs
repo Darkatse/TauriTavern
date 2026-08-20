@@ -4,9 +4,9 @@ use tt_domain::models::agent::{WorkspaceManifest, WorkspacePath};
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 
 #[derive(Debug, Clone)]
-pub(super) struct WorkspaceAccessPolicy {
-    pub(super) visible_roots: Vec<String>,
-    pub(super) writable_roots: Vec<String>,
+pub(in crate::services::agent_tools) struct WorkspaceAccessPolicy {
+    pub(in crate::services::agent_tools) visible_roots: Vec<String>,
+    pub(in crate::services::agent_tools) writable_roots: Vec<String>,
 }
 
 impl WorkspaceAccessPolicy {
@@ -62,12 +62,12 @@ impl WorkspaceAccessPolicy {
         workspace_path_is_under_any_root(path, &self.visible_roots)
     }
 
-    pub(super) fn is_writable(&self, path: &WorkspacePath) -> bool {
+    pub(in crate::services::agent_tools) fn is_writable(&self, path: &WorkspacePath) -> bool {
         is_writable_workspace_path(path, &self.writable_roots)
     }
 }
 
-pub(super) async fn workspace_access_policy(
+pub(in crate::services::agent_tools) async fn workspace_access_policy(
     workspace_repository: &dyn WorkspaceRepository,
     run_id: &str,
 ) -> Result<WorkspaceAccessPolicy, ApplicationError> {

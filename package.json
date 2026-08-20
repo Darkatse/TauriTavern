@@ -98,7 +98,6 @@
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
-  "packageManager": "pnpm@10.34.5",
   "pnpm": {
     "overrides": {
       "lodash-es": "4.18.1"
