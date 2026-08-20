@@ -5,7 +5,7 @@ use crate::services::agent_workspace_scope::{
 use tt_domain::models::agent::{WorkspaceManifest, WorkspacePath};
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(in crate::services::agent_tools) struct WorkspaceAccessPolicy {
     pub(in crate::services::agent_tools) visible_roots: Vec<String>,
     pub(in crate::services::agent_tools) writable_roots: Vec<String>,

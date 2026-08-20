@@ -13,7 +13,7 @@ use tt_ports::skill_script::{SkillScriptLog, SkillScriptLogLevel};
 
 /// 每个输出项（写入路径 / 日志条目）的固定记账成本，
 /// 防止海量空条目绕过字节预算。
-pub(crate) const OUTPUT_ITEM_FIXED_COST: usize = 64;
+const OUTPUT_ITEM_FIXED_COST: usize = 64;
 
 /// 内存覆盖文件系统：快照 + 写入收集器 + 日志收集器。
 pub(crate) struct OverlayFs {
@@ -24,18 +24,18 @@ pub(crate) struct OverlayFs {
     /// 可写根前缀。
     writable_roots: Vec<String>,
     /// 最终状态写入 map：同路径 insert 覆盖，天然去重为最终 delta。
-    pub writes: BTreeMap<String, String>,
+    pub(crate) writes: BTreeMap<String, String>,
     /// 最后一次 writeText 的路径；最终 delta 的路径排序不能表达调用顺序。
-    pub last_write_path: Option<String>,
+    pub(crate) last_write_path: Option<String>,
     /// 收集的日志。
-    pub logs: Vec<SkillScriptLog>,
+    pub(crate) logs: Vec<SkillScriptLog>,
     /// 输出记账：Σ(路径 + 内容) + 每项固定成本 + 日志字节数。
     output_bytes: usize,
     max_output_bytes: usize,
 }
 
 impl OverlayFs {
-    pub fn new(
+    pub(crate) fn new(
         snapshot: HashMap<String, String>,
         visible_roots: Vec<String>,
         writable_roots: Vec<String>,
@@ -91,7 +91,7 @@ impl OverlayFs {
         Ok(cleaned)
     }
 
-    pub fn read_text(&mut self, raw: &str) -> Result<String, String> {
+    pub(crate) fn read_text(&self, raw: &str) -> Result<String, String> {
         let cleaned = Self::clean_path(raw)?;
         if !Self::is_under_roots(&cleaned, &self.visible_roots) {
             return Err(format!(
@@ -104,7 +104,7 @@ impl OverlayFs {
             .ok_or_else(|| format!("file not found: {raw}"))
     }
 
-    pub fn write_text(&mut self, raw: &str, content: String) -> Result<(), String> {
+    pub(crate) fn write_text(&mut self, raw: &str, content: String) -> Result<(), String> {
         let cleaned = Self::clean_path(raw)?;
         if !Self::is_writable_child(&cleaned, &self.writable_roots) {
             return Err(format!(
@@ -133,7 +133,7 @@ impl OverlayFs {
         Ok(())
     }
 
-    pub fn list_files(&self, raw: Option<&str>) -> Result<Vec<String>, String> {
+    pub(crate) fn list_files(&self, raw: Option<&str>) -> Result<Vec<String>, String> {
         let prefix = match raw {
             None => String::new(),
             Some(p) => {
@@ -145,6 +145,7 @@ impl OverlayFs {
             }
         };
 
+        let directory_prefix = format!("{prefix}/");
         let mut entries: Vec<String> = self
             .files
             .keys()
@@ -153,7 +154,7 @@ impl OverlayFs {
                     // 列顶层：返回路径的第一段
                     let first_segment = path.split(['/', '\\']).next().unwrap_or(path);
                     Some(first_segment.to_string())
-                } else if path.starts_with(&format!("{prefix}/")) || path == prefix.as_str() {
+                } else if path.starts_with(&directory_prefix) || path == prefix.as_str() {
                     // 列指定目录下：返回 prefix 之后的相对路径
                     let rest = &path[prefix.len()..];
                     let rest = rest.trim_start_matches(['/', '\\']);
@@ -172,7 +173,7 @@ impl OverlayFs {
         Ok(entries)
     }
 
-    pub fn exists(&self, raw: &str) -> bool {
+    pub(crate) fn exists(&self, raw: &str) -> bool {
         let cleaned = match Self::clean_path(raw) {
             Ok(c) => c,
             Err(_) => return false,
@@ -188,7 +189,11 @@ impl OverlayFs {
                 .any(|path| path.starts_with(&directory_prefix))
     }
 
-    pub fn log(&mut self, level: SkillScriptLogLevel, message: String) -> Result<(), String> {
+    pub(crate) fn log(
+        &mut self,
+        level: SkillScriptLogLevel,
+        message: String,
+    ) -> Result<(), String> {
         let next = self.output_bytes + message.len() + OUTPUT_ITEM_FIXED_COST;
         if next > self.max_output_bytes {
             return Err(format!(
@@ -219,7 +224,7 @@ pub(crate) fn build_workspace_object<'js>(
     let read_text = Function::new(
         ctx.clone(),
         move |ctx: Ctx<'_>, path: String| -> Result<String, rquickjs::Error> {
-            let mut fs = read_overlay.borrow_mut();
+            let fs = read_overlay.borrow();
             fs.read_text(&path).map_err(|m| js_error(&ctx, m))
         },
     )?;

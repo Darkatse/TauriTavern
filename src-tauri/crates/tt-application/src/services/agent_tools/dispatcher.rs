@@ -161,7 +161,7 @@ impl AgentToolDispatcher {
                         engine: self.skill_script_engine.as_ref(),
                         workspace_repository: model_workspace_repository,
                         run_id,
-                        prompt_snapshot: Some(&prompt_snapshot),
+                        prompt_snapshot,
                     },
                     call,
                     session,

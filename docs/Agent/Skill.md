@@ -26,7 +26,7 @@ my-skill/
 - `agents/tauritavern.json` 可选；一旦存在，schema 无效就 fail-fast。
 - `scripts/` 会随 Skill 导入、导出，并在预览中提示风险；不会随导入/安装自动执行，只在 Agent 显式调用 `skill.run_script` 时经沙箱执行。
 
-> `scripts/` 内的脚本可由 Agent 通过 `skill.run_script` 在 QuickJS 沙箱中执行。脚本开发指南（全局变量、文件读写边界、模块导入、第三方库）见 [docs/Agent/SkillScript.md](./SkillScript.md)。
+> `scripts/` 内的脚本可由 Agent 通过 `skill.run_script` 在 QuickJS 沙箱中执行。脚本开发指南（context 快照、文件读写边界、模块导入、第三方库）见 [docs/Agent/SkillScript.md](./SkillScript.md)。
 
 ## 当前实现
 
@@ -36,7 +36,7 @@ my-skill/
 - Repository：`SkillRepository` trait 与文件实现 `FileSkillRepository`。
 - Service：`SkillService`。
 - Host ABI：`window.__TAURITAVERN__.api.skill`。
-- Agent tools：`skill.list` / `skill.search` / `skill.read`，模型侧 alias 为 `skill_list` / `skill_search` / `skill_read`。
+- Agent tools：`skill.list` / `skill.search` / `skill.read` / `skill.run_script`，模型侧 alias 分别为 `skill_list` / `skill_search` / `skill_read` / `skill_run_script`。
 - Preset / Character embedded skill 扫描与导入确认 UI。
 - Preset / Character 删除时，删除仅由该来源引用的已安装 Skill。
 

@@ -77,16 +77,16 @@ struct EntryContentRequest {
     line_count: Option<usize>,
 }
 
-pub(in crate::services::agent_tools) struct ActivatedEntry {
-    pub(in crate::services::agent_tools) world: String,
-    pub(in crate::services::agent_tools) uid: String,
-    pub(in crate::services::agent_tools) display_name: Option<String>,
-    pub(in crate::services::agent_tools) constant: bool,
-    pub(in crate::services::agent_tools) position: Option<String>,
-    pub(in crate::services::agent_tools) content: String,
-    pub(in crate::services::agent_tools) metrics: TextMetrics,
-    pub(in crate::services::agent_tools) total_lines: usize,
-    pub(in crate::services::agent_tools) ref_id: String,
+struct ActivatedEntry {
+    world: String,
+    uid: String,
+    display_name: Option<String>,
+    constant: bool,
+    position: Option<String>,
+    content: String,
+    metrics: TextMetrics,
+    total_lines: usize,
+    ref_id: String,
 }
 
 struct RenderedEntry {
@@ -234,10 +234,7 @@ fn optional_entry_usize(
         .map_err(|_| format!("entries[{position}].{key} is too large"))
 }
 
-pub(in crate::services::agent_tools) fn normalize_entry(
-    index: usize,
-    entry: &Value,
-) -> Result<ActivatedEntry, ApplicationError> {
+fn normalize_entry(index: usize, entry: &Value) -> Result<ActivatedEntry, ApplicationError> {
     let entry = entry.as_object().ok_or_else(|| {
         invalid_activation_snapshot(format!("entries[{index}] must be an object"))
     })?;
@@ -290,6 +287,22 @@ pub(in crate::services::agent_tools) fn normalize_entry(
         total_lines,
         ref_id,
     })
+}
+
+pub(in crate::services::agent_tools) fn normalize_entry_json(
+    index: usize,
+    entry: &Value,
+) -> Result<Value, ApplicationError> {
+    let entry = normalize_entry(index, entry)?;
+    Ok(serde_json::json!({
+        "uid": entry.uid,
+        "ref": entry.ref_id,
+        "content": entry.content,
+        "constant": entry.constant,
+        "world": entry.world,
+        "position": entry.position,
+        "displayName": entry.display_name,
+    }))
 }
 
 fn build_index_result(

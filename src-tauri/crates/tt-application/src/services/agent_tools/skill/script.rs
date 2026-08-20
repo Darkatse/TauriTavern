@@ -34,12 +34,12 @@ const MAX_SCRIPT_MODULES: usize = 64;
 const MAX_SCRIPT_MODULE_TOTAL_BYTES: usize = 2 * 1024 * 1024;
 
 /// skill.run_script 依赖的服务与运行上下文。
-pub struct ScriptContext<'a> {
-    pub skill_service: &'a SkillService,
-    pub engine: &'a dyn SkillScriptEngine,
-    pub workspace_repository: &'a dyn WorkspaceRepository,
-    pub run_id: &'a str,
-    pub prompt_snapshot: Option<&'a Value>,
+pub(in crate::services::agent_tools) struct ScriptContext<'a> {
+    pub(in crate::services::agent_tools) skill_service: &'a SkillService,
+    pub(in crate::services::agent_tools) engine: &'a dyn SkillScriptEngine,
+    pub(in crate::services::agent_tools) workspace_repository: &'a dyn WorkspaceRepository,
+    pub(in crate::services::agent_tools) run_id: &'a str,
+    pub(in crate::services::agent_tools) prompt_snapshot: Value,
 }
 
 pub(in crate::services::agent_tools) async fn script(
@@ -161,17 +161,11 @@ pub(in crate::services::agent_tools) async fn script(
         .map(|(path, file)| (path.clone(), file.text.clone()))
         .collect::<HashMap<_, _>>();
 
-    // 投影世界书快照为纯 JSON（fail-fast：异常条目直接传播错误）
-    let world_info = build_world_info_json(prompt_snapshot)?;
-
-    // 投影变量快照为纯 JSON
-    let variables = build_variables_json(prompt_snapshot);
+    let script_context = build_script_context_json(&prompt_snapshot)?;
 
     tracing::info!(
         "skill.run_script invoked: skill=`{skill}` script=`{script}` args_bytes={}",
-        serde_json::to_string(&script_args)
-            .map(|text| text.len())
-            .unwrap_or(0)
+        script_args.to_string().len()
     );
 
     let outcome = engine
@@ -182,8 +176,7 @@ pub(in crate::services::agent_tools) async fn script(
             workspace_files,
             visible_roots: workspace_policy.visible_roots.clone(),
             writable_roots: workspace_policy.writable_roots.clone(),
-            world_info,
-            variables,
+            context: script_context,
         })
         .await;
 
@@ -216,7 +209,9 @@ pub(in crate::services::agent_tools) async fn script(
                 AgentToolEffect::None,
             ));
         }
-        Err(error) => return Err(ApplicationError::from(error)),
+        Err(SkillScriptEngineError::Internal(message)) => {
+            return Err(ApplicationError::InternalError(message));
+        }
     };
 
     let last_write_path = match result.last_write_path.as_deref() {
@@ -228,6 +223,24 @@ pub(in crate::services::agent_tools) async fn script(
             ));
         }
     };
+
+    // 日志属于已经完成的脚本执行，不应因随后发生的 workspace 冲突而丢失。
+    for log_entry in &result.logs {
+        match log_entry.level {
+            tt_ports::skill_script::SkillScriptLogLevel::Info => {
+                tracing::info!("[skill-script] {}", log_entry.message)
+            }
+            tt_ports::skill_script::SkillScriptLogLevel::Warn => {
+                tracing::warn!("[skill-script] {}", log_entry.message)
+            }
+            tt_ports::skill_script::SkillScriptLogLevel::Error => {
+                tracing::error!("[skill-script] {}", log_entry.message)
+            }
+            tt_ports::skill_script::SkillScriptLogLevel::Debug => {
+                tracing::debug!("[skill-script] {}", log_entry.message)
+            }
+        }
+    }
 
     // ---- 落盘前一次性验证所有路径 ----
     // Application 重新验证正式写入策略（不复用 adapter 内存前缀检查的结论），
@@ -249,10 +262,8 @@ pub(in crate::services::agent_tools) async fn script(
                     call,
                     SKILL_SCRIPT_WRITE_FAILED,
                     &format!(
-                        "Write path `{}` is outside the writable workspace roots ({}); \
-                         only paths under {} can be written.",
+                        "Write path `{}` is outside the writable workspace roots ({}).",
                         write.path,
-                        workspace_policy.writable_roots.join(", "),
                         workspace_policy.writable_roots.join(", ")
                     ),
                 ),
@@ -319,38 +330,14 @@ pub(in crate::services::agent_tools) async fn script(
         }
     }
 
-    // 输出日志
-    for log_entry in &result.logs {
-        match log_entry.level {
-            tt_ports::skill_script::SkillScriptLogLevel::Info => {
-                tracing::info!("[skill-script] {}", log_entry.message)
-            }
-            tt_ports::skill_script::SkillScriptLogLevel::Warn => {
-                tracing::warn!("[skill-script] {}", log_entry.message)
-            }
-            tt_ports::skill_script::SkillScriptLogLevel::Error => {
-                tracing::error!("[skill-script] {}", log_entry.message)
-            }
-            tt_ports::skill_script::SkillScriptLogLevel::Debug => {
-                tracing::debug!("[skill-script] {}", log_entry.message)
-            }
-        }
-    }
-
-    let rendered =
-        serde_json::to_string(&result.value).unwrap_or_else(|_| result.value.to_string());
+    let rendered = result.value.to_string();
     let content = format!("Executed skill script `{skill}/{entry_module}`. Result:\n{rendered}");
 
     let resource_refs = written_files
         .iter()
         .map(|file| file.path.as_str().to_string())
         .collect::<Vec<_>>();
-    let last_text_mutation = last_write_path.and_then(|path| {
-        written_files
-            .iter()
-            .find(|file| file.path.as_str() == path)
-            .map(|file| file.path.clone())
-    });
+    let last_text_mutation = last_write_path.map(WorkspacePath::parse).transpose()?;
 
     tracing::info!(
         "skill.run_script completed: skill=`{skill}` script=`{script}` result_bytes={} writes={} write_bytes={}",
@@ -468,60 +455,47 @@ async fn build_workspace_snapshot(
     Ok(snapshot)
 }
 
-/// 从 prompt_snapshot 投影世界书条目为纯 JSON `{ "entries": [...] }`。
-/// 复用 world_info::normalize_entry 做 fail-fast 解析，异常条目直接传播错误。
-fn build_world_info_json(prompt_snapshot: Option<&Value>) -> Result<Value, ApplicationError> {
-    let entries = match prompt_snapshot
-        .and_then(|snapshot| snapshot.get("worldInfoActivation"))
+/// 把本次 run 的宿主事实投影为引擎无关的 JSON context。
+fn build_script_context_json(prompt_snapshot: &Value) -> Result<Value, ApplicationError> {
+    let entries = prompt_snapshot
+        .get("worldInfoActivation")
         .and_then(|batch| batch.get("entries"))
         .and_then(Value::as_array)
-    {
-        Some(entries) => entries,
-        None => return Ok(json!({ "entries": [] })),
-    };
-    let normalized: Vec<super::super::world_info::ActivatedEntry> = entries
+        .ok_or_else(|| invalid_script_context("worldInfoActivation.entries must be an array"))?;
+    let world_info_entries = entries
         .iter()
         .enumerate()
-        .map(|(index, entry)| super::super::world_info::normalize_entry(index, entry))
-        .collect::<Result<Vec<_>, _>>()?;
-    let entries_json = normalized
-        .iter()
-        .map(|e| {
-            json!({
-                "uid": e.uid,
-                "ref": e.ref_id,
-                "content": e.content,
-                "constant": e.constant,
-                "world": e.world,
-                "position": e.position,
-                "displayName": e.display_name,
-            })
+        .map(|(index, entry)| super::super::world_info::normalize_entry_json(index, entry))
+        .collect::<Result<Vec<_>, ApplicationError>>()?;
+
+    let variables = prompt_snapshot
+        .get("frozenRunInputSnapshot")
+        .and_then(|frozen| frozen.get("variables"))
+        .map(|variables| {
+            let variables = variables
+                .as_object()
+                .ok_or_else(|| invalid_script_context("variables must be an object"))?;
+            let local = variables
+                .get("local")
+                .and_then(Value::as_object)
+                .ok_or_else(|| invalid_script_context("variables.local must be an object"))?;
+            let global = variables
+                .get("global")
+                .and_then(Value::as_object)
+                .ok_or_else(|| invalid_script_context("variables.global must be an object"))?;
+            Ok::<Value, ApplicationError>(json!({ "local": local, "global": global }))
         })
-        .collect::<Vec<_>>();
-    Ok(json!({ "entries": entries_json }))
+        .transpose()?
+        .unwrap_or_else(|| json!({ "local": {}, "global": {} }));
+
+    Ok(json!({
+        "worldInfo": { "entries": world_info_entries },
+        "variables": variables,
+    }))
 }
 
-/// 从 prompt_snapshot 投影变量快照为纯 JSON `{ "local": { ... }, "global": { ... } }`。
-/// 直接从 frozenRunInputSnapshot.variables 提取 local/global map，缺失则回退空对象。
-fn build_variables_json(prompt_snapshot: Option<&Value>) -> Value {
-    let variables = prompt_snapshot
-        .and_then(|snapshot| snapshot.get("frozenRunInputSnapshot"))
-        .and_then(|frozen| frozen.get("variables"))
-        .and_then(Value::as_object);
-    let local = variables
-        .and_then(|map| map.get("local"))
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let global = variables
-        .and_then(|map| map.get("global"))
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    json!({
-        "local": local,
-        "global": global,
-    })
+fn invalid_script_context(message: &str) -> ApplicationError {
+    ApplicationError::ValidationError(format!("agent.invalid_skill_script_context: {message}"))
 }
 
 fn is_valid_script_name(name: &str) -> bool {
@@ -1039,6 +1013,13 @@ mod tests {
         }
     }
 
+    fn empty_prompt_snapshot() -> Value {
+        json!({
+            "worldInfoActivation": { "entries": [] },
+            "frozenRunInputSnapshot": {},
+        })
+    }
+
     async fn run_with_repo_and_outcome(
         arguments: Value,
         repo: FakeSkillRepo,
@@ -1063,7 +1044,7 @@ mod tests {
                     snapshot_content: None,
                 },
                 run_id: "run-1",
-                prompt_snapshot: None,
+                prompt_snapshot: empty_prompt_snapshot(),
             },
             &call(arguments),
             &mut session,
@@ -1224,7 +1205,7 @@ mod tests {
                     snapshot_content: None,
                 },
                 run_id: "run-1",
-                prompt_snapshot: None,
+                prompt_snapshot: empty_prompt_snapshot(),
             },
             &call(json!({ "skill": "demo", "script": "helper", "args": { "n": 7 } })),
             &mut session,
@@ -1244,8 +1225,13 @@ mod tests {
         // Workspace authority 来自调用级 repository manifest，而不是 Profile 副本。
         assert_eq!(requests[0].visible_roots, vec!["output".to_string()]);
         assert_eq!(requests[0].writable_roots, vec!["output".to_string()]);
-        assert_eq!(requests[0].world_info, json!({ "entries": [] }));
-        assert_eq!(requests[0].variables, json!({ "local": {}, "global": {} }));
+        assert_eq!(
+            requests[0].context,
+            json!({
+                "worldInfo": { "entries": [] },
+                "variables": { "local": {}, "global": {} },
+            })
+        );
 
         assert!(!result.is_error);
         assert_eq!(result.structured, json!({ "answer": 42 }));
@@ -1278,7 +1264,7 @@ mod tests {
                     snapshot_content: None,
                 },
                 run_id: "run-1",
-                prompt_snapshot: None,
+                prompt_snapshot: empty_prompt_snapshot(),
             },
             &call(json!({ "skill": "demo", "script": "helper" })),
             &mut session,
@@ -1307,6 +1293,7 @@ mod tests {
         let profile = profile(true);
 
         let prompt_snapshot = json!({
+            "worldInfoActivation": { "entries": [] },
             "frozenRunInputSnapshot": {
                 "variables": {
                     "local": { "score": 42, "name": "Alice" },
@@ -1329,7 +1316,7 @@ mod tests {
                     snapshot_content: None,
                 },
                 run_id: "run-1",
-                prompt_snapshot: Some(&prompt_snapshot),
+                prompt_snapshot,
             },
             &call(json!({ "skill": "demo", "script": "helper" })),
             &mut session,
@@ -1343,15 +1330,15 @@ mod tests {
         let requests = engine.requests.lock().await;
         assert_eq!(requests.len(), 1);
         assert_eq!(
-            requests[0].variables.get("local").unwrap().get("score"),
+            requests[0].context["variables"]["local"].get("score"),
             Some(&json!(42))
         );
         assert_eq!(
-            requests[0].variables.get("local").unwrap().get("name"),
+            requests[0].context["variables"]["local"].get("name"),
             Some(&json!("Alice"))
         );
         assert_eq!(
-            requests[0].variables.get("global").unwrap().get("theme"),
+            requests[0].context["variables"]["global"].get("theme"),
             Some(&json!("dark"))
         );
     }
@@ -1387,7 +1374,7 @@ mod tests {
                 engine: engine.as_ref(),
                 workspace_repository: &workspace_repo,
                 run_id: "run-1",
-                prompt_snapshot: None,
+                prompt_snapshot: empty_prompt_snapshot(),
             },
             &call(json!({ "skill": "demo", "script": "helper" })),
             &mut session,
@@ -1459,7 +1446,7 @@ mod tests {
                 engine: engine.as_ref(),
                 workspace_repository: &workspace_repo,
                 run_id: "run-1",
-                prompt_snapshot: None,
+                prompt_snapshot: empty_prompt_snapshot(),
             },
             &call(json!({ "skill": "demo", "script": "helper" })),
             &mut session,
@@ -1529,7 +1516,7 @@ mod tests {
                 engine: engine.as_ref(),
                 workspace_repository: &workspace_repo,
                 run_id: "run-1",
-                prompt_snapshot: None,
+                prompt_snapshot: empty_prompt_snapshot(),
             },
             &call(json!({ "skill": "demo", "script": "helper" })),
             &mut session,
@@ -1587,7 +1574,7 @@ mod tests {
                 engine: engine.as_ref(),
                 workspace_repository: &workspace_repo,
                 run_id: "run-1",
-                prompt_snapshot: None,
+                prompt_snapshot: empty_prompt_snapshot(),
             },
             &call(json!({ "skill": "demo", "script": "helper" })),
             &mut session,
@@ -1644,7 +1631,7 @@ mod tests {
                 engine: engine.as_ref(),
                 workspace_repository: &workspace_repo,
                 run_id: "run-1",
-                prompt_snapshot: None,
+                prompt_snapshot: empty_prompt_snapshot(),
             },
             &call(json!({ "skill": "demo", "script": "helper" })),
             &mut session,
@@ -1702,7 +1689,7 @@ mod tests {
                 engine: engine.as_ref(),
                 workspace_repository: &workspace_repo,
                 run_id: "run-1",
-                prompt_snapshot: None,
+                prompt_snapshot: empty_prompt_snapshot(),
             },
             &call(json!({ "skill": "demo", "script": "helper" })),
             &mut session,
@@ -1761,7 +1748,7 @@ mod tests {
                     snapshot_content: None,
                 },
                 run_id: "run-1",
-                prompt_snapshot: None,
+                prompt_snapshot: empty_prompt_snapshot(),
             },
             &call(json!({ "skill": "demo", "script": "helper" })),
             &mut session,
@@ -1771,6 +1758,20 @@ mod tests {
         .expect_err("truncated snapshot must fail fast");
         assert!(
             matches!(error, ApplicationError::ValidationError(message) if message.contains("truncated"))
+        );
+    }
+
+    #[test]
+    fn malformed_script_context_fails_fast() {
+        assert!(build_script_context_json(&json!({ "worldInfoActivation": {} })).is_err());
+        assert!(
+            build_script_context_json(&json!({
+                "worldInfoActivation": { "entries": [] },
+                "frozenRunInputSnapshot": {
+                    "variables": { "local": [], "global": {} }
+                },
+            }))
+            .is_err()
         );
     }
 

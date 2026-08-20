@@ -98,17 +98,16 @@ const exists = workspace.exists('output/config.json');
 
 ### 3.2 `context.worldInfo` — 世界书快照（只读）
 
-`context.worldInfo` 提供当前 run 启动时预取的激活世界书条目快照。返回对象与宿主状态隔离，脚本对它的本地修改不会修改世界书。
+`context.worldInfo` 是当前 run 启动时预取的激活世界书快照。它是普通 JSON；脚本可以在本次执行中处理这份副本，但不会修改宿主世界书。
 
 ```js
 import { context } from '@tauritavern/runtime/v1';
 
-// 读取所有激活的世界书条目
-const result = context.worldInfo.readActivated();
-// 返回: { entries: [{ uid, ref, content, constant, position, displayName, world }, ...] }
+const entries = context.worldInfo.entries;
+// [{ uid, ref, content, constant, position, displayName, world }, ...]
 
-// 按 ref 读取特定的世界书条目
-const result = context.worldInfo.readEntries(['worldinfo:lore#1', 'worldinfo:chars#2']);
+const wanted = new Set(['worldinfo:lore#1', 'worldinfo:chars#2']);
+const selected = entries.filter(entry => wanted.has(entry.ref));
 ```
 
 每个条目的字段：
@@ -125,32 +124,23 @@ const result = context.worldInfo.readEntries(['worldinfo:lore#1', 'worldinfo:cha
 
 ### 3.3 `context.variables` — SillyTavern 变量快照（只读）
 
-`context.variables` 提供当前 run 的 SillyTavern 变量快照，接口签名与 `getContext().variables` 保持一致。`local` 和 `global` 两个作用域各提供 `get` / `has`（只读）方法。
+`context.variables` 是当前 run 的 SillyTavern 变量快照，包含 `local` 和 `global` 两个普通 JSON 对象。值保持快照中的原始 JSON 类型。
 
 ```js
 import { context } from '@tauritavern/runtime/v1';
 
-// 读取 local 变量（不存在时返回空字符串，与 ST getLocalVariable 行为一致）
-const score = context.variables.local.get('score');
+// 读取 local 变量
+const score = context.variables.local.score;
+const name = context.variables.local['name'];
 
 // 检查 local 变量是否存在
-const hasName = context.variables.local.has('name');
+const hasName = Object.hasOwn(context.variables.local, 'name');
 
 // 读取 global 变量
-const theme = context.variables.global.get('theme');
-
-// 检查 global 变量是否存在
-const hasGlobal = context.variables.global.has('theme');
+const theme = context.variables.global.theme;
 ```
 
-| 方法 | 签名 | 说明 |
-| --- | --- | --- |
-| `.local.get(name)` | `(name: string) → any` | 读取 local 变量值；缺失时返回空字符串 `''` |
-| `.local.has(name)` | `(name: string) → boolean` | 检查 local 变量是否存在 |
-| `.global.get(name)` | `(name: string) → any` | 读取 global 变量值；缺失时返回空字符串 `''` |
-| `.global.has(name)` | `(name: string) → boolean` | 检查 global 变量是否存在 |
-
-写操作（`set` / `del` / `add` / `inc` / `dec`）存在但会 fail-fast 抛出 `"variables are read-only in skill script sandbox"` 错误。这些方法仅为保持接口签名一致，脚本不能修改变量。
+变量不存在时得到标准 JavaScript `undefined`，可按需使用 `??` 提供默认值。修改这份对象只影响本次脚本执行，不会写回 SillyTavern。
 
 ### 3.4 `log` — 日志 API
 
@@ -232,12 +222,7 @@ import { parse } from './lib/parser.js';
 import { marked } from './vendor/marked.js';
 ```
 
-模块快照上限（fail-fast，超过即拒绝执行）：
-
-| 限制项 | 上限 |
-| --- | --- |
-| 模块数量 | 64 个 |
-| 源码总字节数 | 2 MB（2,097,152 字节） |
+模块快照受 [6.1 资源限制](#61-资源限制) 约束，超过即拒绝执行。
 
 ```text
 my-skill/
@@ -294,7 +279,7 @@ export default function (args) {
 | 返回值大小上限 | 256 KB（262,144 字节） | 返回值经 `JSON.stringify` 序列化后超过此大小则 fail-fast |
 | 模块快照数量上限 | 64 个 | skill `scripts/` 下 `.js` 文件数超过此上限则拒绝执行 |
 | 模块快照字节上限 | 2 MiB（2,097,152 字节） | skill `scripts/` 下所有 `.js` 源码总字节数超过此上限则拒绝执行 |
-| 总输入预算 | 8 MiB | 模块源码 + 工作区快照 + args + 世界书/变量上下文的总字节数，超过直接终止 |
+| 总输入预算 | 8 MiB | 模块源码 + 工作区快照 + args + context 的总字节数，超过直接终止 |
 | 总输出预算 | 1 MiB | 最终 delta + 日志 + 返回值的总字节数（每项含少量固定记账成本），超过直接终止 |
 | 全局并发上限 | 2 | 多个 Agent / 子 Agent 同时执行脚本时排队 |
 
@@ -332,7 +317,7 @@ export default function (args) {
 | 导入 Skill scripts/ 内的模块（含自带库） | 是（内存快照解析） |
 | 导入快照外 / scripts/ 外的模块 | 否（fail-fast） |
 | 网络请求 | 否 |
-| 修改变量 / 世界书 | 否（fail-fast） |
+| 修改宿主变量 / 世界书 | 否；`context` 只是本次执行的副本 |
 | 访问 Node / 浏览器内置对象 | 否 |
 | 访问进程 / shell | 否 |
 
@@ -371,11 +356,10 @@ export default function (args) {
   workspace.writeText('output/result.txt', batches.map(b => b.join('\n')).join('\n---\n'));
 
   // 访问世界书
-  const worldData = context.worldInfo.readActivated();
-  const loreEntries = worldData.entries.filter(e => e.constant);
+  const loreEntries = context.worldInfo.entries.filter(e => e.constant);
 
   // 读取变量
-  const counter = context.variables.local.get('counter');
+  const counter = context.variables.local.counter ?? '';
 
   return {
     processed: result,
@@ -453,18 +437,11 @@ Processes input text with configurable format and batch size.
 - Writes `output/result.txt`.
 ```
 
-## 8. 约束清单
+## 8. 最小约定
 
-1. **入口脚本必须是 ES module**：使用 `export default` 或 `export function main` 导出入口函数；缺失导出会报错，不会静默返回 `undefined`。
-2. **返回值必须 JSON 可序列化**：返回值经 `JSON.stringify` 序列化传回宿主；循环引用、`BigInt`、`Symbol`、函数、`undefined` 会导致失败。
-3. **大输出写入文件**：返回值超过 256 KB 会 fail-fast；大输出应通过 `workspace.writeText` 写入 workspace，返回值只携带摘要或文件路径。
-4. **路径必须相对 workspace 根目录**：不要使用绝对路径或 `..` 逃逸。
-5. **变量和世界书是只读的**：脚本不能修改 SillyTavern 变量或世界书条目。
-6. **脚本名称必须匹配 `^[a-z0-9][a-z0-9-]*$`**：小写字母、数字、连字符，字母或数字开头；不带 `.js` 扩展名。
-7. **不要依赖跨执行状态**：每次 `skill.run_script` 调用都是全新的 Runtime，没有全局变量、缓存或闭包持久化。
-8. **不要使用 Node / 浏览器 API**：没有 `process`、`Buffer`、`fs`、`http`、`crypto`、`setTimeout`、`fetch` 等。
-9. **宿主没有内置第三方库**：需要的库随 skill 自己的 `scripts/` 分发（单文件 ESM bundle，见 5.2），版本由 skill 开发者管理。
-10. **模块快照有上限**：skill `scripts/` 下最多 64 个 `.js` 文件、总计 2 MB；超过则拒绝执行。
-11. **写入是最终状态语义**：同路径多次写只保留最后一次内容；快照后外部修改会导致 stale 冲突报错。
-12. **在 SKILL.md 中记录脚本契约**：模型通过 SKILL.md 了解脚本参数和返回值；缺少文档会导致模型无法正确调用。
-13. **宿主能力只能从 `@tauritavern/runtime/v1` 导入**：沙箱没有全局对象，`workspace` / `context` / `log` 必须通过 `import` 从 `@tauritavern/runtime/v1` 获取。
+1. 使用 ES module，并导出 `default(args)` 或 `main(args)`。
+2. 返回 JSON 可序列化的小结果；大内容写入 workspace。
+3. workspace 路径使用当前 policy 允许的相对路径。
+4. `context` 是隔离快照，不会把修改写回宿主。
+5. 第三方依赖随 Skill 打包，不依赖 Node、浏览器或网络 API。
+6. 在 `SKILL.md` 中写清脚本参数、返回值和文件副作用。

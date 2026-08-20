@@ -52,13 +52,9 @@ pub struct SkillScriptRequest {
     /// 可写根前缀列表（逻辑路径前缀，如 `["output"]`）。
     /// `workspace.writeText` 仅允许写入这些前缀下的路径。
     pub writable_roots: Vec<String>,
-    /// 预取的世界书快照（纯 JSON，由应用层从激活条目
-    /// 投影而成），经 `context.worldInfo` API 提供给脚本。
-    pub world_info: serde_json::Value,
-    /// 预取的 SillyTavern 变量快照（纯 JSON），格式为
-    /// `{ "local": { ... }, "global": { ... } }`，
-    /// 经 `context.variables` API 提供给脚本（只读）。
-    pub variables: serde_json::Value,
+    /// Application 为本次执行投影的只读宿主上下文。
+    /// 引擎只负责把这份普通 JSON 映射为 `context`，不解释平台字段。
+    pub context: serde_json::Value,
 }
 
 /// 脚本写入操作（内存 delta 的一部分）。

@@ -14,7 +14,7 @@
 8. [扩展 API 文档](./API/README.md) - `window.__TAURITAVERN__.api.*` 的参考与适配指南（面向扩展作者）
 9. [Agent 架构文档](./AgentArchitecture.md) - Agent Runtime 的高层架构入口
 10. [Agent 细节文档](./Agent/README.md) - Workspace、Journal、Tool、LLM Gateway、MCP/SKILL 与测试策略
-11. [Skill Script 指南](./Agent/SkillScript.md) - `skill.run_script` 脚本开发：全局变量、文件读写边界、模块导入与第三方库
+11. [Skill Script 指南](./Agent/SkillScript.md) - `skill.run_script` 脚本开发：context 快照、文件读写边界、模块导入与第三方库
 
 ## 项目概述
 

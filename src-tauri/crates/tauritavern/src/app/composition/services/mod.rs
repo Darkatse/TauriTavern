@@ -138,7 +138,6 @@ pub(super) async fn build(
         repositories.secret_repository.clone(),
         ios_policy.clone(),
     ));
-    // skill 脚本引擎：内置库以 BuiltinLoader 内存注册，无需磁盘释放。
     let skill_script_engine: Arc<dyn SkillScriptEngine> = Arc::new(QuickJsScriptEngine::new());
     let vector_service = Arc::new(VectorService::new(
         repositories.vector_repository.clone(),

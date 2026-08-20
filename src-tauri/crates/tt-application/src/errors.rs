@@ -2,7 +2,6 @@ use thiserror::Error;
 
 use tt_domain::errors::DomainError;
 use tt_domain::models::upstream_failure::UpstreamFailure;
-use tt_ports::skill_script::SkillScriptEngineError;
 
 #[derive(Error, Debug)]
 pub enum ApplicationError {
@@ -71,23 +70,6 @@ impl From<DomainError> for ApplicationError {
     }
 }
 
-impl From<SkillScriptEngineError> for ApplicationError {
-    fn from(error: SkillScriptEngineError) -> Self {
-        match error {
-            SkillScriptEngineError::ExecutionFailed { message } => {
-                ApplicationError::InternalError(message)
-            }
-            SkillScriptEngineError::ResultTooLarge {
-                actual_bytes,
-                limit_bytes,
-            } => ApplicationError::ValidationError(format!(
-                "Skill script result is {actual_bytes} bytes, exceeding the {limit_bytes}-byte limit"
-            )),
-            SkillScriptEngineError::Internal(message) => ApplicationError::InternalError(message),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use tt_domain::errors::GENERATION_CANCELLED_BY_USER_MESSAGE;
@@ -111,21 +93,6 @@ mod tests {
         assert!(matches!(
             error,
             ApplicationError::Conflict(message) if message == "busy"
-        ));
-    }
-
-    #[test]
-    fn skill_script_engine_errors_map_to_application_errors() {
-        let internal = ApplicationError::from(SkillScriptEngineError::Internal("boom".to_string()));
-        assert!(matches!(internal, ApplicationError::InternalError(message) if message == "boom"));
-
-        let too_large = ApplicationError::from(SkillScriptEngineError::ResultTooLarge {
-            actual_bytes: 300_000,
-            limit_bytes: 262_144,
-        });
-        assert!(matches!(
-            too_large,
-            ApplicationError::ValidationError(message) if message.contains("300000 bytes")
         ));
     }
 }

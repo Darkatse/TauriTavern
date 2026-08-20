@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use rquickjs::loader::{BuiltinLoader, BuiltinResolver};
-use rquickjs::{Context, Ctx, Function, Module, Object, Runtime, Value as JsValue};
+use rquickjs::{Context, Ctx, Function, Module, Runtime, Value as JsValue};
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
 
@@ -22,7 +22,6 @@ use tt_ports::skill_script::{
 };
 
 use crate::api::OverlayFs;
-use crate::convert::json_to_js;
 use crate::runtime_module::{RuntimeV1Module, RuntimeV1State, RUNTIME_MODULE_NAME};
 
 const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -178,8 +177,7 @@ fn execute_sync(
         // store_userdata 仅在 userdata 被并发访问时失败，此处不可能。
         ctx.store_userdata(RuntimeV1State {
             overlay: overlay.clone(),
-            world_info: request.world_info.clone(),
-            variables: request.variables.clone(),
+            context: request.context.clone(),
         })
         .map_err(|_| rquickjs::Error::Unknown)?;
 
@@ -194,7 +192,7 @@ fn execute_sync(
         // → job 队列耗尽返回 WouldBlock → 落入下方执行错误分支。
         eval_promise.finish::<JsValue>()?;
 
-        let js_args = json_to_js(&ctx, &args)?;
+        let js_args = ctx.json_parse(args.to_string())?;
         let entry = module
             .get::<_, Function>("default")
             .or_else(|_| module.get::<_, Function>("main"))
@@ -217,21 +215,14 @@ fn execute_sync(
             returned
         };
 
-        // 返回值边界：用 JavaScript 的 JSON.stringify 序列化，再交给 serde 解析。
-        // 循环结构在 JS 侧抛 TypeError；undefined/函数不可序列化时明确报错。
-        let json_object = ctx.globals().get::<_, Object>("JSON")?;
-        let stringify = json_object.get::<_, Function>("stringify")?;
-        let stringified = stringify.call::<_, JsValue>((entry_value,))?;
-        if stringified.is_undefined() {
-            return Err(rquickjs::Exception::throw_message(
-                &ctx,
-                "skill script must return a JSON-serializable value; `undefined` and functions cannot be returned (return `null` explicitly instead)",
-            ));
-        }
-        let text = stringified
-            .as_string()
+        // 使用 QuickJS 原生 JSON 边界，不受脚本修改 globalThis.JSON 的影响。
+        let text = ctx
+            .json_stringify(entry_value)?
             .ok_or_else(|| {
-                rquickjs::Exception::throw_message(&ctx, "JSON.stringify returned a non-string value")
+                rquickjs::Exception::throw_message(
+                    &ctx,
+                    "skill script must return a JSON-serializable value; `undefined` and functions cannot be returned (return `null` explicitly instead)",
+                )
             })?
             .to_string()?;
         Ok(text)
@@ -295,23 +286,16 @@ fn execute_sync(
     }
 }
 
-/// 输入总量：模块源码 + 工作区快照 + args + 世界书/变量上下文。
-/// serde_json::Value 由宿主构造，总是可序列化；失败按 0 计不放大内存。
+/// 输入总量：模块源码 + 工作区快照 + args + 宿主上下文。
 fn total_input_bytes(request: &SkillScriptRequest) -> usize {
-    fn json_len(value: &serde_json::Value) -> usize {
-        serde_json::to_string(value)
-            .map(|text| text.len())
-            .unwrap_or(0)
-    }
     request.modules.values().map(|s| s.len()).sum::<usize>()
         + request
             .workspace_files
             .values()
             .map(|s| s.len())
             .sum::<usize>()
-        + json_len(&request.args)
-        + json_len(&request.world_info)
-        + json_len(&request.variables)
+        + request.args.to_string().len()
+        + request.context.to_string().len()
 }
 
 /// 提取 JS 异常的 message 与 stack（如可用），否则回退到错误字符串。
@@ -361,8 +345,10 @@ mod tests {
             workspace_files: HashMap::new(),
             visible_roots: vec!["output".to_string()],
             writable_roots: vec!["output".to_string()],
-            world_info: json!({ "entries": [] }),
-            variables: json!({ "local": {}, "global": {} }),
+            context: json!({
+                "worldInfo": { "entries": [] },
+                "variables": { "local": {}, "global": {} },
+            }),
         }
     }
 
@@ -624,6 +610,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn result_serialization_ignores_mutated_global_json() {
+        let result = QuickJsScriptEngine::new()
+            .execute(request(
+                "export default function () { globalThis.JSON.stringify = () => '\"wrong\"'; return { ok: true }; }",
+                json!({}),
+            ))
+            .await
+            .expect("execute");
+
+        assert_eq!(result.value, json!({ "ok": true }));
+    }
+
+    #[tokio::test]
     async fn fs_api_reads_and_writes_overlay() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
@@ -746,17 +745,20 @@ mod tests {
     async fn world_info_snapshot_is_readable() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
-            "import { context } from '@tauritavern/runtime/v1';\nexport default function () { return context.worldInfo.readActivated(); }",
+            "import { context } from '@tauritavern/runtime/v1';\nexport default function () { return context.worldInfo; }",
             json!({}),
         );
-        req.world_info = json!({
-            "entries": [{
-                "uid": "1",
-                "ref": "worldinfo:lore#1",
-                "content": "text",
-                "constant": true,
-                "world": "lore"
-            }]
+        req.context = json!({
+            "worldInfo": {
+                "entries": [{
+                    "uid": "1",
+                    "ref": "worldinfo:lore#1",
+                    "content": "text",
+                    "constant": true,
+                    "world": "lore"
+                }]
+            },
+            "variables": { "local": {}, "global": {} },
         });
 
         let result = engine.execute(req).await.expect("execute");
@@ -778,12 +780,15 @@ mod tests {
     async fn variables_are_readable() {
         let engine = QuickJsScriptEngine::new();
         let mut req = request(
-            "import { context } from '@tauritavern/runtime/v1';\nexport default function () {\n  return {\n    score: context.variables.local.get('score'),\n    hasName: context.variables.local.has('name'),\n    theme: context.variables.global.get('theme'),\n    missing: context.variables.local.get('missing'),\n  };\n}",
+            "import { context } from '@tauritavern/runtime/v1';\nexport default function () {\n  return {\n    score: context.variables.local.score,\n    hasName: Object.hasOwn(context.variables.local, 'name'),\n    theme: context.variables.global.theme,\n    missing: context.variables.local.missing ?? '',\n  };\n}",
             json!({}),
         );
-        req.variables = json!({
-            "local": { "score": 42, "name": "Alice" },
-            "global": { "theme": "dark" }
+        req.context = json!({
+            "worldInfo": { "entries": [] },
+            "variables": {
+                "local": { "score": 42, "name": "Alice" },
+                "global": { "theme": "dark" }
+            }
         });
 
         let result = engine.execute(req).await.expect("execute");
@@ -796,22 +801,6 @@ mod tests {
                 "missing": "",
             })
         );
-    }
-
-    #[tokio::test]
-    async fn variables_write_operations_fail() {
-        let engine = QuickJsScriptEngine::new();
-        let error = engine
-            .execute(request(
-                "import { context } from '@tauritavern/runtime/v1';\nexport default function () { context.variables.local.set('x', 1); }",
-                json!({}),
-            ))
-            .await
-            .expect_err("must fail");
-        assert!(matches!(
-            error,
-            SkillScriptEngineError::ExecutionFailed { .. }
-        ));
     }
 
     #[tokio::test]
@@ -844,7 +833,7 @@ mod tests {
                  \x20   hasVariables: typeof $variables !== 'undefined',\n\
                  \x20   workspaceWorks: typeof workspace.writeText === 'function',\n\
                  \x20   logWorks: typeof log.info === 'function',\n\
-                 \x20   contextWorks: typeof context.worldInfo.readActivated === 'function',\n\
+                 \x20   contextWorks: Array.isArray(context.worldInfo.entries),\n\
                  \x20 };\n\
                  }",
                 json!({}),
