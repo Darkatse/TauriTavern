@@ -60,6 +60,7 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
                 "skill.list",
                 "skill.search",
                 "skill.read",
+                "skill.run_script",
                 "workspace.list_files",
                 "workspace.search_files",
                 "workspace.read_file",

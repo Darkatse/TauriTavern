@@ -16,7 +16,7 @@ use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
     AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentToolResult, WorkspacePath,
+    AgentToolResult, WorkspaceFileWriteMode, WorkspacePath,
 };
 use tt_domain::models::tool::ToolTurnContract;
 use tt_domain::text_metrics::TextMetrics;
@@ -225,6 +225,40 @@ impl AgentRuntimeService {
                         )
                         .await?;
                         text_mutation = Some((call.call_id, file));
+                    }
+                    AgentToolEffect::WorkspaceFilesWritten {
+                        files,
+                        last_text_mutation,
+                    } => {
+                        for file in &files {
+                            let metrics = TextMetrics::from_text(&file.text);
+                            self.event(
+                                run_id,
+                                AgentRunEventLevel::Info,
+                                "workspace_file_written",
+                                json!({
+                                    "invocationId": invocation_id,
+                                    "path": file.path.as_str(),
+                                    "mode": WorkspaceFileWriteMode::Replace,
+                                    "chars": metrics.chars,
+                                    "words": metrics.words,
+                                    "sha256": file.sha256.as_str(),
+                                }),
+                            )
+                            .await?;
+                        }
+                        if let Some(path) = last_text_mutation {
+                            let file = files
+                                .into_iter()
+                                .find(|file| file.path == path)
+                                .ok_or_else(|| {
+                                    ApplicationError::InternalError(format!(
+                                        "Workspace batch effect is missing its last mutation `{}`",
+                                        path.as_str()
+                                    ))
+                                })?;
+                            text_mutation = Some((call.call_id, file));
+                        }
                     }
                     AgentToolEffect::WorkspaceFilePatched {
                         file,

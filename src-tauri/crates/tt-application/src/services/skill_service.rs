@@ -81,6 +81,19 @@ impl SkillService {
         Ok(self.repository.read_skill_file(request).await?)
     }
 
+    /// 读取已安装 skill 包内脚本文件的源码文本（供 skill.run_script 引擎执行）。
+    pub async fn read_skill_script(
+        &self,
+        scope: SkillScope,
+        name: &str,
+        relative_path: &str,
+    ) -> Result<String, ApplicationError> {
+        Ok(self
+            .repository
+            .read_skill_script(scope, name, relative_path)
+            .await?)
+    }
+
     pub async fn write_skill_file(
         &self,
         request: SkillWriteRequest,
@@ -374,6 +387,15 @@ mod tests {
             &self,
             _request: SkillInstallRequest,
         ) -> Result<tt_domain::models::skill::SkillInstallResult, DomainError> {
+            unreachable!("not needed for resolver tests")
+        }
+
+        async fn read_skill_script(
+            &self,
+            _scope: SkillScope,
+            _name: &str,
+            _relative_path: &str,
+        ) -> Result<String, DomainError> {
             unreachable!("not needed for resolver tests")
         }
 

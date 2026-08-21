@@ -63,6 +63,7 @@ tt-adapter-vector = { path = "../tt-adapter-vector" }
 tt-adapter-storage-core = { path = "../tt-adapter-storage-core" }
 tt-adapter-storage-userdata = { path = "../tt-adapter-storage-userdata" }
 tt-adapter-media = { path = "../tt-adapter-media" }
+tt-adapter-quickjs = { path = "../tt-adapter-quickjs" }
 
 # TT-Sync v2 shared protocol crates. (crates.io)
 ttsync-contract = { workspace = true }

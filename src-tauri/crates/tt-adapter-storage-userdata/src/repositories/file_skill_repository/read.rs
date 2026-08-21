@@ -15,6 +15,24 @@ use tt_domain::text_search::PreparedTextSearch;
 
 const MAX_SKILL_READ_LINES: usize = 1_200;
 
+pub(super) async fn read_skill_script(
+    repository: &FileSkillRepository,
+    scope: &SkillScope,
+    name: &str,
+    relative_path: &str,
+) -> Result<String, DomainError> {
+    let name = validate_skill_name(name)?;
+    let path = normalize_skill_path(relative_path)?;
+    if !path.starts_with("scripts/") {
+        return Err(DomainError::InvalidData(format!(
+            "Skill script path must stay under scripts/: skills/{name}/{path}"
+        )));
+    }
+    Ok(read_skill_text_file(repository, scope, &name, &path)
+        .await?
+        .content)
+}
+
 struct SkillTextFile {
     scope: SkillScope,
     name: String,

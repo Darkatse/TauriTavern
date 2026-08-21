@@ -1,0 +1,24 @@
+[package]
+name = "tt-adapter-quickjs"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+path-clean = "1.0"
+rquickjs = { version = "0.12.2", features = ["loader"] }
+serde_json = { workspace = true }
+# 只保留 spawn_blocking（rt）与 Semaphore（sync）所需的 feature。
+tokio = { version = "1", default-features = false, features = ["rt", "sync"] }
+tt-ports = { path = "../tt-ports" }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["macros"] }
+
+# Android / iOS 目标没有预生成的 rquickjs 绑定，需开启 bindgen 在编译期实时生成。
+[target.'cfg(target_os = "android")'.dependencies]
+rquickjs = { version = "0.12.2", features = ["bindgen"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+rquickjs = { version = "0.12.2", features = ["bindgen"] }

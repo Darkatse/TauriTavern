@@ -24,7 +24,9 @@ my-skill/
 - frontmatter 必须包含 `name` 与 `description`。
 - `name` 使用小写 ASCII、数字、`-`、`_`，最长 128。
 - `agents/tauritavern.json` 可选；一旦存在，schema 无效就 fail-fast。
-- `scripts/` 会随 Skill 导入、导出，并在预览中提示风险；当前不会执行。
+- `scripts/` 会随 Skill 导入、导出，并在预览中提示风险；不会随导入/安装自动执行，只在 Agent 显式调用 `skill.run_script` 时经沙箱执行。
+
+> `scripts/` 内的脚本可由 Agent 通过 `skill.run_script` 在 QuickJS 沙箱中执行。脚本开发指南（context 快照、文件读写边界、模块导入、脚本工具箱）见 [docs/Agent/SkillScript.md](./SkillScript.md)。
 
 ## 当前实现
 
@@ -34,7 +36,7 @@ my-skill/
 - Repository：`SkillRepository` trait 与文件实现 `FileSkillRepository`。
 - Service：`SkillService`。
 - Host ABI：`window.__TAURITAVERN__.api.skill`。
-- Agent tools：`skill.list` / `skill.search` / `skill.read`，模型侧 alias 为 `skill_list` / `skill_search` / `skill_read`。
+- Agent tools：`skill.list` / `skill.search` / `skill.read` / `skill.run_script`，模型侧 alias 分别为 `skill_list` / `skill_search` / `skill_read` / `skill_run_script`。
 - Preset / Character embedded skill 扫描与导入确认 UI。
 - Preset / Character 删除时，删除仅由该来源引用的已安装 Skill。
 
@@ -134,7 +136,7 @@ Agent tool 层的模型可修正读取错误，例如缺失文件、二进制文
 
 当前限制：
 
-- 不执行 Skill 自带脚本。
+- 不自动执行 Skill 自带脚本；脚本只在 Agent 显式调用 `skill.run_script` 时经 QuickJS 沙箱执行（见 [docs/Agent/SkillScript.md](./SkillScript.md)）。
 - 不让 Skill 自动安装 MCP server。
 - 不让 Skill 授予工具权限。
 - 不支持 marketplace、自动更新、多版本并存或依赖解析。
@@ -147,4 +149,4 @@ Agent tool 层的模型可修正读取错误，例如缺失文件、二进制文
 - 明确 recommended skill 与 embedded skill 在 profile / preset / character resolver 中的合流规则。
 - 将 Profile 管理 UI 暴露给创作者后，同步补齐 Skill 可见性配置入口。
 
-不要把 Skill 扩展成脚本执行、权限授予或 MCP 配置入口；这些能力必须走独立的 tool/policy/approval 体系。
+不要把 Skill 扩展成自动脚本执行、权限授予或 MCP 配置入口；脚本执行必须走独立的 `skill.run_script` 沙箱体系（QuickJS、文件读写门控、无网络），权限与 MCP 配置不得由 Skill 自行授予。

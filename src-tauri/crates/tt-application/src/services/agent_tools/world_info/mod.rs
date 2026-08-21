@@ -2,6 +2,7 @@ mod descriptors;
 mod read_activated;
 
 pub(super) use descriptors::worldinfo_read_activated_descriptor;
+pub(in crate::services::agent_tools) use read_activated::normalize_entry_json;
 pub(super) use read_activated::read_activated;
 
 pub(super) const WORLDINFO_READ_ACTIVATED: &str = "worldinfo.read_activated";

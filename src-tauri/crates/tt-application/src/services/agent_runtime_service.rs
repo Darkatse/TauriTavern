@@ -33,6 +33,7 @@ use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
+use tt_ports::skill_script::SkillScriptEngine;
 
 mod artifacts;
 mod commit;
@@ -148,6 +149,7 @@ impl AgentRuntimeService {
         llm_connection_service: Arc<LlmConnectionService>,
         prompt_assembly_service: Arc<PromptAssemblyService>,
         mcp_service: Arc<McpService>,
+        skill_script_engine: Arc<dyn SkillScriptEngine>,
     ) -> Self {
         let tool_registry = BuiltinAgentToolRegistry::all();
         let tool_dispatcher = AgentToolDispatcher::new(
@@ -156,6 +158,7 @@ impl AgentRuntimeService {
             group_chat_repository.clone(),
             workspace_repository.clone(),
             skill_service.clone(),
+            skill_script_engine,
         );
         Self {
             run_repository,

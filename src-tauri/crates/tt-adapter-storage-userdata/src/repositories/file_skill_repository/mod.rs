@@ -164,6 +164,15 @@ impl SkillRepository for FileSkillRepository {
             .await
     }
 
+    async fn read_skill_script(
+        &self,
+        scope: SkillScope,
+        name: &str,
+        relative_path: &str,
+    ) -> Result<String, DomainError> {
+        read::read_skill_script(self, &scope, name, relative_path).await
+    }
+
     async fn read_skill_file(
         &self,
         request: SkillReadRequest,

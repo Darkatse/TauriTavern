@@ -16,6 +16,7 @@ members = [
     "crates/tt-adapter-storage-core",
     "crates/tt-adapter-storage-userdata",
     "crates/tt-adapter-media",
+    "crates/tt-adapter-quickjs",
 ]
 default-members = ["crates/tauritavern"]
 resolver = "3"

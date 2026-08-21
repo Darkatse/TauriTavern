@@ -289,6 +289,22 @@ fn normalize_entry(index: usize, entry: &Value) -> Result<ActivatedEntry, Applic
     })
 }
 
+pub(in crate::services::agent_tools) fn normalize_entry_json(
+    index: usize,
+    entry: &Value,
+) -> Result<Value, ApplicationError> {
+    let entry = normalize_entry(index, entry)?;
+    Ok(serde_json::json!({
+        "uid": entry.uid,
+        "ref": entry.ref_id,
+        "content": entry.content,
+        "constant": entry.constant,
+        "world": entry.world,
+        "position": entry.position,
+        "displayName": entry.display_name,
+    }))
+}
+
 fn build_index_result(
     call: &ToolInvocation,
     batch: &Value,

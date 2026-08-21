@@ -31,6 +31,7 @@ export const KNOWN_TOOLS = Object.freeze([
     'builtin:skill.list',
     'builtin:skill.search',
     'builtin:skill.read',
+    'builtin:skill.run_script',
     'builtin:workspace.list_files',
     'builtin:workspace.search_files',
     'builtin:workspace.read_file',

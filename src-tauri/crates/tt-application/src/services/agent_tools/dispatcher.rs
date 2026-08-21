@@ -18,6 +18,7 @@ use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::workspace_repository::{WorkspaceFile, WorkspaceRepository};
+use tt_ports::skill_script::SkillScriptEngine;
 
 const RUN_PROMPT_SNAPSHOT_PATH: &str = "input/prompt_snapshot.json";
 
@@ -39,6 +40,12 @@ pub(crate) enum AgentToolEffect {
         file: WorkspaceFile,
         replacements: usize,
         old_sha256: String,
+    },
+    /// 一次工具调用批量写入多个工作区文件（如 skill 脚本的最终 delta）。
+    /// 所有文件进入 journal / 事件；最后一次 mutation 单独供 auto-commit 使用。
+    WorkspaceFilesWritten {
+        files: Vec<WorkspaceFile>,
+        last_text_mutation: Option<WorkspacePath>,
     },
     ChatCommitRequested {
         path: WorkspacePath,
@@ -63,6 +70,7 @@ pub(crate) struct AgentToolDispatcher {
     group_chat_repository: Arc<dyn GroupChatRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
     skill_service: Arc<SkillService>,
+    skill_script_engine: Arc<dyn SkillScriptEngine>,
 }
 
 impl AgentToolDispatcher {
@@ -72,6 +80,7 @@ impl AgentToolDispatcher {
         group_chat_repository: Arc<dyn GroupChatRepository>,
         workspace_repository: Arc<dyn WorkspaceRepository>,
         skill_service: Arc<SkillService>,
+        skill_script_engine: Arc<dyn SkillScriptEngine>,
     ) -> Self {
         Self {
             run_repository,
@@ -79,6 +88,7 @@ impl AgentToolDispatcher {
             group_chat_repository,
             workspace_repository,
             skill_service,
+            skill_script_engine,
         }
     }
 
@@ -142,6 +152,22 @@ impl AgentToolDispatcher {
             }
             skill::SKILL_READ => {
                 skill::read(self.skill_service.as_ref(), call, session, profile).await?
+            }
+            skill::SKILL_SCRIPT => {
+                let prompt_snapshot = self.read_run_prompt_snapshot(run_id).await?;
+                skill::script(
+                    skill::ScriptContext {
+                        skill_service: self.skill_service.as_ref(),
+                        engine: self.skill_script_engine.as_ref(),
+                        workspace_repository: model_workspace_repository,
+                        run_id,
+                        prompt_snapshot,
+                    },
+                    call,
+                    session,
+                    profile,
+                )
+                .await?
             }
             workspace::WORKSPACE_LIST_FILES => {
                 workspace::list_files(model_workspace_repository, run_id, call).await?

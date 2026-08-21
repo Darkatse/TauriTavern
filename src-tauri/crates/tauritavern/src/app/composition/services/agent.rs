@@ -14,6 +14,7 @@ use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
+use tt_ports::skill_script::SkillScriptEngine;
 
 use super::super::repositories::AppRepositories;
 
@@ -33,6 +34,7 @@ pub(super) fn build(
     chat_completion_service: Arc<ChatCompletionService>,
     llm_connection_service: Arc<LlmConnectionService>,
     mcp_service: Arc<McpService>,
+    skill_script_engine: Arc<dyn SkillScriptEngine>,
 ) -> AgentServices {
     let agent_profile_service = Arc::new(AgentProfileService::new(
         repositories.agent_profile_repository.clone(),
@@ -63,6 +65,7 @@ pub(super) fn build(
         llm_connection_service,
         prompt_assembly_service.clone(),
         mcp_service,
+        skill_script_engine,
     ));
     let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
         repositories.agent_run_repository.clone(),
