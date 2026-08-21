@@ -2,6 +2,8 @@
 pub mod apis;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 pub mod apple_webview_js_dialogs;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+pub mod apple_webview_refresh_rate;
 pub mod assets;
 pub mod bundled_resources;
 pub mod ios_policy_cache;

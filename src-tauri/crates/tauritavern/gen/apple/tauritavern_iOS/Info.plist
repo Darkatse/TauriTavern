@@ -18,6 +18,8 @@
 	<string>2.2.0</string>
 	<key>CFBundleVersion</key>
 	<string>2.2.0</string>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).ai-generation.*</string>
