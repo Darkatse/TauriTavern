@@ -11,15 +11,18 @@ function readProjectFile(relativePath) {
     return readFile(path.join(REPO_ROOT, relativePath), 'utf8');
 }
 
-test('Gemini 3.6 Flash is selectable in both direct Google providers', async () => {
-    const [indexHtml, openaiSource] = await Promise.all([
+test('latest Gemini Flash models are selectable and hide unsupported prefill', async () => {
+    const [indexHtml, captionHtml, openaiSource] = await Promise.all([
         readProjectFile('src/index.html'),
+        readProjectFile('src/scripts/extensions/caption/settings.html'),
         readProjectFile('src/scripts/openai.js'),
     ]);
 
     assert.equal(indexHtml.match(/<option value="gemini-3\.6-flash">gemini-3\.6-flash<\/option>/g)?.length, 2);
+    assert.equal(indexHtml.match(/<option value="gemini-3\.7-flash">gemini-3\.7-flash<\/option>/g)?.length, 2);
+    assert.equal(captionHtml.match(/value="gemini-3\.7-flash">gemini-3\.7-flash<\/option>/g)?.length, 2);
     assert.match(indexHtml, /<div id="continue_prefill_block" class="range-block">/);
-    assert.match(openaiSource, /\$\('#continue_prefill_block'\)\.toggle\(!isDirectGeminiSource\(\) \|\| !\['gemini-3\.5-flash-lite', 'gemini-3\.6-flash'\]\.includes\(model\)\)/);
+    assert.match(openaiSource, /\$\('#continue_prefill_block'\)\.toggle\(!isDirectGeminiSource\(\) \|\| !\['gemini-3\.5-flash-lite', 'gemini-3\.6-flash', 'gemini-3\.7-flash'\]\.includes\(model\)\)/);
 });
 
 test('Gemini Smooth Streaming preserves final signatures and text part boundaries', async () => {

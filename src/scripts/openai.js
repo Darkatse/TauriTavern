@@ -8645,7 +8645,7 @@ function updateFeatureSupportFlags() {
     }
 
     const model = getChatCompletionModel();
-    $('#continue_prefill_block').toggle(!isDirectGeminiSource() || !['gemini-3.5-flash-lite', 'gemini-3.6-flash'].includes(model));
+    $('#continue_prefill_block').toggle(!isDirectGeminiSource() || !['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash'].includes(model));
 }
 
 export function initOpenAI() {

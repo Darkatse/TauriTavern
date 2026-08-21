@@ -42,6 +42,7 @@ enum GeminiThinkingModel {
     Gemini25FlashLite,
     Gemini25Flash,
     Gemini25Pro,
+    Gemini37Flash,
     Gemini3Flash,
     Gemini3ProLowHigh,
     Gemini3ProMedium,
@@ -136,6 +137,9 @@ pub(super) fn map_gemini_thinking_control(
         GeminiThinkingModel::Gemini25Pro => Some(GeminiThinkingControl::BudgetTokens(
             gemini_pro_budget(max_tokens, effort),
         )),
+        GeminiThinkingModel::Gemini37Flash => {
+            gemini_3_7_flash_level(effort).map(GeminiThinkingControl::Level)
+        }
         GeminiThinkingModel::Gemini3Flash => {
             gemini_3_flash_level(effort).map(GeminiThinkingControl::Level)
         }
@@ -164,6 +168,9 @@ fn classify_gemini_thinking_model(model: &str) -> Option<GeminiThinkingModel> {
     }
     if model.starts_with("gemini-2.5-pro") {
         return Some(GeminiThinkingModel::Gemini25Pro);
+    }
+    if model == "gemini-3.7-flash" {
+        return Some(GeminiThinkingModel::Gemini37Flash);
     }
     if is_gemini_3_variant(&model, "flash") {
         return Some(GeminiThinkingModel::Gemini3Flash);
@@ -253,6 +260,18 @@ fn gemini_3_flash_level(effort: RequestedReasoningEffort) -> Option<&'static str
         RequestedReasoningEffort::Auto => None,
         RequestedReasoningEffort::Minimal => Some("minimal"),
         RequestedReasoningEffort::Low => Some("low"),
+        RequestedReasoningEffort::Medium => Some("medium"),
+        RequestedReasoningEffort::High
+        | RequestedReasoningEffort::Max
+        | RequestedReasoningEffort::XHigh => Some("high"),
+        RequestedReasoningEffort::None => unreachable!("Gemini reasoning mapper rejects none"),
+    }
+}
+
+fn gemini_3_7_flash_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
+    match effort {
+        RequestedReasoningEffort::Auto => None,
+        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Some("low"),
         RequestedReasoningEffort::Medium => Some("medium"),
         RequestedReasoningEffort::High
         | RequestedReasoningEffort::Max
@@ -422,6 +441,7 @@ mod tests {
             "gemini-3-pro-image-preview",
             "gemini-3.1-flash-image-preview",
             "gemini-3.5-flash",
+            "gemini-3.7-flash",
         ] {
             assert!(
                 is_gemini_thinking_config_model(model),
@@ -522,6 +542,7 @@ mod tests {
             ),
             ("gemini-3.5-flash", RequestedReasoningEffort::Max, "high"),
             ("gemini-3.5-flash", RequestedReasoningEffort::XHigh, "high"),
+            ("gemini-3.7-flash", RequestedReasoningEffort::Minimal, "low"),
         ] {
             assert_eq!(
                 map_gemini_thinking_control(model, 8000, effort)

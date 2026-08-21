@@ -4,6 +4,9 @@ use serde_json::{Map, Number, Value, json};
 
 use crate::errors::ApplicationError;
 
+use super::super::model_capabilities::{
+    RequestedReasoningEffort, parse_known_reasoning_effort, unsupported_reasoning_effort,
+};
 use super::content_parts::{
     InputPart, MediaPart, MediaSource, parse_openai_chat_content,
     reject_media_for_text_only_content,
@@ -55,7 +58,7 @@ fn build_gemini_interactions_payload(
         );
     }
 
-    let mut generation_config = build_generation_config(payload);
+    let mut generation_config = build_generation_config(payload)?;
 
     match payload.get("tools") {
         None | Some(Value::Null) => {}
@@ -113,23 +116,17 @@ fn build_gemini_interactions_payload(
     Ok(request)
 }
 
-fn build_generation_config(payload: &Map<String, Value>) -> Map<String, Value> {
+fn build_generation_config(
+    payload: &Map<String, Value>,
+) -> Result<Map<String, Value>, ApplicationError> {
     let mut config = Map::new();
 
-    if let Some(temperature) = payload.get("temperature").filter(|value| !value.is_null()) {
-        config.insert("temperature".to_string(), temperature.clone());
-    }
-
-    if let Some(top_p) = payload.get("top_p").filter(|value| !value.is_null()) {
-        config.insert("top_p".to_string(), top_p.clone());
-    }
-
-    if let Some(top_k) = payload
-        .get("top_k")
+    if let Some(seed) = payload
+        .get("seed")
         .and_then(Value::as_i64)
-        .filter(|value| *value > 0)
+        .filter(|value| *value >= 0)
     {
-        config.insert("top_k".to_string(), Value::Number(Number::from(top_k)));
+        config.insert("seed".to_string(), Value::Number(Number::from(seed)));
     }
 
     if let Some(max_tokens) = payload
@@ -144,7 +141,45 @@ fn build_generation_config(payload: &Map<String, Value>) -> Map<String, Value> {
         );
     }
 
-    config
+    if let Some(stop) = payload
+        .get("stop")
+        .and_then(Value::as_array)
+        .filter(|value| !value.is_empty())
+    {
+        config.insert("stop_sequences".to_string(), Value::Array(stop.clone()));
+    }
+
+    if let Some(value) = payload.get("reasoning_effort").and_then(Value::as_str)
+        && let Some(level) = map_thinking_level(value)?
+    {
+        config.insert(
+            "thinking_level".to_string(),
+            Value::String(level.to_string()),
+        );
+    }
+
+    if let Some(include_reasoning) = payload.get("include_reasoning").and_then(Value::as_bool) {
+        config.insert(
+            "thinking_summaries".to_string(),
+            Value::String(if include_reasoning { "auto" } else { "none" }.to_string()),
+        );
+    }
+
+    Ok(config)
+}
+
+fn map_thinking_level(value: &str) -> Result<Option<&'static str>, ApplicationError> {
+    match parse_known_reasoning_effort(value, "Gemini Interactions")? {
+        RequestedReasoningEffort::Auto => Ok(None),
+        RequestedReasoningEffort::None => {
+            Err(unsupported_reasoning_effort("Gemini Interactions", "none"))
+        }
+        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Ok(Some("low")),
+        RequestedReasoningEffort::Medium => Ok(Some("medium")),
+        RequestedReasoningEffort::High
+        | RequestedReasoningEffort::XHigh
+        | RequestedReasoningEffort::Max => Ok(Some("high")),
+    }
 }
 
 fn map_tool_choice_to_interactions(value: &Value) -> Result<Value, ApplicationError> {
@@ -601,6 +636,37 @@ mod tests {
                 "call_id": "call_1",
                 "result": [{ "type": "text", "text": "Sunny" }]
             })
+        );
+    }
+
+    #[test]
+    fn gemini_interactions_maps_supported_generation_config() {
+        let payload = json!({
+            "model": "gemini-3.7-flash",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "top_k": 40,
+            "max_tokens": 4096,
+            "seed": 17,
+            "stop": ["END"],
+            "reasoning_effort": "min",
+            "include_reasoning": true
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(
+            upstream.get("generation_config"),
+            Some(&json!({
+                "max_output_tokens": 4096,
+                "seed": 17,
+                "stop_sequences": ["END"],
+                "thinking_level": "low",
+                "thinking_summaries": "auto"
+            }))
         );
     }
 

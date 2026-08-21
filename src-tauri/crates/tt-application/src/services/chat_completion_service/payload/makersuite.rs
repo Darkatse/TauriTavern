@@ -108,16 +108,14 @@ fn build_google_payload(
         && !enable_image_modality
         && !is_gemma;
 
-    let (contents, system_prompt) = convert_messages(
-        payload.get("messages"),
-        model,
-        use_system_prompt,
-        use_vertex_ai,
-    )?;
+    let (contents, system_prompt) =
+        convert_messages(payload.get("messages"), model, use_system_prompt)?;
 
     let mut generation_config = Map::new();
-    let has_fixed_sampling_parameters =
-        matches!(model, "gemini-3.5-flash-lite" | "gemini-3.6-flash");
+    let has_fixed_sampling_parameters = matches!(
+        model,
+        "gemini-3.5-flash-lite" | "gemini-3.6-flash" | "gemini-3.7-flash"
+    );
 
     if let Some(value) = payload.get("max_tokens").filter(|value| !value.is_null()) {
         generation_config.insert("maxOutputTokens".to_string(), value.clone());
@@ -298,7 +296,6 @@ fn convert_messages(
     messages: Option<&Value>,
     model: &str,
     use_system_prompt: bool,
-    use_vertex_ai: bool,
 ) -> Result<(Vec<Value>, String), ApplicationError> {
     let mut contents = Vec::new();
     let mut system_parts = Vec::new();
@@ -324,7 +321,7 @@ fn convert_messages(
     let supports_signatures =
         model_lower.contains("gemini-3") || model_lower.contains("gemini-2.5");
     let is_gemini3 = model_lower.contains("gemini-3");
-    let supports_function_call_ids = is_gemini3 && !use_vertex_ai;
+    let supports_function_call_ids = is_gemini3;
     let is_image_model = model_lower.contains("-image");
     let skip_signature_magic = "skip_thought_signature_validator";
 
@@ -940,7 +937,11 @@ mod tests {
                 .expect("generationConfig must be object")
         };
 
-        for model in ["gemini-3.5-flash-lite", "gemini-3.6-flash"] {
+        for model in [
+            "gemini-3.5-flash-lite",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash",
+        ] {
             let config = build_config(model);
             for key in ["candidateCount", "temperature", "topP", "topK"] {
                 assert!(config.get(key).is_none(), "{model} must omit {key}");
@@ -1619,14 +1620,14 @@ mod tests {
         );
         let (_, legacy) = build(legacy_payload).expect("legacy build should succeed");
         let (_, vertex) = build_vertexai(payload).expect("Vertex build should succeed");
-        for body in [&legacy, &vertex] {
-            assert!(
-                body.pointer("/contents/0/parts/0/functionCall/id")
-                    .is_none()
-            );
-            assert!(
-                body.pointer("/contents/1/parts/0/functionResponse/id")
-                    .is_none()
+        for path in [
+            "/contents/0/parts/0/functionCall/id",
+            "/contents/1/parts/0/functionResponse/id",
+        ] {
+            assert!(legacy.pointer(path).is_none());
+            assert_eq!(
+                vertex.pointer(path).and_then(Value::as_str),
+                Some("call_weather")
             );
         }
     }
