@@ -209,9 +209,12 @@ TauriTavern 自有的新 UI 可以作为 SillyTavern first-party extension 挂�
 - React presentation 只接收 strict typed initial state、actions 与 translator；不得直接 `invoke()`、操作 jQuery 或读取 Rust command 名。
 - 跨窗口和长期数据继续由 Rust/Host service 拥有；局部 React state 只表示当前视图，不能成为平台事实源或持久 cache。
 - 样式必须使用 `--SmartTheme*`、字体、动画与边框变量，保留 SillyTavern vanilla 视觉和用户主题覆盖能力。
-- `tsconfig.ui.json`、React Hooks/TypeScript lint 与 Rstest/Testing Library 组成最小验证闭环；`pnpm check` 是统一验收入口。
+- `tsconfig.ui.json`、React Hooks/TypeScript lint 与 Rstest/Testing Library 显式覆盖 Agent、MCP 和 `src/scripts/tauri/setting` 三个 owned scope；`pnpm check` 是统一验收入口。
+- production 与 development 共用 `createRspackConfigs(mode)`。标准 Tauri dev server 在首次 development 编译成功后才监听，并只在成功重编译后 reload。
+- `scripts/check-first-party-ui-guardrails.mjs` 约束 runtime template、Vue import、Vue root 和新 TSX 文件尺寸只能随迁移收敛。
 
 后续迁移应以单个完整 extension root 为单位。迁移期间允许 Vue 与 React 共存，但不建立跨框架组件桥；最后一个 Vue root 移除后再删除 Vue runtime。
+当前工程基线、冻结 handle 与 bundle 数据见 `docs/CurrentState/FirstPartyUI.md`。
 
 ### 7.4 契约与约束
 

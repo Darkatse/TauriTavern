@@ -2,6 +2,9 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { rspack } from '@rspack/core';
+
+import { createRspackConfigs } from '../rspack.config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,6 +14,8 @@ const reloadPath = '/__tauritavern_dev_reload';
 const reloadHost = process.env.TAURI_DEV_HOST || 'localhost';
 const reloadUrl = `http://${formatUrlHost(reloadHost)}:${port}${reloadPath}`;
 const devServiceWorkerBootstrap = '<script src="/dev-sw-bootstrap.js"></script>';
+const rspackConfigs = createRspackConfigs('development');
+const bundleOutputRoots = rspackConfigs.map(config => config.output.path);
 
 const reloadClientScript = `
 <script type="module">
@@ -49,8 +54,12 @@ const mimeTypes = new Map([
 ]);
 
 const reloadClients = new Set();
+const bundledFiles = new Set();
 let reloadTimer;
 let watcherRefreshTimer;
+let closeBundleWatcher;
+let closeFrontendWatcher;
+let shuttingDown = false;
 
 function formatUrlHost(host) {
     return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
@@ -59,6 +68,17 @@ function formatUrlHost(host) {
 function isInsideFrontendRoot(filePath) {
     const relative = path.relative(frontendRoot, filePath);
     return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function isInside(filePath, directory) {
+    const relative = path.relative(directory, filePath);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function isRspackOwned(filePath) {
+    const resolved = path.resolve(filePath);
+    return bundledFiles.has(resolved)
+        || bundleOutputRoots.some(directory => isInside(resolved, directory));
 }
 
 function contentType(filePath) {
@@ -198,6 +218,12 @@ function scheduleReload() {
     }, 80);
 }
 
+function handleFrontendChange(filePath) {
+    if (!filePath || !isRspackOwned(filePath)) {
+        scheduleReload();
+    }
+}
+
 function watchTree(root) {
     const watchers = new Map();
 
@@ -206,8 +232,8 @@ function watchTree(root) {
             return;
         }
 
-        const watcher = fs.watch(directory, (eventType) => {
-            scheduleReload();
+        const watcher = fs.watch(directory, (eventType, filename) => {
+            handleFrontendChange(filename ? path.join(directory, filename) : null);
             if (eventType === 'rename') {
                 scheduleWatcherRefresh();
             }
@@ -241,14 +267,82 @@ function watchTree(root) {
 
 function watchFrontend() {
     try {
-        const watcher = fs.watch(frontendRoot, { recursive: true }, scheduleReload);
+        const watcher = fs.watch(frontendRoot, { recursive: true }, (_eventType, filename) => {
+            handleFrontendChange(filename ? path.join(frontendRoot, filename) : null);
+        });
         return () => watcher.close();
     } catch {
         return watchTree(frontendRoot);
     }
 }
 
-const closeWatcher = watchFrontend();
+function rememberBundleDependencies(stats) {
+    bundledFiles.clear();
+    for (const child of stats.stats) {
+        for (const file of child.compilation.fileDependencies) {
+            bundledFiles.add(path.resolve(file));
+        }
+    }
+}
+
+function closeRspack(compiler, watcher) {
+    return new Promise((resolve) => {
+        watcher.close(() => compiler.close(resolve));
+    });
+}
+
+async function startBundleWatch() {
+    const compiler = rspack(rspackConfigs);
+    let initialBuild = true;
+    let watcher;
+
+    const ready = new Promise((resolve, reject) => {
+        watcher = compiler.watch({}, (error, stats) => {
+            if (error) {
+                if (initialBuild) {
+                    reject(error);
+                } else {
+                    console.error(error);
+                    void shutdown(1);
+                }
+                return;
+            }
+
+            const report = stats.toString({
+                colors: Boolean(process.stdout.isTTY),
+                preset: 'errors-warnings',
+            });
+            if (report) {
+                console.log(report);
+            }
+
+            if (stats.hasErrors()) {
+                if (initialBuild) {
+                    reject(new Error('Initial frontend bundle build failed.'));
+                }
+                return;
+            }
+
+            rememberBundleDependencies(stats);
+            if (initialBuild) {
+                initialBuild = false;
+                resolve();
+            } else {
+                scheduleReload();
+            }
+        });
+    });
+
+    try {
+        await ready;
+    } catch (error) {
+        await closeRspack(compiler, watcher);
+        throw error;
+    }
+
+    return () => closeRspack(compiler, watcher);
+}
+
 const server = http.createServer((request, response) => {
     const pathname = new URL(request.url ?? '/', `http://localhost:${port}`).pathname;
     if (pathname === reloadPath) {
@@ -268,26 +362,41 @@ const server = http.createServer((request, response) => {
 });
 
 server.on('error', (error) => {
-    closeWatcher();
     console.error(error);
-    process.exit(1);
+    void shutdown(1);
 });
 
-function shutdown() {
-    closeWatcher();
+async function shutdown(exitCode = 0) {
+    if (shuttingDown) {
+        return;
+    }
+    shuttingDown = true;
+
+    closeFrontendWatcher();
     clearTimeout(reloadTimer);
     clearTimeout(watcherRefreshTimer);
     for (const client of reloadClients) {
         client.end();
     }
     reloadClients.clear();
-    server.close(() => process.exit(0));
+    await new Promise(resolve => server.close(resolve));
+    await closeBundleWatcher();
+    process.exit(exitCode);
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => void shutdown());
+process.on('SIGTERM', () => void shutdown());
 
-server.listen(port, () => {
-    console.log(`TauriTavern frontend dev server listening on http://localhost:${port}`);
-    console.log(`TauriTavern reload endpoint advertised as ${reloadUrl}`);
+async function main() {
+    closeBundleWatcher = await startBundleWatch();
+    closeFrontendWatcher = watchFrontend();
+    server.listen(port, () => {
+        console.log(`TauriTavern frontend dev server listening on http://localhost:${port}`);
+        console.log(`TauriTavern reload endpoint advertised as ${reloadUrl}`);
+    });
+}
+
+main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
 });

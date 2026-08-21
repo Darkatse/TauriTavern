@@ -50,7 +50,6 @@ test('Rspack exposes a dedicated TauriTavern Dev Logs Vue entry', async () => {
     const source = await readRepoFile('rspack.config.js');
 
     assert.match(source, /['"]dev-logs['"]:\s*['"]\.\/src\/scripts\/tauri\/setting\/dev-logs-app\/index\.js['"]/);
-    assert.match(source, /listScriptFiles\(['"]src\/scripts\/tauri\/setting\/dev-logs-app['"]\)/);
     assert.match(source, /src\/scripts\/tauri\/setting\/dist/);
 });
 

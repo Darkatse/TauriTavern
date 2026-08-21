@@ -10,7 +10,11 @@
   },
   "include": [
     "src/types.d.ts",
-    "src/scripts/extensions/**/*.ts",
-    "src/scripts/extensions/**/*.tsx"
+    "src/scripts/extensions/agent-system/src/**/*.ts",
+    "src/scripts/extensions/agent-system/src/**/*.tsx",
+    "src/scripts/extensions/mcp-manager/src/**/*.ts",
+    "src/scripts/extensions/mcp-manager/src/**/*.tsx",
+    "src/scripts/tauri/setting/**/*.ts",
+    "src/scripts/tauri/setting/**/*.tsx"
   ]
 }

@@ -91,7 +91,7 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | React / React DOM | 新的 TauriTavern first-party UI 基线；当前从 MCP 内置扩展开始使用 |
 | strict TypeScript / TSX | React presentation、typed actions 与组件测试 |
 
-first-party React UI 采用 client island，而不是 Next.js 或独立 SPA：SillyTavern 继续拥有文档与扩展生命周期，Tauri/Rust 与 Host ABI 继续拥有平台能力和数据事实，React 只挂载到独立 extension container。构建复用 Rspack `builtin:swc-loader`，`tsc` 独立执行类型检查；当前不引入路由、全局状态库、query cache、CSS-in-JS 或 UI framework。
+first-party React UI 采用 client island，而不是 Next.js 或独立 SPA：SillyTavern 继续拥有文档与扩展生命周期，Tauri/Rust 与 Host ABI 继续拥有平台能力和数据事实，React 只挂载到独立 extension container。构建复用 Rspack 2.1 的 `builtin:swc-loader`，`tsc` 独立执行类型检查；同一份 mode-aware 构建图分别服务 production build 与 Tauri development watch。当前不引入路由、全局状态库、query cache、CSS-in-JS 或 UI framework。
 
 TauriTavern 自己维护的前端集成层位于 `src/tauri/main/*`，按 `context/kernel/services/adapters/routes` 拆分：
 
@@ -156,8 +156,10 @@ pnpm run check:rust:dev
 
 - `scripts/check-rust-crate-boundaries.mjs` 守住 Rust crate 依赖方向。
 - `scripts/check-frontend-guardrails.mjs` 守住前端注入层边界。
+- `scripts/check-first-party-ui-guardrails.mjs` 守住自有 UI 的 Vue 退役棘轮。
 - `scripts/check-logging-boundaries.mjs` 守住 logging target 使用边界。
 - `tsconfig.host.json` 为 Host Kernel 提供 TypeScript 检查。
+- `tsconfig.ui.json` 为 Agent、MCP 与 Tauri Settings owned UI 提供 strict TS/TSX 检查。
 
 ## 9. 平台与分发
 
@@ -182,6 +184,7 @@ pnpm run check:rust:dev
 | 前端集成结构 | `docs/FrontendGuide.md` |
 | Host ABI / 请求拦截 / 资源契约 | `docs/FrontendHostContract.md` |
 | 当前实现状态 | `docs/CurrentState/README.md` |
+| First-party UI 工程基线 | `docs/CurrentState/FirstPartyUI.md` |
 | Linux 分发与 Nix | `docs/CurrentState/LinuxRepository.md` |
 | 扩展 API | `docs/API/README.md` |
 | Agent 架构 | `docs/AgentArchitecture.md` |

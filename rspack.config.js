@@ -1,99 +1,32 @@
-import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as rspack from '@rspack/core';
 
 // Get the directory name of the current module
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const cacheEnvironment = `${process.platform}-${process.arch}-node${process.versions.node.split('.')[0]}`;
-
-const commonCacheInputs = [
+const cacheBuildDependencies = [
   'rspack.config.js',
   'package.json',
   'pnpm-lock.yaml',
-];
-
-const libraryCacheInputs = [
-  ...commonCacheInputs,
-  'src/lib.js',
-  'src/lib-bundle-core.js',
-  'src/lib-bundle-optional.js',
-];
-
-const agentSystemCacheInputs = [
-  ...commonCacheInputs,
-  ...listScriptFiles('src/scripts/extensions/agent-system/src'),
-  ...listScriptFiles('src/scripts/tauritavern/agent'),
-];
-
-const mcpManagerCacheInputs = [
-  ...commonCacheInputs,
-  ...listScriptFiles('src/scripts/extensions/mcp-manager/src'),
-];
-
-const tauriSettingUiCacheInputs = [
-  ...commonCacheInputs,
-  ...listScriptFiles('src/scripts/tauri/setting/settings-app'),
-  ...listScriptFiles('src/scripts/tauri/setting/dev-logs-app'),
-  ...listScriptFiles('src/scripts/tauri/setting/sync-app'),
-];
+].map(resolveRepoPath);
 
 function resolveRepoPath(file) {
   return path.resolve(__dirname, file);
 }
 
-function listScriptFiles(relativeDir) {
-  const root = resolveRepoPath(relativeDir);
-  const results = [];
-  const stack = [root];
-
-  while (stack.length > 0) {
-    const current = stack.pop();
-    const entries = fs.readdirSync(current, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
-        continue;
-      }
-
-      if (entry.isFile() && ['.js', '.ts', '.tsx'].includes(path.extname(entry.name))) {
-        results.push(path.relative(__dirname, fullPath).replace(/\\/g, '/'));
-      }
-    }
+function createCache(mode, name) {
+  if (mode === 'development') {
+    return { type: 'memory' };
   }
 
-  return results.sort();
-}
-
-function buildCacheVersion(name, inputFiles) {
-  const hash = crypto.createHash('sha256');
-  hash.update(`name=${name}\n`);
-  hash.update(`platform=${process.platform}\n`);
-  hash.update(`arch=${process.arch}\n`);
-  hash.update(`node=${process.versions.node}\n`);
-  hash.update(`rspack=${rspack.rspackVersion}\n`);
-
-  for (const file of inputFiles) {
-    hash.update(`file=${file}\n`);
-    hash.update(fs.readFileSync(resolveRepoPath(file)));
-    hash.update('\n');
-  }
-
-  return hash.digest('hex');
-}
-
-function createPersistentCache(name, inputFiles) {
   return {
     type: 'persistent',
-    version: buildCacheVersion(name, inputFiles),
-    buildDependencies: commonCacheInputs.map(resolveRepoPath),
+    buildDependencies: cacheBuildDependencies,
     storage: {
       type: 'filesystem',
-      directory: path.resolve(__dirname, '.cache/rspack', cacheEnvironment, name),
+      directory: path.resolve(__dirname, '.cache/rspack', name),
     },
   };
 }
@@ -157,7 +90,7 @@ function createVueDefinePlugin() {
   });
 }
 
-function createReactModule() {
+function createReactModule(development) {
   return {
     rules: [
       {
@@ -171,6 +104,7 @@ function createReactModule() {
             jsc: {
               transform: {
                 react: {
+                  development,
                   runtime: 'automatic',
                 },
               },
@@ -182,112 +116,102 @@ function createReactModule() {
   };
 }
 
-const coreConfig = {
-  name: 'vendor-libs',
-  mode: 'production',
-  bail: true,
-  target: ['web', 'es2020'],
-  cache: createPersistentCache('vendor-libs', libraryCacheInputs),
-  entry: {
-    'lib.core': './src/lib-bundle-core.js',
-    'lib.optional': './src/lib-bundle-optional.js',
-  },
-  output: {
-    filename: '[name].bundle.js',
-    path: path.resolve(__dirname, 'src/dist'),
-    module: true,
-    clean: true,
-    library: {
-      type: 'module'
-    }
-  },
-  resolve: sharedResolve,
-  optimization: sharedOptimization,
-  performance: sharedPerformance,
-  stats: sharedStats,
-};
+function createSharedConfig(mode, name) {
+  return {
+    name,
+    mode,
+    bail: mode === 'production',
+    target: ['web', 'es2020'],
+    cache: createCache(mode, name),
+    resolve: sharedResolve,
+    optimization: sharedOptimization,
+    performance: sharedPerformance,
+    stats: sharedStats,
+  };
+}
 
-const agentSystemConfig = {
-  name: 'agent-system',
-  dependencies: ['vendor-libs'],
-  mode: 'production',
-  bail: true,
-  target: ['web', 'es2020'],
-  cache: createPersistentCache('agent-system', agentSystemCacheInputs),
-  entry: {
-    index: './src/scripts/extensions/agent-system/src/index.js',
-  },
-  output: {
-    filename: '[name].bundle.js',
-    path: path.resolve(__dirname, 'src/scripts/extensions/agent-system/dist'),
-    module: true,
-    library: {
-      type: 'module'
+export function createRspackConfigs(mode = 'production') {
+  const development = mode === 'development';
+
+  const coreConfig = {
+    ...createSharedConfig(mode, 'vendor-libs'),
+    entry: {
+      'lib.core': './src/lib-bundle-core.js',
+      'lib.optional': './src/lib-bundle-optional.js',
     },
-    clean: true,
-  },
-  resolve: sharedResolve,
-  optimization: sharedOptimization,
-  performance: sharedPerformance,
-  stats: sharedStats,
-  plugins: [
-    createVueDefinePlugin(),
-  ],
-};
-
-const mcpManagerConfig = {
-  name: 'mcp-manager',
-  mode: 'production',
-  bail: true,
-  target: ['web', 'es2020'],
-  cache: createPersistentCache('mcp-manager', mcpManagerCacheInputs),
-  entry: {
-    index: './src/scripts/extensions/mcp-manager/src/index.tsx',
-  },
-  output: {
-    filename: '[name].bundle.js',
-    path: path.resolve(__dirname, 'src/scripts/extensions/mcp-manager/dist'),
-    module: true,
-    library: {
-      type: 'module'
+    output: {
+      filename: '[name].bundle.js',
+      path: path.resolve(__dirname, 'src/dist'),
+      module: true,
+      clean: true,
+      library: {
+        type: 'module'
+      }
     },
-    clean: true,
-  },
-  module: createReactModule(),
-  resolve: sharedResolve,
-  optimization: sharedOptimization,
-  performance: sharedPerformance,
-  stats: sharedStats,
-};
+  };
 
-const tauriTavernSettingsConfig = {
-  name: 'tauritavern-settings',
-  dependencies: ['vendor-libs'],
-  mode: 'production',
-  bail: true,
-  target: ['web', 'es2020'],
-  cache: createPersistentCache('tauritavern-settings', tauriSettingUiCacheInputs),
-  entry: {
-    settings: './src/scripts/tauri/setting/settings-app/index.js',
-    'dev-logs': './src/scripts/tauri/setting/dev-logs-app/index.js',
-    sync: './src/scripts/tauri/setting/sync-app/index.js',
-  },
-  output: {
-    filename: '[name].bundle.js',
-    path: path.resolve(__dirname, 'src/scripts/tauri/setting/dist'),
-    module: true,
-    library: {
-      type: 'module'
+  const agentSystemConfig = {
+    ...createSharedConfig(mode, 'agent-system'),
+    dependencies: ['vendor-libs'],
+    entry: {
+      index: './src/scripts/extensions/agent-system/src/index.js',
     },
-    clean: true,
-  },
-  resolve: sharedResolve,
-  optimization: sharedOptimization,
-  performance: sharedPerformance,
-  stats: sharedStats,
-  plugins: [
-    createVueDefinePlugin(),
-  ],
-};
+    output: {
+      filename: '[name].bundle.js',
+      path: path.resolve(__dirname, 'src/scripts/extensions/agent-system/dist'),
+      module: true,
+      library: {
+        type: 'module'
+      },
+      clean: true,
+    },
+    module: createReactModule(development),
+    plugins: [
+      createVueDefinePlugin(),
+    ],
+  };
 
-export default [coreConfig, agentSystemConfig, mcpManagerConfig, tauriTavernSettingsConfig];
+  const mcpManagerConfig = {
+    ...createSharedConfig(mode, 'mcp-manager'),
+    entry: {
+      index: './src/scripts/extensions/mcp-manager/src/index.tsx',
+    },
+    output: {
+      filename: '[name].bundle.js',
+      path: path.resolve(__dirname, 'src/scripts/extensions/mcp-manager/dist'),
+      module: true,
+      library: {
+        type: 'module'
+      },
+      clean: true,
+    },
+    module: createReactModule(development),
+  };
+
+  const tauriTavernSettingsConfig = {
+    ...createSharedConfig(mode, 'tauritavern-settings'),
+    dependencies: ['vendor-libs'],
+    entry: {
+      settings: './src/scripts/tauri/setting/settings-app/index.js',
+      'dev-logs': './src/scripts/tauri/setting/dev-logs-app/index.js',
+      sync: './src/scripts/tauri/setting/sync-app/index.js',
+    },
+    output: {
+      filename: '[name].bundle.js',
+      path: path.resolve(__dirname, 'src/scripts/tauri/setting/dist'),
+      module: true,
+      library: {
+        type: 'module'
+      },
+      clean: true,
+    },
+    module: createReactModule(development),
+    plugins: [
+      createVueDefinePlugin(),
+    ],
+  };
+
+  return [coreConfig, agentSystemConfig, mcpManagerConfig, tauriTavernSettingsConfig];
+}
+
+export default (_env, argv = {}) => createRspackConfigs(argv.mode ?? 'production');

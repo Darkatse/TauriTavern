@@ -6,7 +6,42 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { createRspackConfigs } from '../rspack.config.js';
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+test('Rspack exposes one mode-aware build graph for production and development', () => {
+    const production = createRspackConfigs('production');
+    const development = createRspackConfigs('development');
+    const names = ['vendor-libs', 'agent-system', 'mcp-manager', 'tauritavern-settings'];
+
+    assert.deepEqual(production.map(config => config.name), names);
+    assert.deepEqual(development.map(config => config.name), names);
+
+    for (const [index, config] of production.entries()) {
+        assert.equal(config.mode, 'production');
+        assert.equal(config.bail, true);
+        assert.equal(config.cache.type, 'persistent');
+        assert.equal('version' in config.cache, false);
+        assert.match(config.cache.storage.directory, new RegExp(`${names[index]}$`, 'u'));
+    }
+
+    for (const config of development) {
+        assert.equal(config.mode, 'development');
+        assert.equal(config.bail, false);
+        assert.equal(config.cache.type, 'memory');
+    }
+
+    for (const name of names.slice(1)) {
+        const productionConfig = production.find(config => config.name === name);
+        const developmentConfig = development.find(config => config.name === name);
+        const productionReact = productionConfig.module.rules[0].use.options.jsc.transform.react;
+        const developmentReact = developmentConfig.module.rules[0].use.options.jsc.transform.react;
+
+        assert.deepEqual(productionReact, { development: false, runtime: 'automatic' });
+        assert.deepEqual(developmentReact, { development: true, runtime: 'automatic' });
+    }
+});
 
 test('Tauri builds use the repository frontend build hook', async () => {
     const config = JSON.parse(await readFile(
@@ -82,6 +117,25 @@ test('pnpm Tauri entrypoints prepare frontend assets', async () => {
     for (const entrypoint of entrypoints) {
         assert.match(scripts[entrypoint], /(?:^|\s)--prepare-frontend(?:\s|$)/u, entrypoint);
     }
+});
+
+test('pnpm Tauri development delegates bundles to the watched dev server', async () => {
+    const staleBundle = path.join(REPO_ROOT, 'src/dist/lib.bundle.js');
+    await mkdir(path.dirname(staleBundle), { recursive: true });
+    await writeFile(staleBundle, 'development sentinel');
+
+    const result = spawnSync(
+        process.execPath,
+        [path.join(REPO_ROOT, 'scripts/tauri-app.mjs'), '--prepare-frontend', 'dev', '--help'],
+        {
+            cwd: REPO_ROOT,
+            encoding: 'utf8',
+            env: { ...process.env, TAURITAVERN_SKIP_WEB_BUILD: '0' },
+        },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(await readFile(staleBundle, 'utf8'), 'development sentinel');
 });
 
 test('pnpm Tauri wrapper builds clean frontend assets', async () => {

@@ -102,3 +102,7 @@
 22. `docs/CurrentState/VectorApi.md`
    - SillyTavern 1.18.0 Vector 七路由兼容层的当前实现快照
    - 包含 typed command 链路、redb 事务索引、本地/远端 embedding 边界、精确 cosine 基线与明确未支持范围
+
+23. `docs/CurrentState/FirstPartyUI.md`
+   - 自有 UI 的 React/strict TSX 工程基线与 Vue 退役约束
+   - 包含所有权、构建/watch 链路、债务棘轮、冻结 handle、bundle 基线与有意不做的范围
