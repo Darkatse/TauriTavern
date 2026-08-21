@@ -168,7 +168,7 @@ Rustバックエンドは、Clean Architectureに基づくCargoワークスペ�
 <details>
 <summary><b>🛠 開発</b>（前提環境 · 主なコマンド · Tauri Pilot · ポータブルビルド · FasTools）</summary>
 
-**前提環境**：Rust stable（edition 2024）· Node.js 20.19.xまたは22.12以降 · pnpm · Tauri CLI
+**前提環境**：Rust stable（edition 2024）· Node.js 22.13以降 · pnpm 11 · Tauri CLI
 
 ```bash
 git clone https://github.com/Darkatse/TauriTavern.git

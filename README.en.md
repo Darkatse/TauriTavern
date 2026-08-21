@@ -168,7 +168,7 @@ The frontend is upstream SillyTavern plus a modular Tauri injection layer (`src/
 <details>
 <summary><b>🛠 Development</b> (prerequisites · common commands · Tauri Pilot · portable builds · FasTools)</summary>
 
-**Prerequisites**: Rust stable (edition 2024) · Node.js 20.19.x or 22.12+ · pnpm · Tauri CLI
+**Prerequisites**: Rust stable (edition 2024) · Node.js 22.13+ · pnpm 11 · Tauri CLI
 
 ```bash
 git clone https://github.com/Darkatse/TauriTavern.git

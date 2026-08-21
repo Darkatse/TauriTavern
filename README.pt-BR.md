@@ -168,7 +168,7 @@ O frontend combina o SillyTavern original com uma camada modular de integração
 <details>
 <summary><b>🛠 Desenvolvimento</b> (pré-requisitos · comandos comuns · Tauri Pilot · builds portáteis · FasTools)</summary>
 
-**Pré-requisitos**: Rust stable (edition 2024) · Node.js 20.19.x ou 22.12+ · pnpm · Tauri CLI
+**Pré-requisitos**: Rust stable (edition 2024) · Node.js 22.13+ · pnpm 11 · Tauri CLI
 
 ```bash
 git clone https://github.com/Darkatse/TauriTavern.git

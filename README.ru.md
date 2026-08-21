@@ -168,7 +168,7 @@ TauriTavern переносит [SillyTavern](https://github.com/SillyTavern/Sill
 <details>
 <summary><b>🛠 Разработка</b> (требования · основные команды · Tauri Pilot · портативные сборки · FasTools)</summary>
 
-**Требования**: Rust stable (edition 2024) · Node.js 20.19.x или 22.12+ · pnpm · Tauri CLI
+**Требования**: Rust stable (edition 2024) · Node.js 22.13+ · pnpm 11 · Tauri CLI
 
 ```bash
 git clone https://github.com/Darkatse/TauriTavern.git

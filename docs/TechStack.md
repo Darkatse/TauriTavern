@@ -20,7 +20,7 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | Tauri v2 | 原生应用 shell、WebView、插件、跨平台打包、移动端入口 |
 | Rust stable / edition 2024 | Rust 后端、workspace crate、native integration |
 | Cargo workspace | 后端 crate 边界、依赖方向、focused tests |
-| Node.js `>=22.12.0` | 前端工具链与 guard scripts |
+| Node.js `>=22.13.0` | 前端工具链与 guard scripts |
 | pnpm | JavaScript 包管理与项目脚本 |
 | Rspack | 前端 vendor、Agent、Settings 与 first-party React extension 构建 |
 | TypeScript | Tauri Host Kernel 与 first-party React UI 的严格类型检查 |

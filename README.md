@@ -168,7 +168,7 @@ TauriTavern 把 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 移植
 <details>
 <summary><b>🛠 开发与构建</b>（前置要求 · 常用命令 · Tauri Pilot · 便携构建 · FasTools）</summary>
 
-**前置要求**：Rust stable（支持 edition 2024）· Node.js 20.19.x 或 22.12+ · pnpm · Tauri CLI
+**前置要求**：Rust stable（支持 edition 2024）· Node.js 22.13+ · pnpm 11 · Tauri CLI
 
 ```bash
 git clone https://github.com/Darkatse/TauriTavern.git
