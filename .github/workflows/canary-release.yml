@@ -466,7 +466,7 @@ jobs:
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           allow-bots: true
-          codex-args: '["--ephemeral", "-c", "features.multi_agent=false"]'
+          codex-args: '["--ephemeral"]'
 
   notes:
     needs: [prepare, notes-context, notes-ai]
