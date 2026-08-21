@@ -77,6 +77,8 @@ fn transport(
     WorkerTransport::spawn_with_ct(worker, cancel)
 }
 
+// RMCP owns this rich protocol error; boxing it here would only move allocation into our adapter.
+#[allow(clippy::result_large_err)]
 async fn serve_attempt(
     endpoint: &McpEndpoint,
     request_headers: &HashMap<HeaderName, HeaderValue>,
@@ -97,6 +99,7 @@ async fn serve_attempt(
     .await
 }
 
+#[allow(clippy::result_large_err)]
 pub(super) async fn start_client(
     endpoint: &McpEndpoint,
     request_headers: &HashMap<HeaderName, HeaderValue>,

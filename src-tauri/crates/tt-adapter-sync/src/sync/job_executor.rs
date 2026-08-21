@@ -30,6 +30,8 @@ pub struct InfrastructureSyncJobExecutor {
     product_user_agent: String,
 }
 
+// Sync failures intentionally carry the error and any partial local mutation state together.
+#[allow(clippy::result_large_err)]
 impl InfrastructureSyncJobExecutor {
     pub fn new(
         lan_sync_root: std::path::PathBuf,

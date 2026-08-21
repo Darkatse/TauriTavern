@@ -85,7 +85,9 @@ impl OverlayFs {
         if Path::new(&normalized).is_absolute() {
             return Err(format!("absolute paths are not allowed: {raw}"));
         }
-        let cleaned = path_clean::clean(normalized).to_string_lossy().into_owned();
+        let cleaned = path_clean::clean(normalized)
+            .to_string_lossy()
+            .replace('\\', "/");
         if cleaned.starts_with("..") {
             return Err(format!("path escapes the workspace: {raw}"));
         }

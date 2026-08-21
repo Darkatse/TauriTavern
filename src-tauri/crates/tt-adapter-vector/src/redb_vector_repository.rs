@@ -473,14 +473,15 @@ fn encode_embedding(embedding: &[f32]) -> Vec<u8> {
 }
 
 fn decode_embedding(bytes: &[u8]) -> Result<Vec<f32>, DomainError> {
-    let chunks = bytes.chunks_exact(4);
-    if !chunks.remainder().is_empty() {
+    let (chunks, remainder) = bytes.as_chunks::<4>();
+    if !remainder.is_empty() {
         return Err(DomainError::InternalError(
             "Vector index contains malformed embedding bytes".to_string(),
         ));
     }
     let embedding = chunks
-        .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four-byte chunk")))
+        .iter()
+        .map(|chunk| f32::from_le_bytes(*chunk))
         .collect::<Vec<_>>();
     validate_embedding(&embedding)?;
     Ok(embedding)
