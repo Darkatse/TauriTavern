@@ -1,6 +1,6 @@
 # 原生 API 格式（Custom）兼容现状
 
-最后更新：2026-07-27
+最后更新：2026-08-21
 
 本文件描述 **TauriTavern 已落地** 的三家原生 API 格式兼容（OpenAI Responses / Claude Messages / Gemini Interactions）的当前实现快照与持续开发约束。
 
@@ -75,7 +75,7 @@ Connection Profiles（Connection Manager 扩展）：
 
 | Custom 变体 | 非流式 | 流式 | tool calling | thought signature / native blocks | 回滚 ST 启动 |
 |---|---:|---:|---:|---:|---:|
-| OpenAI-compatible (`/chat/completions`) | ✅ | ✅ | ✅（上游 ST 语义） | ✅（现有链路） | ✅ |
+| OpenAI-compatible (`/chat/completions`) | ✅ | ✅ | ✅（上游 ST 语义） | ✅（`tool_calls[].extra_content` opaque round-trip） | ✅ |
 | OpenAI Responses (`/responses`) | ✅（normalize→chat.completion） | ✅（Responses events→chat.completion.chunk） | ✅（full transcript replay / `previous_response_id`） | ✅（backend normalizer / Agent gateway 保留 raw `output` 与 `responseId`） | ✅ |
 | Claude Messages (`/messages`) | ✅（normalize→chat.completion） | ✅（Anthropic events） | ✅（沿用 Claude tool loop） | ✅（现有链路） | ✅ |
 | Gemini Interactions (`/interactions`) | ✅（normalize→chat.completion，含 native） | ✅（SSE→chat.completion.chunk，末包带 native） | ✅ | ✅（`message.extra.native` 回放 steps） | ✅ |
@@ -89,6 +89,13 @@ Connection Profiles（Connection Manager 扩展）：
 ---
 
 ## 4. 三家实现要点（对持续开发最关键的部分）
+
+### 4.0 OpenAI-compatible（/chat/completions）
+
+- assistant tool call 的 `extra_content` 是 provider-owned opaque JSON；Legacy 与 Agent 都按原 tool call 位置保存，并在同 API/model 的后续工具请求中原样回放。
+- 前端不解析其中的 provider namespace 或 signature，不按模型名启用，也不生成缺失值。
+- Rust OpenAI-compatible payload builder 继续整体转发 `messages`，不增加 provider-specific validation；上游不接受该字段时，其错误按现有链路返回用户。
+- Legacy provider/model 切换只迁移 canonical tool call 语义，不携带旧 provider 的 `extra_content`；Agent invocation 的模型连接在 run 内冻结。
 
 ### 4.1 OpenAI Responses（/responses）
 

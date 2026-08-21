@@ -1032,13 +1032,15 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
             && oai_settings.show_thoughts
             && canReplayProviderTurnMetadata;
         const reasoningContent = shouldReplayReasoningContent ? metadataMessage?.extra?.tool_reasoning_content : null;
-        // Remove provider reasoning metadata from invocations if the API/model/speaker don't match.
+        // Remove provider metadata from invocations if the API/model/speaker don't match.
         if (Array.isArray(invocations) && invocations.length > 0) {
             invocations.forEach((invocation, index) => {
-                if (!canReplayProviderTurnMetadata && (invocation.signature || invocation.reasoning)) {
+                if (!canReplayProviderTurnMetadata
+                    && (invocation.signature || invocation.reasoning || Object.hasOwn(invocation, 'extra_content'))) {
                     const cloneInvocation = structuredClone(invocation);
                     delete cloneInvocation.signature;
                     delete cloneInvocation.reasoning;
+                    delete cloneInvocation.extra_content;
                     invocations[index] = cloneInvocation;
                 }
             });
@@ -5129,6 +5131,7 @@ class Message {
                 name: i.name,
             },
             ...(includeSignature && i.signature ? { signature: i.signature } : {}),
+            ...(Object.hasOwn(i, 'extra_content') ? { extra_content: i.extra_content } : {}),
         }));
         const fallbackReasoning = invocations.find(i => typeof i.reasoning === 'string' && i.reasoning.length > 0)?.reasoning || null;
         this.reasoning = includeReasoning ? fallbackReasoning : null;

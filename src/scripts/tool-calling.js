@@ -22,6 +22,7 @@ import { getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
  * @property {string} result - The result of the tool invocation.
  * @property {string?} signature - The thought signature associated with the tool invocation.
  * @property {string?} reasoning - The plaintext reasoning associated with this tool call turn.
+ * @property {unknown} [extra_content] - Opaque provider metadata attached to the tool call.
  * @property {boolean} [error] - Whether the tool invocation failed.
  */
 
@@ -895,6 +896,7 @@ export class ToolManager {
                 displayName,
                 parameters: serializedParameters,
                 signature: toolCall.signature || null,
+                ...(Object.hasOwn(toolCall, 'extra_content') ? { extra_content: toolCall.extra_content } : {}),
             })));
         }
 
@@ -941,6 +943,7 @@ export class ToolManager {
                         error: true,
                         signature: toolCall.signature || null,
                         reasoning: reasoningText || null,
+                        ...(Object.hasOwn(toolCall, 'extra_content') ? { extra_content: toolCall.extra_content } : {}),
                     };
                     result.invocations.push(invocation);
                     projectProgress && onInvocationComplete?.(invocation);
@@ -963,6 +966,7 @@ export class ToolManager {
                 error: false,
                 signature: toolCall.signature || null,
                 reasoning: reasoningText || null,
+                ...(Object.hasOwn(toolCall, 'extra_content') ? { extra_content: toolCall.extra_content } : {}),
             };
             result.invocations.push(invocation);
             projectProgress && onInvocationComplete?.(invocation);
@@ -1035,12 +1039,13 @@ export class ToolManager {
      * @param {string?} reasoningContent Provider reasoning content needed to continue the turn
      */
     static async saveFunctionToolTurn(invocations, ownerMessage, reasoningContent = null) {
-        const toolCalls = invocations.map(({ id, name, displayName, parameters, signature }) => ({
-            id,
-            name,
-            displayName,
-            parameters,
-            signature,
+        const toolCalls = invocations.map(invocation => ({
+            id: invocation.id,
+            name: invocation.name,
+            displayName: invocation.displayName,
+            parameters: invocation.parameters,
+            signature: invocation.signature,
+            ...(Object.hasOwn(invocation, 'extra_content') ? { extra_content: invocation.extra_content } : {}),
         }));
         const toolMessages = invocations.map(invocation => ({
             role: /** @type {const} */ ('tool'),

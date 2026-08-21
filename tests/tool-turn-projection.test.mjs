@@ -48,7 +48,11 @@ test('ordinary chat passes through by identity', () => {
 });
 
 test('empty Assistant owns parallel first-class Tool results by call ID', () => {
-    const firstCall = call('call-1', { displayName: 'Weather lookup', signature: null });
+    const firstCall = call('call-1', {
+        displayName: 'Weather lookup',
+        signature: null,
+        extra_content: { google: { thought_signature: 'opaque-signature' } },
+    });
     const owner = assistant([firstCall, call('call-2', { name: 'clock', parameters: '{}' })]);
     const firstResult = tool('call-1');
     const secondResult = tool('call-2', { name: 'clock', mes: '', error: true });
@@ -61,6 +65,7 @@ test('empty Assistant owns parallel first-class Tool results by call ID', () => 
         { ...firstCall, result: firstResult.mes },
         { ...call('call-2', { name: 'clock', parameters: '{}' }), result: '', error: true },
     ]);
+    assert.equal(Object.hasOwn(projection[0].invocations[1], 'extra_content'), false);
 });
 
 test('Tool results may be physically separated from their Assistant by side-effect messages', () => {

@@ -149,6 +149,7 @@ UI 展示契约：
 
 - Provider normalizer 只把可见文本或 provider 明确给出的摘要提升为 normalized `message.reasoning_content`。
 - Claude / Gemini 的 signature、Gemini thoughtSignature、OpenAI encrypted reasoning 与 Responses continuation item 仍留在 `Native` / `provider_state`，不进入显示 DTO。
+- OpenAI-compatible `tool_calls[].extra_content` 保留在 `ToolInvocation.provider_metadata.raw`，并在后续工具请求中按原调用位置原样回放。
 - Agent timeline 读取模型回合详情时使用 `api.agent.readModelTurn({ runId, round })`；该 DTO 是 `AgentModelResponse` 的白名单投影，不是 raw LLM API log。
 
 ## 5.1 Provider State Contract

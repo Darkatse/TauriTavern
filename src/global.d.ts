@@ -95,6 +95,7 @@ declare global {
         parameters: string;
         displayName?: string;
         signature?: string | null;
+        extra_content?: unknown;
     }
 
     interface SwipeInfo {

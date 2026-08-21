@@ -83,6 +83,52 @@ fn decodes_tool_call_to_canonical_identity() {
 }
 
 #[test]
+fn openai_compatible_replays_opaque_tool_call_extra_content() {
+    let registry = BuiltinAgentToolRegistry::all();
+    let tools = model_tools(&registry);
+    let response = json!({
+        "choices": [{
+            "message": {
+                "content": null,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_finish",
+                            "arguments": "{}"
+                        },
+                        "extra_content": {
+                            "google": { "thought_signature": "opaque-signature" }
+                        }
+                    },
+                    {
+                        "id": "call_2",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"hello\"}"
+                        }
+                    }
+                ]
+            }
+        }]
+    });
+
+    let decoded = decode_chat_completion_response(response, &tools).unwrap();
+    let mut request = basic_request("custom", Some("openai_compat"), vec![decoded.message]);
+    request.tools = tools;
+
+    let dto = encode_chat_completion_request(&request).unwrap();
+    let calls = dto.payload["messages"][0]["tool_calls"].as_array().unwrap();
+    assert_eq!(
+        calls[0]["extra_content"],
+        json!({ "google": { "thought_signature": "opaque-signature" } })
+    );
+    assert!(calls[1].get("extra_content").is_none());
+}
+
+#[test]
 fn rejects_tool_names_outside_the_current_turn_aliases() {
     let registry = BuiltinAgentToolRegistry::all();
     let write = model_tool(&registry, "workspace.write_file");

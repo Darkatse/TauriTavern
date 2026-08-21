@@ -300,6 +300,10 @@ fn encode_openai_tool_call(
         object.insert("signature".to_string(), Value::String(signature));
     }
 
+    if let Some(extra_content) = call.provider_metadata.pointer("/raw/extra_content") {
+        object.insert("extra_content".to_string(), extra_content.clone());
+    }
+
     Ok(Value::Object(object))
 }
 

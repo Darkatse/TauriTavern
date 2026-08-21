@@ -283,6 +283,7 @@ function readCanonicalToolCalls(calls, path) {
             parameters: call.parameters,
             ...(typeof call.displayName === 'string' && call.displayName.trim() ? { displayName: call.displayName } : {}),
             ...(typeof call.signature === 'string' || call.signature === null ? { signature: call.signature } : {}),
+            ...(Object.hasOwn(call, 'extra_content') ? { extra_content: call.extra_content } : {}),
             path: callPath,
         });
     }
@@ -313,6 +314,7 @@ function toInvocation(call, toolMessage) {
         parameters: call.parameters,
         result: toolMessage.mes,
         ...(call.signature !== undefined ? { signature: call.signature } : {}),
+        ...(Object.hasOwn(call, 'extra_content') ? { extra_content: call.extra_content } : {}),
         ...(typeof toolMessage.error === 'boolean' ? { error: toolMessage.error } : {}),
     };
 }

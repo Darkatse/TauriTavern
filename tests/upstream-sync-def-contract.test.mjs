@@ -40,8 +40,10 @@ test('OpenAI tool reasoning sync preserves Tauri native reasoning lanes', async 
     assert.match(source, /const includeClaudeNative = usesClaudeMessagesSemantics\(oai_settings, currentModel\)/);
     assert.match(source, /&& \(!includeClaudeNative \|\| hasClaudeToolUse\(metadataMessage\?\.extra\?\.native\)\)/);
     assert.match(source, /&& canReplayProviderTurnMetadata/);
-    assert.match(source, /if \(!canReplayProviderTurnMetadata && \(invocation\.signature \|\| invocation\.reasoning\)\) \{/);
+    assert.match(source, /if \(!canReplayProviderTurnMetadata/);
+    assert.match(source, /Object\.hasOwn\(invocation, 'extra_content'\)/);
     assert.match(source, /delete cloneInvocation\.reasoning/);
+    assert.match(source, /delete cloneInvocation\.extra_content/);
     assert.match(source, /chatMessage\.setToolCalls\(invocations, includeSignature, includeToolReasoning, assemblyTokenHandler\)/);
     assert.match(source, /const sourceCount = entry\.type === 'tool-turn' \? entry\.sourceIndices\.length : 1/);
     assert.match(source, /if \(Array\.isArray\(chatPrompt\.invocations\)\)/);
@@ -88,6 +90,8 @@ test('ToolManager stores plaintext reasoning and failed tool invocations without
     assert.match(invokeFunctionTools, /projectProgress && onInvocationComplete\?\.\(invocation\)/);
     assert.match(source, /invocation\.result === undefined \? \['Status', 'Running…'\] : \['Result', invocation\.result\]/);
     assert.match(source, /ownerMessage\.tool_calls = toolCalls/);
+    assert.match(source, /Object\.hasOwn\(toolCall, 'extra_content'\)/);
+    assert.match(source, /Object\.hasOwn\(invocation, 'extra_content'\)/);
     assert.match(source, /chat\.push\(\.\.\.toolMessages\)/);
     assert.match(source, /ownerMessage\.extra\.tool_reasoning_content = reasoningContent/);
     assert.doesNotMatch(source, /tool_call_standalone|chat\.splice\(insertionIndex|tool_invocations:\s*invocations/);
@@ -121,6 +125,7 @@ test('ToolManager stores plaintext reasoning and failed tool invocations without
     assert.equal(openaiSource.match(/!agentMode && allowToolCalls && ToolManager\.canAdvertiseToolCalls\(type, settings(?:, model)?\)/g)?.length, 2);
     assert.doesNotMatch(openaiSource, /delete generate_data\.(?:tools|tool_choice)/);
     assert.match(openaiSource, /return \[chatSourceCount, toolData\]/);
+    assert.match(openaiSource, /Object\.hasOwn\(i, 'extra_content'\) \? \{ extra_content: i\.extra_content \}/);
     assert.match(openaiSource, /return \[chat, activePromptManager\.tokenHandler\.counts, toolData\]/);
     assert.match(openaiSource, /chatCompletion\.setTokenBudget\([^;]+;\s*let chatSourceCount = 0;\s*let toolData = null;/);
     assert.match(openaiSource, /if \(toolData === undefined\) \{\s*await ToolManager\.registerFunctionToolsOpenAI\(generate_data\);\s*\} else if \(toolData\) \{\s*Object\.assign\(generate_data, toolData\);/);
