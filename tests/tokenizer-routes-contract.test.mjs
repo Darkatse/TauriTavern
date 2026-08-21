@@ -49,6 +49,16 @@ test('Tokenizer commands are part of the centralized invoke contract', async () 
     assert.doesNotMatch(source, /\| '(?:encode|decode)_openai_tokens'/);
 });
 
+test('Kimi model selection preserves the model identity for native tokenization', async () => {
+    const source = await readFile(new URL('../src/scripts/tokenizers.js', import.meta.url), 'utf8');
+    const start = source.indexOf('export function getTokenizerModel');
+    const end = source.indexOf('\nexport async function warmTokenizerCache', start);
+    const resolver = source.slice(start, end);
+
+    assert.match(resolver, /chat_completion_sources\.MOONSHOT[\s\S]*return oai_settings\.moonshot_model \|\| 'kimi'/);
+    assert.match(resolver, /chat_completion_sources\.CHUTES[\s\S]*model\.includes\('kimi'\)[\s\S]*return model/);
+});
+
 test('OpenAI token count broker preserves all message fields', async () => {
     let capturedDto;
     const broker = createTokenCountBroker({

@@ -778,6 +778,10 @@ export function getTokenizerModel(settings = null) {
         return deepseekTokenizer;
     }
 
+    if (oai_settings.chat_completion_source == chat_completion_sources.MOONSHOT) {
+        return oai_settings.moonshot_model || 'kimi';
+    }
+
     if (oai_settings.chat_completion_source == chat_completion_sources.MINIMAX) {
         return turboTokenizer;
     }
@@ -890,9 +894,11 @@ export function getTokenizerModel(settings = null) {
     if (oai_settings.chat_completion_source == chat_completion_sources.CHUTES && oai_settings.chutes_model) {
         const model = oai_settings.chutes_model.toLowerCase();
 
-        if (model.includes('deepseek') || model.includes('mai-ds')) {
+        if (model.includes('kimi')) {
+            return model;
+        } else if (model.includes('deepseek') || model.includes('mai-ds')) {
             return deepseekTokenizer;
-        } else if (model.includes('qwen') || model.includes('qwq') || model.includes('tongyi') || model.includes('kimi')) {
+        } else if (model.includes('qwen') || model.includes('qwq') || model.includes('tongyi')) {
             return qwen2Tokenizer;
         } else if (model.includes('llama') || model.includes('longcat') || model.includes('hermes')) {
             return llama3Tokenizer;

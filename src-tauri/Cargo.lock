@@ -4578,9 +4578,9 @@ dependencies = [
 
 [[package]]
 name = "miktik"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a8718758c299199a5d354fcd888b2985cb03671dd606ef7fa147d28c340f0e8"
+checksum = "d5008139bd095add0e019d55d2a11f74afb2389b7c6ae021a1a204bef63715ed"
 dependencies = [
  "kitoken",
  "thiserror 2.0.20",

@@ -95,6 +95,13 @@ impl MiktikTokenizerRepository {
                     compression: ResourceCompression::Gzip,
                 },
             }),
+            "kimi" => Some(ModelResourceSpec {
+                file_name: "kimi.tiktoken",
+                source: ModelSource::Remote {
+                    url: "https://huggingface.co/moonshotai/Kimi-K2-Instruct/resolve/main/tiktoken.model",
+                    compression: ResourceCompression::None,
+                },
+            }),
             "llama3" => Some(ModelResourceSpec {
                 file_name: "llama3.json",
                 source: ModelSource::Remote {
@@ -184,7 +191,7 @@ impl MiktikTokenizerRepository {
             return Ok(());
         }
 
-        if !TokenizerRegistry::is_huggingface_model(canonical) {
+        if Self::model_resource_spec(canonical).is_none() {
             self.warm_model(canonical).await?;
             self.mark_model_ready(canonical).await;
             return Ok(());
@@ -745,6 +752,14 @@ mod tests {
             "deepseek"
         );
         assert_eq!(
+            MiktikTokenizerRepository::canonical_model("kimi-k2.5"),
+            "kimi"
+        );
+        assert_eq!(
+            MiktikTokenizerRepository::canonical_model("kimi-k3"),
+            "kimi"
+        );
+        assert_eq!(
             MiktikTokenizerRepository::canonical_model("nerdstash-v2"),
             "nerdstash_v2"
         );
@@ -763,6 +778,7 @@ mod tests {
             "mistral",
             "yi",
             "gemma",
+            "kimi",
             "jamba",
             "claude",
             "llama3",
