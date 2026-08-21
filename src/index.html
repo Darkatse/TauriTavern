@@ -2056,7 +2056,7 @@
                                             </em>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="openai,aimlapi,openrouter,mistralai,makersuite,vertexai,claude,aws_bedrock,custom,xai,pollinations,moonshot,cohere,cometapi,nanogpt,electronhub,azure_openai,zai,siliconflow,chutes,workers_ai">
+                                    <div class="range-block" data-source="openai,aimlapi,openrouter,mistralai,makersuite,vertexai,claude,aws_bedrock,custom,xai,pollinations,moonshot,cohere,cometapi,nanogpt,electronhub,azure_openai,zai,siliconflow,chutes,workers_ai,deepseek">
                                         <label for="openai_media_inlining" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_media_inlining" type="checkbox" />
                                             <span data-i18n="Send inline media">Send inline media</span>
@@ -2080,7 +2080,7 @@
                                             <strong data-source="makersuite,vertexai" data-i18n="video_inlining_hint_4">Videos must be less than 20 MB and under 1 minute long.</strong>
                                             <strong data-source="makersuite,vertexai" data-i18n="audio_inlining_hint_2">Audio must be less than 20 MB.</strong>
                                         </div>
-                                        <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,xai,pollinations,cohere,cometapi,nanogpt,moonshot,aimlapi,openrouter,mistralai,electronhub,azure_openai,zai,siliconflow,chutes,makersuite,vertexai,workers_ai">
+                                        <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,xai,pollinations,cohere,cometapi,nanogpt,moonshot,aimlapi,openrouter,mistralai,electronhub,azure_openai,zai,siliconflow,chutes,makersuite,vertexai,workers_ai,deepseek">
                                             <div class="flex-container oneline-dropdown">
                                                 <label for="openai_inline_image_quality" data-i18n="Inline Image Quality">
                                                     Inline Image Quality
@@ -2173,8 +2173,8 @@
                                             <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.">
                                                 Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.">
-                                                DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek V4 options: Auto omits the effort field, Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort.">
+                                                DeepSeek V4 options: Auto omits the effort field, Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort.
                                             </div>
                                             <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.">
                                                 Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.
@@ -3837,6 +3837,7 @@
                                 <h4 data-i18n="DeepSeek Model">DeepSeek Model</h4>
                                 <select id="model_deepseek_select">
                                     <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                                    <option value="deepseek-v4-flash-vision-exp">deepseek-v4-flash-vision-exp</option>
                                     <option value="deepseek-v4-pro">deepseek-v4-pro</option>
                                     <option value="deepseek-chat">deepseek-chat</option>
                                     <option value="deepseek-reasoner">deepseek-reasoner</option>

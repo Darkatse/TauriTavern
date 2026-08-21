@@ -2657,7 +2657,7 @@
     "Scan depth cannot exceed ${0}": "掃描深度不能超過 ${0}",
     "Reasoning Template": "推理範本",
     "Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.": "推理強度按高、超高、最高依次遞增。各供應商適配器會將專案檔位映射到上游最接近的受支援值。自動不會傳送推理強度參數。",
-    "DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.": "DeepSeek 選項：自動不會傳送推理耗費欄位；最小到超高都會請求 high 推理耗費；最高會請求 max 推理耗費。",
+    "DeepSeek V4 options: Auto omits the effort field, Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort.": "DeepSeek V4 選項：自動不會傳送推理耗費欄位；最小與低會請求 low 推理耗費；中等到超高會請求 high 推理耗費；最高會請求 max 推理耗費。",
     "Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.": "Z.AI GLM-5.2 選項：自動不會傳送推理耗費欄位；最小會略過思考過程；超高會請求 max 推理耗費；最高會請求 xhigh 推理耗費。",
     "Branch or tag name (optional)": "分支／標籤名稱（可留空）",
     "Update enabled": "僅更新啟用項目",

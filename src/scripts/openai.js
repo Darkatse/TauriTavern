@@ -8196,6 +8196,8 @@ export function isImageInliningSupported(settings = oai_settings) {
             return visionSupportedModels.some(model => settings.vertexai_model.includes(model));
         case chat_completion_sources.CLAUDE:
             return visionSupportedModels.some(model => settings.claude_model.includes(model));
+        case chat_completion_sources.DEEPSEEK:
+            return settings.deepseek_model === 'deepseek-v4-flash-vision-exp';
         case chat_completion_sources.OPENROUTER:
             return (Array.isArray(model_list) && model_list.find(m => m.id === settings.openrouter_model)?.architecture?.input_modalities?.includes('image'));
         case chat_completion_sources.CUSTOM:

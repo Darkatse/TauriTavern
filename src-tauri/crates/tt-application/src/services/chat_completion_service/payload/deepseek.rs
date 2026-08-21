@@ -106,9 +106,8 @@ fn normalize_reasoning_effort(value: &str) -> Result<Option<&'static str>, Appli
     match parse_known_reasoning_effort(value, "DeepSeek")? {
         RequestedReasoningEffort::Auto => Ok(None),
         RequestedReasoningEffort::None => Err(unsupported_reasoning_effort("DeepSeek", value)),
-        RequestedReasoningEffort::Minimal
-        | RequestedReasoningEffort::Low
-        | RequestedReasoningEffort::Medium
+        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Ok(Some("low")),
+        RequestedReasoningEffort::Medium
         | RequestedReasoningEffort::High
         | RequestedReasoningEffort::XHigh => Ok(Some("high")),
         RequestedReasoningEffort::Max => Ok(Some("max")),
@@ -300,39 +299,45 @@ mod tests {
 
     #[test]
     fn deepseek_v4_enables_thinking_and_maps_effort() {
-        let payload = json!({
-            "model": "deepseek-v4-pro",
-            "messages": [{"role": "user", "content": "hello"}],
-            "include_reasoning": true,
-            "reasoning_effort": "max",
-            "temperature": 1.2,
-            "top_p": 0.7,
-            "presence_penalty": 0.1,
-            "frequency_penalty": 0.2,
-            "chat_completion_source": "deepseek"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
+        for model in [
+            "deepseek-v4-flash",
+            "deepseek-v4-flash-vision-exp",
+            "deepseek-v4-pro",
+        ] {
+            let payload = json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "include_reasoning": true,
+                "reasoning_effort": "max",
+                "temperature": 1.2,
+                "top_p": 0.7,
+                "presence_penalty": 0.1,
+                "frequency_penalty": 0.2,
+                "chat_completion_source": "deepseek"
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
 
-        let (_, upstream) = build(payload).expect("payload should build");
-        let body = upstream.as_object().expect("body must be object");
+            let (_, upstream) = build(payload).expect("payload should build");
+            let body = upstream.as_object().expect("body must be object");
 
-        assert_eq!(
-            body.get("thinking")
-                .and_then(Value::as_object)
-                .and_then(|thinking| thinking.get("type"))
-                .and_then(Value::as_str),
-            Some("enabled")
-        );
-        assert_eq!(
-            body.get("reasoning_effort").and_then(Value::as_str),
-            Some("max")
-        );
-        assert!(body.get("temperature").is_none());
-        assert!(body.get("top_p").is_none());
-        assert!(body.get("presence_penalty").is_none());
-        assert!(body.get("frequency_penalty").is_none());
+            assert_eq!(
+                body.get("thinking")
+                    .and_then(Value::as_object)
+                    .and_then(|thinking| thinking.get("type"))
+                    .and_then(Value::as_str),
+                Some("enabled")
+            );
+            assert_eq!(
+                body.get("reasoning_effort").and_then(Value::as_str),
+                Some("max")
+            );
+            assert!(body.get("temperature").is_none());
+            assert!(body.get("top_p").is_none());
+            assert!(body.get("presence_penalty").is_none());
+            assert!(body.get("frequency_penalty").is_none());
+        }
     }
 
     #[test]
@@ -351,7 +356,7 @@ mod tests {
         let (_, upstream) = build(payload).expect("payload should build");
         assert_eq!(
             upstream.get("reasoning_effort").and_then(Value::as_str),
-            Some("high")
+            Some("low")
         );
     }
 
