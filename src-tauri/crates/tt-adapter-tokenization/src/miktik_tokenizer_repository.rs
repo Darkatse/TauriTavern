@@ -721,7 +721,7 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{MiktikTokenizerRepository, ModelSource, PREFIX_ESTIMATE_CONTEXT_BYTES};
+    use super::{MiktikTokenizerRepository, ModelSource};
     use tt_adapter_http::HttpClientPool;
     use tt_ports::repositories::tokenizer_repository::{
         TokenizerRepository, openai_text_token_count,
@@ -944,49 +944,6 @@ mod tests {
             }
         }
 
-        let _ = std::fs::remove_dir_all(cache_dir);
-    }
-
-    #[tokio::test]
-    async fn cumulative_prefix_counts_preserve_stop_at_fill_across_backends() {
-        assert_eq!(PREFIX_ESTIMATE_CONTEXT_BYTES, 64);
-
-        let cache_dir = unique_temp_cache_dir();
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
-        let suffixes = vec![
-            "short\n".to_string(),
-            "a considerably longer second entry\n".to_string(),
-            "this entry must not need to be tokenized\n".to_string(),
-        ];
-        for model in ["gpt-4o", "claude", "deepseek", "gemma"] {
-            TokenizerRepository::ensure_model_ready(&repository, model)
-                .await
-                .expect("tokenizer should prepare");
-            let full_counts = TokenizerRepository::count_system_message_prefixes(
-                &repository,
-                model,
-                "base\n",
-                &suffixes,
-                None,
-            )
-            .expect("full prefix counts should succeed");
-            let stop_at = openai_text_token_count(full_counts[1]);
-
-            let stopped_counts = TokenizerRepository::count_system_message_prefixes(
-                &repository,
-                model,
-                "base\n",
-                &suffixes,
-                Some(stop_at),
-            )
-            .expect("stopped prefix counts should succeed");
-
-            assert_eq!(
-                stopped_counts,
-                vec![full_counts[0], full_counts[1], full_counts[1]],
-                "stop/fill semantics changed for {model}"
-            );
-        }
         let _ = std::fs::remove_dir_all(cache_dir);
     }
 

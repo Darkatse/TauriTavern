@@ -8,10 +8,8 @@ const RUST_CRATES_ROOT = path.join(REPO_ROOT, 'src-tauri', 'crates');
 const HOST_CRATE_ROOT = path.join(RUST_CRATES_ROOT, 'tauritavern');
 const HOST_SRC_ROOT = path.join(HOST_CRATE_ROOT, 'src');
 const WORKSPACE_MANIFEST = path.join(REPO_ROOT, 'src-tauri', 'Cargo.toml');
-const DEPENDENCY_TREE_CHECKS = [
-    ['no-default-features', ['--no-default-features']],
-    ['all-features/all-targets', ['--all-features', '--target', 'all', '-e', 'normal,build,dev']],
-];
+const DEPENDENCY_TREE_LABEL = 'all-features/all-targets';
+const DEPENDENCY_TREE_ARGS = ['--all-features', '--target', 'all', '-e', 'normal,build,dev'];
 
 const DOMAIN_FORBIDDEN_PACKAGES = new Set([
     'async-trait',
@@ -652,12 +650,13 @@ function loadWorkspaceMetadata() {
         'metadata',
         '--manifest-path',
         WORKSPACE_MANIFEST,
-        '--no-deps',
+        '--all-features',
         '--format-version',
         '1',
     ], {
         cwd: REPO_ROOT,
         encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
     });
 
     if (result.status !== 0) {
@@ -665,6 +664,13 @@ function loadWorkspaceMetadata() {
     }
 
     return JSON.parse(result.stdout);
+}
+
+function indexWorkspaceMetadata(metadata) {
+    const packages = new Map(metadata.packages.map((entry) => [entry.id, entry]));
+    const nodes = new Map(metadata.resolve.nodes.map((entry) => [entry.id, entry]));
+    const workspacePackages = new Map(metadata.workspace_members.map((id) => [packages.get(id)?.name, id]));
+    return { packages, nodes, workspacePackages };
 }
 
 async function listFiles(dir) {
@@ -751,45 +757,80 @@ async function checkMainCrateSourceRule(config) {
 function checkDependencyTree(config) {
     const violations = [];
 
-    for (const [label, featureArgs] of DEPENDENCY_TREE_CHECKS) {
-        const result = spawnSync('cargo', [
-            'tree',
-            '--manifest-path',
-            WORKSPACE_MANIFEST,
-            '-p',
-            config.name,
-            ...featureArgs,
-            '--prefix',
-            'none',
-        ], {
-            cwd: REPO_ROOT,
-            encoding: 'utf8',
-        });
+    const result = spawnSync('cargo', [
+        'tree',
+        '--manifest-path',
+        WORKSPACE_MANIFEST,
+        '-p',
+        config.name,
+        ...DEPENDENCY_TREE_ARGS,
+        '--prefix',
+        'none',
+    ], {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+    });
 
-        if (result.status !== 0) {
-            violations.push(`${config.name} cargo tree (${label}) failed:\n${result.stderr || result.stdout}`);
-            continue;
-        }
+    if (result.status !== 0) {
+        return [`${config.name} cargo tree (${DEPENDENCY_TREE_LABEL}) failed:\n${result.stderr || result.stdout}`];
+    }
 
-        const packages = new Set(
-            result.stdout
-                .split(/\r?\n/)
-                .map((line) => line.trim().split(/\s+/)[0])
-                .filter(Boolean),
-        );
+    const packages = new Set(
+        result.stdout
+            .split(/\r?\n/)
+            .map((line) => line.trim().split(/\s+/)[0])
+            .filter(Boolean),
+    );
 
-        for (const name of config.forbiddenPackages) {
-            if (packages.has(name)) {
-                violations.push(`${config.name} ${label} dependency tree includes forbidden package: ${name}`);
-            }
+    for (const name of config.forbiddenPackages) {
+        if (packages.has(name)) {
+            violations.push(`${config.name} ${DEPENDENCY_TREE_LABEL} dependency tree includes forbidden package: ${name}`);
         }
     }
 
     return violations;
 }
 
+// The all-features workspace graph is an upper bound. Skip the exact per-crate tree only when
+// Cargo exposed the root completely and no forbidden package is reachable from it.
+function metadataMayContainForbiddenPackage(config, metadata) {
+    const rootId = metadata.workspacePackages.get(config.name);
+    const rootPackage = metadata.packages.get(rootId);
+    const rootNode = metadata.nodes.get(rootId);
+    if (!rootPackage || !rootNode) {
+        return true;
+    }
+
+    const activeFeatures = new Set(rootNode.features);
+    if (Object.keys(rootPackage.features).some((feature) => !activeFeatures.has(feature))) {
+        return true;
+    }
+
+    const directPackages = new Set(rootNode.deps.map((dependency) => metadata.packages.get(dependency.pkg)?.name));
+    if (rootPackage.dependencies.some((dependency) => !directPackages.has(dependency.name))) {
+        return true;
+    }
+
+    const seen = new Set();
+    const pending = [rootId];
+    while (pending.length > 0) {
+        const id = pending.pop();
+        if (seen.has(id)) {
+            continue;
+        }
+        seen.add(id);
+
+        if (config.forbiddenPackages.has(metadata.packages.get(id)?.name)) {
+            return true;
+        }
+        pending.push(...(metadata.nodes.get(id)?.dependencies ?? []));
+    }
+
+    return false;
+}
+
 function checkDirectDependencies(config, metadata) {
-    const rustPackage = metadata.packages.find((entry) => entry.name === config.name);
+    const rustPackage = metadata.packages.get(metadata.workspacePackages.get(config.name));
     if (!rustPackage) {
         return [`${config.name} package missing from cargo metadata`];
     }
@@ -808,13 +849,13 @@ function checkDirectDependencies(config, metadata) {
 }
 
 async function main() {
-    const metadata = loadWorkspaceMetadata();
+    const metadata = indexWorkspaceMetadata(loadWorkspaceMetadata());
     const violations = [];
     for (const config of CRATES) {
         violations.push(
             ...checkDirectDependencies(config, metadata),
             ...(await checkSourceBoundaries(config)),
-            ...checkDependencyTree(config),
+            ...(metadataMayContainForbiddenPackage(config, metadata) ? checkDependencyTree(config) : []),
         );
     }
     for (const config of MAIN_CRATE_SOURCE_RULES) {
