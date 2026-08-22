@@ -25,5 +25,6 @@
 - **数据传输对象 (DTO):** 在应用层和表示层（Tauri 命令）之间传递数据时，必须使用 DTO。DTO 的定义需参考文档并保持前后端一致。
 - **Tauri 命令:** `#[tauri::command]` 只能存在于 `presentation` 层，并且应该调用 `application` 层的服务来执行业务逻辑，避免在命令中直接处理复杂逻辑或操作基础设施。
 - **注释:** 为复杂、非显而易见的逻辑或算法添加清晰、简洁的注释。
-- **测试:** 核心仓储迁移或格式语义变更必须保留最小可运行测试；优先运行受影响 crate 的 focused tests 与 `scripts/check-rust-crate-boundaries.mjs`。每次实现完成后都必须运行 harness：`pnpm run check`。
+- **测试准入:** 只为可观察的稳定行为、非平凡不变式或边界，以及已经发生并修复的具体缺陷添加测试；代码变化和覆盖率本身不是理由。禁止用正则或文本断言源码，不测试字面量、明显控制流、直接委托、实现细节或已移除功能，不提前添加回归测试。
+- **测试实践:** 优先复用最高层的现有行为覆盖，避免在各层重复同一断言；并发测试使用确定性协调，不依赖 sleep。删除功能或测试时同步删除失效的 fixture、fake、hook 与依赖。核心仓储迁移或格式语义变更保留最小可运行测试；先运行受影响 crate 的 focused tests 与 `scripts/check-rust-crate-boundaries.mjs`，每次实现完成后运行完整 harness：`pnpm run check`。
 - **前端交互:** 注意 `FrontendGuide.md` 中关于与前端交互的说明，特别是 DTO 和事件的约定。

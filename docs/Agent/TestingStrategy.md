@@ -1,302 +1,82 @@
-# TauriTavern Agent Testing Strategy
+# TauriTavern Agent 测试策略
 
-本文档定义 Agent 系统的测试策略。Agent 涉及生成、文件、工具、外部协议、保存与兼容事件，测试必须持续作为开发入口的一部分。
+测试是风险控制，不是代码清单。一个测试只有在长期防止真实错误的收益高于维护成本时才应存在；代码发生变化或覆盖率增加本身不是理由。
 
-## 1. 测试目标
+## 准入标准
 
-测试要守住：
+新增测试必须至少满足一项：
 
-- Legacy Generate 兼容。
-- workspace crate 边界。
-- Workspace path 安全。
-- Journal 完整性。
-- 完整 chat payload 保存契约。
-- LLM gateway 不绕过现有 policy/logging。
-- Tool policy 与 approval。
-- MCP 安全边界。
-- 移动端内存与分页读取。
+- 验证用户或调用方可观察的稳定行为。
+- 守住非平凡不变式或边界，例如路径安全、原子发布、并发顺序、配额、取消语义或第三方协议。
+- 复现已经发生且已修复的具体缺陷。
 
-## 2. Domain Tests
+不要提前建立“可能有用”的回归测试。缺陷测试应描述触发条件和外部结果，并在修复缺陷时加入。
 
-覆盖：
+以下内容通常不应测试：
 
-```text
-WorkspacePath normalization
-WorkspacePath traversal rejection
-Artifact manifest validation
-Required artifact missing
-AgentRunStatus transitions
-AgentRunEvent serialization
-PlanPolicy strict/free/hybrid
-ToolPolicy allow/deny/approval
-InvocationToolSnapshot ordered binding/duplicate alias invariants
-ToolTurnContract all-snapshot/choice invariants
-Profile resolution precedence
+- 源码文本、正则匹配、文件布局、函数是否存在或调用链形状。
+- 字面量、枚举映射、默认值、派生序列化、构造器和直接委托。
+- 显然控制流的每个分支，或同一边界的等价输入排列。
+- 已移除功能的墓碑、当前实现细节和本地上游符号链接。
+- 仅为提高覆盖率而存在的用例。
+
+源码形状不是产品契约。架构边界由 crate 依赖检查、类型系统、lint 和编译器负责，不用读取源码的测试重复维护。
+
+## 分层归属
+
+优先在能够观察完整行为的最低成本边界保留一个测试，避免在每一层重复同一断言。
+
+- Domain：纯粹且非平凡的领域不变式、规范化和输入边界。
+- Application：服务的状态转换、错误语义、策略执行和副作用顺序。
+- Adapter：真实文件、网络协议、原子性、格式兼容和安全边界。
+- Host：少量 composition 测试，证明关键能力经过真实 repository/service/command 路径。
+- Frontend：通过公开 API、路由或用户交互观察结果，不检查源码实现。
+
+当 host 或 adapter 的现有行为测试已经覆盖风险时，不再为内部 helper 添加同义测试。简单映射由其所属的代表性请求或响应覆盖。
+
+## Agent 必须守住的风险
+
+Agent 相关改动应根据影响选择最小测试集合，重点包括：
+
+- run 生命周期、journal、持久化与终态一致性。
+- workspace 路径隔离、读取后写入约束、SHA 冲突和 commit 发布顺序。
+- foreground/background、delegate/await/handoff 的所有权与取消语义。
+- 冻结输入、profile/skill scope 和 portable profile 迁移。
+- 工具身份、当前 turn snapshot、预算和副作用审计。
+- Claude、Gemini、OpenAI Responses 等原生 continuation metadata 的保真与跨 provider 隔离。
+- MCP 的权限门、缓存失效，以及已发送后结果未知时不伪造成功或自动重试。
+- chat payload 在成功发布后才通知 history，并保留用户数据。
+
+这是一组风险类别，不是要求每个分支各写一个测试的检查表。已有高层测试能够观察同一风险时，应复用它。
+
+## 并发、时间与 I/O
+
+- 使用 barrier、channel、受控 future 或显式状态协调并发；不要依赖 sleep 猜测调度。
+- 文件行为使用临时目录和真实 adapter；只 mock 当前测试不拥有的外部边界。
+- 网络协议优先使用受控本地 server/fixture，验证发送、提交和失败语义。
+- 时间相关逻辑优先注入时钟或使用确定输入；不要扩大等待时间掩盖不稳定。
+
+## 测试基建
+
+测试 helper 必须减少多个有价值测试的总复杂度。功能删除后同时删除 fixture、fake、hook、feature flag 和未使用依赖。
+
+- 优先使用项目已有 helper、标准库和已安装依赖。
+- 不为少量 DOM 行为维护自制浏览器实现。
+- fixture 只保存外部格式无法用短小构造表达的代表样例。
+- 不向生产代码加入只为测试暴露实现细节的接口。
+
+## 维护与验证
+
+修改前先找现有行为边界；修改后运行受影响 crate 或前端模块的 focused tests。最终合并门禁是：
+
+```sh
+pnpm run check
 ```
 
-Domain tests 不应需要 Tauri、文件系统或 HTTP。
+Rust crate 边界还应由以下脚本验证：
 
-## 3. Application Tests
-
-使用 mock repositories/gateway/tools。
-
-覆盖：
-
-```text
-agent loop success
-agent loop model failure
-cancel before model call
-cancel during model call
-artifact assembly success/failure
-commit service called through expected boundary
-tool loop success
-tool recoverable error
-tool policy denied
-root/return-mode child/handoff snapshot compilation and persistence
-snapshot budget remains authoritative throughout invocation
-ToolRequestGate rejects snapshot/choice violations without consuming budget
-ToolRequestGate reserves exact total/per-canonical-ToolId budget boundaries
-plan locked node violation
-profile switch allowed/denied
-agent.list policy filtering
-agent.delegate creates task and child invocation
-agent.delegate rejects hard runtime budget arguments
-agent.delegate schedules return-mode child task on background scheduler
-agent.await waits for background child task and renders result capsule
-completed child results are injected into the next parent model turn once
-workspace.finish cancels unfinished child tasks without blocking run completion
-task.return records result and terminates child invocation
-child invocation cannot commit, finish, or delegate
-child workspace policy keeps paths unchanged and only scopes visible/writable roots
-child tool snapshot removes commit/finish/delegation and appends task.return
+```sh
+node scripts/check-rust-crate-boundaries.mjs
 ```
 
-关键断言：
-
-- 每个副作用都有 journal event。
-- failure 后状态为 `Failed`。
-- cancel 后状态为 `Cancelled`。
-- required artifact 缺失不 commit。
-
-## 4. Infrastructure Tests
-
-覆盖：
-
-```text
-file event journal append/read pagination
-workspace repository rejects symlink escape
-workspace repository handles unicode relative paths
-file sizes and retention
-MCP config allowlist
-SkillRepository preview/install/read/export/source refs
-Skill archive roundtrip hash
-Skill repository rejects symlink escape
-```
-
-文件测试应使用临时目录，并覆盖 macOS/Linux/Windows path 差异。
-
-## 5. LLM Gateway Tests
-
-覆盖：
-
-```text
-gateway calls ChatCompletionService, not HttpChatCompletionRepository
-source denied by iOS policy
-endpoint override denied
-prompt cache hints preserved
-LLM API log wrapper remains in path
-LLM API log readable output separates visible reasoning from assistant text
-stream chunk becomes model_delta event
-cancel propagates
-tool_call_id opaque round-trip
-native metadata round-trip
-canonical AgentModelRequest/AgentModelResponse encode-decode
-provider tool name resolves only through current turn alias
-canonical/raw/unadvertised tool name fails without global fallback
-same-native cross-provider tool results encode through canonical ToolId
-same-native external timeline events do not inherit builtin side-effect semantics
-tool result call/tool identity mismatch fails before effects and audit persistence
-recent workspace write/patch tool result hydration
-tool args/results use short hashed local audit file names while preserving opaque provider tool_call_id
-```
-
-特别要覆盖 `docs/CurrentState/NativeApiFormats.md` 中的契约：
-
-- tool_call_id 不透明。
-- Claude / Gemini / OpenAI Responses / Gemini Interactions native metadata 保真。
-- Custom Claude header 策略不被硬编码覆盖。
-
-## 6. Frontend Contract Tests
-
-覆盖：
-
-```text
-window.__TAURITAVERN__.api.agent exists after ready
-window.__TAURITAVERN__.api.skill exists after ready
-window.__TAURITAVERN__.api.mcp exists after ready when MCP Host ABI lands
-subscribe returns idempotent unsubscribe
-Agent API uses safeInvoke, not raw command dependency in public caller
-types.d.ts includes agent and skill types; mcp types land with MCP Host ABI
-```
-
-Legacy 回归：
-
-```text
-Agent mode off: Generate signature unchanged
-Agent mode off: GENERATION_STARTED order unchanged
-Agent mode off: GENERATE_AFTER_DATA dryRun still emitted
-Agent mode off: ToolManager legacy behavior unchanged
-Agent event does not emit fake GENERATION_* events
-```
-
-当前 Agent Host ABI 与工具循环必须覆盖：
-
-```text
-api.agent exposes startRunFromLegacyGenerate and startRunWithPromptSnapshot
-api.agent does not expose ambiguous startRun alias
-Generate(..., dryRun = true) resolves undefined and emits GENERATE_AFTER_DATA
-startRunFromLegacyGenerate captures dryRun payload through event listener
-agentMode disables Legacy ToolManager tools in prompt snapshot
-Agent initialChatHistoryMessages positive window keeps latest-first recent turns before PromptManager assembly
-Agent PromptManager assembly materializes a working copy and does not mutate FrozenRunInputSnapshot.promptInputs.messages
-external tools/tool_choice/tool turns are rejected
-stream true is rejected
-foreground finish before workspace.commit returns recoverable tool error
-foreground text mutations auto-commit only the final write/patch once per model round
-chat commit rejects a workspace file whose SHA changed before Host read
-workspace.commit append without prior commit creates the run message
-subscribe polling can read events in seq order
-readWorkspaceFile returns UTF-8 text, chars, words, sha256
-readModelTurn returns assistant text, visible reasoning, tool calls, provider summary
-workspace_list_files accepts omitted/empty/dot path as workspace root
-workspace_search_files searches only visible roots and returns snippets
-chat/workspace/skill search preserves punctuation- and symbol-only queries as literal text
-workspace_read_file full read records read-state
-workspace_read_file line range does not unlock patch state unless it covers the full file
-oversized reads return a successful line preview with nextStartLine
-workspace_read_file returns non-UTF-8 files as recoverable tool errors
-missing current-chat reads return recoverable errors and the next model turn still runs
-externalized MCP results expose a fully line-readable text view plus the exact JSON audit
-workspace_write_file append creates missing files and appends existing files without a rewrite read
-workspace_write_file append does not auto-insert newlines and does not unlock rewrite or patch state for unread existing content
-workspace_apply_patch requires full read-state
-chat deletion removes the corresponding Agent chat workspace and run index
-chat deletion fails clearly while the corresponding Agent workspace has an active run
-skill_search respects visible/deny policy and read budget
-all model-facing text read schemas expose start_line/line_count and no character range
-recoverable tool errors are returned to the model instead of failing the run
-listRuns returns paginated Agent run history summaries
-future API approveToolCall throws explicitly
-run timeline/detail view switching has a single explicit state source and does not derive detailsOpen from scrollLeft
-run timeline main panel does not use horizontal scroll-snap or smooth scroll as a view state machine
-run timeline closes detail by resetting detail state and does not measure or auto-stick hidden timeline scrollers
-run timeline mobile view gesture uses Pointer Events only as an input shortcut and commits through openDetails/showTimeline
-```
-
-Provider normalizer tests 必须覆盖可见 reasoning 提取：Claude `thinking`、Gemini `thought` 文本、OpenAI Responses reasoning summary 进入 `reasoning_content`；signature / encrypted continuation 仍作为 native/provider state 保留，不能作为可展示文本。
-
-## 7. Chat History / Save Integration Tests
-
-覆盖：
-
-```text
-Agent reads bounded history through paged/search APIs
-Agent does not replace or truncate canonical frontend chat
-Agent commit uses chat save contract
-Agent commit remains ordered under serialized saves
-integrity and atomic publish failures surface clearly
-rollback committed message uses save contract
-```
-
-## 8. Security Tests
-
-覆盖：
-
-```text
-../ path rejected
-absolute path rejected
-Windows drive path rejected
-symlink escape rejected
-hidden resource not in context
-denied tool not visible
-unadvertised/denied tool alias fails at the current turn boundary
-MCP arbitrary stdio command rejected
-Agent cannot edit MCP config
-extension tool without authorization hidden
-provider source denied by policy
-```
-
-## 9. Performance Tests
-
-覆盖：
-
-```text
-large chat history remains virtual
-journal pagination does not load full file
-workspace tree lazy read
-tool result budget truncation/summary
-mobile default budgets
-```
-
-指标建议：
-
-- Agent run workspace 初始化耗时。
-- Journal append/read latency。
-- Large history Agent start memory growth。
-- Timeline first render event count。
-
-## 10. Golden Fixtures
-
-建议建立 fixtures：
-
-```text
-fixtures/agent/
-  prompt_snapshot_openai.json
-  prompt_snapshot_claude.json
-  run_events_one_step.jsonl
-  manifest_main_only.json
-  manifest_multi_artifact.json
-  tool_result_chat_search.json
-```
-
-Golden fixtures 应尽量脱敏，不包含真实 API key 或私人聊天。
-
-## 11. Merge Gates
-
-当前落地门禁：
-
-- 后端 `cargo check --manifest-path src-tauri/Cargo.toml` 通过。
-- 后端 `cargo test --manifest-path src-tauri/Cargo.toml agent_runtime_service` 通过。
-- 后端 `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_repository` 通过。
-- 后端 `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_profile_repository` 通过。
-- `node scripts/check-rust-crate-boundaries.mjs` 通过。
-- 涉及前端 ABI 时，前端 `pnpm run check:types`、`pnpm run test:contracts`、`pnpm run check:frontend` 通过。
-- 控制台 smoke 能通过 `startRunFromLegacyGenerate()` 启动 run。
-- 控制台 Agent smoke 能依次调用 `chat_search`、`chat_read_messages`、`worldinfo_read_activated`，写入 `output/main.md` 并进入 `awaiting_commit`。
-- `cargo test agent_model_gateway`、`cargo test openai_responses_payload`、`cargo test claude_native_content_blocks_are_replayed`、`cargo test normalize_` 通过。
-- `provider_state` / gateway 相关测试覆盖 OpenAI Responses portable full replay、显式 WebSocket 模式的 `previousResponseId` / `messageCursor`、same-provider native metadata loss fail-fast、cross-provider private metadata 不迁移、LLM API log 剥离 `_tauritavern_provider_state`。
-- 控制台 workspace 读改 smoke 能依次写入 `plan/outline.md`、`scratch/draft.md`，调用 `workspace_list_files`，完整读取 draft，使用 `workspace_apply_patch` 修改 draft，写入 `summaries/revision_notes.md`、`output/main.md` 并进入 `awaiting_commit`。
-- `commit()` 能把 `output/main.md` 写入当前 active chat；`workspace.finish` 成功后才把 durable `persistStateId` 写回该消息，并追加 `run_completed`。
-- Agent Mode off 的 Legacy Generate 行为不变。
-
-后续工具/运行时变更不合并，除非：
-
-- tool loop 测试通过。
-- tool result 不写 chat message。
-- recoverable tool error 回填模型测试通过。
-- workspace path security 测试通过。
-
-Profile / Plan 相关变更不合并，除非：
-
-- profile resolution 测试通过。
-- `input/resolved_profile.json` 快照写入测试通过。
-- tool/skill/workspace/output policy 的 runtime 行为测试通过。
-- `agentSystemPrompt` 前端 materialize、PromptManager index/role 保留、runtime marker 泄漏 fail-fast 测试通过。
-- strict/free/hybrid plan 与 profile switch 相关测试在对应功能实现时补齐。
-
-MCP 相关变更不合并，除非：
-
-- cached preparation 不触发 discovery，单 registration diagnostic 局部化。
-- Off/Paused 在发送前阻止，Ask/Allow 当前自动执行。
-- Known error 可回填模型，OutcomeUnknown 不伪造结果或自动 retry。
-- Manager/Agent/Legacy 都不能从模型调用路径编辑 MCP registration 或 endpoint。
+测试失败时修复行为或更新已明确改变的契约，不要放宽断言、增加 sleep 或添加静默 fallback。功能删除、边界被更高层覆盖或测试只剩实现细节时，直接删除测试。

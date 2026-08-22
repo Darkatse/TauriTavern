@@ -496,26 +496,17 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 
 `startRunWithPromptSnapshot()` 仍可用于低层 smoke，但不要注入 `tools`、`tool_choice` 或已有 tool turns。
 
-## 最近验证命令
+## 验证入口
 
-最近一次 Rust 侧验证基线：
+开发时运行受影响 service、repository 或 crate 的 focused tests，不在文档中维护易漂移的测试数量和单个测试名。提交前统一运行：
 
-- `cargo fmt --manifest-path src-tauri/Cargo.toml`
-- `cargo check --manifest-path src-tauri/Cargo.toml`
-- `cargo test --manifest-path src-tauri/Cargo.toml skill_scope --lib`：2 passed
-- `cargo test --manifest-path src-tauri/Cargo.toml agent_runtime_service --lib`：53 passed
-- `cargo test --manifest-path src-tauri/Cargo.toml agent_delegate_await_runs_return_mode_subagent`
-- `cargo test --manifest-path src-tauri/Cargo.toml child_workspace_policy_scopes_manifest_roots_without_mapping --lib`：1 passed
-- `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_repository --lib`：23 passed
-- `cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-storage-userdata file_agent_profile_repository`：4 passed
-- `git diff --check`
+```sh
+node scripts/check-rust-crate-boundaries.mjs
+pnpm run check
+git diff --check
+```
 
-最近一次前端侧验证：
-
-- `pnpm run check:frontend`
-- `pnpm run check:types`
-- `pnpm run test:contracts`：通过
-- `git diff --check`
+测试准入和分层归属见 `docs/Agent/TestingStrategy.md`。
 
 ## 已知待办
 
