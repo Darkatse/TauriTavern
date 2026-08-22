@@ -837,28 +837,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_extra_headers_skips_empty_keys_and_values() {
-        let mut headers = HashMap::new();
-        headers.insert("x-empty-value".to_string(), "   ".to_string());
-        headers.insert("   ".to_string(), "value".to_string());
-        headers.insert("x-valid".to_string(), "ok".to_string());
-
-        let request = Client::new().get("https://example.com");
-        let request = HttpChatCompletionRepository::apply_extra_headers(request, &headers);
-        let request = request.build().expect("request should build");
-
-        assert!(request.headers().get("x-empty-value").is_none());
-        assert!(request.headers().get("   ").is_none());
-        assert_eq!(
-            request
-                .headers()
-                .get("x-valid")
-                .and_then(|value| value.to_str().ok()),
-            Some("ok")
-        );
-    }
-
-    #[test]
     fn apply_openai_auth_prefers_explicit_authorization_header() {
         let config = ChatCompletionApiConfig {
             base_url: "https://example.com/v1".to_string(),

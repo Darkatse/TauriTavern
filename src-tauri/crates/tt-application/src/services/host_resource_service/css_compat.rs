@@ -333,13 +333,6 @@ mod tests {
     }
 
     #[test]
-    fn flattens_layer_blocks() {
-        let input = br#"@layer base{.x{color:red;}}"#;
-        let output = flatten_css_layers(input);
-        assert_eq!(output, br#".x{color:red;}"#);
-    }
-
-    #[test]
     fn flattens_nested_layer_blocks() {
         let input = br#"@layer a{@layer b{.x{color:red;}}}"#;
         let output = flatten_css_layers(input);

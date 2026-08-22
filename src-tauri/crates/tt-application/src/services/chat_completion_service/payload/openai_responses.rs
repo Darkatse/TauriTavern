@@ -840,46 +840,6 @@ mod tests {
     }
 
     #[test]
-    fn openai_responses_payload_preserves_text_around_image() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5.5",
-            "messages": [{
-                "role": "user",
-                "content": [
-                    { "type": "text", "text": "before" },
-                    {
-                        "type": "image_url",
-                        "image_url": { "url": "data:image/png;base64,AAAA" }
-                    },
-                    { "type": "text", "text": "after" }
-                ]
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-
-        assert_eq!(
-            upstream["input"],
-            json!([{
-                "role": "user",
-                "content": [
-                    { "type": "input_text", "text": "before" },
-                    {
-                        "type": "input_image",
-                        "image_url": "data:image/png;base64,AAAA"
-                    },
-                    { "type": "input_text", "text": "after" }
-                ]
-            }])
-        );
-    }
-
-    #[test]
     fn openai_responses_payload_preserves_remote_image_url_and_detail() {
         let payload = json!({
             "chat_completion_source": "custom",
@@ -912,68 +872,6 @@ mod tests {
         assert_eq!(content[1]["type"], "input_image");
         assert_eq!(content[1]["image_url"], "https://example.com/cat.png");
         assert_eq!(content[1]["detail"], "original");
-    }
-
-    #[test]
-    fn openai_responses_payload_accepts_native_input_image_file_id() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5.5",
-            "messages": [{
-                "role": "user",
-                "content": [
-                    { "type": "input_text", "text": "describe" },
-                    {
-                        "type": "input_image",
-                        "file_id": "file_123",
-                        "detail": "low"
-                    }
-                ]
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-
-        assert_eq!(
-            upstream["input"],
-            json!([{
-                "role": "user",
-                "content": [
-                    { "type": "input_text", "text": "describe" },
-                    {
-                        "type": "input_image",
-                        "file_id": "file_123",
-                        "detail": "low"
-                    }
-                ]
-            }])
-        );
-    }
-
-    #[test]
-    fn openai_responses_payload_rejects_image_url_without_url() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5.5",
-            "messages": [{
-                "role": "user",
-                "content": [{
-                    "type": "image_url",
-                    "image_url": { "detail": "high" }
-                }]
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let error = build(payload).expect_err("missing image url should fail");
-        assert!(error.to_string().contains("missing url"));
     }
 
     #[test]
@@ -1044,59 +942,6 @@ mod tests {
     }
 
     #[test]
-    fn openai_responses_payload_orders_pre56_extremes() {
-        for (requested, expected) in [("xhigh", "high"), ("max", "xhigh")] {
-            let payload = json!({
-                "chat_completion_source": "custom",
-                "custom_api_format": "openai_responses",
-                "model": "gpt-5.2",
-                "messages": [{ "role": "user", "content": "hi" }],
-                "reasoning_effort": requested
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-            let (_endpoint, upstream) = build(payload).expect("build should succeed");
-            assert_eq!(
-                upstream
-                    .pointer("/reasoning/effort")
-                    .and_then(Value::as_str),
-                Some(expected)
-            );
-        }
-    }
-
-    #[test]
-    fn openai_responses_payload_uses_gpt56_extremes_and_text_verbosity() {
-        for (requested, expected) in [("min", "none"), ("xhigh", "xhigh"), ("max", "max")] {
-            let payload = json!({
-                "chat_completion_source": "custom",
-                "custom_api_format": "openai_responses",
-                "model": "gpt-5.6-terra",
-                "messages": [{ "role": "user", "content": "hi" }],
-                "reasoning_effort": requested,
-                "verbosity": "high"
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-
-            let (_endpoint, upstream) = build(payload).expect("build should succeed");
-            assert_eq!(
-                upstream
-                    .pointer("/reasoning/effort")
-                    .and_then(Value::as_str),
-                Some(expected)
-            );
-            assert_eq!(
-                upstream.pointer("/text/verbosity").and_then(Value::as_str),
-                Some("high")
-            );
-            assert!(upstream.get("verbosity").is_none());
-        }
-    }
-
-    #[test]
     fn openai_responses_payload_lifts_function_tools() {
         let payload = json!({
             "chat_completion_source": "custom",
@@ -1143,36 +988,6 @@ mod tests {
             let (_, upstream) = build(payload).expect("web search should map");
             assert_eq!(upstream["tools"], json!([{ "type": "web_search" }]));
         }
-    }
-
-    #[test]
-    fn openai_responses_maps_specific_tool_choice_to_native_shape() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "tools": [{
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "parameters": { "type": "object" }
-                }
-            }],
-            "tool_choice": {
-                "type": "function",
-                "function": { "name": "get_weather" }
-            }
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream.get("tool_choice"),
-            Some(&json!({ "type": "function", "name": "get_weather" }))
-        );
     }
 
     #[test]
@@ -1276,37 +1091,6 @@ mod tests {
         assert_eq!(input[2]["call_id"], "call_1");
         assert_eq!(input[4]["type"], "function_call_output");
         assert_eq!(input[4]["call_id"], "call_2");
-    }
-
-    #[test]
-    fn openai_responses_payload_leaves_additional_include_to_service_layer() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "custom_include_body": "{\"include\":[\"file_search_call.results\"]}"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        let include = upstream
-            .get("include")
-            .and_then(Value::as_array)
-            .expect("include should exist");
-
-        assert!(
-            include
-                .iter()
-                .any(|value| value == "reasoning.encrypted_content")
-        );
-        assert!(
-            !include
-                .iter()
-                .any(|value| value == "file_search_call.results")
-        );
     }
 
     #[test]

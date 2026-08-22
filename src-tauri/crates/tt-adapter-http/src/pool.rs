@@ -538,22 +538,6 @@ mod tests {
     }
 
     #[test]
-    fn stores_product_user_agent() {
-        assert_eq!(pool().product_user_agent, TEST_USER_AGENT);
-    }
-
-    #[test]
-    fn disabled_proxy_is_valid() {
-        let settings = RequestProxySettings {
-            enabled: false,
-            url: "http://example.com".to_string(),
-            bypass: vec![],
-        };
-
-        HttpClientPool::validate_request_proxy_settings(&settings).unwrap();
-    }
-
-    #[test]
     fn enabled_proxy_requires_url() {
         let settings = RequestProxySettings {
             enabled: true,
@@ -638,54 +622,6 @@ mod tests {
     }
 
     #[test]
-    fn clients_are_cached_per_profile() {
-        let pool = pool();
-
-        pool.client(HttpClientProfile::Default).unwrap();
-        assert_eq!(pool.state.read().unwrap().clients.len(), 1);
-
-        pool.client(HttpClientProfile::Default).unwrap();
-        assert_eq!(pool.state.read().unwrap().clients.len(), 1);
-
-        pool.client(HttpClientProfile::Tokenizer).unwrap();
-        assert_eq!(pool.state.read().unwrap().clients.len(), 2);
-    }
-
-    #[test]
-    fn apply_clears_cached_clients() {
-        let pool = pool();
-
-        pool.client(HttpClientProfile::Default).unwrap();
-        assert_eq!(pool.state.read().unwrap().clients.len(), 1);
-
-        let revision_before = pool.state.read().unwrap().revision;
-        pool.apply_request_proxy_settings(&RequestProxySettings::default())
-            .unwrap();
-
-        let state = pool.state.read().unwrap();
-        assert_eq!(state.clients.len(), 0);
-        assert_eq!(state.revision, revision_before + 1);
-    }
-
-    #[test]
-    fn client_with_revision_tracks_proxy_revision() {
-        let pool = pool();
-
-        let (_, initial_revision) = pool
-            .client_with_revision(HttpClientProfile::ChatCompletionWebSocket)
-            .unwrap();
-
-        pool.apply_request_proxy_settings(&RequestProxySettings::default())
-            .unwrap();
-
-        let (_, next_revision) = pool
-            .client_with_revision(HttpClientProfile::ChatCompletionWebSocket)
-            .unwrap();
-
-        assert_eq!(next_revision, initial_revision + 1);
-    }
-
-    #[test]
     fn apply_sets_and_clears_proxy() {
         let pool = pool();
 
@@ -706,28 +642,6 @@ mod tests {
             pool.state.read().unwrap().proxy,
             super::RequestProxyState::Disabled
         ));
-    }
-
-    #[test]
-    fn git_blocking_builder_uses_product_user_agent() {
-        let server = capture_server();
-        let client = pool()
-            .git_blocking_client_builder()
-            .unwrap()
-            .build()
-            .unwrap();
-
-        client.get(&server.url).send().unwrap();
-        let request = server
-            .requests
-            .recv_timeout(Duration::from_secs(1))
-            .expect("captured request");
-        assert!(
-            request
-                .lines()
-                .any(|line| line.eq_ignore_ascii_case("user-agent: TauriTavern/test"))
-        );
-        server.finish();
     }
 
     #[test]

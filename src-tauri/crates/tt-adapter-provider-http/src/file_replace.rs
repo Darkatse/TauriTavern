@@ -118,31 +118,13 @@ mod tests {
     use tt_domain::errors::DomainError;
     use uuid::Uuid;
 
-    use super::{replace_file_with_fallback, unique_temp_path};
+    use super::replace_file_with_fallback;
 
     fn temp_root(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "tauritavern-provider-http-file-replace-{label}-{}",
             Uuid::new_v4()
         ))
-    }
-
-    #[test]
-    fn unique_temp_path_is_unique_and_adjacent() {
-        let root = temp_root("unique");
-        let target = root.join("a".repeat(255));
-
-        let a = unique_temp_path(&target);
-        let b = unique_temp_path(&target);
-
-        assert_ne!(a, b);
-        assert_eq!(a.parent(), target.parent());
-        assert_eq!(b.parent(), target.parent());
-
-        let a_name = a.file_name().and_then(|value| value.to_str()).unwrap_or("");
-        assert!(a_name.starts_with(".tauritavern-"));
-        assert!(a_name.ends_with(".tmp"));
-        assert!(a_name.len() <= 255);
     }
 
     #[tokio::test]

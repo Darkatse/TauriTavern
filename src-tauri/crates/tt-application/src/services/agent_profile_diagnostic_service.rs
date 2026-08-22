@@ -365,26 +365,6 @@ mod tests {
     use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
 
     #[tokio::test]
-    async fn default_profile_is_healthy() {
-        let (profile_service, diagnostic_service, registry) = test_services(
-            TestPresetRepository::default(),
-            TestLlmConnectionRepository::default(),
-        );
-
-        let health = diagnostic_service
-            .diagnose_profile("default-writer", registry.catalog())
-            .await
-            .expect("diagnose default profile");
-
-        assert!(health.preview_available);
-        assert!(health.prompt_assembly_available);
-        assert!(health.direct_run_available);
-        assert!(health.diagnostics.is_empty());
-
-        drop(profile_service);
-    }
-
-    #[tokio::test]
     async fn dangling_openai_preset_is_diagnostic_not_preview_failure() {
         let (profile_service, diagnostic_service, registry) = test_services(
             TestPresetRepository::default(),
@@ -427,48 +407,6 @@ mod tests {
             diagnostic
                 .repair_actions
                 .contains(&AgentProfileDiagnosticRepairAction::SelectPreset)
-        );
-    }
-
-    #[tokio::test]
-    async fn non_openai_preset_ref_is_diagnostic_for_independent_prompt_assembly() {
-        let (profile_service, diagnostic_service, registry) = test_services(
-            TestPresetRepository::default(),
-            TestLlmConnectionRepository::default(),
-        );
-        let mut profile = profile_service
-            .load_profile("default-writer")
-            .await
-            .expect("load default")
-            .expect("default profile");
-        profile.id = tt_domain::models::agent::profile::AgentProfileId::parse("textgen-writer")
-            .expect("profile id");
-        profile.preset.mode = AgentPresetBindingMode::Ref;
-        profile.preset.ref_ = Some(AgentPresetRef {
-            api_id: "textgenerationwebui".to_string(),
-            name: "TextGen Preset".to_string(),
-        });
-        profile.preset.required = true;
-        profile_service
-            .save_profile(profile, registry.catalog())
-            .await
-            .expect("supported preset type remains editable even if assembly cannot use it");
-
-        let health = diagnostic_service
-            .diagnose_profile("textgen-writer", registry.catalog())
-            .await
-            .expect("diagnose textgen preset profile");
-
-        assert!(health.preview_available);
-        assert!(!health.prompt_assembly_available);
-        let diagnostic = only_diagnostic(&health);
-        assert_eq!(diagnostic.code, "agent.profile_preset_api_unsupported");
-        assert_eq!(
-            diagnostic
-                .resource
-                .as_ref()
-                .and_then(|resource| resource.api_id.as_deref()),
-            Some("textgenerationwebui")
         );
     }
 

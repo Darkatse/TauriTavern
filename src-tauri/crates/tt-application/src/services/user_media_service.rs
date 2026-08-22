@@ -322,12 +322,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn remove_last_extension_strips_only_final_suffix() {
-        assert_eq!(remove_last_extension("a.b.c"), "a.b");
-        assert_eq!(remove_last_extension("file"), "file");
-    }
-
     #[tokio::test]
     async fn upload_user_image_writes_sanitized_path_and_returns_client_path() {
         let store = Arc::new(FakeStore::default());

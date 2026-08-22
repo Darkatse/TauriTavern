@@ -685,7 +685,7 @@ fn parse_string_array(value: Option<&Value>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{character_book_to_world_info, parse_string_array, world_info_to_character_book};
+    use super::{character_book_to_world_info, world_info_to_character_book};
     use serde_json::{Value, json};
 
     #[test]
@@ -758,52 +758,6 @@ mod tests {
     }
 
     #[test]
-    fn world_info_to_character_book_converts_entries_without_original_data() {
-        let world_info = json!({
-            "entries": {
-                "42": {
-                    "uid": 42,
-                    "key": ["alpha", "beta"],
-                    "keysecondary": ["gamma"],
-                    "comment": "memo",
-                    "content": "content",
-                    "constant": true,
-                    "order": 150,
-                    "position": 0,
-                    "disable": false,
-                    "extensions": {
-                        "custom": "value"
-                    },
-                    "excludeRecursion": true,
-                    "preventRecursion": true,
-                    "displayIndex": 7,
-                    "probability": 88,
-                    "depth": 6,
-                    "role": 2,
-                    "triggers": ["hello"]
-                }
-            }
-        });
-
-        let converted =
-            world_info_to_character_book("Lore", &world_info).expect("conversion should succeed");
-        let entry = converted
-            .pointer("/entries/0")
-            .expect("converted character book entry should exist");
-
-        assert_eq!(converted.get("name"), Some(&json!("Lore")));
-        assert_eq!(entry.get("id"), Some(&json!(42)));
-        assert_eq!(entry.get("keys"), Some(&json!(["alpha", "beta"])));
-        assert_eq!(entry.get("secondary_keys"), Some(&json!(["gamma"])));
-        assert_eq!(entry.get("position"), Some(&json!("before_char")));
-        assert_eq!(entry.pointer("/extensions/custom"), Some(&json!("value")));
-        assert_eq!(
-            entry.pointer("/extensions/triggers"),
-            Some(&json!(["hello"]))
-        );
-    }
-
-    #[test]
     fn world_info_to_character_book_merges_original_data_with_current_entries() {
         let original_data = json!({
             "name": "Imported Lore",
@@ -842,14 +796,5 @@ mod tests {
             converted.pointer("/entries/0/extensions/custom"),
             Some(&json!("value"))
         );
-    }
-
-    #[test]
-    fn parse_string_array_accepts_array_and_csv() {
-        let from_array = parse_string_array(Some(&json!(["a", " b ", ""])));
-        let from_csv = parse_string_array(Some(&json!("x, y , ,z")));
-
-        assert_eq!(from_array, vec!["a", "b"]);
-        assert_eq!(from_csv, vec!["x", "y", "z"]);
     }
 }

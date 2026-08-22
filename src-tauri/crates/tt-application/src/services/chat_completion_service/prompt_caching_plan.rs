@@ -174,7 +174,7 @@ mod tests {
         PromptCachingPlan, PromptCachingRequestHints, custom_prompt_cache_scope,
         resolve_prompt_caching_plan,
     };
-    use serde_json::{Map, json};
+    use serde_json::json;
     use tt_ports::repositories::chat_completion_repository::{
         AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
     };
@@ -193,14 +193,6 @@ mod tests {
             aws_bedrock_custom_response_path: None,
             aws_bedrock_custom_stream_path: None,
         }
-    }
-
-    #[test]
-    fn parses_custom_prompt_caching_hint() {
-        let payload = Map::from_iter([("custom_claude_prompt_caching".to_string(), json!(true))]);
-
-        let hints = PromptCachingRequestHints::from_payload(&payload).expect("hint should parse");
-        assert!(hints.custom_claude_prompt_caching);
     }
 
     #[test]

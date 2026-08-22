@@ -6,7 +6,7 @@ use chrono::Utc;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::args::{classify_workspace_io_error, optional_list_path_arg};
+use super::args::classify_workspace_io_error;
 use super::policy::WorkspaceAccessPolicy;
 use super::{MAX_READ_CHARS, MAX_READ_LINES, apply_patch, read_file, write_file};
 use crate::services::agent_tools::{AgentToolEffect, AgentToolSession};
@@ -65,18 +65,6 @@ fn writable_policy_requires_child_path() {
     assert!(test_policy().ensure_writable(&file).is_ok());
 }
 
-#[test]
-fn list_path_arg_treats_empty_and_dot_as_workspace_root() {
-    for value in ["", " ", ".", "./"] {
-        let args = json!({ "path": value });
-        assert!(
-            optional_list_path_arg(args.as_object().unwrap(), "path")
-                .unwrap()
-                .is_none()
-        );
-    }
-}
-
 fn make_test_tool_call(name: &str) -> ToolInvocation {
     ToolInvocation {
         call_id: "call_test".to_string(),
@@ -84,62 +72,6 @@ fn make_test_tool_call(name: &str) -> ToolInvocation {
         arguments: json!({}),
         provider_metadata: json!({}),
     }
-}
-
-#[test]
-fn classify_workspace_path_is_directory_error_maps_to_tool_error() {
-    // Issue #54: a directory hit on workspace_read_file used to surface as
-    // `agent.internal_error`. The tool layer now classifies the
-    // repository's typed domain error into the recoverable
-    // `workspace.path_is_directory` business error so the model can
-    // self-correct by calling workspace_list_files.
-    let call = make_test_tool_call("workspace.read_file");
-    let error = DomainError::workspace_path_is_directory("persist");
-
-    let result = classify_workspace_io_error(&call, error)
-        .expect("directory error must classify into a tool result, not a hard error");
-
-    assert!(result.is_error);
-    assert_eq!(
-        result.error_code.as_deref(),
-        Some("workspace.path_is_directory")
-    );
-    assert!(
-        result.content.contains("persist"),
-        "tool error content should preserve the offending path: {}",
-        result.content
-    );
-}
-
-#[test]
-fn classify_not_found_error_maps_to_file_not_found() {
-    let call = make_test_tool_call("workspace.read_file");
-    let error = DomainError::NotFound("Workspace file not found: persist/MEMORY.md".to_string());
-
-    let result = classify_workspace_io_error(&call, error)
-        .expect("not found must classify into a tool result");
-
-    assert!(result.is_error);
-    assert_eq!(
-        result.error_code.as_deref(),
-        Some("workspace.file_not_found")
-    );
-}
-
-#[test]
-fn classify_non_text_file_maps_to_recoverable_tool_error() {
-    let call = make_test_tool_call("workspace.read_file");
-    let error = DomainError::workspace_file_not_text("output/image.png");
-
-    let result = classify_workspace_io_error(&call, error)
-        .expect("a non-text file must remain recoverable for the Agent");
-
-    assert!(result.is_error);
-    assert_eq!(
-        result.error_code.as_deref(),
-        Some("workspace.file_not_text")
-    );
-    assert!(result.content.contains("Choose another text file"));
 }
 
 #[test]

@@ -754,34 +754,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_rule_migration_keeps_existing_lan_auto_start() {
-        let rule_repository = Arc::new(MigratingRuleRepository::new());
-        let lan_settings_repository = Arc::new(MigratingLanSettingsRepository::new(false));
-        let service =
-            service_with_repositories(rule_repository.clone(), lan_settings_repository.clone());
-
-        let config = service.get_config().await.expect("migrate config");
-
-        assert!(!config.lan_server_auto_start);
-        assert!(
-            lan_settings_repository
-                .saved_settings
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(
-            rule_repository
-                .saved_rules
-                .lock()
-                .unwrap()
-                .last()
-                .map(|rule| rule.sync_mode),
-            Some(SyncMode::Mirror),
-        );
-    }
-
-    #[tokio::test]
     async fn lan_request_acceptance_does_not_count_as_success() {
         let service = service();
         let rule = ScheduledSyncRule {

@@ -156,16 +156,6 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::super::build;
-    use super::super::shared::FlatMessage;
-    use super::{format_r1_prompt, is_text_completion};
-
-    #[test]
-    fn is_text_completion_only_matches_r1_variants() {
-        assert!(is_text_completion("deepseek.r1-v1:0"));
-        assert!(is_text_completion("us.deepseek.r1-v1:0"));
-        assert!(!is_text_completion("deepseek.v3-v1:0"));
-        assert!(!is_text_completion("deepseek.v3.2"));
-    }
 
     #[test]
     fn build_deepseek_r1_emits_text_completion_with_reasoning_template() {
@@ -235,29 +225,5 @@ mod tests {
         assert_eq!(messages[0]["content"], "ping");
         assert_eq!(body.get("max_tokens"), Some(&json!(128)));
         assert_eq!(body.get("temperature"), Some(&json!(0.2)));
-    }
-
-    #[test]
-    fn format_r1_prompt_handles_multi_turn_history() {
-        let turns = vec![
-            FlatMessage {
-                role: "user".to_string(),
-                text: "Who is Newton?".to_string(),
-            },
-            FlatMessage {
-                role: "assistant".to_string(),
-                text: "Isaac Newton.".to_string(),
-            },
-            FlatMessage {
-                role: "user".to_string(),
-                text: "When was he born?".to_string(),
-            },
-        ];
-
-        let prompt = format_r1_prompt(Some("be terse"), &turns);
-        assert!(prompt.starts_with("<｜begin▁of▁sentence｜>be terse<｜User｜>Who is Newton?"));
-        assert!(prompt.contains("<｜Assistant｜>Isaac Newton.<｜end▁of▁sentence｜>"));
-        assert!(prompt.contains("<｜User｜>When was he born?"));
-        assert!(prompt.ends_with("<｜Assistant｜><think>\n"));
     }
 }

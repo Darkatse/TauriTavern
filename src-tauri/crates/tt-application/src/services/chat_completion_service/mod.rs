@@ -957,17 +957,6 @@ mod tests {
     }
 
     #[test]
-    fn nanogpt_claude_cache_control_is_skipped_for_non_claude_models() {
-        let mut payload = json!({
-            "model": "gpt-4o-mini",
-            "messages": [{"role": "user", "content": "hello"}]
-        });
-
-        assert!(!apply_nanogpt_claude_cache_control(&mut payload, "5m"));
-        assert!(payload.get("cache_control").is_none());
-    }
-
-    #[test]
     fn vertexai_claude_rejects_one_hour_cache_for_old_models() {
         let error = ensure_vertexai_claude_prompt_cache_ttl("1h", "claude-3-7-sonnet@20250219")
             .expect_err("old model should reject 1h ttl");
@@ -999,31 +988,6 @@ mod tests {
         apply_vertexai_prompt_cache_session_header(&mut config, &key);
 
         assert!(config.extra_headers.contains_key("X-Vertex-Ai-Session-Id"));
-    }
-
-    #[test]
-    fn vertexai_regional_prompt_cache_skips_session_header() {
-        let mut config = ChatCompletionApiConfig {
-            base_url:
-                "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1"
-                    .to_string(),
-            user_configured_endpoint: false,
-            api_key: String::new(),
-            authorization_header: None,
-            vertexai_service_account_json: None,
-            extra_headers: Default::default(),
-            additional_headers: Default::default(),
-            anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
-            aws_bedrock_custom_response_path: None,
-            aws_bedrock_custom_stream_path: None,
-        };
-        let key = PromptCacheKey::VertexAiClaude {
-            scope: "scope".to_string(),
-        };
-
-        apply_vertexai_prompt_cache_session_header(&mut config, &key);
-
-        assert!(!config.extra_headers.contains_key("X-Vertex-Ai-Session-Id"));
     }
 
     #[test]

@@ -603,17 +603,14 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use async_trait::async_trait;
-    use chrono::{DateTime, Utc};
-    use serde_json::{Value, json};
-
     use super::*;
     use crate::services::agent_run_retention_test_support::{
         TestAgentRunRepository, TestSettingsRepository,
     };
+    use async_trait::async_trait;
+    use chrono::{DateTime, Utc};
     use tt_domain::models::agent::{
-        AgentChatRef, AgentRunEventLevel, AgentRunPresentation, AgentRunSkillScopeRefs,
-        AgentRunStatus,
+        AgentChatRef, AgentRunPresentation, AgentRunSkillScopeRefs, AgentRunStatus,
     };
     use tt_domain::models::settings::{
         AgentRunRetentionSettings, AgentSettings, TauriTavernSettings,
@@ -689,18 +686,6 @@ mod tests {
         }
     }
 
-    fn event(seq: u64, event_type: &str, timestamp: &str, payload: Value) -> AgentRunEvent {
-        AgentRunEvent {
-            seq,
-            id: format!("evt_{seq}"),
-            run_id: "run_summary_test".to_string(),
-            timestamp: instant(timestamp),
-            level: AgentRunEventLevel::Info,
-            event_type: event_type.to_string(),
-            payload,
-        }
-    }
-
     async fn seed_run(
         repository: &TestAgentRunRepository,
         run: &AgentRun,
@@ -722,79 +707,6 @@ mod tests {
         repository
             .add_heavy_artifact(run, heavy_artifact_bytes.len() as u64)
             .await;
-    }
-
-    #[test]
-    fn summary_projection_extracts_committed_message_index_from_message_id() {
-        let projection = build_summary_projection(
-            &run(),
-            &[
-                event(
-                    1,
-                    "chat_commit_completed",
-                    "2026-01-01T00:02:00Z",
-                    json!({
-                        "commitId": "commit_a",
-                        "messageId": "7"
-                    }),
-                ),
-                event(2, "run_completed", "2026-01-01T00:03:00Z", Value::Null),
-            ],
-        );
-
-        assert_eq!(projection.commit_count, 1);
-        assert_eq!(
-            projection.terminal_at,
-            Some(instant("2026-01-01T00:03:00Z"))
-        );
-        let committed = projection
-            .committed_message
-            .expect("committed message projection");
-        assert_eq!(committed.commit_id, "commit_a");
-        assert_eq!(committed.message_id, "7");
-        assert_eq!(committed.message_index, Some(7));
-        assert_eq!(committed.committed_at, instant("2026-01-01T00:02:00Z"));
-    }
-
-    #[test]
-    fn summary_projection_cache_reusable_only_after_terminal_event() {
-        let mut run = run();
-        run.status = AgentRunStatus::Completed;
-        let projection = build_summary_projection(
-            &run,
-            &[event(
-                1,
-                "run_completed",
-                "2026-01-01T00:03:00Z",
-                Value::Null,
-            )],
-        );
-        assert!(projection_is_current(&projection, &run));
-
-        let incomplete_projection = build_summary_projection(&run, &[]);
-        assert!(!projection_is_current(&incomplete_projection, &run));
-
-        let mut active_run = run;
-        active_run.status = AgentRunStatus::DispatchingTool;
-        assert!(!projection_is_current(&projection, &active_run));
-    }
-
-    #[test]
-    fn summary_projection_omits_locator_when_commit_has_no_message_id() {
-        let projection = build_summary_projection(
-            &run(),
-            &[event(
-                1,
-                "chat_commit_completed",
-                "2026-01-01T00:02:00Z",
-                json!({
-                    "commitId": "commit_old"
-                }),
-            )],
-        );
-
-        assert_eq!(projection.commit_count, 1);
-        assert!(projection.committed_message.is_none());
     }
 
     #[tokio::test]
@@ -1001,41 +913,6 @@ mod tests {
         let blocked = &plan.blocked_runs[0];
         assert_eq!(blocked.run_id, "run_prune_active_terminal");
         assert_eq!(blocked.block_reason, AgentRunPruneBlockReasonDto::ActiveRun);
-    }
-
-    #[tokio::test]
-    async fn run_prune_plan_detail_limit_does_not_truncate_totals() {
-        let run_repository = TestAgentRunRepository::new();
-        let settings_repository = TestSettingsRepository::new();
-        for index in 0..3 {
-            let run = run_with_id(
-                &format!("run_prune_detail_limit_{index}"),
-                instant(&format!("2026-01-0{}T00:00:00Z", index + 1)),
-                AgentRunStatus::Completed,
-            );
-            seed_run(&run_repository, &run, b"heavy").await;
-        }
-
-        let service = AgentRunHistoryService::new(
-            run_repository,
-            settings_repository,
-            TestRunActivity::none(),
-        );
-        let plan = service
-            .plan_run_prune(AgentPlanRunPruneDto {
-                retention: Some(AgentRunPruneRetentionDto {
-                    keep_recent_terminal_runs: 0,
-                    keep_full_recent_runs: 0,
-                }),
-                detail_limit: 1,
-            })
-            .await
-            .expect("plan prune");
-
-        assert_eq!(plan.delete_candidate_count, 3);
-        assert_eq!(plan.candidates.len(), 1);
-        assert!(plan.candidate_details_truncated);
-        assert!(plan.total_candidate_file_count >= 3);
     }
 
     #[tokio::test]

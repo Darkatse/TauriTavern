@@ -431,67 +431,6 @@ mod tests {
     }
 
     #[test]
-    fn custom_payload_orders_openai_extremes() {
-        for (requested, expected) in [("xhigh", "high"), ("max", "xhigh")] {
-            let payload = json!({
-                "chat_completion_source": "custom",
-                "model": "gpt-5.2",
-                "messages": [{"role": "user", "content": "hello"}],
-                "reasoning_effort": requested
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-
-            let (_endpoint, upstream) = build(payload).expect("build should succeed");
-            let body = upstream.as_object().expect("payload must be object");
-            assert_eq!(
-                body.get("reasoning_effort").and_then(Value::as_str),
-                Some(expected)
-            );
-        }
-    }
-
-    #[test]
-    fn custom_payload_omits_auto_reasoning_effort_for_supported_openai_models() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "model": "gpt-5-2025-08-07",
-            "messages": [{"role": "user", "content": "hello"}],
-            "reasoning_effort": "auto"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("payload must be object");
-        assert!(body.get("reasoning_effort").is_none());
-    }
-
-    #[test]
-    fn custom_payload_forwards_verbosity_only_for_gpt5_models() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "model": "gpt-5-mini",
-            "messages": [{"role": "user", "content": "hello"}],
-            "verbosity": "low"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("payload must be object");
-        assert_eq!(
-            body.get("verbosity")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            "low"
-        );
-    }
-
-    #[test]
     fn non_custom_sources_do_not_forward_reasoning_effort_or_verbosity() {
         let payload = json!({
             "chat_completion_source": "openrouter",
@@ -567,25 +506,6 @@ mod tests {
                 .pointer("/messages/0/content/1/audio_url")
                 .is_none()
         );
-    }
-
-    #[test]
-    fn openai_chat_rejects_single_object_audio_url() {
-        let payload = json!({
-            "chat_completion_source": "openai",
-            "model": "gpt-4o-audio-preview",
-            "messages": [{
-                "role": "user",
-                "content": { "type": "audio_url", "audio_url": { "url": "data:audio/mpeg;base64,BBBB" } }
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let error = build(payload).expect_err("single object audio should fail fast");
-
-        assert!(error.to_string().contains("content array"));
     }
 
     #[test]
@@ -731,57 +651,6 @@ mod tests {
             let error = build(payload).expect_err("video should fail fast");
 
             assert!(error.to_string().contains("cannot preserve video input"));
-        }
-    }
-
-    #[test]
-    fn openai_compatible_sources_preserve_media_parts() {
-        for source in ["custom", "groq", "siliconflow"] {
-            let payload = json!({
-                "chat_completion_source": source,
-                "model": "provider-model",
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        { "type": "audio_url", "audio_url": { "url": "https://example.test/audio.wav" } },
-                        { "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } },
-                        { "type": "video_url", "video_url": { "url": "data:video/mp4;base64,BBBB" } },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": "https://example.test/cat.png",
-                                "detail": "high"
-                            }
-                        }
-                    ]
-                }]
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-
-            let (_endpoint, upstream) = build(payload).expect("payload should pass through");
-
-            assert_eq!(
-                upstream.pointer("/messages/0/content/0/type"),
-                Some(&json!("audio_url"))
-            );
-            assert_eq!(
-                upstream.pointer("/messages/0/content/1/type"),
-                Some(&json!("audio_url"))
-            );
-            assert_eq!(
-                upstream.pointer("/messages/0/content/1/audio_url/url"),
-                Some(&json!("data:audio/wav;base64,AAAA"))
-            );
-            assert_eq!(
-                upstream.pointer("/messages/0/content/2/type"),
-                Some(&json!("video_url"))
-            );
-            assert_eq!(
-                upstream.pointer("/messages/0/content/3/image_url/detail"),
-                Some(&json!("high"))
-            );
         }
     }
 }

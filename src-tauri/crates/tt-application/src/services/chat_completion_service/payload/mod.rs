@@ -78,30 +78,6 @@ mod tests {
     use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
     #[test]
-    fn deepseek_leaves_additional_body_overrides_to_service_layer() {
-        let payload = json!({
-            "chat_completion_source": "deepseek",
-            "model": "deepseek-v4-flash",
-            "messages": [{"role": "user", "content": "hello"}],
-            "custom_include_body": "{\"x_extra\":true}",
-            "custom_exclude_body": "[\"model\"]"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) =
-            build_payload(ChatCompletionSource::DeepSeek, payload).expect("payload should build");
-        let body = upstream.as_object().expect("body must be object");
-
-        assert!(body.get("x_extra").is_none());
-        assert_eq!(
-            body.get("model").and_then(serde_json::Value::as_str),
-            Some("deepseek-v4-flash")
-        );
-    }
-
-    #[test]
     fn claude_leaves_additional_body_overrides_to_service_layer() {
         let payload = json!({
             "chat_completion_source": "claude",

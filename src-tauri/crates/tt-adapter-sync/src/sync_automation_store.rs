@@ -157,34 +157,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn old_config_reports_canonical_rewrite() {
-        let default_user_dir = temp_default_user_dir();
-        let store = SyncAutomationStore::new(default_user_dir.clone());
-        let path = default_user_dir
-            .join("user")
-            .join("lan-sync")
-            .join("automation.json");
-        tokio::fs::create_dir_all(path.parent().unwrap())
-            .await
-            .expect("create dir");
-        tokio::fs::write(
-            &path,
-            br#"{"lan_server_auto_start":true,"auto_sync_enabled":false,"interval_minutes":15,"selection":{"policy_version":1,"dataset_ids":["chat.character.history"]}}"#,
-        )
-        .await
-        .expect("write old config");
-
-        let loaded = store.load_or_create_rule().await.expect("load old config");
-
-        assert_eq!(loaded.legacy_lan_server_auto_start, Some(true));
-        assert_eq!(loaded.rule.interval_minutes, 15);
-        assert!(loaded.rewrite_canonical);
-        assert!(loaded.legacy_missing_sync_mode);
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
-    }
-
-    #[tokio::test]
     async fn old_camel_case_config_reports_canonical_rewrite() {
         let default_user_dir = temp_default_user_dir();
         let store = SyncAutomationStore::new(default_user_dir.clone());

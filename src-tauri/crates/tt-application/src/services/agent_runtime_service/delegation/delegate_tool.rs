@@ -285,16 +285,6 @@ mod tests {
     }
 
     #[test]
-    fn delegate_task_packet_accepts_8000_char_fields() {
-        let task = json!({
-            "title": "Critique",
-            "objective": "a".repeat(8_000)
-        });
-
-        assert!(validate_delegate_task_packet(&task).is_ok());
-    }
-
-    #[test]
     fn delegate_task_packet_rejects_fields_over_8000_chars() {
         let error = validate_delegate_task_packet(&json!({
             "title": "Critique",

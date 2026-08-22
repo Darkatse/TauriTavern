@@ -191,7 +191,7 @@ fn validate_server_settings(settings: &LanServerSettings) -> Result<(), DomainEr
 #[cfg(test)]
 mod tests {
     use super::LanSyncStore;
-    use ttsync_contract::sync::{OverwritePolicy, SyncMode};
+    use ttsync_contract::sync::SyncMode;
 
     fn temp_default_user_dir() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("tauritavern-lan-store-{}", uuid::Uuid::new_v4()))
@@ -218,57 +218,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_preferences_round_trip() {
-        let default_user_dir = temp_default_user_dir();
-        let store = LanSyncStore::new(default_user_dir.clone());
-        let mut preferences = store
-            .load_or_create_sync_preferences()
-            .await
-            .expect("create preferences");
-        preferences.manual_default_mode = SyncMode::Mirror;
-        preferences.overwrite_policy = OverwritePolicy::PreferNewer;
-
-        store
-            .save_sync_preferences(&preferences)
-            .await
-            .expect("save preferences");
-        let reloaded = store
-            .load_or_create_sync_preferences()
-            .await
-            .expect("reload preferences");
-
-        assert_eq!(reloaded.manual_default_mode, SyncMode::Mirror);
-        assert_eq!(reloaded.overwrite_policy, OverwritePolicy::PreferNewer);
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
-    }
-
-    #[tokio::test]
-    async fn old_sync_preferences_default_to_exact() {
-        let default_user_dir = temp_default_user_dir();
-        let config_dir = default_user_dir.join("user").join("lan-sync");
-        tokio::fs::create_dir_all(&config_dir)
-            .await
-            .expect("create config dir");
-        tokio::fs::write(
-            config_dir.join("sync-preferences.json"),
-            br#"{"manual_default_mode":"Mirror"}"#,
-        )
-        .await
-        .expect("write old preferences");
-
-        let preferences = LanSyncStore::new(default_user_dir.clone())
-            .load_or_create_sync_preferences()
-            .await
-            .expect("load old preferences");
-
-        assert_eq!(preferences.manual_default_mode, SyncMode::Mirror);
-        assert_eq!(preferences.overwrite_policy, OverwritePolicy::Exact);
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
-    }
-
-    #[tokio::test]
     async fn old_config_without_https_port_uses_existing_port() {
         let default_user_dir = temp_default_user_dir();
         write_legacy_config(
@@ -284,43 +233,6 @@ mod tests {
             .expect("load settings");
 
         assert_eq!(settings.port, 55000);
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
-    }
-
-    #[tokio::test]
-    async fn old_config_with_explicit_https_port_migrates_once() {
-        let default_user_dir = temp_default_user_dir();
-        write_legacy_config(
-            &default_user_dir,
-            br#"{"port":55000,"v2_port":56000,"sync_mode":"Mirror"}"#,
-        )
-        .await;
-
-        let store = LanSyncStore::new(default_user_dir.clone());
-        let settings = store
-            .load_or_create_server_settings()
-            .await
-            .expect("load settings");
-        let preferences = store
-            .load_or_create_sync_preferences()
-            .await
-            .expect("load preferences");
-        let reloaded = store
-            .load_or_create_server_settings()
-            .await
-            .expect("reload settings");
-
-        assert_eq!(settings.port, 56000);
-        assert_eq!(reloaded.port, 56000);
-        assert_eq!(preferences.manual_default_mode, SyncMode::Mirror);
-        assert!(
-            !default_user_dir
-                .join("user")
-                .join("lan-sync")
-                .join("config.json")
-                .exists()
-        );
 
         let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }

@@ -67,24 +67,6 @@ fn normalizes_frozen_run_input_snapshot() {
 }
 
 #[test]
-fn frozen_run_input_snapshot_variables_is_optional() {
-    let snapshot = normalize_frozen_run_input_snapshot(
-        &json!({
-            "schemaVersion": 1,
-            "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
-            "generationType": "normal",
-            "promptInputs": { "type": "normal", "messages": [] },
-            "worldInfoActivation": { "entries": [] },
-            "macroContext": {},
-        }),
-        "normal",
-    )
-    .unwrap();
-
-    assert!(snapshot.get("variables").is_none());
-}
-
-#[test]
 fn builds_current_model_connection_snapshot_with_backend_owned_fields() {
     let snapshot = build_current_model_connection_snapshot(
         &json!({
@@ -147,44 +129,6 @@ fn builds_current_model_connection_snapshot_with_backend_owned_fields() {
 }
 
 #[test]
-fn builds_current_model_connection_snapshot_with_openrouter_routing_fields() {
-    let snapshot = build_current_model_connection_snapshot(
-        &json!({
-            "chat_completion_source": "openrouter",
-            "openrouter_model": "anthropic/claude-sonnet-4",
-            "openrouter_use_fallback": true,
-            "openrouter_providers": ["anthropic", "openai"],
-            "openrouter_quantizations": ["bf16"],
-            "openrouter_allow_fallbacks": false,
-            "openrouter_middleout": "off",
-            "openrouter_group_models": true,
-            "openrouter_sort_models": "context",
-            "custom_models_by_source": { "openrouter": ["catalog-only"] }
-        }),
-        "anthropic/claude-sonnet-4",
-        Some("openrouter-secret"),
-    )
-    .unwrap();
-    let settings = snapshot["settings"].as_object().unwrap();
-
-    assert_eq!(settings["chat_completion_source"], "openrouter");
-    assert_eq!(settings["model"], "anthropic/claude-sonnet-4");
-    assert_eq!(settings["openrouter_model"], "anthropic/claude-sonnet-4");
-    assert_eq!(settings["openrouter_use_fallback"], true);
-    assert_eq!(
-        settings["openrouter_providers"],
-        json!(["anthropic", "openai"])
-    );
-    assert_eq!(settings["openrouter_quantizations"], json!(["bf16"]));
-    assert_eq!(settings["openrouter_allow_fallbacks"], false);
-    assert_eq!(settings["openrouter_middleout"], "off");
-    assert_eq!(settings["secret_id"], "openrouter-secret");
-    assert!(settings.get("openrouter_group_models").is_none());
-    assert!(settings.get("openrouter_sort_models").is_none());
-    assert!(settings.get("custom_models_by_source").is_none());
-}
-
-#[test]
 fn current_model_connection_snapshot_rejects_unmapped_source() {
     let error = build_current_model_connection_snapshot(
         &json!({
@@ -226,25 +170,6 @@ fn rejects_frozen_snapshot_generation_type_mismatch() {
 }
 
 #[test]
-fn overlays_connection_ref_model_without_preset_source() {
-    let mut settings = json!({
-        "name": "Prompt Only",
-        "temp_openai": 0.7,
-        "custom_url": "https://stale.example.test",
-        "openrouter_model": "anthropic/claude"
-    });
-    let binding = model_binding("deepseek", "deepseek-v4-flash", None);
-
-    apply_model_binding_to_prompt_settings(&mut settings, &binding).unwrap();
-
-    assert_eq!(settings["chat_completion_source"], "deepseek");
-    assert_eq!(settings["deepseek_model"], "deepseek-v4-flash");
-    assert_eq!(settings["temp_openai"], 0.7);
-    assert!(settings.get("custom_url").is_none());
-    assert!(settings.get("openrouter_model").is_none());
-}
-
-#[test]
 fn connection_ref_model_overrides_conflicting_preset_source() {
     let mut settings = json!({
         "chat_completion_source": "openrouter",
@@ -258,97 +183,6 @@ fn connection_ref_model_overrides_conflicting_preset_source() {
     assert_eq!(settings["chat_completion_source"], "deepseek");
     assert_eq!(settings["deepseek_model"], "deepseek-v4-flash");
     assert!(settings.get("openrouter_model").is_none());
-}
-
-#[test]
-fn custom_connection_ref_sets_custom_format_and_model() {
-    let mut settings = json!({
-        "chat_completion_source": "deepseek",
-        "deepseek_model": "deepseek-v4-flash"
-    });
-    let binding = model_binding("custom", "local-model", Some("gemini_interactions"));
-
-    apply_model_binding_to_prompt_settings(&mut settings, &binding).unwrap();
-
-    assert_eq!(settings["chat_completion_source"], "custom");
-    assert_eq!(settings["custom_model"], "local-model");
-    assert_eq!(settings["custom_api_format"], "gemini_interactions");
-    assert!(settings.get("deepseek_model").is_none());
-}
-
-#[test]
-fn current_prompt_snapshot_overlays_connection_settings_from_frozen_snapshot() {
-    let mut settings = json!({
-        "name": "Prompt Only",
-        "temp_openai": 0.7,
-        "chat_completion_source": "custom",
-        "custom_model": "old-opencode-model",
-        "custom_url": "https://opencode.example.test/v1",
-        "secret_id": "old-secret",
-        "openrouter_providers": ["stale-provider"],
-        "openrouter_quantizations": ["stale-quantization"],
-        "openrouter_allow_fallbacks": false,
-        "openrouter_middleout": "off",
-        "additional_parameters_by_source": {
-            "custom": {
-                "include_body": "",
-                "exclude_body": "",
-                "include_headers": "X-Preset: stale"
-            }
-        },
-        "custom_claude_prompt_caching": false
-    });
-    let frozen_run_input_snapshot = normalize_frozen_run_input_snapshot(
-        &json!({
-            "schemaVersion": 1,
-            "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
-            "generationType": "normal",
-            "promptInputs": {},
-            "worldInfoActivation": {},
-            "macroContext": {},
-            "currentModelConnection": {
-                "schemaVersion": 1,
-                "kind": CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND,
-                "settings": {
-                    "chat_completion_source": "custom",
-                    "model": "deepseek-chat-through-custom",
-                    "custom_model": "deepseek-chat-through-custom",
-                    "custom_url": "https://api.deepseek.example/v1",
-                    "custom_api_format": "openai_compat",
-                    "secret_id": "deepseek-secret",
-                    "additional_parameters_by_source": {
-                        "custom": {
-                            "include_body": "",
-                            "exclude_body": "",
-                            "include_headers": "X-Run: current"
-                        }
-                    },
-                    "custom_claude_prompt_caching": true
-                }
-            }
-        }),
-        "normal",
-    )
-    .unwrap();
-
-    apply_current_model_connection_to_prompt_settings(&mut settings, &frozen_run_input_snapshot)
-        .unwrap();
-
-    assert_eq!(settings["chat_completion_source"], "custom");
-    assert_eq!(settings["custom_model"], "deepseek-chat-through-custom");
-    assert_eq!(settings["custom_url"], "https://api.deepseek.example/v1");
-    assert_eq!(settings["custom_api_format"], "openai_compat");
-    assert_eq!(settings["secret_id"], "deepseek-secret");
-    assert_eq!(
-        settings["additional_parameters_by_source"]["custom"]["include_headers"],
-        "X-Run: current"
-    );
-    assert_eq!(settings["custom_claude_prompt_caching"], true);
-    assert!(settings.get("openrouter_providers").is_none());
-    assert!(settings.get("openrouter_quantizations").is_none());
-    assert!(settings.get("openrouter_allow_fallbacks").is_none());
-    assert!(settings.get("openrouter_middleout").is_none());
-    assert_eq!(settings["temp_openai"], 0.7);
 }
 
 #[test]

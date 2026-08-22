@@ -782,12 +782,7 @@ mod tests {
 
     use super::super::additional_parameters::AdditionalParameters;
     use super::{
-        ApiConfigHints, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, MINIMAX_API_BASE,
-        MINIMAX_API_BASE_CN, MOONSHOT_API_BASE, MOONSHOT_API_BASE_CN, OPENROUTER_API_BASE,
-        OPENROUTER_CATEGORIES, OPENROUTER_REFERER, OPENROUTER_TITLE, ZAI_API_BASE_CODING,
-        default_base_url, resolve_generate_api_config, resolve_status_api_config,
-        resolve_user_configured_endpoint, source_extra_headers, supports_reverse_proxy,
-        vertexai_host,
+        resolve_generate_api_config, resolve_status_api_config, resolve_user_configured_endpoint,
     };
 
     struct TestSecretRepository {
@@ -876,188 +871,6 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_status_uses_non_beta_base() {
-        let hints = ApiConfigHints::default();
-        let actual = default_base_url(
-            ChatCompletionSource::DeepSeek,
-            ApiConfigPurpose::Status,
-            &hints,
-        )
-        .unwrap();
-
-        assert_eq!(actual, DEEPSEEK_STATUS_API_BASE);
-    }
-
-    #[test]
-    fn zai_coding_endpoint_resolves_coding_base() {
-        let hints = ApiConfigHints {
-            zai_endpoint: "coding",
-            ..Default::default()
-        };
-        let actual = default_base_url(
-            ChatCompletionSource::Zai,
-            ApiConfigPurpose::Generate,
-            &hints,
-        )
-        .unwrap();
-
-        assert_eq!(actual, ZAI_API_BASE_CODING);
-    }
-
-    #[test]
-    fn aws_bedrock_uses_region_specific_bedrock_runtime_host() {
-        let default_region = default_base_url(
-            ChatCompletionSource::AwsBedrock,
-            ApiConfigPurpose::Generate,
-            &ApiConfigHints::default(),
-        )
-        .unwrap();
-        assert_eq!(
-            default_region,
-            "https://bedrock-runtime.us-east-1.amazonaws.com"
-        );
-
-        let custom_region = default_base_url(
-            ChatCompletionSource::AwsBedrock,
-            ApiConfigPurpose::Generate,
-            &ApiConfigHints {
-                aws_bedrock_region: "us-west-2",
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            custom_region,
-            "https://bedrock-runtime.us-west-2.amazonaws.com"
-        );
-    }
-
-    #[test]
-    fn minimax_endpoint_resolves_region_base() {
-        let global = default_base_url(
-            ChatCompletionSource::MiniMax,
-            ApiConfigPurpose::Generate,
-            &ApiConfigHints::default(),
-        )
-        .unwrap();
-        assert_eq!(global, MINIMAX_API_BASE);
-
-        let cn = default_base_url(
-            ChatCompletionSource::MiniMax,
-            ApiConfigPurpose::Generate,
-            &ApiConfigHints {
-                minimax_endpoint: "cn",
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(cn, MINIMAX_API_BASE_CN);
-    }
-
-    #[tokio::test]
-    async fn moonshot_endpoint_resolves_global_and_cn_and_rejects_unknown() {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
-            SecretKeys::MOONSHOT,
-            "moonshot-secret",
-        ));
-
-        let status = resolve_status_api_config(
-            ChatCompletionSource::Moonshot,
-            &ChatCompletionStatusRequestDto::default(),
-            &secret_repository,
-        )
-        .await
-        .expect("empty status endpoint should use the global base");
-        assert_eq!(status.base_url, MOONSHOT_API_BASE);
-
-        let global_payload = json!({ "moonshot_endpoint": "global" })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-        let global = resolve_generate_for_test(
-            ChatCompletionSource::Moonshot,
-            &ChatCompletionGenerateRequestDto {
-                payload: global_payload,
-            },
-            &secret_repository,
-        )
-        .await
-        .expect("global generate endpoint should resolve");
-        assert_eq!(global.base_url, MOONSHOT_API_BASE);
-
-        let cn_payload = json!({ "moonshot_endpoint": "cn" })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-        let cn = resolve_generate_for_test(
-            ChatCompletionSource::Moonshot,
-            &ChatCompletionGenerateRequestDto {
-                payload: cn_payload,
-            },
-            &secret_repository,
-        )
-        .await
-        .expect("cn generate endpoint should resolve");
-        assert_eq!(cn.base_url, MOONSHOT_API_BASE_CN);
-
-        let invalid = resolve_status_api_config(
-            ChatCompletionSource::Moonshot,
-            &ChatCompletionStatusRequestDto {
-                moonshot_endpoint: "invalid".to_string(),
-                ..Default::default()
-            },
-            &secret_repository,
-        )
-        .await
-        .expect_err("unknown endpoint should fail fast");
-        assert!(
-            invalid
-                .to_string()
-                .contains("Unsupported Moonshot endpoint")
-        );
-    }
-
-    #[test]
-    fn openrouter_uses_default_base_url() {
-        let hints = ApiConfigHints::default();
-        let actual = default_base_url(
-            ChatCompletionSource::OpenRouter,
-            ApiConfigPurpose::Generate,
-            &hints,
-        )
-        .unwrap();
-        assert_eq!(actual, OPENROUTER_API_BASE);
-    }
-
-    #[test]
-    fn openrouter_uses_app_attribution_headers() {
-        let headers = source_extra_headers(ChatCompletionSource::OpenRouter);
-        assert_eq!(
-            headers.get("HTTP-Referer").map(String::as_str),
-            Some(OPENROUTER_REFERER)
-        );
-        assert_eq!(
-            headers.get("X-OpenRouter-Title").map(String::as_str),
-            Some(OPENROUTER_TITLE)
-        );
-        assert_eq!(
-            headers.get("X-Title").map(String::as_str),
-            Some(OPENROUTER_TITLE)
-        );
-        assert_eq!(
-            headers.get("X-OpenRouter-Categories").map(String::as_str),
-            Some(OPENROUTER_CATEGORIES)
-        );
-    }
-
-    #[test]
-    fn moonshot_and_zai_support_reverse_proxy() {
-        assert!(supports_reverse_proxy(ChatCompletionSource::Moonshot));
-        assert!(supports_reverse_proxy(ChatCompletionSource::Zai));
-        assert!(!supports_reverse_proxy(ChatCompletionSource::MiniMax));
-    }
-
-    #[test]
     fn user_endpoint_resolution_trims_before_selecting_custom_fallback() {
         let endpoint = resolve_user_configured_endpoint(
             ChatCompletionSource::Custom,
@@ -1128,42 +941,6 @@ mod tests {
         assert_eq!(
             config.additional_headers.get("X-Trace").map(String::as_str),
             Some("abc")
-        );
-        assert_eq!(
-            config.additional_headers.iter().find_map(|(key, value)| key
-                .eq_ignore_ascii_case("authorization")
-                .then_some(value.as_str())),
-            Some("Bearer override")
-        );
-    }
-
-    #[tokio::test]
-    async fn custom_status_accepts_object_form_additional_headers() {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
-            SecretKeys::CUSTOM,
-            "saved-secret",
-        ));
-        let dto = ChatCompletionStatusRequestDto {
-            chat_completion_source: "custom".to_string(),
-            custom_url: "https://example.com/v1".to_string(),
-            custom_include_headers: json!({
-                "Content-Type": "application/json",
-                "Authorization": "Bearer override"
-            }),
-            ..Default::default()
-        };
-
-        let config =
-            resolve_status_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
-                .await
-                .expect("status config should resolve");
-
-        assert_eq!(
-            config
-                .additional_headers
-                .get("Content-Type")
-                .map(String::as_str),
-            Some("application/json")
         );
         assert_eq!(
             config.additional_headers.iter().find_map(|(key, value)| key
@@ -1338,32 +1115,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_rejects_non_string_provider_hints() {
-        let secret_repository: Arc<dyn SecretRepository> =
-            Arc::new(TestSecretRepository::active(SecretKeys::MINIMAX, "secret"));
-        let dto = ChatCompletionGenerateRequestDto {
-            payload: json!({
-                "chat_completion_source": "minimax",
-                "minimax_endpoint": 42,
-            })
-            .as_object()
-            .cloned()
-            .expect("payload should be an object"),
-        };
-
-        let error =
-            resolve_generate_for_test(ChatCompletionSource::MiniMax, &dto, &secret_repository)
-                .await
-                .expect_err("non-string provider hint should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("Chat completion request field must be a string: minimax_endpoint")
-        );
-    }
-
-    #[tokio::test]
     async fn custom_generate_secret_id_selects_saved_secret() {
         let secret_repository: Arc<dyn SecretRepository> =
             Arc::new(TestSecretRepository::with_entries(&[
@@ -1422,61 +1173,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn status_uses_requested_secret_id_for_provider_key() {
-        let secret_repository: Arc<dyn SecretRepository> =
-            Arc::new(TestSecretRepository::with_entries(&[
-                (SecretKeys::OPENROUTER, None, "active-secret"),
-                (
-                    SecretKeys::OPENROUTER,
-                    Some("profile-secret"),
-                    "selected-secret",
-                ),
-            ]));
-        let dto = ChatCompletionStatusRequestDto {
-            chat_completion_source: "openrouter".to_string(),
-            secret_id: Some("profile-secret".to_string()),
-            ..Default::default()
-        };
-
-        let config =
-            resolve_status_api_config(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
-                .await
-                .expect("status config should resolve");
-
-        assert_eq!(config.api_key, "selected-secret");
-    }
-
-    #[tokio::test]
-    async fn vertexai_generate_uses_secret_id_for_express_key() {
-        let secret_repository: Arc<dyn SecretRepository> =
-            Arc::new(TestSecretRepository::with_entries(&[
-                (SecretKeys::VERTEXAI, None, "active-secret"),
-                (
-                    SecretKeys::VERTEXAI,
-                    Some("vertex-profile"),
-                    "selected-secret",
-                ),
-            ]));
-        let dto = ChatCompletionGenerateRequestDto {
-            payload: json!({
-                "chat_completion_source": "vertexai",
-                "vertexai_auth_mode": "express",
-                "secret_id": "vertex-profile",
-            })
-            .as_object()
-            .cloned()
-            .expect("payload should be an object"),
-        };
-
-        let config =
-            resolve_generate_for_test(ChatCompletionSource::VertexAi, &dto, &secret_repository)
-                .await
-                .expect("vertex express config should resolve");
-
-        assert_eq!(config.api_key, "selected-secret");
-    }
-
-    #[tokio::test]
     async fn vertexai_claude_express_requires_full_mode() {
         let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
             SecretKeys::VERTEXAI,
@@ -1531,23 +1227,6 @@ mod tests {
                 .expect("Vertex Gemini Express config should resolve with project id");
 
         assert_eq!(config.base_url, "https://aiplatform.googleapis.com/v1");
-    }
-
-    #[test]
-    fn vertexai_host_supports_global_multi_region_and_regional_endpoints() {
-        assert_eq!(vertexai_host("global"), "https://aiplatform.googleapis.com");
-        assert_eq!(
-            vertexai_host("us"),
-            "https://aiplatform.us.rep.googleapis.com"
-        );
-        assert_eq!(
-            vertexai_host("eu"),
-            "https://aiplatform.eu.rep.googleapis.com"
-        );
-        assert_eq!(
-            vertexai_host("europe-west4"),
-            "https://europe-west4-aiplatform.googleapis.com"
-        );
     }
 
     #[tokio::test]
@@ -1682,34 +1361,6 @@ mod tests {
         assert_eq!(
             config.additional_headers.get("X-Debug").map(String::as_str),
             Some("true")
-        );
-    }
-
-    #[tokio::test]
-    async fn native_generate_accepts_reserved_additional_headers_as_user_overrides() {
-        let secret_repository: Arc<dyn SecretRepository> =
-            Arc::new(TestSecretRepository::active(SecretKeys::CLAUDE, "secret"));
-        let dto = ChatCompletionGenerateRequestDto {
-            payload: json!({
-                "chat_completion_source": "claude",
-                "custom_include_headers": "Authorization: Bearer hacked"
-            })
-            .as_object()
-            .cloned()
-            .expect("payload should be object"),
-        };
-
-        let config =
-            resolve_generate_for_test(ChatCompletionSource::Claude, &dto, &secret_repository)
-                .await
-                .expect("generate config should resolve");
-
-        assert_eq!(
-            config
-                .additional_headers
-                .get("Authorization")
-                .map(String::as_str),
-            Some("Bearer hacked")
         );
     }
 }

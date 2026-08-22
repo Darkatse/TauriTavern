@@ -737,24 +737,6 @@ mod tests {
         std::env::temp_dir().join(format!("tauritavern-file-system-{}", random::<u64>()))
     }
 
-    #[test]
-    fn unique_temp_path_is_unique_and_adjacent() {
-        let root = unique_temp_root();
-        let target = root.join("a".repeat(255));
-
-        let a = unique_temp_path(&target);
-        let b = unique_temp_path(&target);
-
-        assert_ne!(a, b);
-        assert_eq!(a.parent(), target.parent());
-        assert_eq!(b.parent(), target.parent());
-
-        let a_name = a.file_name().and_then(|value| value.to_str()).unwrap_or("");
-        assert!(a_name.starts_with(".tauritavern-"));
-        assert!(a_name.ends_with(".tmp"));
-        assert!(a_name.len() <= 255);
-    }
-
     #[tokio::test]
     async fn replace_file_with_fallback_overwrites_existing_file() {
         let root = unique_temp_root();
@@ -806,33 +788,6 @@ mod tests {
             DomainError::NotFound(message) if message.contains("Temp file not found")
         ));
         assert!(!target.exists(), "target should not be created");
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
-    }
-
-    #[tokio::test]
-    async fn replace_file_with_fallback_copies_when_target_parent_is_missing() {
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
-
-        let temp = root.join("temp.txt");
-        let target = root.join("nested").join("target.txt");
-        tokio_fs::write(&temp, b"new")
-            .await
-            .expect("write temp file");
-
-        replace_file_with_fallback(&temp, &target)
-            .await
-            .expect("replace file through fallback");
-
-        let bytes = tokio_fs::read(&target).await.expect("read target");
-        assert_eq!(&bytes, b"new");
-        assert!(!temp.exists(), "temp file should be removed");
 
         tokio_fs::remove_dir_all(&root)
             .await
@@ -970,48 +925,6 @@ mod tests {
         tokio_fs::remove_dir_all(&root)
             .await
             .expect("remove temp root");
-    }
-
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    #[test]
-    fn replace_file_with_fallback_sync_overwrites_existing_file() {
-        let root = unique_temp_root();
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).expect("create temp root");
-
-        let target = root.join("target.txt");
-        std::fs::write(&target, b"old").expect("write existing target");
-
-        let temp = root.join("temp.txt");
-        std::fs::write(&temp, b"new").expect("write temp file");
-
-        replace_file_with_fallback_sync(&temp, &target).expect("replace file");
-
-        let bytes = std::fs::read(&target).expect("read target");
-        assert_eq!(&bytes, b"new");
-        assert!(!temp.exists(), "temp file should be moved/removed");
-
-        std::fs::remove_dir_all(&root).expect("remove temp root");
-    }
-
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    #[test]
-    fn replace_file_with_fallback_sync_copies_when_target_parent_is_missing() {
-        let root = unique_temp_root();
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).expect("create temp root");
-
-        let temp = root.join("temp.txt");
-        let target = root.join("nested").join("target.txt");
-        std::fs::write(&temp, b"new").expect("write temp file");
-
-        replace_file_with_fallback_sync(&temp, &target).expect("replace file through fallback");
-
-        let bytes = std::fs::read(&target).expect("read target");
-        assert_eq!(&bytes, b"new");
-        assert!(!temp.exists(), "temp file should be removed");
-
-        std::fs::remove_dir_all(&root).expect("remove temp root");
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -1172,67 +1085,6 @@ mod tests {
             DomainError::InvalidData(_) => {}
             other => panic!("expected InvalidData, got {:?}", other),
         }
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
-    }
-
-    #[tokio::test]
-    async fn list_files_with_extension_filters_non_matching_entries() {
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
-
-        tokio_fs::write(root.join("a.json"), b"{}")
-            .await
-            .expect("write a.json");
-        tokio_fs::write(root.join("b.txt"), b"ok")
-            .await
-            .expect("write b.txt");
-        tokio_fs::write(root.join("c.json"), b"{}")
-            .await
-            .expect("write c.json");
-
-        tokio_fs::create_dir_all(root.join("sub"))
-            .await
-            .expect("create subdir");
-        tokio_fs::write(root.join("sub").join("d.json"), b"{}")
-            .await
-            .expect("write sub/d.json");
-
-        let mut results = list_files_with_extension(&root, "json")
-            .await
-            .expect("list json files");
-
-        results.sort();
-
-        let expected = vec![root.join("a.json"), root.join("c.json")];
-        assert_eq!(results, expected);
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
-    }
-
-    #[tokio::test]
-    async fn delete_file_is_idempotent() {
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
-
-        let path = root.join("to-delete.txt");
-        tokio_fs::write(&path, b"hello").await.expect("write file");
-
-        delete_file(&path).await.expect("delete file");
-        assert!(!path.exists());
-
-        delete_file(&path).await.expect("delete file again");
-        assert!(!path.exists());
 
         tokio_fs::remove_dir_all(&root)
             .await

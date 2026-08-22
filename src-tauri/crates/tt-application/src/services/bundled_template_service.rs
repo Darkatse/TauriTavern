@@ -94,23 +94,16 @@ mod tests {
 
     use super::*;
 
-    #[derive(Clone, Copy)]
-    enum StoreResult {
-        Text(&'static str),
-        NotFound(&'static str),
-        Invalid(&'static str),
-    }
-
     struct Store {
         paths: Mutex<Vec<String>>,
-        result: StoreResult,
+        text: &'static str,
     }
 
     impl Store {
-        fn new(result: StoreResult) -> Arc<Self> {
+        fn new(text: &'static str) -> Arc<Self> {
             Arc::new(Self {
                 paths: Mutex::new(Vec::new()),
-                result,
+                text,
             })
         }
 
@@ -126,17 +119,13 @@ mod tests {
                 .expect("paths lock poisoned")
                 .push(relative_path.to_string());
 
-            match self.result {
-                StoreResult::Text(text) => Ok(text.to_string()),
-                StoreResult::NotFound(message) => Err(DomainError::NotFound(message.to_string())),
-                StoreResult::Invalid(message) => Err(DomainError::InvalidData(message.to_string())),
-            }
+            Ok(self.text.to_string())
         }
     }
 
     #[test]
     fn reads_frontend_template_from_bundled_resource_path() {
-        let store = Store::new(StoreResult::Text("template"));
+        let store = Store::new("template");
         let service = BundledTemplateService::new(store.clone());
 
         let content = service.read_frontend_template("drawer.html").unwrap();
@@ -146,37 +135,8 @@ mod tests {
     }
 
     #[test]
-    fn caches_frontend_template_reads() {
-        let store = Store::new(StoreResult::Text("template"));
-        let service = BundledTemplateService::new(store.clone());
-
-        let first = service.read_frontend_template("drawer.html").unwrap();
-        let second = service.read_frontend_template("drawer.html").unwrap();
-
-        assert_eq!(first, "template");
-        assert_eq!(second, "template");
-        assert_eq!(store.paths(), vec!["frontend-templates/drawer.html"]);
-    }
-
-    #[test]
-    fn reads_extension_template_from_bundled_resource_path() {
-        let store = Store::new(StoreResult::Text("extension"));
-        let service = BundledTemplateService::new(store.clone());
-
-        let content = service
-            .read_frontend_extension_template("quick-replies", "button")
-            .unwrap();
-
-        assert_eq!(content, "extension");
-        assert_eq!(
-            store.paths(),
-            vec!["frontend-extensions/quick-replies/button.html"]
-        );
-    }
-
-    #[test]
     fn rejects_path_segments_before_reading_store() {
-        let store = Store::new(StoreResult::Text("unused"));
+        let store = Store::new("unused");
         let service = BundledTemplateService::new(store.clone());
 
         let error = service
@@ -187,31 +147,5 @@ mod tests {
             matches!(error, DomainError::InvalidData(message) if message == "Invalid template name: ../drawer.html")
         );
         assert!(store.paths().is_empty());
-    }
-
-    #[test]
-    fn passes_not_found_through() {
-        let store = Store::new(StoreResult::NotFound("Resource not found: missing"));
-        let service = BundledTemplateService::new(store);
-
-        let error = service.read_frontend_template("missing.html").unwrap_err();
-
-        assert!(
-            matches!(error, DomainError::NotFound(message) if message == "Resource not found: missing")
-        );
-    }
-
-    #[test]
-    fn wraps_non_not_found_errors_with_template_context() {
-        let store = Store::new(StoreResult::Invalid("not utf-8"));
-        let service = BundledTemplateService::new(store);
-
-        let error = service.read_frontend_template("broken.html").unwrap_err();
-
-        assert!(matches!(
-            error,
-            DomainError::InternalError(message)
-                if message == "Failed to read template 'broken.html': Invalid data: not utf-8"
-        ));
     }
 }

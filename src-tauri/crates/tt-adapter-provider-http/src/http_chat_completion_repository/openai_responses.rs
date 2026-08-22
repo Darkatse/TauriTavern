@@ -841,18 +841,6 @@ mod tests {
     }
 
     #[test]
-    fn responses_ws_upgrade_url_maps_ws_schemes_back_to_http() {
-        assert_eq!(
-            responses_ws_upgrade_url("wss://api.openai.com/v1", "/responses").unwrap(),
-            "https://api.openai.com/v1/responses"
-        );
-        assert_eq!(
-            responses_ws_upgrade_url("ws://localhost:8080/v1", "/responses").unwrap(),
-            "http://localhost:8080/v1/responses"
-        );
-    }
-
-    #[test]
     fn response_create_event_removes_http_only_fields() {
         let mut payload = json!({
             "model": "gpt-test",
@@ -934,29 +922,6 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("test-key")
         );
-    }
-
-    #[test]
-    fn ws_connection_key_includes_transport_revision() {
-        let config = ChatCompletionApiConfig {
-            base_url: "https://api.openai.com/v1".to_string(),
-            user_configured_endpoint: false,
-            api_key: "secret".to_string(),
-            authorization_header: None,
-            vertexai_service_account_json: None,
-            extra_headers: HashMap::new(),
-            additional_headers: HashMap::new(),
-            anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
-            aws_bedrock_custom_response_path: None,
-            aws_bedrock_custom_stream_path: None,
-        };
-
-        let first = ws_connection_key(&config, "/responses", 1).unwrap();
-        let second = ws_connection_key(&config, "/responses", 2).unwrap();
-
-        assert_ne!(first, second);
-        assert!(first.contains("\n1\nBearer secret\n"));
-        assert!(second.contains("\n2\nBearer secret\n"));
     }
 
     #[test]

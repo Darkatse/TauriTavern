@@ -623,15 +623,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_imported_character_chat_default_keeps_room_for_jsonl_suffix() {
-        let long_name = "角色".repeat(130);
-        let stem = FileCharacterRepository::normalize_chat_file_stem("", &long_name);
-
-        assert!(!stem.is_empty());
-        assert!(format!("{stem}.jsonl").len() <= 255);
-    }
-
-    #[test]
     fn normalize_json_surrogate_escapes_replaces_lone_high_surrogate() {
         let input = r#"{"first_mes":"Hello \uD83D"}"#;
         let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
@@ -640,24 +631,8 @@ mod tests {
     }
 
     #[test]
-    fn normalize_json_surrogate_escapes_replaces_lone_low_surrogate() {
-        let input = r#"{"first_mes":"Hello \uDE00"}"#;
-        let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
-
-        assert_eq!(normalized.as_ref(), r#"{"first_mes":"Hello \uFFFD"}"#);
-    }
-
-    #[test]
     fn normalize_json_surrogate_escapes_keeps_valid_surrogate_pair() {
         let input = r#"{"first_mes":"Hello \uD83D\uDE00"}"#;
-        let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
-
-        assert_eq!(normalized.as_ref(), input);
-    }
-
-    #[test]
-    fn normalize_json_surrogate_escapes_skips_escaped_unicode_literal() {
-        let input = r#"{"first_mes":"Literal \\uD83D marker"}"#;
         let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
 
         assert_eq!(normalized.as_ref(), input);

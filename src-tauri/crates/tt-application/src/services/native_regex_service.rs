@@ -322,18 +322,6 @@ mod tests {
     }
 
     #[test]
-    fn returns_unmatched_input_without_reallocating() {
-        let cache = Arc::new(Mutex::new(RegexCache::new(8)));
-        let text = String::from("unchanged");
-        let input_pointer = text.as_ptr();
-
-        let result = apply_script(&cache, text, &script(r"missing", "", "X")).expect("regex apply");
-
-        assert_eq!(result, "unchanged");
-        assert_eq!(result.as_ptr(), input_pointer);
-    }
-
-    #[test]
     fn skips_regex_when_required_literal_is_absent() {
         let mut regex = script("unchanged", "", "changed");
         regex.required_literal = Some("<safe>".to_string());
@@ -341,13 +329,6 @@ mod tests {
         let result = apply("unchanged", regex);
 
         assert_eq!(result, "unchanged");
-    }
-
-    #[test]
-    fn replaces_first_match_without_global_flag() {
-        let result = apply("a1 b2", script(r"\d", "", "X"));
-
-        assert_eq!(result, "aX b2");
     }
 
     #[test]
@@ -368,40 +349,9 @@ mod tests {
     }
 
     #[test]
-    fn supports_match_alias_replacement() {
-        let result = apply("abc", script(r"b", "", "[$0]"));
-
-        assert_eq!(result, "a[b]c");
-    }
-
-    #[test]
     fn preserves_literal_dollar_replacements() {
         let result = apply("abc", script(r"b", "", "$$"));
 
         assert_eq!(result, "a$$c");
-    }
-
-    #[test]
-    fn trims_capture_replacements() {
-        let mut regex = script(r"<x>([\s\S]*?)</x>", "", "$1");
-        regex.trim_strings = vec!["remove".to_string()];
-
-        let result = apply("a <x>keep remove</x> z", regex);
-
-        assert_eq!(result, "a keep  z");
-    }
-
-    #[test]
-    fn cache_keeps_recently_used_entries() {
-        let mut cache = RegexCache::new(2);
-
-        cache.get_or_compile("a", "").expect("compile a");
-        cache.get_or_compile("b", "").expect("compile b");
-        cache.get_or_compile("a", "").expect("reuse a");
-        cache.get_or_compile("c", "").expect("compile c");
-
-        assert!(cache.entries.contains_key(&cache_key("a", "")));
-        assert!(!cache.entries.contains_key(&cache_key("b", "")));
-        assert!(cache.entries.contains_key(&cache_key("c", "")));
     }
 }

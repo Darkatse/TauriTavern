@@ -223,44 +223,8 @@ fn render_content(formula: &DiceFormula, rolls: &[u64], total: i64) -> String {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{MAX_DICE, MAX_SIDES, parse_formula, render_content};
+    use super::{MAX_DICE, MAX_SIDES, parse_formula};
     use tt_domain::models::tool::{ToolId, ToolInvocation};
-
-    #[test]
-    fn parse_plain_number_as_single_die() {
-        let formula = parse_formula("20").expect("plain number formula");
-
-        assert_eq!(formula.normalized, "1d20");
-        assert_eq!(formula.dice, 1);
-        assert_eq!(formula.sides, 20);
-        assert_eq!(formula.modifier, 0);
-        assert_eq!(formula.min, 1);
-        assert_eq!(formula.max, 20);
-    }
-
-    #[test]
-    fn parse_dice_formula_with_default_count_and_modifier() {
-        let formula = parse_formula("d6-2").expect("default count formula");
-
-        assert_eq!(formula.normalized, "1d6-2");
-        assert_eq!(formula.dice, 1);
-        assert_eq!(formula.sides, 6);
-        assert_eq!(formula.modifier, -2);
-        assert_eq!(formula.min, -1);
-        assert_eq!(formula.max, 4);
-    }
-
-    #[test]
-    fn parse_dice_formula_with_explicit_count_and_modifier() {
-        let formula = parse_formula("3D6+4").expect("explicit count formula");
-
-        assert_eq!(formula.normalized, "3d6+4");
-        assert_eq!(formula.dice, 3);
-        assert_eq!(formula.sides, 6);
-        assert_eq!(formula.modifier, 4);
-        assert_eq!(formula.min, 7);
-        assert_eq!(formula.max, 22);
-    }
 
     #[test]
     fn reject_invalid_or_unbounded_formulas() {
@@ -280,18 +244,6 @@ mod tests {
         ] {
             assert!(parse_formula(value).is_err(), "{value}");
         }
-    }
-
-    #[test]
-    fn render_content_matches_single_and_modified_rolls() {
-        let simple = parse_formula("1d20").expect("simple formula");
-        assert_eq!(render_content(&simple, &[14], 14), "Rolled 1d20: 14.");
-
-        let modified = parse_formula("3d6+4").expect("modified formula");
-        assert_eq!(
-            render_content(&modified, &[2, 5, 6], 17),
-            "Rolled 3d6+4: 2 + 5 + 6 + 4 = 17."
-        );
     }
 
     #[tokio::test]

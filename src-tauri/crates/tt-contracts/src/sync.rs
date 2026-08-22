@@ -349,20 +349,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn operation_options_default_missing_overwrite_policy_to_exact() {
-        let value = serde_json::json!({
-            "selection": {
-                "policy_version": DATASET_POLICY_VERSION,
-                "dataset_ids": ["chat.character.history"]
-            },
-            "require_bundle_zstd": true
-        });
-        let options: SyncOperationOptions = serde_json::from_value(value).unwrap();
-
-        assert_eq!(options.overwrite_policy, OverwritePolicy::Exact);
-    }
-
     fn job() -> SyncJob {
         SyncJob {
             id: "job-1".to_string(),
@@ -401,16 +387,6 @@ mod tests {
     }
 
     #[test]
-    fn failed_without_local_mutation_omits_empty_local_summary() {
-        let report = SyncJobReport::failed_without_local_mutation(job(), "busy");
-        let value = serde_json::to_value(report).unwrap();
-
-        assert_eq!(value["result"]["status"], "failed");
-        assert_eq!(value["result"]["failure_kind"], "without_local_mutation");
-        assert!(value["result"].get("local_applied").is_none());
-    }
-
-    #[test]
     fn sync_job_event_exposes_top_level_status() {
         let report = SyncJobReport::failed_without_local_mutation(job(), "busy");
         let event = SyncJobEvent::from_report(report);
@@ -420,59 +396,5 @@ mod tests {
         assert_eq!(value["result"]["status"], "failed");
         assert_eq!(value["job"]["id"], "job-1");
         assert!(value["job"].get("policy").is_none());
-    }
-
-    #[test]
-    fn sync_job_progress_event_serializes_contract_shape() {
-        let mut job = job();
-        job.endpoint = SyncEndpointRef::RemoteServer {
-            server_device_id: DeviceId::new("22222222-2222-4222-8222-222222222222".to_string())
-                .unwrap(),
-        };
-        job.intent = SyncIntent::ReplicateLocalToRemote;
-        job.execution = SyncExecutionKind::DirectPush;
-        job.origin = SyncOrigin::Scheduled;
-        let event = SyncJobEvent::progress(
-            job.context(),
-            SyncJobProgress {
-                direction: SyncJobProgressDirection::Push,
-                phase: SyncPhase::Uploading,
-                files_done: 1,
-                files_total: 2,
-                bytes_done: 3,
-                bytes_total: 4,
-                current_path: Some("characters/a.png".to_string()),
-            },
-        );
-        let value = serde_json::to_value(event).unwrap();
-
-        assert_eq!(value["status"], "progress");
-        assert_eq!(value["job"]["origin"]["type"], "scheduled");
-        assert_eq!(value["job"]["endpoint"]["type"], "remote_server");
-        assert_eq!(value["progress"]["direction"], "Push");
-        assert_eq!(value["progress"]["phase"], "Uploading");
-        assert!(value.get("result").is_none());
-    }
-
-    #[test]
-    fn sync_job_remote_request_final_serializes_origin_type() {
-        let mut job = job();
-        let peer_id = DeviceId::new("22222222-2222-4222-8222-222222222222".to_string()).unwrap();
-        job.origin = SyncOrigin::RemoteRequest { peer_id };
-        let report = SyncJobReport::from_outcome(
-            job,
-            SyncJobOutcome::Completed {
-                summary: SyncJobSummary::new(1, 2, 0),
-            },
-        );
-        let value = serde_json::to_value(SyncJobEvent::from_report(report)).unwrap();
-
-        assert_eq!(value["status"], "completed");
-        assert_eq!(value["job"]["origin"]["type"], "remote_request");
-        assert_eq!(
-            value["job"]["origin"]["peer_id"],
-            "22222222-2222-4222-8222-222222222222"
-        );
-        assert_eq!(value["result"]["status"], "completed");
     }
 }

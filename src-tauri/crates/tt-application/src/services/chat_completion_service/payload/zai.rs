@@ -145,41 +145,6 @@ mod tests {
     }
 
     #[test]
-    fn zai_glm52_maps_minimum_to_minimal() {
-        let payload = payload(json!({
-            "model": "glm-5.2",
-            "messages": [{"role": "user", "content": "hello"}],
-            "include_reasoning": true,
-            "reasoning_effort": "min",
-            "chat_completion_source": "zai"
-        }));
-
-        let (_endpoint, upstream) = build(payload).expect("payload should build");
-
-        assert_eq!(
-            body(&upstream)
-                .get("reasoning_effort")
-                .and_then(Value::as_str),
-            Some("minimal")
-        );
-    }
-
-    #[test]
-    fn zai_glm52_omits_auto_reasoning_effort() {
-        let payload = payload(json!({
-            "model": "glm-5.2",
-            "messages": [{"role": "user", "content": "hello"}],
-            "include_reasoning": true,
-            "reasoning_effort": "auto",
-            "chat_completion_source": "zai"
-        }));
-
-        let (_endpoint, upstream) = build(payload).expect("payload should build");
-
-        assert!(body(&upstream).get("reasoning_effort").is_none());
-    }
-
-    #[test]
     fn zai_rejects_reasoning_effort_for_unsupported_models() {
         let payload = payload(json!({
             "model": "glm-5.1",

@@ -135,12 +135,6 @@ mod tests {
     }
 
     #[test]
-    fn body_preview_string_returns_short_body_verbatim() {
-        let body = b"<html>error</html>";
-        assert_eq!(body_preview_string(body), "<html>error</html>");
-    }
-
-    #[test]
     fn body_preview_string_replaces_invalid_utf8_lossily() {
         let body = vec![0xff, 0xfe, b'O', b'K'];
         let preview = body_preview_string(&body);

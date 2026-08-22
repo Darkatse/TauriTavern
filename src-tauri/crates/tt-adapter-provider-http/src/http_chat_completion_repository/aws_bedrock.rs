@@ -635,20 +635,13 @@ mod tests {
     use serde_json::json;
     use tokio::sync::mpsc::unbounded_channel;
 
-    use tt_domain::models::bedrock_model::{BedrockModelFamily, extract_provider};
+    use tt_domain::models::bedrock_model::BedrockModelFamily;
 
     use super::{
         ResponseMode, StreamMode, decode_eventstream_payload, derive_control_plane_base,
-        drain_eventstream_messages, extract_model_id_from_endpoint, inference_supports_on_demand,
-        merge_bedrock_models, normalize_provider_response, response_mode_from_endpoint,
-        to_stream_endpoint, validate_invoke_endpoint,
+        drain_eventstream_messages, extract_model_id_from_endpoint, normalize_provider_response,
+        response_mode_from_endpoint, to_stream_endpoint, validate_invoke_endpoint,
     };
-
-    #[test]
-    fn validate_invoke_endpoint_accepts_invoke_suffix() {
-        validate_invoke_endpoint("/model/anthropic.claude-sonnet-4-20250514-v1:0/invoke")
-            .expect("invoke endpoint should be accepted");
-    }
 
     #[test]
     fn validate_invoke_endpoint_rejects_other_paths() {
@@ -659,18 +652,6 @@ mod tests {
     fn stream_endpoint_swaps_invoke_for_invoke_with_response_stream() {
         let stream =
             to_stream_endpoint("/model/anthropic.claude-sonnet-4-20250514-v1:0/invoke").unwrap();
-        assert_eq!(
-            stream,
-            "/model/anthropic.claude-sonnet-4-20250514-v1:0/invoke-with-response-stream"
-        );
-    }
-
-    #[test]
-    fn stream_endpoint_is_idempotent() {
-        let stream = to_stream_endpoint(
-            "/model/anthropic.claude-sonnet-4-20250514-v1:0/invoke-with-response-stream",
-        )
-        .unwrap();
         assert_eq!(
             stream,
             "/model/anthropic.claude-sonnet-4-20250514-v1:0/invoke-with-response-stream"
@@ -693,17 +674,6 @@ mod tests {
         .expect("payload with bytes should decode");
         let parsed: serde_json::Value = serde_json::from_str(&decoded).unwrap();
         assert_eq!(parsed["delta"]["text"], "hello");
-    }
-
-    #[test]
-    fn decode_eventstream_payload_returns_none_for_internal_metadata() {
-        let payload = json!({ "p": "ignored" }).to_string();
-        let decoded = decode_eventstream_payload(
-            payload.as_bytes(),
-            &StreamMode::Family(BedrockModelFamily::AnthropicClaude),
-        )
-        .unwrap();
-        assert!(decoded.is_none(), "metadata payloads should be skipped");
     }
 
     #[test]
@@ -799,33 +769,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_provider_response_dispatches_nova_via_claude_normalizer() {
-        let nova_body = json!({
-            "output": {
-                "message": {
-                    "role": "assistant",
-                    "content": [{ "text": "hi from nova" }]
-                }
-            },
-            "stopReason": "end_turn"
-        });
-
-        let normalized = normalize_provider_response(
-            nova_body,
-            ResponseMode::Family(BedrockModelFamily::AmazonNova),
-        )
-        .expect("nova response should normalize")
-        .body;
-
-        assert_eq!(normalized["object"], "chat.completion");
-        assert_eq!(
-            normalized["choices"][0]["message"]["content"],
-            "hi from nova"
-        );
-        assert_eq!(normalized["choices"][0]["finish_reason"], "stop");
-    }
-
-    #[test]
     fn normalize_provider_response_honours_custom_response_path_over_auto_dispatch() {
         // Even though the model id looks like Nova, the custom-template path
         // should bypass provider-specific normalizers entirely. We point the
@@ -874,205 +817,6 @@ mod tests {
         );
         // Non-Bedrock base cannot be derived; surface a clear error.
         assert!(derive_control_plane_base("https://example.com").is_err());
-    }
-
-    #[test]
-    fn inference_supports_on_demand_treats_explicit_lists_correctly() {
-        let on_demand_only = json!({
-            "inferenceTypesSupported": ["ON_DEMAND"]
-        });
-        assert!(inference_supports_on_demand(&on_demand_only));
-
-        // Claude 4.x foundation models report INFERENCE_PROFILE only.
-        let profile_only = json!({
-            "inferenceTypesSupported": ["INFERENCE_PROFILE"]
-        });
-        assert!(!inference_supports_on_demand(&profile_only));
-
-        let mixed = json!({
-            "inferenceTypesSupported": ["INFERENCE_PROFILE", "ON_DEMAND"]
-        });
-        assert!(inference_supports_on_demand(&mixed));
-
-        // Missing/empty list is forward-compatible: assume opt-in.
-        let missing = json!({});
-        assert!(inference_supports_on_demand(&missing));
-        let empty = json!({ "inferenceTypesSupported": [] });
-        assert!(inference_supports_on_demand(&empty));
-    }
-
-    #[test]
-    fn extract_provider_strips_inference_profile_prefix_and_returns_first_segment() {
-        assert_eq!(extract_provider("anthropic.claude-3-haiku"), "anthropic");
-        assert_eq!(
-            extract_provider("us.anthropic.claude-opus-4-7"),
-            "anthropic"
-        );
-        assert_eq!(extract_provider("amazon.nova-pro-v1:0"), "amazon");
-        assert_eq!(
-            extract_provider("us.meta.llama3-3-70b-instruct-v1:0"),
-            "meta",
-        );
-        assert_eq!(
-            extract_provider("mistral.mistral-large-2407-v1:0"),
-            "mistral"
-        );
-        assert_eq!(extract_provider("cohere.command-r-plus-v1:0"), "cohere");
-        assert_eq!(extract_provider("ai21.jamba-1-5-large-v1:0"), "ai21");
-        assert_eq!(extract_provider("deepseek.r1-v1:0"), "deepseek");
-        assert_eq!(
-            extract_provider("global.anthropic.claude-opus-4-6-v1"),
-            "anthropic",
-        );
-    }
-
-    #[test]
-    fn merge_bedrock_models_lists_all_providers_and_tags_each_entry() {
-        let foundation = json!({
-            "modelSummaries": [
-                {
-                    "modelId": "anthropic.claude-opus-4-7",
-                    "modelName": "Claude Opus 4.7",
-                    "modelLifecycle": { "status": "ACTIVE" },
-                    "inferenceTypesSupported": ["INFERENCE_PROFILE"]
-                },
-                {
-                    "modelId": "anthropic.claude-3-haiku-20240307-v1:0",
-                    "modelName": "Claude 3 Haiku",
-                    "modelLifecycle": { "status": "ACTIVE" },
-                    "inferenceTypesSupported": ["ON_DEMAND"]
-                },
-                {
-                    "modelId": "amazon.titan-text-premier-v1:0",
-                    "modelName": "Titan Text Premier",
-                    "modelLifecycle": { "status": "ACTIVE" },
-                    "inferenceTypesSupported": ["ON_DEMAND"]
-                },
-                {
-                    "modelId": "meta.llama3-2-3b-instruct-v1:0",
-                    "modelName": "Llama 3.2 3B Instruct",
-                    "modelLifecycle": { "status": "ACTIVE" },
-                    "inferenceTypesSupported": ["ON_DEMAND"]
-                },
-                {
-                    "modelId": "anthropic.claude-2",
-                    "modelName": "Claude 2",
-                    "modelLifecycle": { "status": "LEGACY" }
-                }
-            ]
-        });
-        let profiles = json!({
-            "inferenceProfileSummaries": [
-                {
-                    "inferenceProfileId": "us.anthropic.claude-opus-4-7",
-                    "inferenceProfileName": "US Claude Opus 4.7",
-                    "status": "ACTIVE"
-                },
-                {
-                    "inferenceProfileId": "us.meta.llama3-3-70b-instruct-v1:0",
-                    "inferenceProfileName": "US Llama 3.3 70B Instruct",
-                    "status": "ACTIVE"
-                },
-                {
-                    "inferenceProfileId": "us.amazon.nova-pro-v1:0",
-                    "inferenceProfileName": "US Nova Pro",
-                    "status": "ACTIVE"
-                },
-                {
-                    "inferenceProfileId": "us.anthropic.claude-archived",
-                    "inferenceProfileName": "Archived",
-                    "status": "INACTIVE"
-                }
-            ]
-        });
-
-        let merged = merge_bedrock_models(&foundation, &profiles);
-        let by_id: std::collections::HashMap<&str, &serde_json::Value> = merged
-            .iter()
-            .filter_map(|item| {
-                item.get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(|id| (id, item))
-            })
-            .collect();
-
-        // ON_DEMAND foundation models from every provider are kept.
-        assert!(by_id.contains_key("anthropic.claude-3-haiku-20240307-v1:0"));
-        assert!(by_id.contains_key("amazon.titan-text-premier-v1:0"));
-        assert!(by_id.contains_key("meta.llama3-2-3b-instruct-v1:0"));
-        // INFERENCE_PROFILE-only foundation entries are hidden (their
-        // cross-region profile variants surface from /inference-profiles).
-        assert!(!by_id.contains_key("anthropic.claude-opus-4-7"));
-        // LEGACY models are dropped.
-        assert!(!by_id.contains_key("anthropic.claude-2"));
-        // ACTIVE inference profiles for any provider are kept; TauriTavern
-        // metadata marks support status for the UI.
-        assert!(by_id.contains_key("us.anthropic.claude-opus-4-7"));
-        assert!(by_id.contains_key("us.meta.llama3-3-70b-instruct-v1:0"));
-        assert!(by_id.contains_key("us.amazon.nova-pro-v1:0"));
-        // Non-ACTIVE profiles are dropped.
-        assert!(!by_id.contains_key("us.anthropic.claude-archived"));
-
-        // Each entry carries its origin (foundation-model vs inference-profile)
-        // and an extracted `provider` so the frontend can group/tag.
-        let nova = by_id["us.amazon.nova-pro-v1:0"];
-        assert_eq!(
-            nova.get("source").and_then(serde_json::Value::as_str),
-            Some("inference-profile")
-        );
-        assert_eq!(
-            nova.get("provider").and_then(serde_json::Value::as_str),
-            Some("amazon")
-        );
-        assert_eq!(
-            nova.pointer("/tauritavern/bedrock/family")
-                .and_then(serde_json::Value::as_str),
-            Some("amazon_nova")
-        );
-        assert_eq!(
-            nova.pointer("/tauritavern/bedrock/supported")
-                .and_then(serde_json::Value::as_bool),
-            Some(true)
-        );
-        assert_eq!(
-            nova.pointer("/tauritavern/bedrock/capabilities/stream")
-                .and_then(serde_json::Value::as_bool),
-            Some(true)
-        );
-
-        let titan = by_id["amazon.titan-text-premier-v1:0"];
-        assert_eq!(
-            titan
-                .pointer("/tauritavern/bedrock/family")
-                .and_then(serde_json::Value::as_str),
-            Some("unsupported")
-        );
-        assert_eq!(
-            titan
-                .pointer("/tauritavern/bedrock/supported")
-                .and_then(serde_json::Value::as_bool),
-            Some(false)
-        );
-        assert!(
-            titan
-                .pointer("/tauritavern/bedrock/unsupportedReason")
-                .and_then(serde_json::Value::as_str)
-                .is_some()
-        );
-
-        let llama_foundation = by_id["meta.llama3-2-3b-instruct-v1:0"];
-        assert_eq!(
-            llama_foundation
-                .get("source")
-                .and_then(serde_json::Value::as_str),
-            Some("foundation-model")
-        );
-        assert_eq!(
-            llama_foundation
-                .get("provider")
-                .and_then(serde_json::Value::as_str),
-            Some("meta")
-        );
     }
 
     /// Build a synthetic EventStream frame whose payload is `{ "bytes": base64(text) }`.

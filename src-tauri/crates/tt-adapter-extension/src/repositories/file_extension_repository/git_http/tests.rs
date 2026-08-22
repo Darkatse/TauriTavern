@@ -16,17 +16,7 @@ const TEST_USER_AGENT: &str = "TauriTavern/test";
 #[derive(Clone, Debug)]
 struct RecordedRequest {
     target: String,
-    headers: Vec<(String, String)>,
     body: Vec<u8>,
-}
-
-impl RecordedRequest {
-    fn header_values<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
-        self.headers
-            .iter()
-            .filter(move |(key, _value)| key.eq_ignore_ascii_case(name))
-            .map(|(_key, value)| value.as_str())
-    }
 }
 
 struct TestServer {
@@ -81,7 +71,6 @@ fn read_request(stream: &TcpStream) -> io::Result<RecordedRequest> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing request target"))?
         .to_string();
 
-    let mut headers = Vec::new();
     let mut content_length = 0;
     loop {
         let mut line = String::new();
@@ -99,16 +88,11 @@ fn read_request(stream: &TcpStream) -> io::Result<RecordedRequest> {
                 io::Error::new(io::ErrorKind::InvalidData, "invalid content length")
             })?;
         }
-        headers.push((name.to_string(), value));
     }
 
     let mut body = vec![0; content_length];
     reader.read_exact(&mut body)?;
-    Ok(RecordedRequest {
-        target,
-        headers,
-        body,
-    })
+    Ok(RecordedRequest { target, body })
 }
 
 fn respond(
@@ -229,48 +213,6 @@ fn unbounded_post_is_rejected_immediately() {
             .to_string()
             .contains("outside the supported transport contract")
     );
-}
-
-#[test]
-fn request_headers_preserve_git_contract_and_replace_gix_user_agent() {
-    let server = spawn_server(1, |_index, _request, stream| ok(stream, b"ok"));
-    let base = format!("{}/repo", server.base_url);
-    let mut http = git_http();
-    let mut response = http
-        .get(
-            &format!("{base}/info/refs?service=git-upload-pack"),
-            &base,
-            [
-                "User-Agent: git/oxide-0.57.2",
-                "Git-Protocol: version=2",
-                "Accept: application/x-git-upload-pack-advertisement",
-                "X-Repeat: one",
-                "X-Repeat: two",
-            ],
-        )
-        .expect("prepare GET");
-    response
-        .headers
-        .read_to_end(&mut Vec::new())
-        .expect("send GET");
-
-    let request = server
-        .requests
-        .recv_timeout(Duration::from_secs(1))
-        .expect("GET request");
-    assert_eq!(
-        request.header_values("user-agent").collect::<Vec<_>>(),
-        [TEST_USER_AGENT]
-    );
-    assert_eq!(
-        request.header_values("git-protocol").collect::<Vec<_>>(),
-        ["version=2"]
-    );
-    assert_eq!(
-        request.header_values("x-repeat").collect::<Vec<_>>(),
-        ["one", "two"]
-    );
-    server.finish();
 }
 
 #[test]

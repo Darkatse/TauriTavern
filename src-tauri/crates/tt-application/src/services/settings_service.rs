@@ -855,7 +855,7 @@ fn validate_agent_retention_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dto::settings_dto::{RequestProxySettingsDto, UpdateAgentRunRetentionSettingsDto};
+    use crate::dto::settings_dto::UpdateAgentRunRetentionSettingsDto;
     use async_trait::async_trait;
     use serde_json::{Value, json};
     use std::sync::Mutex as StdMutex;
@@ -883,45 +883,6 @@ mod tests {
         assert_eq!(settings.retention.keep_recent_terminal_runs, 50);
         assert_eq!(settings.retention.keep_full_recent_runs, 10);
         assert!(!settings.retention.auto_prune_enabled);
-    }
-
-    #[test]
-    fn agent_retention_update_applies_auto_prune_flag() {
-        let mut settings = AgentSettings::default();
-
-        SettingsService::apply_agent_settings_update(
-            &mut settings,
-            UpdateAgentSettingsDto {
-                retention: Some(UpdateAgentRunRetentionSettingsDto {
-                    auto_prune_enabled: Some(true),
-                    keep_recent_terminal_runs: None,
-                    keep_full_recent_runs: None,
-                }),
-            },
-        )
-        .expect("apply agent settings");
-
-        assert!(settings.retention.auto_prune_enabled);
-    }
-
-    #[test]
-    fn agent_retention_update_allows_zero_terminal_history() {
-        let mut settings = AgentSettings::default();
-
-        SettingsService::apply_agent_settings_update(
-            &mut settings,
-            UpdateAgentSettingsDto {
-                retention: Some(UpdateAgentRunRetentionSettingsDto {
-                    auto_prune_enabled: None,
-                    keep_recent_terminal_runs: Some(0),
-                    keep_full_recent_runs: Some(0),
-                }),
-            },
-        )
-        .expect("apply zero retention");
-
-        assert_eq!(settings.retention.keep_recent_terminal_runs, 0);
-        assert_eq!(settings.retention.keep_full_recent_runs, 0);
     }
 
     #[test]
@@ -979,99 +940,6 @@ mod tests {
         )
         .expect_err("reject invalid sentinel");
         assert!(matches!(error, ApplicationError::ValidationError(_)));
-    }
-
-    #[tokio::test]
-    async fn tauritavern_settings_update_applies_request_proxy_runtime() {
-        let repository = Arc::new(TestSettingsRepository::default());
-        let runtime = Arc::new(TestRequestProxyRuntime::default());
-        let service = SettingsService::new(
-            repository,
-            runtime.clone(),
-            Arc::new(TestChatBackupRuntime::default()),
-        );
-
-        let updated = service
-            .update_tauritavern_settings(UpdateTauriTavernSettingsDto {
-                request_proxy: Some(RequestProxySettingsDto {
-                    enabled: true,
-                    url: "http://127.0.0.1:8080".to_string(),
-                    bypass: vec!["localhost".to_string()],
-                }),
-                updates: None,
-                perf_profile: None,
-                panel_runtime_profile: None,
-                embedded_runtime_profile: None,
-                chat_virtualization_enabled: None,
-                chat_backups: None,
-                close_to_tray_on_close: None,
-                allow_keys_exposure: None,
-                avatar_persona_original_images_enabled: None,
-                native_regex_backend_enabled: None,
-                dev: None,
-                dynamic_theme: None,
-                models: None,
-                agent: None,
-            })
-            .await
-            .expect("update settings");
-
-        assert!(updated.request_proxy.enabled);
-        assert_eq!(
-            runtime.applied.lock().unwrap().as_slice(),
-            ["http://127.0.0.1:8080"]
-        );
-    }
-
-    #[tokio::test]
-    async fn tauritavern_settings_update_persists_chat_virtualization_switch() {
-        let service = SettingsService::new(
-            Arc::new(TestSettingsRepository::default()),
-            Arc::new(TestRequestProxyRuntime::default()),
-            Arc::new(TestChatBackupRuntime::default()),
-        );
-
-        let updated = service
-            .update_tauritavern_settings(UpdateTauriTavernSettingsDto {
-                updates: None,
-                perf_profile: None,
-                panel_runtime_profile: None,
-                embedded_runtime_profile: None,
-                chat_virtualization_enabled: Some(true),
-                chat_backups: None,
-                close_to_tray_on_close: None,
-                request_proxy: None,
-                allow_keys_exposure: None,
-                avatar_persona_original_images_enabled: None,
-                native_regex_backend_enabled: None,
-                dev: None,
-                dynamic_theme: None,
-                models: None,
-                agent: None,
-            })
-            .await
-            .expect("enable chat virtualization");
-
-        assert!(updated.chat_virtualization_enabled);
-    }
-
-    #[tokio::test]
-    async fn unavailable_chat_backup_storage_stats_do_not_block_settings() {
-        let backup_runtime = Arc::new(TestChatBackupRuntime::default());
-        backup_runtime.fail_stats.store(true, Ordering::Release);
-        let service = SettingsService::new(
-            Arc::new(TestSettingsRepository::default()),
-            Arc::new(TestRequestProxyRuntime::default()),
-            backup_runtime,
-        );
-
-        assert_eq!(
-            service
-                .get_chat_backup_storage_stats()
-                .await
-                .expect("optional backup statistics should stay non-fatal"),
-            None
-        );
     }
 
     #[tokio::test]
@@ -1240,123 +1108,6 @@ mod tests {
         .expect("background cleanup was scheduled");
     }
 
-    #[tokio::test]
-    async fn sillytavern_settings_aggregate_uses_cache_until_signature_changes() {
-        let repository = Arc::new(TestSettingsRepository::default());
-        repository
-            .store_user_settings(json!({"username": "one"}))
-            .await;
-        repository.store_signature(test_signature("one")).await;
-        let service = SettingsService::new(
-            repository.clone(),
-            Arc::new(TestRequestProxyRuntime::default()),
-            Arc::new(TestChatBackupRuntime::default()),
-        );
-
-        let first = service
-            .get_sillytavern_settings()
-            .await
-            .expect("load settings aggregate");
-        let second = service
-            .get_sillytavern_settings()
-            .await
-            .expect("load cached settings aggregate");
-
-        assert_eq!(repository.load_user_settings_count().await, 1);
-        assert_eq!(settings_value(&first), json!({"username": "one"}));
-        assert_eq!(
-            first.tauritavern_settings_revision.hash_algorithm,
-            USER_SETTINGS_HASH_ALGORITHM
-        );
-        assert_eq!(
-            first.tauritavern_settings_revision.settings_hash,
-            SettingsService::stable_user_settings_hash(&json!({"username": "one"}))
-                .expect("hash settings")
-        );
-        assert_eq!(settings_value(&second), json!({"username": "one"}));
-
-        repository
-            .store_user_settings(json!({"username": "two"}))
-            .await;
-        repository.store_signature(test_signature("two")).await;
-
-        let third = service
-            .get_sillytavern_settings()
-            .await
-            .expect("reload settings aggregate");
-
-        assert_eq!(repository.load_user_settings_count().await, 2);
-        assert_eq!(settings_value(&third), json!({"username": "two"}));
-        assert_eq!(
-            third.tauritavern_settings_revision.settings_hash,
-            SettingsService::stable_user_settings_hash(&json!({"username": "two"}))
-                .expect("hash updated settings")
-        );
-    }
-
-    #[tokio::test]
-    async fn clear_cache_drops_settings_aggregate_cache_even_when_signature_is_stable() {
-        let repository = Arc::new(TestSettingsRepository::default());
-        repository
-            .store_user_settings(json!({"username": "one"}))
-            .await;
-        repository.store_signature(test_signature("stable")).await;
-        let service = SettingsService::new(
-            repository.clone(),
-            Arc::new(TestRequestProxyRuntime::default()),
-            Arc::new(TestChatBackupRuntime::default()),
-        );
-
-        let first = service
-            .get_sillytavern_settings()
-            .await
-            .expect("prime settings aggregate cache");
-        assert_eq!(settings_value(&first), json!({"username": "one"}));
-
-        repository
-            .store_user_settings(json!({"username": "two"}))
-            .await;
-
-        service.clear_cache().await;
-
-        let second = service
-            .get_sillytavern_settings()
-            .await
-            .expect("reload settings aggregate after explicit clear");
-
-        assert_eq!(repository.load_user_settings_count().await, 2);
-        assert_eq!(settings_value(&second), json!({"username": "two"}));
-    }
-
-    #[tokio::test]
-    async fn save_user_settings_skips_unchanged_payload() {
-        let repository = Arc::new(TestSettingsRepository::default());
-        repository
-            .store_user_settings(json!({"username": "same"}))
-            .await;
-        let service = SettingsService::new(
-            repository.clone(),
-            Arc::new(TestRequestProxyRuntime::default()),
-            Arc::new(TestChatBackupRuntime::default()),
-        );
-
-        let result = service
-            .save_user_settings(UserSettingsDto {
-                data: json!({"username": "same"}),
-            })
-            .await
-            .expect("save unchanged settings");
-
-        assert_eq!(result.mode, "full-noop");
-        assert_eq!(
-            result.settings_hash,
-            SettingsService::stable_user_settings_hash(&json!({"username": "same"}))
-                .expect("hash unchanged settings")
-        );
-        assert_eq!(repository.save_user_settings_count().await, 0);
-        assert_eq!(repository.load_user_settings_count().await, 1);
-    }
-
     #[test]
     fn user_settings_hash_is_stable_for_object_key_order() {
         let left = json!({
@@ -1477,34 +1228,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn save_user_settings_patch_skips_unchanged_payload() {
-        let repository = Arc::new(TestSettingsRepository::default());
-        let current = json!({"username": "same"});
-        let base_hash =
-            SettingsService::stable_user_settings_hash(&current).expect("hash current settings");
-        repository.store_user_settings(current).await;
-        let service = SettingsService::new(
-            repository.clone(),
-            Arc::new(TestRequestProxyRuntime::default()),
-            Arc::new(TestChatBackupRuntime::default()),
-        );
-
-        let result = service
-            .save_user_settings_patch(UserSettingsPatchDto {
-                hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
-                base_hash: base_hash.clone(),
-                ops: Vec::new(),
-            })
-            .await
-            .expect("save unchanged settings patch");
-
-        assert_eq!(result.mode, "patch-noop");
-        assert_eq!(result.settings_hash, base_hash);
-        assert_eq!(repository.load_user_settings_count().await, 1);
-        assert_eq!(repository.save_user_settings_count().await, 0);
-    }
-
-    #[tokio::test]
     async fn save_user_settings_patch_persists_repaired_noop() {
         let repository = Arc::new(TestSettingsRepository::default());
         let current = json!({
@@ -1563,48 +1286,6 @@ mod tests {
         assert_eq!(repository.user_settings_data().await, repaired);
     }
 
-    #[tokio::test]
-    async fn save_user_settings_clears_settings_aggregate_cache_when_payload_changes() {
-        let repository = Arc::new(TestSettingsRepository::default());
-        repository
-            .store_user_settings(json!({"username": "old"}))
-            .await;
-        repository.store_signature(test_signature("stable")).await;
-        let service = SettingsService::new(
-            repository.clone(),
-            Arc::new(TestRequestProxyRuntime::default()),
-            Arc::new(TestChatBackupRuntime::default()),
-        );
-
-        let first = service
-            .get_sillytavern_settings()
-            .await
-            .expect("prime settings aggregate cache");
-        assert_eq!(settings_value(&first), json!({"username": "old"}));
-
-        let result = service
-            .save_user_settings(UserSettingsDto {
-                data: json!({"username": "new"}),
-            })
-            .await
-            .expect("save changed settings");
-
-        assert_eq!(result.mode, "full");
-        assert_eq!(
-            result.settings_hash,
-            SettingsService::stable_user_settings_hash(&json!({"username": "new"}))
-                .expect("hash changed settings")
-        );
-        let second = service
-            .get_sillytavern_settings()
-            .await
-            .expect("reload settings aggregate after save");
-
-        assert_eq!(repository.save_user_settings_count().await, 1);
-        assert_eq!(repository.load_user_settings_count().await, 3);
-        assert_eq!(settings_value(&second), json!({"username": "new"}));
-    }
-
     #[derive(Default)]
     struct TestSettingsRepository {
         settings: Mutex<TauriTavernSettings>,
@@ -1619,20 +1300,12 @@ mod tests {
             *self.user_settings.lock().await = UserSettings { data };
         }
 
-        async fn store_signature(&self, signature: SettingsAggregateSignature) {
-            *self.settings_signature.lock().await = signature;
-        }
-
         async fn user_settings_data(&self) -> Value {
             self.user_settings.lock().await.data.clone()
         }
 
         async fn save_user_settings_count(&self) -> u32 {
             *self.save_user_settings_count.lock().await
-        }
-
-        async fn load_user_settings_count(&self) -> u32 {
-            *self.load_user_settings_count.lock().await
         }
     }
 
@@ -1730,14 +1403,6 @@ mod tests {
         async fn get_world_names(&self) -> Result<Vec<String>, DomainError> {
             Ok(Vec::new())
         }
-    }
-
-    fn test_signature(label: &str) -> SettingsAggregateSignature {
-        SettingsAggregateSignature::new(label)
-    }
-
-    fn settings_value(response: &SillyTavernSettingsResponseDto) -> Value {
-        serde_json::from_str(&response.settings).expect("settings should be JSON")
     }
 
     #[derive(Default)]

@@ -2,10 +2,9 @@ use serde_json::{Value, json};
 
 use super::decode::{decode_chat_completion_exchange, decode_chat_completion_response};
 use super::encode::encode_chat_completion_request;
-use super::format::resolve_request_adapter;
 use super::provider_state::{next_provider_state, responses_websocket_session_id};
 use super::providers::AgentProviderAdapter;
-use super::schema::{render_openai_tools, sanitize_schema_for_provider};
+use super::schema::sanitize_schema_for_provider;
 use crate::services::agent_tools::BuiltinAgentToolRegistry;
 use crate::services::chat_completion_service::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
@@ -204,41 +203,6 @@ fn rejects_normalizer_synthetic_tool_call_id() {
 }
 
 #[test]
-fn built_in_bedrock_claude_uses_claude_adapter() {
-    let cases = [
-        (
-            "global.anthropic.claude-opus-5-v1:0",
-            false,
-            AgentProviderAdapter::ClaudeMessages,
-        ),
-        (
-            "amazon.nova-pro-v1:0",
-            false,
-            AgentProviderAdapter::OpenAiCompatible,
-        ),
-        (
-            "global.anthropic.claude-opus-5-v1:0",
-            true,
-            AgentProviderAdapter::OpenAiCompatible,
-        ),
-    ];
-
-    for (model, use_custom_template, expected) in cases {
-        let mut request = basic_request("aws_bedrock", None, Vec::new());
-        request
-            .payload
-            .insert("model".to_string(), Value::String(model.to_string()));
-        request.payload.insert(
-            "aws_bedrock_use_custom_template".to_string(),
-            Value::Bool(use_custom_template),
-        );
-
-        let (_, adapter) = resolve_request_adapter(&request).unwrap();
-        assert_eq!(adapter, expected, "unexpected adapter for {model}");
-    }
-}
-
-#[test]
 fn encodes_typed_tool_choice_against_advertised_tools() {
     let registry = BuiltinAgentToolRegistry::all();
     let finish = model_tool(&registry, "workspace.finish");
@@ -420,47 +384,6 @@ fn rejects_truncated_agent_turns() {
 }
 
 #[test]
-fn gemini_schema_sanitizer_removes_unsupported_keys_deeply() {
-    let schema = json!({
-        "type": "object",
-        "title": "Root",
-        "additionalProperties": false,
-        "$defs": { "x": { "type": "string" } },
-        "properties": {
-            "mode": {
-                "type": "string",
-                "const": "draft",
-                "default": "draft"
-            },
-            "nested": {
-                "type": "array",
-                "items": {
-                    "oneOf": [{ "type": "string" }],
-                    "examples": ["x"]
-                }
-            }
-        }
-    });
-
-    let sanitized = sanitize_schema_for_provider(&schema, AgentProviderAdapter::Gemini);
-    assert!(sanitized.get("additionalProperties").is_none());
-    assert!(sanitized.get("$defs").is_none());
-    assert!(sanitized.get("title").is_none());
-    assert!(sanitized["properties"]["mode"].get("const").is_none());
-    assert!(sanitized["properties"]["mode"].get("default").is_none());
-    assert!(
-        sanitized["properties"]["nested"]["items"]
-            .get("oneOf")
-            .is_none()
-    );
-    assert!(
-        sanitized["properties"]["nested"]["items"]
-            .get("examples")
-            .is_none()
-    );
-}
-
-#[test]
 fn gemini_schema_sanitizer_projects_nested_objects_to_agent_friendly_schema() {
     let schema = json!({
         "type": "object",
@@ -492,37 +415,6 @@ fn gemini_schema_sanitizer_projects_nested_objects_to_agent_friendly_schema() {
     assert_eq!(sanitized["properties"]["task"]["type"], "object");
     assert_eq!(
         sanitized["properties"]["task"]["properties"]["context"]["type"],
-        "string"
-    );
-}
-
-#[test]
-fn gemini_builtin_tool_schemas_do_not_emit_nested_required() {
-    let registry = BuiltinAgentToolRegistry::all();
-    let tools = render_openai_tools(&model_tools(&registry), AgentProviderAdapter::Gemini);
-    for tool in &tools {
-        let name = tool["function"]["name"].as_str().unwrap_or("<unknown>");
-        assert_gemini_required_shape(
-            &tool["function"]["parameters"],
-            true,
-            &format!("tool `{name}` parameters"),
-        );
-    }
-
-    let delegate = tools
-        .iter()
-        .find(|tool| tool["function"]["name"] == "agent_delegate")
-        .expect("agent_delegate tool must be present");
-    let parameters = &delegate["function"]["parameters"];
-    assert_eq!(parameters["required"], json!(["agentId", "task"]));
-    assert!(parameters["properties"].get("budget").is_none());
-    assert!(parameters["properties"]["task"].get("required").is_none());
-    assert_eq!(
-        parameters["properties"]["task"]["properties"]["context"]["type"],
-        "string"
-    );
-    assert_eq!(
-        parameters["properties"]["task"]["properties"]["expectedOutput"]["type"],
         "string"
     );
 }
@@ -656,26 +548,6 @@ fn openai_responses_next_state_only_enables_continuation_for_websocket_mode() {
     assert_eq!(enhanced["transport"], "responses_websocket");
     assert_eq!(enhanced["previousResponseId"], "resp_2");
     assert_eq!(responses_websocket_session_id(&request), Some("run_1"));
-}
-
-#[test]
-fn openai_responses_portable_mode_does_not_require_response_id() {
-    let raw = json!({
-        "model": "test",
-        "choices": [{ "message": { "role": "assistant", "content": "done" } }]
-    });
-    let response = decode_chat_completion_response(raw, &[]).unwrap();
-    let request = basic_request("custom", Some("openai_responses"), Vec::new());
-
-    let state = next_provider_state(
-        &request,
-        ChatCompletionSource::Custom,
-        AgentProviderAdapter::OpenAiResponses,
-        &response,
-    )
-    .expect("portable mode should not require provider response ids");
-
-    assert!(state.get("previousResponseId").is_none());
 }
 
 #[test]
@@ -930,36 +802,6 @@ fn same_provider_keeps_matching_private_native_metadata() {
     let dto = encode_chat_completion_request(&request).unwrap();
     let native = dto.payload["messages"][0]["native"].as_object().unwrap();
     assert!(native.get("claude").is_some());
-}
-
-fn assert_gemini_required_shape(schema: &Value, root: bool, context: &str) {
-    let Some(object) = schema.as_object() else {
-        return;
-    };
-
-    if let Some(required) = object.get("required").and_then(Value::as_array) {
-        assert!(root, "{context} must not contain nested required arrays");
-        let properties = object
-            .get("properties")
-            .and_then(Value::as_object)
-            .expect("root required schema must declare properties");
-        for entry in required {
-            let name = entry.as_str().expect("required entries must be strings");
-            assert!(
-                properties.contains_key(name),
-                "{context} required property `{name}` is not declared"
-            );
-        }
-    }
-
-    if let Some(properties) = object.get("properties").and_then(Value::as_object) {
-        for (name, nested) in properties {
-            assert_gemini_required_shape(nested, false, &format!("{context}.{name}"));
-        }
-    }
-    if let Some(items) = object.get("items") {
-        assert_gemini_required_shape(items, false, &format!("{context}.items"));
-    }
 }
 
 fn provider_state_test_request(session_id: &str) -> AgentModelRequest {

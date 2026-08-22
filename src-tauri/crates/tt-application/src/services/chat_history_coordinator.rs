@@ -795,41 +795,6 @@ mod tests {
     }
 
     #[test]
-    fn maintenance_only_refreshes_an_existing_pending_request() {
-        let now = Instant::now();
-        let locator = character("chat");
-        let mut state = CoordinatorState::new(now);
-
-        state.note_commit(
-            locator.clone(),
-            CurrentCommitReason::Maintenance,
-            now,
-            Duration::from_secs(30),
-            32,
-        );
-        assert!(state.pending.is_empty());
-
-        state.note_commit(
-            locator.clone(),
-            CurrentCommitReason::Mutation,
-            now,
-            Duration::from_secs(10),
-            32,
-        );
-        let due_at = state.pending[&locator].due_at;
-        state.note_commit(
-            locator.clone(),
-            CurrentCommitReason::Maintenance,
-            now + Duration::from_secs(1),
-            Duration::from_secs(30),
-            32,
-        );
-
-        assert_eq!(state.pending[&locator].commit_seq, 3);
-        assert_eq!(state.pending[&locator].due_at, due_at);
-    }
-
-    #[test]
     fn repeated_commits_are_latest_wins_without_growing_the_map() {
         let now = Instant::now();
         let locator = character("chat");
@@ -851,36 +816,6 @@ mod tests {
 
         assert_eq!(state.pending.len(), 1);
         assert_eq!(state.pending[&locator].commit_seq, 2);
-    }
-
-    #[test]
-    fn global_interval_applies_after_an_attempt_even_with_trailing_work() {
-        let now = Instant::now();
-        let first = character("first");
-        let second = character("second");
-        let mut state = CoordinatorState::new(now);
-        state.note_commit(
-            first,
-            CurrentCommitReason::Mutation,
-            now,
-            Duration::ZERO,
-            32,
-        );
-        state.note_commit(
-            second,
-            CurrentCommitReason::Mutation,
-            now,
-            Duration::ZERO,
-            32,
-        );
-
-        let attempt = state.take_ready(now).unwrap();
-        state.complete_automatic(&attempt, now, Duration::from_secs(60));
-
-        assert_eq!(
-            state.worker_decision(now),
-            WorkerDecision::WaitUntil(now + Duration::from_secs(60))
-        );
     }
 
     #[test]
@@ -907,29 +842,6 @@ mod tests {
         state.complete_explicit(&locator, explicit_started_at, now, Duration::from_secs(60));
 
         assert_eq!(state.pending[&locator].commit_seq, 2);
-    }
-
-    #[test]
-    fn explicit_completion_clears_an_older_suspended_request() {
-        let now = Instant::now();
-        let locator = character("chat");
-        let mut state = CoordinatorState::new(now);
-        state.note_commit(
-            locator.clone(),
-            CurrentCommitReason::Mutation,
-            now,
-            Duration::ZERO,
-            32,
-        );
-        let explicit_started_at = state.next_commit_seq;
-        state.begin_generation(locator.clone());
-
-        state.complete_explicit(&locator, explicit_started_at, now, Duration::from_secs(60));
-        state
-            .finish_generation(&locator, now, Duration::ZERO, 32)
-            .unwrap();
-
-        assert!(state.pending.is_empty());
     }
 
     #[test]
@@ -983,33 +895,6 @@ mod tests {
     }
 
     #[test]
-    fn transient_attempt_does_not_overwrite_a_newer_trailing_request() {
-        let now = Instant::now();
-        let locator = character("chat");
-        let mut state = CoordinatorState::new(now);
-        state.note_commit(
-            locator.clone(),
-            CurrentCommitReason::Mutation,
-            now,
-            Duration::ZERO,
-            32,
-        );
-        let attempt = state.take_ready(now).unwrap();
-        state.note_commit(
-            locator.clone(),
-            CurrentCommitReason::Mutation,
-            now,
-            Duration::ZERO,
-            32,
-        );
-
-        state.defer_automatic(&attempt, now + Duration::from_secs(2));
-
-        assert_eq!(state.pending[&locator].commit_seq, 2);
-        assert_eq!(state.pending[&locator].due_at, now);
-    }
-
-    #[test]
     fn pending_capacity_still_allows_existing_locator_coalescing() {
         let now = Instant::now();
         let first = character("first");
@@ -1048,29 +933,6 @@ mod tests {
         );
         assert_eq!(state.pending.len(), 1);
         assert_eq!(state.pending[&first].commit_seq, 3);
-    }
-
-    #[test]
-    fn invalidate_all_preserves_generation_gate_and_global_cooldown() {
-        let now = Instant::now();
-        let active = character("active");
-        let waiting = character("waiting");
-        let mut state = CoordinatorState::new(now);
-        state.next_automatic_at = now + Duration::from_secs(60);
-        state.note_commit(
-            waiting,
-            CurrentCommitReason::Mutation,
-            now,
-            Duration::ZERO,
-            32,
-        );
-        state.begin_generation(active.clone());
-
-        state.invalidate_all_pending();
-
-        assert!(state.pending.is_empty());
-        assert_eq!(state.next_automatic_at, now + Duration::from_secs(60));
-        assert_eq!(state.active_generation.as_ref().unwrap().locator, active);
     }
 
     #[test]

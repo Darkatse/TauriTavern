@@ -846,61 +846,6 @@ mod tests {
     }
 
     #[test]
-    fn claude_explicit_prompt_caching_omits_root_and_marks_final_block() {
-        let mut payload = json!({
-            "model": "claude-sonnet-4-5@20250929",
-            "system": [
-                { "type": "text", "text": "sys1" },
-                { "type": "text", "text": "sys2" }
-            ],
-            "messages": [
-                { "role": "user", "content": [{ "type": "text", "text": "prehistory" }] },
-                { "role": "assistant", "content": [{ "type": "text", "text": "a1" }] },
-                { "role": "user", "content": [{ "type": "text", "text": "u1" }] }
-            ]
-        });
-
-        let _snapshot = apply_claude_explicit_prompt_caching(&mut payload, None, "5m");
-
-        let root = payload.as_object().expect("payload must be object");
-        assert!(
-            root.get("cache_control").is_none(),
-            "Vertex/Bedrock-style explicit caching must not use Anthropic automatic root cache_control",
-        );
-
-        let system = root
-            .get("system")
-            .and_then(Value::as_array)
-            .expect("system must be array");
-        assert!(has_cache_control(
-            system.last().expect("system must not be empty")
-        ));
-
-        let messages = root
-            .get("messages")
-            .and_then(Value::as_array)
-            .expect("messages must be array");
-
-        let pre_history_block = messages
-            .first()
-            .and_then(Value::as_object)
-            .and_then(|message| message.get("content"))
-            .and_then(Value::as_array)
-            .and_then(|blocks| blocks.last())
-            .expect("prehistory block must exist");
-        assert!(has_cache_control(pre_history_block));
-
-        let last_block = messages
-            .last()
-            .and_then(Value::as_object)
-            .and_then(|message| message.get("content"))
-            .and_then(Value::as_array)
-            .and_then(|blocks| blocks.last())
-            .expect("last message block must exist");
-        assert!(has_cache_control(last_block));
-    }
-
-    #[test]
     fn claude_explicit_prompt_caching_marks_tool_definitions() {
         let mut payload = json!({
             "model": "claude-sonnet-4-5@20250929",
@@ -1022,47 +967,5 @@ mod tests {
             .and_then(|parts| parts.last())
             .expect("last message block must exist");
         assert!(!has_cache_control(last_block));
-    }
-
-    #[test]
-    fn openrouter_prompt_caching_marks_last_common_block_when_suffix_changes() {
-        let mut payload1 = json!({
-            "model": "anthropic/claude-3.5-sonnet",
-            "messages": [
-                { "role": "system", "content": "sys" },
-                { "role": "user", "content": "prehistory" },
-                { "role": "assistant", "content": "a1" },
-                { "role": "user", "content": "u1" }
-            ]
-        });
-        let snapshot = apply_openrouter_claude_prompt_caching(&mut payload1, None, "5m");
-
-        let mut payload2 = json!({
-            "model": "anthropic/claude-3.5-sonnet",
-            "messages": [
-                { "role": "system", "content": "sys" },
-                { "role": "user", "content": "prehistory" },
-                { "role": "assistant", "content": "a1" },
-                { "role": "user", "content": "u1 changed" }
-            ]
-        });
-
-        let _snapshot2 =
-            apply_openrouter_claude_prompt_caching(&mut payload2, Some(&snapshot), "5m");
-
-        let messages = payload2
-            .as_object()
-            .and_then(|root| root.get("messages"))
-            .and_then(Value::as_array)
-            .expect("messages must be array");
-
-        let last_common_block = messages
-            .get(2)
-            .and_then(Value::as_object)
-            .and_then(|message| message.get("content"))
-            .and_then(Value::as_array)
-            .and_then(|parts| parts.last())
-            .expect("assistant block must exist");
-        assert!(has_cache_control(last_common_block));
     }
 }

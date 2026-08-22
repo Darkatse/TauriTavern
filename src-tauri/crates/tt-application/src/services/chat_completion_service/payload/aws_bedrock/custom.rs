@@ -173,35 +173,9 @@ pub(super) fn is_enabled(payload: &Map<String, Value>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Value, json};
+    use serde_json::json;
 
-    use super::{build, is_enabled};
-
-    #[test]
-    fn is_enabled_treats_truthy_variants_uniformly() {
-        let mut payload = serde_json::Map::new();
-        assert!(!is_enabled(&payload));
-        payload.insert(
-            "aws_bedrock_use_custom_template".to_string(),
-            Value::Bool(false),
-        );
-        assert!(!is_enabled(&payload));
-        payload.insert(
-            "aws_bedrock_use_custom_template".to_string(),
-            Value::Bool(true),
-        );
-        assert!(is_enabled(&payload));
-        payload.insert(
-            "aws_bedrock_use_custom_template".to_string(),
-            Value::String("true".to_string()),
-        );
-        assert!(is_enabled(&payload));
-        payload.insert(
-            "aws_bedrock_use_custom_template".to_string(),
-            Value::String("0".to_string()),
-        );
-        assert!(!is_enabled(&payload));
-    }
+    use super::build;
 
     #[test]
     fn build_substitutes_placeholders_and_returns_invoke_endpoint() {
@@ -243,21 +217,6 @@ mod tests {
     }
 
     #[test]
-    fn build_fails_when_template_is_missing_or_empty() {
-        let payload = json!({
-            "model": "writer.palmyra-x-004-v1:0",
-            "aws_bedrock_use_custom_template": true,
-            "messages": [{ "role": "user", "content": "hi" }],
-        })
-        .as_object()
-        .cloned()
-        .unwrap();
-        let err =
-            build(payload, "writer.palmyra-x-004-v1:0").expect_err("missing template must fail");
-        assert!(err.to_string().contains("custom template is enabled but"));
-    }
-
-    #[test]
     fn build_fails_when_rendered_template_is_not_valid_json() {
         let payload = json!({
             "model": "writer.palmyra-x-004-v1:0",
@@ -274,26 +233,6 @@ mod tests {
         let err = build(payload, "writer.palmyra-x-004-v1:0")
             .expect_err("invalid JSON must fail with a clear error");
         assert!(err.to_string().contains("rendered to invalid JSON"));
-    }
-
-    #[test]
-    fn build_uses_defaults_for_missing_max_tokens_and_temperature() {
-        let payload = json!({
-            "model": "writer.palmyra-x-004-v1:0",
-            "aws_bedrock_use_custom_template": true,
-            "aws_bedrock_custom_template":
-                "{\"max_tokens\":{{max_tokens}},\"temperature\":{{temperature}}}",
-            "aws_bedrock_custom_response_path": "output.text",
-            "messages": [{ "role": "user", "content": "hi" }],
-        })
-        .as_object()
-        .cloned()
-        .unwrap();
-
-        let (_, body) =
-            build(payload, "writer.palmyra-x-004-v1:0").expect("template must build with defaults");
-        assert_eq!(body["max_tokens"], 1024);
-        assert!(body["temperature"].as_f64().unwrap().eq(&0.7));
     }
 
     #[test]

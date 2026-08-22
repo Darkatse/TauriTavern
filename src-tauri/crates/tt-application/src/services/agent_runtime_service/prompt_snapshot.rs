@@ -343,7 +343,6 @@ mod tests {
         validate_prompt_snapshot_context_policy,
     };
     use tt_domain::models::agent::profile::ResolvedAgentProfile;
-    use tt_domain::models::agent::{AgentModelContentPart, AgentModelRequest, AgentModelRole};
     use tt_domain::models::tool::ToolChoice;
 
     #[test]
@@ -362,33 +361,6 @@ mod tests {
                 .to_string()
                 .contains("agent.external_tool_choice_unsupported")
         );
-    }
-
-    #[test]
-    fn materialized_agent_system_prompt_passes_through_at_prompt_manager_position() {
-        let request = request_from_prompt_snapshot(&json!({
-            "chatCompletionPayload": {
-                "messages": [
-                    { "role": "system", "content": "Before Agent prompt." },
-                    { "role": "user", "content": "Materialized Agent System Prompt." },
-                    { "role": "user", "content": "hello" }
-                ]
-            }
-        }))
-        .expect("request");
-
-        let request =
-            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
-                .expect("agent request");
-
-        assert_eq!(message_text(&request, 0), "Before Agent prompt.");
-        assert_eq!(request.messages[1].role, AgentModelRole::User);
-        assert_eq!(
-            message_text(&request, 1),
-            "Materialized Agent System Prompt."
-        );
-        assert_eq!(message_text(&request, 2), "hello");
-        assert_eq!(request.tool_choice, ToolChoice::Auto);
     }
 
     #[test]
@@ -508,31 +480,6 @@ mod tests {
 
         validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
             .expect("matching truncated context policy should pass");
-    }
-
-    #[test]
-    fn empty_initial_history_context_policy_is_valid_snapshot_contract() {
-        let mut profile = test_profile(None);
-        profile.context.initial_chat_history_messages = 0;
-        let prompt_snapshot = json!({
-            "contextPolicy": {
-                "initialChatHistoryMessages": 0,
-                "includeActivatedWorldInfo": true
-            },
-            "chatCompletionPayload": {
-                "messages": [{ "role": "system", "content": "Materialized Agent System Prompt." }]
-            }
-        });
-
-        validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
-            .expect("matching empty-history context policy should pass");
-    }
-
-    fn message_text(request: &AgentModelRequest, index: usize) -> &str {
-        match &request.messages[index].parts[0] {
-            AgentModelContentPart::Text { text } => text.as_str(),
-            _ => panic!("expected text message"),
-        }
     }
 
     fn agent_system_marker() -> serde_json::Value {

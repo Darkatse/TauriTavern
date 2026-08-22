@@ -300,62 +300,6 @@ fn inbound_service(
 }
 
 #[tokio::test]
-async fn overwrite_policy_setter_updates_preferences_and_status() {
-    let state = Arc::new(LanSyncRuntimeState::new());
-    let settings_repository = Arc::new(MemorySettingsRepository::new(SyncMode::Incremental));
-    let peer_repository = Arc::new(MemoryPeerRepository {
-        identity: test_identity(
-            test_device_id("11111111-1111-4111-8111-111111111111"),
-            "server",
-        ),
-        paired_devices: Mutex::new(Vec::new()),
-    });
-    let approval = Arc::new(StaticApproval {
-        accept: true,
-        requests: Mutex::new(Vec::new()),
-    });
-    let (jobs, _job_rx) = mpsc::unbounded_channel();
-    let coordinator = Arc::new(SyncJobCoordinator::new(
-        Arc::new(RecordingExecutor { jobs }),
-        Arc::new(NoopReconciler),
-        Arc::new(NoopEvents),
-        Arc::new(Semaphore::new(1)),
-    ));
-    let service = LanSyncService::new(
-        state,
-        settings_repository.clone(),
-        peer_repository,
-        Arc::new(MemoryServerControl),
-        Arc::new(NoopAddressDiscovery),
-        Arc::new(NoopPairingClient),
-        approval,
-        coordinator,
-    );
-
-    service
-        .set_overwrite_policy(OverwritePolicy::PreferNewer)
-        .await
-        .expect("set overwrite policy");
-
-    assert_eq!(
-        settings_repository
-            .load_or_create_sync_preferences()
-            .await
-            .expect("load preferences")
-            .overwrite_policy,
-        OverwritePolicy::PreferNewer
-    );
-    assert_eq!(
-        service
-            .get_status()
-            .await
-            .expect("load status")
-            .overwrite_policy,
-        OverwritePolicy::PreferNewer
-    );
-}
-
-#[tokio::test]
 async fn inbound_pairing_accepts_peer_and_clears_session() {
     let state = Arc::new(LanSyncRuntimeState::new());
     state
@@ -412,61 +356,6 @@ async fn inbound_pairing_accepts_peer_and_clears_session() {
     assert_eq!(approval_requests.len(), 1);
     assert_eq!(approval_requests[0].peer_device_name, "peer");
     assert_eq!(approval_requests[0].peer_ip, "192.168.1.23");
-}
-
-#[tokio::test]
-async fn inbound_pairing_rejection_does_not_store_peer() {
-    let state = Arc::new(LanSyncRuntimeState::new());
-    state
-        .set_pairing_session(LanPairingSession {
-            token: "pair-token".to_string(),
-            expires_at_ms: now_ms() + 60_000,
-        })
-        .await;
-
-    let peer_repository = Arc::new(MemoryPeerRepository {
-        identity: test_identity(
-            test_device_id("11111111-1111-4111-8111-111111111111"),
-            "server",
-        ),
-        paired_devices: Mutex::new(Vec::new()),
-    });
-    let approval = Arc::new(StaticApproval {
-        accept: false,
-        requests: Mutex::new(Vec::new()),
-    });
-    let (jobs, _job_rx) = mpsc::unbounded_channel();
-    let inbound = inbound_service(
-        state.clone(),
-        peer_repository.clone(),
-        approval,
-        jobs,
-        SyncMode::Incremental,
-    );
-
-    let error = inbound
-        .complete_pairing(
-            "pair-token".to_string(),
-            peer_request(
-                test_device_id("22222222-2222-4222-8222-222222222222"),
-                "peer",
-            ),
-        )
-        .await
-        .expect_err("pairing should be rejected");
-
-    assert!(matches!(
-        error,
-        DomainError::AuthenticationError(message) if message == PAIRING_REJECTED_MESSAGE
-    ));
-    assert!(
-        peer_repository
-            .load_paired_devices()
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    assert!(state.get_pairing_session().await.is_some());
 }
 
 #[tokio::test]

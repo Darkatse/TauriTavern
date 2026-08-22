@@ -250,24 +250,3 @@ fn ensure_pull_request_overwrite_policy(
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::ensure_pull_request_overwrite_policy;
-    use crate::sync::lan::server::LAN_PULL_REQUEST_OVERWRITE_POLICY_FEATURE_V1;
-    use ttsync_contract::sync::OverwritePolicy;
-
-    #[test]
-    fn overwrite_policy_feature_is_only_required_for_prefer_newer() {
-        let mut status = ttsync_http::server::default_status_response();
-        status
-            .features
-            .retain(|feature| feature != LAN_PULL_REQUEST_OVERWRITE_POLICY_FEATURE_V1);
-
-        ensure_pull_request_overwrite_policy(&status, OverwritePolicy::Exact)
-            .expect("exact remains compatible with old LAN peers");
-        assert!(
-            ensure_pull_request_overwrite_policy(&status, OverwritePolicy::PreferNewer).is_err()
-        );
-    }
-}

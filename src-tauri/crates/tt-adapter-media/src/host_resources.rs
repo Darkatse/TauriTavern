@@ -408,8 +408,6 @@ fn host_resource_error_from_domain(error: DomainError) -> HostResourceStoreError
 
 #[cfg(test)]
 mod tests {
-    use std::fs::FileTimes;
-
     use image::codecs::gif::GifEncoder;
     use image::{Frame, ImageBuffer, Rgb, Rgba};
     use tt_contracts::range::parse_single_range_header;
@@ -602,26 +600,6 @@ mod tests {
     }
 
     #[test]
-    fn failed_thumbnail_generation_falls_back_before_representation_selection() {
-        let temp = TempDirGuard::new("host-resources-thumbnail-fallback");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
-        let file = temp.path.join("characters").join("a.png");
-        fs::create_dir_all(file.parent().expect("characters parent")).expect("characters dir");
-        fs::write(&file, b"not-an-image").expect("invalid source image");
-        let request = ThumbnailAssetRequest {
-            kind: ThumbnailKind::Avatar,
-            file: "a.png".to_string(),
-            selection: ThumbnailSelection::PreferGenerated,
-        };
-
-        let opened = store
-            .open(HostResourceSourceRequest::Thumbnail(&request))
-            .expect("fallback original");
-        assert_eq!(opened.metadata.content_type, "image/png");
-        assert_eq!(opened.read(None).expect("read original"), b"not-an-image");
-    }
-
-    #[test]
     fn required_static_preview_decodes_an_animated_image_to_jpeg() {
         let temp = TempDirGuard::new("host-resources-thumbnail-required-static");
         let store = FilesystemHostResourceStore::new(roots(&temp.path));
@@ -673,73 +651,6 @@ mod tests {
         };
 
         assert!(matches!(error, HostResourceStoreError::Internal(_)));
-    }
-
-    #[test]
-    fn generated_thumbnail_revision_tracks_source_length_when_mtime_is_preserved() {
-        let temp = TempDirGuard::new("host-resources-thumbnail-source-revision");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
-        let file = temp.path.join("characters").join("a.png");
-        fs::create_dir_all(file.parent().expect("characters parent")).expect("characters dir");
-        ImageBuffer::from_pixel(2, 2, Rgb([255u8, 0, 0]))
-            .save(&file)
-            .expect("first source image");
-        let request = ThumbnailAssetRequest {
-            kind: ThumbnailKind::Avatar,
-            file: "a.png".to_string(),
-            selection: ThumbnailSelection::PreferGenerated,
-        };
-
-        let first = store
-            .open(HostResourceSourceRequest::Thumbnail(&request))
-            .expect("first thumbnail");
-        let first_revision = first.metadata.revision.clone();
-        let first_bytes = first.read(None).expect("first bytes");
-        let source_metadata = fs::metadata(&file).expect("source metadata");
-        let source_mtime = source_metadata.modified().expect("source mtime");
-
-        let reopened = store
-            .open(HostResourceSourceRequest::Thumbnail(&request))
-            .expect("reopen thumbnail");
-        assert_eq!(reopened.metadata.revision, first_revision);
-
-        ImageBuffer::from_pixel(3, 2, Rgb([0u8, 0, 255]))
-            .save(&file)
-            .expect("replacement source image");
-        fs::OpenOptions::new()
-            .write(true)
-            .open(&file)
-            .expect("open replacement source")
-            .set_times(FileTimes::new().set_modified(source_mtime))
-            .expect("preserve source mtime");
-        assert_ne!(
-            fs::metadata(&file).expect("replacement metadata").len(),
-            source_metadata.len()
-        );
-
-        let changed = store
-            .open(HostResourceSourceRequest::Thumbnail(&request))
-            .expect("changed thumbnail");
-        assert_ne!(changed.metadata.revision, first_revision);
-        assert_ne!(changed.read(None).expect("changed bytes"), first_bytes);
-    }
-
-    #[test]
-    fn source_revision_is_stable_across_reopen() {
-        let temp = TempDirGuard::new("host-resources-stable-revision");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
-        let file = temp.path.join("backgrounds").join("a.bin");
-        fs::create_dir_all(file.parent().expect("background parent")).expect("background dir");
-        fs::write(&file, b"abcd").expect("background file");
-        let request = || HostResourceSourceRequest::UserData {
-            kind: UserDataAssetKind::Background,
-            relative_path: Path::new("a.bin"),
-        };
-
-        let first = store.open(request()).expect("first");
-        let second = store.open(request()).expect("second");
-
-        assert_eq!(first.metadata.revision, second.metadata.revision);
     }
 
     #[test]

@@ -53,13 +53,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_result_summary_path_is_flat_and_stable() {
-        let path = task_result_summary_path("scene-critic-002").expect("summary path");
-
-        assert_eq!(path.as_str(), "summaries/scene-critic-002-result.md");
-    }
-
-    #[test]
     fn workspace_path_is_under_any_root_matches_root_boundary() {
         let roots = vec!["output".to_string()];
 

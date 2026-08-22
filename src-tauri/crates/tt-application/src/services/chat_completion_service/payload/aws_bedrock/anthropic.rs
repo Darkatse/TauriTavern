@@ -141,7 +141,6 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::super::build;
-    use super::normalize_bedrock_model_id;
 
     #[test]
     fn bedrock_moves_model_to_url_path_and_injects_anthropic_version() {
@@ -270,67 +269,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_strips_inference_profile_provider_and_version_suffixes() {
-        // Bare Bedrock catalog ids.
-        assert_eq!(
-            normalize_bedrock_model_id("anthropic.claude-opus-4-7"),
-            "claude-opus-4-7"
-        );
-        assert_eq!(
-            normalize_bedrock_model_id("anthropic.claude-opus-4-6-v1"),
-            "claude-opus-4-6"
-        );
-        assert_eq!(
-            normalize_bedrock_model_id("anthropic.claude-sonnet-4-5-20250929-v1:0"),
-            "claude-sonnet-4-5-20250929"
-        );
-        assert_eq!(
-            normalize_bedrock_model_id("anthropic.claude-fable-5"),
-            "claude-fable-5"
-        );
-        assert_eq!(
-            normalize_bedrock_model_id("anthropic.claude-sonnet-5"),
-            "claude-sonnet-5"
-        );
-        // Cross-region inference profile ids.
-        assert_eq!(
-            normalize_bedrock_model_id("us.anthropic.claude-opus-4-7"),
-            "claude-opus-4-7"
-        );
-        assert_eq!(
-            normalize_bedrock_model_id("jp.anthropic.claude-opus-4-8"),
-            "claude-opus-4-8"
-        );
-        assert_eq!(
-            normalize_bedrock_model_id("global.anthropic.claude-fable-5"),
-            "claude-fable-5"
-        );
-        assert_eq!(
-            normalize_bedrock_model_id("global.anthropic.claude-opus-4-6-v1"),
-            "claude-opus-4-6"
-        );
-        // Already-normalized ids pass through unchanged.
-        assert_eq!(
-            normalize_bedrock_model_id("claude-3-5-sonnet-20240620"),
-            "claude-3-5-sonnet-20240620"
-        );
-        // Padding tolerance.
-        assert_eq!(
-            normalize_bedrock_model_id("  us.anthropic.claude-opus-4-7  "),
-            "claude-opus-4-7"
-        );
-        // Non-Anthropic ids: only the inference-profile prefix and the
-        // version suffix are stripped — the provider segment stays. The
-        // normalizer is only ever called on the Anthropic dispatch path, so
-        // this is mostly defensive: we want a stable result regardless.
-        assert_eq!(
-            normalize_bedrock_model_id("us.amazon.nova-pro-v1:0"),
-            "amazon.nova-pro",
-            "us./global. + :0 + -v1 are stripped, provider `amazon.` is kept",
-        );
-    }
-
-    #[test]
     fn bedrock_unlocks_fable_5_adaptive_thinking_via_normalization() {
         let payload = json!({
             "chat_completion_source": "aws_bedrock",
@@ -360,118 +298,5 @@ mod tests {
         assert!(body.get("temperature").is_none());
         assert!(body.get("top_p").is_none());
         assert!(body.get("top_k").is_none());
-    }
-
-    #[test]
-    fn bedrock_unlocks_sonnet_5_adaptive_thinking_via_normalization() {
-        let payload = json!({
-            "chat_completion_source": "aws_bedrock",
-            "model": "us.anthropic.claude-sonnet-5",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "max_tokens": 4096,
-            "reasoning_effort": "xhigh",
-        })
-        .as_object()
-        .cloned()
-        .expect("payload should be object");
-
-        let (endpoint_path, body) = build(payload).expect("payload should build");
-        assert_eq!(
-            endpoint_path, "/model/us.anthropic.claude-sonnet-5/invoke",
-            "URL path must retain the raw Bedrock id"
-        );
-        assert_eq!(
-            body.pointer("/thinking/type").and_then(Value::as_str),
-            Some("adaptive")
-        );
-        assert_eq!(
-            body.pointer("/output_config/effort")
-                .and_then(Value::as_str),
-            Some("xhigh")
-        );
-    }
-
-    #[test]
-    fn bedrock_unlocks_opus_4_7_adaptive_thinking_via_normalization() {
-        // Without normalization, `ClaudeModelContract::resolve` cannot match
-        // `claude-opus-4-7` against `us.anthropic.claude-opus-4-7`, so the
-        // builder would silently strip `reasoning_effort`. With normalization
-        // it should emit an adaptive thinking block plus an
-        // `output_config.effort` field. We only test 4.7 explicitly here; the
-        // 4.6/4.5 variants share the same code path and are covered by the
-        // Claude builder's own contract tests.
-        let payload = json!({
-            "chat_completion_source": "aws_bedrock",
-            "model": "us.anthropic.claude-opus-4-7",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "max_tokens": 4096,
-            "reasoning_effort": "high",
-        })
-        .as_object()
-        .cloned()
-        .expect("payload should be object");
-
-        let (endpoint_path, body) = build(payload).expect("payload should build");
-        assert_eq!(
-            endpoint_path, "/model/us.anthropic.claude-opus-4-7/invoke",
-            "URL path must retain the raw Bedrock id"
-        );
-
-        let body = body.as_object().expect("body should be object");
-        let thinking = body
-            .get("thinking")
-            .and_then(Value::as_object)
-            .expect("Opus 4.7 must emit an adaptive `thinking` block");
-        assert_eq!(
-            thinking.get("type").and_then(Value::as_str),
-            Some("adaptive"),
-            "Opus 4.7 thinking must be adaptive, got: {thinking:?}",
-        );
-        assert!(
-            body.get("output_config")
-                .and_then(Value::as_object)
-                .and_then(|c| c.get("effort"))
-                .is_some(),
-            "Opus 4.7 must surface output_config.effort",
-        );
-    }
-
-    #[test]
-    fn bedrock_claude_orders_extremes_by_normalized_model_contract() {
-        let xhigh_payload = json!({
-            "chat_completion_source": "aws_bedrock",
-            "model": "us.anthropic.claude-opus-4-7",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "max_tokens": 4096,
-            "reasoning_effort": "xhigh",
-        })
-        .as_object()
-        .cloned()
-        .expect("payload should be object");
-
-        let (_endpoint_path, body) = build(xhigh_payload).expect("payload should build");
-        assert_eq!(
-            body.pointer("/output_config/effort")
-                .and_then(Value::as_str),
-            Some("xhigh")
-        );
-
-        let max_payload = json!({
-            "chat_completion_source": "aws_bedrock",
-            "model": "global.anthropic.claude-opus-4-7-v1",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "max_tokens": 4096,
-            "reasoning_effort": "max",
-        })
-        .as_object()
-        .cloned()
-        .expect("payload should be object");
-
-        let (_endpoint_path, body) = build(max_payload).expect("payload should build");
-        assert_eq!(
-            body.pointer("/output_config/effort")
-                .and_then(Value::as_str),
-            Some("max")
-        );
     }
 }

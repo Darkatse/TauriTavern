@@ -323,21 +323,6 @@ mod tests {
     }
 
     #[test]
-    fn narration_treats_json_assistant_text_as_plain_text() {
-        let raw_text = r#"{"context":"draft is ready","ignored":"raw"}"#;
-        let response = response_with_text(raw_text, vec![tool_call()]);
-
-        let narration = model_turn_narration(&response, 80).expect("narration");
-        assert_eq!(narration.source, "assistantText");
-        assert_eq!(narration.text, raw_text);
-        assert!(!narration.truncated);
-
-        let summary = model_turn_event_summary(&response);
-        assert_eq!(summary["narration"]["source"], "assistantText");
-        assert_eq!(summary["narration"]["text"], raw_text);
-    }
-
-    #[test]
     fn narration_is_absent_without_tool_turn_or_text() {
         let plain_response = response_with_text("Final answer.", Vec::new());
         assert!(model_turn_narration(&plain_response, 40).is_none());

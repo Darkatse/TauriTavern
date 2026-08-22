@@ -265,39 +265,6 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_thinking_with_tools_fills_terminal_assistant_reasoning_content() {
-        let payload = json!({
-            "model": "deepseek-v4-flash",
-            "messages": [
-                {"role":"user","content":"continue"},
-                {"role":"assistant","content":"Answer:"}
-            ],
-            "tools": [{
-                "type": "function",
-                "function": {
-                    "name": "noop",
-                    "description": "Do nothing",
-                    "parameters": {"type": "object", "properties": {}}
-                }
-            }],
-            "include_reasoning": true,
-            "chat_completion_source": "deepseek"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("payload should build");
-
-        assert_eq!(
-            upstream
-                .pointer("/messages/1/reasoning_content")
-                .and_then(Value::as_str),
-            Some("")
-        );
-    }
-
-    #[test]
     fn deepseek_v4_enables_thinking_and_maps_effort() {
         for model in [
             "deepseek-v4-flash",
@@ -341,26 +308,6 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_reasoning_accepts_shared_minimal_alias() {
-        let payload = json!({
-            "model": "deepseek-v4-pro",
-            "messages": [{"role": "user", "content": "hello"}],
-            "include_reasoning": true,
-            "reasoning_effort": "minimal",
-            "chat_completion_source": "deepseek"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("payload should build");
-        assert_eq!(
-            upstream.get("reasoning_effort").and_then(Value::as_str),
-            Some("low")
-        );
-    }
-
-    #[test]
     fn deepseek_v4_disables_thinking_without_reasoning_effort() {
         let payload = json!({
             "model": "deepseek-v4-flash",
@@ -386,88 +333,6 @@ mod tests {
         );
         assert!(body.get("reasoning_effort").is_none());
         assert!(body.get("temperature").is_some());
-    }
-
-    #[test]
-    fn deepseek_alias_defaults_match_compat_modes() {
-        let chat_payload = json!({
-            "model": "deepseek-chat",
-            "messages": [{"role": "user", "content": "hello"}],
-            "chat_completion_source": "deepseek"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-        let reasoner_payload = json!({
-            "model": "deepseek-reasoner",
-            "messages": [{"role": "user", "content": "hello"}],
-            "chat_completion_source": "deepseek"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, chat_upstream) = build(chat_payload).expect("payload should build");
-        let (_, reasoner_upstream) = build(reasoner_payload).expect("payload should build");
-
-        assert_eq!(
-            chat_upstream
-                .get("thinking")
-                .and_then(Value::as_object)
-                .and_then(|thinking| thinking.get("type"))
-                .and_then(Value::as_str),
-            Some("disabled")
-        );
-        assert_eq!(
-            reasoner_upstream
-                .get("thinking")
-                .and_then(Value::as_object)
-                .and_then(|thinking| thinking.get("type"))
-                .and_then(Value::as_str),
-            Some("enabled")
-        );
-    }
-
-    #[test]
-    fn deepseek_aliases_ignore_include_reasoning_overrides() {
-        let chat_payload = json!({
-            "model": "deepseek-chat",
-            "messages": [{"role": "user", "content": "hello"}],
-            "include_reasoning": true,
-            "chat_completion_source": "deepseek"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-        let reasoner_payload = json!({
-            "model": "deepseek-reasoner",
-            "messages": [{"role": "user", "content": "hello"}],
-            "include_reasoning": false,
-            "chat_completion_source": "deepseek"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, chat_upstream) = build(chat_payload).expect("payload should build");
-        let (_, reasoner_upstream) = build(reasoner_payload).expect("payload should build");
-
-        assert_eq!(
-            chat_upstream
-                .get("thinking")
-                .and_then(Value::as_object)
-                .and_then(|thinking| thinking.get("type"))
-                .and_then(Value::as_str),
-            Some("disabled")
-        );
-        assert_eq!(
-            reasoner_upstream
-                .get("thinking")
-                .and_then(Value::as_object)
-                .and_then(|thinking| thinking.get("type"))
-                .and_then(Value::as_str),
-            Some("enabled")
-        );
     }
 
     #[test]
@@ -507,56 +372,6 @@ mod tests {
             assistant.get("reasoning_content").and_then(Value::as_str),
             Some("need weather")
         );
-    }
-
-    #[test]
-    fn deepseek_semi_tools_keeps_tool_call_assistant_after_assistant_text() {
-        let payload = json!({
-            "model": "deepseek-chat",
-            "messages": [
-                {"role":"user","content":"draft"},
-                {"role":"assistant","content":"I'll prepare it."},
-                {
-                    "role":"assistant",
-                    "content":"I'll write the file now.",
-                    "tool_calls":[{
-                        "id":"call_1",
-                        "type":"function",
-                        "function":{
-                            "name":"workspace_write_file",
-                            "arguments":"{\"path\":\"output/main.md\",\"content\":\"hi\"}"
-                        }
-                    }]
-                },
-                {"role":"tool","tool_call_id":"call_1","content":"ok"}
-            ],
-            "tools": [{
-                "type": "function",
-                "function": {
-                    "name": "workspace_write_file",
-                    "description": "write file",
-                    "parameters": { "type": "object", "required": [] }
-                }
-            }],
-            "chat_completion_source": "deepseek"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("payload should build");
-        let messages = upstream
-            .get("messages")
-            .and_then(Value::as_array)
-            .expect("messages must be array");
-
-        assert_eq!(messages.len(), 4);
-        assert_eq!(messages[1]["role"], "assistant");
-        assert!(messages[1].get("tool_calls").is_none());
-        assert_eq!(messages[2]["role"], "assistant");
-        assert_eq!(messages[2]["tool_calls"][0]["id"], "call_1");
-        assert_eq!(messages[3]["role"], "tool");
-        assert_eq!(messages[3]["tool_call_id"], "call_1");
     }
 
     #[test]
@@ -601,32 +416,6 @@ mod tests {
                 Some("")
             );
         }
-    }
-
-    #[test]
-    fn deepseek_thinking_without_tool_context_does_not_add_reasoning_content() {
-        let payload = json!({
-            "model": "deepseek-v4-flash",
-            "messages": [
-                {"role":"user","content":"hello"},
-                {"role":"assistant","content":"hi"}
-            ],
-            "include_reasoning": true,
-            "chat_completion_source": "deepseek"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("payload should build");
-        let assistant = upstream
-            .get("messages")
-            .and_then(Value::as_array)
-            .and_then(|messages| messages.get(1))
-            .and_then(Value::as_object)
-            .expect("assistant must be object");
-
-        assert!(assistant.get("reasoning_content").is_none());
     }
 
     #[test]

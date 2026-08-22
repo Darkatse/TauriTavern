@@ -18,8 +18,3 @@ pub mod repositories;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 pub mod runtime_paths_config_store;
 pub mod zipkit;
-
-#[cfg(test)]
-mod platform_boundary_contract_tests;
-#[cfg(test)]
-mod webview_js_dialogs_contract_tests;

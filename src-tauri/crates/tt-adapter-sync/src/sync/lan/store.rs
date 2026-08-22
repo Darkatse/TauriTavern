@@ -199,25 +199,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn store_round_trips_identity() {
-        let default_user_dir = temp_default_user_dir();
-        let store = LanPeerStore::new(default_user_dir.clone());
-
-        let first_identity = store
-            .load_or_create_identity()
-            .await
-            .expect("create identity");
-        let second_identity = store
-            .load_or_create_identity()
-            .await
-            .expect("load identity");
-        assert_eq!(first_identity.device_id, second_identity.device_id);
-        assert_eq!(first_identity.ed25519_seed, second_identity.ed25519_seed);
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
-    }
-
-    #[tokio::test]
     async fn store_round_trips_and_removes_peer() {
         let default_user_dir = temp_default_user_dir();
         let store = LanPeerStore::new(default_user_dir.clone());

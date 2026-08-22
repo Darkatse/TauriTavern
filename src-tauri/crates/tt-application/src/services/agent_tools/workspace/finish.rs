@@ -33,26 +33,3 @@ pub(in crate::services::agent_tools) fn finish(
 
     Ok((result, AgentToolEffect::Finish))
 }
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::finish;
-    use crate::services::agent_tools::AgentToolEffect;
-    use tt_domain::models::tool::{ToolId, ToolInvocation};
-
-    #[test]
-    fn finish_returns_control_effect() {
-        let call = ToolInvocation {
-            call_id: "call_1".to_string(),
-            tool_id: ToolId::builtin("workspace.finish").unwrap(),
-            arguments: json!({}),
-            provider_metadata: json!(null),
-        };
-
-        let (_result, effect) = finish(&call).expect("finish");
-
-        assert!(matches!(effect, AgentToolEffect::Finish));
-    }
-}

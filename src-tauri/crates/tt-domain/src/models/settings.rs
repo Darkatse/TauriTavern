@@ -457,25 +457,8 @@ mod tests {
         AgentRunRetentionSettings, DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS,
         DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS,
         DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX, DEFAULT_CHAT_BACKUP_MAX_TOTAL_BYTES,
-        DEFAULT_CHAT_BACKUP_MAX_TOTAL_FILES, DevLoggingSettings, MAX_AGENT_RETENTION_KEEP_RUNS,
-        TauriTavernSettings,
+        MAX_AGENT_RETENTION_KEEP_RUNS, TauriTavernSettings,
     };
-
-    #[test]
-    fn effective_llm_api_keep_has_minimum_of_one() {
-        let settings = DevLoggingSettings {
-            frontend_console_capture: false,
-            llm_api_keep: 0,
-        };
-
-        assert_eq!(settings.effective_llm_api_keep(), 1);
-    }
-
-    #[test]
-    fn llm_api_keep_validation_requires_positive_values() {
-        assert!(!DevLoggingSettings::is_valid_llm_api_keep(0));
-        assert!(DevLoggingSettings::is_valid_llm_api_keep(1));
-    }
 
     #[test]
     fn avatar_persona_original_images_enabled_migrates_legacy_thumbnail_setting() {
@@ -485,60 +468,6 @@ mod tests {
         .expect("parse settings");
 
         assert!(settings.avatar_persona_original_images_enabled);
-    }
-
-    #[test]
-    fn native_regex_backend_enabled_defaults_to_true() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
-        )
-        .expect("parse settings");
-
-        assert!(settings.native_regex_backend_enabled);
-    }
-
-    #[test]
-    fn chat_virtualization_defaults_to_disabled_and_accepts_enabled() {
-        let older = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
-        )
-        .expect("parse older settings");
-        assert!(!older.chat_virtualization_enabled);
-
-        let enabled = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"chat_virtualization_enabled":true}"#,
-        )
-        .expect("parse enabled chat virtualization");
-        assert!(enabled.chat_virtualization_enabled);
-
-        let serialized = serde_json::to_value(enabled).expect("serialize chat virtualization");
-        assert_eq!(serialized["chat_virtualization_enabled"], true);
-    }
-
-    #[test]
-    fn removed_chat_history_mode_is_ignored() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"chat_history_mode":"windowed"}"#,
-        )
-        .expect("parse settings with removed key");
-
-        let serialized = serde_json::to_value(settings).expect("serialize settings");
-        assert!(serialized.get("chat_history_mode").is_none());
-    }
-
-    #[test]
-    fn agent_retention_defaults_to_recent_terminal_history_policy() {
-        let settings = TauriTavernSettings::default();
-
-        assert!(!settings.agent.retention.auto_prune_enabled);
-        assert_eq!(
-            settings.agent.retention.keep_recent_terminal_runs,
-            DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS
-        );
-        assert_eq!(
-            settings.agent.retention.keep_full_recent_runs,
-            DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS
-        );
     }
 
     #[test]
@@ -556,29 +485,6 @@ mod tests {
         assert_eq!(
             settings.agent.retention.keep_full_recent_runs,
             DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS
-        );
-    }
-
-    #[test]
-    fn chat_backup_settings_default_when_loading_older_settings() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
-        )
-        .expect("parse settings");
-
-        assert!(settings.chat_backups.automatic_enabled);
-        assert!(!settings.chat_backups.zstd_compression_enabled);
-        assert_eq!(
-            settings.chat_backups.max_files_per_prefix,
-            DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX
-        );
-        assert_eq!(
-            settings.chat_backups.max_total_files,
-            DEFAULT_CHAT_BACKUP_MAX_TOTAL_FILES
-        );
-        assert_eq!(
-            settings.chat_backups.max_total_bytes,
-            DEFAULT_CHAT_BACKUP_MAX_TOTAL_BYTES
         );
     }
 

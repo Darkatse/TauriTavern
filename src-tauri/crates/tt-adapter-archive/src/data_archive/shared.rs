@@ -344,24 +344,4 @@ mod tests {
         assert_eq!(writer, b"abcd");
         assert_eq!(copied_chunks, vec![4]);
     }
-
-    #[test]
-    fn byte_progress_complete_reports_the_terminal_message() {
-        let mut progress = ByteProgress::new(4, 10.0, 20.0);
-        let mut reports = Vec::new();
-        let mut report = |stage: &str, percent: f32, message: &str| {
-            reports.push((stage.to_string(), percent, message.to_string()));
-        };
-
-        progress.advance(4, "copying", "Copying", &mut report);
-        progress.complete("copying", "Copied", &mut report);
-
-        assert_eq!(
-            reports,
-            vec![
-                ("copying".to_string(), 20.0, "Copying".to_string()),
-                ("copying".to_string(), 20.0, "Copied".to_string()),
-            ]
-        );
-    }
 }

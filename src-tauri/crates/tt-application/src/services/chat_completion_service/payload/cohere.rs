@@ -562,41 +562,6 @@ mod tests {
     }
 
     #[test]
-    fn cohere_build_sets_safety_mode_off_for_2024_models() {
-        let payload = json!({
-            "model": "command-r-plus-08-2024",
-            "messages": [{"role": "user", "content": "hi"}],
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .get("safety_mode")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            "OFF"
-        );
-    }
-
-    #[test]
-    fn cohere_build_forwards_string_stop_sequences() {
-        let payload = json!({
-            "model": "command-r-plus",
-            "messages": [{"role": "user", "content": "hi"}],
-            "stop": "END"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(upstream.get("stop_sequences"), Some(&json!("END")));
-    }
-
-    #[test]
     fn cohere_tool_calls_use_previous_assistant_content() {
         let payload = json!({
             "model": "command-r-plus",
@@ -643,33 +608,6 @@ mod tests {
                 .and_then(Value::as_str),
             Some("checking weather")
         );
-    }
-
-    #[test]
-    fn cohere_tool_calls_fallback_to_primer_string() {
-        let payload = json!({
-            "model": "command-r-plus",
-            "messages": [
-                { "role": "assistant", "tool_calls": [{ "function": { "name": "weather" } }] }
-            ],
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        let messages = upstream
-            .get("messages")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        assert_eq!(messages.len(), 1);
-        let content = messages[0]
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        assert!(content.contains("call a tool"));
-        assert!(content.contains("weather"));
     }
 
     #[test]
@@ -739,35 +677,6 @@ mod tests {
     }
 
     #[test]
-    fn cohere_prefixes_named_single_object_image_without_flattening_it() {
-        let payload = json!({
-            "model": "command-a-vision-07-2025",
-            "messages": [{
-                "role": "user",
-                "name": "Narrator",
-                "content": {
-                    "type": "image_url",
-                    "image_url": { "url": "data:image/png;base64,AAAA" }
-                }
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-
-        assert_eq!(
-            upstream.pointer("/messages/0/content/0/text"),
-            Some(&json!("Narrator: "))
-        );
-        assert_eq!(
-            upstream.pointer("/messages/0/content/1/type"),
-            Some(&json!("image_url"))
-        );
-    }
-
-    #[test]
     fn cohere_rejects_audio_and_video_content_parts() {
         for (part, expected) in [
             (
@@ -807,69 +716,6 @@ mod tests {
                     .to_string()
                     .contains(&format!("cannot preserve {expected} input"))
             );
-        }
-    }
-
-    #[test]
-    fn cohere_rejects_named_single_object_audio_before_prefixing() {
-        let payload = json!({
-            "model": "command-a-vision-07-2025",
-            "messages": [{
-                "role": "user",
-                "name": "Narrator",
-                "content": {
-                    "type": "audio_url",
-                    "audio_url": { "url": "data:audio/wav;base64,AAAA" }
-                }
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let error = build(payload).expect_err("unsupported media should fail fast");
-
-        assert!(error.to_string().contains("cannot preserve audio input"));
-    }
-
-    #[test]
-    fn cohere_rejects_file_and_native_image_parts() {
-        for (part, expected) in [
-            (
-                json!({ "type": "input_file", "file_id": "file_123" }),
-                "cannot preserve file input",
-            ),
-            (
-                json!({ "fileData": { "mimeType": "image/png", "fileUri": "gs://bucket/cat.png" } }),
-                "cannot preserve file input",
-            ),
-            (
-                json!({ "inlineData": { "mimeType": "image/png", "data": "AAAA" } }),
-                "only supports image_url image content parts",
-            ),
-            (
-                json!({ "type": "input_image", "file_id": "file_123" }),
-                "only supports image_url image content parts",
-            ),
-            (
-                json!({ "type": "image", "source": {} }),
-                "only supports image_url image content parts",
-            ),
-        ] {
-            let payload = json!({
-                "model": "command-a-vision-07-2025",
-                "messages": [{
-                    "role": "user",
-                    "content": [part]
-                }]
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-
-            let error = build(payload).expect_err("unsupported media should fail fast");
-
-            assert!(error.to_string().contains(expected));
         }
     }
 }

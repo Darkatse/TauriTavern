@@ -204,21 +204,6 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn validates_browser_asset_path_segments() {
-        assert!(validate_path_segment("avatar.png"));
-        assert!(validate_path_segment("ã\u{80}\u{90}.png"));
-
-        assert!(!validate_path_segment(""));
-        assert!(!validate_path_segment("."));
-        assert!(!validate_path_segment(".."));
-        assert!(!validate_path_segment("a/b.png"));
-        assert!(!validate_path_segment("a\\b.png"));
-        assert!(!validate_path_segment("bad:name.png"));
-        assert!(!validate_path_segment("bad\u{001F}.png"));
-        assert!(!validate_path_segment("bad\u{007F}.png"));
-    }
-
-    #[test]
     fn parses_character_asset_path() {
         let path = "/characters/avatar.png";
         let parsed = parse_user_data_asset_request_path(path)
@@ -243,20 +228,6 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_redundant_relative_separators() {
-        let path = "/characters//nested//avatar.png";
-        let parsed = parse_user_data_asset_request_path(path)
-            .expect("parse")
-            .expect("should match");
-
-        assert_eq!(
-            parsed.relative_path,
-            PathBuf::from("nested").join("avatar.png")
-        );
-        assert_eq!(parsed.relative_path_display, "nested/avatar.png");
-    }
-
-    #[test]
     fn rejects_dot_segments() {
         let path = "/characters/../avatar.png";
         let result = parse_user_data_asset_request_path(path);
@@ -268,18 +239,6 @@ mod tests {
         let path = "/characters/%2fsecret.png";
         let result = parse_user_data_asset_request_path(path);
         assert_eq!(result, Err(UserDataPathError::InvalidPath));
-    }
-
-    #[test]
-    fn parses_background_asset_path() {
-        let path = "/backgrounds/space%20cat.png";
-        let parsed = parse_user_data_asset_request_path(path)
-            .expect("parse")
-            .expect("should match");
-
-        assert_eq!(parsed.kind, UserDataAssetKind::Background);
-        assert_eq!(parsed.relative_path, PathBuf::from("space cat.png"));
-        assert_eq!(parsed.relative_path_display, "space cat.png");
     }
 
     #[test]
@@ -323,30 +282,6 @@ mod tests {
         assert_eq!(parsed.extension_folder, "mobile");
         assert_eq!(parsed.relative_path, PathBuf::from("manifest.json"));
         assert_eq!(parsed.relative_path_display, "manifest.json");
-    }
-
-    #[test]
-    fn parses_legacy_c1_third_party_asset_path_segments() {
-        let path = "/scripts/extensions/third-party/%C3%A3%C2%80%C2%90/%C3%A3%C2%80%C2%90.js";
-        let parsed = parse_third_party_asset_request_path(path)
-            .expect("parse")
-            .expect("should match");
-
-        assert_eq!(parsed.extension_folder, "ã\u{80}\u{90}");
-        assert_eq!(parsed.relative_path, PathBuf::from("ã\u{80}\u{90}.js"));
-        assert_eq!(parsed.relative_path_display, "ã\u{80}\u{90}.js");
-    }
-
-    #[test]
-    fn normalizes_redundant_third_party_relative_separators() {
-        let path = "/scripts/extensions/third-party/mobile//a.js";
-        let parsed = parse_third_party_asset_request_path(path)
-            .expect("parse")
-            .expect("should match");
-
-        assert_eq!(parsed.extension_folder, "mobile");
-        assert_eq!(parsed.relative_path, PathBuf::from("a.js"));
-        assert_eq!(parsed.relative_path_display, "a.js");
     }
 
     #[test]

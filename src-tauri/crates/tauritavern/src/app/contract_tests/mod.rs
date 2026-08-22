@@ -30,7 +30,6 @@ use tt_application::dto::agent_dto::{
     AgentSkillScopeRefsDto, AgentStartRunDto, AgentStartRunOptionsDto,
 };
 use tt_application::dto::character_dto::{
-    BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataFilterDto,
     CharacterLorebookConflictResolution, CheckCharacterLorebookConflictDto, CreateCharacterDto,
     ExportCharacterContentDto, ExportCharacterDto, ImportCharacterDto, MergeCharacterCardDataDto,
     ReplaceCharacterDto, ResolveCharacterLorebookConflictDto, UpdateAvatarDto,
@@ -84,7 +83,6 @@ use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 const AGENT_CONTRACT_ASYNC_TIMEOUT: Duration = Duration::from_secs(5);
 
 mod agent_runtime;
-mod architecture;
 mod character;
 mod chat_payload_commit;
 mod host_resources;

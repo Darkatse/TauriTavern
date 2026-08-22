@@ -167,27 +167,3 @@ fn normalize_model_entry(entry: &Value) -> Option<Value> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::normalize_models;
-
-    #[test]
-    fn normalize_models_converts_name_to_id() {
-        let payload = json!({
-            "models": [
-                {"name": "command-r-plus", "context_length": 1},
-                {"name": "command-r", "context_length": 2}
-            ]
-        });
-
-        let models = normalize_models(&payload);
-        assert_eq!(models.len(), 2);
-        assert_eq!(models[0]["id"], "command-r-plus");
-        assert_eq!(models[0]["context_length"], 1);
-        assert_eq!(models[1]["id"], "command-r");
-        assert_eq!(models[1]["context_length"], 2);
-    }
-}

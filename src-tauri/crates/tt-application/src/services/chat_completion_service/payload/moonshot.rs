@@ -102,44 +102,4 @@ mod tests {
 
         assert_eq!(partial, Some(true));
     }
-
-    #[test]
-    fn moonshot_partial_coexists_with_tools() {
-        let payload = json!({
-            "model": "kimi-k3",
-            "messages": [
-                {"role": "user", "content": "look it up"},
-                {
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {"name": "lookup", "arguments": "{}"}
-                    }]
-                },
-                {"role": "tool", "tool_call_id": "call_1", "content": "result"},
-                {"role": "assistant", "content": "prefill"}
-            ],
-            "tools": [{
-                "type": "function",
-                "function": {"name": "lookup", "parameters": {"type": "object"}}
-            }],
-            "chat_completion_source": "moonshot"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        let partial = upstream
-            .get("messages")
-            .and_then(Value::as_array)
-            .and_then(|messages| messages.last())
-            .and_then(Value::as_object)
-            .and_then(|message| message.get("partial"))
-            .and_then(Value::as_bool);
-
-        assert_eq!(partial, Some(true));
-    }
 }

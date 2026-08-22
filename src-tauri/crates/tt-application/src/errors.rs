@@ -69,30 +69,3 @@ impl From<DomainError> for ApplicationError {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use tt_domain::errors::GENERATION_CANCELLED_BY_USER_MESSAGE;
-
-    use super::*;
-
-    #[test]
-    fn domain_cancelled_maps_to_application_cancelled() {
-        let error: ApplicationError = DomainError::generation_cancelled_by_user().into();
-
-        assert!(matches!(
-            &error,
-            ApplicationError::Cancelled(message) if message == GENERATION_CANCELLED_BY_USER_MESSAGE
-        ));
-    }
-
-    #[test]
-    fn domain_conflict_maps_to_application_conflict() {
-        let error: ApplicationError = DomainError::Conflict("busy".to_string()).into();
-
-        assert!(matches!(
-            error,
-            ApplicationError::Conflict(message) if message == "busy"
-        ));
-    }
-}

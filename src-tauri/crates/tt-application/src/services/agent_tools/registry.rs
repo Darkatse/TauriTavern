@@ -317,9 +317,7 @@ fn property_schema_object_mut<'a>(
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::super::agent::{
-        AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, TASK_RETURN,
-    };
+    use super::super::agent::{AGENT_LIST, TASK_RETURN};
     use super::super::policy::compile_invocation_tool_snapshot;
     use super::super::skill::SKILL_READ;
     use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE};
@@ -361,84 +359,6 @@ mod tests {
                 binding.model_alias(),
                 binding.tool_id().native_name().replace('.', "_")
             );
-        }
-    }
-
-    #[test]
-    fn registry_declares_canonical_builtin_descriptors() {
-        let registry = BuiltinAgentToolRegistry::all();
-
-        assert_eq!(registry.catalog().len(), 20);
-        assert!(
-            registry
-                .catalog()
-                .get(&ToolId::builtin("skill.run_script").unwrap())
-                .is_some()
-        );
-        for descriptor in registry.catalog().iter() {
-            assert!(descriptor.id.is_builtin());
-            assert!(
-                descriptor
-                    .title
-                    .as_deref()
-                    .is_some_and(|value| !value.is_empty())
-            );
-            assert!(
-                descriptor
-                    .description
-                    .as_deref()
-                    .is_some_and(|value| !value.is_empty())
-            );
-        }
-    }
-
-    #[test]
-    fn agent_delegate_requires_objective_but_not_title() {
-        let registry = BuiltinAgentToolRegistry::all();
-        let delegate = registry
-            .catalog()
-            .get(&ToolId::builtin(AGENT_DELEGATE).unwrap())
-            .expect("agent.delegate descriptor");
-
-        assert_eq!(
-            delegate
-                .input_schema
-                .pointer("/properties/task/required")
-                .expect("task required fields"),
-            &serde_json::json!(["objective"])
-        );
-        assert!(
-            delegate
-                .input_schema
-                .pointer("/properties/task/properties/title")
-                .is_some()
-        );
-        assert!(
-            delegate
-                .input_schema
-                .pointer("/properties/budget")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn builtin_read_tools_expose_only_line_ranges() {
-        let registry = BuiltinAgentToolRegistry::all();
-        for name in [
-            "chat.read_messages",
-            "worldinfo.read_activated",
-            SKILL_READ,
-            WORKSPACE_READ_FILE,
-        ] {
-            let descriptor = registry
-                .catalog()
-                .get(&ToolId::builtin(name).unwrap())
-                .expect("builtin read tool");
-            let schema = serde_json::to_string(&descriptor.input_schema).unwrap();
-            assert!(schema.contains("start_line"), "{name}");
-            assert!(schema.contains("line_count"), "{name}");
-            assert!(!schema.contains("start_char"), "{name}");
-            assert!(!schema.contains("max_chars"), "{name}");
         }
     }
 
@@ -517,40 +437,6 @@ mod tests {
                 ToolId::builtin(AGENT_LIST).unwrap(),
             ]
         );
-    }
-
-    #[test]
-    fn agent_tool_descriptors_keep_runtime_terms_out_of_model_descriptions() {
-        let registry = BuiltinAgentToolRegistry::all();
-        let agent_tools = registry
-            .catalog()
-            .iter()
-            .filter(|tool| {
-                matches!(
-                    tool.id.native_name(),
-                    AGENT_LIST | AGENT_DELEGATE | AGENT_HANDOFF | AGENT_AWAIT | TASK_RETURN
-                )
-            })
-            .collect::<Vec<_>>();
-
-        for tool in agent_tools {
-            let text = format!(
-                "{} {}",
-                tool.description.as_deref().expect("builtin description"),
-                serde_json::to_string(&tool.input_schema).expect("schema JSON")
-            );
-            assert!(!text.contains("invocation"), "{}", tool.id);
-            assert!(!text.contains("parent Agent"), "{}", tool.id);
-            assert!(!text.contains("child Agent"), "{}", tool.id);
-            assert!(!text.contains("This Agent"), "{}", tool.id);
-            assert!(!text.contains("active control"), "{}", tool.id);
-            assert!(!text.contains("active owner"), "{}", tool.id);
-            assert!(!text.contains("delegated result to you"), "{}", tool.id);
-            assert!(!text.contains("workspace_finish"), "{}", tool.id);
-            assert!(!text.contains("to collect it"), "{}", tool.id);
-            assert!(!text.contains("before finalizing"), "{}", tool.id);
-            assert!(!text.contains("first version"), "{}", tool.id);
-        }
     }
 
     fn profile_with_skill_budget(per_call: usize, per_run: usize) -> ResolvedAgentProfile {

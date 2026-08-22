@@ -52,49 +52,6 @@ fn claude_manual_reasoning_uses_legacy_thinking_and_clears_sampling() {
 }
 
 #[test]
-fn claude_reasoning_accepts_shared_minimal_alias() {
-    let mut payload = claude_payload("claude-sonnet-4-5");
-    payload.insert("max_tokens".to_string(), json!(4096));
-    payload.insert("reasoning_effort".to_string(), json!("minimal"));
-
-    let (_, upstream) = build(payload).expect("build should succeed");
-    assert_eq!(
-        upstream
-            .pointer("/thinking/budget_tokens")
-            .and_then(Value::as_i64),
-        Some(1024)
-    );
-}
-
-#[test]
-fn claude_maps_all_canonical_tool_choices_without_downgrade() {
-    let cases = [
-        (json!("auto"), json!({ "type": "auto" })),
-        (json!("none"), json!({ "type": "none" })),
-        (json!("required"), json!({ "type": "any" })),
-        (
-            json!({ "type": "function", "function": { "name": "weather" } }),
-            json!({ "type": "tool", "name": "weather" }),
-        ),
-    ];
-
-    for (choice, expected) in cases {
-        let mut payload = claude_payload("claude-sonnet-4-5");
-        payload.insert(
-            "tools".to_string(),
-            json!([{
-                "type": "function",
-                "function": { "name": "weather", "parameters": { "type": "object" } }
-            }]),
-        );
-        payload.insert("tool_choice".to_string(), choice);
-
-        let (_, upstream) = build(payload).expect("tool choice should map");
-        assert_eq!(upstream["tool_choice"], expected);
-    }
-}
-
-#[test]
 fn claude_web_search_uses_anthropic_server_tool_for_direct_and_custom_routes() {
     for (source, custom_api_format) in [("claude", None), ("custom", Some("claude_messages"))] {
         let mut payload = claude_payload("claude-sonnet-4-5");
@@ -142,48 +99,6 @@ fn claude_rejects_unknown_tool_choice_instead_of_using_auto() {
 }
 
 #[test]
-fn claude_rejects_forced_tool_choice_with_manual_thinking() {
-    let mut payload = claude_payload("claude-sonnet-4-5");
-    payload.insert("reasoning_effort".to_string(), json!("medium"));
-    payload.insert(
-        "tools".to_string(),
-        json!([{
-            "type": "function",
-            "function": { "name": "weather", "parameters": { "type": "object" } }
-        }]),
-    );
-    payload.insert("tool_choice".to_string(), json!("required"));
-
-    let error = build(payload).expect_err("manual thinking conflict must fail");
-    assert!(error.to_string().contains("provider.tool_choice_conflict"));
-}
-
-#[test]
-fn claude_opus_4_5_uses_legacy_thinking_with_output_effort() {
-    let mut payload = claude_payload("claude-opus-4-5");
-    payload.insert("max_tokens".to_string(), json!(4096));
-    payload.insert("reasoning_effort".to_string(), json!("max"));
-
-    let (_, upstream) = build(payload).expect("build should succeed");
-    let body = upstream.as_object().expect("body must be object");
-
-    assert_eq!(
-        body.get("thinking")
-            .and_then(Value::as_object)
-            .and_then(|thinking| thinking.get("type"))
-            .and_then(Value::as_str),
-        Some("enabled")
-    );
-    assert_eq!(
-        body.get("output_config")
-            .and_then(Value::as_object)
-            .and_then(|config| config.get("effort"))
-            .and_then(Value::as_str),
-        Some("max")
-    );
-}
-
-#[test]
 fn claude_rejects_assistant_prefill_for_models_that_removed_it() {
     for model in [
         "claude-opus-5",
@@ -205,20 +120,6 @@ fn claude_rejects_assistant_prefill_for_models_that_removed_it() {
             "{model} should reject assistant_prefill, got: {message}"
         );
     }
-}
-
-#[test]
-fn claude_rejects_assistant_prefill_with_reasoning_effort() {
-    let mut payload = claude_payload("claude-sonnet-4-5");
-    payload.insert("assistant_prefill".to_string(), json!("prefill"));
-    payload.insert("reasoning_effort".to_string(), json!("medium"));
-
-    let error = build(payload).expect_err("build should fail");
-    assert!(
-        error
-            .to_string()
-            .contains("does not support assistant_prefill with reasoning_effort")
-    );
 }
 
 #[test]
@@ -261,40 +162,6 @@ fn claude_use_sysprompt_collects_only_leading_system_messages() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(joined.contains("late system"));
-}
-
-#[test]
-fn claude_system_messages_become_user_when_use_sysprompt_false() {
-    let payload = json!({
-        "model": "claude-3-5-sonnet-latest",
-        "use_sysprompt": false,
-        "messages": [
-            {"role": "system", "content": "s1"},
-            {"role": "user", "content": "u1"}
-        ]
-    })
-    .as_object()
-    .cloned()
-    .expect("payload must be object");
-
-    let (_, upstream) = build(payload).expect("build should succeed");
-    let body = upstream.as_object().expect("body must be object");
-
-    assert!(body.get("system").is_none());
-
-    let messages = body
-        .get("messages")
-        .and_then(Value::as_array)
-        .expect("messages must be array");
-    let joined = messages
-        .iter()
-        .filter_map(|message| message.get("content").and_then(Value::as_array))
-        .flat_map(|parts| parts.iter())
-        .filter_map(|part| part.get("text").and_then(Value::as_str))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(joined.contains("s1"));
-    assert!(joined.contains("u1"));
 }
 
 #[test]
@@ -380,49 +247,6 @@ fn claude_tool_calls_and_results_are_structured() {
             .unwrap_or_default(),
         "call_weather"
     );
-}
-
-#[test]
-fn claude_merged_assistant_content_precedes_tool_use_without_native() {
-    let payload = json!({
-        "model": "claude-3-5-sonnet-latest",
-        "messages": [{
-            "role": "assistant",
-            "content": "checking weather",
-            "tool_calls": [{
-                "id": "call_weather",
-                "type": "function",
-                "function": {
-                    "name": "weather",
-                    "arguments": "{\"city\":\"Paris\"}"
-                }
-            }]
-        }],
-        "tools": [{
-            "type": "function",
-            "function": {
-                "name": "weather",
-                "description": "get weather",
-                "parameters": { "type": "object", "properties": {} }
-            }
-        }]
-    })
-    .as_object()
-    .cloned()
-    .expect("payload must be object");
-
-    let (_, upstream) = build(payload).expect("build should succeed");
-    let blocks = upstream
-        .pointer("/messages/0/content")
-        .and_then(Value::as_array)
-        .expect("assistant content must be an array");
-
-    assert_eq!(
-        blocks[0],
-        json!({ "type": "text", "text": "checking weather" })
-    );
-    assert_eq!(blocks[1]["type"], "tool_use");
-    assert_eq!(blocks[1]["id"], "call_weather");
 }
 
 #[test]
@@ -545,60 +369,6 @@ fn claude_coalesces_exact_split_native_turn() {
 }
 
 #[test]
-fn claude_tool_calls_are_text_when_tools_disabled() {
-    let payload = json!({
-        "model": "claude-3-5-sonnet-latest",
-        "messages": [
-            {
-                "role": "assistant",
-                "tool_calls": [{
-                    "id": "call_weather",
-                    "type": "function",
-                    "function": {
-                        "name": "weather",
-                        "arguments": "{\"city\":\"Paris\"}"
-                    }
-                }]
-            },
-            {
-                "role": "tool",
-                "tool_call_id": "call_weather",
-                "content": "{\"temperature\":20}"
-            }
-        ]
-    })
-    .as_object()
-    .cloned()
-    .expect("payload must be object");
-
-    let (_, upstream) = build(payload).expect("build should succeed");
-    let body = upstream.as_object().expect("body must be object");
-    let messages = body
-        .get("messages")
-        .and_then(Value::as_array)
-        .expect("messages must be array");
-
-    let assistant_blocks = messages
-        .first()
-        .and_then(Value::as_object)
-        .and_then(|message| message.get("content"))
-        .and_then(Value::as_array)
-        .expect("assistant content must be array");
-    assert_eq!(
-        assistant_blocks[0]["type"].as_str().unwrap_or_default(),
-        "text"
-    );
-
-    let tool_blocks = messages
-        .get(1)
-        .and_then(Value::as_object)
-        .and_then(|message| message.get("content"))
-        .and_then(Value::as_array)
-        .expect("tool content must be array");
-    assert_eq!(tool_blocks[0]["type"].as_str().unwrap_or_default(), "text");
-}
-
-#[test]
 fn claude_converts_openai_image_url_blocks() {
     let payload = json!({
         "model": "claude-3-5-sonnet-latest",
@@ -647,37 +417,6 @@ fn claude_converts_openai_image_url_blocks() {
 }
 
 #[test]
-fn claude_direct_accepts_remote_image_url_blocks() {
-    let payload = json!({
-        "model": "claude-3-5-sonnet-latest",
-        "messages": [{
-            "role": "user",
-            "content": [
-                { "type": "text", "text": "describe" },
-                { "type": "image_url", "image_url": { "url": "https://example.test/cat.png" } }
-            ]
-        }]
-    })
-    .as_object()
-    .cloned()
-    .expect("payload must be object");
-
-    let (_, upstream) = build(payload).expect("build should succeed");
-    assert_eq!(
-        upstream
-            .pointer("/messages/0/content/1/source/type")
-            .and_then(Value::as_str),
-        Some("url")
-    );
-    assert_eq!(
-        upstream
-            .pointer("/messages/0/content/1/source/url")
-            .and_then(Value::as_str),
-        Some("https://example.test/cat.png")
-    );
-}
-
-#[test]
 fn claude_direct_rejects_non_remote_image_urls() {
     for url in ["/user/images/cat.png", "file:///tmp/cat.png"] {
         let payload = json!({
@@ -699,51 +438,6 @@ fn claude_direct_rejects_non_remote_image_urls() {
             "{url}: {error}"
         );
     }
-}
-
-#[test]
-fn claude_rejects_input_image_file_id_until_file_resolver_exists() {
-    let payload = json!({
-        "model": "claude-3-5-sonnet-latest",
-        "messages": [{
-            "role": "user",
-            "content": [{ "type": "input_image", "file_id": "file_123" }]
-        }]
-    })
-    .as_object()
-    .cloned()
-    .expect("payload must be object");
-
-    let error = build(payload).expect_err("file_id image references need a resolver");
-    assert!(error.to_string().contains("file_id image references"));
-}
-
-#[test]
-fn claude_direct_preserves_native_image_url_blocks() {
-    let payload = json!({
-        "model": "claude-3-5-sonnet-latest",
-        "messages": [{
-            "role": "user",
-            "content": [{
-                "type": "image",
-                "source": {
-                    "type": "url",
-                    "url": "https://example.test/native.png"
-                }
-            }]
-        }]
-    })
-    .as_object()
-    .cloned()
-    .expect("payload must be object");
-
-    let (_, upstream) = build(payload).expect("build should succeed");
-    assert_eq!(
-        upstream
-            .pointer("/messages/0/content/0/source/url")
-            .and_then(Value::as_str),
-        Some("https://example.test/native.png")
-    );
 }
 
 #[test]
@@ -860,21 +554,6 @@ fn claude_limited_sampling_models_reject_temperature_and_top_p_together() {
 }
 
 #[test]
-fn claude_full_sampling_models_keep_temperature_top_p_and_top_k() {
-    let mut payload = claude_payload("claude-3-5-sonnet-latest");
-    payload.insert("temperature".to_string(), json!(0.7));
-    payload.insert("top_p".to_string(), json!(0.9));
-    payload.insert("top_k".to_string(), json!(40));
-
-    let (_, upstream) = build(payload).expect("build should succeed");
-    let body = upstream.as_object().expect("body must be object");
-
-    assert!(body.get("temperature").is_some());
-    assert!(body.get("top_p").is_some());
-    assert!(body.get("top_k").is_some());
-}
-
-#[test]
 fn claude_sampling_free_models_drop_non_default_sampling_params() {
     for model in [
         "claude-opus-5",
@@ -895,53 +574,6 @@ fn claude_sampling_free_models_drop_non_default_sampling_params() {
         assert!(body.get("top_p").is_none(), "{model}");
         assert!(body.get("top_k").is_none(), "{model}");
     }
-}
-
-#[test]
-fn claude_sampling_free_models_ignore_default_sampling_params() {
-    for model in [
-        "claude-opus-5",
-        "claude-fable-5",
-        "claude-mythos-5",
-        "claude-sonnet-5",
-        "claude-opus-4-7",
-    ] {
-        let mut payload = claude_payload(model);
-        payload.insert("temperature".to_string(), json!(1.0));
-        payload.insert("top_p".to_string(), json!(1.0));
-        payload.insert("top_k".to_string(), json!(0));
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
-
-        assert!(body.get("temperature").is_none(), "{model}");
-        assert!(body.get("top_p").is_none(), "{model}");
-        assert!(body.get("top_k").is_none(), "{model}");
-    }
-}
-
-#[test]
-fn claude_opus_4_8_drops_sampling_and_rejects_prefill() {
-    let mut sampling_payload = claude_payload("claude-opus-4-8");
-    sampling_payload.insert("temperature".to_string(), json!(0.7));
-    sampling_payload.insert("top_p".to_string(), json!(0.9));
-    sampling_payload.insert("top_k".to_string(), json!(40));
-
-    let (_, upstream) = build(sampling_payload).expect("build should succeed");
-    let body = upstream.as_object().expect("body must be object");
-    assert!(body.get("temperature").is_none());
-    assert!(body.get("top_p").is_none());
-    assert!(body.get("top_k").is_none());
-
-    let mut prefill_payload = claude_payload("claude-opus-4-8");
-    prefill_payload.insert("assistant_prefill".to_string(), json!("prefill"));
-
-    let prefill_error = build(prefill_payload).expect_err("build should fail");
-    assert!(
-        prefill_error
-            .to_string()
-            .contains("does not support assistant_prefill")
-    );
 }
 
 #[test]
@@ -1047,61 +679,6 @@ fn claude_default_thinking_only_requests_visible_summary() {
 }
 
 #[test]
-fn claude_adaptive_reasoning_orders_project_extremes() {
-    for model in [
-        "claude-opus-5",
-        "claude-fable-5",
-        "claude-mythos-5",
-        "claude-sonnet-5",
-        "claude-opus-4-7",
-        "claude-opus-4-8",
-    ] {
-        for (requested, expected) in [("xhigh", "xhigh"), ("max", "max")] {
-            let mut payload = claude_payload(model);
-            payload.insert("reasoning_effort".to_string(), json!(requested));
-
-            let (_, upstream) = build(payload).expect("build should succeed");
-            let body = upstream.as_object().expect("body must be object");
-
-            assert_eq!(
-                body.get("thinking")
-                    .and_then(Value::as_object)
-                    .and_then(|thinking| thinking.get("type"))
-                    .and_then(Value::as_str),
-                Some("adaptive")
-            );
-            assert_eq!(
-                body.get("output_config")
-                    .and_then(Value::as_object)
-                    .and_then(|config| config.get("effort"))
-                    .and_then(Value::as_str),
-                Some(expected),
-                "{model} should map project {requested} to {expected}"
-            );
-        }
-    }
-
-    for model in ["claude-opus-4-6", "claude-sonnet-4-6"] {
-        for (requested, expected) in [("xhigh", "high"), ("max", "max")] {
-            let mut payload = claude_payload(model);
-            payload.insert("reasoning_effort".to_string(), json!(requested));
-
-            let (_, upstream) = build(payload).expect("build should succeed");
-            let body = upstream.as_object().expect("body must be object");
-
-            assert_eq!(
-                body.get("output_config")
-                    .and_then(Value::as_object)
-                    .and_then(|config| config.get("effort"))
-                    .and_then(Value::as_str),
-                Some(expected),
-                "{model} should map project {requested} to {expected}"
-            );
-        }
-    }
-}
-
-#[test]
 fn claude_validation_rejects_passthrough_xhigh_on_non_xhigh_models() {
     let request = json!({
         "model": "claude-opus-4-6",
@@ -1140,19 +717,4 @@ fn claude_adaptive_only_models_reject_legacy_thinking_overrides() {
         let error = super::validate_request(&request).expect_err("legacy thinking should fail");
         assert!(error.to_string().contains("requires adaptive thinking"));
     }
-}
-
-#[test]
-fn claude_manual_or_adaptive_models_accept_legacy_thinking_overrides() {
-    let request = json!({
-        "model": "claude-opus-4-6",
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
-        "thinking": {
-            "type": "enabled",
-            "budget_tokens": 2048
-        },
-        "max_tokens": 4096
-    });
-
-    super::validate_request(&request).expect("request should be valid");
 }

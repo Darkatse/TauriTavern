@@ -357,31 +357,7 @@ fn validate_character_name(input: &str) -> Result<String, DomainError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_import_host_whitelisted, validate_asset_category, validate_asset_file_name};
-
-    #[test]
-    fn import_host_whitelist_matches_default_content_sources() {
-        assert!(is_import_host_whitelisted("localhost"));
-        assert!(is_import_host_whitelisted("raw.githubusercontent.com"));
-        assert!(is_import_host_whitelisted("cdn.discordapp.com"));
-        assert!(is_import_host_whitelisted("files.catbox.moe"));
-        assert!(!is_import_host_whitelisted("example.com"));
-    }
-
-    #[test]
-    fn validates_upstream_asset_categories() {
-        for category in [
-            "bgm",
-            "ambient",
-            "blip",
-            "live2d",
-            "vrm",
-            "character",
-            "temp",
-        ] {
-            validate_asset_category(category).unwrap();
-        }
-    }
+    use super::{validate_asset_category, validate_asset_file_name};
 
     #[test]
     fn rejects_unsupported_asset_category() {

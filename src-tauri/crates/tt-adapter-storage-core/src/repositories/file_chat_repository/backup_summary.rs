@@ -299,11 +299,6 @@ impl FileChatRepository {
         });
     }
 
-    #[cfg(test)]
-    pub(super) async fn flush_backup_summary_index_if_needed(&self) -> Result<(), DomainError> {
-        Self::flush_backup_summary_cache(&self.backup_summary_cache).await
-    }
-
     async fn flush_backup_summary_cache(
         cache: &Arc<Mutex<BackupSummaryCache>>,
     ) -> Result<(), DomainError> {

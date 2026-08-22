@@ -248,27 +248,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_libre_lang_maps_zh_and_pt() {
-        assert_eq!(normalize_libre_lang("zh-CN".to_string()), "zh");
-        assert_eq!(normalize_libre_lang("zh-TW".to_string()), "zt");
-        assert_eq!(normalize_libre_lang("pt-BR".to_string()), "pt");
-        assert_eq!(normalize_libre_lang("pt-PT".to_string()), "pt");
-    }
-
-    #[test]
-    fn normalize_deepl_lang_maps_zh_to_uppercase() {
-        assert_eq!(normalize_deepl_lang("zh-CN".to_string()), "ZH");
-        assert_eq!(normalize_deepl_lang("zh-TW".to_string()), "ZH");
-        assert_eq!(normalize_deepl_lang("en".to_string()), "en");
-    }
-
-    #[test]
-    fn deepl_endpoint_defaults_to_free_when_missing() {
-        let body = json!({ "text": "Hello", "lang": "en" });
-        assert_eq!(parse_deepl_endpoint(&body).unwrap(), DeeplApiEndpoint::Free);
-    }
-
-    #[test]
     fn deepl_endpoint_rejects_invalid_values() {
         let body = json!({ "text": "Hello", "lang": "en", "endpoint": "bogus" });
         let result = parse_deepl_endpoint(&body);

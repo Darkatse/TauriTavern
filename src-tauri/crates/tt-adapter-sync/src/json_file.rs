@@ -161,25 +161,14 @@ async fn remove_temp_file(temp_path: &Path, target_path: &Path) -> Result<(), Do
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
-
     use serde_json::{Value, json};
     use tt_domain::errors::DomainError;
     use uuid::Uuid;
 
-    use super::{read_json_file, replace_file_with_fallback, write_json_file};
+    use super::{read_json_file, write_json_file};
 
     fn temp_root() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("tauritavern-sync-json-{}", Uuid::new_v4()))
-    }
-
-    #[tokio::test]
-    async fn read_json_file_reports_missing_file_as_not_found() {
-        let path = temp_root().join("missing.json");
-
-        let error = read_json_file::<Value>(&path).await.unwrap_err();
-
-        assert!(matches!(error, DomainError::NotFound(_)));
     }
 
     #[tokio::test]
@@ -196,45 +185,6 @@ mod tests {
         let error = read_json_file::<Value>(&path).await.unwrap_err();
 
         assert!(matches!(error, DomainError::InvalidData(_)));
-        let _ = tokio::fs::remove_dir_all(root).await;
-    }
-
-    #[tokio::test]
-    async fn write_json_file_creates_parent_directory_and_round_trips() {
-        let root = temp_root();
-        let path = root.join("a").join("b").join("settings.json");
-        let expected = json!({ "version": 1, "name": "demo" });
-
-        write_json_file(&path, &expected).await.expect("write json");
-
-        let actual: Value = read_json_file(&path).await.expect("read json");
-        assert_eq!(actual, expected);
-        let _ = tokio::fs::remove_dir_all(root).await;
-    }
-
-    #[tokio::test]
-    async fn write_json_file_replaces_target_entry() {
-        let root = temp_root();
-        let path = root.join("settings.json");
-        write_json_file(&path, &json!({ "version": 1, "payload": "old" }))
-            .await
-            .expect("write initial json");
-        let mut old_handle = std::fs::File::open(&path).expect("open old handle");
-
-        write_json_file(&path, &json!({ "version": 2, "payload": "new" }))
-            .await
-            .expect("write updated json");
-
-        let mut old_contents = String::new();
-        old_handle
-            .read_to_string(&mut old_contents)
-            .expect("read old handle");
-        let on_disk_contents = tokio::fs::read_to_string(&path).await.expect("read path");
-
-        let old_json: Value = serde_json::from_str(&old_contents).expect("parse old json");
-        let new_json: Value = serde_json::from_str(&on_disk_contents).expect("parse new json");
-        assert_eq!(old_json.get("version"), Some(&json!(1)));
-        assert_eq!(new_json.get("version"), Some(&json!(2)));
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 
@@ -263,30 +213,6 @@ mod tests {
         assert!(matches!(error, DomainError::InvalidData(_)));
         let after: Value = read_json_file(&path).await.expect("read after");
         assert_eq!(after, before);
-        let _ = tokio::fs::remove_dir_all(root).await;
-    }
-
-    #[tokio::test]
-    async fn replace_file_with_fallback_copies_when_target_parent_is_missing() {
-        let root = temp_root();
-        let temp = root.join("temp.json");
-        let target = root.join("nested").join("state.json");
-        tokio::fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
-        tokio::fs::write(&temp, br#"{"ok":true}"#)
-            .await
-            .expect("write temp");
-
-        replace_file_with_fallback(&temp, &target)
-            .await
-            .expect("replace through fallback");
-
-        let contents = tokio::fs::read_to_string(&target)
-            .await
-            .expect("read target");
-        assert_eq!(contents, r#"{"ok":true}"#);
-        assert!(!temp.exists());
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 

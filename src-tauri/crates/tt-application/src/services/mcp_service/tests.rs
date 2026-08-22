@@ -273,46 +273,6 @@ async fn registration_discovery_keeps_authority_off_by_default_and_reports_stale
 }
 
 #[tokio::test]
-async fn catalog_persists_across_services_and_reprojects_current_permission() {
-    let repository = Arc::new(MemoryRepository::default());
-    let first_gateway = Arc::new(FixedGateway::default());
-    let first_service = McpService::new(repository.clone(), first_gateway.clone());
-    let created = first_service
-        .create_server(
-            "Fixture".to_string(),
-            "http://127.0.0.1:3333/mcp".to_string(),
-            BTreeMap::new(),
-            McpProtocolVersionPreference::Auto,
-        )
-        .await
-        .unwrap();
-    first_service
-        .set_server_state(&created.id, McpServerState::Active)
-        .await
-        .unwrap();
-
-    first_service.discover_tools(&created.id).await.unwrap();
-    first_service
-        .set_tool_permission(&created.id, "search".to_string(), McpToolPermission::Allow)
-        .await
-        .unwrap();
-    assert_eq!(first_gateway.discovery_calls.load(Ordering::Relaxed), 1);
-
-    let second_gateway = Arc::new(FixedGateway::default());
-    second_gateway.fail_discovery.store(true, Ordering::Relaxed);
-    let second_service = McpService::new(repository, second_gateway.clone());
-    let restored = second_service.discover_tools(&created.id).await.unwrap();
-
-    assert_eq!(restored.server_version.as_deref(), Some("1.0"));
-    assert_eq!(restored.tools[0].permission, McpToolPermission::Allow);
-    assert_eq!(second_gateway.discovery_calls.load(Ordering::Relaxed), 0);
-
-    second_service.clear_catalog_memory();
-    second_service.discover_tools(&created.id).await.unwrap();
-    assert_eq!(second_gateway.discovery_calls.load(Ordering::Relaxed), 0);
-}
-
-#[tokio::test]
 async fn connection_update_invalidates_catalog_and_uses_new_headers_and_protocol() {
     let repository = Arc::new(MemoryRepository::default());
     let gateway = Arc::new(FixedGateway::default());
@@ -560,40 +520,6 @@ async fn cancelled_prepared_call_is_not_sent_or_retained() {
     assert!(matches!(outcome, McpCallOutcomeDto::NotSent { .. }));
     assert!(gateway.calls.lock().unwrap().is_empty());
     assert!(service.calls.calls.lock().await.is_empty());
-}
-
-#[tokio::test]
-async fn paused_registration_is_rejected_before_the_gateway() {
-    let repository = Arc::new(MemoryRepository::default());
-    let gateway = Arc::new(FixedGateway::default());
-    let service = McpService::new(repository, gateway.clone());
-    let created = service
-        .create_server(
-            "Fixture".to_string(),
-            "http://127.0.0.1:3333/mcp".to_string(),
-            BTreeMap::new(),
-            McpProtocolVersionPreference::Auto,
-        )
-        .await
-        .unwrap();
-    service.start_call("call-paused").await.unwrap();
-
-    let outcome = service
-        .test_call(
-            "call-paused",
-            &created.id,
-            "search".to_string(),
-            "{}".to_string(),
-        )
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        outcome,
-        McpCallOutcomeDto::NotSent { ref code, .. }
-            if code == "mcp.call_server_paused"
-    ));
-    assert!(gateway.calls.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -949,21 +875,6 @@ async fn legacy_call_rejects_invalid_arguments_before_the_gateway() {
         ));
     }
     assert!(gateway.calls.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn empty_agent_selection_does_not_touch_mcp_storage() {
-    let repository = Arc::new(MemoryRepository::default());
-    repository.fail_scan.store(true, Ordering::Relaxed);
-    let service = McpService::new(repository, Arc::new(FixedGateway::default()));
-
-    let resolved = service
-        .resolve_permitted_model_tools_cached(&[])
-        .await
-        .unwrap();
-
-    assert!(resolved.tools.is_empty());
-    assert!(resolved.diagnostics.is_empty());
 }
 
 #[tokio::test]

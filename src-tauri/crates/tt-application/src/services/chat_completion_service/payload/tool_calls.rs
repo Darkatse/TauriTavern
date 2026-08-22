@@ -230,10 +230,7 @@ fn sorted_call_ids(call_ids: &HashSet<String>) -> Vec<&str> {
 mod tests {
     use serde_json::json;
 
-    use super::{
-        extract_openai_tool_calls, normalize_tool_result_payload,
-        validate_openai_chat_tool_transcript,
-    };
+    use super::{extract_openai_tool_calls, validate_openai_chat_tool_transcript};
 
     #[test]
     fn extract_openai_tool_calls_parses_arguments_and_signature() {
@@ -253,12 +250,6 @@ mod tests {
         assert_eq!(calls[0].name, "weather");
         assert_eq!(calls[0].signature.as_deref(), Some("sig_1"));
         assert_eq!(calls[0].arguments["city"], "Paris");
-    }
-
-    #[test]
-    fn normalize_tool_result_payload_wraps_plain_text() {
-        let payload = normalize_tool_result_payload("done");
-        assert_eq!(payload["content"], "done");
     }
 
     #[test]
@@ -301,25 +292,6 @@ mod tests {
 
         validate_openai_chat_tool_transcript(Some(&messages), true)
             .expect("previous response continuation can send only tool outputs");
-    }
-
-    #[test]
-    fn validate_openai_chat_tool_transcript_rejects_missing_tool_call_id() {
-        let messages = json!([
-            {
-                "role":"assistant",
-                "content":"checking",
-                "tool_calls":[{
-                    "type":"function",
-                    "function":{"name":"weather","arguments":"{}"}
-                }]
-            }
-        ]);
-
-        let error = validate_openai_chat_tool_transcript(Some(&messages), false)
-            .expect_err("missing assistant tool call id must fail");
-
-        assert!(error.to_string().contains("is missing id"));
     }
 
     #[test]

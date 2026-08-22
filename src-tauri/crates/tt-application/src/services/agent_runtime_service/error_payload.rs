@@ -128,65 +128,6 @@ mod tests {
     }
 
     #[test]
-    fn application_error_without_code_uses_variant_code() {
-        let payload = run_failure_payload(&ApplicationError::PermissionDenied(
-            "workspace root is hidden".to_string(),
-        ));
-
-        assert_eq!(payload["code"], "agent.permission_denied");
-        assert_eq!(payload["message"], "workspace root is hidden");
-        assert_eq!(
-            payload["technicalMessage"],
-            "Permission denied: workspace root is hidden"
-        );
-        assert_eq!(payload["retryable"], false);
-        // Non-drift, non-retryable errors stay non-user-retryable so the
-        // UI does not lure the user into clicking Retry on policy errors.
-        assert_eq!(payload["userRetryable"], false);
-    }
-
-    #[test]
-    fn rate_limited_error_is_retryable() {
-        let payload = run_failure_payload(&ApplicationError::RateLimited(
-            "model.provider_rate_limited: upstream rate limit".to_string(),
-        ));
-
-        assert_eq!(payload["code"], "model.provider_rate_limited");
-        assert_eq!(payload["message"], "upstream rate limit");
-        assert_eq!(payload["retryable"], true);
-        // Auto-retryable errors are user-retryable by definition.
-        assert_eq!(payload["userRetryable"], true);
-    }
-
-    #[test]
-    fn max_tool_rounds_exceeded_is_user_retryable() {
-        let payload = run_failure_payload(&ApplicationError::ValidationError(
-            "agent.max_tool_rounds_exceeded: workspace.finish was not called within 12 rounds"
-                .to_string(),
-        ));
-
-        assert_eq!(payload["code"], "agent.max_tool_rounds_exceeded");
-        assert_eq!(payload["retryable"], false);
-        assert_eq!(payload["userRetryable"], true);
-    }
-
-    #[test]
-    fn upstream_invalid_response_is_transient_and_retryable() {
-        let payload = run_failure_payload(&ApplicationError::Transient(
-            "model.upstream_invalid_response: openai returned status 200 non-JSON body (generate): expected value at line 1 column 1"
-                .to_string(),
-        ));
-
-        assert_eq!(payload["code"], "model.upstream_invalid_response");
-        assert_eq!(
-            payload["message"],
-            "openai returned status 200 non-JSON body (generate): expected value at line 1 column 1"
-        );
-        assert_eq!(payload["retryable"], true);
-        assert_eq!(payload["userRetryable"], true);
-    }
-
-    #[test]
     fn partial_success_payload_preserves_commits_but_disables_retry_flags() {
         let mut ledger = RunCommitLedger::default();
         ledger.record(

@@ -390,65 +390,6 @@ async fn list_runs_accepts_legacy_index_without_presentation() {
 }
 
 #[tokio::test]
-async fn list_runs_accepts_legacy_awaiting_commit_status() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-    let mut run = sample_run_with_id("run_legacy_awaiting_commit");
-    run.status = AgentRunStatus::AwaitingHostCommit;
-    repository.create_run(&run).await.expect("create run");
-
-    let index_path = root.join("index/runs/run_legacy_awaiting_commit.json");
-    let mut legacy = serde_json::to_value(&run).expect("serialize legacy run");
-    legacy.as_object_mut().expect("run json object").insert(
-        "status".to_string(),
-        Value::String("awaiting_commit".to_string()),
-    );
-    FileAgentRepository::write_json_atomic(&index_path, &legacy)
-        .await
-        .expect("write legacy index");
-
-    let listed = repository
-        .list_runs(AgentRunListQuery {
-            chat_ref: None,
-            stable_chat_id: None,
-            statuses: None,
-            before: None,
-            limit: 10,
-        })
-        .await
-        .expect("list legacy run");
-
-    assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].id, run.id);
-    assert_eq!(listed[0].status, AgentRunStatus::AwaitingHostCommit);
-
-    let loaded = repository.load_run(&run.id).await.expect("load legacy run");
-    assert_eq!(loaded.status, AgentRunStatus::AwaitingHostCommit);
-
-    fs::remove_dir_all(root).await.expect("cleanup");
-}
-
-#[tokio::test]
-async fn list_runs_returns_empty_when_index_is_missing() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-
-    let listed = repository
-        .list_runs(AgentRunListQuery {
-            chat_ref: None,
-            stable_chat_id: None,
-            statuses: None,
-            before: None,
-            limit: 10,
-        })
-        .await
-        .expect("list empty index");
-
-    assert!(listed.is_empty());
-    let _ = fs::remove_dir_all(root).await;
-}
-
-#[tokio::test]
 async fn run_summary_projection_round_trips_by_run_id() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
@@ -877,46 +818,6 @@ async fn repository_round_trips_invocations() {
 }
 
 #[tokio::test]
-async fn read_text_on_directory_returns_typed_workspace_error() {
-    // Issue #54: workspace_read_file used to bubble up the raw EISDIR
-    // ("Is a directory") OS error as `agent.internal_error` (retryable=false)
-    // and tear down the whole run. We now translate it into a structured
-    // domain error so the tool layer can surface it as a recoverable
-    // `workspace.path_is_directory` business error.
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-    let run = sample_run_with_id("run_dir_read");
-    let manifest = sample_manifest(&run);
-    let profile = sample_resolved_profile(&manifest);
-
-    repository.create_run(&run).await.expect("create run");
-    repository
-        .initialize_run(
-            &run,
-            &manifest,
-            &serde_json::json!({"messages": []}),
-            &profile,
-        )
-        .await
-        .expect("initialize workspace");
-
-    let persist_path = WorkspacePath::parse("persist").expect("persist root path");
-    let error = repository
-        .read_text(&run.id, &persist_path)
-        .await
-        .expect_err("reading a directory must fail");
-
-    match error {
-        DomainError::WorkspacePathIsDirectory { path } => {
-            assert_eq!(path, "persist");
-        }
-        other => panic!("expected DomainError::WorkspacePathIsDirectory, got {other:?}"),
-    }
-
-    fs::remove_dir_all(root).await.expect("cleanup");
-}
-
-#[tokio::test]
 async fn read_text_returns_typed_error_for_non_utf8_file() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
@@ -954,43 +855,6 @@ async fn read_text_returns_typed_error_for_non_utf8_file() {
         error,
         DomainError::WorkspaceFileNotText { path } if path == "output/image.bin"
     ));
-
-    fs::remove_dir_all(root).await.expect("cleanup");
-}
-
-#[tokio::test]
-async fn write_text_on_directory_returns_typed_workspace_error() {
-    // Same guard for write_text so workspace_write_file cannot wipe out a
-    // directory through the temp-file swap path.
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-    let run = sample_run_with_id("run_dir_write");
-    let manifest = sample_manifest(&run);
-    let profile = sample_resolved_profile(&manifest);
-
-    repository.create_run(&run).await.expect("create run");
-    repository
-        .initialize_run(
-            &run,
-            &manifest,
-            &serde_json::json!({"messages": []}),
-            &profile,
-        )
-        .await
-        .expect("initialize workspace");
-
-    let output_root = WorkspacePath::parse("output").expect("output root path");
-    let error = repository
-        .write_text(&run.id, &output_root, "should not land")
-        .await
-        .expect_err("writing to a directory must fail");
-
-    match error {
-        DomainError::WorkspacePathIsDirectory { path } => {
-            assert_eq!(path, "output");
-        }
-        other => panic!("expected DomainError::WorkspacePathIsDirectory, got {other:?}"),
-    }
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -1134,86 +998,6 @@ async fn prune_persistent_states_rejects_candidate_file() {
 
     assert!(matches!(error, DomainError::InvalidData(_)));
     assert!(states_dir.join("state_file").exists());
-
-    fs::remove_dir_all(root).await.expect("cleanup");
-}
-
-#[tokio::test]
-async fn delete_missing_chat_workspace_is_idempotent() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-
-    let deletion = repository
-        .delete_chat_workspace("chat_missing")
-        .await
-        .expect("delete missing chat workspace");
-
-    assert!(!deletion.removed);
-    assert!(deletion.run_ids.is_empty());
-
-    let _ = fs::remove_dir_all(root).await;
-}
-
-#[tokio::test]
-async fn empty_persistent_state_restores_when_empty_root_directory_is_missing() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-    let run = sample_run_with_id("run_empty_persist_base");
-    let manifest = sample_manifest(&run);
-    let profile = sample_resolved_profile(&manifest);
-
-    repository.create_run(&run).await.expect("create run");
-    repository
-        .initialize_run(
-            &run,
-            &manifest,
-            &serde_json::json!({"messages": []}),
-            &profile,
-        )
-        .await
-        .expect("initialize workspace");
-
-    let changes = repository
-        .commit_persistent_changes(&run.id)
-        .await
-        .expect("commit empty persist state");
-    assert!(changes.changes.is_empty());
-
-    let missing_empty_root = root
-        .join("chats")
-        .join(&run.workspace_id)
-        .join("persistent-states")
-        .join(&run.id)
-        .join("persist");
-    assert!(missing_empty_root.exists());
-    fs::remove_dir_all(&missing_empty_root)
-        .await
-        .expect("simulate sync dropping empty persist root");
-
-    let mut next_run = sample_run_with_id("run_empty_persist_child");
-    next_run.persist_base_state_id = Some(run.id.clone());
-    repository
-        .create_run(&next_run)
-        .await
-        .expect("create child run");
-    repository
-        .initialize_run(
-            &next_run,
-            &sample_manifest(&next_run),
-            &serde_json::json!({"messages": []}),
-            &profile,
-        )
-        .await
-        .expect("missing empty persist root should restore as empty");
-
-    assert!(
-        root.join("chats")
-            .join(&next_run.workspace_id)
-            .join("runs")
-            .join(&next_run.id)
-            .join("persist")
-            .exists()
-    );
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }

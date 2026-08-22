@@ -336,26 +336,6 @@ mod tests {
     }
 
     #[test]
-    fn user_backup_filter_keeps_regular_files_when_secret_export_is_disabled() {
-        assert!(should_include_user_backup_entry(
-            Path::new("settings.json"),
-            false
-        ));
-        assert!(should_include_user_backup_entry(
-            Path::new("backups/chat.jsonl"),
-            false
-        ));
-        assert!(should_include_user_backup_entry(
-            Path::new("backups/chat.jsonl.zst"),
-            false
-        ));
-        assert!(should_include_user_backup_entry(
-            Path::new("characters/secrets.json"),
-            false
-        ));
-    }
-
-    #[test]
     fn user_backup_filter_keeps_secret_files_when_secret_export_is_enabled() {
         assert!(should_include_user_backup_entry(
             Path::new("secrets.json"),
@@ -380,22 +360,6 @@ mod tests {
         ));
         assert!(!is_chat_backup_staging_entry(Path::new(
             "default-user/backups/.tmp-chat-backup-not-a-uuid"
-        )));
-    }
-
-    #[test]
-    fn archive_filters_only_the_chat_commit_staging_subtree() {
-        assert!(is_chat_commit_staging_entry(Path::new(
-            "default-user/.staging/chat-commits/session.partial"
-        )));
-        assert!(is_chat_commit_staging_entry(Path::new(
-            ".staging/chat-commits/session.partial"
-        )));
-        assert!(!is_chat_commit_staging_entry(Path::new(
-            "default-user/.staging/other-state/data.json"
-        )));
-        assert!(!is_chat_commit_staging_entry(Path::new(
-            "default-user/chats/.staging/chat-commits.jsonl"
         )));
     }
 

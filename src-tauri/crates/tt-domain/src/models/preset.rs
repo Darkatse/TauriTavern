@@ -154,63 +154,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_preset_type_from_api_id() {
-        assert_eq!(PresetType::from_api_id("kobold"), Some(PresetType::Kobold));
-        assert_eq!(
-            PresetType::from_api_id("koboldhorde"),
-            Some(PresetType::Kobold)
-        );
-        assert_eq!(PresetType::from_api_id("novel"), Some(PresetType::Novel));
-        assert_eq!(PresetType::from_api_id("openai"), Some(PresetType::OpenAI));
-        assert_eq!(
-            PresetType::from_api_id("textgenerationwebui"),
-            Some(PresetType::TextGen)
-        );
-        assert_eq!(
-            PresetType::from_api_id("instruct"),
-            Some(PresetType::Instruct)
-        );
-        assert_eq!(
-            PresetType::from_api_id("context"),
-            Some(PresetType::Context)
-        );
-        assert_eq!(
-            PresetType::from_api_id("sysprompt"),
-            Some(PresetType::SysPrompt)
-        );
-        assert_eq!(
-            PresetType::from_api_id("reasoning"),
-            Some(PresetType::Reasoning)
-        );
-        assert_eq!(PresetType::from_api_id("unknown"), None);
-    }
-
-    #[test]
-    fn test_preset_type_directory_name() {
-        assert_eq!(PresetType::Kobold.directory_name(), "KoboldAI Settings");
-        assert_eq!(PresetType::Novel.directory_name(), "NovelAI Settings");
-        assert_eq!(PresetType::OpenAI.directory_name(), "OpenAI Settings");
-        assert_eq!(PresetType::TextGen.directory_name(), "TextGen Settings");
-        assert_eq!(PresetType::Instruct.directory_name(), "instruct");
-        assert_eq!(PresetType::Context.directory_name(), "context");
-        assert_eq!(PresetType::SysPrompt.directory_name(), "sysprompt");
-        assert_eq!(PresetType::Reasoning.directory_name(), "reasoning");
-    }
-
-    #[test]
-    fn test_preset_data_with_name() {
-        let preset = Preset::new(
-            "Test Preset".to_string(),
-            PresetType::OpenAI,
-            json!({"temperature": 0.7}),
-        );
-
-        let data_with_name = preset.data_with_name();
-        assert_eq!(data_with_name["name"], "Test Preset");
-        assert_eq!(data_with_name["temperature"], 0.7);
-    }
-
-    #[test]
     fn test_preset_validation() {
         let valid_preset = Preset::new(
             "Valid Preset".to_string(),

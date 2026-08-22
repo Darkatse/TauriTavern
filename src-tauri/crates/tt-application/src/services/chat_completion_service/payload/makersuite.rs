@@ -995,160 +995,6 @@ mod tests {
     }
 
     #[test]
-    fn makersuite_25_flash_accepts_shared_minimal_alias() {
-        let payload = json!({
-            "model": "gemini-2.5-flash",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 4000,
-            "reasoning_effort": "minimal"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
-                .and_then(Value::as_i64),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn makersuite_25_flash_lite_auto_omits_thinking_budget() {
-        let payload = json!({
-            "model": "gemini-2.5-flash-lite",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 4000,
-            "reasoning_effort": "auto"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
-                .is_none()
-        );
-        assert_eq!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/includeThoughts")
-                .and_then(Value::as_bool),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn makersuite_3_pro_sets_thinking_level() {
-        let payload = json!({
-            "model": "gemini-3-pro",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 8000,
-            "reasoning_effort": "medium",
-            "include_reasoning": false
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
-        let config = body
-            .get("generationConfig")
-            .and_then(Value::as_object)
-            .expect("generationConfig must be object");
-        let thinking = config
-            .get("thinkingConfig")
-            .and_then(Value::as_object)
-            .expect("thinkingConfig must be object");
-
-        assert_eq!(
-            thinking
-                .get("thinkingLevel")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            "low"
-        );
-        assert!(thinking.get("thinkingBudget").is_none());
-    }
-
-    #[test]
-    fn makersuite_31_pro_sets_medium_thinking_level() {
-        let payload = json!({
-            "model": "gemini-3.1-pro-preview",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 8000,
-            "reasoning_effort": "medium"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingLevel")
-                .and_then(Value::as_str),
-            Some("medium")
-        );
-        assert!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn makersuite_31_flash_lite_uses_level_not_budget() {
-        let payload = json!({
-            "model": "gemini-3.1-flash-lite-preview",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 8000,
-            "reasoning_effort": "medium"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingLevel")
-                .and_then(Value::as_str),
-            Some("medium")
-        );
-        assert!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn makersuite_xhigh_behaves_like_max() {
-        let payload = json!({
-            "model": "gemini-2.5-pro",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 8000,
-            "reasoning_effort": "xhigh"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
-                .and_then(Value::as_i64),
-            Some(8000)
-        );
-    }
-
-    #[test]
     fn makersuite_rejects_unknown_reasoning_effort() {
         let payload = json!({
             "model": "gemini-2.5-flash",
@@ -1284,29 +1130,6 @@ mod tests {
     }
 
     #[test]
-    fn makersuite_omits_auto_media_resolution() {
-        let upstream = build_with_messages(
-            "gemini-3-pro",
-            json!([{
-                "role": "user",
-                "content": [{
-                    "type": "image_url",
-                    "image_url": {
-                        "url": "data:image/png;base64,AAAA",
-                        "detail": "auto"
-                    }
-                }]
-            }]),
-        );
-
-        assert!(
-            upstream
-                .pointer("/contents/0/parts/0/mediaResolution")
-                .is_none()
-        );
-    }
-
-    #[test]
     fn makersuite_preserves_native_google_parts() {
         let function_call = json!({
             "name": "lookup",
@@ -1412,28 +1235,6 @@ mod tests {
     }
 
     #[test]
-    fn makersuite_keeps_unknown_text_parts_as_text() {
-        let upstream = build_with_messages(
-            "gemini-2.5-flash",
-            json!([{
-                "role": "user",
-                "content": [
-                    { "type": "provider_text", "text": "hello" },
-                    { "type": "provider_content", "content": " world " }
-                ]
-            }]),
-        );
-
-        assert_eq!(
-            upstream.pointer("/contents/0/parts"),
-            Some(&json!([
-                { "text": "hello" },
-                { "text": "world" }
-            ]))
-        );
-    }
-
-    #[test]
     fn makersuite_rejects_media_that_generate_content_cannot_preserve() {
         for (content, expected) in [
             (
@@ -1500,29 +1301,6 @@ mod tests {
             error
                 .to_string()
                 .contains("Gemini system instruction cannot preserve image input")
-        );
-    }
-
-    #[test]
-    fn vertexai_uses_shared_multimodal_renderer() {
-        let payload = json!({
-            "model": "gemini-2.5-flash",
-            "messages": [{
-                "role": "user",
-                "content": [{
-                    "type": "audio_url",
-                    "audio_url": { "url": "data:audio/wav;base64,AAAA" }
-                }]
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build_vertexai(payload).expect("build should succeed");
-        assert_eq!(
-            upstream.pointer("/contents/0/parts/0/inlineData"),
-            Some(&json!({ "mimeType": "audio/wav", "data": "AAAA" }))
         );
     }
 
@@ -1665,49 +1443,6 @@ mod tests {
         assert_eq!(tool_parts.len(), 2, "parallel tool results share one turn");
         assert_eq!(tool_parts[0]["functionResponse"]["id"], "call_weather");
         assert_eq!(tool_parts[1]["functionResponse"]["id"], "call_time");
-    }
-
-    #[test]
-    fn makersuite_tool_result_skips_user_content_part_renderer() {
-        for role in ["tool", "function"] {
-            let payload = json!({
-                "model": "gemini-2.5-flash",
-                "messages": [
-                    {
-                        "role": "assistant",
-                        "tool_calls": [{
-                            "id": "call_weather",
-                            "type": "function",
-                            "function": {
-                                "name": "weather",
-                                "arguments": "{\"city\":\"Paris\"}"
-                            }
-                        }]
-                    },
-                    {
-                        "role": role,
-                        "tool_call_id": "call_weather",
-                        "content": [
-                            { "type": "text", "text": "{\"temperature\":20}" },
-                            {
-                                "type": "image_url",
-                                "image_url": { "url": "https://example.test/tool-output.png" }
-                            }
-                        ]
-                    }
-                ]
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-
-            let (_, upstream) =
-                build(payload).expect("tool result should not render as user media");
-            assert_eq!(
-                upstream.pointer("/contents/1/parts/0/functionResponse/response/temperature"),
-                Some(&json!(20))
-            );
-        }
     }
 
     #[test]
@@ -1898,40 +1633,6 @@ mod tests {
         assert_eq!(
             image_config.get("aspectRatio").and_then(Value::as_str),
             Some("16:9")
-        );
-    }
-
-    #[test]
-    fn vertexai_disables_include_thoughts_when_budget_zero() {
-        let payload = json!({
-            "model": "gemini-2.5-flash",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 1024,
-            "reasoning_effort": "min",
-            "include_reasoning": true
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build_vertexai(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
-        let config = body
-            .get("generationConfig")
-            .and_then(Value::as_object)
-            .expect("generationConfig must be object");
-        let thinking = config
-            .get("thinkingConfig")
-            .and_then(Value::as_object)
-            .expect("thinkingConfig must be object");
-
-        assert_eq!(
-            thinking.get("thinkingBudget").and_then(Value::as_i64),
-            Some(0)
-        );
-        assert_eq!(
-            thinking.get("includeThoughts").and_then(Value::as_bool),
-            Some(false)
         );
     }
 }

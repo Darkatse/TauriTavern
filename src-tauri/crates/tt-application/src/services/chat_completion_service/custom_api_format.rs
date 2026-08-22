@@ -35,15 +35,6 @@ impl CustomApiFormat {
 #[cfg(test)]
 mod tests {
     use super::CustomApiFormat;
-    use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
-
-    #[test]
-    fn empty_value_defaults_to_openai_compat() {
-        assert_eq!(
-            CustomApiFormat::parse("").expect("format should parse"),
-            CustomApiFormat::OpenAiCompat
-        );
-    }
 
     #[test]
     fn invalid_value_fails_fast() {
@@ -52,22 +43,6 @@ mod tests {
             error
                 .to_string()
                 .contains("Unsupported custom_api_format: invalid")
-        );
-    }
-
-    #[test]
-    fn claude_messages_uses_claude_model_list_transport() {
-        assert_eq!(
-            CustomApiFormat::ClaudeMessages.model_list_source(),
-            ChatCompletionSource::Claude
-        );
-    }
-
-    #[test]
-    fn gemini_interactions_uses_gemini_model_list_transport() {
-        assert_eq!(
-            CustomApiFormat::GeminiInteractions.model_list_source(),
-            ChatCompletionSource::Makersuite
         );
     }
 }

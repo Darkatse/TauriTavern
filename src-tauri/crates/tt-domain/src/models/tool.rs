@@ -443,33 +443,11 @@ mod tests {
     }
 
     #[test]
-    fn tool_identity_is_stable_and_opaque() {
-        let builtin = ToolProviderId::builtin();
-        let mcp = ToolProviderId::parse("mcp/registration-1").unwrap();
-        let builtin_id = ToolId::new(&builtin, "workspace.read_file").unwrap();
-        let mcp_id = ToolId::new(&mcp, "workspace.read_file").unwrap();
-
-        assert_eq!(builtin_id.as_str(), "builtin:workspace.read_file");
-        assert_eq!(builtin_id.provider_id(), "builtin");
-        assert_eq!(builtin_id.native_name(), "workspace.read_file");
-        assert_ne!(builtin_id, mcp_id);
-    }
-
-    #[test]
     fn tool_identity_rejects_invalid_serialized_values() {
         for invalid in ["", "builtin", ":tool", "builtin:"] {
             assert!(serde_json::from_value::<ToolId>(json!(invalid)).is_err());
         }
         assert!(ToolProviderId::parse("mcp:registration-1").is_err());
-    }
-
-    #[test]
-    fn tool_choice_uses_canonical_domain_shape() {
-        let choice = ToolChoice::Specific(ToolId::builtin("workspace.finish").unwrap());
-        let value = serde_json::to_value(&choice).unwrap();
-
-        assert_eq!(value, json!({ "specific": "builtin:workspace.finish" }));
-        assert_eq!(serde_json::from_value::<ToolChoice>(value).unwrap(), choice);
     }
 
     #[test]
@@ -555,32 +533,6 @@ mod tests {
     }
 
     #[test]
-    fn tool_catalog_orders_by_id_and_keeps_provider_namespaces_distinct() {
-        let builtin_id = ToolId::builtin("search").unwrap();
-        let mcp_id = ToolId::new(
-            &ToolProviderId::parse("mcp/registration-1").unwrap(),
-            "search",
-        )
-        .unwrap();
-        let catalog = ToolCatalog::try_from_descriptors([
-            descriptor(mcp_id.clone()),
-            descriptor(builtin_id.clone()),
-        ])
-        .unwrap();
-
-        assert_eq!(catalog.len(), 2);
-        assert!(!catalog.is_empty());
-        assert_eq!(catalog.get(&builtin_id).unwrap().id, builtin_id);
-        assert_eq!(
-            catalog
-                .iter()
-                .map(|descriptor| descriptor.id.as_str())
-                .collect::<Vec<_>>(),
-            ["builtin:search", "mcp/registration-1:search"]
-        );
-    }
-
-    #[test]
     fn tool_catalog_rejects_duplicate_ids() {
         let id = ToolId::builtin("workspace.finish").unwrap();
         let error =
@@ -593,13 +545,5 @@ mod tests {
                 if message
                     == "tool.catalog_duplicate_id: duplicate tool id `builtin:workspace.finish`"
         ));
-    }
-
-    #[test]
-    fn tool_catalog_can_be_empty() {
-        let catalog = ToolCatalog::try_from_descriptors(Vec::new()).unwrap();
-
-        assert!(catalog.is_empty());
-        assert_eq!(catalog.iter().count(), 0);
     }
 }

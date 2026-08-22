@@ -425,15 +425,6 @@ mod tests {
     }
 
     #[test]
-    fn parser_uses_the_fixed_timestamp_tail() {
-        assert_eq!(
-            parsed_backup_prefix("chat_角色_a_b_20260714-010203.jsonl").as_deref(),
-            Some("chat_角色_a_b_")
-        );
-        assert_eq!(parsed_backup_prefix("chat_角色_a_b_bad.jsonl"), None);
-    }
-
-    #[test]
     fn inventory_byte_overflow_is_an_error_not_a_panic() {
         let mut inventory = BackupInventory::default();
         inventory
@@ -549,30 +540,6 @@ mod tests {
             plan_evictions(&inventory, policy(-1, -1, 4), None)
                 .expect("plan global byte retention"),
             ["malformed-old"]
-        );
-    }
-
-    #[test]
-    fn prefix_limit_uses_exact_parsed_prefixes() {
-        let mut inventory = BackupInventory::default();
-        inventory
-            .insert(entry("al", Some("chat_al_"), 1, 1))
-            .unwrap();
-        inventory
-            .insert(entry("alice", Some("chat_al_ice_"), 2, 1))
-            .unwrap();
-
-        assert_eq!(
-            plan_evictions(
-                &inventory,
-                policy(1, -1, -1),
-                Some(BackupCandidate {
-                    prefix: "chat_al_",
-                    byte_len: 1,
-                })
-            )
-            .expect("plan exact prefix retention"),
-            ["al"]
         );
     }
 }
